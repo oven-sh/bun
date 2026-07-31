@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isWindows } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows } from "harness";
 
 describe("spawn stdin ReadableStream", () => {
   test("basic ReadableStream as stdin", async () => {
@@ -833,18 +833,7 @@ describe("spawn stdin ReadableStream", () => {
     await expectMaxObjectTypeCount(expect, "Subprocess", 5);
   });
 
-  // Regression: src/runtime/api/bun/subprocess/Writable.zig:115/193
-  // (`pipe.assignToStream(...)`) — Zig's `FileSink.create` returns rc=1 which is
-  // *transferred* into `Writable{ .pipe = pipe }`; `assignToStream` itself is
-  // ref-neutral (`ref(); defer deref()`). A port that takes an extra +1 inside
-  // `assign_to_stream` (and/or in `to_js`) leaves the native FileSink at rc>=1
-  // even after the stream completes, the Subprocess is finalized, and all JS
-  // wrappers are GC'd — leaking the IOWriter buffers and fd for the life of the
-  // process. `heapStats()` only counts JS wrappers, so the test above does not
-  // catch this; we must check the native live counter directly.
-  // TODO(zig-rust-divergence): Rust port leaks one FileSink per spawn here;
-  // see docs/ZIG_RUST_DIVERGENCE_AUDIT.md.
-  test.todo("does not leak native FileSink when ReadableStream is used as stdin", async () => {
+  test("does not leak native FileSink when ReadableStream is used as stdin", async () => {
     async function once(i: number) {
       const stream = new ReadableStream({
         async pull(controller) {
@@ -896,6 +885,60 @@ describe("spawn stdin ReadableStream", () => {
     // iteration leaks one native FileSink (delta == iterations). Allow one
     // straggler whose wrapper has not yet been finalized.
     expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
+  });
+
+  // A fetch response body piped into a child's stdin is a native ByteStream →
+  // FileSink pump. When the child does not read, the OS pipe fills and the
+  // FileSink backpressures; that must pause the upstream response socket
+  // instead of buffering the rate difference in-process. RSS is measured in a
+  // fresh subprocess so the test runner's heap does not skew the delta.
+  test("fetch response.body as stdin bounds memory when the child does not read", async () => {
+    const fixture = `
+      const net = require("node:net");
+      const chunk = Buffer.alloc(64 * 1024, 0x47);
+      // Endless chunked response, written as fast as the socket accepts it.
+      const source = net.createServer(sock => {
+        sock.write("HTTP/1.1 200 OK\\r\\ntransfer-encoding: chunked\\r\\nconnection: close\\r\\n\\r\\n");
+        const framed = Buffer.concat([Buffer.from("10000\\r\\n"), chunk, Buffer.from("\\r\\n")]);
+        const pump = () => { while (sock.write(framed)); sock.once("drain", pump); }; pump();
+      });
+      await new Promise(r => source.listen(0, "127.0.0.1", r));
+
+      Bun.gc(true);
+      const rssBefore = process.memoryUsage.rss();
+      const up = await fetch(\`http://127.0.0.1:\${source.address().port}/\`);
+      // Child never reads stdin, so the pipe fills after one buffer's worth.
+      const child = Bun.spawn({
+        cmd: [${JSON.stringify(bunExe())}, "-e", "await Bun.sleep(60000)"],
+        env: process.env,
+        stdin: up.body,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+
+      let peak = rssBefore;
+      for (let i = 0; i < 20; i++) {
+        await Bun.sleep(100);
+        peak = Math.max(peak, process.memoryUsage.rss());
+      }
+      child.kill();
+      console.log(JSON.stringify({ deltaMB: (peak - rssBefore) / 1024 / 1024 }));
+      process.exit(0);
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { deltaMB } = JSON.parse(stdout.trim());
+    // Without source-side backpressure RSS grows by GBs within a second on
+    // loopback; with it, in-flight bytes are bounded by the pipe + socket
+    // buffers plus one chunk.
+    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 160 : 64);
+    expect(exitCode).toBe(0);
   });
 
   // for-await over a subprocess stderr pipe is pull-driven: when the consumer

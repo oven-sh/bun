@@ -358,6 +358,49 @@ pub enum PathOrFileDescriptor {
 
 pub type SinkWriteFn = fn(ctx: *mut core::ffi::c_void, data: &streams::Result) -> streams::Writable;
 
+/// Static-dispatch write/end pair for a [`SinkHandle`] pointee. `SinkHandle`'s
+/// match arms call these as `DownstreamSink::write(ptr, ..)`. Methods take
+/// `*mut Self` because the callee may re-enter and clear the handle during
+/// `end_from_stream`, so forming `&mut` at the dispatch boundary would violate
+/// provenance — the impl decides how to borrow.
+pub trait DownstreamSink {
+    fn write(this: *mut Self, data: &streams::Result) -> streams::Writable;
+    fn end_from_stream(this: *mut Self, err: Option<streams::StreamError>);
+}
+
+impl DownstreamSink for fetch::FetchRequestBodySink {
+    #[inline]
+    fn write(this: *mut Self, data: &streams::Result) -> streams::Writable {
+        unsafe { (*this).write(data) }
+    }
+    #[inline]
+    fn end_from_stream(this: *mut Self, err: Option<streams::StreamError>) {
+        unsafe { (*this).end_from_stream(err) }
+    }
+}
+
+impl DownstreamSink for streams::NetworkSink {
+    #[inline]
+    fn write(this: *mut Self, data: &streams::Result) -> streams::Writable {
+        unsafe { (*this).write(data) }
+    }
+    #[inline]
+    fn end_from_stream(this: *mut Self, err: Option<streams::StreamError>) {
+        unsafe { (*this).end_from_stream(err) }
+    }
+}
+
+impl DownstreamSink for file_sink::FileSink {
+    #[inline]
+    fn write(this: *mut Self, data: &streams::Result) -> streams::Writable {
+        unsafe { (*this).write(data) }
+    }
+    #[inline]
+    fn end_from_stream(this: *mut Self, err: Option<streams::StreamError>) {
+        unsafe { (*this).end_from_stream(err) }
+    }
+}
+
 #[derive(Copy, Clone, Default)]
 pub enum SinkHandle {
     #[default]
@@ -386,12 +429,9 @@ impl SinkHandle {
         match *self {
             SinkHandle::None => streams::Writable::Done,
             SinkHandle::ServerResponse(any) => any.write_chunk(data),
-            // SAFETY: see fn-level invariant — pointee outlives the handle.
-            SinkHandle::FetchRequestBody(ptr) => unsafe { (*ptr).write(data) },
-            // SAFETY: see fn-level invariant.
-            SinkHandle::S3Upload(ptr) => unsafe { (*ptr).write(data) },
-            // SAFETY: see fn-level invariant.
-            SinkHandle::FileSink(ptr) => unsafe { (*ptr).write(data) },
+            SinkHandle::FetchRequestBody(ptr) => DownstreamSink::write(ptr, data),
+            SinkHandle::S3Upload(ptr) => DownstreamSink::write(ptr, data),
+            SinkHandle::FileSink(ptr) => DownstreamSink::write(ptr, data),
             SinkHandle::ValueBufferer(ctx, write) => write(ctx, data),
         }
     }
@@ -403,12 +443,9 @@ impl SinkHandle {
         match *self {
             SinkHandle::None => {}
             SinkHandle::ServerResponse(any) => any.end_chunk(err.as_ref()),
-            // SAFETY: see fn-level invariant — pointee outlives the handle.
-            SinkHandle::FetchRequestBody(ptr) => unsafe { (*ptr).end_from_stream(err) },
-            // SAFETY: see fn-level invariant.
-            SinkHandle::S3Upload(ptr) => unsafe { (*ptr).end_from_stream(err) },
-            // SAFETY: see fn-level invariant.
-            SinkHandle::FileSink(ptr) => unsafe { (*ptr).end_from_stream(err) },
+            SinkHandle::FetchRequestBody(ptr) => DownstreamSink::end_from_stream(ptr, err),
+            SinkHandle::S3Upload(ptr) => DownstreamSink::end_from_stream(ptr, err),
+            SinkHandle::FileSink(ptr) => DownstreamSink::end_from_stream(ptr, err),
             SinkHandle::ValueBufferer(ctx, write) => {
                 if let Some(e) = err {
                     let _ = write(ctx, &streams::Result::Err(e));

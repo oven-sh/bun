@@ -386,7 +386,7 @@ impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
         // future requests (stack allocated).
         // SAFETY: `ctx`/`request_object` are the freshly-allocated
         // `RequestContext` slot and heap `Request` produced by
-        // `prepare_js_request_context` for this frame; no other borrow is live.
+        // `prepare_js_request_context` for this frame.
         unsafe {
             (*self.ctx).to_async(
                 std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
@@ -747,7 +747,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         );
         let ctx: *mut ServerRequestContext<SSL, DEBUG> = ctx_slot;
         // SAFETY: fully initialized by `create()`.
-        let ctx_mut = unsafe { &mut *ctx };
+        let ctx_mut = unsafe { &*ctx };
 
         server
             .vm()
@@ -765,12 +765,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // Bump once so the ctx and JS Request each
         // own a +1 on the same slot (streamed bytes buffered into the ctx
         // surface on `request.body`/`request.json()`).
-        ctx_mut.request_body = Some(body_hive.clone());
+        ctx_mut.request_body.set(Some(body_hive.clone()));
 
         let global = server.global_this();
         let signal = jsc::AbortSignal::new(global);
         // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
-        ctx_mut.signal = core::ptr::NonNull::new(signal);
+        ctx_mut.signal.set(core::ptr::NonNull::new(signal));
         bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
 
         // SAFETY: `signal.ref_()` bumps the intrusive count and returns +1.
@@ -792,7 +792,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             )));
         // SAFETY: freshly leaked from `heap::into_raw`, so `request_object`
         // carries the allocation's provenance, as `init_ref` requires.
-        ctx_mut.request_weakref = unsafe { bun_ptr::WeakPtr::init_ref(request_object) };
+        ctx_mut
+            .request_weakref
+            .set(unsafe { bun_ptr::WeakPtr::init_ref(request_object) });
 
         // (H3 eager-url/header population is unreachable on this path.)
 
@@ -808,7 +810,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         if let Some(req_len) = request_body_length {
-            ctx_mut.request_body_content_len = req_len;
+            ctx_mut.request_body_content_len.set(req_len);
             let is_transfer_encoding = req.header(b"transfer-encoding").is_some();
             ctx_mut.flags.set_is_transfer_encoding(is_transfer_encoding);
             if req_len > 0 || is_transfer_encoding {
@@ -954,32 +956,31 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // the request's lifetime.
         let _detach_guard = is_stack.then(|| unsafe { DetachRequestOnDrop::new(request_object) });
 
-        // SAFETY: `ctx` was just allocated (or saved) by this server; no other
-        // borrow is live across this scope.
-        let ctx_mut = unsafe { &mut *ctx };
-        let original_state = ctx_mut.defer_deinit_until_callback_completes;
+        // SAFETY: `ctx` was just allocated (or saved) by this server; the
+        // `defer_deinit_...` flag set below keeps it alive across `on_response`.
+        let ctx_ref = unsafe { &*ctx };
+        let original_state = ctx_ref.defer_deinit_until_callback_completes.get();
         let should_deinit_context = core::cell::Cell::new(false);
-        ctx_mut.defer_deinit_until_callback_completes =
-            Some(bun_ptr::BackRef::new(&should_deinit_context));
-        ctx_mut.on_response(server, prepared.js_request, response_value);
-        // SAFETY: re-borrow after `on_response` returned (which may have run
-        // arbitrary JS but cannot free `ctx` while `defer_deinit_...` is set).
-        unsafe { (*ctx).defer_deinit_until_callback_completes = original_state };
+        ctx_ref
+            .defer_deinit_until_callback_completes
+            .set(Some(bun_ptr::BackRef::new(&should_deinit_context)));
+        ctx_ref.on_response(server, prepared.js_request, response_value);
+        ctx_ref
+            .defer_deinit_until_callback_completes
+            .set(original_state);
 
         // Reference in the stack here in case it is not for whatever reason
         prepared.js_request.ensure_still_alive();
 
         if should_deinit_context.get() {
-            // SAFETY: see above; `on_response` set the deferred flag instead of
-            // freeing in-place. `ctx` is not accessed after this returns.
-            unsafe { (*ctx).deinit() };
+            // `on_response` set the deferred flag instead of freeing in-place.
+            // `ctx` is not accessed after this returns.
+            ctx_ref.deinit();
             return;
         }
 
-        // SAFETY: ctx not yet freed (should_deinit_context == false).
-        if unsafe { (*ctx).should_render_missing() } {
-            // SAFETY: ctx not yet freed (should_deinit_context == false).
-            unsafe { (*ctx).render_missing() };
+        if ctx_ref.should_render_missing() {
+            ctx_ref.render_missing();
             return;
         }
 
@@ -989,14 +990,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             SavedRequestUnion::Stack(r) => {
                 // SAFETY: `r` is the live stack `uws::Request`; `request_object`
                 // is the heap `Request` kept alive by `ctx.request_weakref`.
-                unsafe {
-                    (*ctx).to_async(
-                        std::ptr::from_ref::<uws::Request>(r)
-                            .cast_mut()
-                            .cast::<c_void>(),
-                        &mut *request_object,
-                    )
-                };
+                ctx_ref.to_async(
+                    std::ptr::from_ref::<uws::Request>(r)
+                        .cast_mut()
+                        .cast::<c_void>(),
+                    unsafe { &mut *request_object },
+                );
             }
             SavedRequestUnion::Saved(_) => {} // info already copied
         }
@@ -1028,39 +1027,35 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let _detach_guard = unsafe { DetachRequestOnDrop::new(request_object) };
 
         // SAFETY: `ctx` was allocated by `prepare_js_request_context` for this
-        // frame; no other borrow is live across this scope.
-        unsafe { (*ctx).on_response(&*this, prepared.js_request, response_value) };
+        // frame and cannot be freed while `defer_deinit_...` is set (it is set
+        // by the caller until cleared below).
+        let (ctx_ref, this) = unsafe { (&*ctx, &*this) };
+        ctx_ref.on_response(this, prepared.js_request, response_value);
         // Reference in the stack here in case it is not for whatever reason
         prepared.js_request.ensure_still_alive();
 
-        // SAFETY: re-borrow after `on_response` returned (which may have run
-        // arbitrary JS but cannot free `ctx` while `defer_deinit_…` is set).
-        unsafe { (*ctx).defer_deinit_until_callback_completes = None };
+        ctx_ref.defer_deinit_until_callback_completes.set(None);
 
         if should_deinit_context.get() {
-            // SAFETY: `on_response` set the deferred flag instead of freeing
-            // in-place; we own the slot now. `ctx` is not accessed after this.
-            unsafe { (*ctx).deinit() };
+            // `on_response` set the deferred flag instead of freeing in-place;
+            // we own the slot now. `ctx` is not accessed after this.
+            ctx_ref.deinit();
             return;
         }
 
-        // SAFETY: ctx not yet freed (should_deinit_context == false).
-        if unsafe { (*ctx).should_render_missing() } {
-            // SAFETY: ctx not yet freed (should_deinit_context == false).
-            unsafe { (*ctx).render_missing() };
+        if ctx_ref.should_render_missing() {
+            ctx_ref.render_missing();
             return;
         }
 
         // The request is asynchronous, and all information from `req` must be
         // copied since the provided uws.Request will be re-used for future
         // requests (stack allocated).
-        // SAFETY: `req`/`request_object` live for this frame; `ctx` not freed.
-        unsafe {
-            (*ctx).to_async(
-                std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
-                &mut *request_object,
-            );
-        }
+        // SAFETY: `request_object` is the live heap `Request` (see above).
+        ctx_ref.to_async(
+            std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
+            unsafe { &mut *request_object },
+        );
     }
 
     /// Dispatch the user `fetch` handler.

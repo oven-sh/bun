@@ -1976,9 +1976,10 @@ fn get_or_put_resolved_package_with_find_result(
         // `manager.workspace_package_json_cache` only — disjoint from
         // `manager.lockfile`.
         this.to_update
-            // If updating, only update packages in the current workspace
-            && unsafe { &*(*this_ptr).lockfile }
-                .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
+            // Update direct deps of the current workspace; catalogs are root-scoped.
+            && (dependency.version.tag == dependency::version::Tag::Catalog
+                || unsafe { &*(*this_ptr).lockfile }
+                    .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id))
             // no need to do a look up if update requests are empty (`bun update` with no args)
             && (this.update_requests.is_empty()
                 || this.updating_packages.contains(

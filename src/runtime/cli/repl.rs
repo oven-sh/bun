@@ -204,6 +204,7 @@ impl History {
         };
 
         for line in content.split(|b: &u8| *b == b'\n') {
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
             if !line.is_empty() {
                 self.entries.push(Box::<[u8]>::from(line));
             }

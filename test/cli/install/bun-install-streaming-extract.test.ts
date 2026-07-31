@@ -8,7 +8,7 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { createGzip, gzipSync } from "node:zlib";
@@ -636,111 +636,66 @@ test("buffered extract: damaged-block retry resets header state (upstream semant
 });
 
 // -------------------------------------------------------------------
-// Buffered extract: the gzip stream inside a registry tarball is fully
-// controlled by whoever published the package, so its decompressed
-// size must be bounded. A ~1-3 MB download that inflates to 2.25 GiB
-// has to surface a clean per-package decompression error instead of
-// growing the decompression buffer without limit and installing a
-// multi-gigabyte file.
+// Buffered extract: the decompressed tar is never materialised in
+// memory. libarchive gunzips on the fly, so a ~few-MB .tgz that
+// inflates to more than 2 GiB installs without the ~2.3 GB RSS spike
+// the old pre-decompress path caused, and without hitting any
+// artificial 2 GiB cap. Covers `file:` dependencies, which always take
+// the buffered path.
 // -------------------------------------------------------------------
-test("buffered extract rejects a registry tarball whose decompressed size exceeds the limit", async () => {
-  // 2.25 GiB of zeros: comfortably above the 2 GiB decompression cap,
-  // a multiple of 512 so the tar entry needs no trailing pad block,
-  // and its gzip ISIZE footer is far above the 64 MB libdeflate
-  // preallocation cutoff so the streaming zlib reader is what runs.
+test("buffered extract installs a local tarball whose decompressed size exceeds 2 GiB", async () => {
+  // 2.25 GiB of zeros: above the old 2 GiB in-memory decompression
+  // cap, a multiple of 512 so the tar entry needs no trailing pad
+  // block, and its gzip ISIZE footer is far above the 64 MB libdeflate
+  // preallocation cutoff so libarchive (not libdeflate) decompresses.
   const PAYLOAD_SIZE = 2304 * 1024 * 1024;
   const ZERO_CHUNK = Buffer.alloc(64 * 1024 * 1024);
 
   const pkgJson = Buffer.from(JSON.stringify({ name: "oversized-pkg", version: "1.0.0" }) + "\n");
 
-  // Stream the tar through gzip so the test process never holds the
-  // 2.25 GiB uncompressed archive in memory; only the small compressed
-  // tarball is kept around.
-  const gzip = createGzip({ level: 9 });
-  const compressed: Buffer[] = [];
-  gzip.on("data", c => compressed.push(c as Buffer));
-  const gzipDone = new Promise<void>((resolve, reject) => {
-    gzip.on("end", resolve);
-    gzip.on("error", reject);
+  using dir = tempDir("oversized-decompress", {
+    "package.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      dependencies: { "oversized-pkg": "file:./oversized-pkg.tgz" },
+    }),
   });
-  const writeTar = (chunk: Buffer) =>
-    new Promise<void>((resolve, reject) => gzip.write(chunk, err => (err ? reject(err) : resolve())));
 
-  await writeTar(tarHeader("package/package.json", pkgJson.length, "0"));
-  await writeTar(pkgJson);
-  await writeTar(pad512(pkgJson.length));
-  await writeTar(tarHeader("package/data.bin", PAYLOAD_SIZE, "0"));
-  for (let written = 0; written < PAYLOAD_SIZE; written += ZERO_CHUNK.length) {
-    await writeTar(ZERO_CHUNK);
-  }
-  await writeTar(Buffer.alloc(1024, 0)); // two zero blocks = end-of-archive
-  gzip.end();
-  await gzipDone;
+  // Stream the tar through gzip straight to disk so the test process
+  // never holds the 2.25 GiB uncompressed archive in memory.
+  const tgzPath = join(String(dir), "oversized-pkg.tgz");
+  {
+    const gzip = createGzip({ level: 1 });
+    const out = createWriteStream(tgzPath);
+    gzip.pipe(out);
+    const writeTar = (chunk: Buffer) =>
+      new Promise<void>((resolve, reject) => gzip.write(chunk, err => (err ? reject(err) : resolve())));
 
-  const tgz = Buffer.concat(compressed);
-  // Sanity: the download itself stays tiny even though it inflates far
-  // past the cap — that is exactly the case the bound exists for.
-  expect(tgz.length).toBeLessThan(8 * 1024 * 1024);
-  const shasum = createHash("sha1").update(tgz).digest("hex");
-  const integrity = "sha512-" + createHash("sha512").update(tgz).digest("base64");
-
-  const server: Server = createServer((req, res) => {
-    const url = new URL(req.url!, "http://x");
-    if (url.pathname.endsWith("/oversized-pkg")) {
-      const body = JSON.stringify({
-        name: "oversized-pkg",
-        "dist-tags": { latest: "1.0.0" },
-        versions: {
-          "1.0.0": {
-            name: "oversized-pkg",
-            version: "1.0.0",
-            dist: {
-              shasum,
-              integrity,
-              tarball: `http://127.0.0.1:${port}/oversized-pkg/-/oversized-pkg-1.0.0.tgz`,
-            },
-          },
-        },
-      });
-      res.setHeader("content-type", "application/json");
-      res.end(body);
-      return;
+    await writeTar(tarHeader("package/package.json", pkgJson.length, "0"));
+    await writeTar(pkgJson);
+    await writeTar(pad512(pkgJson.length));
+    await writeTar(tarHeader("package/data.bin", PAYLOAD_SIZE, "0"));
+    for (let written = 0; written < PAYLOAD_SIZE; written += ZERO_CHUNK.length) {
+      await writeTar(ZERO_CHUNK);
     }
-    if (url.pathname.endsWith("/oversized-pkg-1.0.0.tgz")) {
-      res.setHeader("content-type", "application/octet-stream");
-      res.setHeader("content-length", String(tgz.length));
-      res.end(tgz);
-      return;
-    }
-    res.statusCode = 404;
-    res.end("not found");
-  });
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  const port = (server.address() as { port: number }).port;
-
-  try {
-    using dir = tempDir("oversized-decompress", {
-      "package.json": JSON.stringify({
-        name: "app",
-        version: "1.0.0",
-        dependencies: { "oversized-pkg": "1.0.0" },
-      }),
-      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${port}/"\n`,
+    await writeTar(Buffer.alloc(1024, 0)); // two zero blocks = end-of-archive
+    await new Promise<void>((resolve, reject) => {
+      out.once("close", resolve);
+      out.once("error", reject);
+      gzip.end();
     });
-
-    // Force the buffered extractor: that is the code path that has to
-    // bound the decompressed output of a downloaded gzip stream.
-    const { stderr, exitCode } = await runInstall(String(dir), {
-      BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1",
-      BUN_INSTALL_STREAMING_MIN_SIZE: String(1024 * 1024 * 1024),
-    });
-
-    // The package must be reported as failing to decompress instead of
-    // being expanded without a size limit and installed.
-    expect(stderr).toContain('decompressing "oversized-pkg"');
-    expect(existsSync(join(String(dir), "node_modules", "oversized-pkg", "data.bin"))).toBe(false);
-    expect(exitCode).not.toBe(0);
-  } finally {
-    await new Promise<void>(resolve => server.close(() => resolve()));
   }
+
+  // Sanity: the .tgz itself stays tiny even though it inflates far past
+  // 2 GiB; this is exactly the case that used to fail with `ZlibError`.
+  expect(statSync(tgzPath).size).toBeLessThan(32 * 1024 * 1024);
+
+  const { stderr, exitCode } = await runInstall(String(dir));
+
+  expect(stderr).not.toContain("ZlibError");
+  expect(stderr).not.toContain("decompressing");
+  expect(existsSync(join(String(dir), "node_modules", "oversized-pkg", "package.json"))).toBe(true);
+  const big = statSync(join(String(dir), "node_modules", "oversized-pkg", "data.bin"));
+  expect(big.size).toBe(PAYLOAD_SIZE);
+  expect(exitCode).toBe(0);
 });

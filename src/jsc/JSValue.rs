@@ -1420,7 +1420,12 @@ impl JSValue {
     /// [`put`] with `PropertyAttribute::DontEnum`: the property is readable by
     /// name but hidden from `Object.keys`, `for..in`, `JSON.stringify`, and
     /// spread. Used for deprecated/back-compat property aliases.
-    pub fn put_non_enumerable(self, global: &JSGlobalObject, key: impl AsRef<[u8]>, value: JSValue) {
+    pub fn put_non_enumerable(
+        self,
+        global: &JSGlobalObject,
+        key: impl AsRef<[u8]>,
+        value: JSValue,
+    ) {
         let zs = bun_core::ZigString::init(key.as_ref());
         JSC__JSValue__putNonEnumerable(self, global, &zs, value)
     }

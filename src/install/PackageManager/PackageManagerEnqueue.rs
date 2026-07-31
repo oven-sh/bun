@@ -20,9 +20,9 @@ use crate::lockfile::PackageIndexEntry;
 use crate::lockfile::package::Package;
 use crate::lockfile_real as Lockfile;
 use crate::package_manager_real::{
-    self, FailFn, PackageManager, SuccessFn, TaskCallbackList, determine_preinstall_state,
-    get_cache_directory, get_preinstall_state, get_temporary_directory, run_tasks,
-    set_preinstall_state,
+    self, FailFn, PackageManager, SuccessFn, TaskCallbackList, UpdateRequest,
+    determine_preinstall_state, get_cache_directory, get_preinstall_state, get_temporary_directory,
+    run_tasks, set_preinstall_state,
 };
 use crate::package_manager_task as Task;
 use crate::patch_install::EnqueueAfterState;
@@ -1970,21 +1970,22 @@ fn get_or_put_resolved_package_with_find_result(
 ) -> crate::Result<Option<ResolvedPackageResult>> {
     // reshaped for borrowck — `is_root_dependency(&self, &mut PackageManager, …)`
     // borrows `this.lockfile` and `this` at once. Split via raw root.
-    let should_update = {
-        let this_ptr: *mut PackageManager = this;
-        // SAFETY: `is_root_dependency` reads `manager.root_dependency_list` /
-        // `manager.workspace_package_json_cache` only — disjoint from
-        // `manager.lockfile`.
-        this.to_update
-            // If updating, only update packages in the current workspace
-            && unsafe { &*(*this_ptr).lockfile }
+    let should_update = this.to_update
+        && if this.update_requests.is_empty() {
+            // Bare `bun update`: refresh only the current workspace's direct
+            // dependencies.
+            let this_ptr: *mut PackageManager = this;
+            // SAFETY: `is_root_dependency` reads `manager.root_dependency_list` /
+            // `manager.workspace_package_json_cache` only — disjoint from
+            // `manager.lockfile`.
+            unsafe { &*(*this_ptr).lockfile }
                 .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
-            // no need to do a look up if update requests are empty (`bun update` with no args)
-            && (this.update_requests.is_empty()
-                || this.updating_packages.contains(
-                    dependency.name.slice(this.lockfile.buffers.string_bytes.as_slice()),
-                ))
-    };
+        } else {
+            // `bun update <name>`: every dependency on `<name>` is an update target,
+            // whichever workspace or parent package it belongs to. Otherwise other
+            // resolutions stay pinned via `get_package_id`'s satisfies fallback.
+            UpdateRequest::contains_name_hash(&this.update_requests, dependency.name_hash)
+        };
 
     // Was this package already allocated? Let's reuse the existing one.
     //

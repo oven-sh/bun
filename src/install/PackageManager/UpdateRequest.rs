@@ -70,6 +70,13 @@ fn anchor_cli_bytes(b: Box<[u8]>) -> &'static [u8] {
 }
 
 impl UpdateRequest {
+    /// `bun update <name>`: is `name_hash` one of the packages named on the
+    /// command line? `false` for a bare `bun update` (empty `requests`).
+    #[inline]
+    pub fn contains_name_hash(requests: &[UpdateRequest], name_hash: PackageNameHash) -> bool {
+        requests.iter().any(|r| r.name_hash == name_hash)
+    }
+
     /// Borrow the backing string buffer.
     ///
     /// SAFETY for callers: the buffer this points into (leaked CLI input, or

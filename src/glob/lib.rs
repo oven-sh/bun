@@ -33,10 +33,7 @@ pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
             if let Some(idx) = slice.iter().position(|&b| b == token) {
                 // Check for even number of backslashes preceding the
                 // token to know that it's not escaped. `idx` is relative to
-                // `slice`, so rebase it onto `potential_pattern` before
-                // counting; otherwise, once an escaped token has been
-                // skipped, the backslashes are counted at the wrong offset
-                // (e.g. `\*x*` reported no glob syntax).
+                // `slice`, so rebase it onto `potential_pattern` before counting.
                 let mut i = potential_pattern.len() - slice.len() + idx;
                 let mut backslash_count: u16 = 0;
 
@@ -82,13 +79,11 @@ mod tests {
 
     #[test]
     fn detects_unescaped_token_after_escaped_one() {
-        // Regression: backslashes were counted at a slice-relative offset,
-        // so any unescaped token after an escaped one went undetected.
+        // https://github.com/oven-sh/bun/pull/34275
         assert!(detect_glob_syntax(b"\\*x*"));
         assert!(detect_glob_syntax(b"\\{a\\}{b,c}"));
         assert!(detect_glob_syntax(b"\\?a?"));
         assert!(detect_glob_syntax(b"\\[a\\]b[cd]"));
-        // ...while all-escaped stays undetected
         assert!(!detect_glob_syntax(b"\\*x\\*"));
     }
 }

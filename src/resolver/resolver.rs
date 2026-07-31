@@ -1193,7 +1193,6 @@ impl<'a> Resolver<'a> {
                 return ResultUnion::Success(Result {
                     import_kind: kind,
                     path_pair: res.path_pair,
-                    diff_case: res.diff_case,
                     package_json: res.package_json,
                     dirname_fd: res.dirname_fd,
                     file_fd: res.file_fd,
@@ -1842,7 +1841,6 @@ impl<'a> Resolver<'a> {
                             // We don't set the directory fd here because it might remap an entirely different directory
                             return ResultUnion::Success(Result {
                                 path_pair: res.path_pair,
-                                diff_case: res.diff_case,
                                 package_json: res.package_json,
                                 dirname_fd: res.dirname_fd,
                                 file_fd: res.file_fd,
@@ -1892,7 +1890,6 @@ impl<'a> Resolver<'a> {
                 return ResultUnion::Success(Result {
                     dirname_fd: entry.dirname_fd,
                     path_pair: entry.path_pair,
-                    diff_case: entry.diff_case,
                     package_json: entry.package_json,
                     file_fd: entry.file_fd,
                     jsx: self.opts.jsx.clone(),
@@ -2149,7 +2146,6 @@ impl<'a> Resolver<'a> {
                             flags.set_is_external_and_rewrite_import_path(match_result.is_external);
                             return ResultUnion::Success(Result {
                                 path_pair: match_result.path_pair,
-                                diff_case: match_result.diff_case,
                                 dirname_fd: match_result.dirname_fd,
                                 package_json: Some(std::ptr::from_ref(pkg)),
                                 jsx: self.opts.jsx.clone(),
@@ -2175,7 +2171,6 @@ impl<'a> Resolver<'a> {
         {
             ResultUnion::Success(Result {
                 path_pair: res.path_pair,
-                diff_case: res.diff_case,
                 dirname_fd: res.dirname_fd,
                 package_json: res.package_json,
                 jsx: self.opts.jsx.clone(),
@@ -2273,7 +2268,6 @@ impl<'a> Resolver<'a> {
                                 return ResultUnion::Success(Result {
                                     path_pair: pair,
                                     dirname_fd: node_module.dirname_fd,
-                                    diff_case: node_module.diff_case,
                                     package_json: Some(std::ptr::from_ref(package_json)),
                                     jsx: self.opts.jsx.clone(),
                                     ..Default::default()
@@ -2289,7 +2283,6 @@ impl<'a> Resolver<'a> {
                                         primary,
                                         secondary: None,
                                     },
-                                    diff_case: None,
                                     jsx: self.opts.jsx.clone(),
                                     ..Default::default()
                                 });
@@ -2324,7 +2317,6 @@ impl<'a> Resolver<'a> {
                 result.dirname_fd = res.dirname_fd;
                 result.file_fd = res.file_fd;
                 result.package_json = res.package_json;
-                result.diff_case = res.diff_case;
                 result.flags.set_is_from_node_modules(
                     result.flags.is_from_node_modules() || res.is_node_module,
                 );
@@ -2375,7 +2367,6 @@ impl<'a> Resolver<'a> {
                                     result.dirname_fd = remapped.dirname_fd;
                                     result.file_fd = remapped.file_fd;
                                     result.package_json = remapped.package_json;
-                                    result.diff_case = remapped.diff_case;
                                     result.module_type = remapped.module_type;
                                     result.flags.set_is_external(remapped.is_external);
 
@@ -3798,7 +3789,6 @@ impl<'a> Resolver<'a> {
                     dirname_fd: entries.fd,
                     file_fd: entry_query.entry().cache().fd,
                     dir_info: Some(resolved_dir_info),
-                    diff_case: entry_query.diff_case,
                     is_node_module: true,
                     package_json: Some(
                         resolved_dir_info
@@ -5085,7 +5075,6 @@ impl<'a> Resolver<'a> {
                     secondary: None,
                 },
                 dirname_fd: result.dirname_fd,
-                diff_case: result.diff_case,
                 ..Default::default()
             };
             dec_ret!(MatchStatus::Success);
@@ -5207,7 +5196,6 @@ impl<'a> Resolver<'a> {
                                 primary: Path::init(out_buf),
                                 secondary: None,
                             },
-                            diff_case: lookup.diff_case,
                             package_json: Some(std::ptr::from_ref(package_json)),
                             dirname_fd: dir_info.get_file_descriptor(),
                             ..Default::default()
@@ -5220,7 +5208,6 @@ impl<'a> Resolver<'a> {
                             primary: Path::init(out_buf),
                             secondary: None,
                         },
-                        diff_case: lookup.diff_case,
                         dirname_fd: dir_info.get_file_descriptor(),
                         ..Default::default()
                     };
@@ -5303,7 +5290,6 @@ impl<'a> Resolver<'a> {
                                     primary: Path::init(file_result.path),
                                     secondary: None,
                                 },
-                                diff_case: file_result.diff_case,
                                 ..Default::default()
                             };
                             return MatchStatus::Success;
@@ -5355,7 +5341,6 @@ impl<'a> Resolver<'a> {
                                     primary: Path::init(file.path),
                                     secondary: None,
                                 },
-                                diff_case: file.diff_case,
                                 dirname_fd: file.dirname_fd,
                                 package_json: Some(std::ptr::from_ref(package_json)),
                                 file_fd: file.file_fd,
@@ -5374,7 +5359,6 @@ impl<'a> Resolver<'a> {
                     primary: Path::init(file.path),
                     secondary: None,
                 },
-                diff_case: file.diff_case,
                 dirname_fd: file.dirname_fd,
                 file_fd: file.file_fd,
                 ..Default::default()
@@ -5540,7 +5524,6 @@ impl<'a> Resolver<'a> {
                                         primary,
                                         secondary: Some(auto_main_result.path_pair.primary),
                                     },
-                                    diff_case: out.diff_case,
                                     dirname_fd: out.dirname_fd,
                                     package_json,
                                     file_fd: auto_main_result.file_fd,
@@ -5691,7 +5674,6 @@ impl<'a> Resolver<'a> {
 
                 dec_ret!(Some(LoadResult {
                     path: abs_path,
-                    diff_case: query.diff_case,
                     dirname_fd: entries!().fd,
                     file_fd: query.entry().cache().fd,
                 }));
@@ -5811,7 +5793,6 @@ impl<'a> Resolver<'a> {
                                     }
                                     query.entry().abs_path.as_bytes()
                                 },
-                                diff_case: query.diff_case,
                                 dirname_fd: entries!().fd,
                                 file_fd: query.entry().cache().fd,
                             }));
@@ -5901,7 +5882,6 @@ impl<'a> Resolver<'a> {
                         };
                         query.entry().abs_path.as_bytes()
                     },
-                    diff_case: query.diff_case,
                     dirname_fd: entries.fd,
                     file_fd: query.entry().cache().fd,
                 });

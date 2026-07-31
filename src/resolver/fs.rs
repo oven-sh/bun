@@ -310,19 +310,12 @@ impl Default for Entry {
     }
 }
 
-// lifetime-generic, but resolver storage requires `'static`; in practice all
-// three slices borrow process-lifetime interned data (`dir` → DirnameStore,
-// `query` → FilenameStore copy made in `DirEntry::get`, `actual` → EntryStore).
-#[derive(Clone, Copy)]
-pub struct DifferentCase;
-
 // `entry` is a RAW `*mut Entry`. A safe
 // `&self → &mut Entry` accessor would let two `get()` calls produce coexisting
 // aliased `&mut Entry` (PORTING.md §Forbidden). Callers `unsafe { &mut *entry }`
 // at each write site under the per-entry `Entry.mutex`.
 pub struct EntryLookup<'a> {
     pub(crate) entry: *mut Entry,
-    pub(crate) diff_case: Option<DifferentCase>,
     // tie the lookup's nominal lifetime to the DirEntry it came from
     _marker: core::marker::PhantomData<&'a Entry>,
 }
@@ -624,16 +617,10 @@ impl DirEntry {
         Ok(())
     }
 
-    // `query_` borrow detached from the returned Entry lifetime so
-    // callers can pass a slice into the same threadlocal buffer they then
-    // mutate; on a case mismatch the query bytes are interned into the
-    // process-lifetime `FilenameStore` so `DifferentCase<'static>` holds a
-    // genuinely `'static` slice. The store does not dedup, so
-    // repeated lookups of the same case-mismatched specifier (e.g. watch-mode
-    // rebuilds with a busted resolution cache) each intern a fresh copy that
-    // is never freed; accepted because the mismatch arm is a warning/error
-    // path and each copy is small. The intern goes through `handle_oom`
-    // (abort).
+    // `query_` borrow is detached from the returned `Entry` lifetime so callers
+    // can pass a slice into the same threadlocal buffer they then mutate. The
+    // lookup key is the lowercased basename; a case-mismatched query still
+    // returns the stored entry.
     pub fn get<'a>(&'a self, query_: &[u8]) -> Option<EntryLookup<'a>> {
         if query_.is_empty() || query_.len() > MAX_PATH_BYTES {
             return None;
@@ -642,20 +629,8 @@ impl DirEntry {
 
         let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
         let &result_ptr = self.data.get(query)?;
-        // SAFETY: EntryStore-owned pointer, valid for lifetime of store; read-only
-        // borrow here only to compare basename — never overlaps a writer.
-        let basename = unsafe { &*result_ptr }.base();
-        if !strings::eql_long(basename, query_, true) {
-            return Some(EntryLookup {
-                entry: result_ptr,
-                diff_case: Some(DifferentCase),
-                _marker: core::marker::PhantomData,
-            });
-        }
-
         Some(EntryLookup {
             entry: result_ptr,
-            diff_case: None,
             _marker: core::marker::PhantomData,
         })
     }
@@ -667,20 +642,8 @@ impl DirEntry {
         query_lower: &'static [u8],
     ) -> Option<EntryLookup<'a>> {
         let &result_ptr = self.data.get(query_lower)?;
-        // SAFETY: EntryStore-owned pointer; read-only basename compare.
-        let basename = unsafe { &*result_ptr }.base();
-
-        if basename != query_lower {
-            return Some(EntryLookup {
-                entry: result_ptr,
-                diff_case: Some(DifferentCase),
-                _marker: core::marker::PhantomData,
-            });
-        }
-
         Some(EntryLookup {
             entry: result_ptr,
-            diff_case: None,
             _marker: core::marker::PhantomData,
         })
     }

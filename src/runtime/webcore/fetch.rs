@@ -1629,9 +1629,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if let Some(sig) = signal.0 {
         let sig = bun_ptr::BackRef::from(sig);
         if sig.aborted() {
-            // `abort_reason()` is the stored `m_reason` (same object as
-            // `signal.reason`), not a reconstructed DOMException.
-            let reason = sig.abort_reason();
+            // `js_reason()` is the same object `signal.reason` returns, and
+            // materializes the default `DOMException` for `AbortSignal.abort()`
+            // whose `m_reason` weak may not have survived wrapper creation.
+            let reason = sig.js_reason(global_this);
             if let HTTPRequestBody::ReadableStream(stream_ref) = &body {
                 if let Some(stream) = stream_ref.get(global_this) {
                     stream.cancel_with_reason(global_this, reason);

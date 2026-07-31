@@ -499,6 +499,48 @@ describe("AbortSignal", () => {
       expect(stream.locked).toBe(false);
     }
   });
+
+  // collectContinuously is very slow on Windows CI; the code under test is
+  // identical across platforms.
+  it.skipIf(isWindows)(
+    "AbortSignal.abort()'s default reason survives GC until fetch reads it",
+    async () => {
+      // The default DOMException for AbortSignal.abort() was stored in
+      // m_reason (a JSC::Weak) before the JSAbortSignal wrapper existed, so a
+      // GC during toJSNewlyCreated()'s allocation could collect it and fetch
+      // would reject with `null`. collectContinuously makes that GC likely.
+      const script = `
+        const bad = [];
+        for (let i = 0; i < 10000; i++) {
+          const sig = AbortSignal.abort();
+          const err = await fetch("http://127.0.0.1:1/", { signal: sig }).catch(e => e);
+          if (err?.name !== "AbortError") bad.push("fetch rejection " + Bun.inspect(err));
+          else if (err !== sig.reason) bad.push("fetch rejection !== signal.reason");
+        }
+        for (let i = 0; i < 10000; i++) {
+          try { AbortSignal.abort().throwIfAborted(); bad.push("throwIfAborted did not throw"); }
+          catch (e) { if (e?.name !== "AbortError") bad.push("throwIfAborted " + Bun.inspect(e)); }
+          const anyReason = AbortSignal.any([AbortSignal.abort()]).reason;
+          if (anyReason?.name !== "AbortError") bad.push("any.reason " + Bun.inspect(anyReason));
+        }
+        console.log(bad.length ? "bad=" + bad.length + " first=" + bad[0] : "bad=0");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "bad=0", stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+    60_000,
+  );
 });
 
 describe("Headers", () => {

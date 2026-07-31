@@ -126,6 +126,14 @@ impl AbortSignal {
         WebCore__AbortSignal__abortReason(self)
     }
 
+    /// Same value the JS `signal.reason` getter returns: materializes (and
+    /// caches) the default `DOMException` for a signal created by
+    /// `AbortSignal.abort()` / `AbortController.abort()` / `AbortSignal.timeout()`.
+    /// Prefer this over [`abort_reason`], whose raw-weak read can observe `null`.
+    pub fn js_reason(&self, global: &JSGlobalObject) -> JSValue {
+        WebCore__AbortSignal__jsReason(self, global)
+    }
+
     pub fn reason_if_aborted(&self, global: &JSGlobalObject) -> Option<AbortReason> {
         let mut reason: u8 = 0;
         let js_reason = WebCore__AbortSignal__reasonIfAborted(self, global, &mut reason);

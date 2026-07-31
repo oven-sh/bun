@@ -1426,7 +1426,7 @@ impl Kqueue {
                 if !subpath.is_empty() && matches!(e.get_errno(), E::ENOENT | E::ENOTDIR) {
                     return Ok(());
                 }
-                return Err(e.with_path(abs_path.as_bytes()));
+                return Err(e.with_path_and_syscall(abs_path.as_bytes(), Tag::watch));
             }
             Ok(f) => f,
         };
@@ -1471,7 +1471,7 @@ impl Kqueue {
             fd.close();
             return Err(sys::Error {
                 errno: errno as u16,
-                syscall: Tag::kevent,
+                syscall: Tag::watch,
                 ..Default::default()
             }
             .with_path(abs_path.as_bytes()));

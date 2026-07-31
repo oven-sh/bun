@@ -515,9 +515,7 @@ impl Cmd {
         resolved.push(0);
         interp.as_cmd_mut(this).args[0] = resolved;
 
-        // Fill env from export_env + cmd_local_env. A key present in both
-        // would otherwise land in environ twice (getenv returns the first
-        // match), so the export_env pass skips keys cmd_local_env will write.
+        // Fill env from export_env + cmd_local_env; cmd_local_env wins on overlap.
         {
             let env = interp.as_cmd_mut(this).base.shell_mut();
             let mut iter = env.export_env.iterator();

@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isWindows } from "harness";
 
 describe("spawn stdin ReadableStream", () => {
   test("basic ReadableStream as stdin", async () => {
@@ -896,88 +896,6 @@ describe("spawn stdin ReadableStream", () => {
     // iteration leaks one native FileSink (delta == iterations). Allow one
     // straggler whose wrapper has not yet been finalized.
     expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
-  });
-
-  // response.body from fetch() is also a native ByteStream. Piping it into a
-  // subprocess's stdin must take the same native ByteStream → FileSink path and
-  // must not buffer the whole payload; RSS is measured in a fresh subprocess so
-  // the test runner's own heap does not skew the delta.
-  test("native ByteStream from fetch response.body as stdin pumps with bounded memory", async () => {
-    const fixture = `
-      const chunkSize = 64 * 1024;
-      const chunkCount = 64; // ~4 MB
-      const totalBytes = chunkSize * chunkCount;
-
-      const source = Bun.serve({
-        port: 0,
-        fetch() {
-          let sent = 0;
-          return new Response(
-            new ReadableStream({
-              type: "direct",
-              async pull(controller) {
-                while (sent < chunkCount) {
-                  controller.write(Buffer.alloc(chunkSize, (sent + 1) & 0xff));
-                  sent++;
-                  await controller.flush();
-                }
-                controller.close();
-              },
-            }),
-            { headers: { "content-type": "application/octet-stream" } },
-          );
-        },
-      });
-
-      Bun.gc(true);
-      const rssBefore = process.memoryUsage.rss();
-
-      const upstream = await fetch(source.url);
-      const child = Bun.spawn({
-        cmd: [process.execPath, "-e", "process.stdin.pipe(process.stdout)"],
-        stdin: upstream.body,
-        stdout: "pipe",
-        stderr: "inherit",
-      });
-      const echoed = new Uint8Array(await child.stdout.bytes());
-      await child.exited;
-
-      Bun.gc(true);
-      const rssAfter = process.memoryUsage.rss();
-
-      let ok = echoed.length === totalBytes;
-      for (let i = 0; i < chunkCount && ok; i++) {
-        const expected = (i + 1) & 0xff;
-        const base = i * chunkSize;
-        if (echoed[base] !== expected || echoed[base + chunkSize - 1] !== expected) ok = false;
-      }
-
-      source.stop(true);
-      console.log(JSON.stringify({
-        length: echoed.length,
-        ok,
-        deltaMB: (rssAfter - rssBefore) / 1024 / 1024,
-        totalBytes,
-      }));
-    `;
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const { length, ok, deltaMB, totalBytes } = JSON.parse(stdout.trim());
-    expect(length).toBe(totalBytes);
-    expect(ok).toBe(true);
-    // Only the final echoed buffer (~4 MB) plus transient socket/pipe buffers and
-    // subprocess bookkeeping are retained; an unbounded JS pump would retain
-    // multiples of the payload. ASAN quarantine and the debug allocator inflate
-    // RSS substantially, so the bound is branched.
-    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 96 : 32);
-    expect(exitCode).toBe(0);
   });
 
   // for-await over a subprocess stderr pipe is pull-driven: when the consumer

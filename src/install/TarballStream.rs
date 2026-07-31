@@ -799,6 +799,15 @@ impl TarballStream {
         let rest: &[OSPathChar] = tokenize_rest_after_first(&pathname[..]);
 
         let mut norm_buf = OSPathBuffer::uninit();
+        // `normalize_buf_t` writes into a fixed-size OSPathBuffer and assumes
+        // the input fits. PAX tar headers can carry arbitrarily long paths,
+        // so skip entries that would overflow (same guard as
+        // `Archiver::extract_to_dir`).
+        if rest.len() >= norm_buf.len() {
+            self.phase = Phase::WantData;
+            self.out_fd = None;
+            return Ok(());
+        }
         let normalized =
             resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..]);
         let norm_len = normalized.len();

@@ -259,3 +259,73 @@ describe.skipIf(!isDebug)(
     );
   },
 );
+
+// Regression: NewSocket::on_open was the only socket dispatch missing the
+// shutdown guard. It resolves the Bun.connect() promise (entering JS, where
+// the worker's termination trap fires and leaves the TerminationException
+// pending) and then calls the JS `open` handler, which trips
+// Interpreter::executeCallImpl's scope.assertNoException() and SIGABRTs the
+// whole process. Hits from Bun.connect, net.connect, and tls.connect alike
+// (they share on_open). Release WebKit compiles that ASSERT out, so this is
+// debug-only; the exception-scope verifier makes it fire on the first hit.
+test.skipIf(!isDebug)(
+  "terminate() while a worker's Bun.connect() open is firing does not trip assertNoException()",
+  async () => {
+    // Each round keeps LANES loopback connects in flight per worker and
+    // terminates once the worker reports steady state, so terminate() lands
+    // while on_open is hot. Debug+ASAN makes each round ~5s, so the pass
+    // time is ~60s; the unpatched build aborts in the first few rounds.
+    const ROUNDS = 12;
+    const WORKERS = 4;
+    const LANES = 32;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const net = require("node:net");
+        const srv = net.createServer((c) => { c.on("error", () => {}); c.end(); });
+        await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+        const port = srv.address().port;
+        const src =
+          "const { parentPort, workerData: d } = require('node:worker_threads');" +
+          "let opens = 0;" +
+          "function lane() {" +
+          "  Bun.connect({ hostname: '127.0.0.1', port: d.port, socket: {" +
+          "    open(s) { if (++opens === ${LANES}) parentPort.postMessage('hot'); s.end(); }," +
+          "    data() {}, close() { setImmediate(lane); }," +
+          "    connectError() { setImmediate(lane); }, error() {} } })" +
+          "    .catch(() => setImmediate(lane));" +
+          "}" +
+          "for (let i = 0; i < ${LANES}; i++) lane();";
+        for (let r = 0; r < ${ROUNDS}; r++) {
+          const ws = [];
+          for (let i = 0; i < ${WORKERS}; i++) {
+            const w = new Worker(src, { eval: true, workerData: { port } });
+            w.on("error", () => {});
+            ws.push(w);
+          }
+          await Promise.all(ws.map((w) => new Promise((res) => {
+            w.once("message", res);
+            setTimeout(res, 3000);
+          })));
+          await Bun.sleep(r % 3);
+          await Promise.all(ws.map((w) => w.terminate()));
+        }
+        srv.close();
+        console.log("PASS");
+      `,
+      ],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  120_000,
+);

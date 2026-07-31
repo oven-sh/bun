@@ -955,7 +955,6 @@ enum ReadEnvFile {
     Empty,
     /// FIFO/socket/device — caller warns (unless `quiet`), marks the slot,
     /// and returns.
-    #[cfg_attr(windows, allow(dead_code))]
     NotRegular,
     /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — caller prints
     /// (unless `quiet`), marks the slot, and returns.
@@ -965,8 +964,7 @@ enum ReadEnvFile {
 }
 
 fn read_env_file_contents(file: &bun_sys::File) -> crate::Result<ReadEnvFile> {
-    #[cfg(not(windows))]
-    if bun_sys::kind_from_mode(file.stat()?.st_mode as bun_sys::Mode) != bun_sys::FileKind::File {
+    if file.kind()? != bun_sys::FileKind::File {
         return Ok(ReadEnvFile::NotRegular);
     }
     match file.read_to_end() {

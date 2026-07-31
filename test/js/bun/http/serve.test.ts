@@ -3681,7 +3681,11 @@ it("type: direct stream that ignores backpressure is not re-entered on drain", a
       while (!sawBackpressure && Date.now() - t0 < 30000) await Bun.sleep(1);
       expect(sawBackpressure).toBe(true);
     }
-    while (!parked) await Bun.sleep(1);
+    {
+      const t0 = Date.now();
+      while (!parked && Date.now() - t0 < 30000) await Bun.sleep(1);
+      expect(parked).toBe(true);
+    }
     let received = 0;
     socket.on("data", d => (received += d.length));
     socket.resume();

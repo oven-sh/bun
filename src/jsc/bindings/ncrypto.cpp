@@ -1300,20 +1300,30 @@ bool X509View::checkPublicKey(const EVPKeyPointer& pkey) const
     return X509_verify(const_cast<X509*>(cert_), pkey.get()) == 1;
 }
 
+// Shared native certificate-name matcher (src/boringssl/lib.rs). BoringSSL's
+// X509_check_host hard-codes NO_PARTIAL_WILDCARDS and only falls back to the
+// Subject CN when the SAN extension is absent, so Node's documented checkHost
+// options were no-ops. This implements OpenSSL's semantics over the same
+// matcher fetch()/tls.connect use.
+extern "C" int Bun__X509__checkHost(X509* x509, const uint8_t* host, size_t host_len,
+    uint32_t flags, uint8_t** out_peer, size_t* out_len);
+
 X509View::CheckMatch X509View::checkHost(const std::span<const char> host,
     int flags,
     DataPointer* peerName) const
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (cert_ == nullptr) return CheckMatch::NO_MATCH;
-    char* peername;
-    switch (X509_check_host(
-        const_cast<X509*>(cert_), host.data(), host.size(), flags, &peername)) {
+    uint8_t* peer = nullptr;
+    size_t peerLen = 0;
+    switch (Bun__X509__checkHost(const_cast<X509*>(cert_),
+        reinterpret_cast<const uint8_t*>(host.data()), host.size(),
+        static_cast<uint32_t>(flags), &peer, &peerLen)) {
     case 0:
         return CheckMatch::NO_MATCH;
     case 1: {
-        if (peername != nullptr) {
-            DataPointer name(peername, strlen(peername));
+        if (peer != nullptr) {
+            DataPointer name(peer, peerLen);
             if (peerName != nullptr) *peerName = WTF::move(name);
         }
         return CheckMatch::MATCH;

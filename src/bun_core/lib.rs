@@ -1318,7 +1318,7 @@ pub(crate) mod strings_impl {
     /// case-insensitive ASCII substring search (callers are cold path-lookup
     /// on macOS/Windows where the FS is case-insensitive).
     #[inline]
-    pub(crate) fn contains_case_insensitive_ascii(haystack: &[u8], needle: &[u8]) -> bool {
+    pub fn contains_case_insensitive_ascii(haystack: &[u8], needle: &[u8]) -> bool {
         if needle.len() > haystack.len() {
             return false;
         }

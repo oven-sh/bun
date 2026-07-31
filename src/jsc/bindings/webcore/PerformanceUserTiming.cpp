@@ -335,6 +335,7 @@ static Vector<RefPtr<PerformanceEntry>> convertToEntrySequence(const Performance
         entries.appendVector(entry);
 
     ASSERT(entries.size() <= safeInitialCapacity);
+    std::sort(entries.begin(), entries.end(), PerformanceEntry::bufferIndexCompareLessThan);
     return entries;
 }
 

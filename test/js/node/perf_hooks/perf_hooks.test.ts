@@ -209,14 +209,25 @@ test("getEntries()/getEntriesByType()/getEntriesByName() keep insertion order fo
        // getEntriesByName(): same name, same startTime, distinguished by detail.
        for (let i = 0; i < 8; i++) performance.mark("dup", { startTime: 100, detail: i });
        const byName = performance.getEntriesByName("dup", "mark").map(e => e.detail).join(",");
+       // Cross-type tie: Node concats per-type buffers (marks then measures) before
+       // the stable startTime sort, so interleaved inserts still group by type.
+       performance.clearMarks();
+       performance.clearMeasures();
+       performance.mark("m0", { startTime: 100 });
+       performance.measure("s0", { start: 100, end: 100 });
+       performance.mark("m1", { startTime: 100 });
+       performance.measure("s1", { start: 100, end: 100 });
+       performance.mark("m2", { startTime: 100 });
+       const crossType = performance.getEntries().map(e => e.name).join(",");
        // Entries with distinct startTimes are still ordered by startTime, and
        // interleaving with the tied group keeps the tied group's insertion order.
        performance.clearMarks();
+       performance.clearMeasures();
        performance.mark("lo", { startTime: 10 });
        for (const n of names) performance.mark(n, { startTime: 100 });
        performance.mark("hi", { startTime: 200 });
        const mixed = performance.getEntriesByType("mark").map(e => e.name).join(",");
-       console.log(JSON.stringify({ marks, measures, all, byName, mixed }));`,
+       console.log(JSON.stringify({ marks, measures, all, byName, crossType, mixed }));`,
     ],
     env: bunEnv,
     stdout: "pipe",
@@ -230,6 +241,7 @@ test("getEntries()/getEntriesByType()/getEntriesByName() keep insertion order fo
       measures: "a,b,c,d,e,f,g,h",
       all: "ea,eb,ec,ed,ee,ef,eg,eh,aa,ab,ac,ad,ae,af,ag,ah",
       byName: "0,1,2,3,4,5,6,7",
+      crossType: "m0,m1,m2,s0,s1",
       mixed: "lo,a,b,c,d,e,f,g,h,hi",
     }),
     exitCode: 0,

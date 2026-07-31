@@ -68,8 +68,11 @@ public:
 
     static bool startTimeCompareLessThan(const RefPtr<PerformanceEntry>& a, const RefPtr<PerformanceEntry>& b)
     {
-        if (a->startTime() != b->startTime())
-            return a->startTime() < b->startTime();
+        return a->startTime() < b->startTime();
+    }
+
+    static bool bufferIndexCompareLessThan(const RefPtr<PerformanceEntry>& a, const RefPtr<PerformanceEntry>& b)
+    {
         return a->bufferIndex() < b->bufferIndex();
     }
 

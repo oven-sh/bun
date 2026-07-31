@@ -161,7 +161,7 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntries() const
     // if (m_firstContentfulPaint)
     //     entries.append(m_firstContentfulPaint);
 
-    std::sort(entries.begin(), entries.end(), PerformanceEntry::startTimeCompareLessThan);
+    std::stable_sort(entries.begin(), entries.end(), PerformanceEntry::startTimeCompareLessThan);
     return entries;
 }
 
@@ -185,7 +185,7 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByType(const String& ent
             entries.appendVector(m_userTiming->getMeasures());
     }
 
-    std::sort(entries.begin(), entries.end(), PerformanceEntry::startTimeCompareLessThan);
+    std::stable_sort(entries.begin(), entries.end(), PerformanceEntry::startTimeCompareLessThan);
     return entries;
 }
 
@@ -223,7 +223,7 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByName(const String& nam
             entries.appendVector(m_userTiming->getMeasures(name));
     }
 
-    std::sort(entries.begin(), entries.end(), PerformanceEntry::startTimeCompareLessThan);
+    std::stable_sort(entries.begin(), entries.end(), PerformanceEntry::startTimeCompareLessThan);
     return entries;
 }
 

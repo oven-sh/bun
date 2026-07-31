@@ -40,7 +40,7 @@ pub use streams::{
 
 #[path = "webcore/ObjectURLRegistry.rs"]
 pub mod object_url_registry;
-pub use object_url_registry::ObjectURLRegistry;
+pub(crate) use object_url_registry::ObjectURLRegistry;
 
 // ─── webcore-local jsc re-export ─────────────────────────────────────────────
 // `bun_jsc` is now a dep of `bun_runtime`; forward to it. The per-class
@@ -84,7 +84,7 @@ use bun_event_loop::deferred_task_queue::DeferredRepeatingTask;
 pub struct AutoFlusher {
     /// `Cell` so register/unregister can be called from `&self` callbacks
     /// (R-2 §provenance — see `FileSink::on_write`).
-    pub registered: core::cell::Cell<bool>,
+    pub(crate) registered: core::cell::Cell<bool>,
 }
 
 /// Implemented below for `FileSink` and `HTTPServerWritable<_, _>`.
@@ -126,7 +126,7 @@ impl AutoFlusher {
     }
 
     #[inline]
-    pub fn register_deferred_microtask_with_type<T: HasAutoFlusher>(
+    pub(crate) fn register_deferred_microtask_with_type<T: HasAutoFlusher>(
         this: &T,
         vm: &jsc::VirtualMachine,
     ) {
@@ -137,7 +137,7 @@ impl AutoFlusher {
     }
 
     #[inline]
-    pub fn unregister_deferred_microtask_with_type<T: HasAutoFlusher>(
+    pub(crate) fn unregister_deferred_microtask_with_type<T: HasAutoFlusher>(
         this: &T,
         vm: &jsc::VirtualMachine,
     ) {
@@ -148,7 +148,7 @@ impl AutoFlusher {
     }
 
     #[inline]
-    pub fn unregister_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
+    pub(crate) fn unregister_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
         this: &T,
         vm: &jsc::VirtualMachine,
     ) {
@@ -164,7 +164,7 @@ impl AutoFlusher {
     }
 
     #[inline]
-    pub fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
+    pub(crate) fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
         this: &T,
         vm: &jsc::VirtualMachine,
     ) {
@@ -218,13 +218,12 @@ impl<const SSL: bool, const HTTP3: bool> HasAutoFlusher
 }
 
 #[path = "webcore/headers_ref.rs"]
-pub mod headers_ref;
+pub(crate) mod headers_ref;
 
 #[path = "webcore/Blob.rs"]
 pub mod blob;
 pub use blob::Any as AnyBlob;
 pub use blob::Internal as InternalBlob;
-pub use blob::store::StoreExt as BlobStoreExt;
 pub use blob::{Blob, BlobExt, SizeType as BlobSizeType};
 
 #[path = "webcore/Body.rs"]

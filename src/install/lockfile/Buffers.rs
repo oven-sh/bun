@@ -17,7 +17,7 @@ use crate::{Aligner, DependencyID, PackageID, PackageManager, dependency, invali
 
 #[derive(Default)]
 pub struct Buffers {
-    pub trees: tree::List,
+    pub(crate) trees: tree::List,
     pub hoisted_dependencies: DependencyIDList,
     /// This is the underlying buffer used for the `resolutions` external slices inside of `Package`
     /// Should be the same length as `dependencies`
@@ -34,7 +34,7 @@ pub struct Buffers {
 // needed.
 
 impl Buffers {
-    pub fn preallocate(&mut self, that: &Buffers) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn preallocate(&mut self, that: &Buffers) -> Result<(), bun_alloc::AllocError> {
         self.trees
             .reserve(that.trees.len().saturating_sub(self.trees.len()));
         self.resolutions.reserve(
@@ -80,7 +80,7 @@ mod sizes {
     const _: () = assert!(ALIGN_TYPE_0 == align_of::<&[Tree]>());
 }
 
-pub fn read_array<T: Copy>(stream: &mut Stream) -> crate::Result<Vec<T>> {
+pub(crate) fn read_array<T: Copy>(stream: &mut Stream) -> crate::Result<Vec<T>> {
     let start_pos = stream.read_int_le::<u64>()?;
 
     // If its 0xDEADBEEF, then that means the value was never written in the lockfile.
@@ -151,7 +151,11 @@ pub fn read_array<T: Copy>(stream: &mut Stream) -> crate::Result<Vec<T>> {
     Ok(misaligned.to_vec())
 }
 
-pub fn write_array<S, T>(stream: &mut S, array: &[T], prefix: &'static str) -> crate::Result<()>
+pub(crate) fn write_array<S, T>(
+    stream: &mut S,
+    array: &[T],
+    prefix: &'static str,
+) -> crate::Result<()>
 where
     // One type plays both the positional-stream and append-writer roles —
     // `StreamType` impls both `PositionalStream` (get_pos/pwrite) and
@@ -209,7 +213,7 @@ where
     Ok(())
 }
 
-pub fn save<S>(
+pub(crate) fn save<S>(
     lockfile: &Lockfile,
     options: &PackageManagerOptions,
     stream: &mut S,
@@ -372,7 +376,7 @@ where
 }
 
 impl Buffers {
-    pub fn legacy_package_to_dependency_id(
+    pub(crate) fn legacy_package_to_dependency_id(
         &self,
         dependency_visited: Option<&mut Bitset>,
         package_id: PackageID,

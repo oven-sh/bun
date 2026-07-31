@@ -1,5 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isMacOS } from "harness";
 
 describe("heapStats() mimalloc integration", () => {
   test("mimalloc aggregate stats are present", () => {
@@ -61,5 +62,32 @@ describe("heapStats() mimalloc integration", () => {
       expect(Array.isArray(h.pages)).toBe(true);
     }
     void before;
+  });
+
+  // mimalloc tags its arena mmaps with an app-reserved VM tag (240-255). The old default,
+  // 100, is VM_MEMORY_IOACCELERATOR, so profilers reported Bun's heap as GPU memory.
+  test.skipIf(!isMacOS)("arena memory is tagged as application memory, not IOAccelerator", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const keep = [];
+         for (let i = 0; i < 96; i++) keep.push(Buffer.alloc(1 << 20, i).toString("latin1"));
+         const summary = Bun.spawnSync({ cmd: ["vmmap", "--summary", String(process.pid)] }).stdout.toString();
+         const mb = name => summary.split("\\n").filter(l => l.startsWith(name)).reduce((n, l) => {
+           const m = l.slice(name.length).match(/([\\d.]+)([KMG])/);
+           return m ? n + parseFloat(m[1]) * { K: 1 / 1024, M: 1, G: 1024 }[m[2]] : n;
+         }, 0);
+         console.log(JSON.stringify({ ioaccelerator: mb("IOAccelerator"), appTag: mb("Memory Tag 24") + mb("Memory Tag 25"), kept: keep.length }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const { ioaccelerator, appTag } = JSON.parse(stdout.trim().split("\n").at(-1)!);
+    expect(ioaccelerator).toBe(0);
+    expect(appTag).toBeGreaterThan(64);
+    expect(exitCode).toBe(0);
   });
 });

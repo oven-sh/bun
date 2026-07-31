@@ -453,30 +453,47 @@ export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: Direct
   return base;
 }
 
-export function bunRun(file: string, env?: Record<string, string> | NodeJS.ProcessEnv, dump = false) {
+export interface BunRunResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  signalCode: NodeJS.Signals | null;
+}
+
+/**
+ * Spawn `bun` with the given file (or argv array) and collect the results.
+ *
+ * When given a string, runs that file with `cwd` set to its directory.
+ * When given an array, the array is passed directly after `bunExe()`.
+ *
+ * Does not throw on non-zero exit. Pair with `expect(result).toSpawn()` to
+ * assert exit code 0 and empty stderr.
+ */
+export async function bunRun(
+  fileOrArgs: string | string[],
+  env?: Record<string, string | undefined> | NodeJS.ProcessEnv,
+): Promise<BunRunResult> {
   var path = require("path");
-  const result = Bun.spawnSync([bunExe(), file], {
-    cwd: path.dirname(file),
+  const args = Array.isArray(fileOrArgs) ? fileOrArgs : [fileOrArgs];
+  const cwd = Array.isArray(fileOrArgs) ? undefined : path.dirname(fileOrArgs);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
     env: {
       ...bunEnv,
       NODE_ENV: undefined,
       ...env,
     },
     stdin: "ignore",
-    stdout: !dump ? "pipe" : "inherit",
-    stderr: !dump ? "pipe" : "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  if (!result.success) {
-    if (dump) {
-      throw new Error(
-        "exited with code " + result.exitCode + (result.signalCode ? `signal: ${result.signalCode}` : ""),
-      );
-    }
-    throw new Error(String(result.stderr) + "\n" + String(result.stdout));
-  }
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return {
-    stdout: String(result.stdout ?? "").trim(),
-    stderr: String(result.stderr ?? "").trim(),
+    stdout: stdout.trim(),
+    stderr: stderr.trim(),
+    exitCode,
+    signalCode: proc.signalCode,
   };
 }
 
@@ -660,31 +677,41 @@ if (expect.extend)
         }
       }
     },
-    toRun(cmds: string[], optionalStdout?: string, expectedCode: number = 0) {
-      const result = Bun.spawnSync({
-        cmd: [bunExe(), ...cmds],
-        env: bunEnv,
-        stdio: ["inherit", "pipe", "inherit"],
-      });
+    toSpawn(actual: BunRunResult, expectedStdout?: string) {
+      if (actual == null || typeof actual !== "object" || typeof actual.exitCode !== "number") {
+        throw new TypeError(
+          `expect(received).toSpawn()\n\nExpected a BunRunResult (did you forget to await bunRun()?)`,
+        );
+      }
 
-      if (result.exitCode !== expectedCode) {
+      if (actual.exitCode !== 0) {
         return {
           pass: false,
-          message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
+          message: () =>
+            `Expected process to exit with code 0 but got ${actual.exitCode}` +
+            (actual.signalCode ? ` (signal: ${actual.signalCode})` : "") +
+            `\nstderr: ${actual.stderr}\nstdout: ${actual.stdout}`,
         };
       }
 
-      if (optionalStdout != null) {
+      if (actual.stderr !== "") {
         return {
-          pass: result.stdout.toString("utf-8") === optionalStdout,
+          pass: false,
+          message: () => `Expected stderr to be empty but got:\n${actual.stderr}`,
+        };
+      }
+
+      if (expectedStdout != null && actual.stdout !== expectedStdout) {
+        return {
+          pass: false,
           message: () =>
-            `Expected ${cmds.join(" ")} to output ${optionalStdout} but got ${result.stdout.toString("utf-8")}`,
+            `Expected stdout to be ${JSON.stringify(expectedStdout)} but got ${JSON.stringify(actual.stdout)}`,
         };
       }
 
       return {
         pass: true,
-        message: () => `Expected ${cmds.join(" ")} to fail`,
+        message: () => `Expected process to fail but it exited with code 0\nstdout: ${actual.stdout}`,
       };
     },
     toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
@@ -1556,7 +1583,8 @@ interface BunHarnessTestMatchers {
   toBeUTF16String(): void;
   toHaveTestTimedOutAfter(expected: number): void;
   toBeBinaryType(expected: keyof typeof binaryTypes): void;
-  toRun(optionalStdout?: string, expectedCode?: number): void;
+  /** Asserts that a {@link BunRunResult} exited with code 0 and empty stderr. */
+  toSpawn(expectedStdout?: string): void;
   toThrowWithCode(cls: CallableFunction, code: string): void;
   toThrowWithCodeAsync(cls: CallableFunction, code: string): Promise<void>;
 }
@@ -2221,3 +2249,8 @@ export function compileFixture(sourcePath: string, options: { flags?: string[] }
   compiledFixtures.set(cacheKey, outPath);
   return outPath;
 }
+
+export const rss: () => number =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? (Bun.unsafe.memoryFootprint as () => number)
+    : process.memoryUsage.rss;

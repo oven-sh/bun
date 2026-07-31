@@ -37,11 +37,11 @@ impl CSSNumberFns {
         }
     }
 
-    pub fn try_from_angle(_: Angle) -> Option<CSSNumber> {
+    pub(crate) fn try_from_angle(_: Angle) -> Option<CSSNumber> {
         None
     }
 
-    pub fn sign(this: CSSNumber) -> f32 {
+    pub(crate) fn sign(this: CSSNumber) -> f32 {
         if this == 0.0 {
             // Spec-faithful: ±0.0 both map to +0.0 — do NOT
             // collapse with `signfns::sign_f32` / `calc::std_math_sign`.

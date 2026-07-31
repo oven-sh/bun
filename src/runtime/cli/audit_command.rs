@@ -46,7 +46,7 @@ struct AuditResult {
 }
 
 impl AuditResult {
-    pub(crate) fn init() -> AuditResult {
+    fn init() -> AuditResult {
         AuditResult {
             vulnerable_packages: StringArrayHashMap::default(),
             all_vulnerabilities: Vec::new(),
@@ -104,7 +104,7 @@ impl AuditCommand {
     /// Returns the exit code of the command. 0 if no vulnerabilities were found, 1 if vulnerabilities were found.
     /// The exception is when you pass --json, it will simply return 0 as that was considered a successful "request
     /// for the audit information"
-    pub(crate) fn audit(
+    fn audit(
         _ctx: Command::Context,
         pm: &mut PackageManager,
         json_output: bool,
@@ -395,18 +395,24 @@ fn collect_packages_for_audit(
         if pkg_idx > 0 {
             body.push(b',');
         }
-        body.push(b'"');
-        body.extend_from_slice(&package.name);
-        body.push(b'"');
+        write!(
+            &mut body,
+            "{}",
+            bun_core::fmt::format_json_string_utf8(&package.name, Default::default())
+        )
+        .expect("unreachable");
         body.push(b':');
         body.push(b'[');
         for (ver_idx, version) in package.versions.iter().enumerate() {
             if ver_idx > 0 {
                 body.push(b',');
             }
-            body.push(b'"');
-            body.extend_from_slice(version);
-            body.push(b'"');
+            write!(
+                &mut body,
+                "{}",
+                bun_core::fmt::format_json_string_utf8(version, Default::default())
+            )
+            .expect("unreachable");
         }
         body.push(b']');
     }

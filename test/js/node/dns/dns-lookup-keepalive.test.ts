@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, bunRun } from "harness";
 import { join } from "path";
 
-test("expect dns.lookup to keep the process alive", () => {
-  expect([join(import.meta.dir, "dns-fixture.js")]).toRun();
+test.concurrent("expect dns.lookup to keep the process alive", async () => {
+  expect(await bunRun(join(import.meta.dir, "dns-fixture.js"))).toSpawn();
 });
 
 // When the last outstanding query on a Resolver completes via the retransmit

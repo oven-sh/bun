@@ -9,7 +9,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 // Re-exports (thin aliases)
-pub use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
+pub(crate) use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 pub use crate::webcore::s3::multipart::{self, MultiPartUpload};
 pub use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 pub use bun_s3_signing::acl::ACL;
@@ -22,22 +22,22 @@ pub use bun_s3_signing::error as Error;
 // re-export hub.
 #[path = "error_jsc.rs"]
 pub mod error_jsc;
-pub use error_jsc::S3ErrorJsc;
-pub use error_jsc::get_js_sign_error;
-pub use error_jsc::s3_error_to_js;
-pub use error_jsc::throw_sign_error;
+pub(crate) use error_jsc::S3ErrorJsc;
+pub(crate) use error_jsc::get_js_sign_error;
+pub(crate) use error_jsc::s3_error_to_js;
+pub(crate) use error_jsc::throw_sign_error;
 
 pub use bun_s3_signing::credentials::S3Credentials;
 pub use bun_s3_signing::credentials::S3CredentialsWithOptions;
 use bun_s3_signing::credentials::encode_uri_component;
 
-pub use crate::webcore::s3::list_objects::S3ListObjectsOptions;
-pub use crate::webcore::s3::list_objects::get_list_objects_options_from_js;
-pub use crate::webcore::s3::simple_request::S3DeleteResult;
-pub use crate::webcore::s3::simple_request::S3DownloadResult;
-pub use crate::webcore::s3::simple_request::S3HttpSimpleTask;
-pub use crate::webcore::s3::simple_request::S3ListObjectsResult;
-pub use crate::webcore::s3::simple_request::S3StatResult;
+pub(crate) use crate::webcore::s3::list_objects::S3ListObjectsOptions;
+pub(crate) use crate::webcore::s3::list_objects::get_list_objects_options_from_js;
+pub(crate) use crate::webcore::s3::simple_request::S3DeleteResult;
+pub(crate) use crate::webcore::s3::simple_request::S3DownloadResult;
+pub(crate) use crate::webcore::s3::simple_request::S3HttpSimpleTask;
+pub(crate) use crate::webcore::s3::simple_request::S3ListObjectsResult;
+pub(crate) use crate::webcore::s3::simple_request::S3StatResult;
 pub use crate::webcore::s3::simple_request::S3UploadResult;
 
 use crate::webcore::s3::simple_request as s3_simple_request;
@@ -296,7 +296,6 @@ pub(crate) fn list_objects(
     let task_ptr = bun_core::heap::into_raw(Box::new(S3HttpSimpleTask {
         // Written below via `MaybeUninit::write` before any read.
         http: core::mem::MaybeUninit::uninit(),
-        range: None,
         sign_result: result,
         callback_context,
         callback: s3_simple_request::Callback::ListObjects(callback),
@@ -377,7 +376,7 @@ pub(crate) fn list_objects(
     Ok(())
 }
 
-pub fn upload(
+pub(crate) fn upload(
     this: &S3Credentials,
     path: &[u8],
     content: &[u8],
@@ -555,13 +554,13 @@ pub(crate) fn writable_stream(
 
 pub struct S3UploadStreamWrapper {
     // intrusive ref_count — bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) → bun_ptr::IntrusiveRc<Self>
-    pub ref_count: core::cell::Cell<u32>,
+    pub(crate) ref_count: core::cell::Cell<u32>,
 
     pub sink: Option<NonNull<NetworkSink>>,
     pub task: *mut MultiPartUpload,
-    pub end_promise: bun_jsc::JSPromiseStrong,
+    pub(crate) end_promise: bun_jsc::JSPromiseStrong,
     pub callback: Option<fn(S3UploadResult, *mut c_void)>,
-    pub callback_context: *mut c_void,
+    pub(crate) callback_context: *mut c_void,
     /// this is owned by the task not by the wrapper
     pub path: bun_ptr::RawSlice<u8>,
     /// Pins the source ReadableStream when the native ByteStream fast-path is
@@ -665,7 +664,7 @@ impl S3UploadStreamWrapper {
         });
     }
 
-    pub(crate) fn resolve(result: S3UploadResult, self_: &mut Self) -> JsTerminatedResult<()> {
+    fn resolve(result: S3UploadResult, self_: &mut Self) -> JsTerminatedResult<()> {
         bun_output::scoped_log!(S3UploadStream, "resolve");
         // scope-exit deref via guard (keeps borrowck happy)
         let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), |s| {
@@ -827,7 +826,7 @@ impl Drop for S3UploadStreamWrapper {
 /// Takes ownership of one `credentials` ref (adopted directly into the
 /// `MultiPartUpload`; not bumped). Callers pass `creds.dupe()`. On every
 /// early-return path the ref is explicitly released.
-pub fn upload_stream(
+pub(crate) fn upload_stream(
     credentials: bun_ptr::IntrusiveRc<S3Credentials>,
     path: &[u8],
     readable_stream: ReadableStream,
@@ -1149,7 +1148,7 @@ pub fn upload_stream(
 }
 
 /// download a file from s3 chunk by chunk aka streaming (used on readableStream)
-pub(crate) fn download_stream(
+fn download_stream(
     this: &S3Credentials,
     path: &[u8],
     offset: usize,
@@ -1243,7 +1242,6 @@ pub(crate) fn download_stream(
             callback_context: NonNull::new(callback_context.cast::<()>())
                 .expect("callers always pass a non-null Box-allocated context"),
             callback,
-            range: range.map(Vec::into_boxed_slice),
             headers,
             // `VirtualMachine::get()` returns the live per-thread VM singleton.
             vm: Some(bun_ptr::BackRef::new(VirtualMachine::get())),
@@ -1452,7 +1450,7 @@ impl Drop for S3DownloadStreamWrapper {
 }
 
 /// returns a readable stream that reads from the s3 path
-pub fn readable_stream(
+pub(crate) fn readable_stream(
     this: &S3Credentials,
     path: &[u8],
     offset: usize,

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, rss, tempDir } from "harness";
 
 test("native ReadableStream reuses the pull buffer across small reads", async () => {
   // #getInternalBuffer used to rotate to a fresh autoAllocateChunkSize
@@ -154,19 +154,19 @@ test.skipIf(isWindows)(
       await readAndWrite(BYTES_TO_WRITE);
     }
     Bun.gc(true);
-    const before = process.memoryUsage.rss();
+    const before = rss();
 
     for (let i = 0; i < rounds; i++) {
       await readAndWrite();
     }
     Bun.gc(true);
-    const after = process.memoryUsage.rss();
+    const after = rss();
 
     for (let i = 0; i < rounds; i++) {
       await readAndWrite();
     }
     Bun.gc(true);
-    const after2 = process.memoryUsage.rss();
+    const after2 = rss();
     console.log({ after, after2 });
     console.log(require("bun:jsc").heapStats());
     console.log("RSS delta", ((after - before) | 0) / 1024 / 1024);

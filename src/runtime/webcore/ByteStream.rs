@@ -22,23 +22,23 @@ bun_output::declare_scope!(ByteStream, visible);
 /// across `ByteBlobLoader` / `FileReader`); the trait impl below auto-derefs
 /// to the `&self` inherent bodies.
 pub struct ByteStream {
-    pub buffer: JsCell<Vec<u8>>,
-    pub has_received_last_chunk: Cell<bool>,
-    pub pending: JsCell<streams::Pending>,
-    pub done: Cell<bool>,
+    pub(crate) buffer: JsCell<Vec<u8>>,
+    pub(crate) has_received_last_chunk: Cell<bool>,
+    pub(crate) pending: JsCell<streams::Pending>,
+    pub(crate) done: Cell<bool>,
     /// Borrowed view into a JS `Uint8Array` passed from `on_pull`; kept alive by `pending_value`.
     // Raw fat slice ptr because the backing store is JS-heap-owned and rooted via
     // `pending_value: Strong`. Never freed by Rust.
-    pub pending_buffer: Cell<*mut [u8]>,
-    pub pending_value: JsCell<StrongOptional>, // jsc.Strong.Optional
+    pub(crate) pending_buffer: Cell<*mut [u8]>,
+    pub(crate) pending_value: JsCell<StrongOptional>, // jsc.Strong.Optional
     pub offset: Cell<usize>,
-    pub high_water_mark: blob::SizeType,
+    pub(crate) high_water_mark: blob::SizeType,
     /// Native sink this stream is piped into; `on_data` dispatches and honors `Writable`.
-    pub sink: JsCell<SinkHandle>,
+    pub(crate) sink: JsCell<SinkHandle>,
     /// Set on `Writable::Backpressure` (buffer instead of write); cleared by [`Self::resume`].
-    pub sink_paused: Cell<bool>,
-    pub size_hint: Cell<blob::SizeType>,
-    pub buffer_action: JsCell<Option<BufferAction>>,
+    pub(crate) sink_paused: Cell<bool>,
+    pub(crate) size_hint: Cell<blob::SizeType>,
+    pub(crate) buffer_action: JsCell<Option<BufferAction>>,
 }
 
 impl Default for ByteStream {
@@ -123,7 +123,7 @@ impl ByteStream {
         drop(core::mem::take(self));
     }
 
-    pub(crate) fn on_start(&self) -> streams::Start {
+    fn on_start(&self) -> streams::Start {
         if self.has_received_last_chunk.get() && self.buffer.get().is_empty() {
             return streams::Start::Empty;
         }
@@ -146,7 +146,7 @@ impl ByteStream {
         streams::Start::ChunkSize((512 * 1024 + page_size).min(self.high_water_mark.max(page_size)))
     }
 
-    pub(crate) fn value(&self) -> JSValue {
+    fn value(&self) -> JSValue {
         self.pending_value.with_mut(|pv| {
             let Some(result) = pv.get() else {
                 return JSValue::ZERO;
@@ -456,11 +456,7 @@ impl ByteStream {
         Ok(())
     }
 
-    pub(crate) fn append(
-        &self,
-        stream: streams::Result,
-        offset: usize,
-    ) -> Result<(), bun_alloc::AllocError> {
+    fn append(&self, stream: streams::Result, offset: usize) -> Result<(), bun_alloc::AllocError> {
         if self.buffer.get().capacity() == 0 {
             match stream {
                 streams::Result::Owned(mut owned) | streams::Result::OwnedAndDone(mut owned) => {
@@ -515,13 +511,13 @@ impl ByteStream {
         Ok(())
     }
 
-    pub(crate) fn set_value(&self, view: JSValue) {
+    fn set_value(&self, view: JSValue) {
         bun_jsc::mark_binding!();
         let global = self.parent_const().global_this();
         self.pending_value.with_mut(|pv| pv.set(global, view));
     }
 
-    pub(crate) fn on_pull(&self, buffer: &mut [u8], view: JSValue) -> streams::Result {
+    fn on_pull(&self, buffer: &mut [u8], view: JSValue) -> streams::Result {
         bun_jsc::mark_binding!();
         debug_assert!(!buffer.is_empty());
         debug_assert!(self.buffer_action.get().is_none());
@@ -588,7 +584,7 @@ impl ByteStream {
         streams::Result::Pending(self.pending.as_ptr())
     }
 
-    pub(crate) fn on_cancel(&self) {
+    fn on_cancel(&self) {
         bun_jsc::mark_binding!();
         let view = self.value();
         if self.buffer.get().capacity() > 0 {
@@ -620,7 +616,7 @@ impl ByteStream {
         }
     }
 
-    pub(crate) fn memory_cost(&self) -> usize {
+    fn memory_cost(&self) -> usize {
         // ReadableStreamSource covers @sizeOf(ByteStream)
         self.buffer.get().capacity()
     }
@@ -633,7 +629,7 @@ impl ByteStream {
     /// `SourceContext::deinit_fn(&mut self)` after the ref-count hits zero), so
     /// no JS re-entry can alias `self`; and `parent().deinit()` needs unique
     /// `Box` provenance.
-    pub(crate) fn finalize(&mut self) {
+    fn finalize(&mut self) {
         bun_jsc::mark_binding!();
         if self.buffer.get().capacity() > 0 {
             self.buffer.with_mut(|b| {
@@ -710,7 +706,7 @@ impl ByteStream {
         None
     }
 
-    pub(crate) fn to_buffered_value(
+    fn to_buffered_value(
         &self,
         global_this: &JSGlobalObject,
         action: streams::BufferActionTag,

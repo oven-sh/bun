@@ -247,4 +247,4 @@ impl ShellGlobTask {
 /// Re-export: the real DirTask lives in `builtins::rm` (full recursive
 /// tree-walk node). `dispatch.rs` calls `ShellRmDirTask::run_from_main_thread`
 /// for the verbose-write bounce-back.
-pub use crate::shell::builtins::rm::DirTask as ShellRmDirTask;
+pub(crate) use crate::shell::builtins::rm::DirTask as ShellRmDirTask;

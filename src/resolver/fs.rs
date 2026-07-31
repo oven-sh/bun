@@ -23,7 +23,7 @@ bun_core::define_scoped_log!(debug, Fs, hidden);
 // `bun_core::strings`; `bun_resolver::fs_full::BOM` re-exports it.
 pub use bun_core::strings::BOM;
 
-pub(crate) mod preallocate {
+mod preallocate {
     pub(crate) mod counts {
         pub(crate) const FILES: usize = 4096;
     }
@@ -38,56 +38,6 @@ pub(crate) type EntryStoreBacking = allocators::BSSList<Entry, { preallocate::co
 bun_alloc::bss_string_list! { pub filename_store_backing : preallocate::counts::FILES * 2, 64 + 1 }
 bun_alloc::bss_list! { pub entry_store_backing : Entry, preallocate::counts::FILES * 2 }
 
-/// ZST handle resolving to the `filename_store_backing()` singleton.
-pub(crate) struct FilenameStore(());
-
-static FILENAME_STORE_ZST: FilenameStore = FilenameStore(());
-
-// `BSSStringList::append`/`append_lower_case`/`print` now take a raw
-// `*mut Self` receiver (matching `BSSList::append`), so the
-// inner `self.mutex` is the sole serialization point and no `&mut` is ever
-// materialized before the lock is held. The previous outer `LazyLock<Mutex>`
-// pair existed only to prevent aliased-`&mut`-before-lock UB under the old
-// `&mut self` receiver; with the raw-ptr receiver that hazard is gone, so the
-// outer locks (and their `LazyLock` slow-init / `.text` overhead on the
-// startup path) are dropped.
-
-macro_rules! string_store_impl {
-    ($t:ty, $zst:ident, $backing:ident, $bty:ty) => {
-        impl $t {
-            #[inline]
-            pub(crate) fn instance() -> &'static Self {
-                &$zst
-            }
-            #[inline]
-            fn backing() -> *mut $bty {
-                // returns the raw `*mut` singleton.
-                // `BSSStringList`'s mutating methods take `*mut Self` and lock
-                // internally, so callers may pass this directly without ever
-                // forming a `&mut`.
-                $backing()
-            }
-            pub(crate) fn append(
-                &self,
-                value: &[u8],
-            ) -> core::result::Result<&'static [u8], AllocError> {
-                // SAFETY: `backing()` is the live process-lifetime singleton;
-                // `BSSStringList::append` serializes on its inner mutex. The
-                // returned slice borrows the singleton's never-freed storage
-                // (heap-owned by a `'static` `BSSStringList` or a leaked
-                // mi_malloc), so widening to `'static` is sound.
-                unsafe { <$bty>::append(Self::backing(), &value) }
-            }
-        }
-    };
-}
-string_store_impl!(
-    FilenameStore,
-    FILENAME_STORE_ZST,
-    filename_store_backing,
-    FilenameStoreBacking
-);
-
 /// Pre-resolved `FilenameStore` appender for the `readdir` hot loop.
 ///
 /// `<FilenameStore as Appender>::append` re-evaluates `filename_store_backing()`
@@ -101,7 +51,7 @@ pub struct FilenameStoreAppender {
 }
 impl FilenameStoreAppender {
     #[inline]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         // One `Once` check, hoisted out of the per-entry loop.
         Self {
             backing: filename_store_backing(),
@@ -165,11 +115,11 @@ pub enum EntryKind {
 
 #[derive(Clone, Copy)]
 pub struct EntryCache {
-    pub symlink: Interned,
+    pub(crate) symlink: Interned,
     /// Too much code expects this to be 0
     /// don't make it bun.invalid_fd
     pub fd: Fd,
-    pub kind: EntryKind,
+    pub(crate) kind: EntryKind,
 }
 
 impl Default for EntryCache {
@@ -189,13 +139,13 @@ impl Default for EntryCache {
 // rewrite of these `Cell`s across threads (the `unsafe impl Sync for Entry`
 // below opts back in under that external-locking discipline).
 pub struct Entry {
-    pub cache: core::cell::Cell<EntryCache>,
+    pub(crate) cache: core::cell::Cell<EntryCache>,
     pub dir: &'static [u8],
 
     pub base_: strings::StringOrTinyString,
 
     // Necessary because the hash table uses it as a key
-    pub base_lowercase_: strings::StringOrTinyString,
+    pub(crate) base_lowercase_: strings::StringOrTinyString,
 
     pub mutex: Mutex,
     pub need_stat: core::cell::Cell<bool>,
@@ -222,14 +172,14 @@ impl Entry {
     }
 
     #[inline(always)]
-    pub fn set_cache_kind(&self, kind: EntryKind) {
+    pub(crate) fn set_cache_kind(&self, kind: EntryKind) {
         let mut c = self.cache.get();
         c.kind = kind;
         self.cache.set(c);
     }
 
     #[inline(always)]
-    pub fn set_cache_symlink(&self, symlink: Interned) {
+    pub(crate) fn set_cache_symlink(&self, symlink: Interned) {
         let mut c = self.cache.get();
         c.symlink = symlink;
         self.cache.set(c);
@@ -301,7 +251,7 @@ impl Entry {
     /// # Safety
     /// `fs` must point to a live `EntryKindResolver` (the process-global
     /// `RealFS` singleton in practice). See [`Entry::kind`].
-    pub unsafe fn symlink<R: EntryKindResolver>(
+    pub(crate) unsafe fn symlink<R: EntryKindResolver>(
         &self,
         fs: *mut R,
         store_fd: bool,
@@ -360,23 +310,12 @@ impl Default for Entry {
     }
 }
 
-// lifetime-generic, but resolver storage requires `'static`; in practice all
-// three slices borrow process-lifetime interned data (`dir` → DirnameStore,
-// `query` → FilenameStore copy made in `DirEntry::get`, `actual` → EntryStore).
-#[derive(Clone, Copy)]
-pub struct DifferentCase<'a> {
-    pub dir: &'a [u8],
-    pub query: &'a [u8],
-    pub actual: &'a [u8],
-}
-
 // `entry` is a RAW `*mut Entry`. A safe
 // `&self → &mut Entry` accessor would let two `get()` calls produce coexisting
 // aliased `&mut Entry` (PORTING.md §Forbidden). Callers `unsafe { &mut *entry }`
 // at each write site under the per-entry `Entry.mutex`.
 pub struct EntryLookup<'a> {
-    pub entry: *mut Entry,
-    pub diff_case: Option<DifferentCase<'static>>,
+    pub(crate) entry: *mut Entry,
     // tie the lookup's nominal lifetime to the DirEntry it came from
     _marker: core::marker::PhantomData<&'a Entry>,
 }
@@ -477,12 +416,12 @@ pub struct DirEntry {
     // DirnameStore (a process-lifetime BSSList), so `&'static` is correct.
     pub dir: &'static [u8],
     pub fd: Fd,
-    pub generation: Generation,
+    pub(crate) generation: Generation,
     pub data: dir_entry::EntryMap,
 }
 
 impl DirEntry {
-    pub fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
+    pub(crate) fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
         if FeatureFlags::VERBOSE_FS {
             bun_core::prettyln!("\n  {}", BStr::new(dir));
         }
@@ -499,7 +438,7 @@ impl DirEntry {
     // should hoist `FilenameStoreAppender::new()` once and call
     // `add_entry_with_store` directly.
 
-    pub fn add_entry_with_store<I: DirEntryIterator>(
+    pub(crate) fn add_entry_with_store<I: DirEntryIterator>(
         &mut self,
         prev_map: Option<&mut dir_entry::EntryMap>,
         entry: &bun_sys::dir_iterator::IteratorResult,
@@ -678,16 +617,10 @@ impl DirEntry {
         Ok(())
     }
 
-    // `query_` borrow detached from the returned Entry lifetime so
-    // callers can pass a slice into the same threadlocal buffer they then
-    // mutate; on a case mismatch the query bytes are interned into the
-    // process-lifetime `FilenameStore` so `DifferentCase<'static>` holds a
-    // genuinely `'static` slice. The store does not dedup, so
-    // repeated lookups of the same case-mismatched specifier (e.g. watch-mode
-    // rebuilds with a busted resolution cache) each intern a fresh copy that
-    // is never freed; accepted because the mismatch arm is a warning/error
-    // path and each copy is small. The intern goes through `handle_oom`
-    // (abort).
+    // `query_` borrow is detached from the returned `Entry` lifetime so callers
+    // can pass a slice into the same threadlocal buffer they then mutate. The
+    // lookup key is the lowercased basename; a case-mismatched query still
+    // returns the stored entry.
     pub fn get<'a>(&'a self, query_: &[u8]) -> Option<EntryLookup<'a>> {
         if query_.is_empty() || query_.len() > MAX_PATH_BYTES {
             return None;
@@ -696,55 +629,21 @@ impl DirEntry {
 
         let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
         let &result_ptr = self.data.get(query)?;
-        // SAFETY: EntryStore-owned pointer, valid for lifetime of store; read-only
-        // borrow here only to compare basename — never overlaps a writer.
-        let basename = unsafe { &*result_ptr }.base();
-        if !strings::eql_long(basename, query_, true) {
-            return Some(EntryLookup {
-                entry: result_ptr,
-                diff_case: Some(DifferentCase {
-                    dir: self.dir,
-                    // intern a copy of the caller's (possibly
-                    // threadlocal-buffer-backed) slice so the `'static` in
-                    // `DifferentCase<'static>` is real, not discipline-based.
-                    query: bun_core::handle_oom(FilenameStore::instance().append(query_)),
-                    // SAFETY: `basename` borrows EntryStore (process-lifetime).
-                    actual: unsafe { &*core::ptr::from_ref::<[u8]>(basename) },
-                }),
-                _marker: core::marker::PhantomData,
-            });
-        }
-
         Some(EntryLookup {
             entry: result_ptr,
-            diff_case: None,
             _marker: core::marker::PhantomData,
         })
     }
 
     /// Looks up a cached entry by name. Takes a `&'static [u8]` that is
     /// already lowercase, so no per-call lowercasing buffer is needed.
-    pub fn get_comptime_query<'a>(&'a self, query_lower: &'static [u8]) -> Option<EntryLookup<'a>> {
+    pub(crate) fn get_comptime_query<'a>(
+        &'a self,
+        query_lower: &'static [u8],
+    ) -> Option<EntryLookup<'a>> {
         let &result_ptr = self.data.get(query_lower)?;
-        // SAFETY: EntryStore-owned pointer; read-only basename compare.
-        let basename = unsafe { &*result_ptr }.base();
-
-        if basename != query_lower {
-            return Some(EntryLookup {
-                entry: result_ptr,
-                diff_case: Some(DifferentCase {
-                    dir: self.dir,
-                    query: query_lower,
-                    // SAFETY: `basename` borrows EntryStore (process-lifetime).
-                    actual: unsafe { &*core::ptr::from_ref::<[u8]>(basename) },
-                }),
-                _marker: core::marker::PhantomData,
-            });
-        }
-
         Some(EntryLookup {
             entry: result_ptr,
-            diff_case: None,
             _marker: core::marker::PhantomData,
         })
     }
@@ -776,10 +675,8 @@ impl bun_dotenv::DirEntryProbe for DirEntry {
 
 #[derive(Default, Clone, Copy)]
 pub struct ModKey {
-    pub inode: u64, // u64 covers libc stat `ino_t`
-    pub size: u64,
-    pub mtime: i128,
-    pub mode: u32, // u32 covers libc stat `mode_t`
+    pub(crate) size: u64,
+    pub(crate) mtime: i128,
 }
 
 impl ModKey {
@@ -809,7 +706,7 @@ impl ModKey {
         Ok(&out[..written])
     }
 
-    pub fn hash(&self) -> u64 {
+    pub(crate) fn hash(&self) -> u64 {
         let mut hash_bytes = [0u8; 32];
         // We shouldn't just read the contents of the ModKey into memory
         // The hash should be deterministic across computers and operating systems.
@@ -849,16 +746,15 @@ unsafe impl Send for Entry {}
 /// `Cow::Owned` ⇢ heap arm); callers `.map(Contents::from)` to tag provenance.
 pub fn read_file_contents<'buf>(
     file: &bun_sys::File,
-    path: &[u8],
     use_shared_buffer: bool,
     shared: &'buf mut MutableString,
     stream: bool,
 ) -> crate::CrateResult<Cow<'buf, [u8]>> {
     match (use_shared_buffer, stream) {
-        (true, true) => read_file_with_handle_impl::<true, true>(path, None, file, shared),
-        (true, false) => read_file_with_handle_impl::<true, false>(path, None, file, shared),
-        (false, true) => read_file_with_handle_impl::<false, true>(path, None, file, shared),
-        (false, false) => read_file_with_handle_impl::<false, false>(path, None, file, shared),
+        (true, true) => read_file_with_handle_impl::<true, true>(None, file, shared),
+        (true, false) => read_file_with_handle_impl::<true, false>(None, file, shared),
+        (false, true) => read_file_with_handle_impl::<false, true>(None, file, shared),
+        (false, false) => read_file_with_handle_impl::<false, false>(None, file, shared),
     }
     .map(|p| p.contents)
 }
@@ -987,12 +883,11 @@ fn finish_arena_contents(
     (ptr, total)
 }
 
-pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const STREAM: bool>(
-    path: &'p [u8],
+pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STREAM: bool>(
     size_hint: Option<usize>,
     file: &bun_sys::File,
     shared_buffer: &'buf mut MutableString,
-) -> crate::CrateResult<PathContentsPair<'p, 'buf>> {
+) -> crate::CrateResult<PathContentsPair<'buf>> {
     // allocator param dropped (global mimalloc)
     crate::fs::FileSystem::set_max_fd(file.handle().native());
 
@@ -1026,12 +921,10 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
             if USE_SHARED_BUFFER {
                 shared_buffer.reset();
                 return Ok(PathContentsPair {
-                    path: Path::init(path),
                     contents: Cow::Borrowed(b""),
                 });
             } else {
                 return Ok(PathContentsPair {
-                    path: Path::init(path),
                     contents: Cow::Borrowed(b""),
                 });
             }
@@ -1069,7 +962,7 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
                 }
 
                 if (bytes_read as usize) < new_size {
-                    shared_buffer.grow_by(new_size - size)?;
+                    shared_buffer.grow_by(new_size.saturating_sub(size))?;
                     // SAFETY: u8; `read_all` overwrites the exposed tail before any read.
                     unsafe { shared_buffer.list.expand_to_capacity() };
                     size = new_size;
@@ -1124,7 +1017,6 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
                 }
 
                 return Ok(PathContentsPair {
-                    path: Path::init(path),
                     contents: Cow::Owned(allocation),
                 });
             }
@@ -1144,17 +1036,17 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
         // Allocate UNINITIALIZED (no zero-fill):
         // `extend_from_slice` writes the prefix, `read_all` writes
         // the tail, then `set_len` exposes only the initialized `..total`.
-        let mut buf: Vec<u8> = Vec::with_capacity(size + 1);
+        let cap = size.max(initial_read.len());
+        let mut buf: Vec<u8> = Vec::with_capacity(cap + 1);
         buf.extend_from_slice(initial_read);
 
         if size == 0 {
             return Ok(PathContentsPair {
-                path: Path::init(path),
                 contents: Cow::Borrowed(b""),
             });
         }
 
-        let tail_len = size + 1 - initial_read.len();
+        let tail_len = cap + 1 - initial_read.len();
         let tail = &mut buf.spare_capacity_mut()[..tail_len];
         // stick a zero at the end
         tail[tail_len - 1].write(0);
@@ -1166,7 +1058,7 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
         })?;
         let total = read_count + initial_read.len();
         debug!("read({}, {}) = {}", file.handle(), size, read_count);
-        // SAFETY: capacity ≥ `size + 1` ≥ `total`; bytes `..initial_read.len()`
+        // SAFETY: capacity ≥ `cap + 1` ≥ `total`; bytes `..initial_read.len()`
         // were written by `extend_from_slice` and `initial_read.len()..total` by
         // `read_all` above.
         unsafe { buf.set_len(total) };
@@ -1177,7 +1069,6 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
         }
 
         return Ok(PathContentsPair {
-            path: Path::init(path),
             contents: Cow::Owned(buf),
         });
     }
@@ -1193,18 +1084,16 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
     let _ = file_contents_ptr;
     let file_contents: &'buf [u8] = &shared_buffer.list[..file_contents_len];
     Ok(PathContentsPair {
-        path: Path::init(path),
         contents: Cow::Borrowed(file_contents),
     })
 }
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct PathContentsPair<'a, 'buf> {
-    pub path: Path<'a>,
+pub struct PathContentsPair<'buf> {
     /// `Owned` for the heap-allocated branch (caller frees on drop); `Borrowed`
     /// for the shared-buffer branch (points into the caller's `MutableString`,
     /// tied to `'buf` — see the note in `read_file_with_handle_impl`).
-    pub contents: Cow<'buf, [u8]>,
+    pub(crate) contents: Cow<'buf, [u8]>,
 }
 
 // `Path` / `PathName` — re-exported from the canonical `bun_paths::fs` via
@@ -1213,7 +1102,6 @@ pub struct PathContentsPair<'a, 'buf> {
 // short-circuiting, `non_unique_name_string`, `json_stringify`, etc.) were
 // never reachable and are dropped — `crate::fs::PathResolverExt` carries the
 // live resolver-tier methods.
-pub(crate) use crate::fs::Path;
 
 #[path = "fs/stat_hash.rs"]
 pub mod stat_hash;

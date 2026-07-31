@@ -17,7 +17,7 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // `to_slice()` owns its buffer and frees it on Drop.
 
     let arguments = frame.arguments();
@@ -68,7 +68,7 @@ pub(crate) fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let arguments = frame.arguments();
     if arguments.len() < 2 {
         return Err(global.throw(format_args!("Expected two arguments")));

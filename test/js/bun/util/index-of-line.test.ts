@@ -85,6 +85,36 @@ test("indexOfLine is linear on large input with a non-ASCII byte", async () => {
   expect(proc.signalCode).toBeNull();
 }, 60_000);
 
+test("indexOfLine returns -1 when the offset's valueOf transfers the buffer via structuredClone", () => {
+  const buf = new Uint8Array([104, 101, 108, 108, 111, 10, 119, 111, 114, 108, 100]);
+  const kept: ArrayBuffer[] = [];
+  const offset = {
+    valueOf() {
+      kept.push(structuredClone(buf.buffer, { transfer: [buf.buffer] }));
+      return 0;
+    },
+  };
+  expect(indexOfLine(buf, offset)).toBe(-1);
+  expect(buf.byteLength).toBe(0);
+  expect(kept.length).toBe(1);
+  expect(new Uint8Array(kept[0])).toEqual(new Uint8Array([104, 101, 108, 108, 111, 10, 119, 111, 114, 108, 100]));
+});
+
+test("indexOfLine returns -1 when the offset's valueOf transfers the buffer via ArrayBuffer.prototype.transfer", () => {
+  const buf = new Uint8Array([104, 101, 108, 108, 111, 10, 119, 111, 114, 108, 100]);
+  const kept: ArrayBuffer[] = [];
+  const offset = {
+    valueOf() {
+      kept.push(buf.buffer.transfer());
+      return 0;
+    },
+  };
+  expect(indexOfLine(buf, offset)).toBe(-1);
+  expect(buf.byteLength).toBe(0);
+  expect(kept.length).toBe(1);
+  expect(new Uint8Array(kept[0])).toEqual(new Uint8Array([104, 101, 108, 108, 111, 10, 119, 111, 114, 108, 100]));
+});
+
 test("indexOfLine skips multi-byte sequences correctly", () => {
   // ascii prefix, multi-byte char, ascii, newline
   const buf = Buffer.from("abé d\n");

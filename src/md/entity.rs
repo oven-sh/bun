@@ -5,7 +5,7 @@ use core::cmp::Ordering;
 
 /// HTML named entity lookup.
 /// Sorted array of entity names (including & and ;) mapped to Unicode codepoint(s).
-pub(crate) struct Entity {
+struct Entity {
     pub name: &'static [u8],
     pub codepoints: [u32; 2],
 }

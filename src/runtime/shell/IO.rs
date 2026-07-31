@@ -13,9 +13,9 @@ use crate::shell::shell_body::subproc::ShellIO;
 
 #[derive(Clone, Default)]
 pub struct IO {
-    pub stdin: InKind,
-    pub stdout: OutKind,
-    pub stderr: OutKind,
+    pub(crate) stdin: InKind,
+    pub(crate) stdout: OutKind,
+    pub(crate) stderr: OutKind,
 }
 
 impl fmt::Display for IO {
@@ -30,7 +30,7 @@ impl fmt::Display for IO {
 
 impl IO {
     /// Sum of stdin/stdout/stderr.
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut size = core::mem::size_of::<IO>();
         size += self.stdin.memory_cost();
         size += self.stdout.memory_cost();
@@ -42,7 +42,7 @@ impl IO {
     /// `subproc::Stdio` for [`ShellSubprocess::spawn_async`], and stashes the
     /// owning `IOWriter` Arcs on `shellio` so [`PipeReader`]'s captured-writer
     /// path can tee subprocess output back into the JS-side buffers.
-    pub fn to_subproc_stdio(&self, stdio: &mut [Stdio; 3], shellio: &mut ShellIO) {
+    pub(crate) fn to_subproc_stdio(&self, stdio: &mut [Stdio; 3], shellio: &mut ShellIO) {
         stdio[0] = self.stdin.to_subproc_stdio();
         stdio[1] = self.stdout.to_subproc_stdio(&mut shellio.stdout);
         stdio[2] = self.stderr.to_subproc_stdio(&mut shellio.stderr);
@@ -80,10 +80,10 @@ pub enum OutKind {
 // is `Arc` so it ref-counts on clone.
 #[derive(Clone)]
 pub struct OutFd {
-    pub writer: std::sync::Arc<IOWriter>,
+    pub(crate) writer: std::sync::Arc<IOWriter>,
     /// If set, also append every chunk to this buffer (the JS-side captured
     /// stdout/stderr). Points into `ShellExecEnv::_buffered_{stdout,stderr}`.
-    pub captured: Option<*mut Vec<u8>>,
+    pub(crate) captured: Option<*mut Vec<u8>>,
 }
 
 impl OutFd {
@@ -118,14 +118,14 @@ impl fmt::Display for OutKind {
 }
 
 impl InKind {
-    pub(crate) fn memory_cost(&self) -> usize {
+    fn memory_cost(&self) -> usize {
         match self {
             InKind::Fd(r) => r.memory_cost(),
             InKind::Ignore => 0,
         }
     }
 
-    pub(crate) fn to_subproc_stdio(&self) -> Stdio {
+    fn to_subproc_stdio(&self) -> Stdio {
         match self {
             InKind::Fd(r) => Stdio::Fd(r.fd()),
             InKind::Ignore => Stdio::Ignore,
@@ -134,7 +134,7 @@ impl InKind {
 }
 
 impl OutFd {
-    pub(crate) fn memory_cost(&self) -> usize {
+    fn memory_cost(&self) -> usize {
         let mut cost = self.writer.memory_cost();
         if let Some(captured) = self.captured {
             // SAFETY: `captured` points into a live `ShellExecEnv` buffer;
@@ -146,7 +146,7 @@ impl OutFd {
 }
 
 impl OutKind {
-    pub(crate) fn memory_cost(&self) -> usize {
+    fn memory_cost(&self) -> usize {
         match self {
             OutKind::Fd(fd) => fd.memory_cost(),
             _ => 0,
@@ -166,12 +166,17 @@ impl OutKind {
     /// Retains the `IOWriter` Arc on
     /// `shellio` so the subprocess's `PipeReader::captured_writer` can drain
     /// captured bytes into it after the spawn returns.
-    pub(crate) fn to_subproc_stdio(&self, shellio: &mut Option<std::sync::Arc<IOWriter>>) -> Stdio {
+    fn to_subproc_stdio(&self, shellio: &mut Option<std::sync::Arc<IOWriter>>) -> Stdio {
         match self {
             OutKind::Fd(val) => {
                 *shellio = Some(std::sync::Arc::clone(&val.writer));
                 if let Some(cap) = val.captured {
-                    Stdio::Capture(Capture { buf: cap })
+                    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                    let _ = cap;
+                    Stdio::Capture(Capture {
+                        #[cfg(any(target_os = "linux", target_os = "android"))]
+                        buf: cap,
+                    })
                 } else {
                     // `IOWriter::fd()` (IOWriter.rs) returns `Fd::INVALID`
                     // once the fd has been handed off to libuv, so the

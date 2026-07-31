@@ -63,13 +63,13 @@ impl Default for Mapping {
 /// Optimization: if we don't care about the "names" column, then don't store the names.
 #[derive(Clone, Copy, Default)]
 pub struct MappingWithoutName {
-    pub generated: LineColumnOffset,
-    pub original: LineColumnOffset,
-    pub source_index: i32,
+    pub(crate) generated: LineColumnOffset,
+    pub(crate) original: LineColumnOffset,
+    pub(crate) source_index: i32,
 }
 
 impl MappingWithoutName {
-    pub(crate) fn to_named(&self) -> Mapping {
+    fn to_named(&self) -> Mapping {
         Mapping {
             generated: self.generated,
             original: self.original,
@@ -106,23 +106,20 @@ macro_rules! both_lists {
 }
 
 impl ListValue {
-    pub(crate) fn memory_cost(&self) -> usize {
+    fn memory_cost(&self) -> usize {
         both_lists!(self, |list| list.memory_cost())
     }
 
-    pub(crate) fn ensure_total_capacity(
-        &mut self,
-        count: usize,
-    ) -> Result<(), bun_alloc::AllocError> {
+    fn ensure_total_capacity(&mut self, count: usize) -> Result<(), bun_alloc::AllocError> {
         both_lists!(self, |list| list.ensure_total_capacity(count))
     }
 }
 
 #[derive(Default)]
 pub struct List {
-    pub r#impl: ListValue,
-    pub names: Box<[SemverString]>,
-    pub names_buffer: Vec<u8>,
+    pub(crate) r#impl: ListValue,
+    pub(crate) names: Box<[SemverString]>,
+    pub(crate) names_buffer: Vec<u8>,
 }
 
 impl List {
@@ -187,7 +184,7 @@ impl List {
         None
     }
 
-    pub fn sort(&mut self) {
+    pub(crate) fn sort(&mut self) {
         // `MultiArrayList::sort(&mut self, ctx)` swaps the `generated` column
         // in place, so the comparator cannot hold a `&[LineColumnOffset]` over
         // it (that aliased the swap before this rewrite). Instead capture the
@@ -200,7 +197,7 @@ impl List {
         })
     }
 
-    pub fn append(&mut self, mapping: &Mapping) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn append(&mut self, mapping: &Mapping) -> Result<(), bun_alloc::AllocError> {
         match &mut self.r#impl {
             ListValue::WithoutNames(list) => {
                 list.append(MappingWithoutName {
@@ -216,7 +213,7 @@ impl List {
         Ok(())
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         both_lists!(&self.r#impl, |list| list.len())
     }
 
@@ -245,11 +242,11 @@ impl List {
         both_lists!(&self.r#impl, |list| list.items_generated())
     }
 
-    pub fn original(&self) -> &[LineColumnOffset] {
+    pub(crate) fn original(&self) -> &[LineColumnOffset] {
         both_lists!(&self.r#impl, |list| list.items_original())
     }
 
-    pub fn source_index(&self) -> &[i32] {
+    pub(crate) fn source_index(&self) -> &[i32] {
         both_lists!(&self.r#impl, |list| list.items_source_index())
     }
 
@@ -274,13 +271,16 @@ impl List {
         None
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         self.r#impl.memory_cost()
             + self.names_buffer.memory_cost()
             + (self.names.len() * size_of::<SemverString>())
     }
 
-    pub fn ensure_total_capacity(&mut self, count: usize) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn ensure_total_capacity(
+        &mut self,
+        count: usize,
+    ) -> Result<(), bun_alloc::AllocError> {
         self.r#impl.ensure_total_capacity(count)
     }
 }

@@ -10,7 +10,7 @@
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { gcTick, isASAN, tempDir } from "harness";
+import { gcTick, isASAN, rss, tempDir } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 
@@ -547,13 +547,13 @@ describe("memory hygiene", () => {
       if ((i & 127) === 0) gcTick();
     }
     gcTick();
-    const before = process.memoryUsage().rss;
+    const before = rss();
     for (let i = 0; i < run; i++) {
       await body();
       if ((i & 127) === 0) gcTick();
     }
     gcTick();
-    return process.memoryUsage().rss - before;
+    return rss() - before;
   }
 
   test("decode/encode cycles plateau (no per-call leak after warmup)", async () => {
@@ -571,7 +571,7 @@ describe("memory hygiene", () => {
   });
 
   test("constructor with throwing getter cleans up under repetition", () => {
-    const before = process.memoryUsage().rss;
+    const before = rss();
     for (let i = 0; i < 10_000; i++) {
       try {
         new Bun.Image(tinyPng, {
@@ -583,7 +583,7 @@ describe("memory hygiene", () => {
       if ((i & 1023) === 0) gcTick();
     }
     gcTick();
-    expect(process.memoryUsage().rss - before).toBeLessThan((isASAN ? 256 : 64) * 1024 * 1024);
+    expect(rss() - before).toBeLessThan((isASAN ? 256 : 64) * 1024 * 1024);
   });
 });
 

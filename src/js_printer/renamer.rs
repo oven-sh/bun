@@ -105,8 +105,8 @@ pub struct NoOpRenamer<'a> {
     // every transpile (require-cache.test.ts "files transpiled and loaded don't
     // leak the output source code" — `await import()` re-transpiles each
     // iteration, so the leak compounds to OOM).
-    pub symbols: symbol::Map,
-    pub source: &'a bun_ast::Source,
+    pub(crate) symbols: symbol::Map,
+    pub(crate) source: &'a bun_ast::Source,
 }
 
 impl<'a> NoOpRenamer<'a> {
@@ -114,7 +114,7 @@ impl<'a> NoOpRenamer<'a> {
         NoOpRenamer { symbols, source }
     }
 
-    pub(crate) fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
+    fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
         if ref_.is_source_contents_slice() {
             return &self.source.contents[ref_.source_index() as usize
                 ..(ref_.source_index() + ref_.inner_index()) as usize];
@@ -150,7 +150,7 @@ pub enum Renamer<'r, 'src> {
 }
 
 impl<'r, 'src> Renamer<'r, 'src> {
-    pub fn symbols(&self) -> &symbol::Map {
+    pub(crate) fn symbols(&self) -> &symbol::Map {
         match self {
             Renamer::NumberRenamer(r) => &r.symbols,
             Renamer::NoOpRenamer(r) => &r.symbols,
@@ -174,9 +174,9 @@ pub struct SymbolSlot {
     // We can store the string inline!
     // But we have to be very careful of where it's used.
     // Or we WILL run into memory bugs.
-    pub name: TinyString,
-    pub count: u32,
-    pub needs_capital_for_jsx: bool,
+    pub(crate) name: TinyString,
+    pub(crate) count: u32,
+    pub(crate) needs_capital_for_jsx: bool,
 }
 
 impl Default for SymbolSlot {
@@ -193,12 +193,12 @@ pub(crate) type SymbolSlotList = EnumMap<symbol::SlotNamespace, Vec<SymbolSlot>>
 
 #[derive(Clone, Copy, Default)]
 pub struct InlineString {
-    pub bytes: [u8; 15],
-    pub len: u8,
+    pub(crate) bytes: [u8; 15],
+    pub(crate) len: u8,
 }
 
 impl InlineString {
-    pub(crate) fn init(str_: &[u8]) -> InlineString {
+    fn init(str_: &[u8]) -> InlineString {
         let mut this = InlineString {
             len: u8::try_from(str_.len().min(15)).expect("int cast"),
             ..Default::default()
@@ -215,7 +215,7 @@ impl InlineString {
     // do not make this *const or you will run into memory bugs.
     // we cannot let the compiler decide to copy this struct because
     // that would cause this to become a pointer to stack memory.
-    pub(crate) fn slice(&mut self) -> &[u8] {
+    fn slice(&mut self) -> &[u8] {
         &self.bytes[0..self.len as usize]
     }
 }
@@ -228,7 +228,7 @@ pub enum TinyString {
 }
 
 impl TinyString {
-    pub(crate) fn init(input: &[u8], arena: &Bump) -> Result<TinyString, bun_alloc::AllocError> {
+    fn init(input: &[u8], arena: &Bump) -> Result<TinyString, bun_alloc::AllocError> {
         if input.len() <= 15 {
             Ok(TinyString::InlineString(InlineString::init(input)))
         } else {
@@ -240,7 +240,7 @@ impl TinyString {
     // do not make this *const or you will run into memory bugs.
     // we cannot let the compiler decide to copy this struct because
     // that would cause this to become a pointer to stack memory.
-    pub(crate) fn slice(&mut self) -> &[u8] {
+    fn slice(&mut self) -> &[u8] {
         match self {
             TinyString::InlineString(s) => s.slice(),
             // `StoreStr::slice` centralises the arena-backed deref; the payload
@@ -251,13 +251,13 @@ impl TinyString {
 }
 
 pub struct MinifyRenamer {
-    pub reserved_names: StringHashMap<u32>,
-    pub slots: SymbolSlotList,
-    pub top_level_symbol_to_slot: TopLevelSymbolSlotMap,
-    pub symbols: ManuallyDrop<symbol::Map>,
-    pub owns_symbols: bool,
+    pub(crate) reserved_names: StringHashMap<u32>,
+    pub(crate) slots: SymbolSlotList,
+    pub(crate) top_level_symbol_to_slot: TopLevelSymbolSlotMap,
+    pub(crate) symbols: ManuallyDrop<symbol::Map>,
+    pub(crate) owns_symbols: bool,
     /// Backs `TinyString::String` slot-name allocations.
-    pub arena: Bump,
+    pub(crate) arena: Bump,
 }
 
 impl Drop for MinifyRenamer {
@@ -473,9 +473,9 @@ impl MinifyRenamer {
 
 #[derive(Clone, Copy)]
 pub struct StableSymbolCount {
-    pub stable_source_index: u32,
-    pub ref_: Ref,
-    pub count: u32,
+    pub(crate) stable_source_index: u32,
+    pub(crate) ref_: Ref,
+    pub(crate) count: u32,
 }
 
 pub(crate) type StableSymbolCountArray = Vec<StableSymbolCount>;
@@ -515,16 +515,16 @@ impl SlotAndCount {
 
 pub struct NumberRenamer {
     // See `NoOpRenamer.symbols` — non-owning view.
-    pub symbols: ManuallyDrop<symbol::Map>,
-    pub names: Box<[Vec<NameStr>]>,
+    pub(crate) symbols: ManuallyDrop<symbol::Map>,
+    pub(crate) names: Box<[Vec<NameStr>]>,
     pub number_scope_pool: HiveArrayFallback<NumberScope, 128>,
     pub root: NumberScope,
     /// Backs renamed-name slices written into `names`.
-    pub arena: Bump,
+    pub(crate) arena: Bump,
 }
 
 impl NumberRenamer {
-    pub fn assign_name(&mut self, scope: &mut NumberScope, input_ref: Ref) {
+    pub(crate) fn assign_name(&mut self, scope: &mut NumberScope, input_ref: Ref) {
         let ref_ = self.symbols.follow(input_ref);
 
         // Don't rename the same symbol more than once
@@ -749,18 +749,18 @@ pub struct NumberScope {
     /// `assign_names_recursive_with_number_scope` call, both of which strictly
     /// outlive this child (children are `put()` back before their parent), so
     /// `ParentRef::get()` is sound without per-site `unsafe`.
-    pub parent: Option<bun_ptr::ParentRef<NumberScope>>,
-    pub name_counts: NameCountMap,
+    pub(crate) parent: Option<bun_ptr::ParentRef<NumberScope>>,
+    pub(crate) name_counts: NameCountMap,
 }
 
-pub(crate) enum NameUse {
+enum NameUse {
     Unused,
     SameScope(u32),
     Used,
 }
 
 impl NameUse {
-    pub(crate) fn find(this: &NumberScope, name: &[u8]) -> NameUse {
+    fn find(this: &NumberScope, name: &[u8]) -> NameUse {
         // This version doesn't allocate
         debug_assert!(js_lexer::is_identifier(name));
 
@@ -801,7 +801,7 @@ impl NameUse {
     }
 }
 
-pub enum UnusedName {
+pub(crate) enum UnusedName {
     NoCollision,
     Renamed(NameStr),
 }
@@ -833,7 +833,7 @@ fn is_simple_ascii_identifier(s: &[u8]) -> bool {
 
 impl NumberScope {
     /// Caller must use an arena allocator
-    pub fn find_unused_name(&mut self, arena: &Bump, input_name: &[u8]) -> UnusedName {
+    pub(crate) fn find_unused_name(&mut self, arena: &Bump, input_name: &[u8]) -> UnusedName {
         // `MutableString::ensure_valid_identifier` always heap-allocates
         // (Box<[u8]>), even when the input is already a valid ASCII
         // identifier. Skip the call entirely for the common case so this
@@ -972,11 +972,11 @@ impl NumberScope {
 }
 
 pub struct ExportRenamer {
-    pub string_buffer: MutableString,
-    pub used: StringHashMap<u32>,
-    pub count: isize,
+    pub(crate) string_buffer: MutableString,
+    pub(crate) used: StringHashMap<u32>,
+    pub(crate) count: isize,
     /// Backs renamed export-name slices returned to the caller.
-    pub arena: Bump,
+    pub(crate) arena: Bump,
 }
 
 impl ExportRenamer {

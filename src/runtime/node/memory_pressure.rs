@@ -34,9 +34,9 @@ use core::ptr::NonNull;
 
 /// Pressure level passed to JS. Values are the `NOTE_MEMORYSTATUS_PRESSURE_*`
 /// bits on macOS so the kqueue dispatch can pass `fflags` through unchanged.
-pub mod level {
-    pub const WARNING: i32 = 0x00000002;
-    pub const CRITICAL: i32 = 0x00000004;
+pub(crate) mod level {
+    pub(crate) const WARNING: i32 = 0x00000002;
+    pub(crate) const CRITICAL: i32 = 0x00000004;
 }
 
 unsafe extern "C" {
@@ -45,7 +45,7 @@ unsafe extern "C" {
 
 /// `run_task` target for `task_tag::MemoryPressureTask`. `lvl` is the packed
 /// task payload (macOS kevent `fflags`, or `level::CRITICAL` elsewhere).
-pub fn emit(global: &JSGlobalObject, lvl: i32) {
+pub(crate) fn emit(global: &JSGlobalObject, lvl: i32) {
     // macOS can deliver WARN|CRITICAL together under EV_CLEAR; pick the more severe.
     let lvl = if lvl & level::CRITICAL != 0 || lvl & level::WARNING == 0 {
         level::CRITICAL
@@ -56,7 +56,7 @@ pub fn emit(global: &JSGlobalObject, lvl: i32) {
     unsafe { Process__emitMemoryPressureEvent(core::ptr::from_ref(global).cast_mut(), lvl) };
 }
 
-pub(crate) fn pressure_task(lvl: i32) -> Task {
+fn pressure_task(lvl: i32) -> Task {
     Task::new(task_tag::MemoryPressureTask, lvl as usize as *mut ())
 }
 
@@ -220,7 +220,7 @@ mod posix {
 
     /// `__bun_run_file_poll` dispatch target. `fflags` is the kqueue `fflags`
     /// on macOS (carrying the pressure level) and 0 on Linux.
-    pub fn on_poll(poll: &mut FilePoll, fflags: i64) {
+    pub(crate) fn on_poll(poll: &mut FilePoll, fflags: i64) {
         let vm = VirtualMachine::get_mut();
 
         // `EPOLLERR`/`EPOLLHUP` on a PSI fd means the trigger is dead (e.g.
@@ -384,7 +384,7 @@ mod windows {
 // ────────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__MemoryPressure__install(global: &JSGlobalObject) {
+pub(crate) extern "C" fn Bun__MemoryPressure__install(global: &JSGlobalObject) {
     #[cfg(not(windows))]
     posix::install(global);
     #[cfg(windows)]
@@ -392,7 +392,7 @@ pub extern "C" fn Bun__MemoryPressure__install(global: &JSGlobalObject) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__MemoryPressure__uninstall(global: &JSGlobalObject) {
+pub(crate) extern "C" fn Bun__MemoryPressure__uninstall(global: &JSGlobalObject) {
     #[cfg(not(windows))]
     posix::uninstall(global);
     #[cfg(windows)]
@@ -400,12 +400,12 @@ pub extern "C" fn Bun__MemoryPressure__uninstall(global: &JSGlobalObject) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__MemoryPressure__emit(global: &JSGlobalObject, lvl: i32) {
+pub(crate) extern "C" fn Bun__MemoryPressure__emit(global: &JSGlobalObject, lvl: i32) {
     emit(global, lvl);
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__MemoryPressure__isInstalled(global: &JSGlobalObject) -> bool {
+pub(crate) extern "C" fn Bun__MemoryPressure__isInstalled(global: &JSGlobalObject) -> bool {
     global
         .bun_vm()
         .as_mut()
@@ -415,4 +415,4 @@ pub extern "C" fn Bun__MemoryPressure__isInstalled(global: &JSGlobalObject) -> b
 }
 
 #[cfg(not(windows))]
-pub use posix::on_poll;
+pub(crate) use posix::on_poll;

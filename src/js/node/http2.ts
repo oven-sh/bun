@@ -3299,7 +3299,7 @@ class ServerHttp2Stream extends Http2Stream {
         // also what releases the session's bookkeeping - do that explicitly.
         pushedStream[kNeverAnnounced] = true;
         session[kReleaseUnannouncedStream](pushId);
-        pushedStream.destroy(err);
+        pushedStream.destroy(pushedStream.listenerCount("error") > 0 ? err : undefined);
       }
       process.nextTick(callback, err);
       return;

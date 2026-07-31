@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include "ActiveDOMObject.h"
 #include "EventTarget.h"
 #include "MessageWithMessagePorts.h"
 #include "WorkerOptions.h"

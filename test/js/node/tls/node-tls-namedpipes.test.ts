@@ -122,10 +122,6 @@ it.if(isWindows)("named-pipe tls.connect({ socket }) does not re-emit bytes on t
 
     nonTLSClient = net.connect(pipe_name);
     nonTLSClient.on("error", rejectDone);
-    // A pre-existing user `data` listener on the original named-pipe socket
-    // must go quiet once TLS owns the stream. Before the fix it received every
-    // post-upgrade ciphertext byte because the TLS feeder subscribed via the
-    // public `data` event.
     nonTLSClient.on("data", chunk => {
       leaked += chunk.length;
     });

@@ -6,18 +6,10 @@ import tls from "tls";
 
 // https://github.com/oven-sh/bun/issues/32242
 test("tls.connect({ socket }) via the stream-level engine does not re-emit post-upgrade bytes on the original socket", async () => {
-  // A net.Socket with a buffered write takes the upgradeDuplexToTLS path
-  // (hasUnflushedWrites). Its native handle keeps delivering raw bytes after
-  // the upgrade, and before the fix those bytes were pushed onto the original
-  // socket's readable (re-emitted as `data`) as well as being fed to the TLS
-  // engine. Node silences the original socket once TLS owns the stream.
   const { promise: done, resolve, reject } = Promise.withResolvers<number>();
 
   const server = net.createServer(s => {
     s.on("error", () => {});
-    // Reply to any inbound bytes with a TLS handshake_failure alert. The
-    // client's TLS engine must receive this via the feeder (and error on it);
-    // the client's pre-existing raw `data` listener must not.
     s.on("data", () => s.write(Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28])));
   });
   server.on("error", reject);
@@ -34,22 +26,15 @@ test("tls.connect({ socket }) via the stream-level engine does not re-emit post-
       leaked += chunk.length;
     });
 
-    // Force the stream-level TLS engine (upgradeDuplex) by buffering a write:
-    // writableLength > 0 at tls.connect time makes hasUnflushedWrites true on
-    // every platform, so this exercises the same code path as a Windows named
-    // pipe.
+    // cork+write so writableLength > 0 forces the upgradeDuplexToTLS path.
     raw.cork();
     raw.write("S");
     expect(raw.writableLength).toBeGreaterThan(0);
     const tlsSocket = tls.connect({ socket: raw, rejectUnauthorized: false });
-    raw.uncork();
-
-    // Any terminal outcome on the TLS socket is acceptable here; the server is
-    // not a real TLS peer. What matters is that the alert bytes reached the TLS
-    // engine (via the feeder) and never re-surfaced on raw.
     tlsSocket.on("error", () => resolve(leaked));
     tlsSocket.on("secureConnect", () => resolve(leaked));
     tlsSocket.on("close", () => resolve(leaked));
+    raw.uncork();
 
     expect(await done).toBe(0);
   } finally {
@@ -60,10 +45,6 @@ test("tls.connect({ socket }) via the stream-level engine does not re-emit post-
 
 // https://github.com/oven-sh/bun/issues/32242
 test("tls.connect({ socket }) drains every buffered chunk into the stream-level engine", async () => {
-  // A paused socket can have multiple chunks in its readable buffer when the
-  // upgrade runs. The install-time drain must feed all of them to the TLS
-  // engine (read() returns one chunk at a time); leaving any behind would
-  // stall the handshake once the raw data handler stops pushing.
   const { promise: done, resolve, reject } = Promise.withResolvers<void>();
   const alert = Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]);
 
@@ -81,21 +62,18 @@ test("tls.connect({ socket }) drains every buffered chunk into the stream-level 
     raw.pause();
     await once(raw, "connect");
     await once(raw, "readable");
-    // Stage a second chunk so the readable buffer holds more than one.
     raw.unshift(Buffer.from(alert));
     expect(raw.readableLength).toBe(alert.length * 2);
 
     raw.cork();
     raw.write("S");
     const tlsSocket = tls.connect({ socket: raw, rejectUnauthorized: false });
-    raw.uncork();
-
-    // Every pre-buffered chunk was handed to the feeder; nothing is stranded.
-    expect(raw.readableLength).toBe(0);
-
     tlsSocket.on("error", () => resolve());
     tlsSocket.on("secureConnect", () => resolve());
     tlsSocket.on("close", () => resolve());
+    raw.uncork();
+
+    expect(raw.readableLength).toBe(0);
     await done;
   } finally {
     raw.destroy();

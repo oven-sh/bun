@@ -17,7 +17,7 @@ use bun_http::{
 };
 use bun_io::KeepAlive;
 use bun_jsc::debugger::AsyncTaskTracker;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{CrossThreadShutdownSignal, VirtualMachine};
 use bun_jsc::{
     self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional,
 };
@@ -68,6 +68,13 @@ pub struct FetchTasklet {
     pub(crate) result: HTTPClientResult<'static>,
     pub(crate) metadata: Option<HTTPResponseMetadata>,
     pub(crate) javascript_vm: &'static VirtualMachine,
+    /// Clone of `javascript_vm.cross_thread_shutdown`. The HTTP-thread
+    /// callbacks below read the shutdown state and fence the
+    /// `enqueue_task_concurrent` against `WebWorker::shutdown` through this
+    /// handle: `javascript_vm` is a lifetime-erased reference that dangles
+    /// once a worker has `dealloc`'d its VM, so it may only be dereferenced
+    /// inside a successful `try_begin_vm_read` section.
+    pub(crate) vm_shutdown_signal: std::sync::Arc<CrossThreadShutdownSignal>,
     pub global_this: GlobalRef,
     pub(crate) request_body: HTTPRequestBody,
     // ThreadSafeStreamBuffer is intrusively refcounted (`ref_count: AtomicU32`,
@@ -397,7 +404,7 @@ impl FetchTasklet {
             return;
         }
         let self_ = Self::from_raw_ref(this);
-        if self_.javascript_vm.is_shutting_down() {
+        if !self_.vm_shutdown_signal.try_begin_vm_read() {
             // SAFETY: last ref; exclusive access. `deinit()` would run
             // `clear_data()` + `Drop` for the JSC `Strong`/`Weak` fields, which
             // reach into the VM's StrongRootBlock list / WeakSet from this
@@ -414,6 +421,7 @@ impl FetchTasklet {
             self_.javascript_vm,
             ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback),
         );
+        self_.vm_shutdown_signal.end_vm_read();
     }
 
     // ConcurrentTask::from_callback takes `fn(*mut T) -> bun_event_loop::JsResult<()>`
@@ -518,11 +526,17 @@ impl FetchTasklet {
     ///     (`on_response_finalize`) registered against `this`, so freeing the
     ///     box before `destructOnExit` sweeps the Response is a UAF.
     ///
-    /// Park the intact box on the JS thread via
+    /// Main-thread VM: park the intact box on the JS thread via
     /// `bun_http::defer_shutdown_reclaim`; the drain runs from
     /// `global_exit()` after the HTTP thread has parked but before
     /// `destructOnExit`, so `deinit()` there can release every handle on the
     /// right thread and the Weak is cleared before its referent is finalized.
+    ///
+    /// Worker VM: there is no per-worker drain point (`shutdown_for_exit` is
+    /// process-global) and by the time this runs the worker's JSC heap is, or
+    /// is about to be, freed, so the parked `deinit()` would dereference dead
+    /// handles. Leak the box instead; the large buffers were already released
+    /// by the caller.
     ///
     /// SAFETY: `this` must be the last reference (ref_count == 0) and have
     /// been allocated via heap::alloc.
@@ -530,7 +544,10 @@ impl FetchTasklet {
         bun_output::scoped_log!(FetchTasklet, "deallocForShutdown");
         // SAFETY: caller contract — `this` is live with ref_count == 0.
         unsafe { (*this).ref_count.assert_no_refs() };
-        http::defer_shutdown_reclaim(this.cast(), FetchTasklet::deinit_erased);
+        // SAFETY: caller contract — `this` is live with ref_count == 0.
+        if unsafe { (*this).vm_shutdown_signal.is_main_thread() } {
+            http::defer_shutdown_reclaim(this.cast(), FetchTasklet::deinit_erased);
+        }
     }
 
     unsafe fn deinit_erased(this: *mut c_void) {
@@ -2027,6 +2044,7 @@ impl FetchTasklet {
             result: HTTPClientResult::default(),
             metadata: None,
             javascript_vm: jsc_vm,
+            vm_shutdown_signal: std::sync::Arc::clone(jsc_vm.cross_thread_shutdown()),
             global_this: GlobalRef::from(global_this),
             request_body: fetch_options.body,
             request_body_streaming_buffer: None,
@@ -2271,7 +2289,7 @@ impl FetchTasklet {
     /// This is ALWAYS called from the http thread and we cannot touch the buffer here because is locked
     fn on_write_request_data_drain(this: *mut FetchTasklet) {
         let this_ref = Self::from_raw_ref(this);
-        if this_ref.javascript_vm.is_shutting_down() {
+        if !this_ref.vm_shutdown_signal.try_begin_vm_read() {
             return;
         }
         // ref until the main thread callback is called
@@ -2282,6 +2300,7 @@ impl FetchTasklet {
             this_ref.javascript_vm,
             ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream),
         );
+        this_ref.vm_shutdown_signal.end_vm_read();
     }
 
     /// This is ALWAYS called from the main thread
@@ -2649,7 +2668,7 @@ impl FetchTasklet {
             }
         }
         // will deinit when done with the http client (when is_done = true)
-        if task_ref.javascript_vm.is_shutting_down() {
+        if !task_ref.vm_shutdown_signal.try_begin_vm_read() {
             // VM teardown: the JS-thread side will never drain this buffer (its
             // on_progress_update bails the same way), so free the body bytes now.
             task_ref.scheduled_response_buffer = MutableString::default();
@@ -2689,6 +2708,7 @@ impl FetchTasklet {
         // `ct` is the inline `concurrent_task` field of the heap tasklet; the
         // queue takes ownership of its `next` link.
         Self::enqueue_concurrent(task_ref.javascript_vm, ct);
+        task_ref.vm_shutdown_signal.end_vm_read();
 
         task_ref.mutex.unlock();
         // we are done with the http client so we can deref our side

@@ -21,11 +21,9 @@ mod scope {
 }
 use scope::which as which_log;
 
+/// Writes `[cwd/]segment/bin\0` into `buf` and stats it as an executable.
 #[cfg(not(windows))]
 fn is_valid(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Option<u16> {
-    // Builds `[cwd/]segment/bin` into `buf` and stats it. `cwd` is prepended
-    // only when non-empty so relative `segment`s are checked against the
-    // caller-supplied working directory instead of the process cwd.
     let cwd_prefix_len = if cwd.is_empty() { 0 } else { cwd.len() + 1 };
     let segment_end = cwd_prefix_len + segment.len();
     let prefix_len = segment_end + 1; // includes trailing path separator
@@ -159,12 +157,9 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
             return None;
         }
 
-        // execvp resolves a relative $PATH entry after chdir, so `.` means the
-        // child's cwd. The existence check runs in the parent, so join
-        // relative segments with `cwd` to stat the same file the child would
-        // exec. Only prepend an absolute `cwd`: the returned path is consumed
-        // after the child's chdir, and a relative prefix would be re-resolved
-        // there (double-applied).
+        // execvp resolves relative $PATH entries after chdir; stat them here
+        // against `cwd` so the parent-side check matches. Only an absolute
+        // `cwd` is safe to prepend (the result is exec'd after chdir).
         let cwd_for_relative_segment: &[u8] = if is_absolute(cwd) {
             cwd_trimmed
         } else {

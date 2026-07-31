@@ -6080,8 +6080,8 @@ impl NodeFS {
     fn read_inner(&mut self, args: &args::Read) -> Maybe<ret::Read> {
         debug_assert!(args.position.is_none());
         let (ptr, len) = args.buffer.bytes();
-        // SAFETY: `ptr`/`len` describe the pinned JSC-owned backing store
-        // (pinned in `Read::from_js`/`to_thread_safe`), writable for this I/O.
+        // SAFETY: `ptr`/`len` describe the JSC-owned backing store pinned by
+        // `bytes()` above (or by `to_thread_safe()` on the async path).
         let mut buf = unsafe { bun_core::ffi::slice_mut(ptr, len) };
         let off = (args.offset as usize).min(buf.len());
         buf = &mut buf[off..];

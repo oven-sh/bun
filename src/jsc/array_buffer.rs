@@ -857,13 +857,6 @@ impl MarkedArrayBuffer {
         Self::new(ArrayBuffer::from_array_buffer(ctx, value), false, false)
     }
 
-    /// Wrap an already-pinned descriptor. Used by callers that pinned via
-    /// [`JSValue::as_pinned_arraybuffer`] themselves.
-    #[inline]
-    pub fn from_pinned(buffer: ArrayBuffer) -> MarkedArrayBuffer {
-        Self::new(buffer, false, true)
-    }
-
     /// A non-owning view that neither owns the allocation nor the original's
     /// pin. [`bytes`] on the borrow takes its own pin (pin count is a
     /// counter), released by its own `Drop`.
@@ -902,10 +895,6 @@ impl MarkedArrayBuffer {
         Some(Self::from_unpinned(value.as_array_buffer(global)?))
     }
 
-    pub fn from_js_pinned(global: &JSGlobalObject, value: JSValue) -> Option<MarkedArrayBuffer> {
-        Some(Self::from_pinned(value.as_pinned_arraybuffer(global)?))
-    }
-
     pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> MarkedArrayBuffer {
         Self::new(
             ArrayBuffer::from_bytes(bytes, typed_array_type),
@@ -939,7 +928,7 @@ impl MarkedArrayBuffer {
         self.owns_buffer.get()
     }
 
-    /// Release the pin taken by [`bytes`]/[`from_js_pinned`] and clear the
+    /// Release the pin taken by [`bytes`]/[`to_thread_safe`] and clear the
     /// flag so `Drop` is a no-op. JS-thread only.
     #[inline]
     pub fn unpin(&self) {

@@ -4993,6 +4993,54 @@ pub(crate) fn write_file_with_source_destination(
 // writeFileInternal / writeFile (Bun.write)
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Creates a `Bytes`-backed `Blob` that borrows `data`'s ArrayBuffer in place
+/// instead of copying it, so large `Bun.write(path, typedArray)` payloads
+/// don't stall the JS thread snapshotting into a memfd or Vec. The buffer is
+/// pinned (JS cannot detach it) and GC-protected; both are released by the
+/// store's allocator `free`, which MUST therefore run on the JS thread. The
+/// only caller is `write_file_internal` for regular-file destinations, where
+/// the sole surviving store ref is dropped in `WriteFile::then` /
+/// `WriteFileWindows::run_from_js_thread`.
+///
+/// Returns `None` when `data` is not buffer-backed, is empty, or is resizable
+/// (a concurrent shrink would invalidate the borrowed slice).
+fn borrow_array_buffer_for_write(global_this: &JSGlobalObject, data: JSValue) -> Option<Blob> {
+    let buffer = data.as_pinned_arraybuffer(global_this)?;
+    if buffer.byte_len == 0 || buffer.resizable {
+        data.unpin_array_buffer();
+        return None;
+    }
+    data.protect();
+
+    fn free(ptr: *mut c_void, _buf: &mut [u8], _a: bun_alloc::Alignment, _ra: usize) {
+        let value = JSValue::from_encoded(ptr as usize);
+        value.unpin_array_buffer();
+        value.unprotect();
+    }
+    static VTABLE: bun_alloc::AllocatorVTable = bun_alloc::AllocatorVTable::free_only(free);
+
+    // SAFETY: `buffer.ptr[..byte_len]` is the pinned+protected ArrayBuffer's
+    // storage, kept valid until `free` releases both.
+    let bytes = unsafe {
+        store::Bytes::from_raw_parts(
+            buffer.ptr,
+            buffer.byte_len as SizeType,
+            buffer.byte_len as SizeType,
+            bun_alloc::StdAllocator {
+                ptr: data.0 as *mut c_void,
+                vtable: &VTABLE,
+            },
+        )
+    };
+    let store = StoreRef::from(Store::new(Store {
+        data: store::Data::Bytes(bytes),
+        mime_type: bun_http_types::MimeType::NONE,
+        ref_count: bun_ptr::ThreadSafeRefCount::init(),
+        is_all_ascii: None,
+    }));
+    Some(Blob::init_with_store(store, global_this))
+}
+
 /// ## Errors
 /// - If `path_or_blob` is a detached blob
 /// ## Panics
@@ -5282,6 +5330,18 @@ pub(crate) fn write_file_internal(
         // Check for Archive - allows Bun.write() and S3 writes to accept Archive instances
         if let Some(archive) = data.as_class_ref::<Archive>() {
             break 'brk Blob::init_with_store(archive.store_ref().clone(), global_this);
+        }
+
+        // For ArrayBuffer/TypedArray sources going to a regular file, borrow
+        // the bytes in place so the pool-thread write reads them directly
+        // (matching `fs.promises.writeFile`), instead of `Blob::get`
+        // snapshotting the whole payload into a memfd/Vec on this thread.
+        // S3 destinations keep the copying path because the store may outlive
+        // the JS-thread drop there.
+        if !destination_blob.is_s3() {
+            if let Some(blob) = borrow_array_buffer_for_write(global_this, data) {
+                break 'brk blob;
+            }
         }
 
         break 'brk Blob::get::<false, false>(global_this, data)?;

@@ -2599,29 +2599,32 @@ impl FetchTasklet {
             }
         } else if success {
             let scheduled = &mut task_ref.scheduled_response_buffer;
-            // Grow to Content-Length once so the per-packet append below
-            // doesn't leave the ~2x doubling over-capacity that the
-            // ArrayBuffer would adopt. Gated on `is_buffering_body`
-            // (set by `on_start_buffering_callback`), not the raw
-            // `BufferAll` mode: `drop_backpressure_if_unobserved` also
-            // sets `BufferAll` while still draining per chunk.
-            if task_ref.is_buffering_body.load(Ordering::Acquire) {
-                if let http::BodySize::ContentLength(n) = task_ref.body_size {
-                    if n > scheduled.list.capacity() {
-                        let additional = n
-                            .min(SCHEDULED_PRERESERVE_MAX)
-                            .saturating_sub(scheduled.list.len());
-                        let _ = scheduled.list.try_reserve_exact(additional);
+            if body.is_empty() && !body_owned.is_empty() && scheduled.list.is_empty() {
+                scheduled.list = body_owned;
+            } else {
+                // Grow to Content-Length once so the per-packet append below
+                // doesn't leave the ~2x doubling over-capacity that the
+                // ArrayBuffer would adopt. Gated on `is_buffering_body`
+                // (set by `on_start_buffering_callback`), not the raw
+                // `BufferAll` mode: `drop_backpressure_if_unobserved` also
+                // sets `BufferAll` while still draining per chunk.
+                if task_ref.is_buffering_body.load(Ordering::Acquire) {
+                    if let http::BodySize::ContentLength(n) = task_ref.body_size {
+                        if n > scheduled.list.capacity() {
+                            let additional = n
+                                .min(SCHEDULED_PRERESERVE_MAX)
+                                .saturating_sub(scheduled.list.len());
+                            let _ = scheduled.list.try_reserve_exact(additional);
+                        }
                     }
                 }
-            }
-            if !body.is_empty() {
-                bun_core::handle_oom(scheduled.write(body));
-            } else if !body_owned.is_empty() {
-                if scheduled.list.is_empty() {
-                    scheduled.list = body_owned;
+                let chunk = if body.is_empty() {
+                    body_owned.as_slice()
                 } else {
-                    bun_core::handle_oom(scheduled.write(body_owned.as_slice()));
+                    body
+                };
+                if !chunk.is_empty() {
+                    bun_core::handle_oom(scheduled.write(chunk));
                 }
             }
             if task_ref.result.has_more && !task_ref.scheduled_response_buffer.list.is_empty() {

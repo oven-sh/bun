@@ -50,6 +50,11 @@ impl Taskable for FetchTasklet {
 
 bun_output::declare_scope!(FetchTasklet, visible);
 
+/// Cap on the one-time `reserve_exact` for `scheduled_response_buffer` when
+/// Content-Length is known. Bodies above this still benefit from a single
+/// exact growth up to the cap; the remainder grows by amortized doubling.
+const SCHEDULED_PRERESERVE_MAX: usize = 256 * 1024 * 1024;
+
 use http::signals::BodyReceiveMode;
 
 #[derive(bun_ptr::ThreadSafeRefCounted)]
@@ -2595,11 +2600,33 @@ impl FetchTasklet {
             }
         } else {
             if success {
-                bun_core::handle_oom(
-                    task_ref
-                        .scheduled_response_buffer
-                        .write(task_ref.response_buffer.list.as_slice()),
-                );
+                let scheduled = &mut task_ref.scheduled_response_buffer;
+                let incoming = &mut task_ref.response_buffer;
+                if scheduled.list.capacity() == 0 {
+                    // Move instead of copy. The HTTP client holds
+                    // `&raw mut task_ref.response_buffer` (the field address; see
+                    // the aliasing assert above), not the Vec's heap pointer, so
+                    // swapping the Vec underneath is invisible to it.
+                    core::mem::swap(scheduled, incoming);
+                }
+                // Size scheduled_response_buffer to the known body length once,
+                // instead of letting extend_from_slice's amortized doubling leave
+                // up to ~2x overcapacity (which is what .arrayBuffer()/.bytes()
+                // ultimately adopts). For compressed responses Content-Length is
+                // the compressed size, so this under-reserves and the excess
+                // grows as before. Capped so a hostile Content-Length can't
+                // allocate ahead of bytes actually arriving.
+                if let http::BodySize::ContentLength(n) = task_ref.body_size {
+                    if n > scheduled.list.capacity() {
+                        let additional = n
+                            .min(SCHEDULED_PRERESERVE_MAX)
+                            .saturating_sub(scheduled.list.len());
+                        let _ = scheduled.list.try_reserve_exact(additional);
+                    }
+                }
+                if !incoming.list.is_empty() {
+                    bun_core::handle_oom(scheduled.write(incoming.list.as_slice()));
+                }
                 if task_ref.result.has_more && !task_ref.scheduled_response_buffer.list.is_empty() {
                     let _ = task_ref.signal_store.try_transition_receive_mode(
                         BodyReceiveMode::AutoPause,
@@ -2607,8 +2634,12 @@ impl FetchTasklet {
                     );
                 }
             }
-            // reset for reuse
-            task_ref.response_buffer.reset();
+            if task_ref.result.has_more {
+                // reset for reuse
+                task_ref.response_buffer.reset();
+            } else {
+                task_ref.response_buffer = MutableString::default();
+            }
         }
 
         if let Err(has_schedule_callback) = task_ref.has_schedule_callback.compare_exchange(

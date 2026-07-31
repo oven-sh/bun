@@ -962,3 +962,67 @@ test("aborting in-flight streaming fetch() responses does not retain the buffere
   expect(stderr).not.toContain("LEAK");
   expect(exitCode).toBe(0);
 });
+
+test("fetch().arrayBuffer() of a large Content-Length body peaks at ~1x the payload", async () => {
+  // The per-packet handoff in FetchTasklet::callback appended each socket read
+  // into scheduled_response_buffer via extend_from_slice, so the Vec grew by
+  // amortized doubling. For a body just past a doubling step that left the
+  // allocation the ArrayBuffer adopts at ~2x the payload, and the intermediate
+  // reallocations spiked ru_maxrss well past 2x. Reserving Content-Length
+  // exactly up front keeps it to a single allocation that is moved through to
+  // the ArrayBuffer.
+  //
+  // Body size is 128 MiB + 1 MiB so the old doubling growth would have crossed
+  // the 128 -> 256 step, making the unfixed peak reliably > 2x body.
+  const bodyBytes = 129 * 1024 * 1024;
+  const chunk = Buffer.alloc(256 * 1024, "abcdefghij");
+  const net = require("node:net");
+  const server = net.createServer(socket => {
+    socket.once("data", () => {
+      socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${bodyBytes}\r\nConnection: close\r\n\r\n`);
+      let sent = 0;
+      const pump = () => {
+        while (sent < bodyBytes) {
+          const n = Math.min(chunk.length, bodyBytes - sent);
+          sent += n;
+          if (!socket.write(n === chunk.length ? chunk : chunk.subarray(0, n))) {
+            socket.once("drain", pump);
+            return;
+          }
+        }
+        socket.end();
+      };
+      pump();
+    });
+    socket.on("error", () => {});
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address();
+
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", join(import.meta.dir, "fetch-buffer-peak-fixture.ts")],
+      env: {
+        ...bunEnv,
+        SERVER: `http://127.0.0.1:${port}/`,
+        BODY_BYTES: String(bodyBytes),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    console.log(stdout.trim());
+    expect(stderr).toBe("");
+    const { bodyMB, rssBeforeMB, rssAfterMB } = JSON.parse(stdout.trim());
+    expect(bodyMB).toBe(129);
+    // Unfixed: the doubling reallocations (retained by ASAN quarantine / mimalloc
+    //          page cache) leave RSS at >= 2x body over the pre-fetch resident
+    //          set (release linux ~2.9x, debug+ASAN default quarantine ~2.7x).
+    // Fixed:   a single exact allocation, ~1.0x body.
+    const delta = rssAfterMB - rssBeforeMB;
+    expect(delta).toBeLessThan(1.5 * bodyMB);
+    expect(exitCode).toBe(0);
+  } finally {
+    server.close();
+  }
+}, 60000);

@@ -214,4 +214,33 @@ describe.skipIf(isWindows)("console.log after process.stdout is materialized on 
     const stdout = (await proc.stdout.text()).trim();
     expect(Number(stdout)).toBe((1 << 20) + 1);
   });
+
+  test("parent console.log survives a bun child that touches inherited stdout", async () => {
+    // O_NONBLOCK lives on the shared open file description. A bun child with
+    // stdio:'inherit' that materializes its process.stdout flips the PARENT's
+    // fd 1 too; the parent's console writer must still deliver every line.
+    using dir = tempDir("stdout-nonblock-child-inherit", {
+      "parent.mjs": `
+        const { spawnSync } = require("node:child_process");
+        spawnSync(process.execPath, ["-e", 'process.stdout.write("")'],
+                  { stdio: ["ignore", "inherit", "ignore"] });
+        const pad = Buffer.alloc(190, 120).toString();
+        for (let i = 0; i < 20000; i++) console.log("O" + i + " " + pad);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        "/bin/sh",
+        "-c",
+        'exec "$0" "$1" | { sleep 1; wc -l; }',
+        bunExe(),
+        path.join(String(dir), "parent.mjs"),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const stdout = (await proc.stdout.text()).trim();
+    expect(Number(stdout)).toBe(20000);
+  });
 });

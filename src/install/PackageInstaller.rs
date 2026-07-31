@@ -298,13 +298,8 @@ type TreeContextId = lockfile::tree::Id;
 // TreeContext::deinit dropped — Vec and Bin::PriorityQueue impl Drop.
 
 /// Finds the tree whose `node_modules` contains `target_pkg_id`, walked in
-/// Node's resolution order from `<start_tree>/<alias>/`: first the child tree
-/// at `<start_tree>/<alias>/node_modules/`, then `start_tree` itself, then
-/// each ancestor up to the root.
-///
-/// This is only used to locate a nativeDependencies package's platform
-/// optionalDependency for the `.bin` redirect, so walking the package's own
-/// resolution chain (rather than every tree) is both correct and cheap.
+/// Node resolution order from `<start_tree>/<alias>/`: the child tree at
+/// `<start_tree>/<alias>/node_modules/`, then `start_tree`, then each ancestor.
 fn find_native_binlink_target_tree(
     trees: &[Tree],
     hoisted_deps: &[DependencyID],
@@ -650,15 +645,9 @@ impl<'a> PackageInstaller<'a> {
                                     if can_defer
                                         && !completed_trees.is_set(target_tree_id as usize)
                                     {
-                                        // The platform package lives in a tree that
-                                        // hasn't been installed yet (typically the
-                                        // child tree under `<alias>/node_modules/`).
-                                        // Link the package's own bin now so any
-                                        // lifecycle script that resolves it still
-                                        // works, and re-queue so
-                                        // `link_remaining_bins` replaces it with
-                                        // the direct native link once every tree is
-                                        // on disk.
+                                        // Platform package's tree isn't installed
+                                        // yet: link the package's own bin now and
+                                        // re-queue for `link_remaining_bins`.
                                         defer_this_bin = true;
                                         break 'native_binlink_optimization;
                                     }

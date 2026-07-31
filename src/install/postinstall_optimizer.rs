@@ -193,20 +193,13 @@ impl List {
 
         match mode {
             PostinstallOptimizer::NativeBinlink => {
-                // It's not as simple as checking `get(name_hash) != null` because if the
-                // specific versions of the package do not have optional
-                // dependencies then we cannot do this optimization without
-                // breaking the code.
+                // Not a plain name-hash lookup: package versions without a
+                // platform optionalDependency (e.g. old esbuild) must still run
+                // their postinstall. See test/integration/esbuild/esbuild.test.ts.
                 //
-                // This shows up in test/integration/esbuild/esbuild.test.ts
-                //
-                // The skip applies regardless of where the package lands in the
-                // tree: the platform optionalDependency is resolved per package,
-                // and the hoisted linker redirects the `.bin` entry straight to
-                // the platform package for nested copies as well (see
-                // `find_native_binlink_target_tree` in `PackageInstaller.rs`),
-                // so skipping postinstall is safe whether or not the package's
-                // own `bin` file would have worked on its own.
+                // Tree position doesn't matter here; the `.bin` linker redirects
+                // nested copies to the platform package as well (see
+                // `find_native_binlink_target_tree`).
                 PostinstallOptimizer::get_native_binlink_replacement_package_id(
                     resolutions,
                     metas,

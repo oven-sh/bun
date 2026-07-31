@@ -483,9 +483,11 @@ impl UpgradedDuplex {
         }
     }
 
-    /// Install the freshly built engine and kick off the handshake. `start()`
-    /// re-enters (fires `on_open`), so it runs after the cell write with no
-    /// borrow live.
+    /// Install the freshly built engine and kick off the handshake. The `w`
+    /// borrow is live across the re-entrant `start()` (fires `on_open`); that
+    /// is sound because no path re-assigns the `wrapper` cell while an engine
+    /// frame is on the stack — `teardown()` neuters the payload in place
+    /// rather than `set(None)`. Preserve that if you touch `teardown()`.
     fn install_and_start(&self, wrapper: WrapperType, verify: ServerVerify) {
         self.wrapper.set(Some(wrapper));
         let w = self.wrapper_ref().unwrap();

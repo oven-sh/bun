@@ -254,9 +254,10 @@ impl PathWatcher {
                 on_update_end_fn(Some(ctx));
             }
 
-            // The guard is still `true` when `maybe_deinit` checks it (always a no-op there).
-            Self::maybe_deinit(this);
+            // Clear the guard first so a `close()` from the JS callbacks above
+            // can actually free the watcher; `this`/`me` are not used after.
             me.emit_in_progress.set(false);
+            Self::maybe_deinit(this);
             return;
         }
 

@@ -99,7 +99,7 @@ trait RequestCtxOps: RequestCtx {
     type Server;
     fn create_in(
         slot: *mut Self,
-        server: *const Self::Server,
+        server: *mut Self::Server,
         req: &mut Self::Req,
         resp: &mut Self::Resp,
         should_deinit_context: Option<DeferDeinitFlag>,
@@ -113,7 +113,11 @@ trait RequestCtxOps: RequestCtx {
     fn ctx_method(&self) -> http::Method;
     fn set_defer_deinit(&self, flag: Option<DeferDeinitFlag>);
     fn set_request_body(&self, body: Option<crate::webcore::body::BodyHiveHandle>);
-    fn request_body_mut<'r>(&self) -> Option<&'r mut BodyValue>;
+    #[allow(
+        clippy::mut_from_ref,
+        reason = "the body slot is a separate pooled allocation, not a field of *self (R-2)"
+    )]
+    fn request_body_mut(&self) -> Option<&mut BodyValue>;
     fn set_signal(&self, sig: *mut AbortSignal);
     fn set_request_weakref(&self, req: *mut Request);
     fn clear_req(&self);
@@ -143,7 +147,7 @@ where
     #[inline]
     fn create_in(
         slot: *mut Self,
-        server: *const ThisServer,
+        server: *mut ThisServer,
         req: &mut Self::Req,
         resp: &mut Self::Resp,
         should_deinit_context: Option<DeferDeinitFlag>,
@@ -195,7 +199,7 @@ where
         self.request_body.set(body)
     }
     #[inline]
-    fn request_body_mut<'r>(&self) -> Option<&'r mut BodyValue> {
+    fn request_body_mut(&self) -> Option<&mut BodyValue> {
         // SAFETY: R-2 invariant — slot shared with `Request.body`, never
         // `&mut`-borrowed concurrently (single-threaded event loop).
         self.request_body
@@ -1942,7 +1946,9 @@ where
             return Ok(JSValue::FALSE);
         }
 
-        let resp = upgrader.resp.get().unwrap();
+        let Some(resp) = upgrader.resp.get() else {
+            return Ok(JSValue::FALSE);
+        };
         let upgrade_ctx = upgrade_context.unwrap();
 
         // Keep the upgrader alive across option getters below, which run
@@ -2938,7 +2944,7 @@ where
         req: &mut Ctx::Req,
         resp: &mut Ctx::Resp,
     ) {
-        let server_ptr = user_route.server.cast_mut();
+        let server_ptr = user_route.server;
         // SAFETY: `UserRoute.server` is a back-pointer to the owning server,
         // which outlives every route it registered.
         let server = unsafe { &mut *server_ptr };
@@ -3140,7 +3146,7 @@ where
             );
         }
 
-        let self_ptr: *const Self = self;
+        let self_ptr: *mut Self = self;
         // SAFETY: both allocators hand out `*mut RequestContext<_, SSL, DEBUG, _>`; the
         // const-bool H3 parameter only affects associated consts/types, not layout, so
         // reinterpreting the slot pointer as the caller's `Ctx` monomorphization is sound.
@@ -3328,9 +3334,10 @@ where
         // BACKREF: `UserRoute.server` is set at construction from the owning
         // `NewServer` (which outlives every `UserRoute` in its `user_routes`
         // vec); non-null by invariant.
-        let server_ref = bun_ptr::BackRef::from(
-            NonNull::new(this.server.cast_mut()).expect("UserRoute.server set at construction"),
-        );
+        debug_assert!(!this.server.is_null());
+        // SAFETY: `UserRoute.server` is the owning `*mut NewServer` (write provenance),
+        // set at construction and non-null while the route is registered.
+        let server_ref = unsafe { bun_ptr::BackRef::from_raw_mut(this.server) };
         let server_ptr = server_ref.as_ptr();
         let index = this.id;
 
@@ -3503,8 +3510,7 @@ where
             unsafe { (*detach_ptr).request_context.detach_request() };
         }
 
-        // SAFETY: self_ptr is live for the request's duration.
-        ctx.on_response(unsafe { &*self_ptr }, args[0], response_value);
+        ctx.on_response(&*this, args[0], response_value);
 
         ctx.defer_deinit_until_callback_completes.set(None);
 

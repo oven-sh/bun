@@ -339,8 +339,7 @@ pub(crate) fn list_objects(
     } else {
         None
     };
-    let vm_ref = task.vm.expect("vm set at task creation");
-    let vm = vm_ref.as_mut();
+    let vm = task.vm.expect("vm set at task creation");
 
     task.http.write(bun_http::AsyncHTTP::init(
         bun_http::Method::GET,
@@ -471,12 +470,9 @@ pub(crate) fn writable_stream(
         wrapper_callback(result, unsafe { bun_ptr::callback_ctx::<NetworkSink>(ctx) })
     }
     fn on_writable_thunk(task: &MultiPartUpload, ctx: *mut c_void, flushed: u64) {
-        // SAFETY: ctx is the NetworkSink set as callback_context.
-        let _ = NetworkSink::on_writable(
-            task,
-            unsafe { bun_ptr::callback_ctx::<NetworkSink>(ctx) },
-            flushed,
-        );
+        // ctx is the NetworkSink set as callback_context; passed raw so the
+        // callee never holds an exclusive borrow across its re-entrant wake.
+        let _ = NetworkSink::on_writable(task, ctx.cast::<NetworkSink>(), flushed);
     }
 
     let proxy_url = proxy.unwrap_or(b"");
@@ -487,6 +483,7 @@ pub(crate) fn writable_stream(
     let global_static = GlobalRef::from(global_this);
     let part_size = options.part_size;
     let task_ptr: *mut MultiPartUpload = bun_core::heap::into_raw(Box::new(MultiPartUpload {
+        root: Cell::new(None),
         queue: JsCell::new(None),
         available: Cell::new(IntegerBitSet::init_full()),
         current_part_number: Cell::new(1),
@@ -521,6 +518,8 @@ pub(crate) fn writable_stream(
         on_writable: Some(on_writable_thunk), // assigned below after response_stream exists
         callback_context: Cell::new(core::ptr::null_mut()), // assigned below
     }));
+    // SAFETY: `task_ptr` is the fresh, non-null allocation root.
+    unsafe { (*task_ptr).root.set(core::ptr::NonNull::new(task_ptr)) };
     // SAFETY: freshly heap-allocated and refcounted; only shared access from here on.
     let task = unsafe { &*task_ptr };
 
@@ -531,7 +530,9 @@ pub(crate) fn writable_stream(
     // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
     let response_stream: *mut NetworkSink =
         bun_core::heap::into_raw(NetworkSink::new(NetworkSink {
-            task: NonNull::new(task_ptr).map(bun_ptr::BackRef::from),
+            // SAFETY: `task_ptr` is the live heap-alloc'd MultiPartUpload (write provenance
+            // from `into_raw`); the sink holds a counted ref released in `detach_writable`.
+            task: Some(unsafe { bun_ptr::BackRef::from_raw_mut(task_ptr) }),
             global_this: Some(bun_ptr::BackRef::new(global_this)),
             high_water_mark: part_size as BlobSizeType,
             ..Default::default()
@@ -929,6 +930,7 @@ pub(crate) fn upload_stream(
     let global_static = GlobalRef::from(global_this);
     let part_size = options.part_size;
     let task_ptr: *mut MultiPartUpload = bun_core::heap::into_raw(Box::new(MultiPartUpload {
+        root: Cell::new(None),
         queue: JsCell::new(None),
         available: Cell::new(IntegerBitSet::init_full()),
         current_part_number: Cell::new(1),
@@ -962,6 +964,8 @@ pub(crate) fn upload_stream(
         on_writable: Some(on_writable_thunk), // assigned below after ctx exists
         callback_context: Cell::new(core::ptr::null_mut()), // assigned below
     }));
+    // SAFETY: `task_ptr` is the fresh, non-null allocation root.
+    unsafe { (*task_ptr).root.set(core::ptr::NonNull::new(task_ptr)) };
     // SAFETY: freshly heap-allocated and refcounted; only shared access from here on.
     let task = unsafe { &*task_ptr };
 
@@ -991,7 +995,9 @@ pub(crate) fn upload_stream(
     // via `controller.end()/close()` before GC so its destructor never calls
     // `finalize` on this allocation.
     let sink: &mut NetworkSink = Box::leak(NetworkSink::new(NetworkSink {
-        task: NonNull::new(task_ptr).map(bun_ptr::BackRef::from),
+        // SAFETY: `task_ptr` is the live heap-alloc'd MultiPartUpload (write provenance
+        // from `into_raw`); the sink holds a counted ref released in `detach_writable`.
+        task: Some(unsafe { bun_ptr::BackRef::from_raw_mut(task_ptr) }),
         global_this: Some(bun_ptr::BackRef::new(global_this)),
         high_water_mark: part_size as BlobSizeType,
         ..Default::default()
@@ -1260,11 +1266,9 @@ fn download_stream(
 
     task.signals = task.signal_store.to();
 
-    // SAFETY: `VirtualMachine::get()` returns the live per-thread VM singleton; the
-    // `&mut` borrow is scoped to the two getter calls below.
-    let vm_mut = VirtualMachine::get().as_mut();
-    let verbose = vm_mut.get_verbose_fetch();
-    let reject_unauthorized = vm_mut.get_tls_reject_unauthorized();
+    let vm = VirtualMachine::get();
+    let verbose = vm.get_verbose_fetch();
+    let reject_unauthorized = vm.get_tls_reject_unauthorized();
 
     task.http.write(bun_http::AsyncHTTP::init(
         bun_http::Method::GET,

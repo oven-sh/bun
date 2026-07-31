@@ -267,18 +267,20 @@ pub unsafe fn is_no_proxy(
 // HOST_EXPORT(Bun__setVerboseFetchValue, c)
 pub fn set_verbose_fetch_value(value: i32) {
     use bun_http::HTTPVerboseLevel;
-    VirtualMachine::get().as_mut().default_verbose_fetch = Some(match value {
-        1 => HTTPVerboseLevel::Headers as u8,
-        2 => HTTPVerboseLevel::Curl as u8,
-        _ => HTTPVerboseLevel::None as u8,
-    });
+    VirtualMachine::get()
+        .default_verbose_fetch
+        .set(Some(match value {
+            1 => HTTPVerboseLevel::Headers as u8,
+            2 => HTTPVerboseLevel::Curl as u8,
+            _ => HTTPVerboseLevel::None as u8,
+        }));
 }
 
 // HOST_EXPORT(Bun__getVerboseFetchValue, c)
 pub fn get_verbose_fetch_value() -> i32 {
     use bun_http::HTTPVerboseLevel;
     // SAFETY: VM singleton is process-lifetime.
-    match VirtualMachine::get().as_mut().get_verbose_fetch() {
+    match VirtualMachine::get().get_verbose_fetch() {
         HTTPVerboseLevel::None => 0,
         HTTPVerboseLevel::Headers => 1,
         HTTPVerboseLevel::Curl => 2,

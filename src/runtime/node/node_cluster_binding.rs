@@ -307,14 +307,15 @@ pub(crate) fn handle_internal_message_primary(
             // Take the acked callback out of the holder (dropping the Strong)
             // before running JS.
             let entry = ipc_data.internal_msg_queue.with_mut(|q| {
-                let entry = q.callbacks.get(&ack).map(|s| s.get());
-                if entry.is_some() {
+                // A present-but-cleared `StrongOptional` (or a cleared worker)
+                // yields `None`: the callback is simply not run.
+                let cb = q.callbacks.get(&ack).and_then(|s| s.get());
+                if q.callbacks.contains_key(&ack) {
                     q.callbacks.swap_remove(&ack);
                 }
-                entry.map(|cb| (cb, q.worker.get().unwrap()))
+                cb.zip(q.worker.get())
             });
-            if let Some((callback_opt, worker)) = entry {
-                let cb = callback_opt.unwrap();
+            if let Some((cb, worker)) = entry {
                 event_loop.run_callback(
                     cb,
                     global,

@@ -65,6 +65,12 @@ pub struct Channel<Owner> {
 
     pub(crate) backend: Backend,
 
+    /// This channel's own address with write provenance, recorded by
+    /// [`Channel::adopt`] / [`Channel::adopt_pipe`] from the owner's
+    /// `&mut`. Callback pointers and the owner recovery derive from it,
+    /// never from a `&self`.
+    root: Cell<*mut Channel<Owner>>,
+
     _owner: PhantomData<*mut Owner>,
 }
 
@@ -80,20 +86,25 @@ impl<Owner> Default for Channel<Owner> {
             out: JsCell::new(Vec::new()),
             done: Cell::new(false),
             backend: Backend::default(),
+            root: Cell::new(core::ptr::null_mut()),
             _owner: PhantomData,
         }
     }
 }
 
 impl<Owner: ChannelOwner> Channel<Owner> {
-    /// Raw backref to the embedding owner. Callers form `&mut Owner` only
-    /// for the duration of one callback call, with no cell borrow of `self`
-    /// held across it.
+    /// Raw backref to the embedding owner, derived from the root recorded at
+    /// adopt time (write provenance over the whole owner). Callers form
+    /// `&mut Owner` only for the duration of one callback call, with no cell
+    /// borrow of `self` held across it.
     #[inline]
     fn owner_ptr(&self) -> *mut Owner {
-        // SAFETY: `self` is always embedded at `Owner::OFFSET` inside an
-        // `Owner` that outlives all callbacks (see module doc).
-        unsafe { Owner::from_field_ptr(std::ptr::from_ref(self).cast_mut()) }
+        let root = self.root.get();
+        debug_assert!(!root.is_null(), "Channel::owner_ptr before adopt");
+        // SAFETY: `self` is embedded at `Owner::OFFSET` inside an `Owner`
+        // that outlives all callbacks (see module doc); `root` is that same
+        // address with the owner's write provenance.
+        unsafe { Owner::from_field_ptr(root) }
     }
 }
 
@@ -183,13 +194,18 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     // parameter would trip `invalid_reference_casting` on the `&T → &mut T`
     // promotion; the raw-pointer route sidesteps that lint while keeping both
     // call sites (which pass `&`/`&mut` and coerce) unchanged.
-    pub(crate) fn adopt(&self, vm: *const VirtualMachine, fd: Fd) -> bool {
-        // VM is process-singleton and accessed only from the main
-        // thread here; route through the safe singleton accessor.
-        let _ = vm;
-        let vm: &mut VirtualMachine = VirtualMachine::get().as_mut();
+    /// `this` is the channel's address derived from the owner's `&mut`.
+    pub(crate) fn adopt(this: *mut Self, vm: *const VirtualMachine, fd: Fd) -> bool {
+        // SAFETY: caller passes `&raw mut owner.channel` (live for the call).
+        let self_ = unsafe { &*this };
+        self_.root.set(this);
+        Self::adopt_impl(self_, this, vm, fd)
+    }
+
+    fn adopt_impl(&self, this: *mut Self, _vm: *const VirtualMachine, fd: Fd) -> bool {
         #[cfg(windows)]
         {
+            let _ = this; // registered via `adopt_pipe_impl` from `self.root`
             // With ipc=true
             // libuv wraps reads/writes in its own framing; both ends use it so
             // the wrapping is transparent and our payload bytes pass through
@@ -220,7 +236,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 return false;
             }
             let pipe = bun_core::heap::into_raw(pipe);
-            if !self.adopt_pipe(vm, pipe) {
+            if !self.adopt_pipe_impl(pipe) {
                 // Caller still owns `pipe` on adopt_pipe failure.
                 // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
                 unsafe { uv::Pipe::close_and_destroy(pipe) };
@@ -230,14 +246,11 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         }
         #[cfg(not(windows))]
         {
+            // VM is process-singleton and accessed only from the main
+            // thread here; route through the safe singleton accessor.
+            let vm: &mut VirtualMachine = VirtualMachine::get().as_mut();
             let g = Self::ensure_posix_group(vm);
-            let Some(sock) = Socket::from_fd(
-                g,
-                uws::SocketKind::Dynamic,
-                fd,
-                std::ptr::from_ref(self).cast_mut(),
-                true,
-            ) else {
+            let Some(sock) = Socket::from_fd(g, uws::SocketKind::Dynamic, fd, this, true) else {
                 // us_socket_from_fd does NOT take ownership on failure; leaving
                 // the inherited IPC endpoint open keeps the peer process alive.
                 fd.close();
@@ -261,13 +274,26 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// `close()` / `Drop`, and both sides exit via Global.exit / drive()
     /// returning, so the extra ref never holds the process open.
     #[cfg(windows)]
-    pub(crate) fn adopt_pipe(&self, _vm: *const VirtualMachine, pipe: *mut uv::Pipe) -> bool {
+    /// `this` is the channel's address derived from the owner's `&mut`.
+    pub(crate) fn adopt_pipe(
+        this: *mut Self,
+        _vm: *const VirtualMachine,
+        pipe: *mut uv::Pipe,
+    ) -> bool {
+        // SAFETY: caller passes `&raw mut owner.channel` (live for the call).
+        let self_ = unsafe { &*this };
+        self_.root.set(this);
+        self_.adopt_pipe_impl(pipe)
+    }
+
+    #[cfg(windows)]
+    fn adopt_pipe_impl(&self, pipe: *mut uv::Pipe) -> bool {
         // The read callbacks are expressed via the `StreamReader` trait impl
         // below and routed through `read_start_ctx`, which stashes `self` in
         // `handle.data`.
         // SAFETY: `pipe` is a live, init'ed `Box<Pipe>` allocation owned by the
         // caller; we only borrow it to start reading.
-        let rc = unsafe { (*pipe).read_start_ctx::<Self>(core::ptr::from_ref(self).cast_mut()) };
+        let rc = unsafe { (*pipe).read_start_ctx::<Self>(self.root.get()) };
         if let Some(e) = rc.to_error(bun_sys::Tag::listen) {
             bun_core::debug_warn!(
                 "Channel.adoptPipe: readStart failed: {}",
@@ -369,7 +395,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         self.backend
             .write_buf
             .set(uv::uv_buf_t::init(self.backend.inflight.get().as_slice()));
-        let this: *mut Self = std::ptr::from_ref(self).cast_mut();
+        let this: *mut Self = self.root.get();
         // SAFETY: `p` is the `this` handed to `write` below — the live Channel
         // stashed for the callback; every Channel method is `&self`.
         let on_write: fn(*mut Self, uv::ReturnCode) =
@@ -430,18 +456,25 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         #[cfg(not(windows))]
         {
             while !self.done.get() {
-                let wrote = {
-                    let out = self.out.get();
-                    if out.is_empty() {
-                        return;
-                    }
-                    self.backend.socket.get().write(out.as_slice())
-                };
+                // No `out` borrow is held across `write()`: a synchronous
+                // close inside it re-enters this channel (`mark_done` →
+                // `on_channel_done`, which may `send()`).
+                let mut pending = self.out.replace(Vec::new());
+                if pending.is_empty() {
+                    self.out.set(pending);
+                    return;
+                }
+                let wrote = self.backend.socket.get().write(pending.as_slice());
+                let w = usize::try_from(wrote).unwrap_or(0).min(pending.len());
+                pending.drain_front(w);
+                self.out.with_mut(|cur| {
+                    // Bytes queued during the write are newer: after the tail.
+                    pending.extend_from_slice(cur);
+                    *cur = pending;
+                });
                 if wrote <= 0 {
                     return;
                 }
-                let w: usize = usize::try_from(wrote).unwrap();
-                self.out.with_mut(|out| out.drain_front(w));
             }
         }
     }

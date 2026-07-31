@@ -110,7 +110,7 @@ pub struct RequestContext<
     /// BACKREF to the embedding `Server` — the server owns this request
     /// context (allocated from its `HiveArray` pool) and outlives it, so the
     /// pointee is live for the holder's entire lifetime. `None` once detached.
-    pub(crate) server: Cell<Option<bun_ptr::BackRef<ThisServer>>>,
+    pub(crate) server: Cell<Option<bun_ptr::BackRef<ThisServer, bun_ptr::Mut>>>,
     pub(crate) resp: Cell<Option<uws::AnyResponse>>,
     pub(crate) req: Cell<Option<*mut Req<SSL_ENABLED, HTTP3>>>,
     pub(crate) request_weakref: JsCell<request::WeakRef>,
@@ -594,7 +594,11 @@ where
     /// hold it across disjoint reborrows of other `RequestContext` fields
     /// (same pattern as [`server()`]).
     #[inline]
-    fn request_body_mut<'r>(&self) -> Option<&'r mut Body::Value> {
+    #[allow(
+        clippy::mut_from_ref,
+        reason = "the body slot is a separate pooled allocation, not a field of *self (R-2)"
+    )]
+    fn request_body_mut(&self) -> Option<&mut Body::Value> {
         // SAFETY: R-2 invariant — the slot is shared with `Request.body` but
         // never `&mut`-borrowed concurrently (single-threaded event loop).
         self.request_body
@@ -614,7 +618,11 @@ where
     /// `do_render_stream`; this `RequestContext` is its sole owner until
     /// [`destroy_sink`] consumes it. Single-threaded — no other `&mut` alias.
     #[inline]
-    fn sink_mut<'r>(&self) -> Option<&'r mut ResponseStreamJSSink<SSL_ENABLED, HTTP3>> {
+    #[allow(
+        clippy::mut_from_ref,
+        reason = "the sink is a separate heap allocation owned by this ctx, not a field of *self"
+    )]
+    fn sink_mut(&self) -> Option<&mut ResponseStreamJSSink<SSL_ENABLED, HTTP3>> {
         // SAFETY: see fn doc — heap JSSink owned by this ctx, sole live
         // mutable view, single-threaded.
         self.sink.get().map(|p| unsafe { &mut *p.as_ptr() })
@@ -1333,7 +1341,7 @@ where
 
     pub(crate) fn create(
         this: &mut core::mem::MaybeUninit<Self>,
-        server: *const ThisServer,
+        server: *mut ThisServer,
         req: *mut Req<SSL_ENABLED, HTTP3>,
         resp: uws::AnyResponse,
         should_deinit_context: Option<DeferDeinitFlag>,
@@ -1348,7 +1356,11 @@ where
                 resp: Cell::new(Some(resp)),
                 req: Cell::new(Some(req)),
                 method: resolved_method,
-                server: Cell::new(NonNull::new(server.cast_mut()).map(bun_ptr::BackRef::from)),
+                // BACKREF — `server` is the live `NewServer` that owns the request
+                // pool this ctx lives in; caller passes `*mut Self`.
+                server: Cell::new(
+                    NonNull::new(server).map(|p| bun_ptr::BackRef::from_raw_mut(p.as_ptr())),
+                ),
                 defer_deinit_until_callback_completes: Cell::new(should_deinit_context),
                 range: RangeRequest::raw_from_request(&Self::any_request(req)),
                 request_weakref: JsCell::new(request::WeakRef::EMPTY),

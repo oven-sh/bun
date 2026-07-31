@@ -61,7 +61,7 @@ struct TerminalCreateResult {
     /// when this struct was populated; the +1 ref is held until
     /// `Subprocess::finalize` (or the spawn-error scopeguard's
     /// `abandon_from_spawn`) releases it, so the pointee outlives this struct.
-    pub terminal: bun_ptr::BackRef<Terminal>,
+    pub terminal: bun_ptr::BackRef<Terminal, bun_ptr::Mut>,
     pub js_value: JSValue,
 }
 
@@ -415,7 +415,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut windows_verbatim_arguments: bool = false;
     let mut abort_signal: Option<*mut WebCore::AbortSignal> = None;
     let mut terminal_info: Option<TerminalCreateResult> = None;
-    let mut existing_terminal: Option<bun_ptr::BackRef<Terminal>> = None; // Existing terminal passed by user
+    let mut existing_terminal: Option<bun_ptr::BackRef<Terminal, bun_ptr::Mut>> = None; // Existing terminal passed by user
     let mut terminal_js_value: JSValue = JSValue::ZERO;
     let mut defer_guard = scopeguard::guard(
         (&mut abort_signal, &mut terminal_info),
@@ -828,7 +828,9 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                         // `terminal_val` is reachable (kept alive below via
                         // `terminal_js_value`), so the `BackRef` invariant
                         // (pointee outlives holder) holds for this scope.
-                        let term = bun_ptr::BackRef::from(terminal);
+                        // SAFETY: `terminal` is the wrapper's live `m_ctx` heap pointer
+                        // (write provenance from its original allocation).
+                        let term = unsafe { bun_ptr::BackRef::from_raw_mut(terminal.as_ptr()) };
                         if term.is_closed() {
                             return Err(global_this
                                 .throw_invalid_arguments(format_args!("terminal is closed")));
@@ -863,10 +865,11 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                                     // in `Subprocess::finalize`); the scopeguard's
                                     // `abandon_from_spawn` path covers the error case.
                                     // `IntrusiveRc::into_raw` is never null (NonNull-backed).
-                                    terminal: bun_ptr::BackRef::from(
-                                        core::ptr::NonNull::new(created.terminal.into_raw())
-                                            .expect("IntrusiveRc non-null"),
-                                    ),
+                                    // SAFETY: `into_raw()` yields the live heap pointer
+                                    // (write provenance, non-null); ref released later.
+                                    terminal: unsafe {
+                                        bun_ptr::BackRef::from_raw_mut(created.terminal.into_raw())
+                                    },
                                     js_value: created.js_value,
                                 });
                             }
@@ -1319,7 +1322,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         global_this: bun_ptr::BackRef::new(global_this),
         // SAFETY: `to_process` returns a non-null `Box::into_raw` pointer; the
         // intrusive ref is released in `Subprocess::finalize`.
-        process: unsafe { bun_ptr::BackRef::from_raw(process) },
+        process: unsafe { bun_ptr::BackRef::from_raw_mut(process) },
         pid_rusage: Cell::new(None),
         // stdin/stdout/stderr are assigned immediately after this literal.
         // `Writable.init()` writes to `subprocess.weak_file_sink_stdin_ptr`,
@@ -1450,6 +1453,16 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
             subprocess.finalize_streams();
             subprocess.process_mut().detach();
+            // The SendQueue allocated above is only released by `finalize()`,
+            // which won't run on this error path: detach and drop our ref.
+            if let Some(ipc_data) = subprocess.ipc_data.take() {
+                // SAFETY: owned ref from `SendQueue::new` above; nothing else
+                // holds it yet (no socket wired, no task scheduled).
+                unsafe {
+                    (*ipc_data.as_ptr()).detach();
+                    <IPC::SendQueue as bun_ptr::CellRefCounted>::deref(ipc_data.as_ptr());
+                }
+            }
             // Release the intrusive ref
             // (finalize() won't run on this error path).
             // SAFETY: this error path returns without ever reading `process` again.

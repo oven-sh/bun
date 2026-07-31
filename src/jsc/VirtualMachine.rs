@@ -220,7 +220,7 @@ pub struct VirtualMachine {
     pub(crate) default_tls_reject_unauthorized: Option<bool>,
     // LAYERING: real type is `Option<http::HTTPVerboseLevel>` (forward dep);
     // stored as the enum's `u8` repr.
-    pub(crate) default_verbose_fetch: Option<u8>,
+    pub(crate) default_verbose_fetch: core::cell::Cell<Option<u8>>,
 
     /// Do not access this field directly! It exists in the VirtualMachine struct so
     /// that we don't accidentally make a stack copy of it; only use it through
@@ -3200,9 +3200,9 @@ impl VirtualMachine {
     }
 
     /// Verbose fetch logging level, from the cached override or `BUN_CONFIG_VERBOSE_FETCH`.
-    pub fn get_verbose_fetch(&mut self) -> bun_http::HTTPVerboseLevel {
+    pub fn get_verbose_fetch(&self) -> bun_http::HTTPVerboseLevel {
         use bun_http::HTTPVerboseLevel as L;
-        if let Some(v) = self.default_verbose_fetch {
+        if let Some(v) = self.default_verbose_fetch.get() {
             // Note: field is `Option<u8>` until the b2-cycle widens it;
             // map ordinals back.
             return match v {
@@ -3214,14 +3214,14 @@ impl VirtualMachine {
         // SAFETY: `transpiler.env` is set during init and live for VM lifetime.
         if let Some(verbose_fetch) = self.env_loader().get(b"BUN_CONFIG_VERBOSE_FETCH") {
             if verbose_fetch == b"true" || verbose_fetch == b"1" {
-                self.default_verbose_fetch = Some(1);
+                self.default_verbose_fetch.set(Some(1));
                 return L::Headers;
             } else if verbose_fetch == b"curl" {
-                self.default_verbose_fetch = Some(2);
+                self.default_verbose_fetch.set(Some(2));
                 return L::Curl;
             }
         }
-        self.default_verbose_fetch = Some(0);
+        self.default_verbose_fetch.set(Some(0));
         L::None
     }
 

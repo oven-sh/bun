@@ -66,6 +66,9 @@ pub struct WindowsNamedPipe {
     /// deferred while [`Flags::WRAPPER_BUSY`] is set (see
     /// [`Self::with_wrapper`]).
     pub(crate) wrapper: JsCell<Option<WrapperType>>,
+    /// An `on_close` that arrived while [`Flags::WRITER_BUSY`] was set; run
+    /// from [`Self::close_writer`]'s epilogue once the writer borrow ends.
+    pub(crate) deferred_writer_close: Cell<bool>,
     /// Non-owning alias of the heap `uv::Pipe`. The owning
     /// `Box<uv::Pipe>` is leaked in [`from`] and adopted by
     /// `self.writer.source` (`Source::Pipe`) inside [`start`]; this field only
@@ -121,6 +124,12 @@ bitflags::bitflags! {
         /// `Option` under that in-flight frame, so `release_resources` defers
         /// the move-out to `with_wrapper`'s epilogue while this bit is set.
         const WRAPPER_BUSY = 1 << 5;
+        /// Set while `writer` is exclusively borrowed for `close()` in
+        /// [`WindowsNamedPipe::close_writer`]. `StreamingWriter::close` fires
+        /// `Parent::on_close` synchronously, whose `release_resources` would
+        /// re-borrow the `writer` cell; `on_close` defers itself instead
+        /// (`deferred_writer_close`) and runs from `close_writer`'s epilogue.
+        const WRITER_BUSY  = 1 << 6;
         // _: u2 padding
     }
 }
@@ -296,7 +305,23 @@ impl WindowsNamedPipe {
             }
             WriteStatus::EndOfFile => {
                 // we send FIN so we close after this
-                self.writer.with_mut(|w| w.close());
+                self.close_writer();
+            }
+        }
+    }
+
+    /// Close the streaming writer. `close()` synchronously fires
+    /// `Parent::on_close`; that runs deferred (via [`Flags::WRITER_BUSY`])
+    /// so `release_resources` never re-borrows the `writer` cell while this
+    /// exclusive borrow is live.
+    fn close_writer(&self) {
+        let was_busy = self.flags.get().contains(Flags::WRITER_BUSY);
+        self.update_flags(|f| f.insert(Flags::WRITER_BUSY));
+        self.writer.with_mut(|w| w.close());
+        if !was_busy {
+            self.update_flags(|f| f.remove(Flags::WRITER_BUSY));
+            if self.deferred_writer_close.replace(false) {
+                self.on_close();
             }
         }
     }
@@ -310,11 +335,11 @@ impl WindowsNamedPipe {
         if err == bun_sys::E::EOF {
             // we received FIN but we dont allow half-closed connections right now
             (self.handlers.on_end)(self.handlers.ctx);
-            self.writer.with_mut(|w| w.close());
+            self.close_writer();
             return;
         }
         self.on_error(bun_sys::Error::from_code(err, bun_sys::Tag::read));
-        self.writer.with_mut(|w| w.close());
+        self.close_writer();
     }
 
     fn on_error(&self, err: bun_sys::Error) {
@@ -409,6 +434,12 @@ impl WindowsNamedPipe {
     }
 
     fn on_close(&self) {
+        if self.flags.get().contains(Flags::WRITER_BUSY) {
+            // Called synchronously from inside `close_writer`'s exclusive
+            // writer borrow; defer to its epilogue.
+            self.deferred_writer_close.set(true);
+            return;
+        }
         bun_output::scoped_log!(WindowsNamedPipe, "onClose");
         // `self.pipe` is a non-owning alias of the `Box<uv::Pipe>` owned by
         // `writer.source`. By the time the writer invokes this hook it has
@@ -548,6 +579,7 @@ impl WindowsNamedPipe {
             // re-materialises the `Box` and is responsible for freeing it.
             pipe: Cell::new(Some(NonNull::from(Box::leak(pipe)))),
             wrapper: JsCell::new(None),
+            deferred_writer_close: Cell::new(false),
             handlers,
             // defaults:
             writer: JsCell::new(StreamingWriter::default()),

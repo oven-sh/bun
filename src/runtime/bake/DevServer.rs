@@ -111,7 +111,10 @@ impl DevServer {
     /// SAFETY: single JS thread; caller must not hold an aliasing `&mut`.
     #[inline]
     pub(crate) fn vm_mut(&self) -> &mut VirtualMachine {
-        debug_assert!(::core::ptr::eq(self.vm.as_ptr(), VirtualMachine::get()));
+        debug_assert!(::core::ptr::eq(
+            self.vm.as_const_ptr(),
+            VirtualMachine::get()
+        ));
         VirtualMachine::get_mut()
     }
 
@@ -2737,9 +2740,10 @@ impl DevServer {
                     },
                 );
                 // SAFETY: per-access reborrow; no other `&` into `*route_bundle` live.
+                // `route_ptr` is the fresh heap-alloc'd StaticRoute (write provenance, non-null).
                 unsafe {
                     (*route_bundle).data.html_mut().cached_response =
-                        ::core::ptr::NonNull::new(route_ptr).map(bun_ptr::BackRef::from)
+                        Some(bun_ptr::BackRef::from_raw_mut(route_ptr))
                 };
                 break 'generate route_ptr;
             }
@@ -2940,8 +2944,10 @@ impl DevServer {
                         ..Default::default()
                     },
                 );
+                // SAFETY: `route_ptr` is the fresh heap-alloc'd StaticRoute (write
+                // provenance, non-null); the route bundle holds its counted ref.
                 route_bundle.client_bundle =
-                    ::core::ptr::NonNull::new(route_ptr).map(bun_ptr::BackRef::from);
+                    Some(unsafe { bun_ptr::BackRef::from_raw_mut(route_ptr) });
                 break 'generate route_ptr;
             }
         };

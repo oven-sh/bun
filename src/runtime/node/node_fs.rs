@@ -1446,7 +1446,7 @@ mod _async_tasks {
         /// BACKREF — `Some` iff `IS_SHELL`. The shell `ShellCpTask` owns and
         /// outlives this task; `ParentRef` gives a safe `&ShellCpTask` projection
         /// for `cp_on_copy` and round-trips the `*mut` for `cp_on_finish`.
-        pub(crate) shelltask: Option<bun_ptr::ParentRef<ShellCpTask>>,
+        pub(crate) shelltask: Option<bun_ptr::ParentRef<ShellCpTask, bun_ptr::Mut>>,
     }
 
     bun_threading::intrusive_work_task!([const IS_SHELL: bool] NewAsyncCpTask<IS_SHELL>, task);
@@ -1459,7 +1459,7 @@ mod _async_tasks {
         /// as `ParentRef` (constructed from the `*mut` with `Box::leak` provenance)
         /// so shared reads are safe-projected and `as_mut_ptr()` round-trips the
         /// original write provenance for `on_subtask_done`'s `&mut` promotion.
-        pub(crate) cp_task: bun_ptr::ParentRef<NewAsyncCpTask<IS_SHELL>>,
+        pub(crate) cp_task: bun_ptr::ParentRef<NewAsyncCpTask<IS_SHELL>, bun_ptr::Mut>,
         /// Single owned allocation laid out as `<src>\0<dest>\0`. Ownership is
         /// encoded directly as `Box<[OSPathChar]>` and
         /// the two NUL-terminated views are reconstructed via `src()` / `dest()`.
@@ -1485,9 +1485,9 @@ mod _async_tasks {
             WorkPool::schedule_new(CpSingleTask {
                 // `parent` is the `Box::leak`'d task — never null; `NonNull → ParentRef`
                 // preserves the mutable provenance for `on_subtask_done`.
-                cp_task: bun_ptr::ParentRef::from(
-                    core::ptr::NonNull::new(parent).expect("cp parent"),
-                ),
+                // SAFETY: `parent` is the live `Box::leak`'d task (write provenance), never null.
+                cp_task: unsafe { bun_ptr::ParentRef::from_nullable_mut(parent) }
+                    .expect("cp parent"),
                 path_buf,
                 src_len,
                 dest_len,
@@ -1614,7 +1614,9 @@ mod _async_tasks {
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
                 subtask_count: AtomicUsize::new(1),
-                shelltask: core::ptr::NonNull::new(shelltask).map(bun_ptr::ParentRef::from),
+                // SAFETY: `shelltask` (when non-null) is the live heap-alloc'd `ShellCpTask`
+                // that owns and outlives this task; pointer carries write provenance.
+                shelltask: unsafe { bun_ptr::ParentRef::from_nullable_mut(shelltask) },
             });
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
@@ -1647,7 +1649,9 @@ mod _async_tasks {
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker { id: 0 },
                 subtask_count: AtomicUsize::new(1),
-                shelltask: core::ptr::NonNull::new(shelltask).map(bun_ptr::ParentRef::from),
+                // SAFETY: `shelltask` (when non-null) is the live heap-alloc'd `ShellCpTask`
+                // that owns and outlives this task; pointer carries write provenance.
+                shelltask: unsafe { bun_ptr::ParentRef::from_nullable_mut(shelltask) },
             });
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));

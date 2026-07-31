@@ -175,7 +175,7 @@ impl Worker {
             if !extra_pipes.is_empty() {
                 // coord.vm backref valid for worker lifetime; adopt() mutates the
                 // loop's socket context via interior mutability on the C side.
-                if !this.ipc.adopt(coord.vm, extra_pipes[0].fd()) {
+                if !Channel::adopt(&raw mut this.ipc, coord.vm, extra_pipes[0].fd()) {
                     return Err(crate::Error::ChannelAdoptFailed);
                 }
             } else {
@@ -275,7 +275,7 @@ impl Worker {
             // to the Channel on success (it does the Box::from_raw internally).
             // On failure the caller still owns it (Channel.rs:294) and the
             // `ipc_pipe_guard` errdefer performs `close_and_destroy`.
-            if !this.ipc.adopt_pipe(coord.vm, ipc_pipe) {
+            if !Channel::adopt_pipe(&raw mut this.ipc, coord.vm, ipc_pipe) {
                 return Err(crate::Error::ChannelAdoptFailed);
             }
             // Channel now owns the Box; disarm the errdefer so end-of-block

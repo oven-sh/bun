@@ -277,7 +277,9 @@ impl WindowsNamedPipeContext {
     }
 
     #[cfg(windows)]
-    pub(crate) fn run_event(this: *mut Self) {
+    /// # Safety
+    /// `this` is the live queued pointer; the call may free it.
+    pub(crate) unsafe fn run_event(this: *mut Self) {
         // SAFETY: called from the `task_tag::WindowsNamedPipeContext` dispatch
         // arm; `this` is the live ctx pointer registered in create()
         match unsafe { (*this).task_event } {
@@ -465,7 +467,8 @@ impl Drop for WindowsNamedPipeContext {
 }
 
 // Taskable: `deref()` enqueues `*mut Self`; the dispatch arm calls
-// `run_event`, which may free the context.
+// `run_event`, which may free the context. Gated like the dispatch arm.
+#[cfg(windows)]
 impl bun_event_loop::Taskable for WindowsNamedPipeContext {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WindowsNamedPipeContext;
 }

@@ -296,7 +296,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// `JSValue::then` as a promise context and (b) `ServePlugins` is mutated
     /// through any owner. The
     /// counted ref held here is released in `Drop for NewServer`.
-    pub(crate) plugins: Option<bun_ptr::BackRef<ServePlugins>>,
+    pub(crate) plugins: Option<bun_ptr::BackRef<ServePlugins, bun_ptr::Mut>>,
 
     pub(crate) dev_server: Option<Box<crate::bake::DevServer::DevServer>>,
 
@@ -317,7 +317,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
 
 pub struct UserRoute<const SSL: bool, const DEBUG: bool> {
     pub(crate) id: u32,
-    pub(crate) server: *const NewServer<SSL, DEBUG>,
+    pub(crate) server: *mut NewServer<SSL, DEBUG>,
     pub(crate) route: server_config::RouteDeclaration,
 }
 
@@ -463,7 +463,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     #[inline(always)]
     pub(crate) fn vm_mut(&self) -> *mut jsc::VirtualMachine {
         debug_assert!(core::ptr::eq(
-            self.vm.as_ptr(),
+            self.vm.as_const_ptr(),
             jsc::VirtualMachine::get_mut_ptr()
         ));
         jsc::VirtualMachine::get_mut_ptr()
@@ -1119,7 +1119,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: `user_route` is the live entry in `server.user_routes` whose
         // address was registered as the uws callback userdata.
         let user_route = unsafe { &*user_route };
-        let server = user_route.server.cast_mut();
+        let server = user_route.server;
         let index = user_route.id;
 
         // SAFETY: `server` is the live backref stored in `user_route`.
@@ -1547,15 +1547,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if self.poll_ref.is_active() {
             return;
         }
-        // SAFETY: `self.vm` is the live per-thread VM singleton backref.
-        self.poll_ref
-            .ref_(unsafe { jsc::VirtualMachine::event_loop_ctx(self.vm.as_ptr()) });
+        self.poll_ref.ref_(self.vm.loop_ctx());
     }
 
     pub(crate) fn unref(&mut self) {
-        // SAFETY: `self.vm` is the live per-thread VM singleton backref.
-        self.poll_ref
-            .unref(unsafe { jsc::VirtualMachine::event_loop_ctx(self.vm.as_ptr()) });
+        self.poll_ref.unref(self.vm.loop_ctx());
     }
 
     pub(crate) fn stop_listening(&mut self, abrupt: bool) {
@@ -2450,9 +2446,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .as_ref()
             {
                 if !serve_plugins_config.is_empty() {
-                    self.plugins =
-                        core::ptr::NonNull::new(ServePlugins::init(serve_plugins_config.clone()))
-                            .map(bun_ptr::BackRef::from);
+                    let p = ServePlugins::init(serve_plugins_config.clone());
+                    // SAFETY: `init` returns a live `heap::alloc`'d `ServePlugins` (write
+                    // provenance, non-null); freed only via `ServePlugins::deref_`.
+                    self.plugins = Some(unsafe { bun_ptr::BackRef::from_raw_mut(p) });
                 }
             }
         }

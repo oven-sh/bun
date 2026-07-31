@@ -321,9 +321,12 @@ pub(crate) fn run_task(
         #[cfg(windows)]
         task_tag::WindowsNamedPipeContext => {
             // Same shape as `DuplexUpgradeContext`: may free the context.
-            crate::socket::WindowsNamedPipeContext::run_event(cast_ptr!(
-                crate::socket::WindowsNamedPipeContext
-            ));
+            // SAFETY: tag identifies the pointee; the queue owns it until here.
+            unsafe {
+                crate::socket::WindowsNamedPipeContext::run_event(cast_ptr!(
+                    crate::socket::WindowsNamedPipeContext
+                ))
+            };
         }
         #[cfg(windows)]
         task_tag::GetAddrInfoLibuvComplete => {

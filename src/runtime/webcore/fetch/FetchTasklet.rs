@@ -1176,10 +1176,11 @@ impl FetchTasklet {
         let tracker = self.tracker;
         tracker.will_dispatch(&global_this);
         // defer block:
-        let dispatch_cleanup = |this: &mut FetchTasklet| {
+        let dispatch_cleanup = |_this: &mut FetchTasklet| {
             bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: promise_value is not null");
             tracker.did_dispatch(&global_this);
-            this.promise = jsc::JSPromiseStrong::empty();
+            // `self.promise` was already emptied by the `take()` that moved
+            // it into the settle task above.
         };
 
         let result = if success {

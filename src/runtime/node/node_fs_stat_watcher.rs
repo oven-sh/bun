@@ -503,10 +503,10 @@ pub struct StatWatcher {
     pub(crate) next: bun_threading::Link<StatWatcher>, // INTRUSIVE link for UnboundedQueue
 
     // JSC_BORROW per LIFETIMES.tsv — VM outlives the watcher. `BackRef` gives
-    // safe `&VirtualMachine` projection (Deref) at every read site. Constructed
-    // via `From<NonNull>` from `bun_vm_ptr()` so `as_ptr()` retains write
-    // provenance for the one `rare_data()` (`&mut self`) call in `deinit`.
-    ctx: BackRef<VirtualMachine>,
+    // safe `&VirtualMachine` projection (Deref) at every read site. `Mut`
+    // provenance from `bun_vm_ptr()` for the one `rare_data()` (`&mut self`)
+    // call in `deinit`.
+    ctx: BackRef<VirtualMachine, bun_ptr::Mut>,
 
     ref_count: ThreadSafeRefCount<StatWatcher>,
 
@@ -992,9 +992,10 @@ impl StatWatcher {
         let vm = args.global_this.bun_vm_ptr();
         let this = Box::new(StatWatcher {
             next: bun_threading::Link::new(),
-            // JSC_BORROW: `vm` is the live per-thread VM (never null). `From<NonNull>`
-            // preserves the FFI write provenance for the `rare_data()` call in `deinit`.
-            ctx: BackRef::from(core::ptr::NonNull::new(vm).expect("vm")),
+            // JSC_BORROW: `vm` is the live per-thread VM (never null); write provenance
+            // for the `rare_data()` call in `deinit`.
+            // SAFETY: `bun_vm_ptr()` is the live per-thread VM, non-null, outlives the watcher.
+            ctx: unsafe { BackRef::from_raw_mut(vm) },
             ref_count: ThreadSafeRefCount::init(),
             closed: AtomicBool::new(false),
             path: alloc_file_path,

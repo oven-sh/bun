@@ -527,23 +527,30 @@ impl<'a> Coordinator<'a> {
         let base: *mut Worker = self.workers.as_mut_ptr();
         let n = self.spawned_count as usize;
         for i in 0..n {
-            // SAFETY: `i < spawned_count <= workers.len()`; this is the only
-            // live `&mut Worker` into the slice for the duration of the reap.
-            let w = unsafe { &mut *base.add(i) };
-            if !core::mem::take(&mut w.reap_pending) {
-                continue;
-            }
-            // SpawnStatus is not Copy (Err arm owns a path); take()
-            // instead of pattern-match-by-copy.
-            let status = w
-                .exit_status
-                .take()
-                .expect("reap_pending set only after exit_status");
+            // SAFETY: `i < spawned_count <= workers.len()`. Keep the slot as a
+            // raw pointer: `reap_worker` reborrows `self`, so no protected
+            // `&mut Worker` may span that call (see `find_steal_victim`).
+            let w: *mut Worker = unsafe { base.add(i) };
+            // SAFETY: `w` is a live slot; short place accesses only.
+            let status = unsafe {
+                if !core::mem::take(&mut (*w).reap_pending) {
+                    continue;
+                }
+                // SpawnStatus is not Copy (Err arm owns a path); take()
+                // instead of pattern-match-by-copy.
+                (*w).exit_status
+                    .take()
+                    .expect("reap_pending set only after exit_status")
+            };
             self.reap_worker(w, &status);
         }
     }
 
-    fn reap_worker(&mut self, w: &mut Worker, status: &SpawnStatus) {
+    fn reap_worker(&mut self, w: *mut Worker, status: &SpawnStatus) {
+        // SAFETY: `w` is a live slot in `self.workers`' heap buffer, an
+        // allocation disjoint from `*self`; re-derived here rather than
+        // passed as a protected `&mut` across the `&mut self` call boundary.
+        let w = unsafe { &mut *w };
         // Decrement here (not in onProcessExit) so drive() keeps pumping until
         // the IPC pipe has been drained and this reap actually runs.
         self.live_workers -= 1;

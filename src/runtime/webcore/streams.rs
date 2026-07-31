@@ -2108,7 +2108,7 @@ pub struct NetworkSink {
     // Stored as `BackRef`
     // (set-once); while `Some` the sink holds a counted ref on the intrusively
     // ref-counted `MultiPartUpload`, released in `detach_writable`.
-    pub task: Option<BackRef<bun_s3::MultiPartUpload>>,
+    pub task: Option<BackRef<bun_s3::MultiPartUpload, bun_ptr::Mut>>,
     pub(crate) source: SourceHandle,
     // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
     pub global_this: Option<BackRef<JSGlobalObject>>,
@@ -2214,9 +2214,12 @@ impl NetworkSink {
 
     /// Narrowed like
     /// `flushPromise`; promise resolution only fails on VM termination.
+    /// `this` is the sink registered as the task's callback ctx. The wake at
+    /// the end can synchronously re-enter this sink (JS `onPull` →
+    /// `writer.write()`), so no `&mut NetworkSink` is held across it.
     pub(crate) fn on_writable(
         task: &bun_s3::MultiPartUpload,
-        this: &mut NetworkSink,
+        this: *mut NetworkSink,
         flushed: u64,
     ) -> core::result::Result<(), jsc::JsTerminated> {
         bun_core::scoped_log!(
@@ -2226,15 +2229,21 @@ impl NetworkSink {
             task.state.get() as u8
         );
         let _ = task;
-        if this.flush_promise.has_value() {
-            let global = this.global_this.expect("global_this set at construction");
-            this.flush_promise
-                .resolve(&global, JSValue::js_number(flushed as f64))?;
-        }
-        this.pending.run();
+        let mut source = {
+            // SAFETY: `this` is the live sink; this exclusive borrow ends
+            // before the re-entrant wake below.
+            let sink = unsafe { &mut *this };
+            if sink.flush_promise.has_value() {
+                let global = sink.global_this.expect("global_this set at construction");
+                sink.flush_promise
+                    .resolve(&global, JSValue::js_number(flushed as f64))?;
+            }
+            sink.pending.run();
+            sink.source
+        };
         // Wake the upstream source (JS controller onPull or native ByteStream
         // resume). No-op when `source` is `None` (the `writer()` path).
-        this.source.ready(None, None);
+        source.ready(None, None);
         Ok(())
     }
 
@@ -2433,9 +2442,9 @@ impl NetworkSink {
             }
             (task_ref, wrapper)
         };
-        // SAFETY: `task_ref` is a separate counted allocation; `fail()` may
-        // deref it but the sink holds its own +1 until `detach_sink`.
-        let task = unsafe { &mut *task_ref.as_ptr() };
+        // `task_ref` is a separate counted allocation; `fail()` may deref it
+        // but the sink holds its own +1 until `detach_sink`.
+        let task = task_ref.get();
         if err.is_some() {
             let _ = task.fail(bun_s3_signing::error::S3Error {
                 code: b"UnknownError",

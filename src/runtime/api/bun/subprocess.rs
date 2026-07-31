@@ -125,7 +125,7 @@ pub struct Subprocess<'a> {
     /// `ThreadSafeRefCount` and crosses the `ProcessAutoKiller`/waiter-thread
     /// boundary by raw identity, so wrapping in `Arc` would double-count and
     /// (worse) `Arc::from_raw` on a `Box` allocation is UB.
-    pub(crate) process: bun_ptr::BackRef<Process>,
+    pub(crate) process: bun_ptr::BackRef<Process, bun_ptr::Mut>,
     pub(crate) stdin: JsCell<Writable<'a>>,
     pub(crate) stdout: JsCell<Readable>,
     pub(crate) stderr: JsCell<Readable>,
@@ -1075,7 +1075,7 @@ impl Subprocess<'_> {
             let self_ptr = self.as_ctx_ptr().cast::<Subprocess<'static>>();
             if matches!(
                 *pipe.source.get(),
-                crate::webcore::streams::SourceHandle::Subprocess(p) if p.as_ptr() == self_ptr
+                crate::webcore::streams::SourceHandle::Subprocess(p) if p.as_const_ptr() == self_ptr.cast_const()
             ) {
                 // `source` is a `JsCell`; `with_mut` takes `&self`, so the
                 // shared `pipe: &FileSink` deref above is sufficient.

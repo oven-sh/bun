@@ -174,8 +174,15 @@ impl<T: ?Sized, P> ParentRef<T, P> {
         unsafe { self.ptr.as_ref() }
     }
 
-    /// Raw pointer with the provenance the `ParentRef` was constructed with;
-    /// only `ParentRef<T, Mut>` carries write permission.
+    /// Read-only raw pointer; available for either provenance.
+    #[inline]
+    pub fn as_const_ptr(self) -> *const T {
+        self.ptr.as_ptr()
+    }
+}
+
+impl<T> ParentRef<T, crate::Mut> {
+    /// Raw pointer with write provenance (only the `Mut` marker carries it).
     #[inline]
     pub fn as_mut_ptr(self) -> *mut T {
         self.ptr.as_ptr()

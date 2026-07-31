@@ -132,6 +132,10 @@ declare_scope!(S3MultiPartUpload, hidden);
 /// holds one, so the lifecycle release inside `fail`/`done` is never the last.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct MultiPartUpload {
+    /// Allocation root recorded by the `client.rs` constructors right after
+    /// `heap::into_raw`; every `*mut Self` handed out (part `ctx`, request
+    /// callbacks) derives from this, never from a `&self`.
+    pub(crate) root: Cell<Option<core::ptr::NonNull<MultiPartUpload>>>,
     pub(crate) queue: JsCell<Option<Box<[UploadPart]>>>,
     pub(crate) available: Cell<IntegerBitSet<{ Self::MAX_QUEUE_SIZE }>>,
 
@@ -201,8 +205,16 @@ impl MultiPartUpload {
     }
 
     #[inline]
+    fn root_ptr(&self) -> *mut MultiPartUpload {
+        self.root
+            .get()
+            .expect("MultiPartUpload root set at construction")
+            .as_ptr()
+    }
+
+    #[inline]
     fn as_ctx_ptr(&self) -> *mut c_void {
-        std::ptr::from_ref::<Self>(self).cast_mut().cast::<c_void>()
+        self.root_ptr().cast::<c_void>()
     }
 }
 
@@ -223,7 +235,7 @@ pub struct UploadPart {
     /// Raw owned slice; backing allocation length is `allocated_size` (may exceed `data.len()`).
     /// Freed via `free_allocated_slice`. Default is a static empty slice.
     pub(crate) data: Cell<*const [u8]>,
-    pub ctx: bun_ptr::BackRef<MultiPartUpload>, // BACKREF (LIFETIMES.tsv)
+    pub ctx: bun_ptr::BackRef<MultiPartUpload, bun_ptr::Mut>, // BACKREF (LIFETIMES.tsv)
     pub(crate) allocated_size: Cell<usize>,
     pub(crate) state: Cell<PartState>,
     pub(crate) part_number: Cell<u16>, // max is 10,000
@@ -262,6 +274,7 @@ impl UploadPart {
         // SAFETY: callback context — `this` is the queue slot passed in `perform()`; the
         // ref this part holds on `ctx` keeps the queue alive until the tail `deref_` below.
         let this = unsafe { &*this.cast::<Self>() };
+        // `ctx` is the queue's allocation root (write provenance).
         let ctx_ptr = this.ctx.as_ptr();
         let ctx = this.ctx.get();
         let part_number = this.part_number.get();
@@ -484,10 +497,10 @@ impl MultiPartUpload {
         available.unset(index);
         self.available.set(available);
         if self.queue.get().is_none() {
-            // SAFETY: `self` is a heap-stable `MultiPartUpload` (intrusive RC); every
-            // in-flight `UploadPart` holds a ref so `self` outlives it (BackRef invariant).
-            let self_ref =
-                unsafe { bun_ptr::BackRef::from_raw(std::ptr::from_ref::<Self>(self).cast_mut()) };
+            // SAFETY: `root_ptr()` is this heap-stable allocation's root (write
+            // provenance); every in-flight `UploadPart` holds a ref so it
+            // outlives the part (BackRef invariant).
+            let self_ref = unsafe { bun_ptr::BackRef::from_raw_mut(self.root_ptr()) };
             // queueSize will never change and is small (max 255)
             let mut queue: Vec<UploadPart> = Vec::with_capacity(queue_size);
             // zero set just in case

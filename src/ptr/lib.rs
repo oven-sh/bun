@@ -185,9 +185,18 @@ impl<T, P> BackRef<T, P> {
     }
 }
 
-impl<T: ?Sized, P> BackRef<T, P> {
+impl<T: ?Sized> BackRef<T, Mut> {
+    /// Raw pointer with write provenance (only the `Mut` marker carries it).
     #[inline]
     pub const fn as_ptr(self) -> *mut T {
+        self.0.as_ptr()
+    }
+}
+
+impl<T: ?Sized, P> BackRef<T, P> {
+    /// Read-only raw pointer; available for either provenance.
+    #[inline]
+    pub const fn as_const_ptr(self) -> *const T {
         self.0.as_ptr()
     }
 

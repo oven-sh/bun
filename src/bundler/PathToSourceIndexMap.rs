@@ -37,11 +37,8 @@ pub type Map = StringHashMap<IndexInt>;
 /// `found_existing` + value-ptr together, so we hand-roll a thin shim.
 pub(crate) type GetOrPutResult<'a> = bun_collections::string_hash_map::GetOrPutResult<'a, IndexInt>;
 
-/// Module identity is `(namespace, text)`, matching esbuild's plugin contract.
-/// The stored key is `text` for the `file` namespace (the overwhelmingly common
-/// case: every disk/entry/resolver path) and `namespace ++ '\0' ++ text` otherwise.
-/// NUL is disallowed in real filesystem paths on every platform we target, so a
-/// file-namespace `text` can never equal a composite key.
+/// Module identity is `(namespace, text)`. File-namespace entries key on bare
+/// `text`; other namespaces key on `namespace ++ '\0' ++ text`.
 impl PathToSourceIndexMap {
     #[inline]
     fn is_file_namespace(namespace: &[u8]) -> bool {

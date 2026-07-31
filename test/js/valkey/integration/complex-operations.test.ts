@@ -10,16 +10,14 @@ import { ConnectionType, createClient, ctx, isEnabled } from "../test-utils";
  * - Realistic use cases
  */
 describe.skipIf(!isEnabled)("Valkey: Complex Operations", () => {
-  // Every test below works on its own uniquely-named key, so there is no
-  // cross-test key state to reset. The MULTI/EXEC tests each close their
-  // transaction with EXEC or DISCARD, so the connection leaves them in normal
-  // mode. When this file runs on its own (and in CI, which spawns one process
-  // per file) test-utils' beforeAll has already connected `ctx.redis` and the
-  // guard below is a no-op; when run alongside siblings in one process it
-  // reconnects once if a prior file's afterAll closed the shared client.
-  beforeEach(() => {
+  // Tests use unique keys, so one client can serve the whole file. The
+  // best-effort DISCARD clears any MULTI left open by a mid-transaction
+  // assertion failure so it doesn't cascade into the other tests.
+  beforeEach(async () => {
     ctx.id++;
-    if (!ctx.redis?.connected) {
+    if (ctx.redis?.connected) {
+      await ctx.redis.send("DISCARD", []).catch(() => {});
+    } else {
       ctx.redis = createClient(ConnectionType.TCP);
     }
   });

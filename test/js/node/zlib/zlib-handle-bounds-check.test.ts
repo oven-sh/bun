@@ -463,4 +463,50 @@ describe.concurrent("zlib native handle argument validation", () => {
       exitCode: 0,
     });
   });
+
+  // A growable SharedArrayBuffer grows in place and never shrinks, so the
+  // pointer/length captured for the threadpool write stays a valid prefix even
+  // across a concurrent grow(). The resizable-buffer rejection above must not
+  // apply to it.
+  test.concurrent("write() accepts an output buffer backed by a growable SharedArrayBuffer", async () => {
+    expect(
+      await run(
+        `const C = zlib.createDeflateRaw()._handle.constructor;
+         const h = new C(zlib.constants.DEFLATERAW);
+         const ws = new Uint32Array(2);
+         const { promise, resolve } = Promise.withResolvers();
+         h.init(15, 6, 8, 0, ws, resolve, undefined);
+         const sab = new SharedArrayBuffer(64, { maxByteLength: 128 });
+         if (!sab.growable) throw new Error("SharedArrayBuffer is not growable");
+         const out = new Uint8Array(sab);
+         h.write(zlib.constants.Z_FINISH, Buffer.from("hello"), 0, 5, out, 0, 64);
+         sab.grow(128);
+         await promise;
+         const written = 64 - ws[0];
+         console.log("ok " + zlib.inflateRawSync(Buffer.from(out.slice(0, written))).toString());`,
+      ),
+    ).toEqual({ stdout: "ok hello", exitCode: 0 });
+  });
+
+  test.concurrent("write() accepts an input buffer backed by a growable SharedArrayBuffer", async () => {
+    expect(
+      await run(
+        `const C = zlib.createDeflateRaw()._handle.constructor;
+         const h = new C(zlib.constants.DEFLATERAW);
+         const ws = new Uint32Array(2);
+         const { promise, resolve } = Promise.withResolvers();
+         h.init(15, 6, 8, 0, ws, resolve, undefined);
+         const sab = new SharedArrayBuffer(16, { maxByteLength: 64 });
+         if (!sab.growable) throw new Error("SharedArrayBuffer is not growable");
+         const input = new Uint8Array(sab);
+         input.set(Buffer.from("hello world"));
+         const out = Buffer.alloc(1024);
+         h.write(zlib.constants.Z_FINISH, input, 0, 11, out, 0, 1024);
+         sab.grow(64);
+         await promise;
+         const written = 1024 - ws[0];
+         console.log("ok " + zlib.inflateRawSync(out.subarray(0, written)).toString());`,
+      ),
+    ).toEqual({ stdout: "ok hello world", exitCode: 0 });
+  });
 });

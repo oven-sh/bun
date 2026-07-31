@@ -75,8 +75,6 @@ pub struct FetchTasklet {
     // borrowed for `acquire/release`. Model as a raw pointer.
     pub(crate) request_body_streaming_buffer: Option<core::ptr::NonNull<ThreadSafeStreamBuffer>>,
 
-    /// buffer being used by AsyncHTTP
-    pub(crate) response_buffer: MutableString,
     /// buffer used to stream response to JS
     pub(crate) scheduled_response_buffer: MutableString,
     /// response weak ref we need this to track the response JS lifetime
@@ -474,7 +472,6 @@ impl FetchTasklet {
             drop(metadata);
         }
 
-        self.response_buffer = MutableString::default();
         self.response.clear();
         if let Some(response) = self.native_response.take() {
             // SAFETY: `response` is the +1 ref held in `native_response`.
@@ -2024,7 +2021,6 @@ impl FetchTasklet {
             global_this: GlobalRef::from(global_this),
             request_body: fetch_options.body,
             request_body_streaming_buffer: None,
-            response_buffer: MutableString::default(),
             scheduled_response_buffer: MutableString::default(),
             response: jsc::Weak::default(),
             native_response: None,
@@ -2111,9 +2107,8 @@ impl FetchTasklet {
         // `heap::alloc`, so erase the borrow lifetimes through raw pointers.
         // SAFETY: `fetch_tasklet_ptr` is a stable heap allocation that outlives
         // the AsyncHTTP (dropped together in `deinit`); the slices below borrow
-        // its `request_headers.buf`, `request_body`, `hostname`, and
-        // `response_buffer` fields which are not reallocated for the lifetime
-        // of the request.
+        // its `request_headers.buf`, `request_body`, and `hostname` fields
+        // which are not reallocated for the lifetime of the request.
         // SAFETY (`Interned::assume` — Population B, holder-backed):
         // `fetch_tasklet_ptr` is a `heap::alloc`'d `FetchTasklet` whose
         // `request_headers.buf` / `request_body` / `hostname` fields are not
@@ -2133,7 +2128,6 @@ impl FetchTasklet {
             .as_deref()
             // SAFETY: see block note above — same `FetchTasklet` owner.
             .map(|s| unsafe { bun_ptr::Interned::assume(s) }.as_bytes());
-        let response_buffer: *mut MutableString = &raw mut fetch_tasklet.response_buffer;
         // `MultiArrayList` owns its
         // allocation, so clone; AsyncHTTP::init clones again for the client.
         let header_entries = bun_core::handle_oom(fetch_tasklet.request_headers.entries.clone());
@@ -2146,7 +2140,6 @@ impl FetchTasklet {
             url,
             header_entries,
             headers_buf,
-            response_buffer,
             request_body_slice,
             // handles response events (on headers, on body, etc.)
             http::HTTPClientResultCallback::new_with_release::<FetchTasklet>(
@@ -2542,25 +2535,18 @@ impl FetchTasklet {
             result.is_success(),
             task_ref.signal_store.body_receive_mode(),
             result.has_more,
-            result.body.as_ref().map(|b| b.list.len()).unwrap_or(0)
-        );
-
-        // Verify the aliasing invariant (see comment below).
-        debug_assert!(
-            result
-                .body
-                .as_deref()
-                .is_none_or(|b| core::ptr::eq(b, &raw const task_ref.response_buffer)),
-            "HTTPClientResult.body must alias FetchTasklet.response_buffer",
+            result.body.len()
         );
 
         let prev_metadata = task_ref.result.metadata.take();
         let prev_cert_info = task_ref.result.certificate_info.take();
         let prev_can_stream = task_ref.result.can_stream;
-        // SAFETY: lifetime erasure — `HTTPClientResult<'a>` borrows the
-        // `*mut MutableString` we passed into `AsyncHTTP::init` (which lives
-        // in `self.response_buffer` for the FetchTasklet's lifetime); widen
-        // `'_` → `'static` to store it.
+        // `result.body` borrows the HTTP thread's scratch buffer; capture the
+        // slice before `detach_lifetime` replaces it with `&[]` in the stored
+        // copy.
+        let body: &[u8] = result.body;
+        // SAFETY: lifetime erasure for non-body fields; `body` is stored as
+        // `&'static []` so no borrow escapes.
         task_ref.result = unsafe { result.detach_lifetime() };
         // can_stream is a one-shot signal to start the request body stream; don't let a
         // later coalesced result clobber it before the JS thread sees it.
@@ -2586,15 +2572,8 @@ impl FetchTasklet {
         task_ref.body_size = task_ref.result.body_size;
 
         let success = task_ref.result.is_success();
-        // `result.body` always aliases `task_ref.response_buffer` (the
-        // `*mut MutableString` passed to `AsyncHTTP::init` at FetchTasklet::create flows
-        // through `HTTPClient.state.body_out_str` and back out in the result). Asserted
-        // above before the lifetime-erasing assignment; the bytes are already in place, so
-        // no copy is needed and the `reset()` calls below operate on the right allocation.
 
         if task_ref.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
-            task_ref.response_buffer.reset();
-
             if task_ref.scheduled_response_buffer.list.capacity() > 0 {
                 task_ref.scheduled_response_buffer = MutableString::default();
             }
@@ -2607,47 +2586,32 @@ impl FetchTasklet {
                 }
                 return;
             }
-        } else {
-            if success {
-                let scheduled = &mut task_ref.scheduled_response_buffer;
-                let incoming = &mut task_ref.response_buffer;
-                if scheduled.list.capacity() == 0 {
-                    // `body_out_str` aliases the field, not the Vec's heap
-                    // pointer (asserted above), so swapping here is invisible
-                    // to the HTTP client.
-                    core::mem::swap(scheduled, incoming);
-                }
-                // Grow to Content-Length once so the per-packet append below
-                // doesn't leave the ~2x doubling over-capacity that the
-                // ArrayBuffer would adopt. Gated on `is_buffering_body`
-                // (set by `on_start_buffering_callback`), not the raw
-                // `BufferAll` mode: `drop_backpressure_if_unobserved` also
-                // sets `BufferAll` while still draining per chunk.
-                if task_ref.is_buffering_body.load(Ordering::Acquire) {
-                    if let http::BodySize::ContentLength(n) = task_ref.body_size {
-                        if n > scheduled.list.capacity() {
-                            let additional = n
-                                .min(SCHEDULED_PRERESERVE_MAX)
-                                .saturating_sub(scheduled.list.len());
-                            let _ = scheduled.list.try_reserve_exact(additional);
-                        }
+        } else if success {
+            let scheduled = &mut task_ref.scheduled_response_buffer;
+            // Grow to Content-Length once so the per-packet append below
+            // doesn't leave the ~2x doubling over-capacity that the
+            // ArrayBuffer would adopt. Gated on `is_buffering_body`
+            // (set by `on_start_buffering_callback`), not the raw
+            // `BufferAll` mode: `drop_backpressure_if_unobserved` also
+            // sets `BufferAll` while still draining per chunk.
+            if task_ref.is_buffering_body.load(Ordering::Acquire) {
+                if let http::BodySize::ContentLength(n) = task_ref.body_size {
+                    if n > scheduled.list.capacity() {
+                        let additional = n
+                            .min(SCHEDULED_PRERESERVE_MAX)
+                            .saturating_sub(scheduled.list.len());
+                        let _ = scheduled.list.try_reserve_exact(additional);
                     }
                 }
-                if !incoming.list.is_empty() {
-                    bun_core::handle_oom(scheduled.write(incoming.list.as_slice()));
-                }
-                if task_ref.result.has_more && !task_ref.scheduled_response_buffer.list.is_empty() {
-                    let _ = task_ref.signal_store.try_transition_receive_mode(
-                        BodyReceiveMode::AutoPause,
-                        BodyReceiveMode::Paused,
-                    );
-                }
             }
-            if task_ref.result.has_more {
-                // reset for reuse
-                task_ref.response_buffer.reset();
-            } else {
-                task_ref.response_buffer = MutableString::default();
+            if !body.is_empty() {
+                bun_core::handle_oom(scheduled.write(body));
+            }
+            if task_ref.result.has_more && !task_ref.scheduled_response_buffer.list.is_empty() {
+                let _ = task_ref.signal_store.try_transition_receive_mode(
+                    BodyReceiveMode::AutoPause,
+                    BodyReceiveMode::Paused,
+                );
             }
         }
 

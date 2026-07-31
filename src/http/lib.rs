@@ -5038,7 +5038,8 @@ impl<'a> HTTPClient<'a> {
         }
 
         // if is no redirect or if is redirect == "manual" just proceed
-        let is_redirect = status_code >= 300 && status_code <= 399;
+        // https://fetch.spec.whatwg.org/#redirect-status
+        let is_redirect = matches!(status_code, 301 | 302 | 303 | 307 | 308);
         if is_redirect {
             if !is_proxy_connect_failure
                 && self.redirect_type == FetchRedirect::Follow

@@ -578,10 +578,18 @@ pub unsafe extern "C" fn Bun__X509__checkHost(
 /// Certificate name bytes (IA5 / Latin-1) for error messages.
 struct NameBytes<'a>(&'a [u8]);
 
+/// Returns `true` iff `name` contains no characters that would require
+/// escaping in a subjectAltName entry (Node's `IsSafeAltName`, non-UTF-8 path).
+#[inline]
+fn is_safe_alt_name(name: &[u8]) -> bool {
+    name.iter()
+        .all(|&c| (b' '..=b'~').contains(&c) && !matches!(c, b'"' | b'\\' | b',' | b'\''))
+}
+
 impl core::fmt::Display for NameBytes<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         use core::fmt::Write;
-        if X509::is_safe_alt_name(self.0, false) {
+        if is_safe_alt_name(self.0) {
             for &byte in self.0 {
                 f.write_char(char::from(byte))?;
             }

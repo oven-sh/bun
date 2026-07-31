@@ -30,7 +30,6 @@ pub struct S3HttpDownloadStreamingTask {
     pub(crate) signals: Signals,
     pub poll_ref: KeepAlive,
 
-    pub(crate) response_buffer: MutableString,
     pub(crate) mutex: Mutex,
     pub(crate) reported_response_buffer: MutableString,
     /// The HTTP-level failure, if any. Guarded by `mutex`; the `request_error`
@@ -70,7 +69,6 @@ impl Default for S3HttpDownloadStreamingTask {
             signal_store: bun_http::signals::Store::default(),
             signals: Signals::default(),
             poll_ref: KeepAlive::default(),
-            response_buffer: MutableString::default(),
             mutex: Mutex::default(),
             reported_response_buffer: MutableString::default(),
             request_error: None,
@@ -289,21 +287,10 @@ impl S3HttpDownloadStreamingTask {
         );
 
         if should_enqueue {
-            if let Some(body) = result.body {
-                // `body` is `&this.response_buffer`, so a `ptr::read` + assign here would
-                // run Drop on the old `self.response_buffer`, freeing the Vec allocation
-                // that `body` (and the freshly-stored value) still point at — a
-                // use-after-free / double-free. Instead, append `body`'s bytes to
-                // `reported_response_buffer`, then reset the buffer, operating on `body`
-                // directly.
-                if !body.list.as_slice().is_empty() {
-                    let _ = self.reported_response_buffer.write(body.list.as_slice());
-                }
-                body.reset();
-                if self.reported_response_buffer.list.as_slice().is_empty() && !is_done {
-                    return false;
-                }
-            } else if !is_done {
+            if !result.body.is_empty() {
+                let _ = self.reported_response_buffer.write(result.body);
+            }
+            if self.reported_response_buffer.list.is_empty() && !is_done {
                 return false;
             }
             if let Err(has_schedule_callback) = self.has_schedule_callback.compare_exchange(
@@ -363,7 +350,7 @@ impl Drop for S3HttpDownloadStreamingTask {
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
-        // response_buffer, reported_response_buffer, headers, sign_result, range, proxy_url:
+        // reported_response_buffer, headers, sign_result, range, proxy_url:
         // dropped automatically (Box/Vec-backed fields).
         // SAFETY: `http` is always initialised before the task is scheduled / dropped.
         let http = unsafe { self.http.assume_init_mut() };

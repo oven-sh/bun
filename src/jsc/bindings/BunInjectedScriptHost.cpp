@@ -64,6 +64,8 @@ static JSObject* objectForEventTargetListeners(VM& vm, JSGlobalObject* exec, Eve
         RETURN_IF_EXCEPTION(scope, {});
 
         for (auto& eventListener : eventTarget->eventListeners(eventType)) {
+            if (eventListener->wasRemoved())
+                continue;
             if (!is<JSEventListener>(eventListener->callback()))
                 continue;
 

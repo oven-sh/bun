@@ -38,6 +38,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsGetEventListeners, (JSGlobalObject 
     MarkedArgumentBuffer values;
     auto& listeners = thisObject->wrapped().eventListeners(WTF::makeAtomString(eventType));
     for (auto& listener : listeners) {
+        if (listener->wasRemoved())
+            continue;
         auto* function = listener->callback().jsFunction();
         if (function) {
             values.append(function);

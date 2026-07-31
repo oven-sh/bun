@@ -1325,7 +1325,7 @@ impl Tag {
     pub(crate) const pread: Tag = Tag(36);
     pub(crate) const pwrite: Tag = Tag(37);
     pub const read: Tag = Tag(38);
-    pub(crate) const readlink: Tag = Tag(39);
+    pub const readlink: Tag = Tag(39);
     pub const rename: Tag = Tag(40);
     pub(crate) const stat: Tag = Tag(41);
     pub(crate) const statfs: Tag = Tag(42);
@@ -4202,7 +4202,7 @@ mod windows_impl {
     pub(crate) fn linkat_tmpfile(_tmpfd: Fd, _dirfd: Fd, _name: &ZStr) -> Maybe<()> {
         Err(Error::new(E::ENOTSUP, Tag::link))
     }
-    pub(crate) fn symlinkat(target: &ZStr, dirfd: impl AsFd, dest: &ZStr) -> Maybe<()> {
+    pub fn symlinkat(target: &ZStr, dirfd: impl AsFd, dest: &ZStr) -> Maybe<()> {
         let dirfd = dirfd.as_fd();
         // Resolve `dest` against `dirfd`, then symlink via libuv.
         let mut db = bun_core::PathBuffer::default();
@@ -7918,7 +7918,7 @@ pub fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
     copy_file::copy_file(in_, out)
 }
 #[cfg(windows)]
-pub(crate) fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
+pub fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
     // Windows `bun.copyFile` takes paths, not fds; fd-based callers (e.g.
     // `move_file_z_with_handle`'s EXDEV fallback) get the read/write loop.
     let mut buf = [0u8; 64 * 1024];

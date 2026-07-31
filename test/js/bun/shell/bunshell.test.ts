@@ -3172,3 +3172,47 @@ test("cd treats interpolated arguments starting with tilde or dash as literal di
     expect(exitCode).toBe(1);
   }
 });
+
+describe("literal digits after an interpolated value", () => {
+  TestBuilder.command`echo ${"a b"}0`
+    .stdout("a b0\n")
+    .runAsTest("a literal digit after an interpolated string is preserved");
+
+  TestBuilder.command`echo ${5}0`.stdout("50\n").runAsTest("a literal digit after an interpolated number is preserved");
+
+  TestBuilder.command`echo ${"a b"}1 ${"c d"}`
+    .stdout("a b1 c d\n")
+    .runAsTest("each interpolated value keeps its own slot when followed by a literal digit");
+});
+
+test.skipIf(isWindows)("external command resolution uses the PATH from the shell environment", async () => {
+  using dir = tempDir("shell-argv0-path", {
+    "onlyintool": "#!/bin/sh\necho from-onlyintool\n",
+  });
+  chmodSync(join(String(dir), "onlyintool"), 0o755);
+  const toolDir = String(dir).replaceAll("\\", "/");
+
+  {
+    const { stdout, stderr, exitCode } = await $`onlyintool`
+      .env({ ...bunEnv, PATH: toolDir })
+      .quiet()
+      .nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("from-onlyintool\n");
+    expect(exitCode).toBe(0);
+  }
+
+  {
+    const { stdout, stderr, exitCode } = await $`PATH=${toolDir} onlyintool`.quiet().nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("from-onlyintool\n");
+    expect(exitCode).toBe(0);
+  }
+
+  {
+    const { stdout, stderr, exitCode } = await $`export PATH=${toolDir}; onlyintool`.quiet().nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("from-onlyintool\n");
+    expect(exitCode).toBe(0);
+  }
+});

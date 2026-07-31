@@ -2422,32 +2422,22 @@ pub fn try_convert_utf8_to_utf16_in_buffer<'a>(
 /// Decode one WTF-8 sequence at the head of `s`; invalid lead/truncated → (U+FFFD, 1).
 /// Lone surrogates pass through (WTF-8). Helper for [`convert_utf8_to_utf16_in_buffer`].
 fn decode_wtf8_one(s: &[u8]) -> (u32, usize) {
-    let b0 = s[0] as u32;
+    let b0 = s[0];
     if b0 < 0x80 {
-        return (b0, 1);
+        return (b0 as u32, 1);
     }
-    if b0 < 0xC0 || s.len() < 2 {
+    let width = wtf8_byte_sequence_length_with_invalid(b0);
+    if width == 1 {
         return (0xFFFD, 1);
     }
-    let b1 = s[1] as u32;
-    if b0 < 0xE0 {
-        return (((b0 & 0x1F) << 6) | (b1 & 0x3F), 2);
-    }
-    if s.len() < 3 {
+    let take = (width as usize).min(s.len());
+    let mut buf = [0u8; 4];
+    buf[..take].copy_from_slice(&s[..take]);
+    let cp = decode_wtf8_rune_t::<i32>(buf, width, -1);
+    if cp < 0 {
         return (0xFFFD, 1);
     }
-    let b2 = s[2] as u32;
-    if b0 < 0xF0 {
-        return (((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F), 3);
-    }
-    if s.len() < 4 {
-        return (0xFFFD, 1);
-    }
-    let b3 = s[3] as u32;
-    (
-        ((b0 & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F),
-        4,
-    )
+    (cp as u32, take)
 }
 
 /// `strings.toUTF8ListWithType` — append UTF-8 transcoding of `utf16` onto
@@ -2651,5 +2641,21 @@ mod tests {
         assert_eq!(super::first_non_ascii(b"ab\xC3"), Some(2));
         assert!(super::eql_case_insensitive_ascii(b"A", b"a", true));
         assert!(!super::eql_case_insensitive_ascii(b"Ab", b"a", true));
+    }
+
+    #[test]
+    fn convert_utf8_to_utf16_in_buffer_fallback_rejects_malformed_sequences() {
+        let mut buf = [0u16; 16];
+        let out =
+            super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xC0\xAE\xC0\xAF\xC1\x9C\xC0\x80");
+        assert_eq!(out, &[0xFFFD; 8][..]);
+        let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xE0\x80\x80");
+        assert_eq!(out, &[0xFFFD, 0xFFFD, 0xFFFD][..]);
+        let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"a\xC2\x41");
+        assert_eq!(out, &[b'a' as u16, 0xFFFD, b'A' as u16][..]);
+        let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xED\xA0\x80");
+        assert_eq!(out, &[0xD800][..]);
+        let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xC3\xA9\xF0\x9F\x98\x80");
+        assert_eq!(out, &[0x00E9, 0xD83D, 0xDE00][..]);
     }
 }

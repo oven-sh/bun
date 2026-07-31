@@ -1577,7 +1577,8 @@ class WebSocketServer extends EventEmitter {
       return;
     }
 
-    if (req.headers.upgrade.toLowerCase() !== "websocket") {
+    const upgrade = req.headers.upgrade;
+    if (upgrade === undefined || upgrade.toLowerCase() !== "websocket") {
       const message = "Invalid Upgrade header";
       abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
       return;

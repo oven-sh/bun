@@ -2083,7 +2083,7 @@ pub(crate) mod strings_impl {
     /// Only matches http:// and https:// schemes and rejects empty pw.
     pub(crate) fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
         // Case-sensitive prefix match; the search region is truncated at the
-        // first '\n' before scanning for '@'/':'.
+        // first '\n' and at the end of the authority before scanning for '@'/':'.
         let scheme_end = if s.starts_with(b"http://") {
             7
         } else if s.starts_with(b"https://") {
@@ -2094,6 +2094,9 @@ pub(crate) mod strings_impl {
         let mut rest = &s[scheme_end..];
         if let Some(nl) = rest.iter().position(|&b| b == b'\n') {
             rest = &rest[..nl];
+        }
+        if let Some(end) = rest.iter().position(|&b| matches!(b, b'/' | b'?' | b'#')) {
+            rest = &rest[..end];
         }
         let at = rest.iter().position(|&b| b == b'@')?;
         let userinfo = &rest[..at];

@@ -901,8 +901,9 @@ impl PublishCommand {
         }
 
         // continues from `printSummary`
+        let registry_href = registry_url.href_without_auth();
         bun_core::pretty!(
-            "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}\n",
+            "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}/\n",
             bstr::BStr::new(if !ctx.manager.options.publish_config.tag.is_empty() {
                 ctx.manager.options.publish_config.tag
             } else {
@@ -913,7 +914,7 @@ impl PublishCommand {
             } else {
                 "default"
             },
-            bstr::BStr::new(registry.url.href()),
+            bstr::BStr::new(strings::without_trailing_slash(&registry_href)),
         );
 
         // dry-run stops here
@@ -1172,6 +1173,10 @@ impl PublishCommand {
                     // SAFETY: `buf[len] == 0`; arena-backed `'static`.
                     ZStr::from_buf(&buf[..], len)
                 };
+                let auth_url_is_web = {
+                    let auth_url = URL::parse(auth_url_str.as_bytes());
+                    auth_url.is_http() || auth_url.is_https()
+                };
 
                 // important to clone because it belongs to `response_buf`, and `response_buf` will be
                 // reused with the following requests
@@ -1179,10 +1184,24 @@ impl PublishCommand {
                     break 'try_web;
                 };
                 let done_url = URL::parse(crate::cli::cli_dupe(done_url_str));
+                {
+                    let registry_url = registry.url.url();
+                    if !(done_url.is_http() || done_url.is_https())
+                        || done_url.protocol != registry_url.protocol
+                        || done_url.hostname != registry_url.hostname
+                        || done_url.get_port_auto() != registry_url.get_port_auto()
+                    {
+                        break 'try_web;
+                    }
+                }
 
-                bun_core::prettyln!(
-                    "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n",
-                );
+                if auth_url_is_web {
+                    bun_core::prettyln!(
+                        "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n",
+                    );
+                } else {
+                    bun_core::prettyln!("\nAuthenticate your account at:\n");
+                }
 
                 const PADDING: usize = 1;
 
@@ -1242,18 +1261,20 @@ impl PublishCommand {
                 Output::print(format_args!("{}\n", bottom_right));
                 Output::flush();
 
-                // on another thread because pressing enter is not required
-                match std::thread::Builder::new()
-                    .spawn(move || Self::press_enter_to_open_in_browser(auth_url_str))
-                {
-                    Ok(_t) => { /* JoinHandle dropped → detached */ }
-                    Err(_e) => {
-                        Output::err(
-                            "ThreadSpawn",
-                            "failed to spawn thread for opening auth url",
-                            (),
-                        );
-                        Global::crash();
+                if auth_url_is_web {
+                    // on another thread because pressing enter is not required
+                    match std::thread::Builder::new()
+                        .spawn(move || Self::press_enter_to_open_in_browser(auth_url_str))
+                    {
+                        Ok(_t) => { /* JoinHandle dropped → detached */ }
+                        Err(_e) => {
+                            Output::err(
+                                "ThreadSpawn",
+                                "failed to spawn thread for opening auth url",
+                                (),
+                            );
+                            Global::crash();
+                        }
                     }
                 }
 
@@ -1494,9 +1515,12 @@ impl PublishCommand {
                         // always use replace https with http
                         // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
                         bstr::BStr::new(strings::without_trailing_slash(strings::without_prefix(
-                            registry.url.href(),
-                            b"https://"
-                        ),)),
+                            strings::without_prefix(
+                                &registry.url.url().href_without_auth(),
+                                b"https://"
+                            ),
+                            b"http://",
+                        ))),
                         bstr::BStr::new(package_name),
                         pack::fmt_tarball_filename(
                             package_name,

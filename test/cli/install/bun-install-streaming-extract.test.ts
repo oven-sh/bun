@@ -346,6 +346,38 @@ describe("streaming tarball extraction", () => {
     }
   });
 
+  test("streaming extract skips an entry whose pathname is longer than the path buffer", async () => {
+    const longName = Buffer.alloc(40000, "a").toString("utf8");
+    const longEntries: Entry[] = [...entries, { path: longName, body: Buffer.from("long name body\n") }];
+    const built = buildTarball(longEntries);
+    expect(built.tgz.length).toBeGreaterThan(2 * 1024 * 1024);
+
+    await using reg = await makeRegistry(built.tgz, built.shasum, built.integrity, chunkBytes);
+    const registry = reg.url;
+
+    using dir = tempDir("streaming-extract-long-path", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "stream-pkg": "1.0.0" },
+      }),
+      "bunfig.toml": `[install]\nregistry = "${registry}"\n`,
+    });
+
+    const { stderr, exitCode } = await runInstall(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain("Streamed ");
+    expect(reg.tarballHits).toBe(1);
+
+    const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
+    for (const { path, body } of entries) {
+      const got = readFileSync(join(pkgRoot, path));
+      expect([path, got.equals(body)]).toEqual([path, true]);
+    }
+    expect(existsSync(join(pkgRoot, longName))).toBe(false);
+    expect(exitCode).toBe(0);
+  });
+
   test("tarballs below BUN_INSTALL_STREAMING_MIN_SIZE take the buffered path", async () => {
     // Reuse the same large tarball but raise the threshold above it.
     // The server sends Content-Length, so `notify()` sees a body_size

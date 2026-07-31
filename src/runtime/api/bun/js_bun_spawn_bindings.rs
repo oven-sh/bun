@@ -1396,10 +1396,14 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             #[cfg(unix)]
             {
                 if let Some(fd) = spawned_stdout {
-                    fd.close();
+                    if !stdio[1].borrows_caller_fd() {
+                        fd.close();
+                    }
                 }
                 if let Some(fd) = spawned_stderr {
-                    fd.close();
+                    if !stdio[2].borrows_caller_fd() {
+                        fd.close();
+                    }
                 }
             }
             #[cfg(not(unix))]

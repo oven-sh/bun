@@ -3027,6 +3027,55 @@ it("http2 server splits an oversized PUSH_PROMISE header block into CONTINUATION
   }
 });
 
+it("http2 pushStream reports header values containing CR, LF, or NUL through the callback", async () => {
+  const results = [];
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    const values = ["a\rb", "a\nb", "a\0b"];
+    let pending = values.length;
+    for (const value of values) {
+      stream.pushStream({ ":path": "/pushed", "x-custom": value }, err => {
+        results.push({ name: err?.constructor?.name, code: err?.code, message: err?.message });
+        if (--pending === 0) {
+          stream.respond({ ":status": 200 });
+          stream.end("ok");
+        }
+      });
+    }
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  try {
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", () => {});
+    const pushes = [];
+    client.on("stream", pushed => {
+      pushes.push(pushed);
+      pushed.on("error", () => {});
+      pushed.resume();
+    });
+    const { promise: body, resolve: onBody, reject: onError } = Promise.withResolvers();
+    const req = client.request({ ":path": "/" });
+    req.on("error", onError);
+    req.setEncoding("utf8");
+    let received = "";
+    req.on("data", chunk => (received += chunk));
+    req.on("end", () => onBody(received));
+
+    expect(await body).toBe("ok");
+    const expected = {
+      name: "TypeError",
+      code: "ERR_HTTP2_INVALID_HEADER_VALUE",
+      message: 'Invalid value for header "x-custom"',
+    };
+    expect(results).toEqual([expected, expected, expected]);
+    expect(pushes.length).toBe(0);
+    client.close();
+  } finally {
+    server.close();
+  }
+});
+
 it("http2 option range error messages use the options. prefix", () => {
   for (const opt of ["maxSessionInvalidFrames", "maxSessionRejectedStreams", "unknownProtocolTimeout"]) {
     let error;

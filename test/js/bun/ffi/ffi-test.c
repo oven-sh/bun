@@ -118,13 +118,9 @@ uint32_t add_uint32_t(uint32_t a, uint32_t b) { return a + b; }
 uint64_t add_uint64_t(uint64_t a, uint64_t b) { return a + b; }
 
 FFI_EXPORT void *ptr_should_point_to_42_as_int32_t();
-FFI_EXPORT void *getNoopDeallocatorCallback();
 
 static int32_t ffi_static_42 = 42;
 void *ptr_should_point_to_42_as_int32_t() { return &ffi_static_42; }
-
-static void noop_deallocator(void *ptr, void *ctx) { (void)ptr; (void)ctx; }
-void *getNoopDeallocatorCallback() { return &noop_deallocator; }
 
 static uint8_t buffer_with_deallocator[128];
 static int deallocatorCalled;

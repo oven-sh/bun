@@ -289,18 +289,9 @@ dependencies = [
 name = "bun_brotli"
 version = "0.0.0"
 dependencies = [
- "bitflags",
- "bstr",
  "bun_alloc",
  "bun_brotli_sys",
  "bun_core",
- "bun_io",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
  "thiserror",
 ]
 
@@ -1723,17 +1714,7 @@ dependencies = [
 name = "bun_safety"
 version = "0.0.0"
 dependencies = [
- "bitflags",
- "bstr",
- "bun_alloc",
  "bun_core",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
- "thiserror",
 ]
 
 [[package]]

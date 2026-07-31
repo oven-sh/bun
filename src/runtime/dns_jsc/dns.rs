@@ -4169,7 +4169,7 @@ impl Resolver {
         // SAFETY: `this` is the heap allocation from `init()`; refcount has hit
         // zero (sole caller is `Self::deref`), so we hold exclusive ownership.
         unsafe {
-            if let Some(channel) = (*this).channel.get() {
+            if let Some(channel) = (*this).channel.take() {
                 c_ares::Channel::destroy(channel);
             }
             drop(bun_core::heap::take(this));

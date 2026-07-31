@@ -3067,9 +3067,10 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
                 path_ptr = tmp_buf[resolved_device_len..].as_ptr();
                 path_len = ep_len;
             } else {
-                // cwd is limited to MAX_PATH_BYTES.
-                cwd_len = get_cwd_t(&mut tmp_buf[..])?.len();
-                path_ptr = tmp_buf.as_ptr();
+                // cwd is limited to MAX_PATH_BYTES. Store it AFTER the device:
+                // tmp_buf[0..resolved_device_len] backs resolvedDevice.
+                cwd_len = get_cwd_t(&mut tmp_buf[resolved_device_len..])?.len();
+                path_ptr = tmp_buf[resolved_device_len..].as_ptr();
                 path_len = cwd_len;
                 // We must set envPath here so that it doesn't hit the null check just below.
                 env_path_len = Some(cwd_len);
@@ -3084,7 +3085,7 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
             //     StringPrototypeToLowerCase(resolvedDevice) &&
             //     StringPrototypeCharCodeAt(path, 2) === CHAR_BACKWARD_SLASH)) {
             if env_path_len.is_none()
-                || (path!()[2] == T::from_u8(CHAR_BACKWARD_SLASH)
+                || (path!().get(2).copied() == Some(T::from_u8(CHAR_BACKWARD_SLASH))
                     && !eql_ignore_case_t(&path!()[0..2], &tmp_buf[0..resolved_device_len]))
             {
                 // Translated from the following JS code:

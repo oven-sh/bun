@@ -24,7 +24,6 @@
 
 #include "JSCryptoKey.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSCryptoAesKeyAlgorithm.h"

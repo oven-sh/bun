@@ -4603,6 +4603,8 @@ impl VirtualMachine {
             self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
+        // Pre-arm the waker so this settled-promise tick cannot park (#36450).
+        self.wakeup();
         self.auto_tick();
         Ok(self.pending_internal_promise.unwrap())
     }
@@ -6302,7 +6304,7 @@ impl VirtualMachine {
                 let _ = write!(
                     writer,
                     "\n::error file={},line={},col={},title=",
-                    bstr::BStr::new(file),
+                    bun_core::fmt::github_action_property(file),
                     frame.position.line.one_based(),
                     frame.position.column.one_based(),
                 );
@@ -6316,7 +6318,12 @@ impl VirtualMachine {
         if name.is_empty() || name.eql_comptime(b"Error") {
             let _ = writer.write_all(b"error");
         } else {
-            let _ = write!(writer, "{}", name.github_action());
+            let name_utf8 = name.to_utf8();
+            let _ = write!(
+                writer,
+                "{}",
+                bun_core::fmt::github_action_property(name_utf8.slice())
+            );
         }
 
         if !message.is_empty() {
@@ -6325,10 +6332,13 @@ impl VirtualMachine {
             let mut cursor: u32 = 0;
             if let Some(i) = bun_core::strings::index_of_char(msg, b'\n') {
                 cursor = i + 1;
-                let first_line = bun_core::String::borrow_utf8(&msg[..i as usize]);
-                let _ = write!(writer, ": {}::", first_line.github_action());
+                let _ = write!(
+                    writer,
+                    ": {}::",
+                    bun_core::fmt::github_action_property(&msg[..i as usize])
+                );
             } else {
-                let _ = write!(writer, ": {}::", message.github_action());
+                let _ = write!(writer, ": {}::", bun_core::fmt::github_action_property(msg));
             }
             // Skip past the next newline.
             if let Some(i) = bun_core::strings::index_of_char(&msg[cursor as usize..], b'\n') {
@@ -6357,25 +6367,30 @@ impl VirtualMachine {
                 if file.is_empty() && func.slice().is_empty() {
                     continue;
                 }
-                let name_fmt = frame.name_formatter(false);
-                let has_name = {
+                let (name_str, loc_str) = {
                     use core::fmt::Write as _;
-                    let mut probe = String::new();
-                    let _ = write!(probe, "{name_fmt}");
-                    !probe.is_empty()
+                    let mut name_str = String::new();
+                    let _ = write!(name_str, "{}", frame.name_formatter(false));
+                    let mut loc_str = String::new();
+                    let _ = write!(
+                        loc_str,
+                        "{}",
+                        frame.source_url_formatter(file, origin, false, false)
+                    );
+                    (name_str, loc_str)
                 };
-                if has_name {
+                if !name_str.is_empty() {
                     let _ = write!(
                         writer,
                         "%0A      at {} ({})",
-                        name_fmt,
-                        frame.source_url_formatter(file, origin, false, false),
+                        jsc::ZigString::init_utf8(name_str.as_bytes()).github_action(),
+                        jsc::ZigString::init_utf8(loc_str.as_bytes()).github_action(),
                     );
                 } else {
                     let _ = write!(
                         writer,
                         "%0A      at {}",
-                        frame.source_url_formatter(file, origin, false, false),
+                        jsc::ZigString::init_utf8(loc_str.as_bytes()).github_action(),
                     );
                 }
             }

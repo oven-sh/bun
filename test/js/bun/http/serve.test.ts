@@ -1574,18 +1574,83 @@ describe("response framing", () => {
       expect(headerNames).not.toContain("transfer-encoding");
     });
 
-    // 205 MUST indicate a zero-length body (RFC 9110 15.3.6) and 304 MAY carry
-    // a Content-Length (RFC 9110 15.4.5) -- both keep the explicit 0.
-    it.each([205, 304])("a %i response keeps Content-Length: 0", async status => {
+    // RFC 9110 15.3.6: a 205 MUST NOT generate content; the explicit 0 it
+    // already emitted stays (still conformant, and matches prior releases).
+    it("a 205 response keeps Content-Length: 0", async () => {
       using server = Bun.serve({
         port: 0,
         hostname: "127.0.0.1",
-        fetch: () => new Response(null, { status }),
+        fetch: () => new Response(null, { status: 205 }),
       });
-      const { statusLine, headerNames } = await rawRequest(server.port, method);
-      expect(statusLine).toStartWith(`HTTP/1.1 ${status} `);
-      expect(headerNames).toContain("content-length");
+      const { statusLine, headers } = await rawRequest(server.port, method);
+      expect(statusLine).toStartWith(`HTTP/1.1 205 `);
+      expect(headers["content-length"]).toBe("0");
     });
+
+    // RFC 9110 8.6: a 304 MAY carry Content-Length but MUST NOT unless it
+    // equals what the 200 would have sent. Only the handler knows that value,
+    // so pass its header through; when it sets none, emit none (a fabricated 0
+    // poisons caches that update stored headers from a 304, RFC 9111 4.3.4).
+    it.each([
+      [undefined, null],
+      ["1234", "1234"],
+      ["0", "0"],
+      ["abc", null],
+    ])("a 304 response passes the handler's Content-Length through (%p -> %p)", async (appCL, expected) => {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () =>
+          new Response(null, {
+            status: 304,
+            headers: appCL === undefined ? { etag: '"x"' } : { etag: '"x"', "content-length": appCL },
+          }),
+      });
+      const { statusLine, headers, body } = await rawRequest(server.port, method);
+      expect({ statusLine: statusLine.slice(0, 12), contentLength: headers["content-length"] ?? null, body }).toEqual({
+        statusLine: "HTTP/1.1 304",
+        contentLength: expected,
+        body: "",
+      });
+      expect(headers["date"]).toBeDefined();
+    });
+  });
+
+  // RFC 9112 6.3: a 304 is terminated at the blank line regardless of
+  // Content-Length, so a non-zero handler value must not desync keep-alive.
+  it("a 304 with a handler Content-Length does not desync keep-alive", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const p = new URL(req.url).pathname;
+        if (p === "/a") return new Response(null, { status: 304, headers: { "content-length": "1234", etag: '"a"' } });
+        return new Response("ok-b");
+      },
+    });
+    const received: Buffer[] = [];
+    const { resolve, reject, promise } = Promise.withResolvers<void>();
+    await using c = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        data: (_, d) => received.push(d),
+        close: () => resolve(),
+        end: () => resolve(),
+        error: (_, e) => reject(e),
+      },
+    });
+    c.write(
+      "GET /a HTTP/1.1\r\nHost: x\r\n\r\n" + //
+        "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+    c.flush();
+    await promise;
+    const raw = Buffer.concat(received).toString();
+    const [first, ...rest] = raw.split("HTTP/1.1 ").filter(Boolean);
+    expect(first).toMatch(/^304 Not Modified\r\n/);
+    expect(first).toMatch(/\r\ncontent-length: 1234\r\n/i);
+    expect(rest.join("HTTP/1.1 ")).toMatch(/^200 OK\r\n[\s\S]*\r\n\r\nok-b$/);
   });
 
   // RFC 9112 6.3 terminates a 1xx/204/304 at the blank line after the header
@@ -1599,8 +1664,8 @@ describe("response framing", () => {
       [204, "HEAD", null],
       [205, "GET", "0"],
       [205, "HEAD", "0"],
-      [304, "GET", "0"],
-      [304, "HEAD", "0"],
+      [304, "GET", null],
+      [304, "HEAD", null],
     ];
     it.each(cases)("%i %s", async (status, method, contentLength) => {
       const makeResponse = () => new Response("data", { status });
@@ -2989,6 +3054,39 @@ it("Bun.serve hostname with interior NUL byte does not crash the process", async
     stderr: expect.any(String),
     exitCode: 0,
   });
+});
+
+it("development error log prints the request pathname verbatim", async () => {
+  const script = `
+    const net = require("node:net");
+    const server = Bun.serve({
+      port: 0,
+      development: true,
+      fetch() {
+        throw new Error("boom");
+      },
+    });
+    const socket = net.connect(server.port, "127.0.0.1", () => {
+      socket.write("GET /a<b>c>d HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n");
+    });
+    socket.on("data", () => {});
+    socket.on("close", () => {
+      server.stop(true);
+      process.exit(0);
+    });
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("GET - /a<b>c>d failed");
+  expect(exitCode).toBe(0);
 });
 
 // The HTTP parser shares HttpParser.h between Bun.serve and node:http. When a request

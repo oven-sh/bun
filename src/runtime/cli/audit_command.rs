@@ -395,18 +395,24 @@ fn collect_packages_for_audit(
         if pkg_idx > 0 {
             body.push(b',');
         }
-        body.push(b'"');
-        body.extend_from_slice(&package.name);
-        body.push(b'"');
+        write!(
+            &mut body,
+            "{}",
+            bun_core::fmt::format_json_string_utf8(&package.name, Default::default())
+        )
+        .expect("unreachable");
         body.push(b':');
         body.push(b'[');
         for (ver_idx, version) in package.versions.iter().enumerate() {
             if ver_idx > 0 {
                 body.push(b',');
             }
-            body.push(b'"');
-            body.extend_from_slice(version);
-            body.push(b'"');
+            write!(
+                &mut body,
+                "{}",
+                bun_core::fmt::format_json_string_utf8(version, Default::default())
+            )
+            .expect("unreachable");
         }
         body.push(b']');
     }

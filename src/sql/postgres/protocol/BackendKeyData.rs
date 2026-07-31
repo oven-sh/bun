@@ -1,7 +1,6 @@
 use super::new_reader::NewReader;
 use crate::postgres::AnyPostgresError;
 
-#[derive(Default)]
 pub struct BackendKeyData {}
 
 impl BackendKeyData {

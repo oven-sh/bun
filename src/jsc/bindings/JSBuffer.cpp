@@ -18,7 +18,6 @@
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/ExceptionScope.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"

@@ -1050,7 +1050,7 @@ where
         }
 
         let mut message: Vec<u8> = Vec::new();
-        let _ = write!(&mut message, "{}", Output::pretty_fmt::<false>(fmt));
+        let _ = write!(&mut message, "{}", fmt);
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
         let fallback_container = Box::new(Api::FallbackMessageContainer {
             message: Some(message.into_boxed_slice()),
@@ -1073,12 +1073,6 @@ where
             }),
         });
 
-        // `fmt::Arguments` has no const len, but an empty format string is
-        // detectable at runtime via `as_str() == Some("")`.
-        if fmt.as_str() != Some("") {
-            #[allow(clippy::disallowed_methods)] // fmt is a caller-provided Arguments parameter
-            Output::pretty_errorln(fmt);
-        }
         Output::flush();
 
         if self.method == Method::HEAD {
@@ -2502,7 +2496,7 @@ where
         // not derive framing from that body (or the user headers) either
         // (RFC 9110 §9.3.2): render the exact metadata+framing GET would.
         if HTTPStatusText::is_null_body(response.status_code()) {
-            Self::do_render_blob_corked(std::ptr::from_mut::<Self>(this));
+            Self::do_render_null_body_status_corked(std::ptr::from_mut::<Self>(this));
             return;
         }
 
@@ -3374,6 +3368,60 @@ where
         this.render_bytes();
     }
 
+    pub(crate) fn do_render_null_body_status(&mut self) {
+        if self.flags.has_abort_handler() {
+            if let Some(resp) = self.resp {
+                resp.run_corked_with_type(Self::do_render_null_body_status_corked, self);
+            }
+        } else {
+            Self::do_render_null_body_status_corked(std::ptr::from_mut::<Self>(self));
+        }
+    }
+
+    /// Render a response whose status forbids a body (RFC 9112 §6.3). `try_end`
+    /// would put `Content-Length: 0` on a 304 (uWS only suppresses it for
+    /// 1xx/204); RFC 9110 §8.6 only allows the 200's length, so forward the
+    /// handler's value or emit none.
+    ///
+    /// # Safety
+    /// `this` must point to a live `RequestContext` threaded through cork user-data.
+    fn do_render_null_body_status_corked(this: *mut Self) {
+        // SAFETY: caller upholds the fn-level contract.
+        let this = unsafe { &mut *this };
+
+        let (status, app_content_length) = {
+            let response: &mut Response = this.response_weakref.get().unwrap();
+            let status = response.status_code();
+            // Parsed before render_metadata() fast_remove()s it and derefs the headers.
+            let app_cl = (status == 304)
+                .then(|| {
+                    let s = response
+                        .get_init_headers_mut()?
+                        .fast_get(jsc::HTTPHeaderName::ContentLength)?
+                        .to_slice();
+                    bun_core::parse_int::<u64>(s.slice(), 10).ok()
+                })
+                .flatten();
+            (status, app_cl)
+        };
+
+        this.render_metadata();
+
+        if status == 304 {
+            if let Some(resp) = this.resp {
+                if let Some(len) = app_content_length {
+                    resp.write_header_int(b"content-length", len);
+                }
+                // end_without_body skips writeMark(); keep Date as try_end did.
+                resp.write_mark();
+                this.end_without_body(this.should_close_connection());
+                return;
+            }
+        }
+        // render_bytes releases the base ref on every path (resp gone included).
+        this.render_bytes();
+    }
+
     /// `render_metadata` adapter for `run_corked_with_type` (takes `fn(*mut U)`).
     fn render_metadata_corked(this: *mut Self) {
         // SAFETY: this is the live RequestContext threaded through cork user-data.
@@ -3494,11 +3542,12 @@ where
             let log = vm.log_mut().unwrap();
             // NOTE: format eagerly so `format_args!` doesn't hold an
             // immutable borrow of `self` across the `&mut self` call.
-            let msg = format!(
+            bun_core::pretty_errorln!(
                 "<r><red>{:?}<r> - <b>{}<r> failed",
                 self.method,
                 self.ensure_pathname()
             );
+            let msg = format!("{:?} - {} failed", self.method, self.ensure_pathname());
             self.render_default_error(
                 log,
                 &crate::Error::ExceptionOcurred,
@@ -3904,7 +3953,7 @@ where
 
         // SAFETY: caller contract — `response` is live.
         if HTTPStatusText::is_null_body(unsafe { (*response).status_code() }) {
-            self.do_render_blob();
+            self.do_render_null_body_status();
             return;
         }
 

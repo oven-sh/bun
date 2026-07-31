@@ -339,16 +339,9 @@ fn os_path_literal_empty() -> &'static OSPathSliceZ {
     }
 }
 
-/// `bun.StandaloneModuleGraph::get()` — singleton accessor. Short-circuits
-/// `stat`/`exists`/`readFile` for files embedded in `bun build --compile`
-/// binaries (under `/$bunfs/` / `B:\~BUN\`). Returns `None` outside a
-/// standalone executable. The graph stores per-`File` lazy fields under
-/// interior mutability, so `get()` hands out a raw `*mut`; we re-borrow it
-/// `&mut` for the duration of each lookup (single-threaded JS / workpool
-/// callers never overlap on the same `File`).
 #[inline]
-fn standalone_module_graph_get() -> Option<*mut bun_standalone_graph::Graph> {
-    bun_standalone_graph::Graph::get()
+fn standalone_module_graph() -> Option<&'static bun_standalone_graph::Graph> {
+    bun_standalone_graph::Graph::get_ref()
 }
 
 /// Local shim for `Maybe(void)::aborted` (node.rs:302). `bun_sys::Maybe` is
@@ -4742,12 +4735,10 @@ fn encode_path_result(bytes: &[u8], encoding: Encoding) -> StringOrBuffer {
 
 impl NodeFS {
     pub(crate) fn access(&mut self, args: &args::Access, _: Flavor) -> Maybe<ret::Access> {
-        if let Some(graph) = standalone_module_graph_get() {
-            // SAFETY: see `standalone_module_graph_get`.
-            let graph = unsafe { &mut *graph };
+        if let Some(graph) = standalone_module_graph() {
             let p = args.path.slice();
             let is_dir = graph.find_dir(p);
-            if is_dir || graph.find(p).is_some() {
+            if is_dir || graph.contains_file(p) {
                 let mode = args.mode.as_int();
                 if (mode & sys::posix::W_OK) != 0 || ((mode & sys::posix::X_OK) != 0 && !is_dir) {
                     return Err(sys::Error::from_code(E::EACCES, sys::Tag::access).with_path(p));
@@ -4786,7 +4777,12 @@ impl NodeFS {
             }
             PathOrFileDescriptor::Path(path_) => {
                 let path = path_.slice_z(&mut self.sync_error_buf);
-                let fd = Syscall::open(path, FileSystemFlags::A.as_int(), args.mode)?;
+                let flags = if args.flag == FileSystemFlags::W {
+                    FileSystemFlags::A
+                } else {
+                    args.flag
+                };
+                let fd = Syscall::open(path, flags.as_int(), args.mode)?;
                 let _close = scopeguard::guard(fd, |fd| fd.close());
                 while !data.is_empty() {
                     let written = Syscall::write(fd, data)?;
@@ -5442,12 +5438,8 @@ impl NodeFS {
             return Ok(false);
         };
 
-        if let Some(graph) = standalone_module_graph_get() {
-            // SAFETY: see `standalone_module_graph_get` — exclusive lookup on
-            // the per-process singleton; `find` only mutates lazy per-`File`
-            // fields.
-            let graph = unsafe { &mut *graph };
-            if graph.find(path.slice()).is_some() || graph.find_dir(path.slice()) {
+        if let Some(graph) = standalone_module_graph() {
+            if graph.contains_file(path.slice()) || graph.find_dir(path.slice()) {
                 return Ok(true);
             }
         }
@@ -5696,9 +5688,8 @@ impl NodeFS {
 
     pub(crate) fn lstat(&mut self, args: &args::Lstat, _: Flavor) -> Maybe<ret::Lstat> {
         let path = args.path.slice_z(&mut self.sync_error_buf);
-        if let Some(graph) = standalone_module_graph_get() {
-            // SAFETY: see `standalone_module_graph_get`.
-            if let Some(result) = unsafe { &mut *graph }.stat(path.as_bytes()) {
+        if let Some(graph) = standalone_module_graph() {
+            if let Some(result) = graph.stat(path.as_bytes()) {
                 return Ok(StatOrNotFound::Stats(Box::new(Stats::init(
                     &PosixStat::init(&result),
                     args.big_int,
@@ -6436,7 +6427,7 @@ impl NodeFS {
     pub(crate) fn readdir(&mut self, args: &args::Readdir, flavor: Flavor) -> Maybe<ret::Readdir> {
         if flavor != Flavor::Sync && args.recursive {
             debug_assert!(
-                standalone_module_graph_get().is_some()
+                standalone_module_graph().is_some()
                     && bun_standalone_graph::is_bun_standalone_file_path(args.path.slice()),
                 "async recursive readdir must go through AsyncReaddirRecursiveTask"
             );
@@ -6991,72 +6982,15 @@ impl NodeFS {
     ) -> Maybe<ret::Readdir> {
         let path = args.path.slice_z(buf);
 
-        if let Some(graph) = standalone_module_graph_get() {
+        if let Some(graph) = standalone_module_graph() {
             if bun_standalone_graph::is_bun_standalone_file_path(path.as_bytes()) {
-                // SAFETY: see `standalone_module_graph_get`.
-                let graph = unsafe { &mut *graph };
-                let Some(list) = graph.readdir(path.as_bytes(), recursive) else {
-                    let code = if graph.find_assume_standalone_path(path.as_bytes()).is_some() {
-                        E::ENOTDIR
-                    } else {
-                        E::ENOENT
-                    };
-                    return Err(
-                        sys::Error::from_code(code, sys::Tag::scandir).with_path(args.path.slice())
-                    );
-                };
-                let mut entries: Vec<T> = Vec::with_capacity(list.len());
-                let root_path = if T::IS_DIRENT {
-                    BunString::clone_utf8(args.path.slice())
-                } else {
-                    BunString::empty()
-                };
-                let mut joined: Vec<u8> = Vec::new();
-                #[allow(unused_mut)]
-                for (mut name, is_dir) in list {
-                    let kind = if is_dir {
-                        sys::FileKind::Directory
-                    } else {
-                        sys::FileKind::File
-                    };
-                    if recursive {
-                        #[cfg(windows)]
-                        for b in name.iter_mut() {
-                            if *b == b'/' {
-                                *b = paths::SEP;
-                            }
-                        }
-                        let (base, parent) = match strings::last_index_of_char(&name, paths::SEP) {
-                            Some(i) => (&name[i + 1..], &name[..i]),
-                            None => (&name[..], b"".as_slice()),
-                        };
-                        let dirent_path = if T::IS_DIRENT && !parent.is_empty() {
-                            joined.clear();
-                            joined.extend_from_slice(args.path.slice());
-                            if !matches!(joined.last(), Some(&b'/') | Some(&b'\\')) {
-                                joined.push(paths::SEP);
-                            }
-                            joined.extend_from_slice(parent);
-                            BunString::clone_utf8(&joined)
-                        } else {
-                            root_path.dupe_ref()
-                        };
-                        T::append_entry_recursive(
-                            &mut entries,
-                            base,
-                            &name,
-                            &dirent_path,
-                            kind,
-                            args.encoding,
-                            flavor == Flavor::Sync,
-                        );
-                        dirent_path.deref();
-                    } else {
-                        T::append_entry(&mut entries, &name, &root_path, kind, args.encoding);
-                    }
-                }
-                root_path.deref();
-                return Ok(T::into_readdir(entries));
+                return Self::readdir_standalone::<T>(
+                    graph,
+                    path.as_bytes(),
+                    args,
+                    recursive,
+                    flavor,
+                );
             }
         }
 
@@ -7109,6 +7043,77 @@ impl NodeFS {
             Err(err) => Err(err),
             Ok(()) => Ok(T::into_readdir(entries)),
         }
+    }
+
+    /// Caller has already checked `is_bun_standalone_file_path(path)`.
+    fn readdir_standalone<T: ReaddirEntry>(
+        graph: &bun_standalone_graph::Graph,
+        path: &[u8],
+        args: &args::Readdir,
+        recursive: bool,
+        flavor: Flavor,
+    ) -> Maybe<ret::Readdir> {
+        let Some(list) = graph.readdir(path, recursive) else {
+            let code = if graph.contains_file(path) {
+                E::ENOTDIR
+            } else {
+                E::ENOENT
+            };
+            return Err(sys::Error::from_code(code, sys::Tag::scandir).with_path(args.path.slice()));
+        };
+
+        let mut entries: Vec<T> = Vec::with_capacity(list.len());
+        let root_path = if T::IS_DIRENT {
+            BunString::clone_utf8(args.path.slice())
+        } else {
+            BunString::empty()
+        };
+        let mut joined: Vec<u8> = Vec::new();
+        #[allow(unused_mut)]
+        for (mut name, is_dir) in list {
+            let kind = if is_dir {
+                sys::FileKind::Directory
+            } else {
+                sys::FileKind::File
+            };
+            if recursive {
+                #[cfg(windows)]
+                for b in name.iter_mut() {
+                    if *b == b'/' {
+                        *b = paths::SEP;
+                    }
+                }
+                let (base, parent) = match strings::last_index_of_char(&name, paths::SEP) {
+                    Some(i) => (&name[i + 1..], &name[..i]),
+                    None => (&name[..], b"".as_slice()),
+                };
+                let dirent_path = if T::IS_DIRENT && !parent.is_empty() {
+                    joined.clear();
+                    joined.extend_from_slice(args.path.slice());
+                    if !matches!(joined.last(), Some(&b'/') | Some(&b'\\')) {
+                        joined.push(paths::SEP);
+                    }
+                    joined.extend_from_slice(parent);
+                    BunString::clone_utf8(&joined)
+                } else {
+                    root_path.dupe_ref()
+                };
+                T::append_entry_recursive(
+                    &mut entries,
+                    base,
+                    &name,
+                    &dirent_path,
+                    kind,
+                    args.encoding,
+                    flavor == Flavor::Sync,
+                );
+                dirent_path.deref();
+            } else {
+                T::append_entry(&mut entries, &name, &root_path, kind, args.encoding);
+            }
+        }
+        root_path.deref();
+        Ok(T::into_readdir(entries))
     }
 
     pub(crate) fn read_file(
@@ -7172,10 +7177,8 @@ impl NodeFS {
             PathOrFileDescriptor::Path(p) => {
                 let path = p.slice_z(&mut self.sync_error_buf);
 
-                if let Some(graph) = standalone_module_graph_get() {
-                    // SAFETY: see `standalone_module_graph_get`.
-                    let graph = unsafe { &mut *graph };
-                    if let Some(file) = graph.find(path.as_bytes()) {
+                if let Some(graph) = standalone_module_graph() {
+                    if let Some(file) = graph.find_ref(path.as_bytes()) {
                         let contents: &[u8] = file.contents.as_bytes();
                         return if args.encoding == Encoding::Buffer {
                             // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
@@ -8005,9 +8008,8 @@ impl NodeFS {
 
     pub(crate) fn stat(&mut self, args: &args::Stat, _: Flavor) -> Maybe<ret::Stat> {
         let path = args.path.slice_z(&mut self.sync_error_buf);
-        if let Some(graph) = standalone_module_graph_get() {
-            // SAFETY: see `standalone_module_graph_get`.
-            if let Some(result) = unsafe { &mut *graph }.stat(path.as_bytes()) {
+        if let Some(graph) = standalone_module_graph() {
+            if let Some(result) = graph.stat(path.as_bytes()) {
                 return Ok(StatOrNotFound::Stats(Box::new(Stats::init(
                     &PosixStat::init(&result),
                     args.big_int,

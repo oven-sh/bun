@@ -869,8 +869,8 @@ impl WebWorker {
             // reads the slice and owns its own temporary allocations.
             let parsed = unsafe { (hooks.parse_worker_exec_argv_allow_addons)(exec_argv) };
             if let Some(allow_addons) = parsed {
-                // override the existing even if it was set
-                transform_options.allow_addons = Some(allow_addons);
+                let parent_allows = transform_options.allow_addons.unwrap_or(true);
+                transform_options.allow_addons = Some(parent_allows && allow_addons);
             }
         }
 

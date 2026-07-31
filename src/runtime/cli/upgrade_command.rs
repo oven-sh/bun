@@ -1088,6 +1088,9 @@ impl UpgradeCommand {
             let destination_executable_z: &ZStr = bun_core::self_exe_path()
                 .map_err(|_| crate::Error::UpgradeFailedMissingExecutable)?;
             let destination_executable: &[u8] = destination_executable_z.as_bytes();
+            if destination_executable.len() >= bun_paths::MAX_PATH_BYTES {
+                return Err(crate::Error::PathTooLong);
+            }
             // Reshaped for borrowck — use stack-local buffer.
             // Stacked Borrows: take ONE `*mut u8` over the buffer up front and
             // route every read/write through it. Indexing the `PathBuffer`

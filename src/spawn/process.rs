@@ -1734,11 +1734,10 @@ mod spawn_process_body {
         // accessor for the set-once `.uv_loop` field of the `uws::WindowsLoop`.
         let loop_ = options.windows.loop_.uv_loop();
 
-        let mut cwd_buf = bun_core::PathBuffer::uninit();
-        cwd_buf[..options.cwd.len()].copy_from_slice(&options.cwd);
-        cwd_buf[options.cwd.len()] = 0;
-        // SAFETY: cwd_buf[options.cwd.len()] == 0 written above
-        let cwd = bun_core::ZStr::from_buf(&cwd_buf[..], options.cwd.len());
+        let cwd = match bun_sys::to_posix_path(&options.cwd) {
+            Ok(p) => p,
+            Err(e) => return Err(crate::Error::Sys(e)),
+        };
 
         // `git_diff_internal` reaches here
         // with `Options::default()` → `cwd = ""`. libuv treats a

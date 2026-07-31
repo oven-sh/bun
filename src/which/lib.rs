@@ -22,16 +22,25 @@ mod scope {
 use scope::which as which_log;
 
 #[cfg(not(windows))]
-fn is_valid(buf: &mut PathBuffer, segment: &[u8], bin: &[u8]) -> Option<u16> {
-    let prefix_len = segment.len() + 1; // includes trailing path separator
+fn is_valid(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Option<u16> {
+    // Builds `[cwd/]segment/bin` into `buf` and stats it. `cwd` is prepended
+    // only when non-empty so relative `segment`s are checked against the
+    // caller-supplied working directory instead of the process cwd.
+    let cwd_prefix_len = if cwd.is_empty() { 0 } else { cwd.len() + 1 };
+    let segment_end = cwd_prefix_len + segment.len();
+    let prefix_len = segment_end + 1; // includes trailing path separator
     let len = prefix_len + bin.len();
     let len_z = len + 1; // includes null terminator
     if len_z > MAX_PATH_BYTES {
         return None;
     }
 
-    buf[..segment.len()].copy_from_slice(segment);
-    buf[segment.len()] = SEP;
+    if !cwd.is_empty() {
+        buf[..cwd.len()].copy_from_slice(cwd);
+        buf[cwd.len()] = SEP;
+    }
+    buf[cwd_prefix_len..segment_end].copy_from_slice(segment);
+    buf[segment_end] = SEP;
     buf[prefix_len..prefix_len + bin.len()].copy_from_slice(bin);
     buf[len] = 0;
     // SAFETY: buf[len] == 0 written above
@@ -128,15 +137,17 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
             return None;
         }
 
+        // Strip trailing SEP bytes from cwd.
+        let mut cwd_trimmed = cwd;
+        while cwd_trimmed.last() == Some(&SEP) {
+            cwd_trimmed = &cwd_trimmed[..cwd_trimmed.len() - 1];
+        }
+
         if strings::index_of_char(bin, b'/').is_some() {
             if !cwd.is_empty() {
-                // Strip trailing SEP bytes from cwd.
-                let mut cwd_trimmed = cwd;
-                while cwd_trimmed.last() == Some(&SEP) {
-                    cwd_trimmed = &cwd_trimmed[..cwd_trimmed.len() - 1];
-                }
                 if let Some(len) = is_valid(
                     buf,
+                    b"",
                     cwd_trimmed,
                     strings::without_prefix_comptime(bin, b"./"),
                 ) {
@@ -149,7 +160,16 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         }
 
         for segment in path.split(|b| *b == DELIMITER).filter(|s| !s.is_empty()) {
-            if let Some(len) = is_valid(buf, segment, bin) {
+            // execvp resolves a relative $PATH entry after chdir, so `.` means
+            // the child's cwd. The existence check runs in the parent, so join
+            // relative segments with `cwd` to stat the same file the child
+            // would exec.
+            let cwd_prefix: &[u8] = if is_absolute(segment) {
+                b""
+            } else {
+                cwd_trimmed
+            };
+            if let Some(len) = is_valid(buf, cwd_prefix, segment, bin) {
                 // SAFETY: is_valid wrote NUL at buf[len]
                 return Some(ZStr::from_buf(&buf[..], len as usize));
             }

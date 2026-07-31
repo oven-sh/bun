@@ -1189,8 +1189,6 @@ impl PublishCommand {
                 if !(done_url.is_http() || done_url.is_https()) {
                     break 'try_web;
                 }
-                // npm-registry-fetch scopes credentials by registry: attach auth
-                // only when polling the registry's own origin.
                 let done_url_same_origin = {
                     let registry_url = registry.url.url();
                     done_url.is_https() == registry_url.is_https()

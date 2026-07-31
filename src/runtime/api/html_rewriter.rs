@@ -1261,8 +1261,7 @@ where
                 let exc_value = JSValue::from_cell(exc.as_ptr());
                 // Store the exception in the VM's unhandled rejection capture
                 // mechanism if it's available (this is the same mechanism used
-                // by BufferOutputSink). The slot is stack-rooted in
-                // `BufferOutputSink::init`; no `.protect()` needed.
+                // by BufferOutputSink)
                 if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
                     // SAFETY: VM-owned pointer set by BufferOutputSink::init.
                     unsafe { *err_ptr = exc_value };

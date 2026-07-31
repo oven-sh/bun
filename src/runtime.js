@@ -107,7 +107,7 @@ export var __toCommonJS = from => {
 var __moduleCache;
 
 // When you do know the module is CJS
-export var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+export var __commonJS = (cb, req, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod, req), mod.exports);
 
 export var __name = (target, name) => {
   Object.defineProperty(target, "name", {

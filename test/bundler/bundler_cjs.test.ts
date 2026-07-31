@@ -597,4 +597,142 @@ describe("bundler", () => {
       stdout: "loaded ok",
     },
   });
+
+  // ============================================================================
+  // Direct eval inside a wrapped CommonJS module must see `require`.
+  // protobufjs (used by @grpc/proto-loader and every @google-cloud/* gRPC
+  // client) hides its Buffer probe from bundlers via
+  // `eval("require")("buffer")`, and falls back to Uint8Array when that throws,
+  // which breaks grpc-js. https://github.com/oven-sh/bun/issues/9367
+  // ============================================================================
+
+  const inquireFiles = {
+    "/entry.js": /* js */ `
+      const inquire = require("./inquire.cjs");
+      const buffer = inquire("buffer");
+      if (!buffer) throw new Error("buffer module not found");
+      const b = buffer.Buffer.from([1, 2, 3]);
+      console.log(b.constructor.name);
+      console.log(Buffer.isBuffer(b));
+    `,
+    // This is @protobufjs/inquire verbatim.
+    "/inquire.cjs": /* js */ `
+      function inquire(moduleName) {
+        try {
+          var mod = eval("quire".replace(/^/, "re"))(moduleName);
+          if (mod && (mod.length || Object.keys(mod).length))
+            return mod;
+        } catch (e) {}
+        return null;
+      }
+      module.exports = inquire;
+    `,
+  };
+
+  itBundled("cjs/DirectEvalSeesRequireBun", {
+    files: inquireFiles,
+    target: "bun",
+    run: { stdout: "Buffer\ntrue" },
+  });
+
+  itBundled("cjs/DirectEvalSeesRequireBunMinified", {
+    files: inquireFiles,
+    target: "bun",
+    minifyIdentifiers: true,
+    minifySyntax: true,
+    minifyWhitespace: true,
+    run: { stdout: "Buffer\ntrue" },
+  });
+
+  itBundled("cjs/DirectEvalSeesRequireNodeESM", {
+    files: inquireFiles,
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    run: { runtime: "node", stdout: "Buffer\ntrue" },
+  });
+
+  // Same file mixes a dynamic require() (forces the per-file __require polyfill
+  // to become ast.require_ref) with direct eval; the wrapper parameter must
+  // still be named `require`.
+  const dynamicRequireFiles = {
+    "/entry.js": /* js */ `
+      console.log(require("./mod.cjs"));
+    `,
+    "/mod.cjs": /* js */ `
+      var name = "buffer";
+      var Buf = require(name).Buffer;
+      module.exports = eval("req" + "uire")("buffer").Buffer === Buf;
+    `,
+  };
+
+  itBundled("cjs/DirectEvalWithDynamicRequireBun", {
+    files: dynamicRequireFiles,
+    target: "bun",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      if (!/\bfunction\(exports, module, require\)/.test(out)) {
+        throw new Error("wrapper parameter should be named require:\n" + out);
+      }
+    },
+    run: { stdout: "true" },
+  });
+
+  itBundled("cjs/DirectEvalWithDynamicRequireNodeESM", {
+    files: dynamicRequireFiles,
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    run: { runtime: "node", stdout: "true" },
+  });
+
+  itBundled("cjs/DirectEvalSeesRequireCompile", {
+    files: inquireFiles,
+    target: "bun",
+    compile: true,
+    run: { stdout: "Buffer\ntrue" },
+  });
+
+  itBundled("cjs/DirectEvalRequireShapeBun", {
+    files: {
+      "/entry.js": /* js */ `
+        const probe = require("./probe.cjs");
+        console.log(JSON.stringify(probe));
+      `,
+      "/probe.cjs": /* js */ `
+        const req = eval("req" + "uire");
+        module.exports = {
+          type: typeof req,
+          resolve: typeof req.resolve,
+          assert: req("assert").strictEqual === require("assert").strictEqual,
+        };
+      `,
+    },
+    target: "bun",
+    run: { stdout: '{"type":"function","resolve":"function","assert":true}' },
+  });
+
+  // No direct eval: wrapper signature stays minimal and __require is tree-shaken.
+  itBundled("cjs/NoRequireArgWithoutDirectEval", {
+    files: {
+      "/entry.js": /* js */ `
+        const x = require("./mod.cjs");
+        console.log(x);
+      `,
+      "/mod.cjs": /* js */ `
+        module.exports = typeof require;
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      if (out.includes("__require")) {
+        throw new Error("__require should be tree-shaken when no direct eval is present");
+      }
+      if (!/__commonJS\(function\(exports, module\) \{/.test(out)) {
+        throw new Error("wrapper signature changed unexpectedly:\n" + out);
+      }
+    },
+    run: { stdout: "function" },
+  });
 });

@@ -3093,6 +3093,26 @@ impl<'a> LinkerContext<'a> {
                             crate::Index::RUNTIME,
                         )
                         .expect("unreachable");
+
+                    // Keep `__require` live so the wrapper can bind `require` for direct eval.
+                    if self.options.output_format != Format::Cjs {
+                        let scope = &self.graph.ast.items_module_scope()[source_index as usize];
+                        if scope.contains_direct_eval
+                            && scope.members.get(&b"require"[..]).is_some_and(|m| {
+                                self.graph.symbols.get_const(m.ref_).map(|s| s.kind)
+                                    == Some(bun_ast::symbol::Kind::Unbound)
+                            })
+                        {
+                            self.graph
+                                .generate_runtime_symbol_import_and_use(
+                                    source_index,
+                                    crate::Index::part(part_index),
+                                    b"__require",
+                                    1,
+                                )
+                                .expect("unreachable");
+                        }
+                    }
                 }
             }
 

@@ -609,23 +609,18 @@ impl EventLoop {
         // The scope/counter cleanup is inlined at each return site below (a
         // scopeguard closure would alias `&mut self`).
 
-        // A previous tick() can leave the termination exception on the VM with
-        // tasks still queued (it was set mid-batch and `tick_with_count`
-        // returned 0). Callers like the worker run loop's
-        // `tick(); while is_event_loop_alive() { tick(); ... }` pair may call
-        // straight back in because `is_event_loop_alive()` only looks at queue
-        // lengths. Running the next batch with the exception pending re-enters
-        // `executeCallImpl` under `scope.assertNoException()`.
+        // Same guard as after `drain_microtasks` below: a prior tick() that
+        // aborted mid-batch on termination can leave tasks queued with the
+        // exception pending, and some callers re-enter without checking.
         if scope.has_exception() {
             self.entered_event_loop_count -= 1;
             return;
         }
 
         let ctx = self.vm();
-        // One snapshot of thread-pool completions per tick, like libuv's
-        // `uv__work_done`. Completions that arrive while this batch is being
-        // processed are picked up by the next tick (after immediates/timers),
-        // so a self-feeding chain can't starve the check/timer phases.
+        // One snapshot of thread-pool completions per tick (libuv's
+        // `uv__work_done`); new arrivals wait for the next iteration so a
+        // self-feeding chain can't starve the check/timer phases.
         self.tick_concurrent();
         self.process_gc_timer();
 

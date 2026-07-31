@@ -1039,12 +1039,7 @@ impl VirtualMachine {
                 + self.active_tasks
                 + el.tasks.readable_length()
                 + (el.has_pending_refs() as usize)
-                // A cross-thread completion posted via `queueTaskConcurrently`
-                // (`ConcurrentCppTask::run_owned` → `postTaskTo`) drops its
-                // `concurrent_ref` on the work-pool thread before the JS
-                // thread observes it, so `has_pending_refs()` alone is not
-                // sufficient; a task still sitting in `concurrent_tasks` is
-                // work `tick()` must run.
+                // A posted-but-not-yet-drained cross-thread task is work to run.
                 + (!el.concurrent_tasks.is_empty() as usize)
                 > 0)
     }

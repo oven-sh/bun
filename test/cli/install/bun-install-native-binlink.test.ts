@@ -414,9 +414,9 @@ linker = "hoisted"
       nested: existsSync(join(nested, "postinstall-ran")),
     }).toEqual({ hoisted: false, nested: false });
 
-    // Both bins must be present and runnable. The hoisted bin is redirected
-    // straight to the platform package; the nested bin remains the package's
-    // own shim, which must work without postinstall.
+    // Both `.bin` entries must be redirected straight to the platform
+    // package, not the main package's own shim, so skipping postinstall is
+    // safe regardless of what the shim would have done.
     async function runBin(binPath: string) {
       const proc = spawn({
         cmd: [binPath],
@@ -442,9 +442,11 @@ linker = "hoisted"
 
     expect(existsSync(hoistedBin)).toBeTrue();
     expect(existsSync(nestedBin)).toBeTrue();
+    expect(realpathSync(hoistedBin)).toContain("test-postinstall-skip-native");
+    expect(realpathSync(nestedBin)).toContain("test-postinstall-skip-native");
 
     expect(await runBin(hoistedBin)).toEqual({ out: "native v2.0.0", err: "", code: 0 });
-    expect(await runBin(nestedBin)).toEqual({ out: "shim v1.0.0", err: "", code: 0 });
+    expect(await runBin(nestedBin)).toEqual({ out: "native v1.0.0", err: "", code: 0 });
 
     // Re-install from the lockfile with node_modules removed.
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
@@ -467,9 +469,10 @@ linker = "hoisted"
       hoisted: existsSync(join(hoisted, "postinstall-ran")),
       nested: existsSync(join(nested, "postinstall-ran")),
     }).toEqual({ hoisted: false, nested: false });
+    expect(realpathSync(nestedBin)).toContain("test-postinstall-skip-native");
 
     expect(await runBin(hoistedBin)).toEqual({ out: "native v2.0.0", err: "", code: 0 });
-    expect(await runBin(nestedBin)).toEqual({ out: "shim v1.0.0", err: "", code: 0 });
+    expect(await runBin(nestedBin)).toEqual({ out: "native v1.0.0", err: "", code: 0 });
   });
 });
 

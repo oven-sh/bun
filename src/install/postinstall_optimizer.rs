@@ -202,9 +202,11 @@ impl List {
                 //
                 // The skip applies regardless of where the package lands in the
                 // tree: the platform optionalDependency is resolved per package,
-                // and the package's own `bin` shim locates it via Node module
-                // resolution at runtime, so a nested copy works the same as a
-                // hoisted one without its postinstall.
+                // and the hoisted linker redirects the `.bin` entry straight to
+                // the platform package for nested copies as well (see
+                // `find_native_binlink_target_tree` in `PackageInstaller.rs`),
+                // so skipping postinstall is safe whether or not the package's
+                // own `bin` file would have worked on its own.
                 PostinstallOptimizer::get_native_binlink_replacement_package_id(
                     resolutions,
                     metas,

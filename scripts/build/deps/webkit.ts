@@ -1,9 +1,14 @@
 /**
- * WebKit commit — determines prebuilt download URL + what to checkout
- * for local mode. Override via `--webkit-version=<hash>` to test a branch.
+ * WebKit commit — determines the prebuilt download URL (and the CI
+ * version-sync check). For **local mode this is metadata only**: the
+ * actual checkout in vendor/WebKit is what's built, and its git HEAD is
+ * what the build graph tracks (see `BUN_WEBKIT_GIT_HEAD` in build() and
+ * the generic `dep_git_stamp` edge in source.ts) — a checkout bump
+ * automatically re-runs cmake configure + rebuild, no constant bump
+ * needed. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "34c01d13391e00c06862a3d2c5b7fff350ac87e0";
+export const WEBKIT_VERSION = "8172ab945d8e5ec03be0dcd7cec47bfe6e339a75";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -45,7 +50,7 @@ import { join, resolve } from "node:path";
 import type { Config } from "../config.ts";
 import { computeCpuTargetFlags } from "../flags.ts";
 import { slash } from "../shell.ts";
-import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSourceDir } from "../source.ts";
+import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSourceDir, gitHeadSync } from "../source.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Prebuilt URL computation
@@ -401,6 +406,16 @@ export const webkit: Dependency = {
     };
 
     const srcDir = webkitSrcDir(cfg);
+    // Bake the ACTUAL checkout commit into the cmake args (WEBKIT_VERSION
+    // is prebuilt metadata only). Ninja re-runs dep_configure when $args
+    // change, so a checkout bump triggers `cmake --fresh` + header
+    // regeneration even without the dep_git_stamp edge — and the baked
+    // value makes `grep BUN_WEBKIT_GIT_HEAD build.ninja` show which commit
+    // the current graph was configured against.
+    const webkitHead = gitHeadSync(srcDir);
+    if (webkitHead !== undefined) {
+      args.BUN_WEBKIT_GIT_HEAD = webkitHead;
+    }
     // FFI headers (BunFFI.h, FFISignature.h, etc.) live in the ffi/
     // subdirectory but are included as <JavaScriptCore/*.h> from Bun's
     // JSCFFIBridge.cpp. Symlink them into the parent JSC directory so the

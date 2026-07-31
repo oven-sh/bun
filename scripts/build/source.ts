@@ -19,6 +19,7 @@
  * re-extraction after a failed patch doesn't re-download.
  */
 
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ar, cc, cxx, nasm } from "./compile.ts";
@@ -626,6 +627,21 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     pool: "dep",
   });
 
+  // Git-HEAD stamp for local deps that are git checkouts (see
+  // emitGitHeadStamp). Runs on every ninja invocation (always input) but
+  // rewrites the stamp only when the checkout's HEAD changes — restat
+  // prunes downstream when the commit is unchanged. This replaces the
+  // CMakeLists.txt/Cargo.toml manifest stamp for git checkouts: `git
+  // checkout` preserves mtimes of unchanged files, so a commit bump that
+  // doesn't touch the manifest would otherwise leave generated headers
+  // (e.g. WebKit's BunFFI.h) stale without re-running cmake configure.
+  n.rule("dep_git_stamp", {
+    command: `${stream} --cwd=$srcdir $cmd`,
+    description: "stamp $name (git HEAD)",
+    restat: true,
+    pool: "dep",
+  });
+
   // DirectBuild host tool: compile+link in one clang invocation with NO
   // cfg target/arch flags — the tool runs on the build host. cc()/link()
   // would add --target which breaks cross-compiles. cfg.hostCc (not cfg.cc):
@@ -701,6 +717,61 @@ export function depSourceStamp(cfg: Config, name: string): string {
  */
 export function depBuildDir(cfg: Config, name: string): string {
   return resolve(cfg.buildDir, "deps", name);
+}
+
+/**
+ * Emit a git-HEAD stamp edge for a local dep that is a git checkout, and
+ * return the stamp path to use as the dep's source stamp.
+ *
+ * The edge runs on every ninja invocation (always input, ~ms) but rewrites
+ * the stamp only when `git rev-parse HEAD` changes; restat prunes
+ * downstream when the commit is unchanged. Configure/build edges depend on
+ * the stamp, so a checkout bump re-runs cmake configure — regenerating
+ * headers (WebKit's BunFFI.h) — and rebuilds changed sources. Git preserves
+ * mtimes of unchanged files, so the CMakeLists.txt/Cargo.toml manifest
+ * stamp would miss commit bumps entirely.
+ */
+function emitGitHeadStamp(n: Ninja, cfg: Config, name: string, srcDir: string): string {
+  const stamp = resolve(depBuildDir(cfg, name), ".git-identity");
+  const cmd = quoteArgs(
+    [
+      "bash",
+      "-c",
+      // $1 = stamp path. Re-reads HEAD (falls back to "unknown" if the
+      // repo disappears) and rewrites the stamp only when it changed —
+      // write-if-changed keeps mtime stable so restat prunes downstream.
+      `head=$(git rev-parse HEAD 2>/dev/null) || head=unknown; cur=$(cat "$1" 2>/dev/null) || cur=; if [ "$head" != "$cur" ]; then printf '%s' "$head" > "$1"; fi`,
+      "sh",
+      stamp,
+    ],
+    cfg.host.os === "windows",
+  );
+  n.build({
+    outputs: [stamp],
+    rule: "dep_git_stamp",
+    inputs: [],
+    implicitInputs: [n.always()],
+    vars: { name, srcdir: srcDir, cmd },
+  });
+  return stamp;
+}
+
+/**
+ * Current HEAD of the git checkout at `dir`, or undefined if `dir` is not
+ * a git repo (or git is unavailable). Probes the environment only — no
+ * build artifacts — so it's a legitimate configure-time spawnSync (see
+ * CLAUDE.md "Configure time vs build time").
+ */
+export function gitHeadSync(dir: string): string | undefined {
+  try {
+    const head = execFileSync("git", ["-C", dir, "rev-parse", "HEAD"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return head.length > 0 ? head : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -807,6 +878,17 @@ export function resolveDep(
           ? `Expected ${stampFile || "source"} at ${source.path}/ — check deps/${dep.name}.ts`
           : (source.hint ?? `Clone the dep to vendor/${dep.name}/ manually`),
     });
+
+    // Git checkouts: replace the manifest stamp with the checkout's actual
+    // HEAD — `git checkout` preserves mtimes of unchanged files, so a
+    // commit bump that doesn't touch CMakeLists.txt/Cargo.toml would leave
+    // the manifest stamp unchanged and skip reconfigure (stale generated
+    // headers, e.g. WebKit's BunFFI.h). In-tree deps (sqlite) are excluded:
+    // their sources are bun-repo files already tracked per-file, and a
+    // HEAD stamp would force needless rebuilds on any unrelated commit.
+    if (source.kind === "local" && stampFile !== "" && cfg.host.os !== "windows" && gitHeadSync(srcDir) !== undefined) {
+      sourceStamp = emitGitHeadStamp(n, cfg, dep.name, srcDir);
+    }
   }
 
   // ─── Resolve fetchDeps → extra inputs on configure + build ───

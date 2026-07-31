@@ -329,3 +329,68 @@ test.skipIf(!isDebug)(
   },
   120_000,
 );
+
+// Regression: terminate() during a synchronous require() of a deep CJS graph.
+// finishRequireWithError (and JSCommonJSModule::load's error branch) did
+// tryClearException() then requireMap()->remove() with the sticky
+// TerminationException still pending, so JSMap::remove bailed and
+// ASSERT(wasRemoved) SIGABRTed the process. Release builds compile the assert
+// out and leave the throwing module cached for a dying VM, so debug-only.
+test.skipIf(!isDebug)(
+  "terminate() while a worker is inside require() does not trip ASSERT(wasRemoved)",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+        import { tmpdir } from "node:os";
+        import { join } from "node:path";
+        const N = 200;
+        const dir = mkdtempSync(join(tmpdir(), "cjsreq-"));
+        for (let i = 0; i < N; i++) {
+          const a = (i + 1) % N, b = (i * 13 + 5) % N;
+          writeFileSync(join(dir, "c" + i + ".cjs"),
+            "require('./c" + a + ".cjs');\\nrequire('./c" + b + ".cjs');\\nexports.id = " + i + ";\\n");
+        }
+        writeFileSync(join(dir, "w.mjs"),
+          "const D = " + JSON.stringify(dir + "/") + ";\\n" +
+          "postMessage('ready');\\n" +
+          "while (true) {\\n" +
+          "  for (const k of Object.keys(require.cache)) delete require.cache[k];\\n" +
+          "  require(D + 'c0.cjs');\\n" +
+          "}\\n");
+        process.on("exit", () => { try { rmSync(dir, { recursive: true, force: true }); } catch {} });
+        // Three lanes, each terminates its worker at a sweep of offsets so at
+        // least one lands mid-require. The worker spends ~all its time inside
+        // require(), so the unpatched build aborts within the first few
+        // iterations.
+        async function lane(offset) {
+          for (let i = 0; i < 25; i++) {
+            const w = new Worker(join(dir, "w.mjs"));
+            w.onerror = () => {};
+            await new Promise((res) => {
+              w.onmessage = () => res();
+              setTimeout(res, 2000);
+            });
+            await Bun.sleep(offset + (i % 10) * 5);
+            await w.terminate();
+          }
+        }
+        await Promise.all([lane(0), lane(20), lane(60)]);
+        console.log("PASS");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  120_000,
+);

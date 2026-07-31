@@ -247,6 +247,11 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         this->m_filename.get());
 
     if (auto exception = scope.exception()) {
+        // tryClearException() cannot clear a termination, and JSMap::remove
+        // with it still pending bails out (and RELEASE_ASSERTs in the HashMapImpl
+        // path). The worker is dying, so leave the entry in place.
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return false;
         (void)scope.tryClearException();
 
         // On error, remove the module from the require map/
@@ -1263,8 +1268,14 @@ const JSC::ClassInfo RequireFunctionPrototype::s_info = { "require"_s, &Base::s_
 
 ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObject, JSC::ThrowScope& throwScope, JSC::JSValue specifierValue)
 {
+    auto& vm = JSC::getVM(globalObject);
     JSC::JSValue exception = throwScope.exception();
     ASSERT(exception);
+    // tryClearException() cannot clear a termination, and JSMap::remove with it
+    // still pending returns false, tripping the assert below. The worker is
+    // dying, so leave the entry in place and propagate.
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        RELEASE_AND_RETURN(throwScope, {});
     (void)throwScope.tryClearException();
 
     // On error, remove the module from the require map/
@@ -1574,6 +1585,8 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                                 moduleObject->m_dirname.get(),
                                 moduleObject->m_filename.get());
                             if (auto exception = scope.exception()) {
+                                if (vm.hasPendingTerminationException()) [[unlikely]]
+                                    return;
                                 (void)scope.tryClearException();
 
                                 // On error, remove the module from the require map

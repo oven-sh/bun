@@ -297,14 +297,14 @@ static JSValue invokeMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject*
     RELEASE_AND_RETURN(scope, JSC::call(globalObject, method, callData, object, args));
 }
 
-static JSC::JSUint8Array* encodeStringToUint8Array(JSC::VM& vm, JSGlobalObject* globalObject, JSValue stringValue)
+// The same simdutf sizer/writer pair the chunk appender uses: one sizing pass, one
+// encode straight into the result (no intermediate CString copy). The result is
+// buffer-backed from birth so a later `.buffer` access never has to change modes.
+static RefPtr<JSC::ArrayBuffer> encodeStringToBuffer(JSC::VM& vm, JSGlobalObject* globalObject, JSValue stringValue)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String string = stringValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    // The same simdutf sizer/writer pair the chunk appender uses: one sizing pass, one
-    // encode straight into the result (no intermediate CString copy). The result is
-    // buffer-backed from birth so a later `.buffer` access never has to change modes.
     size_t byteLength = utf8ByteLengthWithReplacement(string);
     RefPtr<JSC::ArrayBuffer> resultBuffer = JSC::ArrayBuffer::tryCreateUninitialized(byteLength, 1);
     if (!resultBuffer) [[unlikely]] {
@@ -315,8 +315,25 @@ static JSC::JSUint8Array* encodeStringToUint8Array(JSC::VM& vm, JSGlobalObject* 
         size_t written = writeUTF8(string, { static_cast<uint8_t*>(resultBuffer->data()), byteLength });
         ASSERT_UNUSED(written, written == byteLength);
     }
+    return resultBuffer;
+}
+
+static JSC::JSUint8Array* encodeStringToUint8Array(JSC::VM& vm, JSGlobalObject* globalObject, JSValue stringValue)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RefPtr<JSC::ArrayBuffer> resultBuffer = encodeStringToBuffer(vm, globalObject, stringValue);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    size_t byteLength = resultBuffer->byteLength();
     auto* structure = globalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
     RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(resultBuffer), 0, byteLength));
+}
+
+static JSC::JSArrayBuffer* encodeStringToArrayBuffer(JSC::VM& vm, JSGlobalObject* globalObject, JSValue stringValue)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RefPtr<JSC::ArrayBuffer> resultBuffer = encodeStringToBuffer(vm, globalObject, stringValue);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_AND_RETURN(scope, JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTF::move(resultBuffer)));
 }
 
 static bool appendChunkBytes(JSC::VM& vm, JSGlobalObject* globalObject, JSValue chunk, WTF::Vector<uint8_t>& bytes)
@@ -484,7 +501,7 @@ static JSValue convertChunksToArrayBuffer(JSGlobalObject* globalObject, JSValue 
             return JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTF::move(copied));
         }
         if (chunk.isString())
-            RELEASE_AND_RETURN(scope, encodeStringToUint8Array(vm, globalObject, chunk));
+            RELEASE_AND_RETURN(scope, encodeStringToArrayBuffer(vm, globalObject, chunk));
     }
     RELEASE_AND_RETURN(scope, concatenateChunks(vm, globalObject, chunks, /* asUint8Array */ false));
 }

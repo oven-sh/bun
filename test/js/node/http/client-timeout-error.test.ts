@@ -169,4 +169,40 @@ describe("node:http client timeout", () => {
       }
     });
   });
+
+  // A connected peer that has stopped reading: writes back up in the handle's
+  // send queue and getBufferedAmount() stays nonzero. Node's _onTimeout
+  // heuristic suppresses 'timeout' only while the write queue is *draining*
+  // (writeQueueSize moved since the last check), re-arming each time; once the
+  // queue stalls it emits. The old `if (getBufferedAmount(handle) > 0) return`
+  // dropped the one-shot timer with no re-arm, so 'timeout' was lost for good.
+  it("net.Socket 'timeout' fires when a connected write is stalled by a non-reading peer", async () => {
+    const accepted: net.Socket[] = [];
+    const server = net.createServer(s => {
+      accepted.push(s);
+      s.on("error", () => {});
+      s.pause();
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as net.AddressInfo;
+
+    const socket = net.connect({ host: "127.0.0.1", port });
+    socket.on("error", () => {});
+    try {
+      await once(socket, "connect");
+      const chunk = Buffer.alloc(1 << 20, 0x42);
+      let mb = 0;
+      while (socket.write(chunk) && ++mb < 64) {}
+      expect(socket.writableLength).toBeGreaterThan(0);
+
+      socket.setTimeout(200);
+      await once(socket, "timeout");
+      expect(socket.connecting).toBe(false);
+    } finally {
+      socket.destroy();
+      for (const s of accepted) s.destroy();
+      server.close();
+    }
+  });
 });

@@ -1526,7 +1526,9 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
 
     if (!hasValue) {
         WTF::StringImpl* keyString = propertyKey.uid();
-        throwVMError(globalObject, scope, makeString("Property `"_s, keyString ? StringView { *keyString } : StringView {}, "` does not exist in the provided object"_s));
+        StringView description = keyString ? StringView { *keyString } : StringView {};
+        WTF::String keyDisplay = propertyKey.isSymbol() ? makeString("Symbol("_s, description, ")"_s) : description.toString();
+        throwVMError(globalObject, scope, makeString("Property `"_s, keyDisplay, "` does not exist in the provided object"_s));
         return {};
     }
 

@@ -1086,6 +1086,10 @@ describe("spyOn", () => {
     expect(() => spyOn(Object.create({ inherited: () => 1 }), "nope")).toThrow(
       "Property `nope` does not exist in the provided object",
     );
+
+    expect(() => spyOn({ foo: 1 }, Symbol("foo"))).toThrow(
+      "Property `Symbol(foo)` does not exist in the provided object",
+    );
   });
 
   test("spies through a Proxy with default traps", () => {
@@ -1189,6 +1193,28 @@ describe("spyOn", () => {
       armed = false;
       fn2.mockRestore();
       expect(target2.m()).toBe("orig");
+    });
+
+    test("restoreAllMocks propagates a Proxy set trap failure and keeps skipped spies tracked", () => {
+      let armed = false;
+      const throwingSet = (t, k, v) => {
+        if (armed) throw new Error("boom-set");
+        return Reflect.set(t, k, v);
+      };
+      const t1 = { m: () => "orig1" };
+      const t2 = { m: () => "orig2" };
+      spyOn(new Proxy(t1, { set: throwingSet }), "m");
+      spyOn(new Proxy(t2, { set: throwingSet }), "m");
+
+      armed = true;
+      expect(() => jest.restoreAllMocks()).toThrow("boom-set");
+      // At least one spy was skipped and is still the mock (activeSpies not cleared).
+      expect(t1.m.mock !== undefined || t2.m.mock !== undefined).toBe(true);
+
+      armed = false;
+      jest.restoreAllMocks();
+      expect(t1.m()).toBe("orig1");
+      expect(t2.m()).toBe("orig2");
     });
 
     test("installs and restores through a redirecting set trap symmetrically", () => {

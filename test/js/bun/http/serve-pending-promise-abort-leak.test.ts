@@ -264,8 +264,9 @@ test("pendingRequests drops when client aborts a parked direct-stream pull()", a
   // promise. If the client disconnects while pull() is suspended on a promise that is
   // still rooted (e.g. the resolver is stashed in user state), that chain never settles,
   // so the NativePromiseContext reaction keeps the RequestContext at ref_count 1 until
-  // the user releases the resolver. on_abort's sink branch reports the request complete
-  // eagerly so pending_requests (and anything gated on it) does not wait on that.
+  // the user releases the resolver. on_abort's sink branch bumps aborted_with_live_ctx so
+  // the user-visible server.pendingRequests drops immediately; the structural
+  // pending_requests (which gates deinit_if_we_can) still waits for the ctx to deinit.
   const parked: Array<() => void> = [];
   const pullEntered: Array<() => void> = [];
 
@@ -302,14 +303,14 @@ test("pendingRequests drops when client aborts a parked direct-stream pull()", a
   }
 
   // pull() is still suspended (its resolver is rooted in `parked`), so the
-  // pull promise and its reaction chain are still alive. pending_requests must
-  // nonetheless drop to 0 once on_abort has run.
+  // pull promise and its reaction chain are still alive. The getter must
+  // nonetheless read 0 once on_abort has run.
   await waitForPendingRequests(server, 0);
   expect(parked.length).toBe(iterations);
 
   // Releasing the pull() resolver lets the reaction chain settle and deinit
-  // the RequestContext; the flag set in on_abort keeps deinit from reporting
-  // complete a second time (which would underflow pending_requests).
+  // the RequestContext; deinit balances aborted_with_live_ctx before
+  // on_request_complete runs, so the getter stays at 0.
   for (const r of parked.splice(0)) r();
   await Bun.sleep(0);
   Bun.gc(true);

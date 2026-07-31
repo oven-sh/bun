@@ -1502,8 +1502,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     #[inline]
     pub(crate) fn note_aborted_ctx_released(&self) {
-        self.aborted_with_live_ctx
-            .set(self.aborted_with_live_ctx.get().saturating_sub(1));
+        let cur = self.aborted_with_live_ctx.get();
+        debug_assert!(cur > 0, "aborted_with_live_ctx underflow");
+        self.aborted_with_live_ctx.set(cur - 1);
     }
 
     /// `server.pendingRequests` getter value; see [`aborted_with_live_ctx`].

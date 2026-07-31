@@ -12769,6 +12769,10 @@ test("data row that omits columns declared in the row description yields nulls f
   // existing duplicate-column-name behavior).
   expect(stdout).toContain('EMPTY_ROW {"c":null}');
   expect(stdout).toContain('FULL_ROW {"c":"v61"}');
+  // A short DataRow against a mixed named + digit-named RowDescription must
+  // still surface both keys: the indexed column "7" is not silently dropped.
+  expect(stdout).toContain('MIXED_EMPTY {"7":null,"a":null}');
+  expect(stdout).toContain('MIXED_FULL {"7":"v7","a":"va"}');
   expect(stdout).toContain("FIXTURE_DONE");
   expect(filteredStderr).toBe("");
   expect(exitCode).toBe(0);

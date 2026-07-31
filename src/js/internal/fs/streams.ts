@@ -571,10 +571,7 @@ function writevAll(chunks, size, pos, cb, retries = 0) {
   });
 }
 
-// Bytes handed to the FileSink for a fast-path write. FileSink.write(string)
-// always encodes UTF-8 (it has no encoding parameter), so strings are measured
-// as UTF-8 regardless of the caller's `encoding` argument, keeping the counter
-// in lockstep with what actually reaches the fd.
+// FileSink.write(string) always emits UTF-8, so count that (not the caller's encoding).
 function bytesForWrite(data: any): number {
   return typeof data === "string" ? Buffer.byteLength(data) : (data?.byteLength ?? data?.length ?? 0);
 }

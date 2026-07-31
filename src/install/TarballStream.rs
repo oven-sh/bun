@@ -799,6 +799,13 @@ impl TarballStream {
         let rest: &[OSPathChar] = tokenize_rest_after_first(&pathname[..]);
 
         let mut norm_buf = OSPathBuffer::uninit();
+        // PAX paths are unbounded; +1 covers the Windows UNC/drive case
+        // where `normalize_buf_t` grows output by one, plus the NUL below.
+        if rest.len() + 1 >= norm_buf.len() {
+            self.phase = Phase::WantData;
+            self.out_fd = None;
+            return Ok(());
+        }
         let normalized =
             resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..]);
         let norm_len = normalized.len();

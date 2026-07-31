@@ -1494,7 +1494,9 @@ impl Archiver {
                     // at its original `.len()`; therefore `remaining[remaining.len()] == 0`.
                     let pathname: &[OSPathChar] = remaining;
 
-                    if pathname.len() >= normalized_buf.len() {
+                    // +1: `normalize_buf_t` can grow a Windows UNC/drive
+                    // input by one, and we write a NUL after it.
+                    if pathname.len() + 1 >= normalized_buf.len() {
                         if options.log {
                             bun_core::warn!(
                                 "Skipping entry with a path longer than the maximum path length: {}\n",

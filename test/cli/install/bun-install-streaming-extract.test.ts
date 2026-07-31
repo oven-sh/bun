@@ -376,6 +376,59 @@ describe("streaming tarball extraction", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The streaming extractor normalizes each entry's path into a fixed-size
+  // OSPathBuffer. PAX extended headers can carry paths of arbitrary length,
+  // so an entry longer than that buffer must be skipped rather than
+  // overrunning it. The buffered extractor already has this guard; this
+  // covers the streaming path.
+  test("streaming extract skips an overlong PAX path instead of crashing", async () => {
+    // Longer than OSPathBuffer on every platform: 1024 on macOS/BSD,
+    // 4096 on Linux, 32767 u16 units on Windows. Built from hash output
+    // so gzip cannot collapse it; the compressed body must span multiple
+    // HTTP chunks for the streaming path to commit.
+    let longName = "";
+    let seed = createHash("sha256").update("overlong-pax").digest();
+    while (longName.length < 40_000) {
+      longName += seed.toString("hex");
+      seed = createHash("sha256").update(seed).digest();
+    }
+    longName = longName.slice(0, 40_000);
+
+    const { tgz, shasum, integrity } = buildTarball([
+      {
+        path: "package.json",
+        body: Buffer.from(JSON.stringify({ name: "stream-pkg", version: "1.0.0" }) + "\n"),
+      },
+      { path: longName, body: Buffer.from("unreachable\n") },
+      { path: "after.txt", body: Buffer.from("after\n") },
+    ]);
+    expect(tgz.length).toBeGreaterThan(4096);
+
+    await using reg = await makeRegistry(tgz, shasum, integrity, 512);
+    using dir = tempDir("streaming-extract-overlong-pax", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "stream-pkg": "1.0.0" },
+      }),
+      "bunfig.toml": `[install]\nregistry = "${reg.url}"\n`,
+    });
+
+    // The crafted tarball is small; lower the threshold so the streaming
+    // extractor commits to it instead of falling back to the buffered path.
+    const { stderr, exitCode } = await runInstall(String(dir), {
+      BUN_INSTALL_STREAMING_MIN_SIZE: "1",
+    });
+    expect(stderr).toContain("Streamed ");
+
+    const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
+    expect(readFileSync(join(pkgRoot, "after.txt"), "utf8")).toBe("after\n");
+    // The overlong entry must produce no on-disk artifact, not even under
+    // the truncated ustar fallback name.
+    expect(await readdirSorted(pkgRoot)).toEqual(["after.txt", "package.json"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("streaming rejects a tarball whose integrity does not match", async () => {
     // Serve the valid tarball but advertise the integrity of a
     // *different* blob. Extraction will stream to completion (so we

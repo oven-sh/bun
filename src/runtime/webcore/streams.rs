@@ -2264,10 +2264,8 @@ impl NetworkSink {
         }
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
-        // `Backpressure`/`Done` are control signals for the native ByteStream/
-        // JS-controller pump. The direct `.writer()` API (`source == None`)
-        // exposes `write()` as `number | Promise<number>`, so surface the byte
-        // count there and let `flush()` provide the async backpressure hook.
+        // Direct `.writer()` (no source) exposes `write()` as `number`; only
+        // the pump paths consume `Backpressure`/`Done`.
         let has_source = !matches!(self.source, SourceHandle::None);
 
         if let Some(task) = self.task_mut() {

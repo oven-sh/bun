@@ -3329,9 +3329,6 @@ where
         if err.is_some()
             && let Some(resp) = this.resp
         {
-            // Body bytes are already on the wire: close without the terminating
-            // chunk (RFC 9112 section 7) so the client sees an incomplete
-            // message rather than a truncated-but-clean response.
             let state = resp.state();
             if state.is_http_write_called() && state.is_response_pending() {
                 this.force_close();

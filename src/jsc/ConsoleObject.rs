@@ -2308,6 +2308,7 @@ pub mod formatter {
                 T::WrapForValidIterator
                 | T::RegExpStringIterator
                 | T::JSArrayIterator
+                | T::StringIterator
                 | T::Iterator
                 | T::IteratorHelper
                 | T::Generator
@@ -5454,6 +5455,12 @@ pub mod formatter {
                 jsc::JSType::Generator
                     | jsc::JSType::AsyncGenerator
                     | jsc::JSType::AsyncFunctionGenerator
+                    | jsc::JSType::JSArrayIterator
+                    | jsc::JSType::StringIterator
+                    | jsc::JSType::Iterator
+                    | jsc::JSType::IteratorHelper
+                    | jsc::JSType::WrapForValidIterator
+                    | jsc::JSType::RegExpStringIterator
             );
             let global_this = self.global_this;
             let mut iter = PropertyIteratorCtx::<C> {

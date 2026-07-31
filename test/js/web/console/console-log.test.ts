@@ -152,7 +152,7 @@ it("console.log with SharedArrayBuffer", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/18324
-it.concurrent("console.log identifies generator and async generator objects", async () => {
+it.concurrent("console.log identifies generator and iterator objects without dumping prototype methods", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -160,16 +160,24 @@ it.concurrent("console.log identifies generator and async generator objects", as
       `
 function* syncGen() { yield 1; }
 async function* asyncGen() { yield 1; }
-console.log(syncGen());
-console.log(asyncGen());
-console.log(Bun.inspect(syncGen()), "|", Bun.inspect(asyncGen()));
+const line = v => process.stdout.write(Bun.inspect(v) + "\\n");
+line(syncGen());
+line(asyncGen());
+line([1, 2][Symbol.iterator]());
+line("ab"[Symbol.iterator]());
+line([1].values().map(x => x));
+line("a".matchAll(/a/g));
+line(Iterator.from({ next: () => ({ done: true }) }));
 const gen = syncGen();
 gen.z = 1;
 gen.a = 2;
-process.stdout.write(Bun.inspect(gen) + "\\n");
+line(gen);
 const agen = asyncGen();
 agen.x = "hi";
-process.stdout.write(Bun.inspect(agen) + "\\n");
+line(agen);
+const it = [1][Symbol.iterator]();
+it.custom = "prop";
+line(it);
 `,
     ],
     env: bunEnv,
@@ -183,9 +191,14 @@ process.stdout.write(Bun.inspect(agen) + "\\n");
     [
       "Generator {}",
       "AsyncGenerator {}",
-      "Generator {} | AsyncGenerator {}",
+      "Array Iterator {}",
+      "String Iterator {}",
+      "Iterator Helper {}",
+      "RegExp String Iterator {}",
+      "Iterator {}",
       "Generator {\n  z: 1,\n  a: 2,\n}",
       'AsyncGenerator {\n  x: "hi",\n}',
+      'Array Iterator {\n  custom: "prop",\n}',
       "",
     ].join("\n"),
   );

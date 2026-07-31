@@ -1138,6 +1138,25 @@ booga"
       expect(exitCode).toBe(0);
     });
 
+    test("cd distinguishes ENOENT from ENOTDIR", async () => {
+      using dir = tempDir("cd-enoent-enotdir", {
+        "afile.txt": "",
+      });
+      const missing = join(String(dir), "does-not-exist");
+      const afile = join(String(dir), "afile.txt");
+
+      {
+        const { stderr, exitCode } = await $`cd ${missing}`.quiet().nothrow();
+        expect(stderr.toString()).toBe(`cd: ${missing}: No such file or directory\n`);
+        expect(exitCode).toBe(1);
+      }
+      {
+        const { stderr, exitCode } = await $`cd ${afile}`.quiet().nothrow();
+        expect(stderr.toString()).toBe(`cd: ${afile}: Not a directory\n`);
+        expect(exitCode).toBe(1);
+      }
+    });
+
     // handleChangeCwdErr's `else` arm previously returned `.failed` without writing
     // to stderr or calling done(), so any errno other than NOTDIR/NOENT/NAMETOOLONG
     // (e.g. EACCES, ELOOP) left the shell promise unresolved forever.

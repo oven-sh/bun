@@ -22,7 +22,6 @@ pub enum CatState {
         in_done: bool,
         chunks_queued: usize,
         chunks_done: usize,
-        errno: ExitCode,
     },
     ExecFilepathArgs {
         /// Index into argv where filepath args start.
@@ -71,7 +70,6 @@ impl Cat {
                 in_done: false,
                 chunks_queued: 0,
                 chunks_done: 0,
-                errno: 0,
             }
         } else {
             CatState::ExecFilepathArgs {
@@ -237,7 +235,7 @@ impl Cat {
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         if let Some(e) = err {
-            let errno = e.get_errno() as ExitCode;
+            let exit_code = Builtin::status_for(e.get_errno());
             let rchild = ReaderChildPtr {
                 node: cmd,
                 tag: ReaderTag::Cat,
@@ -246,12 +244,7 @@ impl Cat {
             // Pull the reader `Arc` out of
             // state before calling `remove_reader`, then drop it.
             match &mut Self::state_mut(interp, cmd).state {
-                CatState::ExecStdin {
-                    in_done,
-                    errno: st_errno,
-                    ..
-                } => {
-                    *st_errno = errno;
+                CatState::ExecStdin { in_done, .. } => {
                     let was_done = core::mem::replace(in_done, true);
                     if !was_done {
                         if let BuiltinInput::Fd(r) = &Builtin::of(interp, cmd).stdin {
@@ -267,7 +260,7 @@ impl Cat {
                 CatState::WaitingWriteErr => {}
                 _ => panic!("Invalid state"),
             }
-            return Builtin::done(interp, cmd, errno);
+            return Builtin::done(interp, cmd, exit_code);
         }
 
         let step = match &mut Self::state_mut(interp, cmd).state {
@@ -341,7 +334,7 @@ impl Cat {
         cmd: NodeId,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        let errno: ExitCode = err.map(|e| e.get_errno() as ExitCode).unwrap_or(0);
+        let exit_code: ExitCode = err.map(|e| Builtin::status_for(e.get_errno())).unwrap_or(0);
         let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
         let mut cancel = false;
         let step = match &mut Self::state_mut(interp, cmd).state {
@@ -349,13 +342,11 @@ impl Cat {
                 chunks_queued,
                 chunks_done,
                 in_done,
-                errno: st_errno,
             } => {
-                *st_errno = errno;
                 *in_done = true;
-                if errno != 0 {
+                if exit_code != 0 {
                     if *chunks_done >= *chunks_queued || !stdout_needs_io {
-                        Step::Done(errno)
+                        Step::Done(exit_code)
                     } else {
                         cancel = true;
                         Step::Suspend
@@ -375,11 +366,11 @@ impl Cat {
                 ..
             } => {
                 *in_done = true;
-                if errno != 0 {
+                if exit_code != 0 {
                     if *out_done || !stdout_needs_io {
                         // Drop the reader ref.
                         *reader = None;
-                        Step::Done(errno)
+                        Step::Done(exit_code)
                     } else {
                         cancel = true;
                         Step::Suspend

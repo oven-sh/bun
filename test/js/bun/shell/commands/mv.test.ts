@@ -46,7 +46,19 @@ describe("mv", async () => {
 
   TestBuilder.command`touch a; mkdir -p foo; mv foo/ a`
     .ensureTempDir()
-    .exitCode(20 /* ENOTDIR */)
+    .exitCode(1)
     .stderr("mv: a: Not a directory\n")
     .runAsTest("move dir -> file fails");
+
+  TestBuilder.command`mv nosuchsrc dst`
+    .ensureTempDir()
+    .exitCode(1)
+    .stderr(s => expect(s).toContain("No such file or directory"))
+    .runAsTest("missing source exits 1 (not ENOENT)");
+
+  TestBuilder.command`mkdir -p d/x; mv d d/inside`
+    .ensureTempDir()
+    .exitCode(1)
+    .stderr(s => expect(s).toContain("mv:"))
+    .runAsTest("move dir into own subdir exits 1 (not EINVAL)");
 });

@@ -5046,260 +5046,234 @@ impl<'a> HTTPClient<'a> {
                 && !location.is_empty()
                 && self.remaining_redirect_count > 0
             {
-                match status_code {
-                    302 | 301 | 307 | 308 | 303 => {
-                        // https://fetch.spec.whatwg.org/#http-redirect-fetch step 11:
-                        // "If internalResponse's status is not 303, request's body
-                        // is non-null, and request's body's source is null, then
-                        // return a network error." A ReadableStream body has no
-                        // source to replay from, so only 303 (which drops the body
-                        // and switches to GET) may be followed.
-                        if status_code != 303
-                            && matches!(
-                                self.state.original_request_body,
-                                HTTPRequestBody::Stream(_)
-                            )
+                // https://fetch.spec.whatwg.org/#http-redirect-fetch step 11:
+                // "If internalResponse's status is not 303, request's body
+                // is non-null, and request's body's source is null, then
+                // return a network error." A ReadableStream body has no
+                // source to replay from, so only 303 (which drops the body
+                // and switches to GET) may be followed.
+                if status_code != 303
+                    && matches!(self.state.original_request_body, HTTPRequestBody::Stream(_))
+                {
+                    return Err(crate::Error::RequestBodyNotReusable);
+                }
+                let is_same_origin;
+
+                {
+                    if let Some(i) = strings::index_of(location, b"://") {
+                        let mut string_builder = StringBuilder::default();
+
+                        let is_protocol_relative = i == 0;
+                        let protocol_name: &[u8] = if is_protocol_relative {
+                            self.url.display_protocol()
+                        } else {
+                            &location[0..i]
+                        };
+                        let is_http =
+                            strings::eql_case_insensitive_ascii(protocol_name, b"http", true);
+                        if is_http
+                            || strings::eql_case_insensitive_ascii(protocol_name, b"https", true)
                         {
-                            return Err(crate::Error::RequestBodyNotReusable);
+                        } else {
+                            return Err(crate::Error::UnsupportedRedirectProtocol);
                         }
-                        let is_same_origin;
 
+                        if (protocol_name.len() * usize::from(is_protocol_relative))
+                            + location.len()
+                            > MAX_REDIRECT_URL_LENGTH
                         {
-                            if let Some(i) = strings::index_of(location, b"://") {
-                                let mut string_builder = StringBuilder::default();
+                            return Err(crate::Error::RedirectURLTooLong);
+                        }
 
-                                let is_protocol_relative = i == 0;
-                                let protocol_name: &[u8] = if is_protocol_relative {
-                                    self.url.display_protocol()
-                                } else {
-                                    &location[0..i]
-                                };
-                                let is_http = strings::eql_case_insensitive_ascii(
-                                    protocol_name,
-                                    b"http",
-                                    true,
-                                );
-                                if is_http
-                                    || strings::eql_case_insensitive_ascii(
-                                        protocol_name,
-                                        b"https",
-                                        true,
-                                    )
-                                {
-                                } else {
-                                    return Err(crate::Error::UnsupportedRedirectProtocol);
-                                }
+                        string_builder.count(location);
 
-                                if (protocol_name.len() * usize::from(is_protocol_relative))
-                                    + location.len()
-                                    > MAX_REDIRECT_URL_LENGTH
-                                {
-                                    return Err(crate::Error::RedirectURLTooLong);
-                                }
-
-                                string_builder.count(location);
-
-                                if is_protocol_relative {
-                                    if is_http {
-                                        string_builder.count(b"http");
-                                    } else {
-                                        string_builder.count(b"https");
-                                    }
-                                }
-
-                                string_builder.allocate()?;
-
-                                if is_protocol_relative {
-                                    if is_http {
-                                        let _ = string_builder.append(b"http");
-                                    } else {
-                                        let _ = string_builder.append(b"https");
-                                    }
-                                }
-
-                                let _ = string_builder.append(location);
-
-                                debug_assert!(string_builder.cap == string_builder.len);
-
-                                let input =
-                                    BunString::borrow_utf8(string_builder.allocated_slice());
-                                let normalized_url =
-                                    OwnedString::new(bun_url::href_from_string(&input));
-                                if normalized_url.tag() == BunStringTag::Dead {
-                                    // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
-                                    return Err(crate::Error::RedirectURLInvalid);
-                                }
-                                let normalized_url_str = normalized_url.to_owned_slice();
-
-                                // SAFETY: self-borrow — `normalized_url_str` is moved into
-                                // `self.redirect` below, which lives as long as `self` (≥ `'a`).
-                                let new_url: URL<'a> =
-                                    unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
-                                is_same_origin = strings::eql_case_insensitive_ascii(
-                                    strings::without_trailing_slash(new_url.origin),
-                                    strings::without_trailing_slash(self.url.origin),
-                                    true,
-                                );
-                                self.url = new_url;
-                                // connected_url still borrows from the previous hop's buffer
-                                // until doRedirect releases the socket, so park it in
-                                // prev_redirect for doRedirect to free instead of leaking it.
-                                debug_assert!(self.prev_redirect.is_empty());
-                                self.prev_redirect =
-                                    core::mem::replace(&mut self.redirect, normalized_url_str);
-                            } else if location.starts_with(b"//") {
-                                let mut string_builder = StringBuilder::default();
-
-                                let protocol_name = self.url.display_protocol();
-
-                                if protocol_name.len() + 1 + location.len()
-                                    > MAX_REDIRECT_URL_LENGTH
-                                {
-                                    return Err(crate::Error::RedirectURLTooLong);
-                                }
-
-                                let is_http = strings::eql_case_insensitive_ascii(
-                                    protocol_name,
-                                    b"http",
-                                    true,
-                                );
-
-                                if is_http {
-                                    string_builder.count(b"http:");
-                                } else {
-                                    string_builder.count(b"https:");
-                                }
-
-                                string_builder.count(location);
-
-                                string_builder.allocate()?;
-
-                                if is_http {
-                                    let _ = string_builder.append(b"http:");
-                                } else {
-                                    let _ = string_builder.append(b"https:");
-                                }
-
-                                let _ = string_builder.append(location);
-
-                                debug_assert!(string_builder.cap == string_builder.len);
-
-                                let input =
-                                    BunString::borrow_utf8(string_builder.allocated_slice());
-                                let normalized_url =
-                                    OwnedString::new(bun_url::href_from_string(&input));
-                                if normalized_url.tag() == BunStringTag::Dead {
-                                    return Err(crate::Error::RedirectURLInvalid);
-                                }
-                                let normalized_url_str = normalized_url.to_owned_slice();
-
-                                // SAFETY: self-borrow — `normalized_url_str` is moved into
-                                // `self.redirect` below, which lives as long as `self` (≥ `'a`).
-                                let new_url: URL<'a> =
-                                    unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
-                                is_same_origin = strings::eql_case_insensitive_ascii(
-                                    strings::without_trailing_slash(new_url.origin),
-                                    strings::without_trailing_slash(self.url.origin),
-                                    true,
-                                );
-                                self.url = new_url;
-                                debug_assert!(self.prev_redirect.is_empty());
-                                self.prev_redirect =
-                                    core::mem::replace(&mut self.redirect, normalized_url_str);
+                        if is_protocol_relative {
+                            if is_http {
+                                string_builder.count(b"http");
                             } else {
-                                let original_url = self.url.clone();
-
-                                let base = BunString::borrow_utf8(original_url.href);
-                                let rel = BunString::borrow_utf8(location);
-                                let new_url_ = OwnedString::new(bun_url::join(&base, &rel));
-
-                                if new_url_.is_empty() {
-                                    return Err(crate::Error::InvalidRedirectURL);
-                                }
-
-                                let new_url = new_url_.to_owned_slice();
-                                let parsed_url = URL::parse(&new_url);
-                                if !parsed_url.has_http_like_protocol() {
-                                    return Err(crate::Error::UnsupportedRedirectProtocol);
-                                }
-                                // SAFETY: self-borrow — `new_url` is moved into `self.redirect`
-                                // below, which lives as long as `self` (≥ `'a`).
-                                self.url = unsafe { parsed_url.erase_lifetime() };
-                                is_same_origin = strings::eql_case_insensitive_ascii(
-                                    strings::without_trailing_slash(self.url.origin),
-                                    strings::without_trailing_slash(original_url.origin),
-                                    true,
-                                );
-                                debug_assert!(self.prev_redirect.is_empty());
-                                self.prev_redirect =
-                                    core::mem::replace(&mut self.redirect, new_url);
+                                string_builder.count(b"https");
                             }
                         }
 
-                        // If one of the following is true
-                        // - internalResponse's status is 301 or 302 and request's method is `POST`
-                        // - internalResponse's status is 303 and request's method is not `GET` or `HEAD`
-                        // then:
-                        if ((status_code == 301 || status_code == 302)
-                            && self.method == Method::POST)
-                            || (status_code == 303
-                                && self.method != Method::GET
-                                && self.method != Method::HEAD)
-                        {
-                            // - Set request's method to `GET` and request's body to null.
-                            self.method = Method::GET;
+                        string_builder.allocate()?;
 
-                            // https://github.com/oven-sh/bun/issues/6053
-                            if self.header_entries.len() > 0 {
-                                // - For each headerName of request-body-header name, delete headerName from request's header list.
-                                let mut i: usize = 0;
-                                while i < self.header_entries.len() {
-                                    let names = self.header_entries.items_name();
-                                    let name = self.header_str(names[i]);
-                                    if REQUEST_BODY_HEADERS
-                                        .get_ascii_case_insensitive(name)
-                                        .is_some()
-                                    {
-                                        let _ = self.header_entries.ordered_remove(i);
-                                    } else {
-                                        i += 1;
-                                    }
-                                }
+                        if is_protocol_relative {
+                            if is_http {
+                                let _ = string_builder.append(b"http");
+                            } else {
+                                let _ = string_builder.append(b"https");
                             }
                         }
 
-                        // Cross-origin redirect: re-derive SNI / cert
-                        // verification / Host from the redirect target. See
-                        // `InternalStateFlags::clear_hostname_on_redirect`.
-                        if !is_same_origin {
-                            self.state.flags.clear_hostname_on_redirect = true;
+                        let _ = string_builder.append(location);
+
+                        debug_assert!(string_builder.cap == string_builder.len);
+
+                        let input = BunString::borrow_utf8(string_builder.allocated_slice());
+                        let normalized_url = OwnedString::new(bun_url::href_from_string(&input));
+                        if normalized_url.tag() == BunStringTag::Dead {
+                            // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
+                            return Err(crate::Error::RedirectURLInvalid);
+                        }
+                        let normalized_url_str = normalized_url.to_owned_slice();
+
+                        // SAFETY: self-borrow — `normalized_url_str` is moved into
+                        // `self.redirect` below, which lives as long as `self` (≥ `'a`).
+                        let new_url: URL<'a> =
+                            unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
+                        is_same_origin = strings::eql_case_insensitive_ascii(
+                            strings::without_trailing_slash(new_url.origin),
+                            strings::without_trailing_slash(self.url.origin),
+                            true,
+                        );
+                        self.url = new_url;
+                        // connected_url still borrows from the previous hop's buffer
+                        // until doRedirect releases the socket, so park it in
+                        // prev_redirect for doRedirect to free instead of leaking it.
+                        debug_assert!(self.prev_redirect.is_empty());
+                        self.prev_redirect =
+                            core::mem::replace(&mut self.redirect, normalized_url_str);
+                    } else if location.starts_with(b"//") {
+                        let mut string_builder = StringBuilder::default();
+
+                        let protocol_name = self.url.display_protocol();
+
+                        if protocol_name.len() + 1 + location.len() > MAX_REDIRECT_URL_LENGTH {
+                            return Err(crate::Error::RedirectURLTooLong);
                         }
 
-                        // https://fetch.spec.whatwg.org/#concept-http-redirect-fetch
-                        // If request's current URL's origin is not same origin with
-                        // locationURL's origin, then for each headerName of CORS
-                        // non-wildcard request-header name, delete headerName from
-                        // request's header list.
-                        if !is_same_origin && self.header_entries.len() > 0 {
-                            let mut i = 0;
-                            while i < self.header_entries.len() {
-                                let name = self.header_str(self.header_entries.items_name()[i]);
-                                if CROSS_ORIGIN_STRIPPED_REQUEST_HEADERS
-                                    .get_ascii_case_insensitive(name)
-                                    .is_some()
-                                {
-                                    let _ = self.header_entries.ordered_remove(i);
-                                } else {
-                                    i += 1;
-                                }
-                            }
+                        let is_http =
+                            strings::eql_case_insensitive_ascii(protocol_name, b"http", true);
+
+                        if is_http {
+                            string_builder.count(b"http:");
+                        } else {
+                            string_builder.count(b"https:");
                         }
-                        self.state.flags.is_redirect_pending = true;
-                        if self.method.has_request_body() {
-                            self.state.flags.resend_request_body_on_redirect = true;
+
+                        string_builder.count(location);
+
+                        string_builder.allocate()?;
+
+                        if is_http {
+                            let _ = string_builder.append(b"http:");
+                        } else {
+                            let _ = string_builder.append(b"https:");
+                        }
+
+                        let _ = string_builder.append(location);
+
+                        debug_assert!(string_builder.cap == string_builder.len);
+
+                        let input = BunString::borrow_utf8(string_builder.allocated_slice());
+                        let normalized_url = OwnedString::new(bun_url::href_from_string(&input));
+                        if normalized_url.tag() == BunStringTag::Dead {
+                            return Err(crate::Error::RedirectURLInvalid);
+                        }
+                        let normalized_url_str = normalized_url.to_owned_slice();
+
+                        // SAFETY: self-borrow — `normalized_url_str` is moved into
+                        // `self.redirect` below, which lives as long as `self` (≥ `'a`).
+                        let new_url: URL<'a> =
+                            unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
+                        is_same_origin = strings::eql_case_insensitive_ascii(
+                            strings::without_trailing_slash(new_url.origin),
+                            strings::without_trailing_slash(self.url.origin),
+                            true,
+                        );
+                        self.url = new_url;
+                        debug_assert!(self.prev_redirect.is_empty());
+                        self.prev_redirect =
+                            core::mem::replace(&mut self.redirect, normalized_url_str);
+                    } else {
+                        let original_url = self.url.clone();
+
+                        let base = BunString::borrow_utf8(original_url.href);
+                        let rel = BunString::borrow_utf8(location);
+                        let new_url_ = OwnedString::new(bun_url::join(&base, &rel));
+
+                        if new_url_.is_empty() {
+                            return Err(crate::Error::InvalidRedirectURL);
+                        }
+
+                        let new_url = new_url_.to_owned_slice();
+                        let parsed_url = URL::parse(&new_url);
+                        if !parsed_url.has_http_like_protocol() {
+                            return Err(crate::Error::UnsupportedRedirectProtocol);
+                        }
+                        // SAFETY: self-borrow — `new_url` is moved into `self.redirect`
+                        // below, which lives as long as `self` (≥ `'a`).
+                        self.url = unsafe { parsed_url.erase_lifetime() };
+                        is_same_origin = strings::eql_case_insensitive_ascii(
+                            strings::without_trailing_slash(self.url.origin),
+                            strings::without_trailing_slash(original_url.origin),
+                            true,
+                        );
+                        debug_assert!(self.prev_redirect.is_empty());
+                        self.prev_redirect = core::mem::replace(&mut self.redirect, new_url);
+                    }
+                }
+
+                // If one of the following is true
+                // - internalResponse's status is 301 or 302 and request's method is `POST`
+                // - internalResponse's status is 303 and request's method is not `GET` or `HEAD`
+                // then:
+                if ((status_code == 301 || status_code == 302) && self.method == Method::POST)
+                    || (status_code == 303
+                        && self.method != Method::GET
+                        && self.method != Method::HEAD)
+                {
+                    // - Set request's method to `GET` and request's body to null.
+                    self.method = Method::GET;
+
+                    // https://github.com/oven-sh/bun/issues/6053
+                    if self.header_entries.len() > 0 {
+                        // - For each headerName of request-body-header name, delete headerName from request's header list.
+                        let mut i: usize = 0;
+                        while i < self.header_entries.len() {
+                            let names = self.header_entries.items_name();
+                            let name = self.header_str(names[i]);
+                            if REQUEST_BODY_HEADERS
+                                .get_ascii_case_insensitive(name)
+                                .is_some()
+                            {
+                                let _ = self.header_entries.ordered_remove(i);
+                            } else {
+                                i += 1;
+                            }
                         }
                     }
-                    _ => {}
+                }
+
+                // Cross-origin redirect: re-derive SNI / cert
+                // verification / Host from the redirect target. See
+                // `InternalStateFlags::clear_hostname_on_redirect`.
+                if !is_same_origin {
+                    self.state.flags.clear_hostname_on_redirect = true;
+                }
+
+                // https://fetch.spec.whatwg.org/#concept-http-redirect-fetch
+                // If request's current URL's origin is not same origin with
+                // locationURL's origin, then for each headerName of CORS
+                // non-wildcard request-header name, delete headerName from
+                // request's header list.
+                if !is_same_origin && self.header_entries.len() > 0 {
+                    let mut i = 0;
+                    while i < self.header_entries.len() {
+                        let name = self.header_str(self.header_entries.items_name()[i]);
+                        if CROSS_ORIGIN_STRIPPED_REQUEST_HEADERS
+                            .get_ascii_case_insensitive(name)
+                            .is_some()
+                        {
+                            let _ = self.header_entries.ordered_remove(i);
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+                self.state.flags.is_redirect_pending = true;
+                if self.method.has_request_body() {
+                    self.state.flags.resend_request_body_on_redirect = true;
                 }
             } else if !is_proxy_connect_failure && self.redirect_type == FetchRedirect::Error {
                 // error out if redirect is not allowed

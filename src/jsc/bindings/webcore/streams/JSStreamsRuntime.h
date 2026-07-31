@@ -45,7 +45,8 @@ namespace WebCore {
 // Signature of every entry:  name(JSC::JSValue resolutionValue, contextCell at argument(1)).
 
 // owner: WebStreamsMisc.cpp — the shared "fulfillment step that returns undefined" / no-op
-// reaction (readableStreamCancel; readDirectStream's `.then(noop)`). context: unused.
+// reaction (readableStreamCancel; tee's reader-closed reactions; pipeTo's default handler).
+// context: unused.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_MISC(V) \
     V(onReturnUndefined)
 

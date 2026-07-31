@@ -6241,9 +6241,7 @@ impl Drop for TemporaryBytes {
     }
 }
 
-/// Decode BOM-stripped UTF-16 payload bytes to an `OwnedString`. `buf` has no
-/// alignment guarantee (it is `raw[2..]`); take the `bytemuck` fast path only
-/// for little-endian when it happens to be 2-byte aligned.
+/// Decode BOM-stripped UTF-16 payload bytes (possibly odd-aligned) to an `OwnedString`.
 fn utf16_bom_payload_to_owned_string(bom: strings::BOM, buf: &[u8]) -> OwnedString {
     debug_assert!(matches!(bom, strings::BOM::Utf16Le | strings::BOM::Utf16Be));
     let buf = &buf[..buf.len() & !1];

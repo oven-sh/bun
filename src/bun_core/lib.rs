@@ -1693,10 +1693,8 @@ pub(crate) mod strings_impl {
         to_utf8_alloc(&aligned)
     }
 
-    /// Transcode raw UTF-16-BE *bytes* (no alignment requirement) to a fresh
-    /// UTF-8 `Vec`. See `to_utf8_alloc_from_le_bytes` for the alignment rationale;
-    /// this variant additionally byte-swaps each `u16` after the aligned copy so
-    /// the existing host-endian (`LE`) transcode path can be reused.
+    /// Big-endian twin of [`to_utf8_alloc_from_le_bytes`]: byte-swaps each
+    /// aligned `u16` so the host-endian transcode path can be reused.
     pub fn to_utf8_alloc_from_be_bytes(be_bytes: &[u8]) -> Vec<u8> {
         let n_u16 = be_bytes.len() / 2;
         if n_u16 == 0 {

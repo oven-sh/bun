@@ -1494,9 +1494,8 @@ impl Archiver {
                     // at its original `.len()`; therefore `remaining[remaining.len()] == 0`.
                     let pathname: &[OSPathChar] = remaining;
 
-                    // On Windows a bare UNC volume name normalizes to one
-                    // character longer than its input and we write a
-                    // trailing NUL afterwards, so keep one slot of headroom.
+                    // +1: `normalize_buf_t` can grow a Windows UNC/drive
+                    // input by one, and we write a NUL after it.
                     if pathname.len() + 1 >= normalized_buf.len() {
                         if options.log {
                             bun_core::warn!(

@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSMessagePort.h"
 
-#include "ActiveDOMObject.h"
 #include "EventNames.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"

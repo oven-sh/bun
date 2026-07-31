@@ -1613,6 +1613,26 @@ describe("bundler", () => {
     },
     dce: true,
   });
+  // Sibling of edgecase/TsEnumKeyedLiteralObjectTreeShaking#31755 for classes:
+  // the computed-key check must unwrap EInlinedEnum before is_primitive_literal.
+  itBundled("dce/TreeShakingClassEnumKey", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { A } from './lib';
+        console.log(JSON.stringify(A));
+      `,
+      "/lib.ts": /* ts */ `
+        export enum A { FOO, BAR }
+        export const unusedInstanceREMOVE = class { [A.FOO]() {} };
+        export const unusedStaticREMOVE = class { static [A.BAR] = 1 };
+      `,
+    },
+    dce: true,
+    dceKeepMarkerCount: false,
+    run: {
+      stdout: `{"0":"FOO","1":"BAR","FOO":0,"BAR":1}`,
+    },
+  });
   itBundled("dce/TreeShakingUnaryOperators", {
     files: {
       "/entry.js": /* js */ `

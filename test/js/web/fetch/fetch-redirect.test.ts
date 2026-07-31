@@ -82,15 +82,15 @@ describe("fetch() only treats WHATWG redirect statuses as redirects", () => {
   }
 
   const nonRedirect3xx = [
-    [300, "Multiple Choices", "Location: /elsewhere\r\n"],
-    [304, "Not Modified", 'ETag: "v1"\r\n'],
-    [304, "Not Modified", 'ETag: "v1"\r\nLocation: /elsewhere\r\n'],
-    [305, "Use Proxy", "Location: /elsewhere\r\n"],
-    [306, "unused", ""],
+    ["300 Multiple Choices", 300, "Multiple Choices", "Location: /elsewhere\r\n"],
+    ["304 Not Modified", 304, "Not Modified", 'ETag: "v1"\r\n'],
+    ["304 Not Modified with Location", 304, "Not Modified", 'ETag: "v1"\r\nLocation: /elsewhere\r\n'],
+    ["305 Use Proxy", 305, "Use Proxy", "Location: /elsewhere\r\n"],
+    ["306 unused", 306, "unused", ""],
   ] as const;
 
   describe.each(["error", "follow"] as const)("redirect: %p", redirect => {
-    it.concurrent.each(nonRedirect3xx)("%d %s is returned as-is", async (status, reason, extra) => {
+    it.concurrent.each(nonRedirect3xx)("%s is returned as-is", async (_label, status, reason, extra) => {
       const { server, url } = await serve(status, reason, extra);
       try {
         const res = await fetch(url, { redirect, headers: { "if-none-match": '"v1"' } });

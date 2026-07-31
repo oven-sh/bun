@@ -1174,8 +1174,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
                     _ => {}
                 }
             } else if char == u32::from(b'\n') {
-                // `\<newline>` is a line continuation (bash): both characters
-                // are removed.
+                // `\<newline>` line continuation: drop both.
                 continue;
             }
 
@@ -1309,9 +1308,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         self.chars.eat()
     }
 
-    /// Consume a single-quoted span: everything up to the next `'` is literal
-    /// text (including `\`), and both quote characters are dropped.
-    /// An unterminated quote consumes to end of input.
+    /// `'…'`: content literal (including `\`); quote chars dropped.
     fn eat_single_quoted(&mut self) -> Result<(), AllocError> {
         while let Some(c) = self.chars.eat_raw() {
             if c == u32::from(b'\'') {
@@ -1322,10 +1319,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         Ok(())
     }
 
-    /// Consume a double-quoted span: `{`, `,`, `}` are literal text, both quote
-    /// characters are dropped, and `\` is an escape only before `"`/`\`/`$`/`` ` ``
-    /// /newline (bash quote-removal). An unterminated quote consumes to end of
-    /// input.
+    /// `"…"`: content literal; `\` escapes only `"`/`\`/`$`/`` ` ``/LF (bash).
     fn eat_double_quoted(&mut self) -> Result<(), AllocError> {
         while let Some(c) = self.chars.eat_raw() {
             if c == u32::from(b'"') {
@@ -1344,7 +1338,6 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
                         continue;
                     }
                     Some(next) if next == u32::from(b'\n') => {
-                        // `\<newline>` is a line continuation: both removed.
                         let _ = self.chars.eat_raw();
                         continue;
                     }
@@ -1356,11 +1349,8 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         Ok(())
     }
 
-    /// Consume a `$'…'` span: the `$` and both quote characters are dropped,
-    /// the content is literal for brace purposes, and a `\X` pair is reduced to
-    /// `X` so an escaped `'` does not terminate the span. Other ANSI-C escape
-    /// translations (e.g. `\n` → LF) are not performed here. An unterminated
-    /// quote consumes to end of input.
+    /// `$'…'`: content literal; `\X` reduced to `X` so `\'` does not close
+    /// (full ANSI-C escape translation is not performed here).
     fn eat_ansi_c_quoted(&mut self) -> Result<(), AllocError> {
         while let Some(c) = self.chars.eat_raw() {
             if c == u32::from(b'\'') {

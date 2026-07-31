@@ -128,12 +128,9 @@ console.log(JSON.stringify(Bun.$.braces("{" + inner)));`,
   });
 });
 
-// `$.braces()` tokenized the raw string with no quote state, so `{`, `,`, `}`
-// inside `'…'`/`"…"` were treated as brace metacharacters and the quote
-// characters were left in the output. Bun's own `$` shell already handled the
-// same source text correctly because it brace-expands over atoms the shell
-// lexer has already quote-parsed. Each expected value below is the exact
-// `printf '[%s]\n' <input>` output under bash 5.2.
+// `{`, `,`, `}` inside `'…'`/`"…"`/`$'…'` are literal and the quote chars are
+// dropped; the `$` shell already got this right (it quote-parses first). Each
+// expected value is the `printf '[%s]\n' <input>` output under bash 5.2.
 describe("$.braces is quote-aware (bash 5.2)", () => {
   const cases: [string, string[]][] = [
     // Single-quoted span: literal content, quote characters dropped.

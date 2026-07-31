@@ -479,9 +479,7 @@ pub(crate) fn braces(
     }
 
     if expansion_count == 0 {
-        // No `{…}` group formed an expansion. The lexer has already stripped
-        // quoting (`'…'`/`"…"`/`\x`), so reconstruct the single output word
-        // from the token text rather than echoing the raw input.
+        // Return the (quote-stripped) token text, not the raw input.
         let mut word: Vec<u8> = Vec::with_capacity(brace_slice.slice().len());
         for tok in &lexer_output.tokens {
             if let Braces::Token::Text(txt) = tok {

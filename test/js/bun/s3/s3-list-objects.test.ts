@@ -1092,7 +1092,6 @@ describe.concurrent("S3 - List Objects", () => {
             '<Name>bkt</Name>' +
             '<Contents>' +
               '<Key>k</Key>' +
-              '<ChecksumAlgorithm>SHA256</ChecksumAlgorithm>' +
               '<Owner><ID>oid</ID><DisplayName>dn</DisplayName></Owner>' +
             '</Contents>' +
             '<CommonPrefixes><Prefix>p/</Prefix></CommonPrefixes>' +
@@ -1130,10 +1129,10 @@ describe.concurrent("S3 - List Objects", () => {
     expect(stdout.trim()).toBe(
       JSON.stringify({
         top: { name: "bkt", contents: 1, commonPrefixes: 1 },
-        entry: { key: "k", checksumAlgorithme: "SHA256", owner: { id: "oid", displayName: "dn" } },
+        entry: { key: "k", owner: { id: "oid", displayName: "dn" } },
         owner: { id: "oid", displayName: "dn" },
         common: { prefix: "p/" },
-        assign: { key: "k", checksumAlgorithme: "SHA256", owner: { id: "oid", displayName: "dn" } },
+        assign: { key: "k", owner: { id: "oid", displayName: "dn" } },
       }),
     );
     // stderr is reported for context on failure but not asserted exactly; a

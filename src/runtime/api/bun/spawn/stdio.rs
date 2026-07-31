@@ -323,8 +323,6 @@ impl Stdio {
     }
 
     pub fn borrows_caller_fd(&self) -> bool {
-        // `extract_blob` lowers fd-backed file blobs to `Stdio::Fd` / `Inherit`,
-        // so `Stdio::Fd` is the only variant that carries a caller-owned fd.
         matches!(self, Self::Fd(_))
     }
 

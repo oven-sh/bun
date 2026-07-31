@@ -859,15 +859,7 @@ impl Loader {
             };
 
         match read_env_file_contents(&file)? {
-            ReadEnvFile::Empty => {}
-            ReadEnvFile::NotRegular => {
-                if !self.quiet {
-                    bun_core::pretty_errorln!(
-                        "<yellow>warn<r>: {} is not a regular file; ignoring",
-                        bstr::BStr::new(base)
-                    );
-                }
-            }
+            ReadEnvFile::Empty | ReadEnvFile::NotRegular => {}
             ReadEnvFile::ReadErr(err) => {
                 if !self.quiet {
                     bun_core::pretty_errorln!(

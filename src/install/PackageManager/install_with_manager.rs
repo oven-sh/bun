@@ -36,8 +36,8 @@ use bun_install_types::NodeLinker::NodeLinker;
 // to avoid one giant `impl PackageManager` block.
 use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
 use crate::package_manager_real::{
-    enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre, save_lockfile,
-    setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
+    UpdateRequest, enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre,
+    save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
 };
 
 use super::security_scanner;
@@ -523,6 +523,34 @@ pub fn install_with_manager(
                                 false,
                             ) {
                                 add_dependency_error(manager, &dep, err);
+                            }
+                        }
+                    }
+
+                    // `bun update <name>`: drop and re-enqueue every `<name>` slot, not just root-level.
+                    if manager.to_update && !manager.update_requests.is_empty() {
+                        let dependencies_len = manager.lockfile.buffers.dependencies.len();
+                        for dependency_i in 0..dependencies_len {
+                            let dependency =
+                                manager.lockfile.buffers.dependencies[dependency_i].clone();
+                            if UpdateRequest::contains_name(
+                                &manager.update_requests,
+                                dependency.name_hash,
+                                dependency
+                                    .name
+                                    .slice(manager.lockfile.buffers.string_bytes.as_slice()),
+                            ) {
+                                manager.lockfile.buffers.resolutions[dependency_i] =
+                                    invalid_package_id;
+                                if let Err(err) = enqueue_dependency_with_main(
+                                    manager,
+                                    dependency_i as u32,
+                                    &dependency,
+                                    invalid_package_id,
+                                    false,
+                                ) {
+                                    add_dependency_error(manager, &dependency, err);
+                                }
                             }
                         }
                     }

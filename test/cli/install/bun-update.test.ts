@@ -1121,10 +1121,7 @@ it("--filter with a glob plus a negation scopes to the matched set minus the exc
 
 // https://github.com/oven-sh/bun/issues/23507
 it("--recursive --dry-run writes no workspace package.json", async () => {
-  await setupWorkspaces(
-    { dependencies: { baz: "~0.0.3" } },
-    { "pkg-a": { dependencies: { baz: "~0.0.3" } } },
-  );
+  await setupWorkspaces({ dependencies: { baz: "~0.0.3" } }, { "pkg-a": { dependencies: { baz: "~0.0.3" } } });
   const rootBefore = await file(join(package_dir, "package.json")).text();
   const aBefore = await file(join(package_dir, "packages", "pkg-a", "package.json")).text();
   await runUpdate(["--recursive", "--latest", "--dry-run"]);

@@ -743,21 +743,25 @@ describe.concurrent("--env-file", () => {
   test.skipIf(isWindows)("should ignore a FIFO", async () => {
     const fifoPath = path.join(dir, ".env.fifo");
     mkfifo(fifoPath);
-    // Hold a read+write handle so the loader's O_RDONLY open doesn't block.
-    const fd = fs.openSync(fifoPath, "r+");
     try {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), `--env-file=${fifoPath}`, "-e", "console.log('ok')"],
-        cwd: dir,
-        env: { ...bunEnv, NODE_ENV: undefined },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toBe("ok\n");
-      expect(exitCode).toBe(0);
+      // Hold a read+write handle so the loader's O_RDONLY open doesn't block,
+      // and stage data so a future reads-FIFOs implementation would be caught.
+      const fd = fs.openSync(fifoPath, "r+");
+      fs.writeSync(fd, "BUNTEST_FIFO=from_fifo\n");
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), `--env-file=${fifoPath}`, "-e", "console.log(process.env.BUNTEST_FIFO ?? 'unset')"],
+          cwd: dir,
+          env: { ...bunEnv, NODE_ENV: undefined },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "unset\n", stderr: "", exitCode: 0 });
+      } finally {
+        fs.closeSync(fd);
+      }
     } finally {
-      fs.closeSync(fd);
       fs.rmSync(fifoPath, { force: true });
     }
   });

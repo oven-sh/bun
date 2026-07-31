@@ -60,6 +60,7 @@ public:
 
     ExceptionOr<void> append(const String& name, const String& value);
     ExceptionOr<void> remove(const StringView);
+    ExceptionOr<void> clear();
     ExceptionOr<String> get(const StringView) const;
     ExceptionOr<bool> has(const StringView) const;
     ExceptionOr<void> set(const String& name, const String& value);

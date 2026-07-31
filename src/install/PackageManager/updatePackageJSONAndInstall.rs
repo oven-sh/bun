@@ -959,23 +959,26 @@ fn write_resolved_versions_to_targets(
     let log = manager.log_mut();
     let mut any_failed = false;
 
-    for (hash, name) in targets {
-        let pkg_id = manager.lockfile.get_workspace_package_id(Some(*hash));
-        if manager.lockfile.packages.items_name_hash()[pkg_id as usize] != *hash {
+    let packages = manager.lockfile.packages.slice();
+    let pkg_resolutions = packages.items_resolution();
+    let pkg_name_hashes = packages.items_name_hash();
+    let pkg_names = packages.items_name();
+    for pkg_id in 0..packages.len() {
+        let res = pkg_resolutions[pkg_id];
+        let (ws_name_hash, rel): (Option<crate::PackageNameHash>, &[u8]) = match res.tag {
+            crate::resolution::Tag::Root => (None, b""),
+            crate::resolution::Tag::Workspace => (
+                Some(pkg_name_hashes[pkg_id]),
+                res.workspace()
+                    .slice(manager.lockfile.buffers.string_bytes.as_slice()),
+            ),
+            _ => continue,
+        };
+        let hash = pkg_name_hashes[pkg_id];
+        let name = pkg_names[pkg_id].slice(manager.lockfile.buffers.string_bytes.as_slice());
+        if !targets.iter().any(|(h, n)| *h == hash && &**n == name) {
             continue;
         }
-        let res = manager.lockfile.packages.items_resolution()[pkg_id as usize];
-        let ws_name_hash = if res.tag == crate::resolution::Tag::Root {
-            None
-        } else {
-            Some(*hash)
-        };
-        let rel: &[u8] = if res.tag == crate::resolution::Tag::Workspace {
-            res.workspace()
-                .slice(manager.lockfile.buffers.string_bytes.as_slice())
-        } else {
-            b""
-        };
         let mut path_buf = PathBuffer::uninit();
         let path: &[u8] = bun_paths::resolve_path::join_abs_string_buf::<
             bun_paths::resolve_path::platform::Auto,

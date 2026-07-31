@@ -5659,12 +5659,6 @@ extern "C" bool WebCore__AbortSignal__aborted(WebCore::AbortSignal* arg0)
     return abortSignal->aborted();
 }
 
-extern "C" JSC::EncodedJSValue WebCore__AbortSignal__abortReason(WebCore::AbortSignal* arg0)
-{
-    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
-    return JSC::JSValue::encode(abortSignal->reason().getValue(jsNull()));
-}
-
 // Same value the JS `signal.reason` getter returns: lazily materializes the
 // `DOMException` for a common abort reason and caches it, so repeated reads
 // (native or JS) observe the identical object.

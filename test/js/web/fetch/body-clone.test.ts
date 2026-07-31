@@ -1101,3 +1101,41 @@ test("Blob type from a consumed Response keeps the original content-type after c
   expect(stdout.trim().split("\n")).toEqual(["application/x-original-type-0000000000000001", "clone-ok", "churn-ok"]);
   expect(exitCode).toBe(0);
 });
+
+// Regression for oven-sh/bun#22885: arrayBuffer()/bytes() must copy the body
+// bytes (WHATWG), not hand out a view aliasing the shared store. Response.clone()
+// shares the backing store, so mutating a clone's buffer leaked into the original.
+// String bodies already copied; these use store-backed bodies (fetch/Blob/typed
+// array), which took the zero-copy transfer path.
+test("Response.clone().arrayBuffer() does not alias the original body (#22885)", async () => {
+  using server = Bun.serve({ port: 0, fetch: () => new Response("hello world") });
+  const x = await fetch(server.url);
+  const buffer = await x.clone().arrayBuffer();
+  // The clone reads the correct bytes before mutation.
+  expect(new TextDecoder().decode(buffer)).toBe("hello world");
+  // Mutating the clone's buffer must not reach back into the original body.
+  new Uint8Array(buffer).fill("X".charCodeAt(0));
+  expect(await x.text()).toBe("hello world");
+});
+
+test("Response.clone().bytes() does not alias the original body (#22885)", async () => {
+  const x = new Response(new Blob(["hello world"]));
+  const bytes = await x.clone().bytes();
+  expect(new TextDecoder().decode(bytes)).toBe("hello world");
+  bytes.fill("X".charCodeAt(0));
+  expect(await x.text()).toBe("hello world");
+});
+
+test("mutating one clone's buffer leaves the original and sibling clones intact (#22885)", async () => {
+  const x = new Response(new Uint8Array([104, 101, 108, 108, 111])); // "hello"
+  const first = x.clone();
+  const second = x.clone();
+  new Uint8Array(await first.arrayBuffer()).fill("X".charCodeAt(0));
+  expect(await second.text()).toBe("hello");
+  expect(await x.text()).toBe("hello");
+});
+
+test("Response.arrayBuffer() without clone still returns the body bytes (#22885 fast path)", async () => {
+  const x = new Response(new Uint8Array([104, 101, 108, 108, 111])); // "hello"
+  expect(new TextDecoder().decode(await x.arrayBuffer())).toBe("hello");
+});

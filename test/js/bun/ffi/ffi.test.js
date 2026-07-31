@@ -1373,9 +1373,7 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
   const gcLoop = `for (let i = 0; i < 20; i++) { Bun.gc(true); Buffer.alloc(1024 * 1024); }`;
 
   // Forcing GC repeatedly in a subprocess costs a few seconds on a debug build, so
-  // the default 5s budget is too tight to be reliable. (On an unpatched Bun the child
-  // SIGSEGVs and then wedges in the crash handler, so there the red signal is this
-  // timeout rather than the exit-code assertion.)
+  // the default 5s budget is too tight to be reliable.
   const GC_TIMEOUT = 20_000;
 
   // Post-condition on the ACTUAL caller memory the bad-free targets: drop only the
@@ -1395,7 +1393,7 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
       ${gcLoop}
   `;
 
-  it(
+  it.concurrent(
     "toBuffer(ptr(buffer)) does not free caller-owned memory on GC",
     async () => {
       expect(
@@ -1414,7 +1412,7 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
     GC_TIMEOUT,
   );
 
-  it(
+  it.concurrent(
     "toBuffer(ptr(buffer), offset) does not free an interior pointer on GC",
     async () => {
       // The adopted view starts at original[8], so both the aliasing check and the
@@ -1435,7 +1433,7 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
     GC_TIMEOUT,
   );
 
-  it(
+  it.concurrent(
     "toBuffer(ptr(typedArray)) does not free caller-owned memory on GC",
     async () => {
       expect(
@@ -1458,7 +1456,7 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
   // reset the counter, so the count is isolated to this test).
   it.skipIf(!FFI_FIXTURE_PATH)(
     "toBuffer with an explicit finalizer calls the deallocator exactly once on GC",
-    () => {
+    async () => {
       const {
         symbols: { getDeallocatorCallback, getDeallocatorBuffer, getDeallocatorCalledCount },
       } = dlopen(FFI_FIXTURE_PATH, {
@@ -1466,16 +1464,19 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
         getDeallocatorBuffer: { args: [], returns: "ptr" },
         getDeallocatorCalledCount: { args: [], returns: "int" },
       });
-      const bufPtr = getDeallocatorBuffer();
-      let buf = toBuffer(bufPtr, 0, 128, getDeallocatorCallback());
-      expect(buf.length).toBe(128);
-      expect(getDeallocatorCalledCount()).toBe(0); // not called during construction
-      buf = null;
-      // Await the collection rather than assuming one pass suffices: a single
-      // Bun.gc(true) can still see `buf` conservatively from the stack.
-      for (let i = 0; i < 20 && getDeallocatorCalledCount() === 0; i++) {
+      (() => {
+        const bufPtr = getDeallocatorBuffer();
+        let buf = toBuffer(bufPtr, 0, 128, getDeallocatorCallback());
+        expect(buf.length).toBe(128);
+        expect(getDeallocatorCalledCount()).toBe(0); // not called during construction
+        buf = null;
+      })();
+      // Yield between collections so the frame that held `buf` is popped before the
+      // conservative scan; a synchronous loop can keep a single cell pinned.
+      for (let i = 0; i < 100 && getDeallocatorCalledCount() === 0; i++) {
         Bun.gc(true);
         Buffer.alloc(1024 * 1024);
+        await Bun.sleep(0);
       }
       expect(getDeallocatorCalledCount()).toBe(1); // called exactly once on GC
       Bun.gc(true);

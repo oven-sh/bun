@@ -919,7 +919,10 @@ describe("spawn stdin ReadableStream", () => {
         await Bun.sleep(100);
         peak = Math.max(peak, process.memoryUsage.rss());
       }
+      // Clean up so ASAN does not flag the in-flight pipe buffer at exit.
       child.kill();
+      await child.exited;
+      source.close();
       console.log(JSON.stringify({ deltaMB: (peak - rssBefore) / 1024 / 1024 }));
       process.exit(0);
     `;

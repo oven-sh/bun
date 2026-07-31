@@ -747,7 +747,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         );
         let ctx: *mut ServerRequestContext<SSL, DEBUG> = ctx_slot;
         // SAFETY: fully initialized by `create()`.
-        let ctx_mut = unsafe { &*ctx };
+        let ctx_ref = unsafe { &*ctx };
 
         server
             .vm()
@@ -765,12 +765,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // Bump once so the ctx and JS Request each
         // own a +1 on the same slot (streamed bytes buffered into the ctx
         // surface on `request.body`/`request.json()`).
-        ctx_mut.request_body.set(Some(body_hive.clone()));
+        ctx_ref.request_body.set(Some(body_hive.clone()));
 
         let global = server.global_this();
         let signal = jsc::AbortSignal::new(global);
         // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
-        ctx_mut.signal.set(core::ptr::NonNull::new(signal));
+        ctx_ref.signal.set(core::ptr::NonNull::new(signal));
         bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
 
         // SAFETY: `signal.ref_()` bumps the intrusive count and returns +1.
@@ -784,7 +784,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // `Request::finalize`.
         let request_object: *mut crate::webcore::Request =
             bun_core::heap::into_raw(crate::webcore::Request::new(crate::webcore::Request::init(
-                ctx_mut.method,
+                ctx_ref.method,
                 AnyRequestContext::init(ctx),
                 SSL,
                 Some(signal_ref),
@@ -792,14 +792,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             )));
         // SAFETY: freshly leaked from `heap::into_raw`, so `request_object`
         // carries the allocation's provenance, as `init_ref` requires.
-        ctx_mut
+        ctx_ref
             .request_weakref
             .set(unsafe { bun_ptr::WeakPtr::init_ref(request_object) });
 
         // (H3 eager-url/header population is unreachable on this path.)
 
         if DEBUG {
-            ctx_mut.flags.set_is_web_browser_navigation('brk: {
+            ctx_ref.flags.set_is_web_browser_navigation('brk: {
                 if let Some(fetch_dest) = req.header(b"sec-fetch-dest") {
                     if fetch_dest == b"document" {
                         break 'brk true;
@@ -810,9 +810,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         if let Some(req_len) = request_body_length {
-            ctx_mut.request_body_content_len.set(req_len);
+            ctx_ref.request_body_content_len.set(req_len);
             let is_transfer_encoding = req.header(b"transfer-encoding").is_some();
-            ctx_mut.flags.set_is_transfer_encoding(is_transfer_encoding);
+            ctx_ref.flags.set_is_transfer_encoding(is_transfer_encoding);
             if req_len > 0 || is_transfer_encoding {
                 // we defer pre-allocating the body until we receive the first chunk
                 // that way if the client is lying about how big the body is or the client aborts
@@ -838,7 +838,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             ..Default::default()
                         });
                 }
-                ctx_mut.flags.set_is_waiting_for_request_body(true);
+                ctx_ref.flags.set_is_waiting_for_request_body(true);
 
                 resp_ref.on_data(
                     |u: *mut ServerRequestContext<SSL, DEBUG>,

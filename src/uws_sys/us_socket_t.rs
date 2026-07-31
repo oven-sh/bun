@@ -666,6 +666,8 @@ impl us_socket_stream_buffer_t {
                 // SAFETY: list_ptr/list_cap came from a decomposed Vec<u8> (global mimalloc).
                 drop(Vec::from_raw_parts(self.list_ptr, 0, self.list_cap));
             }
+            self.list_ptr = core::ptr::null_mut();
+            self.list_cap = 0;
         }
     }
 }

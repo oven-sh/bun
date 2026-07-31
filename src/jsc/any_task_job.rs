@@ -70,6 +70,10 @@ pub unsafe fn dispatch_erased(ptr: *mut ()) -> JsResult<()> {
     entry(ptr)
 }
 
+// `dispatch_erased` reads the entry point through the allocation head, so it
+// must stay the first `#[repr(C)]` field.
+const _: () = assert!(core::mem::offset_of!(AnyTaskJob<()>, run_from_js_erased) == 0);
+
 impl<C> bun_event_loop::Taskable for AnyTaskJob<C> {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AnyTaskJob;
 }

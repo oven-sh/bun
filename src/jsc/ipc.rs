@@ -995,8 +995,12 @@ impl SendQueue {
     /// harmlessly against the detached queue and release theirs.
     pub fn detach(&self) {
         log!("SendQueue#detach");
-        self.owner.set(None);
+        // No close notification after this point: mark it delivered before
+        // closing so the synchronous on_close re-entry (POSIX) neither enqueues
+        // a deferred task nor reaches the owner we clear below.
+        self.close_event_sent.set(true);
         self.close_socket(CloseReason::Failure, CloseFrom::Deinit);
+        self.owner.set(None);
     }
 
     /// Heap-allocate a SendQueue with one ref held by the caller (the owner).
@@ -1035,6 +1039,14 @@ impl SendQueue {
     #[inline]
     fn root_ptr(&self) -> *mut SendQueue {
         self.root.get().expect("SendQueue::new sets root").as_ptr()
+    }
+
+    /// The allocation-root pointer for callers that stash a `*mut SendQueue`
+    /// (socket ext slots, uv `handle.data`) rather than re-deriving one from
+    /// a `&self`.
+    #[inline]
+    pub fn as_ctx_ptr(&self) -> *mut SendQueue {
+        self.root_ptr()
     }
 
     #[inline]
@@ -1129,7 +1141,7 @@ impl SendQueue {
         // can reach this path again with the socket already `.closed`; the
         // owner is about to free the memory that backs `this`, so scheduling
         // a task that points back into it would use-after-free.
-        if notify && was_open && !self.pending_after_close.get() {
+        if notify && was_open && !self.pending_after_close.get() && !self.close_event_sent.get() {
             self.pending_after_close.set(true);
             self.schedule_deferred();
         }
@@ -1234,7 +1246,7 @@ impl SendQueue {
         global: &JSGlobalObject,
         callback: JSValue,
         handle: Option<Handle>,
-        payload: &[u8],
+        payload: StreamBuffer,
     ) -> JsResult<()> {
         log!("SendQueue#startMessage");
         #[cfg(debug_assertions)]
@@ -1251,24 +1263,22 @@ impl SendQueue {
             } else {
                 false
             };
-            let msg = if use_last {
+            if use_last {
+                // append onto the last plain message (a copy is unavoidable here)
                 let len = queue.len();
                 let last = &mut queue[len - 1];
                 if callback.is_callable() {
                     last.callbacks.push(callback, global)?;
                 }
-                last
+                handle_oom(last.data.write(&payload.list));
             } else {
-                // fallback case: append a new message to the queue
+                // fallback case: append a new message that owns the buffer
                 queue.push(SendHandle {
-                    data: StreamBuffer::default(),
+                    data: payload,
                     handle,
                     callbacks: CallbackList::init(callback),
                 });
-                let idx = queue.len() - 1;
-                &mut queue[idx]
-            };
-            handle_oom(msg.data.write(payload));
+            }
             Ok(())
         })
     }
@@ -1507,7 +1517,7 @@ impl SendQueue {
             Done::Partial | Done::NoProgress => {}
             Done::Error => {
                 // error. close socket.
-                self.close_socket(CloseReason::Failure, CloseFrom::Deinit);
+                self.close_socket(CloseReason::Failure, CloseFrom::User);
             }
         }
         self.update_ref(&global_this);
@@ -1557,7 +1567,7 @@ impl SendQueue {
         };
         debug_assert!(payload.list.len() == payload_length);
         if self
-            .start_message(global, callback, handle, &payload.list)
+            .start_message(global, callback, handle, payload)
             .is_err()
         {
             return SerializeAndSendResult::Failure;
@@ -1852,17 +1862,14 @@ impl uv::StreamReader for SendQueue {
     #[inline]
     unsafe fn on_read(this: *mut Self, data: &[u8]) {
         // `data` points into `(*this).incoming` (it was returned from
-        // `on_read_alloc`). Forming `&mut *this` would retag every byte of
-        // `*this` Unique and pop the SharedRW tag `data`'s provenance descends
-        // from — any later read through `data` is UB under Stacked Borrows
-        // *regardless* of write order. Capture the only thing we need (length)
-        // while `data` is still valid, drop it, then reborrow `*this`; the
-        // callee re-derives the just-written tail from `incoming` itself.
+        // `on_read_alloc`); the callee re-derives the written tail from
+        // `incoming` itself, so only the length is forwarded and only a shared
+        // view of `*this` is formed.
         let nread = data.len();
         let _ = data;
         // SAFETY: `this` is the live `SendQueue` stashed in `handle.data` by
         // `read_start_ctx`; `data` is no longer live so the Unique retag is sound.
-        IPCHandlers::WindowsNamedPipe::on_read(unsafe { &mut *this }, nread);
+        IPCHandlers::WindowsNamedPipe::on_read(unsafe { &*this }, nread);
     }
 }
 
@@ -1875,9 +1882,11 @@ impl bun_event_loop::Taskable for SendQueue {
 impl Drop for SendQueue {
     fn drop(&mut self) {
         log!("SendQueue#deinit");
-        // Refcount reached zero: the owner has detached and every queued task
-        // has run, so nothing points here. `detach()` already closed the
-        // socket; this covers the never-attached / socket-still-open case.
+        // Refcount reached zero: `detach()` already closed the socket; this
+        // covers the never-attached / socket-still-open case. Mark the close
+        // event delivered first so the synchronous on_close re-entry can neither
+        // enqueue a task nor take a ref on this dying object.
+        self.close_event_sent.set(true);
         self.close_socket(CloseReason::Failure, CloseFrom::Deinit);
 
         // queue items / internal_msg_queue / incoming / waiting_for_ack: Drop handles them.

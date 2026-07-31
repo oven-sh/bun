@@ -509,8 +509,16 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             head += 5usize + len as usize;
         }
         buf.drain_front(head);
-        debug_assert!(self.r#in.get().is_empty());
-        self.r#in.set(buf);
+        self.r#in.with_mut(|cur| {
+            if cur.is_empty() {
+                *cur = buf;
+            } else {
+                // Anything appended during the callbacks is newer: keep it
+                // after the unconsumed tail.
+                buf.extend_from_slice(cur);
+                *cur = buf;
+            }
+        });
     }
 
     fn mark_done(&self) {

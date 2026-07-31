@@ -222,9 +222,9 @@ impl WebSocketProxyTunnel {
         )
         .map_err(|_| crate::Error::InvalidOptions)?;
 
-        // Snapshot the `*mut SSL` *before* moving `wrapper` into `*this` and before
-        // forming any `&mut SslWrapper`, so callbacks can read it from a tunnel
-        // field disjoint from `wrapper` (see `self.ssl` doc).
+        // Snapshot the `*mut SSL` *before* moving `wrapper` into `*this`, so
+        // callbacks can read it from a tunnel field disjoint from `wrapper`
+        // (see `self.ssl` doc).
         let ssl = wrapper.ssl.get();
 
         // SAFETY: caller contract — `this` is live. Short-lived raw derefs to assign

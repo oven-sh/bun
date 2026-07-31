@@ -1586,7 +1586,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 if let Some(ctx) = posix_ipc_info.ext::<*mut IPC::SendQueue>() {
                     // SAFETY: `ctx` is the live ext-slot pointer returned by uSockets;
                     // it stays valid for the socket's lifetime.
-                    unsafe { *ctx = std::ptr::from_ref(ipc_data).cast_mut() };
+                    unsafe { *ctx = ipc_data.as_ctx_ptr() };
                     ipc_data.socket.set(IPC::SocketUnion::Open(posix_ipc_info));
                 }
             }

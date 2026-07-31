@@ -286,10 +286,10 @@ impl S3HttpDownloadStreamingTask {
             should_enqueue
         );
 
+        if !result.body.is_empty() {
+            let _ = self.reported_response_buffer.write(result.body);
+        }
         if should_enqueue {
-            if !result.body.is_empty() {
-                let _ = self.reported_response_buffer.write(result.body);
-            }
             if self.reported_response_buffer.list.is_empty() && !is_done {
                 return false;
             }

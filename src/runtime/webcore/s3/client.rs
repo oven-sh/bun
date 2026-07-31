@@ -678,6 +678,7 @@ impl S3UploadStreamWrapper {
                 if let Some(sink_ptr) = self_.sink {
                     // SAFETY: sink is live while held in `self_.sink`.
                     let sink = unsafe { &mut *sink_ptr.as_ptr() };
+                    sink.pending.run();
                     if sink.flush_promise.has_value() {
                         sink.flush_promise
                             .resolve(&self_.global, JSValue::js_number(0.0))?;
@@ -725,6 +726,8 @@ impl S3UploadStreamWrapper {
                     );
                     sink.ended = true;
                     sink.done = true;
+                    sink.pending.result = crate::webcore::streams::Writable::Done;
+                    sink.pending.run();
                     if sink.flush_promise.has_value() {
                         sink.flush_promise.reject(&self_.global, Ok(js_err))?;
                     }
@@ -1069,6 +1072,7 @@ pub fn upload_stream(
                         byte_stream.sink.set(crate::webcore::SinkHandle::None);
                         // SAFETY: `ctx.sink` set above; sink live.
                         let sink = unsafe { &mut *sink_ptr };
+                        sink.source.clear();
                         if !sink.ended {
                             let _ = sink.end(None);
                         }
@@ -1082,6 +1086,7 @@ pub fn upload_stream(
                 byte_stream.sink.set(crate::webcore::SinkHandle::None);
                 // SAFETY: `ctx.sink` set above; sink live.
                 let sink = unsafe { &mut *sink_ptr };
+                sink.source.clear();
                 if !sink.ended {
                     let _ = sink.end(None);
                 }

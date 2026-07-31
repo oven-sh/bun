@@ -1483,9 +1483,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.on_request_complete();
     }
 
+    /// Decrement-only. Callers that have fully released the `RequestContext`
+    /// use [`on_request_complete`] (which also runs the idle-server check);
+    /// this exists so `on_abort` can drop the counter while a parked stream
+    /// reaction still holds the context, without letting `deinit_if_we_can`
+    /// downgrade `js_value` out from under that backref.
+    #[inline]
+    pub(crate) fn note_request_complete(&mut self) {
+        self.pending_requests -= 1;
+    }
+
     #[inline]
     pub(crate) fn on_request_complete(&mut self) {
-        self.pending_requests -= 1;
+        self.note_request_complete();
         self.deinit_if_we_can();
     }
 
@@ -3389,6 +3399,8 @@ pub trait ServerLike {
     fn vm_mut(&self) -> *mut jsc::VirtualMachine;
     fn config(&self) -> &ServerConfig;
     fn on_request_complete(&mut self);
+    fn note_request_complete(&mut self);
+    fn deinit_if_we_can(&mut self);
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer>;
     fn js_value(&self) -> &jsc::JsRef;
     fn h3_alt_svc(&self) -> Option<&[u8]>;
@@ -3427,6 +3439,14 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
     #[inline]
     fn on_request_complete(&mut self) {
         Self::on_request_complete(self)
+    }
+    #[inline]
+    fn note_request_complete(&mut self) {
+        Self::note_request_complete(self)
+    }
+    #[inline]
+    fn deinit_if_we_can(&mut self) {
+        Self::deinit_if_we_can(self)
     }
     #[inline]
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {

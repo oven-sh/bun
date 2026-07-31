@@ -861,10 +861,14 @@ where
             // server is a BACKREF; pool put + onRequestComplete
             server
                 .release_request_context(std::ptr::from_mut::<Self>(self).cast::<c_void>(), HTTP3);
-            if !already_reported {
-                // SAFETY: `&mut` through the backref — the server outlives this
-                // context and no other borrow of it is live here.
-                unsafe { (*server.as_ptr()).on_request_complete() };
+            // SAFETY: `&mut` through the backref — the server outlives this
+            // context and no other borrow of it is live here.
+            unsafe {
+                let srv = &mut *server.as_ptr();
+                if !already_reported {
+                    srv.note_request_complete();
+                }
+                srv.deinit_if_we_can();
             }
         }
     }
@@ -1447,13 +1451,15 @@ where
             // A parked direct pull() keeps the stream-result promise pending,
             // so the NativePromiseContext reaction holds ref_count at 1 until
             // user code releases the resolver. Decrement pending_requests now
-            // (deinit's flag check prevents a second decrement).
+            // (deinit's flag check prevents a second decrement). Not
+            // `on_request_complete`: that runs `deinit_if_we_can`, which may
+            // downgrade `js_value` while this context's backref is still live.
             if !this.flags.request_complete_reported() {
                 this.flags.set_request_complete_reported(true);
                 let server_ref = this.server.expect("asserted Some above");
                 // SAFETY: BACKREF; server outlives `this` and no other borrow
                 // of it is live across this call.
-                unsafe { (*server_ref.as_ptr()).on_request_complete() };
+                unsafe { (*server_ref.as_ptr()).note_request_complete() };
             }
             // SAFETY: `sink_ptr` is the live JSSink allocated by do_render_stream
             // (repr(transparent) over the sink). `abort` takes the raw pointer
@@ -4642,8 +4648,8 @@ bitflags::bitflags! {
         const REQUEST_BODY_PAUSED         = 1 << 16;
         /// `on_start_buffering` fired (`.text()` etc.); skip pre-stream backpressure.
         const REQUEST_BODY_BUFFER_ALL     = 1 << 17;
-        /// `server.on_request_complete()` has already run for this context (from
-        /// `on_abort`'s sink branch); `deinit` must not call it again.
+        /// `server.note_request_complete()` has already run for this context (from
+        /// `on_abort`'s sink branch); `deinit` must not decrement again.
         const REQUEST_COMPLETE_REPORTED   = 1 << 18;
     }
 }

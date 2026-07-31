@@ -441,6 +441,11 @@ impl JSType {
     /// ```
     pub(crate) const Generator: JSType = JSType(75);
 
+    /// Internal coroutine-state generator behind an `async function` body
+    /// (JSC's `JSAsyncFunctionGenerator`). Not normally user-observable; the
+    /// function's visible return value is the Promise it drives.
+    pub(crate) const AsyncFunctionGenerator: JSType = JSType(76);
+
     /// Async generator object for asynchronous iteration.
     /// ```js
     /// async function* asyncGen() {

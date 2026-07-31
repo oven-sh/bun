@@ -222,8 +222,9 @@ describe.skipIf(isWindows)("console.log after process.stdout is materialized on 
     using dir = tempDir("stdout-nonblock-child-inherit", {
       "parent.mjs": `
         const { spawnSync } = require("node:child_process");
-        spawnSync(process.execPath, ["-e", 'process.stdout.write("")'],
-                  { stdio: ["ignore", "inherit", "ignore"] });
+        const r = spawnSync(process.execPath, ["-e", 'process.stdout.write("")'],
+                            { stdio: ["ignore", "inherit", "ignore"] });
+        if (r.error || r.status !== 0) throw new Error("child failed: " + (r.error ?? r.status));
         const pad = Buffer.alloc(190, 120).toString();
         for (let i = 0; i < 20000; i++) console.log("O" + i + " " + pad);
       `,

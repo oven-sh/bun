@@ -525,7 +525,7 @@ impl JSMySQLConnection {
             ref_count: Cell::new(1),
             js_value: JsCell::new(JsRef::empty()),
             global_object: GlobalRef::from(global_object),
-            vm: BackRef::new_mut(vm),
+            vm: BackRef::new(&*vm),
             poll_ref: JsCell::new(KeepAlive::default()),
             connection: JsCell::new(my_sql_connection::MySQLConnection::init(
                 database,

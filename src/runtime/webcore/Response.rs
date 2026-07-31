@@ -117,7 +117,7 @@ impl Drop for HeadersRef {
 pub(crate) struct BodyAbortListener {
     signal: AbortSignalRef,
     /// `Response` owns `Box<Self>`, so a ref-counted pointer here would cycle.
-    response: bun_ptr::ParentRef<Response>,
+    response: bun_ptr::ParentRef<Response, bun_ptr::Mut>,
     global: GlobalRef,
 }
 

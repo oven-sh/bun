@@ -325,7 +325,7 @@ impl IOWriter {
     #[inline]
     pub(crate) fn set_interp(&self, interp: *mut Interpreter) {
         // SAFETY: caller contract above.
-        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
+        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable(interp) };
     }
 
     #[inline]

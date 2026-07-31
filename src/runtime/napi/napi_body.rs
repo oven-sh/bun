@@ -2396,7 +2396,7 @@ pub(crate) struct ThreadSafeFunction {
     // EventLoop`; reborrowed at use sites (single JS thread). `None` once the
     // owning env is torn down: the loop lives inside a VirtualMachine that a
     // worker's shutdown frees, while addon threads outlive it.
-    pub(crate) event_loop: Option<bun_ptr::BackRef<EventLoop>>,
+    pub(crate) event_loop: Option<bun_ptr::BackRef<EventLoop, bun_ptr::Mut>>,
     pub(crate) tracker: Debugger::AsyncTaskTracker,
 
     /// Dropped on the JS thread by `env_teardown`; `None` afterwards.
@@ -3063,7 +3063,7 @@ extern "C" fn napi_create_threadsafe_function(
     let function = ThreadSafeFunction::new(ThreadSafeFunction {
         // SAFETY: the loop is live now; `NapiEnv::cleanup()` clears this field
         // (via `env_teardown`) before the VirtualMachine holding it is freed.
-        event_loop: Some(unsafe { bun_ptr::BackRef::from_raw(vm.event_loop()) }),
+        event_loop: Some(unsafe { bun_ptr::BackRef::from_raw_mut(vm.event_loop()) }),
         // SAFETY: env is a live C++-owned napi_env.
         env: Some(unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) }),
         callback,

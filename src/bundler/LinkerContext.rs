@@ -540,7 +540,7 @@ impl<'a> LinkerContext<'a> {
         // Note: erase `'a` → `'static` for the task backref. The tasks are
         // joined before `self` is dropped (see `SourceMapData.*_wait_group`).
         // SAFETY: write provenance from `ptr::from_mut`; outlives every task.
-        let ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>>> = Some(unsafe {
+        let ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>, bun_ptr::Mut>> = Some(unsafe {
             bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext<'a>>(self).cast())
         });
         let mut batch = ThreadPoolLib::Batch::default();
@@ -1297,7 +1297,7 @@ pub struct SourceMapData {
 pub struct SourceMapDataTask {
     /// `None` only in `Default` (the per-index slot is overwritten before
     /// scheduling).
-    pub(crate) ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>>>,
+    pub(crate) ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>, bun_ptr::Mut>>,
     pub(crate) source_index: crate::IndexInt,
     pub(crate) thread_task: ThreadPoolLib::Task,
 }
@@ -1411,7 +1411,7 @@ impl SourceMapData {
     /// writes only `graph.files[source_index].line_offset_table` (disjoint by
     /// `source_index`) via a raw column pointer.
     pub(crate) fn compute_line_offsets(
-        this: bun_ptr::ParentRef<LinkerContext<'_>>,
+        this: bun_ptr::ParentRef<LinkerContext<'_>, bun_ptr::Mut>,
         alloc: &Bump,
         source_index: crate::IndexInt,
     ) {
@@ -1468,7 +1468,7 @@ impl SourceMapData {
     /// Runs concurrently across the worker pool — see `compute_line_offsets`
     /// for the `ParentRef` aliasing contract.
     pub(crate) fn compute_quoted_source_contents(
-        this: bun_ptr::ParentRef<LinkerContext<'_>>,
+        this: bun_ptr::ParentRef<LinkerContext<'_>, bun_ptr::Mut>,
         _alloc: &Bump,
         source_index: crate::IndexInt,
     ) {
@@ -1561,19 +1561,19 @@ pub(crate) type ChunkMetaMap = ArrayHashMap<Ref, ()>;
 /// `c`/`chunks` are disjoint or read-only.
 #[derive(Clone, Copy)]
 pub struct GenerateChunkCtx<'a> {
-    pub(crate) c: bun_ptr::ParentRef<LinkerContext<'a>>,
+    pub(crate) c: bun_ptr::ParentRef<LinkerContext<'a>, bun_ptr::Mut>,
     /// Backref to the full `chunks: &mut [Chunk]` slice owned by
     /// `generate_chunks_in_parallel`. The slice outlives every
     /// `GenerateChunkCtx` (joined via `wait_for_all`), so [`bun_ptr::BackRef`]'s
     /// owner-outlives-holder invariant holds and per-task reads go through
     /// safe `Deref`. Tasks that need write provenance (HTML loader) recover
     /// the raw `*mut [Chunk]` via [`bun_ptr::BackRef::as_ptr`].
-    pub(crate) chunks: bun_ptr::BackRef<[Chunk]>,
+    pub(crate) chunks: bun_ptr::BackRef<[Chunk], bun_ptr::Mut>,
     /// Backref to this task's `Chunk` (an element of `chunks`). Constructed
     /// via [`bun_ptr::BackRef::new_mut`] so the stored `NonNull` carries write
     /// provenance; per-task slot writes recover the raw `*mut Chunk` via
     /// [`bun_ptr::BackRef::as_ptr`], shared reads go through safe `Deref`.
-    pub(crate) chunk: bun_ptr::BackRef<Chunk>,
+    pub(crate) chunk: bun_ptr::BackRef<Chunk, bun_ptr::Mut>,
 }
 // SAFETY: see note above — each task writes only its own `*mut Chunk` slot;
 // shared reads are read-only.

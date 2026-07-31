@@ -454,7 +454,7 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     /// BACKREF to the owning context (Bundler / VM transpiler store) that
     /// created this reloader. Set once at init and never reassigned; the
     /// context outlives the reloader (and every `Task` it spawns).
-    pub ctx: bun_ptr::BackRef<Ctx>,
+    pub ctx: bun_ptr::BackRef<Ctx, bun_ptr::Mut>,
     pub(crate) verbose: bool,
     pub(crate) pending_count: AtomicU32,
 
@@ -709,7 +709,7 @@ where
 
         let reloader = bun_core::heap::into_raw(Box::new(Self {
             // SAFETY: `this` is the live owning context; it outlives the reloader.
-            ctx: unsafe { bun_ptr::BackRef::from_raw(this) },
+            ctx: unsafe { bun_ptr::BackRef::from_raw_mut(this) },
             verbose: ctx.log_level_at_least_info(),
             pending_count: AtomicU32::new(0),
             main: MainFile::init(entry_path.unwrap_or(b"")),

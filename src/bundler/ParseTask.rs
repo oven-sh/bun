@@ -114,7 +114,7 @@ pub struct ParseTask {
     /// BACKREF (LIFETIMES.tsv) — written through in
     /// `on_complete`. `None` only in the `default()` placeholder; every
     /// scheduled task has it set via `init` / `bundle_v2.rs` write-sites.
-    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>>>,
+    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
     // Borrows package_json (resolver arena); valid for the bundle pass.
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
@@ -133,7 +133,7 @@ pub enum ParseTaskStage {
 /// The information returned to the Bundler thread when a parse finishes.
 pub(crate) struct Result {
     pub(crate) task: EventLoop::Task,
-    pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>>,
+    pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
     pub(crate) value: ResultValue,
     pub(crate) watcher_data: WatcherData,
     /// This is used for native onBeforeParsePlugins to store

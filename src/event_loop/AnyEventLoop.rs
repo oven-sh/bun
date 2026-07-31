@@ -2,6 +2,7 @@ use core::ptr::NonNull;
 
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_ptr::BackRef;
+use bun_ptr::Mut;
 use bun_uws::Loop as UwsLoop;
 
 use crate::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
@@ -215,7 +216,7 @@ pub enum EventLoopHandle {
     // strictly outlive every `EventLoopHandle` derived from them — the
     // [`BackRef`] invariant. Read-only sites use safe `Deref`; the few
     // `&mut`-taking dispatch sites go through [`mini_mut`] (single deref site).
-    Mini(BackRef<MiniEventLoop>),
+    Mini(BackRef<MiniEventLoop, Mut>),
 }
 
 /// Single `unsafe` deref site for the `EventLoopHandle::Mini` arm — collapses
@@ -230,7 +231,7 @@ pub enum EventLoopHandle {
 /// [`BackRef::get_mut`] precondition, discharged once here instead of at each
 /// dispatch site. Private to this module so the invariant is local.
 #[inline]
-fn mini_mut<'a>(mini: &'a mut BackRef<MiniEventLoop>) -> &'a mut MiniEventLoop {
+fn mini_mut<'a>(mini: &'a mut BackRef<MiniEventLoop, Mut>) -> &'a mut MiniEventLoop {
     // SAFETY: see fn doc — per-thread `!Send` singleton, exclusive for the
     // returned borrow's duration.
     unsafe { mini.get_mut() }
@@ -298,9 +299,15 @@ impl EventLoopHandle {
         // (pointee outlives every copy of the handle) is the caller's
         // structural guarantee, same as before.
         EventLoopHandle::Mini(
-            NonNull::new(mini)
-                .expect("MiniEventLoop ptr is non-null")
-                .into(),
+            // SAFETY: `mini` is a live, write-capable `*mut MiniEventLoop`
+            // (checked non-null above the call chain).
+            unsafe {
+                BackRef::from_raw_mut(
+                    NonNull::new(mini)
+                        .expect("MiniEventLoop ptr is non-null")
+                        .as_ptr(),
+                )
+            },
         )
     }
 
@@ -359,7 +366,14 @@ impl EventLoopHandle {
             },
             // `(tag, ptr)` came from `into_tag_ptr` on a live loop, so `ptr`
             // is non-null. `BackRef: From<NonNull<T>>`.
-            2 => EventLoopHandle::Mini(NonNull::new(ptr.cast()).expect("non-null mini ptr").into()),
+            // SAFETY: `ptr` is the write-capable pointer from `into_tag_ptr`.
+            2 => EventLoopHandle::Mini(unsafe {
+                BackRef::from_raw_mut(
+                    NonNull::new(ptr.cast())
+                        .expect("non-null mini ptr")
+                        .as_ptr(),
+                )
+            }),
             _ => unreachable!("invalid parent event-loop tag {}", tag),
         }
     }

@@ -84,16 +84,28 @@ pub use bun_core::callback_ctx;
 // `usize` length so it is a drop-in replacement for any `*const [T]` field.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Provenance markers for [`BackRef`]. `Shared` back-references are born from
+/// `&T` and only ever yield `&T`; `Mut` back-references are born from `&mut T` /
+/// a write-capable `*mut T` and additionally expose the `unsafe fn get_mut`.
+pub struct Shared;
+pub struct Mut;
+
 /// Non-owning, non-null back-reference to an object that outlives `self`.
 ///
 /// For struct fields where the pointee is the owner/parent and is
 /// guaranteed live for the holder's entire lifetime (owner-creates-child).
 /// `Copy` + `Deref` so call sites read `self.owner.method()` instead of
 /// `unsafe { &*self.owner }.method()`.
+///
+/// The `P` parameter records the provenance the pointer was born with:
+/// `BackRef<T>` (i.e. `BackRef<T, Shared>`) comes from `&T` and is read-only;
+/// `BackRef<T, Mut>` comes from `&mut T`/`*mut T` and may `get_mut`. A field
+/// that needs `get_mut` must be declared `BackRef<T, Mut>`, which the compiler
+/// then refuses to fill from a `&T`.
 #[repr(transparent)]
-pub struct BackRef<T: ?Sized>(core::ptr::NonNull<T>);
+pub struct BackRef<T: ?Sized, P = Shared>(core::ptr::NonNull<T>, core::marker::PhantomData<P>);
 
-impl<T: ?Sized> BackRef<T> {
+impl<T: ?Sized> BackRef<T, Shared> {
     /// Wrap a reference to the owner. Safe: no lifetime is forged at
     /// construction; the back-reference invariant (pointee outlives holder) is
     /// the caller's structural guarantee, enforced at the *type* boundary by
@@ -101,16 +113,10 @@ impl<T: ?Sized> BackRef<T> {
     /// holder.
     #[inline]
     pub fn new(r: &T) -> Self {
-        BackRef(core::ptr::NonNull::from(r))
+        BackRef(core::ptr::NonNull::from(r), core::marker::PhantomData)
     }
 
-    /// Wrap a mutable reference to the owner (same invariant as `new`).
-    #[inline]
-    pub fn new_mut(r: &mut T) -> Self {
-        BackRef(core::ptr::NonNull::from(r))
-    }
-
-    /// Wrap a raw pointer.
+    /// Wrap a raw pointer as a read-only back-reference.
     ///
     /// # Safety
     /// `p` must be non-null, properly aligned, and point to a `T` that will
@@ -119,9 +125,67 @@ impl<T: ?Sized> BackRef<T> {
     #[inline]
     pub const unsafe fn from_raw(p: *mut T) -> Self {
         // SAFETY: caller contract — `p` is non-null.
-        BackRef(unsafe { core::ptr::NonNull::new_unchecked(p) })
+        BackRef(
+            unsafe { core::ptr::NonNull::new_unchecked(p) },
+            core::marker::PhantomData,
+        )
+    }
+}
+
+impl<T: ?Sized> BackRef<T, Mut> {
+    /// Wrap a mutable reference to the owner (same liveness invariant as
+    /// [`BackRef::new`]); the stored pointer keeps write provenance.
+    #[inline]
+    pub fn new_mut(r: &mut T) -> Self {
+        BackRef(core::ptr::NonNull::from(r), core::marker::PhantomData)
     }
 
+    /// Wrap a write-capable raw pointer.
+    ///
+    /// # Safety
+    /// Same contract as [`BackRef::from_raw`]; additionally `p` must have been
+    /// derived with mutable provenance (`ptr::from_mut`, `&raw mut`,
+    /// `Box::into_raw`, ...).
+    #[inline]
+    pub const unsafe fn from_raw_mut(p: *mut T) -> Self {
+        // SAFETY: caller contract — `p` is non-null.
+        BackRef(
+            unsafe { core::ptr::NonNull::new_unchecked(p) },
+            core::marker::PhantomData,
+        )
+    }
+
+    /// Mutably borrow the pointee.
+    ///
+    /// # Safety
+    /// Caller must guarantee no other `&` or `&mut` to the pointee is live for
+    /// the returned borrow's duration (same uniqueness rule as
+    /// `NonNull::as_mut`). The `BackRef` invariant guarantees liveness and
+    /// alignment but *not* exclusivity — that is a per-call-site obligation.
+    #[inline]
+    pub unsafe fn get_mut(&mut self) -> &mut T {
+        // SAFETY: caller guarantees exclusivity; BackRef invariant guarantees
+        // liveness/alignment; `Mut` records write provenance.
+        unsafe { self.0.as_mut() }
+    }
+
+    /// Forget the write capability.
+    #[inline]
+    pub const fn shared(self) -> BackRef<T, Shared> {
+        BackRef(self.0, core::marker::PhantomData)
+    }
+}
+
+impl<T, P> BackRef<T, P> {
+    /// Placeholder for two-phase initialisation (`field: BackRef::dangling()`
+    /// then assigned for real before first deref). Dereferencing is UB.
+    #[inline]
+    pub const fn dangling() -> Self {
+        BackRef(core::ptr::NonNull::dangling(), core::marker::PhantomData)
+    }
+}
+
+impl<T: ?Sized, P> BackRef<T, P> {
     #[inline]
     pub const fn as_ptr(self) -> *mut T {
         self.0.as_ptr()
@@ -137,36 +201,20 @@ impl<T: ?Sized> BackRef<T> {
     #[inline]
     pub fn get(&self) -> &T {
         // SAFETY: BackRef invariant — pointee outlives holder; non-null,
-        // aligned, dereferenceable. No `&mut` alias is live: owners hand out
-        // `BackRef` only to children they themselves own, and child access is
-        // single-threaded per the runtime's `!Send` event-loop affinity.
+        // aligned, dereferenceable.
         unsafe { self.0.as_ref() }
-    }
-
-    /// Mutably borrow the pointee.
-    ///
-    /// # Safety
-    /// Caller must guarantee no other `&` or `&mut` to the pointee is live for
-    /// the returned borrow's duration (same uniqueness rule as
-    /// `NonNull::as_mut`). The `BackRef` invariant guarantees liveness and
-    /// alignment but *not* exclusivity — that is a per-call-site obligation.
-    #[inline]
-    pub unsafe fn get_mut(&mut self) -> &mut T {
-        // SAFETY: caller guarantees exclusivity; BackRef invariant guarantees
-        // liveness/alignment.
-        unsafe { self.0.as_mut() }
     }
 }
 
-impl<T: ?Sized> Copy for BackRef<T> {}
-impl<T: ?Sized> Clone for BackRef<T> {
+impl<T: ?Sized, P> Copy for BackRef<T, P> {}
+impl<T: ?Sized, P> Clone for BackRef<T, P> {
     #[inline]
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<T: ?Sized> core::ops::Deref for BackRef<T> {
+impl<T: ?Sized, P> core::ops::Deref for BackRef<T, P> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &T {
@@ -174,26 +222,26 @@ impl<T: ?Sized> core::ops::Deref for BackRef<T> {
     }
 }
 
-impl<T: ?Sized> From<core::ptr::NonNull<T>> for BackRef<T> {
+impl<T: ?Sized> From<core::ptr::NonNull<T>> for BackRef<T, Shared> {
     #[inline]
     fn from(p: core::ptr::NonNull<T>) -> Self {
-        BackRef(p)
+        BackRef(p, core::marker::PhantomData)
     }
 }
 
-impl<T: ?Sized> core::fmt::Debug for BackRef<T> {
+impl<T: ?Sized, P> core::fmt::Debug for BackRef<T, P> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("BackRef").field(&self.0).finish()
     }
 }
 
-impl<T: ?Sized> PartialEq for BackRef<T> {
+impl<T: ?Sized, P> PartialEq for BackRef<T, P> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         core::ptr::addr_eq(self.0.as_ptr(), other.0.as_ptr())
     }
 }
-impl<T: ?Sized> Eq for BackRef<T> {}
+impl<T: ?Sized, P> Eq for BackRef<T, P> {}
 
 /// Detach a slice borrow from its borrowck lifetime.
 ///
@@ -581,15 +629,17 @@ where
     }
 }
 
-// SAFETY: `BackRef<T>` is morally `&T` (Deref/get) with an unsafe `get_mut`
-// escape hatch whose exclusivity is the caller's per-site obligation. Match
-// `&T` auto-trait bounds: `&T: Send ⇔ T: Sync`, `&T: Sync ⇔ T: Sync`. Holders
-// that additionally call `get_mut` across threads must separately ensure
-// `T: Send` at the call site (no different from `NonNull<T>` today).
-unsafe impl<T: ?Sized + Sync> Send for BackRef<T> {}
-// SAFETY: `&BackRef<T>` only yields `&T` (via `get`/`Deref`); `&T: Sync` holds
-// exactly when `T: Sync`, so sharing the back-reference across threads is sound.
-unsafe impl<T: ?Sized + Sync> Sync for BackRef<T> {}
+// SAFETY: `BackRef<T, P>` is morally `&T` (Deref/get) with, for `P = Mut`, an
+// unsafe `get_mut` escape hatch whose exclusivity is the caller's per-site
+// obligation. Match `&T` auto-trait bounds: `&T: Send ⇔ T: Sync`,
+// `&T: Sync ⇔ T: Sync`. Holders that additionally call `get_mut` across
+// threads must separately ensure `T: Send` at the call site (no different
+// from `NonNull<T>` today).
+unsafe impl<T: ?Sized + Sync, P> Send for BackRef<T, P> {}
+// SAFETY: `&BackRef<T, P>` only yields `&T` (via `get`/`Deref`); `&T: Sync`
+// holds exactly when `T: Sync`, so sharing the back-reference across threads is
+// sound.
+unsafe impl<T: ?Sized + Sync, P> Sync for BackRef<T, P> {}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AsCtxPtr — `&self` → `*mut Self` for FFI / C-callback ctx slots.

@@ -36,23 +36,29 @@ use core::ptr::NonNull;
 /// `#[repr(transparent)]` over `NonNull<T>`, so
 /// `Option<ParentRef<T>>` is pointer-sized (NonNull niche) — bit-identical to
 /// the `*mut T` field it replaces, no struct-layout churn.
+///
+/// # Provenance parameter
+/// `P` is [`Shared`](crate::Shared) (default) for back-pointers born from
+/// `&T` / a read-only `*const T` — those only ever yield `&T` — or
+/// [`Mut`](crate::Mut) for back-pointers born from a write-capable `*mut T`,
+/// which additionally expose the unsafe [`assume_mut`](Self::assume_mut). A
+/// field that needs `assume_mut` must be declared `ParentRef<T, Mut>`, which
+/// the compiler then refuses to fill from a `&T`.
 #[repr(transparent)]
-pub struct ParentRef<T: ?Sized> {
+pub struct ParentRef<T: ?Sized, P = crate::Shared> {
     ptr: NonNull<T>,
+    _provenance: core::marker::PhantomData<P>,
 }
 
-impl<T: ?Sized> ParentRef<T> {
+impl<T: ?Sized> ParentRef<T, crate::Shared> {
     /// Construct from a shared borrow of the parent. Provenance is
-    /// `SharedReadOnly` — correct, because `ParentRef` only ever yields `&T`.
-    ///
-    /// **Do not** call [`assume_mut`](Self::assume_mut) on the result; the
-    /// stored pointer has no write provenance. Use [`from_raw_mut`] for that.
-    ///
-    /// [`from_raw_mut`]: Self::from_raw_mut
+    /// `SharedReadOnly` — correct, because `ParentRef<T, Shared>` only ever
+    /// yields `&T`.
     #[inline]
     pub fn new(parent: &T) -> Self {
         Self {
             ptr: NonNull::from(parent),
+            _provenance: core::marker::PhantomData,
         }
     }
 
@@ -67,6 +73,31 @@ impl<T: ?Sized> ParentRef<T> {
         Self {
             // SAFETY: caller contract — `p` is non-null.
             ptr: unsafe { NonNull::new_unchecked(p.cast_mut()) },
+            _provenance: core::marker::PhantomData,
+        }
+    }
+
+    /// Convenience: `Some(from_raw(p))` if `p` is non-null, else `None`.
+    ///
+    /// # Safety
+    /// If `p` is non-null, the [`from_raw`](Self::from_raw) contract applies.
+    #[inline]
+    pub unsafe fn from_nullable(p: *const T) -> Option<Self> {
+        NonNull::new(p.cast_mut()).map(|nn| Self {
+            ptr: nn,
+            _provenance: core::marker::PhantomData,
+        })
+    }
+}
+
+impl<T: ?Sized> ParentRef<T, crate::Mut> {
+    /// Construct from an exclusive borrow of the parent; the stored pointer
+    /// keeps write provenance (same liveness invariant as [`ParentRef::new`]).
+    #[inline]
+    pub fn from_ref_mut(parent: &mut T) -> Self {
+        Self {
+            ptr: NonNull::from(parent),
+            _provenance: core::marker::PhantomData,
         }
     }
 
@@ -85,6 +116,7 @@ impl<T: ?Sized> ParentRef<T> {
         Self {
             // SAFETY: caller contract — `p` is non-null.
             ptr: unsafe { NonNull::new_unchecked(p) },
+            _provenance: core::marker::PhantomData,
         }
     }
 
@@ -95,9 +127,41 @@ impl<T: ?Sized> ParentRef<T> {
     /// applies.
     #[inline]
     pub unsafe fn from_nullable_mut(p: *mut T) -> Option<Self> {
-        NonNull::new(p).map(|nn| Self { ptr: nn })
+        NonNull::new(p).map(|nn| Self {
+            ptr: nn,
+            _provenance: core::marker::PhantomData,
+        })
     }
 
+    /// Explicit *unsafe* exclusive borrow, for the handful of sites that
+    /// genuinely need `&mut Parent` and have audited exclusivity (e.g.
+    /// single-threaded event-loop callback after all peer borrows retired).
+    /// Named `assume_mut` — not `get_mut` — so it does not look like a routine
+    /// accessor. Only present on `ParentRef<T, Mut>`: the write provenance
+    /// requirement is discharged by the type.
+    ///
+    /// # Safety
+    /// Caller guarantees:
+    ///   (a) the parent is live for `'a`,
+    ///   (b) **no** other `&` or `&mut` to the parent overlaps the returned
+    ///       borrow.
+    #[inline]
+    pub unsafe fn assume_mut<'a>(self) -> &'a mut T {
+        // SAFETY: caller contract (a)+(b); `Mut` records write provenance.
+        unsafe { &mut *self.ptr.as_ptr() }
+    }
+
+    /// Forget the write capability.
+    #[inline]
+    pub const fn shared(self) -> ParentRef<T, crate::Shared> {
+        ParentRef {
+            ptr: self.ptr,
+            _provenance: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<T: ?Sized, P> ParentRef<T, P> {
     /// Shared borrow of the parent.
     ///
     /// Sound under the `ParentRef` invariant: the pointee outlives the holder
@@ -110,52 +174,23 @@ impl<T: ?Sized> ParentRef<T> {
         unsafe { self.ptr.as_ref() }
     }
 
-    /// Raw pointer with the provenance the `ParentRef` was constructed with.
-    /// Only carries write permission if constructed via
-    /// [`from_raw_mut`](Self::from_raw_mut) / [`from_nullable_mut`].
-    ///
-    /// [`from_nullable_mut`]: Self::from_nullable_mut
+    /// Raw pointer with the provenance the `ParentRef` was constructed with;
+    /// only `ParentRef<T, Mut>` carries write permission.
     #[inline]
     pub fn as_mut_ptr(self) -> *mut T {
         self.ptr.as_ptr()
     }
-
-    /// Explicit *unsafe* exclusive borrow, for the handful of sites that
-    /// genuinely need `&mut Parent` and have audited exclusivity (e.g.
-    /// single-threaded event-loop callback after all peer borrows retired).
-    /// Named `assume_mut` — not `get_mut` — so it does not look like a routine
-    /// accessor.
-    ///
-    /// # Safety
-    /// Caller guarantees:
-    ///   (a) the parent is live for `'a`,
-    ///   (b) **no** other `&` or `&mut` to the parent overlaps the returned
-    ///       borrow,
-    ///   (c) this `ParentRef` was constructed via [`from_raw_mut`] /
-    ///       [`from_nullable_mut`] from a pointer with write provenance —
-    ///       **not** via [`new`], which derives from `&T` and gives
-    ///       `SharedReadOnly` provenance (writing through that is UB under
-    ///       Stacked Borrows regardless of (a)/(b)).
-    ///
-    /// [`from_raw_mut`]: Self::from_raw_mut
-    /// [`from_nullable_mut`]: Self::from_nullable_mut
-    /// [`new`]: Self::new
-    #[inline]
-    pub unsafe fn assume_mut<'a>(self) -> &'a mut T {
-        // SAFETY: caller contract (a)+(b)+(c).
-        unsafe { &mut *self.ptr.as_ptr() }
-    }
 }
 
-impl<T: ?Sized> Copy for ParentRef<T> {}
-impl<T: ?Sized> Clone for ParentRef<T> {
+impl<T: ?Sized, P> Copy for ParentRef<T, P> {}
+impl<T: ?Sized, P> Clone for ParentRef<T, P> {
     #[inline]
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<T: ?Sized> core::ops::Deref for ParentRef<T> {
+impl<T: ?Sized, P> core::ops::Deref for ParentRef<T, P> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &T {
@@ -163,34 +198,37 @@ impl<T: ?Sized> core::ops::Deref for ParentRef<T> {
     }
 }
 
-impl<T: ?Sized> From<NonNull<T>> for ParentRef<T> {
+impl<T: ?Sized> From<NonNull<T>> for ParentRef<T, crate::Shared> {
     #[inline]
     fn from(p: NonNull<T>) -> Self {
-        Self { ptr: p }
+        Self {
+            ptr: p,
+            _provenance: core::marker::PhantomData,
+        }
     }
 }
 
-impl<T: ?Sized> core::fmt::Debug for ParentRef<T> {
+impl<T: ?Sized, P> core::fmt::Debug for ParentRef<T, P> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "ParentRef({:p})", self.ptr)
     }
 }
 
-impl<T: ?Sized> PartialEq for ParentRef<T> {
+impl<T: ?Sized, P> PartialEq for ParentRef<T, P> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         core::ptr::addr_eq(self.ptr.as_ptr(), other.ptr.as_ptr())
     }
 }
-impl<T: ?Sized> Eq for ParentRef<T> {}
+impl<T: ?Sized, P> Eq for ParentRef<T, P> {}
 
 // SAFETY: `ParentRef<T>` is morally `&'parent T` (Deref/get only); `assume_mut`
 // is `unsafe` and its cross-thread caller must separately establish `T: Send`.
 // Match `&T` auto-trait rules: `&T: Send ⇔ T: Sync`, `&T: Sync ⇔ T: Sync`.
-unsafe impl<T: ?Sized + Sync> Send for ParentRef<T> {}
+unsafe impl<T: ?Sized + Sync, P> Send for ParentRef<T, P> {}
 // SAFETY: same as the `Send` impl above — `ParentRef<T>` projects only `&T`, so
 // sharing `&ParentRef<T>` across threads is sound exactly when `T: Sync`.
-unsafe impl<T: ?Sized + Sync> Sync for ParentRef<T> {}
+unsafe impl<T: ?Sized + Sync, P> Sync for ParentRef<T, P> {}
 
 #[cfg(all(test, not(debug_assertions)))]
 const _: () = {

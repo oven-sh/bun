@@ -2276,7 +2276,7 @@ mod _async_tasks {
     }
 
     pub(super) struct ReaddirSubtask {
-        pub readdir_task: bun_ptr::ParentRef<AsyncReaddirRecursiveTask>,
+        pub readdir_task: bun_ptr::ParentRef<AsyncReaddirRecursiveTask, bun_ptr::Mut>,
         /// Heap-owned, NUL-terminated (`[basename.., 0]`); freed on drop.
         pub basename: Box<[u8]>,
         pub task: WorkPoolTask,

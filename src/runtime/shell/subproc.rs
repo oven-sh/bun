@@ -207,7 +207,7 @@ pub(crate) const DEFAULT_MAX_BUFFER_SIZE: u32 = 1024 * 1024 * 4;
 /// each use site.
 #[derive(Clone, Copy)]
 pub struct CmdHandle {
-    pub(crate) interp: bun_ptr::ParentRef<Interpreter>,
+    pub(crate) interp: bun_ptr::ParentRef<Interpreter, bun_ptr::Mut>,
     pub(crate) id: NodeId,
 }
 

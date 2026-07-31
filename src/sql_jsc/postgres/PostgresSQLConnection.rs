@@ -1189,7 +1189,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             // the JS-thread singleton with full write provenance. `BackRef::new_mut`
             // captures the `NonNull` so `vm_mut()` can later route through the same
             // canonical `VirtualMachine::as_mut()` accessor.
-            vm: BackRef::new_mut(vm),
+            vm: BackRef::new(&*vm),
             statements: JsCell::new(PreparedStatementsMap::default()),
             prepared_statement_id: Cell::new(0),
             pending_activity_count: AtomicU32::new(0),

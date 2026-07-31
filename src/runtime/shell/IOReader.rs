@@ -175,7 +175,7 @@ impl IOReader {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn set_interp(&self, interp: *mut Interpreter) {
         // SAFETY: precondition above.
-        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
+        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable(interp) };
     }
 
     #[inline]

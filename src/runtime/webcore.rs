@@ -354,31 +354,15 @@ pub enum PathOrFileDescriptor {
 }
 
 // ─── SinkHandle ──────────────────────────────────────────────────────────────
-// Held by ByteStream; dispatches write()/end() to the native sink. Http* variants carry
-// thunks since RequestContext is generic.
+// Held by ByteStream; dispatches write()/end() to the native sink.
 
 pub type SinkWriteFn = fn(ctx: *mut core::ffi::c_void, data: &streams::Result) -> streams::Writable;
-pub type SinkEndFn = fn(ctx: *mut core::ffi::c_void, err: Option<&streams::StreamError>);
 
 #[derive(Copy, Clone, Default)]
 pub enum SinkHandle {
     #[default]
     None,
-    HttpResponse {
-        ctx: *mut core::ffi::c_void,
-        write: SinkWriteFn,
-        end: SinkEndFn,
-    },
-    HttpsResponse {
-        ctx: *mut core::ffi::c_void,
-        write: SinkWriteFn,
-        end: SinkEndFn,
-    },
-    H3Response {
-        ctx: *mut core::ffi::c_void,
-        write: SinkWriteFn,
-        end: SinkEndFn,
-    },
+    ServerResponse(crate::server::AnyRequestContext),
     FetchRequestBody(*mut fetch::FetchRequestBodySink),
     S3Upload(*mut streams::NetworkSink),
     FileSink(*mut file_sink::FileSink),
@@ -396,29 +380,12 @@ impl SinkHandle {
         !self.is_none()
     }
 
-    #[inline]
-    pub fn http_response<const SSL: bool, const H3: bool>(
-        ctx: *mut core::ffi::c_void,
-        write: SinkWriteFn,
-        end: SinkEndFn,
-    ) -> Self {
-        if H3 {
-            SinkHandle::H3Response { ctx, write, end }
-        } else if SSL {
-            SinkHandle::HttpsResponse { ctx, write, end }
-        } else {
-            SinkHandle::HttpResponse { ctx, write, end }
-        }
-    }
-
     /// SAFETY: every non-None variant's pointee is kept alive by the hook-in site for as long
     /// as this handle is installed.
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
         match *self {
             SinkHandle::None => streams::Writable::Done,
-            SinkHandle::HttpResponse { ctx, write, .. }
-            | SinkHandle::HttpsResponse { ctx, write, .. }
-            | SinkHandle::H3Response { ctx, write, .. } => write(ctx, data),
+            SinkHandle::ServerResponse(any) => any.write_chunk(data),
             // SAFETY: see fn-level invariant — pointee outlives the handle.
             SinkHandle::FetchRequestBody(ptr) => unsafe { (*ptr).write(data) },
             // SAFETY: see fn-level invariant.
@@ -435,9 +402,7 @@ impl SinkHandle {
     pub fn end(&self, err: Option<streams::StreamError>) {
         match *self {
             SinkHandle::None => {}
-            SinkHandle::HttpResponse { ctx, end, .. }
-            | SinkHandle::HttpsResponse { ctx, end, .. }
-            | SinkHandle::H3Response { ctx, end, .. } => end(ctx, err.as_ref()),
+            SinkHandle::ServerResponse(any) => any.end_chunk(err.as_ref()),
             // SAFETY: see fn-level invariant — pointee outlives the handle.
             SinkHandle::FetchRequestBody(ptr) => unsafe { (*ptr).end_from_stream(err) },
             // SAFETY: see fn-level invariant.

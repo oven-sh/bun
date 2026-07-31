@@ -3223,21 +3223,9 @@ where
                             // body is in flight, so `handle_reject` must not
                             // fall through to render_missing() and end it.
                             this.flags.set_has_marked_pending(true);
-                            byte_stream.sink.set(
-                                WebCore::SinkHandle::http_response::<SSL_ENABLED, HTTP3>(
-                                    std::ptr::from_mut::<Self>(this).cast::<c_void>(),
-                                    |ctx, stream| {
-                                        // SAFETY: `ctx` is the `*mut Self` stored at hook-in time;
-                                        // the `+1` ref taken just above keeps it alive until
-                                        // `end_chunk` drops it.
-                                        Self::write_chunk(unsafe { &mut *ctx.cast::<Self>() }, stream)
-                                    },
-                                    |ctx, err| {
-                                        // SAFETY: same as the write thunk above.
-                                        Self::end_chunk(unsafe { &mut *ctx.cast::<Self>() }, err)
-                                    },
-                                ),
-                            );
+                            byte_stream.sink.set(WebCore::SinkHandle::ServerResponse(
+                                AnyRequestContext::init(std::ptr::from_mut::<Self>(this)),
+                            ));
                             stream.lock_native(global_this);
                             byte_stream.signal_native_sink_attached();
                             // Deinit the old Strong reference before creating a new one
@@ -3293,9 +3281,11 @@ where
     }
 
     pub fn write_chunk(
-        this: &mut Self,
+        this: *mut Self,
         stream: &WebCore::streams::Result,
     ) -> WebCore::streams::Writable {
+        // SAFETY: caller passes the live `*mut RequestContext` stored as the sink ctx.
+        let this = unsafe { &mut *this };
         if this.is_aborted_or_ended() {
             return WebCore::streams::Writable::Done;
         }
@@ -3321,9 +3311,11 @@ where
         }
     }
 
-    pub fn end_chunk(this: &mut Self, err: Option<&WebCore::streams::StreamError>) {
+    pub fn end_chunk(this: *mut Self, err: Option<&WebCore::streams::StreamError>) {
         // Drop the ref taken when the ByteStream sink was installed.
-        let _ref = RequestContextRef(std::ptr::from_mut::<Self>(this));
+        let _ref = RequestContextRef(this);
+        // SAFETY: caller passes the live `*mut RequestContext` stored as the sink ctx.
+        let this = unsafe { &mut *this };
 
         if this.is_aborted_or_ended() {
             return;

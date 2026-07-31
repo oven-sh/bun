@@ -24,7 +24,6 @@ bitflags.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
 bun_ast.workspace = true
-bun_options_types.workspace = true
 bun_http_types.workspace = true
 bun_paths.workspace = true
 bun_ptr.workspace = true

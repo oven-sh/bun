@@ -345,13 +345,13 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   mark("mkdirAll");
 
   // Seed an empty symbol ordering file so the link flag always points at
-  // something. lld treats an empty file as a no-op, which is exactly the
-  // unordered pass-1 link; a later `generateOrderFile()` overwrites it and
-  // ninja relinks (linkDepends lists it). Never clobber an existing one —
-  // that would throw away the file a release relink or a canary download
+  // something. lld and Apple ld both treat an empty file as a no-op, which is
+  // exactly the unordered pass-1 link; a later `generateOrderFile()` overwrites
+  // it and ninja relinks (linkDepends lists it). Never clobber an existing one
+  // — that would throw away the file a release relink or a canary download
   // just put there.
   if (usesOrderFile(cfg) && !existsSync(orderFilePath(cfg))) {
-    writeIfChanged(orderFilePath(cfg), "# no order file yet — an empty file is a no-op for lld\n");
+    writeIfChanged(orderFilePath(cfg), "# no order file yet — an empty file is a no-op for the linker\n");
   }
   mark("orderFile");
 

@@ -20,6 +20,7 @@
 #include <JavaScriptCore/PropertyNameArray.h>
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/DateInstance.h"
+#include <wtf/Int128.h>
 #if !OS(WINDOWS)
 #include <sys/stat.h>
 #endif
@@ -642,6 +643,14 @@ extern "C" JSC::EncodedJSValue Bun__createJSStatsObject(Zig::GlobalObject* globa
     return JSC::JSValue::encode(object);
 }
 
+static constexpr WTF::Int128 kNsPerSec = 1'000'000'000;
+static constexpr WTF::Int128 kNsPerMs = 1'000'000;
+
+static ALWAYS_INLINE WTF::Int128 timespecToNs(int64_t sec, int64_t nsec)
+{
+    return static_cast<WTF::Int128>(sec) * kNsPerSec + static_cast<WTF::Int128>(nsec);
+}
+
 extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatsObject(Zig::GlobalObject* globalObject,
     uint64_t dev,
     uint64_t ino,
@@ -653,19 +662,26 @@ extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatsObject(Zig::GlobalObject*
     uint64_t size,
     uint64_t blksize,
     uint64_t blocks,
-    int64_t atimeMs,
-    int64_t mtimeMs,
-    int64_t ctimeMs,
-    int64_t birthtimeMs,
-    uint64_t atimeNs,
-    uint64_t mtimeNs,
-    uint64_t ctimeNs,
-    uint64_t birthtimeNs)
+    int64_t atimeSec,
+    int64_t atimeNsec,
+    int64_t mtimeSec,
+    int64_t mtimeNsec,
+    int64_t ctimeSec,
+    int64_t ctimeNsec,
+    int64_t birthtimeSec,
+    int64_t birthtimeNsec)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* structure = getStructure<true>(globalObject);
+
+    // Node computes atimeNs = sec * 1e9n + nsec and atimeMs = atimeNs / 1e6n.
+    const WTF::Int128 atimeNs = timespecToNs(atimeSec, atimeNsec);
+    const WTF::Int128 mtimeNs = timespecToNs(mtimeSec, mtimeNsec);
+    const WTF::Int128 ctimeNs = timespecToNs(ctimeSec, ctimeNsec);
+    const WTF::Int128 birthtimeNs = timespecToNs(birthtimeSec, birthtimeNsec);
+
     // Node.js fills a BigInt64Array via static_cast<int64_t>(uint64_t).
     JSC::JSValue js_dev = JSC::JSBigInt::createFrom(globalObject, static_cast<int64_t>(dev));
     RETURN_IF_EXCEPTION(scope, {});
@@ -687,13 +703,13 @@ extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatsObject(Zig::GlobalObject*
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_blocks = JSC::JSBigInt::createFrom(globalObject, static_cast<int64_t>(blocks));
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSValue js_atimeMs = JSC::JSBigInt::createFrom(globalObject, atimeMs);
+    JSC::JSValue js_atimeMs = JSC::JSBigInt::createFrom(globalObject, atimeNs / kNsPerMs);
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSValue js_mtimeMs = JSC::JSBigInt::createFrom(globalObject, mtimeMs);
+    JSC::JSValue js_mtimeMs = JSC::JSBigInt::createFrom(globalObject, mtimeNs / kNsPerMs);
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSValue js_ctimeMs = JSC::JSBigInt::createFrom(globalObject, ctimeMs);
+    JSC::JSValue js_ctimeMs = JSC::JSBigInt::createFrom(globalObject, ctimeNs / kNsPerMs);
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSValue js_birthtimeMs = JSC::JSBigInt::createFrom(globalObject, birthtimeMs);
+    JSC::JSValue js_birthtimeMs = JSC::JSBigInt::createFrom(globalObject, birthtimeNs / kNsPerMs);
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_atimeNs = JSC::JSBigInt::createFrom(globalObject, atimeNs);
     RETURN_IF_EXCEPTION(scope, {});

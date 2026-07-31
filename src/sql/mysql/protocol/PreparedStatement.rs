@@ -53,7 +53,6 @@ impl<'a> Execute<'a> {
         let mut null_bitmap_buf = [0u8; MYSQL_MAX_PARAMS];
         let bitmap_bytes = self.params.len.div_ceil(8);
         let null_bitmap = &mut null_bitmap_buf[0..bitmap_bytes];
-        null_bitmap.fill(0);
 
         for i in 0..self.params.len {
             if (self.params.is_null)(self.params.ctx, i) {
@@ -65,7 +64,7 @@ impl<'a> Execute<'a> {
         Ok(())
     }
 
-    pub fn write_internal<C: WriterContext>(
+    pub(crate) fn write_internal<C: WriterContext>(
         &self,
         writer: NewWriter<C>,
     ) -> Result<(), any_mysql_error::Error> {

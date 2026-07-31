@@ -53,11 +53,6 @@ impl AnyPromise {
     }
 
     #[inline]
-    pub fn is_handled(self) -> bool {
-        any_promise_dispatch!(self, |p| p.is_handled())
-    }
-
-    #[inline]
     pub fn set_handled(self, vm: &VM) {
         let _ = vm;
         any_promise_dispatch!(self, |p| p.set_handled())
@@ -93,22 +88,13 @@ impl AnyPromise {
     /// JSInternalPromise subclasses JSPromise in C++ — this cast is safe for
     /// any C++ function taking JSPromise*.
     #[inline]
-    pub fn as_js_promise(self) -> *mut JSPromise {
+    pub(crate) fn as_js_promise(self) -> *mut JSPromise {
         match self {
             Self::Normal(p) => p,
             // SAFETY: JSInternalPromise subclasses JSPromise in C++; the
             // pointer reinterpretation is valid for any C++ API taking JSPromise*.
             Self::Internal(p) => p.cast::<JSPromise>(),
         }
-    }
-
-    #[inline]
-    pub fn reject_as_handled(
-        self,
-        global_this: &JSGlobalObject,
-        value: JSValue,
-    ) -> Result<(), JsTerminated> {
-        any_promise_dispatch!(self, |p| p.reject_as_handled(global_this, value))
     }
 
     #[inline]

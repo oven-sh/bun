@@ -439,7 +439,11 @@ macro_rules! cmd_key_value_varargs {
 
 impl JSValkeyClient {
     #[bun_jsc::host_fn(method)]
-    pub fn js_send(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn js_send(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let command = OwnedString::new(frame.argument(0).to_bun_string(global)?);
 
         let args_array = frame.argument(1);
@@ -498,7 +502,7 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_buffer(
+    pub(crate) fn get_buffer(
         this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -520,7 +524,11 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn set(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"set")?;
 
         let args_view = frame.arguments();
@@ -568,7 +576,11 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn incr(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn incr(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"incr")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
@@ -586,7 +598,11 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn decr(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn decr(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"decr")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
@@ -604,7 +620,11 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn exists(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn exists(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"exists")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
@@ -623,7 +643,11 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn expire(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn expire(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"expire")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
@@ -656,7 +680,11 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn ttl(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn ttl(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"ttl")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
@@ -675,7 +703,11 @@ impl JSValkeyClient {
 
     // Implement srem (remove value from a set)
     #[bun_jsc::host_fn(method)]
-    pub fn srem(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn srem(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"srem")?;
 
         let args_view = frame.arguments();
@@ -716,7 +748,7 @@ impl JSValkeyClient {
 
     // Implement srandmember (get random member from set)
     #[bun_jsc::host_fn(method)]
-    pub fn srandmember(
+    pub(crate) fn srandmember(
         this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -759,7 +791,11 @@ impl JSValkeyClient {
 
     // Implement smembers (get all members of a set)
     #[bun_jsc::host_fn(method)]
-    pub fn smembers(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn smembers(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"smembers")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
@@ -778,7 +814,11 @@ impl JSValkeyClient {
 
     // Implement spop (pop a random member from a set)
     #[bun_jsc::host_fn(method)]
-    pub fn spop(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn spop(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"spop")?;
 
         let args_view = frame.arguments();
@@ -813,7 +853,11 @@ impl JSValkeyClient {
 
     // Implement sadd (add member to a set)
     #[bun_jsc::host_fn(method)]
-    pub fn sadd(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn sadd(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"sadd")?;
 
         let args_view = frame.arguments();
@@ -854,7 +898,11 @@ impl JSValkeyClient {
 
     // Implement sismember (check if value is member of a set)
     #[bun_jsc::host_fn(method)]
-    pub fn sismember(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn sismember(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"sismember")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
@@ -880,7 +928,11 @@ impl JSValkeyClient {
 
     // Implement hmget (get multiple values from hash)
     #[bun_jsc::host_fn(method)]
-    pub fn hmget(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn hmget(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"hmget")?;
 
         let args_view = frame.arguments();
@@ -942,7 +994,11 @@ impl JSValkeyClient {
 
     // Implement hincrby (increment hash field by integer value)
     #[bun_jsc::host_fn(method)]
-    pub fn hincrby(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn hincrby(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"hincrby")?;
 
         let key = OwnedString::new(frame.argument(0).to_bun_string(global)?);
@@ -966,7 +1022,7 @@ impl JSValkeyClient {
 
     // Implement hincrbyfloat (increment hash field by float value)
     #[bun_jsc::host_fn(method)]
-    pub fn hincrbyfloat(
+    pub(crate) fn hincrbyfloat(
         this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -1108,12 +1164,20 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn hset(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn hset(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         Self::hset_impl(this, global, frame, b"HSET")
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn hmset(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn hmset(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         Self::hset_impl(this, global, frame, b"HMSET")
     }
 
@@ -1140,7 +1204,11 @@ impl JSValkeyClient {
     cmd_strings_varargs!(httl, b"httl", "HTTL", NotSubscriber);
 
     #[bun_jsc::host_fn(method)]
-    pub fn hsetnx(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn hsetnx(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"hsetnx")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
@@ -1164,7 +1232,11 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn hexists(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn hexists(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"hexists")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
@@ -1187,7 +1259,11 @@ impl JSValkeyClient {
 
     // Implement ping (send a PING command with an optional message)
     #[bun_jsc::host_fn(method)]
-    pub fn ping(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn ping(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let message: Option<JSArgument> = if !frame.argument(0).is_undefined_or_null() {
             // Only use the first argument if provided, ignore any additional arguments
             let Some(m) = from_js(global, frame.argument(0))? else {
@@ -1519,7 +1595,11 @@ impl JSValkeyClient {
     );
 
     #[bun_jsc::host_fn(method)]
-    pub fn smove(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn smove(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"smove")?;
 
         let Some(source) = from_js(global, frame.argument(0))? else {
@@ -1611,7 +1691,11 @@ impl JSValkeyClient {
     );
 
     #[bun_jsc::host_fn(method)]
-    pub fn publish(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn publish(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"publish")?;
 
         let args_view = frame.arguments();
@@ -1643,7 +1727,16 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn subscribe(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn subscribe(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        // `upsert_receive_handler`'s exit guard re-enters `on_writable` /
+        // `update_poll_ref` before `send()` is reached; hold a ref so `*this`
+        // stays live across those calls.
+        let _guard = this.ref_scope();
+
         let [channel_or_many, handler_callback] = frame.arguments_as_array::<2>();
         let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
 
@@ -1743,11 +1836,15 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn unsubscribe(
+    pub(crate) fn unsubscribe(
         this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
+        // Hold a ref so `*this` stays live across the handler-map updates and
+        // the `send()` below.
+        let _guard = this.ref_scope();
+
         // Check if we're in subscription mode
         require_subscriber(this, b"unsubscribe")?;
 
@@ -1891,7 +1988,11 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn duplicate(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn duplicate(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let _ = frame;
 
         let new_client_ptr = this.clone_without_connecting(global)?;

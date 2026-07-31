@@ -51,7 +51,7 @@ struct PrunedInfo {
 
 /// Promotes temporary (unnamed) identifiers used in scopes to named identifiers.
 /// TS: `promoteUsedTemporaries`
-pub fn promote_used_temporaries(func: &mut ReactiveFunction, env: &mut Environment) {
+pub(crate) fn promote_used_temporaries(func: &mut ReactiveFunction, env: &mut Environment) {
     let mut state = State {
         tags: HashSet::new(),
         promoted: HashSet::new(),

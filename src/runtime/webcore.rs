@@ -46,7 +46,7 @@ pub use streams::{
 
 #[path = "webcore/ObjectURLRegistry.rs"]
 pub mod object_url_registry;
-pub use object_url_registry::ObjectURLRegistry;
+pub(crate) use object_url_registry::ObjectURLRegistry;
 
 // ─── webcore-local jsc re-export ─────────────────────────────────────────────
 // `bun_jsc` is now a dep of `bun_runtime`; forward to it. The per-class
@@ -73,33 +73,6 @@ pub mod jsc {
     }
 }
 
-// `bun_s3` is not a workspace crate (only `bun_s3_signing`). Webcore drafts
-// reference `bun_s3::{S3Credentials, ACL, ...}` for the S3-backed Blob store.
-// Forward the real `bun_s3_signing` types so `s3_stub::X` and
-// `bun_s3_signing::X` are the *same* type (avoids
-// `s3_stub::ACL`-vs-`bun_s3_signing::ACL` mismatches across modules).
-// Remaining names without a real definition stay as opaque unit structs until
-// a real `bun_s3` crate exists.
-pub mod s3_stub {
-    macro_rules! opaque { ($($n:ident),* $(,)?) => {$(
-        #[derive(Debug, Default)] pub struct $n;
-    )*};}
-    opaque!(
-        S3DeleteResult,
-        S3ListObjectsResult,
-        S3SimpleRequestResult,
-        S3DownloadStreamWrapper,
-        S3HttpSimpleTask,
-    );
-    // Real types now exist upstream — forward them.
-    pub use bun_s3_signing::{ACL, S3Credentials, S3CredentialsWithOptions, StorageClass};
-    // Real type now exists in webcore/s3/list_objects.rs — forward it so
-    // `s3_stub::S3ListObjectsOptions` and `s3::list_objects::S3ListObjectsOptions`
-    // are the same type (Store.rs imports via this path).
-    pub use crate::webcore::__s3_list_objects::S3ListObjectsOptions;
-    pub use crate::webcore::s3::MultiPartUploadOptions;
-}
-
 // Forward the real enums so `webcore::node_types::X` and
 // `crate::node::types::X` are the same type.
 pub mod node_types {
@@ -109,17 +82,15 @@ pub mod node_types {
 pub use crate::jsc::AbortSignal;
 
 // ─── AutoFlusher (webcore tier) ──────────────────────────────────────────────
-// The lower-tier `bun_event_loop::auto_flusher` takes a `&mut DeferredTaskQueue`
-// directly to avoid an event_loop→jsc upward dependency. This tier takes a
-// `&VirtualMachine` and reaches the queue via `vm.event_loop().deferred_tasks`.
-pub use bun_event_loop::auto_flusher;
+// Takes a `&VirtualMachine` and reaches the queue via
+// `vm.event_loop().deferred_tasks`.
 use bun_event_loop::deferred_task_queue::DeferredRepeatingTask;
 
 #[derive(Debug, Default)]
 pub struct AutoFlusher {
     /// `Cell` so register/unregister can be called from `&self` callbacks
     /// (R-2 §provenance — see `FileSink::on_write`).
-    pub registered: core::cell::Cell<bool>,
+    pub(crate) registered: core::cell::Cell<bool>,
 }
 
 /// Implemented below for `FileSink` and `HTTPServerWritable<_, _>`.
@@ -161,7 +132,7 @@ impl AutoFlusher {
     }
 
     #[inline]
-    pub fn register_deferred_microtask_with_type<T: HasAutoFlusher>(
+    pub(crate) fn register_deferred_microtask_with_type<T: HasAutoFlusher>(
         this: &T,
         vm: &jsc::VirtualMachine,
     ) {
@@ -172,7 +143,7 @@ impl AutoFlusher {
     }
 
     #[inline]
-    pub fn unregister_deferred_microtask_with_type<T: HasAutoFlusher>(
+    pub(crate) fn unregister_deferred_microtask_with_type<T: HasAutoFlusher>(
         this: &T,
         vm: &jsc::VirtualMachine,
     ) {
@@ -183,7 +154,7 @@ impl AutoFlusher {
     }
 
     #[inline]
-    pub fn unregister_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
+    pub(crate) fn unregister_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
         this: &T,
         vm: &jsc::VirtualMachine,
     ) {
@@ -199,7 +170,7 @@ impl AutoFlusher {
     }
 
     #[inline]
-    pub fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
+    pub(crate) fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
         this: &T,
         vm: &jsc::VirtualMachine,
     ) {
@@ -253,13 +224,12 @@ impl<const SSL: bool, const HTTP3: bool> HasAutoFlusher
 }
 
 #[path = "webcore/headers_ref.rs"]
-pub mod headers_ref;
+pub(crate) mod headers_ref;
 
 #[path = "webcore/Blob.rs"]
 pub mod blob;
 pub use blob::Any as AnyBlob;
 pub use blob::Internal as InternalBlob;
-pub use blob::store::StoreExt as BlobStoreExt;
 pub use blob::{Blob, BlobExt, SizeType as BlobSizeType};
 
 #[path = "webcore/Body.rs"]
@@ -288,7 +258,6 @@ pub use file_reader::FileReader;
 
 #[path = "webcore/Sink.rs"]
 pub mod sink;
-pub use sink::Sink;
 
 #[path = "webcore/FileSink.rs"]
 pub mod file_sink;
@@ -369,14 +338,6 @@ pub mod __s3_simple_request;
 pub mod s3 {
     pub use super::multipart_options_impl as multipart_options;
     pub use super::multipart_options_impl::MultiPartUploadOptions;
-    // Forward the credential / enum stubs so `crate::webcore::s3::{ACL, ...}`
-    // resolves for S3Client.rs (its `crate::s3` path is being migrated here).
-    // These come from `s3_stub` until a real `bun_s3` crate exists.
-    pub use super::s3_stub::{
-        ACL, S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3DownloadStreamWrapper,
-        S3HttpSimpleTask, S3ListObjectsOptions, S3ListObjectsResult, S3SimpleRequestResult,
-        StorageClass,
-    };
 
     // Note: `client` is the umbrella re-export hub. It pulls in `simple_request`
     // / `download_stream` / `list_objects` / `multipart` transitively.
@@ -400,12 +361,12 @@ pub enum PathOrFileDescriptor {
 #[derive(Default)]
 pub struct Pipe {
     pub ctx: Option<NonNull<()>>,
-    pub on_pipe: Option<Function>,
+    pub(crate) on_pipe: Option<Function>,
 }
 
 impl Pipe {
     #[inline]
-    pub(crate) fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.ctx.is_none() && self.on_pipe.is_none()
     }
 }
@@ -421,7 +382,7 @@ pub(crate) trait PipeHandler {
 pub(crate) struct Wrap<T: PipeHandler>(core::marker::PhantomData<T>);
 
 impl<T: PipeHandler> Wrap<T> {
-    pub(crate) fn pipe(self_: NonNull<()>, stream: streams::Result) {
+    fn pipe(self_: NonNull<()>, stream: streams::Result) {
         // SAFETY: `self_` was produced from `NonNull::from(&mut T)` in `init` below; caller
         // guarantees the pointee outlives the Pipe and is exclusively borrowed here.
         let this = unsafe { self_.cast::<T>().as_mut() };

@@ -28,8 +28,7 @@ impl TextEncoderStreamEncoder {
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn encode(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments = frame.arguments_old::<1>();
-        let arguments = arguments.slice();
+        let arguments = frame.arguments();
         if arguments.is_empty() {
             return Err(global.throw_not_enough_arguments(
                 "TextEncoderStreamEncoder.encode",
@@ -96,14 +95,9 @@ impl TextEncoderStreamEncoder {
                 buffer.ensure_total_capacity(buffer.len() + remain.len() + 1);
             }
         }
-
-        if cfg!(debug_assertions) {
-            // guarded so simdutf isn't called in a release build here.
-            debug_assert!(
-                buffer.len()
-                    == (simdutf::length::utf8::from::latin1(input) + prepend_replacement_len)
-            );
-        }
+        debug_assert!(
+            buffer.len() == (simdutf::length::utf8::from::latin1(input) + prepend_replacement_len)
+        );
 
         JSUint8Array::from_bytes(global, buffer.into())
     }

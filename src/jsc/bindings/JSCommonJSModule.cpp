@@ -1239,6 +1239,22 @@ void JSCommonJSModule::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
             analyzer.analyzePropertyNameEdge(cell, overriddenParent.asCell(), overriddenParentIdentifier.impl());
         }
     }
+
+    if (thisObject->m_childrenValue) {
+        JSValue childrenValue = thisObject->m_childrenValue.get();
+        if (childrenValue.isCell()) {
+            const Identifier childrenIdentifier = Identifier::fromString(vm, "children"_s);
+            analyzer.analyzePropertyNameEdge(cell, childrenValue.asCell(), childrenIdentifier.impl());
+        }
+    }
+
+    if (thisObject->m_overriddenCompile) {
+        JSValue overriddenCompile = thisObject->m_overriddenCompile.get();
+        if (overriddenCompile.isCell()) {
+            const Identifier overriddenCompileIdentifier = Identifier::fromString(vm, "_compile"_s);
+            analyzer.analyzePropertyNameEdge(cell, overriddenCompile.asCell(), overriddenCompileIdentifier.impl());
+        }
+    }
 }
 
 const JSC::ClassInfo JSCommonJSModule::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSModule) };

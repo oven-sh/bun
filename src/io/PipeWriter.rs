@@ -271,10 +271,6 @@ pub trait PosixBufferedWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`; returned slice borrows from it.
     unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8];
-    const HAS_ON_WRITABLE: bool;
-    /// # Safety
-    /// `this` must point to a live `Self`.
-    unsafe fn on_writable(_this: *mut Self) {}
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
@@ -285,9 +281,9 @@ pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
     /// `None` only between `Default` and `set_parent`; every dispatch path
     /// assumes it is set (see SAFETY comments at the call sites).
     pub parent: Option<bun_ptr::ParentRef<Parent>>,
-    pub is_done: bool,
-    pub pollable: bool,
-    pub closed_without_reporting: bool,
+    pub(crate) is_done: bool,
+    pub(crate) pollable: bool,
+    pub(crate) closed_without_reporting: bool,
     pub close_fd: bool,
 }
 
@@ -376,7 +372,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         mem::size_of::<Self>()
     }
 
-    pub fn create_poll(&mut self, fd: Fd) -> FilePollRef {
+    pub(crate) fn create_poll(&mut self, fd: Fd) -> FilePollRef {
         FilePollRef::init(
             self.parent_event_loop(),
             fd,
@@ -388,14 +384,14 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         self.handle.get_poll()
     }
 
-    pub fn get_file_type(&self) -> FileType {
+    pub(crate) fn get_file_type(&self) -> FileType {
         let Some(poll) = self.get_poll() else {
             return FileType::File;
         };
         poll.file_type()
     }
 
-    pub fn get_fd(&self) -> Fd {
+    pub(crate) fn get_fd(&self) -> Fd {
         self.handle.get_fd()
     }
 
@@ -405,10 +401,6 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         self.parent_on_error(err);
 
         self.close();
-    }
-
-    pub fn get_force_sync(&self) -> bool {
-        false
     }
 
     fn _on_write(&mut self, written: usize, status: WriteStatus) {
@@ -440,17 +432,6 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         }
     }
 
-    fn _on_writable(&mut self) {
-        if self.is_done {
-            return;
-        }
-
-        if Parent::HAS_ON_WRITABLE {
-            // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-            unsafe { Parent::on_writable(self.parent()) };
-        }
-    }
-
     pub fn register_poll(&mut self) {
         let Some(poll) = self.get_poll() else { return };
         // Use the event loop from the parent, not the global one
@@ -463,18 +444,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         }
     }
 
-    pub fn has_ref(&self) -> bool {
-        if self.is_done {
-            return false;
-        }
-
-        let Some(poll) = self.get_poll() else {
-            return false;
-        };
-        poll.can_enable_keeping_process_alive()
-    }
-
-    pub fn enable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
+    pub(crate) fn enable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
         self.update_ref(event_loop, true);
     }
 
@@ -540,10 +510,6 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle
             .set_owner(Owner::new(Parent::POLL_OWNER_TAG, owner.cast()));
-    }
-
-    pub fn write(&mut self) {
-        self.on_poll(0, false);
     }
 
     pub fn watch(&mut self) {
@@ -632,7 +598,7 @@ pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
     pub handle: PollOrFd,
     pub parent: *mut Parent,
     pub is_done: bool,
-    pub closed_without_reporting: bool,
+    pub(crate) closed_without_reporting: bool,
     pub force_sync: bool,
 }
 
@@ -718,10 +684,6 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         unsafe { Parent::on_write(self.parent(), amount, status) }
     }
 
-    pub fn get_force_sync(&self) -> bool {
-        self.force_sync
-    }
-
     pub fn memory_cost(&self) -> usize {
         mem::size_of::<Self>() + self.outgoing.memory_cost()
     }
@@ -730,11 +692,11 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.handle.get_poll()
     }
 
-    pub fn get_fd(&self) -> Fd {
+    pub(crate) fn get_fd(&self) -> Fd {
         self.handle.get_fd()
     }
 
-    pub fn get_file_type(&self) -> FileType {
+    pub(crate) fn get_file_type(&self) -> FileType {
         let Some(poll) = self.get_poll() else {
             return FileType::File;
         };
@@ -750,7 +712,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.outgoing.size()
     }
 
-    pub fn should_buffer(&self, addition: usize) -> bool {
+    pub(crate) fn should_buffer(&self, addition: usize) -> bool {
         !self.force_sync && self.outgoing.size() + addition < Self::CHUNK_SIZE
     }
 
@@ -794,19 +756,6 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle
             .set_owner(Owner::new(Parent::POLL_OWNER_TAG, owner.cast()));
-    }
-
-    fn _on_writable(&mut self) {
-        if self.is_done || self.closed_without_reporting {
-            return;
-        }
-
-        self.outgoing.reset();
-
-        if Parent::HAS_ON_READY {
-            // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-            unsafe { Parent::on_ready(self.parent()) };
-        }
     }
 
     fn close_without_reporting(&mut self) {
@@ -1033,13 +982,6 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         rc
     }
 
-    pub fn has_ref(&self) -> bool {
-        let Some(poll) = self.get_poll() else {
-            return false;
-        };
-        !self.is_done && poll.can_enable_keeping_process_alive()
-    }
-
     pub fn enable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
         if self.is_done {
             return;
@@ -1158,16 +1100,6 @@ pub trait BaseWindowsPipeWriter {
             return Fd::INVALID;
         };
         pipe.get_fd()
-    }
-
-    fn has_ref(&self) -> bool {
-        if self.is_done() {
-            return false;
-        }
-        if let Some(pipe) = self.source() {
-            return pipe.has_ref();
-        }
-        false
     }
 
     fn enable_keeping_process_alive(&mut self, event_loop: EventLoopHandle) {
@@ -1422,12 +1354,12 @@ pub trait WindowsBufferedWriterParent: WindowsWriterParent {
 pub struct WindowsBufferedWriter<Parent: WindowsBufferedWriterParent> {
     pub source: Option<Source>,
     pub owns_fd: bool,
-    pub parent: *mut Parent,
-    pub is_done: bool,
+    pub(crate) parent: *mut Parent,
+    pub(crate) is_done: bool,
     // we use only one write_req, any queued data in outgoing will be flushed after this ends
-    pub write_req: uv::uv_write_t,
-    pub write_buffer: uv::uv_buf_t,
-    pub pending_payload_size: usize,
+    pub(crate) write_req: uv::uv_write_t,
+    pub(crate) write_buffer: uv::uv_buf_t,
+    pub(crate) pending_payload_size: usize,
 }
 
 #[cfg(windows)]
@@ -1574,7 +1506,10 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             return;
         }
         let pending = Self::r(this).get_buffer_internal();
-        let has_pending_data = (pending.len() - written) != 0;
+        // `close()` may have run before this callback (exit-first ordering) and
+        // cleared the parent's buffer to 0 while `written` still carries the
+        // submitted size; treat that as no pending data rather than underflowing.
+        let has_pending_data = pending.len().saturating_sub(written) != 0;
         let is_done_before = Self::r(this).is_done;
         // SAFETY: parent BACKREF valid.
         unsafe {
@@ -1791,7 +1726,7 @@ impl StreamBuffer {
         self.list.clear();
     }
 
-    pub fn maybe_shrink(&mut self) {
+    pub(crate) fn maybe_shrink(&mut self) {
         // Runtime page size of the host.
         let page = bun_core::page_size();
         if self.list.capacity() > page {
@@ -1837,16 +1772,13 @@ impl StreamBuffer {
         Ok(())
     }
 
-    pub fn write_type_as_bytes<T: bun_core::NoUninit>(&mut self, data: &T) -> Result<(), OOM> {
-        self.write(bun_core::bytes_of(data))
-    }
-
     pub fn write_type_as_bytes_assume_capacity<T: bun_core::NoUninit>(&mut self, data: T) {
         self.list.extend_from_slice(bun_core::bytes_of(&data));
     }
 
     /// Dispatched on the `WriteKind` enum tag.
-    pub fn write_or_fallback<'a>(
+    #[cfg(windows)]
+    pub(crate) fn write_or_fallback<'a>(
         &'a mut self,
         buffer_u8: Option<&'a [u8]>,
         buffer_u16: Option<&[u16]>,
@@ -1939,15 +1871,15 @@ pub struct WindowsStreamingWriter<Parent: WindowsStreamingWriterParent> {
     pub parent: *mut Parent,
     pub is_done: bool,
     // we use only one write_req, any queued data in outgoing will be flushed after this ends
-    pub write_req: uv::uv_write_t,
-    pub write_buffer: uv::uv_buf_t,
+    pub(crate) write_req: uv::uv_write_t,
+    pub(crate) write_buffer: uv::uv_buf_t,
 
     // queue any data that we want to write here
     pub outgoing: StreamBuffer,
     // libuv requires a stable ptr when doing async so we swap buffers
-    pub current_payload: StreamBuffer,
+    pub(crate) current_payload: StreamBuffer,
     // we preserve the last write result for simplicity
-    pub last_write_result: WriteResult,
+    pub(crate) last_write_result: WriteResult,
     // Set only by `close_without_reporting()` (i.e. `Drop`) to suppress
     // `Parent::on_close` while the parent is mid-teardown.
     pub closed_without_reporting: bool,
@@ -2793,7 +2725,6 @@ macro_rules! impl_buffered_writer_parent {
                 #[allow(unused_unsafe)]
                 unsafe { $gb }
             }
-            const HAS_ON_WRITABLE: bool = false;
             #[inline]
             unsafe fn event_loop(this: *mut Self) -> $crate::EventLoopHandle {
                 // SAFETY: see on_write.

@@ -21,7 +21,7 @@ struct ArgsSlice {
 
 impl ArgsSlice {
     #[inline]
-    pub(crate) fn get(&self, global: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
+    fn get(&self, global: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
         self.array.get_index(global, self.start + i)
     }
 }
@@ -35,14 +35,14 @@ enum ValueRef {
 }
 
 impl ValueRef {
-    pub(crate) fn as_bun_string(&self, global: &JSGlobalObject) -> JsResult<String> {
+    fn as_bun_string(&self, global: &JSGlobalObject) -> JsResult<String> {
         match self {
             ValueRef::Jsvalue(str) => str.to_bun_string(global),
             ValueRef::Bunstr(str) => Ok(*str),
         }
     }
 
-    pub(crate) fn as_js_value(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    fn as_js_value(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             ValueRef::Jsvalue(str) => Ok(*str),
             ValueRef::Bunstr(str) => str.to_js(global),
@@ -171,10 +171,7 @@ impl OptionToken {
     }
 }
 
-pub(crate) fn find_option_by_long_name(
-    long_name: String,
-    options: &[OptionDefinition],
-) -> Option<usize> {
+fn find_option_by_long_name(long_name: String, options: &[OptionDefinition]) -> Option<usize> {
     for (i, option) in options.iter().enumerate() {
         if long_name.eql(&option.long_name) {
             return Some(i);
@@ -784,7 +781,7 @@ struct ParseArgsState<'a> {
 }
 
 impl<'a> ParseArgsState<'a> {
-    pub(crate) fn handle_token(&mut self, token_generic: &Token) -> JsResult<()> {
+    fn handle_token(&mut self, token_generic: &Token) -> JsResult<()> {
         let global = self.global;
 
         match &token_generic {
@@ -853,11 +850,6 @@ impl<'a> ParseArgsState<'a> {
                 Token::Option(token) => {
                     obj.put(
                         global,
-                        ZigString::static_("index"),
-                        JSValue::js_number(token.index as f64),
-                    );
-                    obj.put(
-                        global,
                         ZigString::static_("name"),
                         token.name.as_js_value(global)?,
                     );
@@ -865,6 +857,11 @@ impl<'a> ParseArgsState<'a> {
                         global,
                         ZigString::static_("rawName"),
                         token.make_raw_name_js_value(global)?,
+                    );
+                    obj.put(
+                        global,
+                        ZigString::static_("index"),
+                        JSValue::js_number(token.index as f64),
                     );
 
                     // value exists only for string options, otherwise the property exists with "undefined" as value
@@ -907,7 +904,7 @@ impl<'a> ParseArgsState<'a> {
 }
 
 #[bun_jsc::host_fn(export = "Bun__NodeUtil__jsParseArgs")]
-pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     MarkedArgumentBuffer::new(|default_roots| parse_args_impl(global, callframe, default_roots))
 }
 
@@ -1061,10 +1058,10 @@ fn parse_args_impl(
     bun_output::scoped_log!(parseArgs, "Phase 4: Build result object");
 
     let result = JSValue::create_empty_object(global, if return_tokens { 3 } else { 2 });
+    result.put(global, ZigString::static_("values"), state.values);
+    result.put(global, ZigString::static_("positionals"), state.positionals);
     if return_tokens {
         result.put(global, ZigString::static_("tokens"), state.tokens);
     }
-    result.put(global, ZigString::static_("values"), state.values);
-    result.put(global, ZigString::static_("positionals"), state.positionals);
     Ok(result)
 }

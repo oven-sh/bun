@@ -94,20 +94,15 @@ pub struct BinaryExpressionVisitor {
     /// `StoreRef` is the safe arena back-reference: `Copy` + `Deref`/`DerefMut`
     /// encapsulate the AST-store invariant, so call sites need no raw-pointer
     /// round-trip to forge an `'arena` borrow.
-    pub e: StoreRef<E::Binary>,
-    pub loc: bun_ast::Loc,
-    // `in` is a Rust keyword; named `in_`.
-    pub in_: ExprIn,
+    pub(crate) e: StoreRef<E::Binary>,
+    pub(crate) loc: bun_ast::Loc,
 
     /// Input for visiting the left child
-    pub left_in: ExprIn,
-
-    /// "Local variables" passed from "checkAndPrepare" to "visitRightAndFinish"
-    pub is_stmt_expr: bool, // = false (set by caller / Default)
+    pub(crate) left_in: ExprIn,
 }
 
 impl BinaryExpressionVisitor {
-    pub fn visit_right_and_finish<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+    pub(crate) fn visit_right_and_finish<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
         v: &mut Self,
         p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
     ) -> Expr {
@@ -732,7 +727,7 @@ impl BinaryExpressionVisitor {
         }
     }
 
-    pub fn check_and_prepare<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+    pub(crate) fn check_and_prepare<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
         v: &mut Self,
         p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
     ) -> Option<Expr> {
@@ -781,8 +776,6 @@ impl BinaryExpressionVisitor {
             }
             _ => {}
         }
-
-        v.is_stmt_expr = matches!(p.stmt_expr_value, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), std::ptr::from_mut(e_)));
 
         v.left_in = ExprIn {
             assign_target: Op::Code::binary_assign_target(e_.op),

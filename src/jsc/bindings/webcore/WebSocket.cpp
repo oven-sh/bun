@@ -74,6 +74,7 @@
 #include <wtf/text/StringBuilder.h>
 
 #include "JSBuffer.h"
+#include "BunClientData.h"
 #include "ErrorEvent.h"
 #include "WebSocketDeflate.h"
 
@@ -117,6 +118,13 @@ static size_t getFramingOverhead(size_t payloadSize)
 }
 
 const size_t maxReasonSizeInBytes = 123;
+// RFC 6455 §5.5: control frame payloads are at most 125 bytes.
+const size_t maxControlFramePayloadSize = 125;
+
+static Exception controlFramePayloadTooLargeException(size_t length)
+{
+    return Exception { RangeError, makeString("The data size must not be greater than "_s, maxControlFramePayloadSize, " bytes. Received "_s, length, " bytes."_s) };
+}
 
 // Close codes an endpoint may put on the wire (RFC 6455 7.4 + the IANA registry).
 // Deliberately the RFC endpoint set, not the browser's "1000 or 3000-4999":
@@ -251,6 +259,12 @@ static ExceptionOr<std::optional<ProxyConfig>> setupProxy(const String& proxyUrl
     URL url { proxyUrl };
     if (!url.isValid())
         return Exception { SyntaxError, makeString("Invalid proxy URL: "_s, proxyUrl) };
+
+    // Only HTTP CONNECT proxies are supported. Reject socks5://, ftp://, etc. up front
+    // instead of silently sending an HTTP CONNECT request to a non-HTTP proxy, matching
+    // fetch()'s UnsupportedProxyProtocol behaviour.
+    if (!url.protocolIsInHTTPFamily())
+        return Exception { SyntaxError, makeString("Unsupported proxy protocol \""_s, url.protocol(), "\" (expected \"http\" or \"https\")"_s) };
 
     ProxyConfig config;
     config.host = url.host().toString();
@@ -1088,16 +1102,19 @@ ExceptionOr<void> WebSocket::ping(const String& message)
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
+    auto utf8 = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+    size_t payloadSize = utf8.length();
     // No exception is raised if the connection was once established but has subsequently been closed.
     if (m_state == CLOSING || m_state == CLOSED) {
-        auto utf8 = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
-        size_t payloadSize = utf8.length();
         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }
 
-    this->sendWebSocketString(message, Opcode::Ping);
+    if (payloadSize > maxControlFramePayloadSize)
+        return controlFramePayloadTooLargeException(payloadSize);
+
+    this->sendWebSocketData(utf8.data(), payloadSize, Opcode::Ping);
 
     return {};
 }
@@ -1117,6 +1134,8 @@ ExceptionOr<void> WebSocket::ping(ArrayBuffer& binaryData)
 
     char* data = static_cast<char*>(binaryData.data());
     size_t length = binaryData.byteLength();
+    if (length > maxControlFramePayloadSize)
+        return controlFramePayloadTooLargeException(length);
     this->sendWebSocketData(data, length, Opcode::Ping);
 
     return {};
@@ -1140,6 +1159,8 @@ ExceptionOr<void> WebSocket::ping(ArrayBufferView& arrayBufferView)
     auto* buffer = bufferRef.get();
     char* baseAddress = reinterpret_cast<char*>(buffer->data()) + arrayBufferView.byteOffset();
     size_t length = arrayBufferView.byteLength();
+    if (length > maxControlFramePayloadSize)
+        return controlFramePayloadTooLargeException(length);
     this->sendWebSocketData(baseAddress, length, Opcode::Ping);
 
     return {};
@@ -1167,16 +1188,19 @@ ExceptionOr<void> WebSocket::pong(const String& message)
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
+    auto utf8 = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+    size_t payloadSize = utf8.length();
     // No exception is raised if the connection was once established but has subsequently been closed.
     if (m_state == CLOSING || m_state == CLOSED) {
-        auto utf8 = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
-        size_t payloadSize = utf8.length();
         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }
 
-    this->sendWebSocketString(message, Opcode::Pong);
+    if (payloadSize > maxControlFramePayloadSize)
+        return controlFramePayloadTooLargeException(payloadSize);
+
+    this->sendWebSocketData(utf8.data(), payloadSize, Opcode::Pong);
 
     return {};
 }
@@ -1196,6 +1220,8 @@ ExceptionOr<void> WebSocket::pong(ArrayBuffer& binaryData)
 
     char* data = static_cast<char*>(binaryData.data());
     size_t length = binaryData.byteLength();
+    if (length > maxControlFramePayloadSize)
+        return controlFramePayloadTooLargeException(length);
     this->sendWebSocketData(data, length, Opcode::Pong);
 
     return {};
@@ -1219,6 +1245,8 @@ ExceptionOr<void> WebSocket::pong(ArrayBufferView& arrayBufferView)
     auto* buffer = bufferRef.get();
     char* baseAddress = reinterpret_cast<char*>(buffer->data()) + arrayBufferView.byteOffset();
     size_t length = arrayBufferView.byteLength();
+    if (length > maxControlFramePayloadSize)
+        return controlFramePayloadTooLargeException(length);
     this->sendWebSocketData(baseAddress, length, Opcode::Pong);
 
     return {};
@@ -1529,6 +1557,56 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
     // });
 }
 
+void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, std::span<const uint8_t> body)
+{
+    // Only the `ws` shim listens; the browser-style path pays nothing.
+    if (!this->hasEventListeners(eventNames().handshakeEvent))
+        return;
+
+    auto* context = scriptExecutionContext();
+    if (!context)
+        return;
+    auto* globalObject = context->jsGlobalObject();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto& builtinNames = WebCore::builtinNames(vm);
+
+    auto* obj = JSC::constructEmptyObject(globalObject);
+    obj->putDirect(vm, builtinNames.statusCodePublicName(), JSC::jsNumber(statusCode));
+    obj->putDirect(vm, builtinNames.statusMessagePublicName(),
+        JSC::jsString(vm, WTF::String({ statusMessage.data(), statusMessage.size() })));
+
+    auto* rawHeaders = JSC::constructEmptyArray(globalObject, nullptr, headers.size() * 2);
+    if (!rawHeaders || scope.exception()) [[unlikely]] {
+        scope.clearExceptionExceptTermination();
+        return;
+    }
+    for (size_t i = 0; i < headers.size(); i++) {
+        rawHeaders->putDirectIndex(globalObject, i * 2,
+            JSC::jsString(vm, WTF::String({ headers[i].name_ptr, headers[i].name_len })));
+        rawHeaders->putDirectIndex(globalObject, i * 2 + 1,
+            JSC::jsString(vm, WTF::String({ headers[i].value_ptr, headers[i].value_len })));
+    }
+    obj->putDirect(vm, builtinNames.rawHeadersPublicName(), rawHeaders);
+
+    JSC::JSUint8Array* bodyBuffer = createBuffer(globalObject, body);
+    if (!bodyBuffer || scope.exception()) [[unlikely]] {
+        scope.clearExceptionExceptTermination();
+        return;
+    }
+    obj->putDirect(vm, builtinNames.bodyPublicName(), bodyBuffer);
+
+    JSC::EnsureStillAliveScope ensureStillAlive(obj);
+
+    MessageEvent::Init init;
+    init.data = obj;
+    init.origin = m_url.string();
+
+    this->incPendingActivityCount();
+    dispatchEvent(MessageEvent::create(eventNames().handshakeEvent, WTF::move(init), EventIsTrusted::Yes));
+    this->decPendingActivityCount();
+}
+
 void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError)
 {
     // LOG(Network, "WebSocket %p didReceiveErrorMessage()", this);
@@ -1730,7 +1808,10 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         break;
     }
     case Bun::WebSocketErrorCode::timeout: {
-        didReceiveClose(CleanStatus::Clean, 1013, "Timeout"_s);
+        // Opening-handshake timeout: per WHATWG "fail the WebSocket connection"
+        // fire error + close(1006). didReceiveClose gates the error event on
+        // wasConnecting, so a (currently unreachable) post-open timeout only closes.
+        didReceiveClose(CleanStatus::NotClean, 1006, "Timeout"_s, true);
         break;
     }
     case Bun::WebSocketErrorCode::closed: {
@@ -1904,6 +1985,11 @@ extern "C" void WebSocket__didConnectWithTunnel(WebCore::WebSocket* webSocket, v
     webSocket->didConnectWithTunnel(tunnel, bufferedData, len, deflate_params);
 }
 
+extern "C" void WebSocket__didReceiveHandshakeResponse(WebCore::WebSocket* webSocket, uint16_t statusCode, const uint8_t* statusMessage, size_t statusMessageLen, const WebCore::WebSocket::HandshakeRawHeader* headers, size_t headersLen, const uint8_t* body, size_t bodyLen)
+{
+    webSocket->didReceiveHandshakeResponse(statusCode, std::span(statusMessage, statusMessageLen), std::span(headers, headersLen), std::span(body, bodyLen));
+}
+
 extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode)
 {
     webSocket->didFailWithErrorCode(errorCode);
@@ -1969,6 +2055,8 @@ WebCore::ExceptionOr<void> WebCore::WebSocket::ping(WebCore::JSBlob* blob)
     size_t dataSize = Blob__getSize(JSC::JSValue::encode(blob));
 
     if (dataPtr && dataSize > 0) {
+        if (dataSize > maxControlFramePayloadSize)
+            return controlFramePayloadTooLargeException(dataSize);
         this->sendWebSocketData(static_cast<const char*>(dataPtr), dataSize, Opcode::Ping);
     } else {
         // Send empty frame for empty blobs
@@ -1991,6 +2079,8 @@ WebCore::ExceptionOr<void> WebCore::WebSocket::pong(WebCore::JSBlob* blob)
     size_t dataSize = Blob__getSize(JSC::JSValue::encode(blob));
 
     if (dataPtr && dataSize > 0) {
+        if (dataSize > maxControlFramePayloadSize)
+            return controlFramePayloadTooLargeException(dataSize);
         this->sendWebSocketData(static_cast<const char*>(dataPtr), dataSize, Opcode::Pong);
     } else {
         // Send empty frame for empty blobs

@@ -27,7 +27,7 @@ use crate::jsc_hooks::{timer_all, timer_all_mut};
 
 impl All {
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__Timer__getNextID() -> i32 {
+    pub(crate) extern "C" fn Bun__Timer__getNextID() -> i32 {
         let all = timer_all();
         if all.is_null() {
             return 0;
@@ -46,7 +46,7 @@ impl All {
     // jsc/runtime crate cycle — see DateHeaderTimer.rs). Opaque-token
     // forwarding makes not_unsafe_ptr_arg_deref a false positive.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn update_date_header_timer_if_necessary(
+    pub(crate) fn update_date_header_timer_if_necessary(
         &mut self,
         loop_: &UwsLoop,
         vm: *mut VirtualMachine,
@@ -209,7 +209,7 @@ impl All {
     /// Bun.sleep
     /// a setTimeout that uses a promise instead of a callback, and interprets the countdown
     /// slightly differently for historical reasons (see jsValueToCountdown)
-    pub fn sleep(
+    pub(crate) fn sleep(
         global: &JSGlobalObject,
         promise: JSValue,
         countdown: JSValue,
@@ -233,7 +233,7 @@ impl All {
         ))
     }
 
-    pub fn set_immediate(
+    pub(crate) fn set_immediate(
         global: &JSGlobalObject,
         callback: JSValue,
         arguments: JSValue,
@@ -253,7 +253,7 @@ impl All {
         ))
     }
 
-    pub fn set_timeout(
+    pub(crate) fn set_timeout(
         global: &JSGlobalObject,
         callback: JSValue,
         arguments: JSValue,
@@ -278,7 +278,7 @@ impl All {
         ))
     }
 
-    pub fn set_interval(
+    pub(crate) fn set_interval(
         global: &JSGlobalObject,
         callback: JSValue,
         arguments: JSValue,
@@ -316,7 +316,7 @@ impl All {
         Some(unsafe { TimeoutObject::from_timer_ptr(value) })
     }
 
-    pub fn clear_timer(
+    pub(crate) fn clear_timer(
         timer_id_value: JSValue,
         global_this: &JSGlobalObject,
         kind: Kind,
@@ -423,19 +423,19 @@ impl All {
         Ok(())
     }
 
-    pub fn clear_immediate(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn clear_immediate(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         Self::clear_timer(id, global_this, Kind::SetImmediate)?;
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn clear_timeout(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn clear_timeout(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         Self::clear_timer(id, global_this, Kind::SetTimeout)?;
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn clear_interval(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn clear_interval(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         Self::clear_timer(id, global_this, Kind::SetInterval)?;
         Ok(JSValue::UNDEFINED)
@@ -462,7 +462,7 @@ impl DateHeaderTimer {
     /// # Safety
     /// `vm` must point to the live per-thread `VirtualMachine`; its `uws_loop()`
     /// must outlive this call.
-    pub(super) unsafe fn enable(&mut self, vm: *mut VirtualMachine, now: &Timespec) {
+    unsafe fn enable(&mut self, vm: *mut VirtualMachine, now: &Timespec) {
         debug_assert!(self.event_loop_timer.state != EventLoopTimerState::ACTIVE);
 
         // `EventLoopTimer.next` is the lower-tier `ElTimespec` stub
@@ -570,7 +570,7 @@ pub fn clear_interval_export(global: &JSGlobalObject, id: JSValue) -> JsResult<J
     All::clear_interval(global, id)
 }
 
-pub mod internal_bindings {
+pub(crate) mod internal_bindings {
     use super::*;
 
     /// Node.js has some tests that check whether timers fire at the right time. They check this

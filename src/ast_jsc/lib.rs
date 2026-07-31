@@ -37,7 +37,7 @@ pub fn msg_from_js(global_object: &JSGlobalObject, file: Vec<u8>, err: JSValue) 
     })
 }
 
-pub(crate) fn msg_to_js(this: Msg, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+fn msg_to_js(this: Msg, global_object: &JSGlobalObject) -> JsResult<JSValue> {
     match this.metadata {
         Metadata::Build => BuildMessage::create(global_object, this),
         Metadata::Resolve(_) => ResolveMessage::create(global_object, &this, b""),

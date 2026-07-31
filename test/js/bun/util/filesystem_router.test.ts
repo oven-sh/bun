@@ -538,6 +538,7 @@ it("MatchedRoute.params does not leak", async () => {
   // garbage-collected. Use long segment values so any leak is large enough to
   // dominate RSS noise.
   const code = /* ts */ `
+    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
     const router = new Bun.FileSystemRouter({
       dir: ${JSON.stringify(path.join(String(dir), "pages"))},
       style: "nextjs",
@@ -549,11 +550,11 @@ it("MatchedRoute.params does not leak", async () => {
     // warm up
     for (let i = 0; i < 1000; i++) router.match(url).params;
     Bun.gc(true);
-    const before = process.memoryUsage.rss();
+    const before = rss();
 
     for (let i = 0; i < 30000; i++) router.match(url).params;
     Bun.gc(true);
-    const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+    const growthMB = (rss() - before) / 1024 / 1024;
     console.error("RSS growth: " + growthMB.toFixed(2) + "MB");
     // ASAN's quarantine retains freed allocations (default 256 MB) so RSS
     // deltas run far higher under bun-asan; widen the threshold there.

@@ -2,6 +2,7 @@
 
 use core::fmt;
 
+use bun_alloc::Arena;
 use bun_ast as js_ast;
 use bun_ast::lexer_tables as tables;
 use bun_ast::{LexerLog, Loc, Log, Range, Source};
@@ -10,9 +11,6 @@ use bun_core::strings;
 use bun_core::strings::CodepointIterator;
 use bun_core::{Environment, feature_flags as FeatureFlags};
 use identifier as js_identifier;
-// MOVE-IN: Indentation now lives in this crate (was bun_js_printer::Options::Indentation).
-use bun_alloc::Arena;
-use bun_ast::{Indentation, IndentationCharacter};
 
 // Unicode ID-Start/ID-Continue tables moved DOWN to `bun_core` (pure data;
 // no upward deps) so `bun_core::lexer` / `MutableString` get full coverage
@@ -35,40 +33,38 @@ fn tokenToString_get(token: T) -> &'static [u8] {
     tokenToString[token]
 }
 
-pub static EMPTY_JAVASCRIPT_STRING: [u16; 1] = [0];
-
 #[derive(Default, Clone, Copy)]
 pub struct JSXPragma {
-    pub _jsx: js_ast::Span,
-    pub _jsx_frag: js_ast::Span,
-    pub _jsx_runtime: js_ast::Span,
-    pub _jsx_import_source: js_ast::Span,
+    pub(crate) _jsx: js_ast::Span,
+    pub(crate) _jsx_frag: js_ast::Span,
+    pub(crate) _jsx_runtime: js_ast::Span,
+    pub(crate) _jsx_import_source: js_ast::Span,
 }
 
 impl JSXPragma {
     // `Span.text` is a `StoreStr`; `.len()` via Deref<[u8]>.
-    pub fn jsx(&self) -> Option<js_ast::Span> {
+    pub(crate) fn jsx(&self) -> Option<js_ast::Span> {
         if self._jsx.text.len() > 0 {
             Some(self._jsx)
         } else {
             None
         }
     }
-    pub fn jsx_frag(&self) -> Option<js_ast::Span> {
+    pub(crate) fn jsx_frag(&self) -> Option<js_ast::Span> {
         if self._jsx_frag.text.len() > 0 {
             Some(self._jsx_frag)
         } else {
             None
         }
     }
-    pub fn jsx_runtime(&self) -> Option<js_ast::Span> {
+    pub(crate) fn jsx_runtime(&self) -> Option<js_ast::Span> {
         if self._jsx_runtime.text.len() > 0 {
             Some(self._jsx_runtime)
         } else {
             None
         }
     }
-    pub fn jsx_import_source(&self) -> Option<js_ast::Span> {
+    pub(crate) fn jsx_import_source(&self) -> Option<js_ast::Span> {
         if self._jsx_import_source.text.len() > 0 {
             Some(self._jsx_import_source)
         } else {
@@ -77,56 +73,12 @@ impl JSXPragma {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
-pub struct JSONOptions {
-    /// Enable JSON-specific warnings/errors
-    pub is_json: bool,
-
-    /// tsconfig.json supports comments & trailing commas
-    pub allow_comments: bool,
-    pub allow_trailing_commas: bool,
-
-    /// Loading JSON-in-JSON may start like \\""\\"
-    /// This is technically invalid, since we parse from the first value of the string
-    pub ignore_leading_escape_sequences: bool,
-    pub ignore_trailing_escape_sequences: bool,
-
-    pub json_warn_duplicate_keys: bool,
-
-    /// mark as originally for a macro to enable inlining
-    pub was_originally_macro: bool,
-
-    pub guess_indentation: bool,
-}
-
-impl JSONOptions {
-    pub const DEFAULT: Self = Self {
-        is_json: false,
-        allow_comments: false,
-        allow_trailing_commas: false,
-        ignore_leading_escape_sequences: false,
-        ignore_trailing_escape_sequences: false,
-        json_warn_duplicate_keys: true,
-        was_originally_macro: false,
-        guess_indentation: false,
-    };
-}
-
-impl Default for JSONOptions {
-    fn default() -> Self {
-        Self::DEFAULT
-    }
-}
-
 /// The lexer is generic over the eight const bools of the option set.
 ///
 /// `Lexer` (below) is the default instantiation.
 ///
-/// nightly-2025-12-10 rejects field projection (`J.is_json`) on a
-/// `const J: JSONOptions` parameter inside a generic-const expression
-/// ("overly complex generic constant"), even with `generic_const_exprs`.
-/// The option set is therefore modeled as a *type* parameter
-/// implementing [`JsonOptionsT`], whose associated consts *are* accepted in
+/// The option set is modeled as a *type* parameter
+/// implementing [`JsonOptionsT`], whose associated consts are accepted in
 /// const-argument position under `generic_const_exprs`. Callers define a ZST
 /// per option set and `impl JsonOptionsT for It { const IS_JSON: bool = true; … }`.
 pub trait JsonOptionsT {
@@ -137,22 +89,9 @@ pub trait JsonOptionsT {
     const IGNORE_TRAILING_ESCAPE_SEQUENCES: bool = false;
     const JSON_WARN_DUPLICATE_KEYS: bool = true;
     const WAS_ORIGINALLY_MACRO: bool = false;
-    const GUESS_INDENTATION: bool = false;
-
-    /// Reify as a value.
-    const OPTIONS: JSONOptions = JSONOptions {
-        is_json: Self::IS_JSON,
-        allow_comments: Self::ALLOW_COMMENTS,
-        allow_trailing_commas: Self::ALLOW_TRAILING_COMMAS,
-        ignore_leading_escape_sequences: Self::IGNORE_LEADING_ESCAPE_SEQUENCES,
-        ignore_trailing_escape_sequences: Self::IGNORE_TRAILING_ESCAPE_SEQUENCES,
-        json_warn_duplicate_keys: Self::JSON_WARN_DUPLICATE_KEYS,
-        was_originally_macro: Self::WAS_ORIGINALLY_MACRO,
-        guess_indentation: Self::GUESS_INDENTATION,
-    };
 }
 
-/// `JSONOptions{}` — the default (non-JSON, JS-mode) option set.
+/// The default (non-JSON, JS-mode) option set.
 pub struct DefaultJsonOptions;
 impl JsonOptionsT for DefaultJsonOptions {}
 
@@ -170,7 +109,6 @@ pub type NewLexer<'a, J: JsonOptionsT = DefaultJsonOptions> = LexerType<
     { <J as JsonOptionsT>::IGNORE_TRAILING_ESCAPE_SEQUENCES },
     { <J as JsonOptionsT>::JSON_WARN_DUPLICATE_KEYS },
     { <J as JsonOptionsT>::WAS_ORIGINALLY_MACRO },
-    { <J as JsonOptionsT>::GUESS_INDENTATION },
 >;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
@@ -194,27 +132,21 @@ pub enum StringLiteralRawFormat {
     NeedsDecode,
 }
 
-#[derive(Clone, Copy, Default)]
-pub struct IndentInfo {
-    pub guess: Indentation,
-    pub first_newline: bool,
-}
-
 /// `packed struct(u8) { suffix_len: u2, needs_decode: bool, _padding: u5 = 0 }`
 #[repr(transparent)]
 #[derive(Clone, Copy, Default)]
-pub struct InnerStringLiteral(pub u8);
+pub struct InnerStringLiteral(pub(crate) u8);
 impl InnerStringLiteral {
     #[inline]
-    pub fn new(suffix_len: u8, needs_decode: bool) -> Self {
+    pub(crate) fn new(suffix_len: u8, needs_decode: bool) -> Self {
         Self((suffix_len & 0b11) | ((needs_decode as u8) << 2))
     }
     #[inline]
-    pub fn suffix_len(self) -> u8 {
+    pub(crate) fn suffix_len(self) -> u8 {
         self.0 & 0b11
     }
     #[inline]
-    pub fn needs_decode(self) -> bool {
+    pub(crate) fn needs_decode(self) -> bool {
         (self.0 >> 2) & 1 != 0
     }
 }
@@ -227,8 +159,8 @@ pub enum IdentifierKind {
 
 #[derive(Clone, Copy)]
 pub struct ScanResult<'a> {
-    pub token: T,
-    pub contents: &'a [u8],
+    pub(crate) token: T,
+    pub(crate) contents: &'a [u8],
 }
 
 /// POD snapshot of all backtrack-relevant lexer state.
@@ -247,41 +179,38 @@ pub struct ScanResult<'a> {
 /// growable `Vec` buffers (captured as lengths only — `restore()` truncates).
 #[derive(Clone, Copy)]
 pub struct LexerSnapshot<'a> {
-    pub current: usize,
-    pub start: usize,
-    pub end: usize,
-    pub approximate_newline_count: usize,
-    pub previous_backslash_quote_in_jsx: Range,
-    pub token: T,
-    pub has_newline_before: bool,
-    pub has_pure_comment_before: bool,
-    pub has_no_side_effect_comment_before: bool,
-    pub has_react_hooks_suppression_before: bool,
-    pub has_react_hooks_block_suppression: bool,
-    pub preserve_all_comments_before: bool,
-    pub is_legacy_octal_literal: bool,
-    pub is_log_disabled: bool,
-    pub code_point: CodePoint,
-    pub identifier: &'a [u8],
-    pub jsx_pragma: JSXPragma,
-    pub source_mapping_url: Option<js_ast::Span>,
-    pub number: f64,
-    pub rescan_close_brace_as_template_token: bool,
-    pub prev_error_loc: Loc,
-    pub prev_token_was_await_keyword: bool,
-    pub await_keyword_loc: Loc,
-    pub fn_or_arrow_start_loc: Loc,
-    pub regex_flags_start: Option<u16>,
-    pub string_literal_raw_content: &'a [u8],
-    pub string_literal_start: usize,
-    pub string_literal_raw_format: StringLiteralRawFormat,
-    pub is_ascii_only: bool,
-    pub track_comments: bool,
-    pub track_react_suppressions: bool,
-    pub indent_info: IndentInfo,
+    pub(crate) current: usize,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) approximate_newline_count: usize,
+    pub(crate) previous_backslash_quote_in_jsx: Range,
+    pub(crate) token: T,
+    pub(crate) has_newline_before: bool,
+    pub(crate) has_pure_comment_before: bool,
+    pub(crate) has_react_hooks_suppression_before: bool,
+    pub(crate) has_react_hooks_block_suppression: bool,
+    pub(crate) preserve_all_comments_before: bool,
+    pub(crate) is_legacy_octal_literal: bool,
+    pub(crate) is_log_disabled: bool,
+    pub(crate) code_point: CodePoint,
+    pub(crate) identifier: &'a [u8],
+    pub(crate) jsx_pragma: JSXPragma,
+    pub(crate) source_mapping_url: Option<js_ast::Span>,
+    pub(crate) number: f64,
+    pub(crate) rescan_close_brace_as_template_token: bool,
+    pub(crate) prev_error_loc: Loc,
+    pub(crate) prev_token_was_await_keyword: bool,
+    pub(crate) fn_or_arrow_start_loc: Loc,
+    pub(crate) regex_flags_start: Option<u16>,
+    pub(crate) string_literal_raw_content: &'a [u8],
+    pub(crate) string_literal_start: usize,
+    pub(crate) string_literal_raw_format: StringLiteralRawFormat,
+    pub(crate) is_ascii_only: bool,
+    pub(crate) track_comments: bool,
+    pub(crate) track_react_suppressions: bool,
     // Vec buffer lengths — restore() truncates back to these.
-    pub all_comments_len: usize,
-    pub comments_to_preserve_before_len: usize,
+    pub(crate) all_comments_len: usize,
+    pub(crate) comments_to_preserve_before_len: usize,
 }
 
 /// The lexer struct produced by `NewLexer_`.
@@ -298,7 +227,6 @@ pub struct LexerType<
     const IGNORE_TRAILING_ESCAPE_SEQUENCES: bool,
     const JSON_WARN_DUPLICATE_KEYS: bool,
     const WAS_ORIGINALLY_MACRO: bool,
-    const GUESS_INDENTATION: bool,
 > {
     // err: ?LexerType.Error,
     /// Raw pointer to the caller-owned `Log`. The parser holds a second
@@ -308,8 +236,8 @@ pub struct LexerType<
     /// `init*` constructors take a plain `&mut Log` (not tied to `'a`); the
     /// caller must keep the pointee alive for the lexer's lifetime — see
     /// `init_without_reading`.
-    pub log: core::ptr::NonNull<Log>,
-    pub source: &'a Source,
+    pub(crate) log: core::ptr::NonNull<Log>,
+    pub(crate) source: &'a Source,
     /// Cached `source.contents()` slice. With `source: &'a Source` plus
     /// `Source.contents: Cow<'static,[u8]>`, every inlined `step()` was a
     /// 3-load dependent chain (`self.source` → Cow tag/ptr → Cow len) that
@@ -325,54 +253,49 @@ pub struct LexerType<
     /// `parse_numeric_literal_or_dot()`), so the ptr+len stays in a register
     /// for the whole token loop. `source` is kept for
     /// error-reporting paths that need `path` / `identifier_name`.
-    pub contents: &'a [u8],
+    pub(crate) contents: &'a [u8],
     pub current: usize,
-    pub start: usize,
+    pub(crate) start: usize,
     pub end: usize,
-    pub approximate_newline_count: usize,
-    pub previous_backslash_quote_in_jsx: Range,
+    pub(crate) approximate_newline_count: usize,
+    pub(crate) previous_backslash_quote_in_jsx: Range,
     pub token: T,
-    pub has_newline_before: bool,
-    pub has_pure_comment_before: bool,
-    pub has_no_side_effect_comment_before: bool,
+    pub(crate) has_newline_before: bool,
+    pub(crate) has_pure_comment_before: bool,
     /// Set (and never cleared by `next()`) once an `eslint-disable[-next-line]`
     /// comment naming `react-hooks/rules-of-hooks` or `react-hooks/exhaustive-deps`
     /// has been scanned. The parser reads this at function-body close to set
     /// `flags::Function::HasReactHooksSuppression` / `E::Arrow::has_react_hooks_suppression`.
-    pub has_react_hooks_suppression_before: bool,
+    pub(crate) has_react_hooks_suppression_before: bool,
     /// Sticky variant of the above: set when the suppression comment is a bare
     /// `eslint-disable` (no `-next-line` suffix). Never cleared by the
     /// parser, so it applies to every subsequent function in the file.
-    pub has_react_hooks_block_suppression: bool,
-    pub preserve_all_comments_before: bool,
-    pub is_legacy_octal_literal: bool,
-    pub is_log_disabled: bool,
-    pub comments_to_preserve_before: Vec<js_ast::G::Comment>,
-    pub code_point: CodePoint,
-    pub identifier: &'a [u8],
-    pub jsx_pragma: JSXPragma,
-    pub source_mapping_url: Option<js_ast::Span>,
-    pub number: f64,
-    pub rescan_close_brace_as_template_token: bool,
-    pub prev_error_loc: Loc,
-    pub prev_token_was_await_keyword: bool,
-    pub await_keyword_loc: Loc,
-    pub fn_or_arrow_start_loc: Loc,
-    pub regex_flags_start: Option<u16>,
-    pub arena: &'a Arena,
-    pub string_literal_raw_content: &'a [u8],
-    pub string_literal_start: usize,
-    pub string_literal_raw_format: StringLiteralRawFormat,
-    pub temp_buffer_u16: Vec<u16>,
+    pub(crate) has_react_hooks_block_suppression: bool,
+    pub(crate) preserve_all_comments_before: bool,
+    pub(crate) is_legacy_octal_literal: bool,
+    pub(crate) is_log_disabled: bool,
+    pub(crate) comments_to_preserve_before: Vec<js_ast::G::Comment>,
+    pub(crate) code_point: CodePoint,
+    pub(crate) identifier: &'a [u8],
+    pub(crate) jsx_pragma: JSXPragma,
+    pub(crate) source_mapping_url: Option<js_ast::Span>,
+    pub(crate) number: f64,
+    pub(crate) rescan_close_brace_as_template_token: bool,
+    pub(crate) prev_error_loc: Loc,
+    pub(crate) prev_token_was_await_keyword: bool,
+    pub(crate) fn_or_arrow_start_loc: Loc,
+    pub(crate) regex_flags_start: Option<u16>,
+    pub(crate) arena: &'a Arena,
+    pub(crate) string_literal_raw_content: &'a [u8],
+    pub(crate) string_literal_start: usize,
+    pub(crate) string_literal_raw_format: StringLiteralRawFormat,
+    pub(crate) temp_buffer_u16: Vec<u16>,
 
     /// Only used for JSON stringification when bundling.
-    pub is_ascii_only: bool,
-    pub track_comments: bool,
-    pub track_react_suppressions: bool,
-    pub all_comments: Vec<Range>,
-
-    /// Only meaningful when `GUESS_INDENTATION` is set.
-    pub indent_info: IndentInfo,
+    pub(crate) is_ascii_only: bool,
+    pub(crate) track_comments: bool,
+    pub(crate) track_react_suppressions: bool,
+    pub(crate) all_comments: Vec<Range>,
 }
 
 // Note: Rust macros must emit complete items; the macro now wraps the
@@ -388,7 +311,6 @@ macro_rules! lexer_impl_header {
             const IGNORE_TRAILING_ESCAPE_SEQUENCES: bool,
             const JSON_WARN_DUPLICATE_KEYS: bool,
             const WAS_ORIGINALLY_MACRO: bool,
-            const GUESS_INDENTATION: bool,
         >
             LexerType<
                 'a,
@@ -399,7 +321,6 @@ macro_rules! lexer_impl_header {
                 IGNORE_TRAILING_ESCAPE_SEQUENCES,
                 JSON_WARN_DUPLICATE_KEYS,
                 WAS_ORIGINALLY_MACRO,
-                GUESS_INDENTATION,
             >
         { $($body)* }
     };
@@ -414,7 +335,6 @@ impl<
     const IGNORE_TRAILING_ESCAPE_SEQUENCES: bool,
     const JSON_WARN_DUPLICATE_KEYS: bool,
     const WAS_ORIGINALLY_MACRO: bool,
-    const GUESS_INDENTATION: bool,
 > LexerLog<'a>
     for LexerType<
         'a,
@@ -425,7 +345,6 @@ impl<
         IGNORE_TRAILING_ESCAPE_SEQUENCES,
         JSON_WARN_DUPLICATE_KEYS,
         WAS_ORIGINALLY_MACRO,
-        GUESS_INDENTATION,
     >
 {
     type Err = Error;
@@ -467,7 +386,7 @@ lexer_impl_header! {
     /// parser's `P::log()`) live at once.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn log(&self) -> &mut Log {
+    pub(crate) fn log(&self) -> &mut Log {
         // SAFETY: `self.log` is a non-null raw handle stored by the `init*`
         // constructors from a caller-supplied `&mut Log`; the caller must keep
         // the pointee alive and unaliased for the lexer's lifetime. Only one
@@ -482,7 +401,7 @@ lexer_impl_header! {
     }
 
     #[cold]
-    pub fn add_range_error_with_notes(
+    pub(crate) fn add_range_error_with_notes(
         &mut self,
         r: Range,
         args: fmt::Arguments<'_>,
@@ -510,7 +429,7 @@ lexer_impl_header! {
 
     /// Capture a `Copy` snapshot of all backtrack-relevant state. See
     /// `LexerSnapshot` doc.
-    pub fn snapshot(&self) -> LexerSnapshot<'a> {
+    pub(crate) fn snapshot(&self) -> LexerSnapshot<'a> {
         LexerSnapshot {
             current: self.current,
             start: self.start,
@@ -520,7 +439,6 @@ lexer_impl_header! {
             token: self.token,
             has_newline_before: self.has_newline_before,
             has_pure_comment_before: self.has_pure_comment_before,
-            has_no_side_effect_comment_before: self.has_no_side_effect_comment_before,
             has_react_hooks_suppression_before: self.has_react_hooks_suppression_before,
             has_react_hooks_block_suppression: self.has_react_hooks_block_suppression,
             preserve_all_comments_before: self.preserve_all_comments_before,
@@ -534,7 +452,6 @@ lexer_impl_header! {
             rescan_close_brace_as_template_token: self.rescan_close_brace_as_template_token,
             prev_error_loc: self.prev_error_loc,
             prev_token_was_await_keyword: self.prev_token_was_await_keyword,
-            await_keyword_loc: self.await_keyword_loc,
             fn_or_arrow_start_loc: self.fn_or_arrow_start_loc,
             regex_flags_start: self.regex_flags_start,
             string_literal_raw_content: self.string_literal_raw_content,
@@ -543,7 +460,6 @@ lexer_impl_header! {
             is_ascii_only: self.is_ascii_only,
             track_comments: self.track_comments,
             track_react_suppressions: self.track_react_suppressions,
-            indent_info: self.indent_info,
             all_comments_len: self.all_comments.len(),
             comments_to_preserve_before_len: self.comments_to_preserve_before.len(),
         }
@@ -552,7 +468,7 @@ lexer_impl_header! {
     /// Rewind to a prior `snapshot()`: copy each scalar field and
     /// truncate the Vecs to their snapshotted lengths. `log`/`source`/`arena`
     /// are left untouched.
-    pub fn restore(&mut self, original: &LexerSnapshot<'a>) {
+    pub(crate) fn restore(&mut self, original: &LexerSnapshot<'a>) {
         // Keep this field list in sync with `snapshot()` and the Lexer struct fields.
         self.current = original.current;
         self.start = original.start;
@@ -562,7 +478,6 @@ lexer_impl_header! {
         self.token = original.token;
         self.has_newline_before = original.has_newline_before;
         self.has_pure_comment_before = original.has_pure_comment_before;
-        self.has_no_side_effect_comment_before = original.has_no_side_effect_comment_before;
         self.has_react_hooks_suppression_before = original.has_react_hooks_suppression_before;
         self.has_react_hooks_block_suppression = original.has_react_hooks_block_suppression;
         self.preserve_all_comments_before = original.preserve_all_comments_before;
@@ -577,7 +492,6 @@ lexer_impl_header! {
             original.rescan_close_brace_as_template_token;
         self.prev_error_loc = original.prev_error_loc;
         self.prev_token_was_await_keyword = original.prev_token_was_await_keyword;
-        self.await_keyword_loc = original.await_keyword_loc;
         self.fn_or_arrow_start_loc = original.fn_or_arrow_start_loc;
         self.regex_flags_start = original.regex_flags_start;
         self.string_literal_raw_content = original.string_literal_raw_content;
@@ -586,7 +500,6 @@ lexer_impl_header! {
         self.is_ascii_only = original.is_ascii_only;
         self.track_comments = original.track_comments;
         self.track_react_suppressions = original.track_react_suppressions;
-        self.indent_info = original.indent_info;
 
         debug_assert!(self.all_comments.len() >= original.all_comments_len);
         debug_assert!(
@@ -608,7 +521,7 @@ lexer_impl_header! {
     }
 
     #[inline]
-    pub fn is_identifier_or_keyword(&self) -> bool {
+    pub(crate) fn is_identifier_or_keyword(&self) -> bool {
         (self.token as u32) >= (T::TIdentifier as u32)
     }
 
@@ -1107,7 +1020,7 @@ lexer_impl_header! {
 
     // PERF: each `QUOTE` instantiation is single-caller from `next()`.
     #[inline]
-    pub fn parse_string_literal<const QUOTE: i32>(&mut self) -> Result<(), Error> {
+    pub(crate) fn parse_string_literal<const QUOTE: i32>(&mut self) -> Result<(), Error> {
         if QUOTE != 0x60 {
             self.token = T::TStringLiteral;
         } else if self.rescan_close_brace_as_template_token {
@@ -1228,7 +1141,7 @@ lexer_impl_header! {
     }
 
     #[inline]
-    pub fn expect_or_insert_semicolon(&mut self) -> Result<(), Error> {
+    pub(crate) fn expect_or_insert_semicolon(&mut self) -> Result<(), Error> {
         if self.token == T::TSemicolon
             || (!self.has_newline_before
                 && self.token != T::TCloseBrace
@@ -1241,7 +1154,7 @@ lexer_impl_header! {
 
     #[cold]
     #[inline(never)]
-    pub fn add_unsupported_syntax_error(&mut self, msg: &[u8]) -> Result<(), Error> {
+    pub(crate) fn add_unsupported_syntax_error(&mut self, msg: &[u8]) -> Result<(), Error> {
         self.add_error(
             self.end,
             format_args!("Unsupported syntax: {}", bstr::BStr::new(msg)),
@@ -1254,7 +1167,7 @@ lexer_impl_header! {
     // bloats `next()` (which dispatches here from the identifier arm).
     #[cold]
     #[inline(never)]
-    pub fn scan_identifier_with_escapes(
+    pub(crate) fn scan_identifier_with_escapes(
         &mut self,
         kind: IdentifierKind,
     ) -> Result<ScanResult<'a>, Error> {
@@ -1377,7 +1290,7 @@ lexer_impl_header! {
         Ok(result)
     }
 
-    pub fn expect_contextual_keyword(&mut self, keyword: &'static [u8]) -> Result<(), Error> {
+    pub(crate) fn expect_contextual_keyword(&mut self, keyword: &'static [u8]) -> Result<(), Error> {
         if !self.is_contextual_keyword(keyword) {
             if cfg!(debug_assertions) {
                 self.add_error(
@@ -1404,7 +1317,7 @@ lexer_impl_header! {
         self.next()
     }
 
-    pub fn maybe_expand_equals(&mut self) -> Result<(), Error> {
+    pub(crate) fn maybe_expand_equals(&mut self) -> Result<(), Error> {
         match self.code_point {
             0x3E => {
                 // "=" + ">" = "=>"
@@ -1427,7 +1340,7 @@ lexer_impl_header! {
         Ok(())
     }
 
-    pub fn expect_less_than<const IS_INSIDE_JSX_ELEMENT: bool>(
+    pub(crate) fn expect_less_than<const IS_INSIDE_JSX_ELEMENT: bool>(
         &mut self,
     ) -> Result<(), Error> {
         match self.token {
@@ -1458,7 +1371,7 @@ lexer_impl_header! {
         Ok(())
     }
 
-    pub fn expect_greater_than<const IS_INSIDE_JSX_ELEMENT: bool>(
+    pub(crate) fn expect_greater_than<const IS_INSIDE_JSX_ELEMENT: bool>(
         &mut self,
     ) -> Result<(), Error> {
         match self.token {
@@ -1523,7 +1436,6 @@ lexer_impl_header! {
     pub fn next(&mut self) -> Result<(), Error> {
         self.has_newline_before = self.end == 0;
         self.has_pure_comment_before = false;
-        self.has_no_side_effect_comment_before = false;
         self.prev_token_was_await_keyword = false;
 
         // PERF: bind the source slice once so every inlined `step()` in the
@@ -1599,44 +1511,6 @@ lexer_impl_header! {
                 0x0D | 0x0A | 0x2028 | 0x2029 =>
                 {
                     self.has_newline_before = true;
-
-                    if GUESS_INDENTATION {
-                        if self.indent_info.first_newline
-                            && self.code_point == 0x0A
-                        {
-                            while self.code_point == 0x0A
-                                || self.code_point == 0x0D
-                            {
-                                self.step_with(contents);
-                            }
-
-                            if self.code_point != 0x20
-                                && self.code_point != 0x09
-                            {
-                                // try to get the next one. this handles cases where the file starts
-                                // with a newline
-                                continue;
-                            }
-
-                            self.indent_info.first_newline = false;
-
-                            let indent_character = self.code_point;
-                            let mut count: usize = 0;
-                            while self.code_point == indent_character {
-                                self.step_with(contents);
-                                count += 1;
-                            }
-
-                            self.indent_info.guess.character =
-                                if indent_character == 0x20 {
-                                    IndentationCharacter::Space
-                                } else {
-                                    IndentationCharacter::Tab
-                                };
-                            self.indent_info.guess.scalar = count;
-                            continue;
-                        }
-                    }
 
                     self.step_with(contents);
                     continue;
@@ -2235,7 +2109,7 @@ lexer_impl_header! {
 
     #[cold]
     #[inline(never)]
-    pub fn expected(&mut self, token: T) -> Result<(), Error> {
+    pub(crate) fn expected(&mut self, token: T) -> Result<(), Error> {
         if self.is_log_disabled {
             return Err(Error::Backtrack);
         } else if !tokenToString_get(token).is_empty() {
@@ -2247,7 +2121,7 @@ lexer_impl_header! {
 
     #[cold]
     #[inline(never)]
-    pub fn unexpected(&mut self) -> Result<(), Error> {
+    pub(crate) fn unexpected(&mut self) -> Result<(), Error> {
         let found: &[u8] = 'finder: {
             self.start = self.start.min(self.end);
 
@@ -2265,18 +2139,18 @@ lexer_impl_header! {
     }
 
     #[inline(always)]
-    pub fn raw(&self) -> &'a [u8] {
+    pub(crate) fn raw(&self) -> &'a [u8] {
         // `self.contents: &'a [u8]` — slice carries `'a` directly.
         &self.contents[self.start..self.end]
     }
 
-    pub fn is_contextual_keyword(&self, keyword: &'static [u8]) -> bool {
+    pub(crate) fn is_contextual_keyword(&self, keyword: &'static [u8]) -> bool {
         self.token == T::TIdentifier && self.raw() == keyword
     }
 
     #[cold]
     #[inline(never)]
-    pub fn expected_string(&mut self, text: &[u8]) -> Result<(), Error> {
+    pub(crate) fn expected_string(&mut self, text: &[u8]) -> Result<(), Error> {
         if self.prev_token_was_await_keyword {
             let mut notes: [bun_ast::Data; 1] = [bun_ast::Data::default()];
             if !self.fn_or_arrow_start_loc.is_empty() {
@@ -2587,7 +2461,6 @@ lexer_impl_header! {
 
         if strings::has_prefix_with_word_boundary(chunk, b"jsx") {
             if let Some(span) = PragmaArg::scan(
-                PragmaArg::SkipSpaceFirst,
                 self.start + offset_for_errors,
                 b"jsx",
                 chunk,
@@ -2603,7 +2476,6 @@ lexer_impl_header! {
             }
         } else if strings::has_prefix_with_word_boundary(chunk, b"jsxFrag") {
             if let Some(span) = PragmaArg::scan(
-                PragmaArg::SkipSpaceFirst,
                 self.start + offset_for_errors,
                 b"jsxFrag",
                 chunk,
@@ -2619,7 +2491,6 @@ lexer_impl_header! {
             }
         } else if strings::has_prefix_with_word_boundary(chunk, b"jsxRuntime") {
             if let Some(span) = PragmaArg::scan(
-                PragmaArg::SkipSpaceFirst,
                 self.start + offset_for_errors,
                 b"jsxRuntime",
                 chunk,
@@ -2635,7 +2506,6 @@ lexer_impl_header! {
             }
         } else if strings::has_prefix_with_word_boundary(chunk, b"jsxImportSource") {
             if let Some(span) = PragmaArg::scan(
-                PragmaArg::SkipSpaceFirst,
                 self.start + offset_for_errors,
                 b"jsxImportSource",
                 chunk,
@@ -2664,28 +2534,12 @@ lexer_impl_header! {
         0
     }
 
-    // TODO: implement this
-    pub fn remove_multiline_comment_indent(&mut self, _: &[u8], text: &'a [u8]) -> &'a [u8] {
-        text
-    }
-
-    pub fn range(&self) -> Range {
+    pub(crate) fn range(&self) -> Range {
         Range {
             loc: bun_ast::usize2loc(self.start),
             // Saturate on overflow.
             len: i32::try_from(self.end - self.start).unwrap_or(i32::MAX),
         }
-    }
-
-    pub fn init_json(
-        log: &mut Log,
-        source: &'a Source,
-        arena: &'a Arena,
-    ) -> Result<Self, Error> {
-        let mut lex = Self::init_without_reading(log, source, arena);
-        lex.step();
-        lex.next()?;
-        Ok(lex)
     }
 
     /// `log` is *not* tied to `'a`: the lexer stores it as `NonNull<Log>` (see
@@ -2713,7 +2567,6 @@ lexer_impl_header! {
             token: T::TEndOfFile,
             has_newline_before: false,
             has_pure_comment_before: false,
-            has_no_side_effect_comment_before: false,
             has_react_hooks_suppression_before: false,
             has_react_hooks_block_suppression: false,
             preserve_all_comments_before: false,
@@ -2728,7 +2581,6 @@ lexer_impl_header! {
             rescan_close_brace_as_template_token: false,
             prev_error_loc: Loc::EMPTY,
             prev_token_was_await_keyword: false,
-            await_keyword_loc: Loc::EMPTY,
             fn_or_arrow_start_loc: Loc::EMPTY,
             regex_flags_start: None,
             arena,
@@ -2740,25 +2592,10 @@ lexer_impl_header! {
             track_comments: false,
             track_react_suppressions: false,
             all_comments: Vec::new(),
-            indent_info: IndentInfo {
-                guess: Indentation::default(),
-                first_newline: true,
-            },
         }
     }
 
-    pub fn init(
-        log: &mut Log,
-        source: &'a Source,
-        arena: &'a Arena,
-    ) -> Result<Self, Error> {
-        let mut lex = Self::init_without_reading(log, source, arena);
-        lex.step();
-        lex.next()?;
-        Ok(lex)
-    }
-
-    pub fn to_e_string(&mut self) -> Result<js_ast::E::String, Error> {
+    pub(crate) fn to_e_string(&mut self) -> Result<js_ast::E::String, Error> {
         match self.string_literal_raw_format {
             StringLiteralRawFormat::Ascii => {
                 // string_literal_raw_content contains ascii without escapes
@@ -2810,7 +2647,7 @@ lexer_impl_header! {
         }
     }
 
-    pub fn to_utf8_e_string(&mut self) -> Result<js_ast::E::String, Error> {
+    pub(crate) fn to_utf8_e_string(&mut self) -> Result<js_ast::E::String, Error> {
         let mut res = self.to_e_string()?;
         res.to_utf8(self.arena)?;
         Ok(res)
@@ -2825,7 +2662,7 @@ lexer_impl_header! {
         }
     }
 
-    pub fn scan_reg_exp(&mut self) -> Result<(), Error> {
+    pub(crate) fn scan_reg_exp(&mut self) -> Result<(), Error> {
         self.assert_not_json();
         self.regex_flags_start = None;
         loop {
@@ -2897,13 +2734,13 @@ lexer_impl_header! {
         }
     }
 
-    pub fn utf16_to_string(&self, js: JavascriptString<'_>) -> &'a [u8] {
+    pub(crate) fn utf16_to_string(&self, js: JavascriptString<'_>) -> &'a [u8] {
         // Transcode into a temporary Vec and dupe into the arena.
         let owned = strings::to_utf8_alloc_with_type(js);
         self.arena.alloc_slice_copy(&owned)
     }
 
-    pub fn next_inside_jsx_element(&mut self) -> Result<(), Error> {
+    pub(crate) fn next_inside_jsx_element(&mut self) -> Result<(), Error> {
         self.assert_not_json();
 
         self.has_newline_before = false;
@@ -3082,7 +2919,7 @@ lexer_impl_header! {
         Ok(())
     }
 
-    pub fn parse_jsx_string_literal<const QUOTE: u8>(&mut self) -> Result<(), Error> {
+    pub(crate) fn parse_jsx_string_literal<const QUOTE: u8>(&mut self) -> Result<(), Error> {
         self.assert_not_json();
 
         let mut backslash = Range::NONE;
@@ -3175,7 +3012,7 @@ lexer_impl_header! {
         Ok(())
     }
 
-    pub fn expect_jsx_element_child(&mut self, token: T) -> Result<(), Error> {
+    pub(crate) fn expect_jsx_element_child(&mut self, token: T) -> Result<(), Error> {
         self.assert_not_json();
 
         if self.token != token {
@@ -3185,7 +3022,7 @@ lexer_impl_header! {
         self.next_jsx_element_child()
     }
 
-    pub fn next_jsx_element_child(&mut self) -> Result<(), Error> {
+    pub(crate) fn next_jsx_element_child(&mut self) -> Result<(), Error> {
         self.assert_not_json();
 
         self.has_newline_before = false;
@@ -3273,7 +3110,7 @@ lexer_impl_header! {
         Ok(())
     }
 
-    pub fn fix_whitespace_and_decode_jsx_entities(
+    pub(crate) fn fix_whitespace_and_decode_jsx_entities(
         &mut self,
         text: &[u8],
         decoded: &mut Vec<u16>,
@@ -3411,7 +3248,7 @@ lexer_impl_header! {
         }
     }
 
-    pub fn decode_jsx_entities(
+    pub(crate) fn decode_jsx_entities(
         &mut self,
         text: &[u8],
         out: &mut Vec<u16>,
@@ -3431,7 +3268,7 @@ lexer_impl_header! {
         Ok(())
     }
 
-    pub fn expect_inside_jsx_element(&mut self, token: T) -> Result<(), Error> {
+    pub(crate) fn expect_inside_jsx_element(&mut self, token: T) -> Result<(), Error> {
         self.assert_not_json();
 
         if self.token != token {
@@ -3442,7 +3279,7 @@ lexer_impl_header! {
         self.next_inside_jsx_element()
     }
 
-    pub fn expect_inside_jsx_element_with_name(
+    pub(crate) fn expect_inside_jsx_element_with_name(
         &mut self,
         token: T,
         name: &[u8],
@@ -3481,7 +3318,7 @@ lexer_impl_header! {
         Ok(())
     }
 
-    pub fn rescan_close_brace_as_template_token(&mut self) -> Result<(), Error> {
+    pub(crate) fn rescan_close_brace_as_template_token(&mut self) -> Result<(), Error> {
         self.assert_not_json();
 
         if self.token != T::TCloseBrace {
@@ -3497,7 +3334,7 @@ lexer_impl_header! {
         Ok(())
     }
 
-    pub fn raw_template_contents(&mut self) -> &'a [u8] {
+    pub(crate) fn raw_template_contents(&mut self) -> &'a [u8] {
         self.assert_not_json();
 
         let mut text: &[u8] = b"";
@@ -3692,7 +3529,7 @@ lexer_impl_header! {
 
             // Slow path: do we need to re-scan the input as text?
             if is_big_integer_literal || is_invalid_legacy_octal_literal {
-                let text = self.raw();
+                let mut text = self.raw();
 
                 // Can't use a leading zero for bigint literals;
                 if is_big_integer_literal && self.is_legacy_octal_literal {
@@ -3711,6 +3548,7 @@ lexer_impl_header! {
                             i += 1;
                         }
                     }
+                    text = bytes;
                 }
 
                 // Store bigints as text to avoid precision loss;
@@ -3914,7 +3752,7 @@ pub fn is_identifier_continue(codepoint: i32) -> bool {
     js_identifier::is_identifier_part(codepoint)
 }
 
-pub fn is_whitespace(codepoint: CodePoint) -> bool {
+pub(crate) fn is_whitespace(codepoint: CodePoint) -> bool {
     // ECMAScript `WhiteSpace`: TAB VT FF SP ZWNBSP + Unicode Zs.
     matches!(codepoint, 0x0009 | 0x000B | 0x000C | 0x0020 | 0xFEFF)
         || strings::is_unicode_space_separator(codepoint as u32)
@@ -3996,7 +3834,7 @@ fn latin1_identifier_continue_length(name: &[u8]) -> usize {
 }
 
 #[inline(always)]
-pub fn latin1_identifier_continue_length_scalar(name: &[u8]) -> usize {
+pub(crate) fn latin1_identifier_continue_length_scalar(name: &[u8]) -> usize {
     for (i, &c) in name.iter().enumerate() {
         match c {
             b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'$' | b'_' => {}
@@ -4007,21 +3845,17 @@ pub fn latin1_identifier_continue_length_scalar(name: &[u8]) -> usize {
     name.len()
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PragmaArg {
-    NoSpaceFirst,
-    SkipSpaceFirst,
-}
+pub struct PragmaArg;
 
 impl PragmaArg {
-    pub fn is_newline(c: CodePoint) -> bool {
+    pub(crate) fn is_newline(c: CodePoint) -> bool {
         c == 0x0D || c == 0x0A || c == 0x2028 || c == 0x2029
     }
 
     // These can be extremely long, so we use SIMD.
     /// "//# sourceMappingURL=data:/adspaoksdpkz"
     ///                       ^^^^^^^^^^^^^^^^^^
-    pub fn scan_source_mapping_url_value(
+    pub(crate) fn scan_source_mapping_url_value(
         start: usize,
         offset_for_errors: usize,
         chunk: &[u8],
@@ -4064,8 +3898,7 @@ impl PragmaArg {
         PREFIX as usize + url_len // Correct total length
     }
 
-    pub fn scan(
-        kind: PragmaArg,
+    pub(crate) fn scan(
         offset_: usize,
         pragma: &[u8],
         text_: &[u8],
@@ -4079,25 +3912,21 @@ impl PragmaArg {
             return None;
         }
 
-        let mut start: u32 = 0;
-
         // One or more whitespace characters
-        if kind == PragmaArg::SkipSpaceFirst {
-            if !is_whitespace(cursor.c) {
-                return None;
-            }
-
-            while is_whitespace(cursor.c) {
-                if !iter.next(&mut cursor) {
-                    break;
-                }
-            }
-            start = cursor.i;
-            text = &text[cursor.i as usize..];
-            cursor = strings::Cursor::default();
-            iter = CodepointIterator::init(text);
-            let _ = iter.next(&mut cursor);
+        if !is_whitespace(cursor.c) {
+            return None;
         }
+
+        while is_whitespace(cursor.c) {
+            if !iter.next(&mut cursor) {
+                break;
+            }
+        }
+        let start: u32 = cursor.i;
+        text = &text[cursor.i as usize..];
+        cursor = strings::Cursor::default();
+        iter = CodepointIterator::init(text);
+        let _ = iter.next(&mut cursor);
 
         let mut i: usize = 0;
         while !is_whitespace(cursor.c) && (!allow_newline || !Self::is_newline(cursor.c)) {

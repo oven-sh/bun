@@ -97,7 +97,7 @@ struct Trns {
     type3_alpha: [u8; 256],
 }
 
-pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
     // SAFETY: spng_ctx_new is safe to call with any flags; null return = OOM.
     let ctx = unsafe { spng_ctx_new(0) };
     if ctx.is_null() {

@@ -3062,6 +3062,35 @@ console.log(resolve.length)
       expectParseError("for ([...a, b] of c) {}", 'Unexpected "," after rest pattern');
     });
 
+    it("binding pattern error locations point at the operator", () => {
+      const parseErrorAt = code => {
+        try {
+          parsed(code, false, false);
+        } catch (er) {
+          const err = er instanceof AggregateError ? er.errors[0] : er;
+          return { message: err.message, offset: err.position?.offset };
+        }
+        throw new Error("Expected parse error for code\n\t" + code);
+      };
+
+      expect(parseErrorAt("((...a = 1) => {})")).toEqual({
+        message: "A rest argument cannot have a default initializer",
+        offset: "((...a ".length,
+      });
+      expect(parseErrorAt("x = 1; ([...a = 1]) => {}")).toEqual({
+        message: "A rest argument cannot have a default initializer",
+        offset: "x = 1; ([...a ".length,
+      });
+      expect(parseErrorAt("a;b;(([]) = []) => {}")).toEqual({
+        message: "Unexpected parentheses in binding pattern",
+        offset: "a;b;(".length,
+      });
+      expect(parseErrorAt("a;b;(({}) = {}) => {}")).toEqual({
+        message: "Unexpected parentheses in binding pattern",
+        offset: "a;b;(".length,
+      });
+    });
+
     it("for-in and for-of loop initializers", () => {
       // Annex B: a plain identifier "var" binding may keep its initializer in a sloppy-mode for-in
       expectPrintedNoTrim("for (var x = 1 in y) ;", "x = 1;\nfor (x in y)\n  ;\nvar x;\n");
@@ -3999,8 +4028,19 @@ console.log(foo, array);
       expectPrinted('"" == 0', "!0");
       expectPrinted("1n == 1n", "!0");
       expectPrinted("1234n == 1234n", "!0");
+      expectPrinted("1n == 2n", "!1");
+      expectPrinted("!0n", "!0");
+      expectPrinted("!1n", "!1");
+      // Radix BigInt literals keep their source text, so folds that need a
+      // decimal string bail out instead of producing a wrong constant.
       expectPrinted("0x00n == 0n", "0x00n == 0n");
-      expectPrinted("1n == 2n", "1n == 2n");
+      expectPrinted("0x10n == 16n", "0x10n == 16n");
+      expectPrinted("0x10n == 0x10n", "!0");
+      expectPrinted("!0x0n", "!0x0n");
+      expectPrinted("!0x1n", "!0x1n");
+      expectPrinted("`${0x10n}`", "`${0x10n}`");
+      expectPrinted("`${0b1_0n}`", "`${0b10n}`");
+      expectPrinted("`${10n}`", '"10"');
 
       expectPrinted("'a' === '\\x61'", "!0");
       expectPrinted("'a' === '\\x62'", "!1");

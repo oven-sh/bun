@@ -287,6 +287,10 @@ pub fn enable() {
     }
 }
 
+/// Windows-only primitive; POSIX cleanup is the exit-time tree walk above.
+#[inline]
+pub fn ensure_kill_on_close_job() {}
+
 /// Register `EVFILT_PROC`/`NOTE_EXIT` for the original parent on the main
 /// event loop's kqueue. Called from `VirtualMachine.init` once the uws loop is
 /// up. macOS-only; no-op elsewhere and on subsequent calls.
@@ -379,7 +383,7 @@ extern "C" fn on_process_exit() {
 /// (so its child set is stable while we recurse), which is what makes the
 /// verify step sufficient. The only forking process is `self`, and we're in
 /// the exit handler — not forking.
-pub(crate) fn kill_descendants() {
+fn kill_descendants() {
     #[cfg(unix)]
     {
         let self_pid = getpid();

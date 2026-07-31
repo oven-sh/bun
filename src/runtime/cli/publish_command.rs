@@ -26,7 +26,7 @@ use bun_url::URL;
 // `LogLevel`/`AuthType`/`Access` from `bun_install::PackageManagerOptions`.
 use bun_ast::expr::Data as ExprData;
 use bun_core::OSPathChar;
-pub use bun_install::Access;
+use bun_install::Access;
 use bun_install::dependency;
 use bun_install::{AuthType, LogLevel};
 use bun_sys::FdExt as _;
@@ -93,23 +93,21 @@ pub(crate) struct PublishCommand;
 // Const generics cannot vary field types; the script fields and script_env are
 // kept as Option<> in both instantiations and we rely on
 // invariants (always None / never used when DIRECTORY_PUBLISH == false).
-pub struct Context<'a, const DIRECTORY_PUBLISH: bool> {
-    pub manager: &'a mut PackageManager,
-    pub command_ctx: Command::Context<'a>,
+pub(crate) struct Context<'a, const DIRECTORY_PUBLISH: bool> {
+    pub(crate) manager: &'a mut PackageManager,
+    pub(crate) command_ctx: Command::Context<'a>,
 
-    pub package_name: Box<[u8]>,
-    pub package_version: Box<[u8]>,
-    pub abs_tarball_path: Box<ZStr>,
-    pub tarball_bytes: Box<[u8]>,
-    pub shasum: SHA1Digest,
-    pub integrity: SHA512Digest,
-    pub uses_workspaces: bool,
+    pub(crate) package_name: Box<[u8]>,
+    pub(crate) package_version: Box<[u8]>,
+    pub(crate) abs_tarball_path: Box<ZStr>,
+    pub(crate) tarball_bytes: Box<[u8]>,
+    pub(crate) uses_workspaces: bool,
 
-    pub normalized_pkg_info: Box<[u8]>,
+    pub(crate) normalized_pkg_info: Box<[u8]>,
 
-    pub publish_script: Option<Box<[u8]>>,
-    pub postpublish_script: Option<Box<[u8]>>,
-    pub script_env: Option<&'a mut dotenv::Loader<'a>>,
+    pub(crate) publish_script: Option<Box<[u8]>>,
+    pub(crate) postpublish_script: Option<Box<[u8]>>,
+    pub(crate) script_env: Option<&'a mut dotenv::Loader>,
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -139,7 +137,7 @@ pub(crate) type FromWorkspaceError = pack::PackError<true>;
 
 impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
     /// Retrieve information for publishing from a tarball path, `bun publish path/to/tarball.tgz`
-    pub fn from_tarball_path(
+    pub(crate) fn from_tarball_path(
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
         tarball_path: &[u8],
@@ -444,8 +442,6 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             package_version,
             abs_tarball_path: ZStr::boxed(abs_tarball_path.as_bytes()),
             tarball_bytes: tarball_bytes.into(),
-            shasum,
-            integrity,
             uses_workspaces: false,
             normalized_pkg_info,
             publish_script: None,
@@ -460,7 +456,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
     // valid shape. `'static` matches `pack::pack`'s return —
     // the embedded `&mut PackageManager` / `Command::Context` are process-
     // lifetime singletons reborrowed through raw pointers there.
-    pub fn from_workspace(
+    pub(crate) fn from_workspace(
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
     ) -> Result<Context<'static, true>, FromWorkspaceError> {
@@ -852,7 +848,7 @@ impl PublishCommand {
         let Ok(res) = req.send_sync() else {
             return false;
         };
-        if res.status_code != 200 {
+        if res.status_code() != 200 {
             return false;
         }
 
@@ -874,7 +870,7 @@ impl PublishCommand {
         false
     }
 
-    pub(crate) fn publish<const DIRECTORY_PUBLISH: bool>(
+    fn publish<const DIRECTORY_PUBLISH: bool>(
         ctx: &Context<'_, DIRECTORY_PUBLISH>,
     ) -> Result<(), PublishError> {
         let registry = ctx.manager.scope_for_package_name(&ctx.package_name);
@@ -985,14 +981,14 @@ impl PublishCommand {
             }
         };
 
-        match res.status_code {
+        match res.status_code() {
             400..=u32::MAX => {
                 let prompt_for_otp = 'prompt_for_otp: {
-                    if res.status_code != 401 {
+                    if res.status_code() != 401 {
                         break 'prompt_for_otp false;
                     }
 
-                    if let Some(www_authenticate) = res.headers.get(b"www-authenticate") {
+                    if let Some(www_authenticate) = res.header(b"www-authenticate") {
                         let mut iter = strings::split(www_authenticate, b",");
                         while let Some(part) = iter.next() {
                             let trimmed = strings::trim(part, &strings::WHITESPACE_CHARS);
@@ -1032,9 +1028,7 @@ impl PublishCommand {
 
                 // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
                 // ignore if x-local-cache exists
-                if let Some(notice) = res
-                    .headers
-                    .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
+                if let Some(notice) = res.header_if_other_is_absent(b"npm-notice", b"x-local-cache")
                 {
                     Output::print_error(format_args!("\n"));
                     bun_core::note!("{}", bstr::BStr::new(notice));
@@ -1082,7 +1076,7 @@ impl PublishCommand {
                     }
                 };
 
-                match otp_res.status_code {
+                match otp_res.status_code() {
                     400..=u32::MAX => {
                         Npm::response_error::<true>(
                             &otp_req,
@@ -1094,9 +1088,8 @@ impl PublishCommand {
                     _ => {
                         // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
                         // ignore if x-local-cache exists
-                        if let Some(notice) = otp_res
-                            .headers
-                            .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
+                        if let Some(notice) =
+                            otp_res.header_if_other_is_absent(b"npm-notice", b"x-local-cache")
                         {
                             Output::print_error(format_args!("\n"));
                             bun_core::note!("{}", bstr::BStr::new(notice));
@@ -1301,11 +1294,11 @@ impl PublishCommand {
                         }
                     };
 
-                    match res.status_code {
+                    match res.status_code() {
                         202 => {
                             // retry
                             let nanoseconds: u64 = 'nanoseconds: {
-                                if let Some(retry) = res.headers.get(b"retry-after") {
+                                if let Some(retry) = res.header(b"retry-after") {
                                     'default: {
                                         let trimmed =
                                             strings::trim(retry, &strings::WHITESPACE_CHARS);
@@ -1359,9 +1352,8 @@ impl PublishCommand {
 
                             // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
                             // ignore if x-local-cache exists
-                            if let Some(notice) = res
-                                .headers
-                                .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
+                            if let Some(notice) =
+                                res.header_if_other_is_absent(b"npm-notice", b"x-local-cache")
                             {
                                 Output::print_error(format_args!("\n"));
                                 bun_core::note!("{}", bstr::BStr::new(notice));

@@ -29,7 +29,6 @@ class SubtleCrypto;
 class EventTarget;
 class Performance;
 class JSBuiltinInternalFunctions;
-class JSStreamsRuntime;
 } // namespace WebCore
 
 namespace Bun {
@@ -69,6 +68,7 @@ struct node_module;
 #include <node_api.h>
 #include "BakeAdditionsToGlobalObject.h"
 #include "WriteBarrierList.h"
+#include "streams/JSStreamsRuntime.h"
 
 namespace Bun {
 class JSCommonJSExtensions;
@@ -261,6 +261,8 @@ public:
     JSC::JSObject* JSStringDecoder() const { return m_JSStringDecoderClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSStringDecoderPrototype() const { return m_JSStringDecoderClassStructure.prototypeInitializedOnMainThread(this); }
 
+    JSC::JSObject* JSFFICStringConstructor() const { return m_JSFFICStringConstructor.getInitializedOnMainThread(this); }
+
     JSC::Structure* NodeVMScriptStructure() const { return m_NodeVMScriptClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* NodeVMScript() const { return m_NodeVMScriptClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMScriptPrototype() const { return m_NodeVMScriptClassStructure.prototypeInitializedOnMainThread(this); }
@@ -273,7 +275,7 @@ public:
     JSC::JSObject* NodeVMSyntheticModule() const { return m_NodeVMSyntheticModuleClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMSyntheticModulePrototype() const { return m_NodeVMSyntheticModuleClassStructure.prototypeInitializedOnMainThread(this); }
 
-    WebCore::JSStreamsRuntime* streamsRuntime() const { return m_streamsRuntime.getInitializedOnMainThread(this); }
+    WebCore::JSStreamsRuntime* streamsRuntime() { return &m_streamsRuntime; }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
     // The JSC module loader registry is no longer a JS Map. Use
     // moduleLoader()->registryEntry(key) / moduleMap() / removeEntry(key) /
@@ -559,6 +561,13 @@ public:
     V(private, LazyClassStructure, m_JSH3ResponseSinkClassStructure)                                         \
                                                                                                              \
     V(private, LazyClassStructure, m_JSStringDecoderClassStructure)                                          \
+    V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSFFICStringConstructor)                              \
+    V(public, LazyClassStructure, m_JSDatabaseSyncClassStructure)                                            \
+    V(public, LazyClassStructure, m_JSStatementSyncClassStructure)                                           \
+    V(public, LazyClassStructure, m_JSStatementSyncIteratorClassStructure)                                   \
+    V(public, LazyClassStructure, m_JSNodeSqliteSessionClassStructure)                                       \
+    V(public, LazyClassStructure, m_JSNodeSqliteLimitsClassStructure)                                        \
+    V(public, LazyClassStructure, m_JSNodeSqliteTagStoreClassStructure)                                      \
     V(private, LazyClassStructure, m_NapiClassStructure)                                                     \
     V(private, LazyClassStructure, m_callSiteStructure)                                                      \
     V(public, LazyClassStructure, m_JSBufferClassStructure)                                                  \
@@ -577,6 +586,7 @@ public:
     V(public, LazyClassStructure, m_JSCipherClassStructure)                                                  \
     V(public, LazyClassStructure, m_JSKeyObjectClassStructure)                                               \
     V(public, LazyClassStructure, m_JSSecretKeyObjectClassStructure)                                         \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_JSAsymmetricKeyObjectPrototype)                        \
     V(public, LazyClassStructure, m_JSPublicKeyObjectClassStructure)                                         \
     V(public, LazyClassStructure, m_JSPrivateKeyObjectClassStructure)                                        \
     V(public, LazyClassStructure, m_JSMIMEParamsClassStructure)                                              \
@@ -597,7 +607,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeColorFunction)                    \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeNoColorFunction)                  \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_wasmStreamingConsumeStreamFunction)                 \
-    V(private, LazyPropertyOfGlobalObject<WebCore::JSStreamsRuntime>, m_streamsRuntime)                      \
+    V(private, WebCore::JSStreamsRuntime, m_streamsRuntime)                                                  \
     V(private, LazyPropertyOfGlobalObject<JSMap>, m_requireMap)                                              \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSArrayBufferControllerPrototype)                     \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSHTTPSResponseControllerPrototype)                   \
@@ -768,6 +778,12 @@ public:
     bool hasOverriddenModuleWrapper = false;
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
+
+    // node:crypto deprecation warnings are emitted at most once per realm, like Node, whose
+    // flags live in per-realm module state (lib/internal/crypto/keys.js). They must not be
+    // process-wide statics: each worker thread has its own realm and warns independently.
+    bool hasWarnedCryptoKeyDeprecation = false;
+    bool hasWarnedNonExtractableCryptoKeyDeprecation = false;
 
     // WeakGCMap<uint64_t, JSObject> — JS-level dedup of SecureContext by
     // config digest. WeakGCMap self-registers with the heap, so no

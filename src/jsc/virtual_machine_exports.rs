@@ -113,16 +113,6 @@ pub fn queue_task(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) 
         .enqueue_task(Task::init(task));
 }
 
-// Print an error value via the VM's error formatter without touching exit_code
-// or the unhandled counter (unlike Bun__reportUnhandledError).
-// HOST_EXPORT(Bun__printErrorValue, c)
-pub fn print_error_value(global: &JSGlobalObject, value: JSValue) {
-    crate::mark_binding!();
-    if !value.is_termination_exception() {
-        global.bun_vm().as_mut().run_error_handler(value, None);
-    }
-}
-
 // HOST_EXPORT(Bun__reportUnhandledError, c)
 pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValue {
     crate::mark_binding!();

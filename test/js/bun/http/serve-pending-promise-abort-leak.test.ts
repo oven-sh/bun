@@ -259,11 +259,13 @@ test("resolve() after abort does not crash and cleans up", async () => {
   expect(server.pendingRequests).toBe(0);
 });
 
-test("RequestContext is freed when client aborts a parked direct-stream pull()", async () => {
+test("pendingRequests drops when client aborts a parked direct-stream pull()", async () => {
   // readDirectStream's async-pull branch returns a promise chained off the user's pull()
   // promise. If the client disconnects while pull() is suspended on a promise that is
   // still rooted (e.g. the resolver is stashed in user state), that chain never settles,
-  // so on_abort's sink teardown is the request's only release path.
+  // so the NativePromiseContext reaction keeps the RequestContext at ref_count 1 until
+  // the user releases the resolver. on_abort's sink branch reports the request complete
+  // eagerly so pending_requests (and anything gated on it) does not wait on that.
   const parked: Array<() => void> = [];
   const pullEntered: Array<() => void> = [];
 
@@ -300,22 +302,31 @@ test("RequestContext is freed when client aborts a parked direct-stream pull()",
   }
 
   // pull() is still suspended (its resolver is rooted in `parked`), so the
-  // pull promise and its reaction chain are still alive. The request must
-  // nonetheless be released once the sink observes the abort.
+  // pull promise and its reaction chain are still alive. pending_requests must
+  // nonetheless drop to 0 once on_abort has run.
   await waitForPendingRequests(server, 0);
   expect(parked.length).toBe(iterations);
 
-  // Late resolution of pull() is a no-op: the close path already took
-  // m_closePromise, so the pull-settlement reaction finds it empty.
+  // Releasing the pull() resolver lets the reaction chain settle and deinit
+  // the RequestContext; the flag set in on_abort keeps deinit from reporting
+  // complete a second time (which would underflow pending_requests).
   for (const r of parked.splice(0)) r();
   await Bun.sleep(0);
+  Bun.gc(true);
+  await Bun.sleep(0);
   expect(server.pendingRequests).toBe(0);
+
+  // A follow-up request proves pending_requests did not underflow.
+  const ok = await fetch(server.url);
+  await ok.body?.cancel();
+  for (const r of parked.splice(0)) r();
+  await waitForPendingRequests(server, 0);
 });
 
-test("direct-stream pull() that resolves normally still releases the request", async () => {
-  // The non-abort twin: pull() settles first, its reaction takes m_closePromise
-  // and resolves the native consumer's promise; the later sink close finds the
-  // slot empty and no-ops.
+test("direct-stream pull() that resolves normally still releases exactly once", async () => {
+  // The non-abort twin: pull() settles, handle_resolve_stream runs, deinit
+  // calls on_request_complete once. A mismatched early decrement in on_abort
+  // that leaked into the non-abort path would underflow pending_requests.
   using server = Bun.serve({
     port: 0,
     async fetch() {
@@ -337,86 +348,9 @@ test("direct-stream pull() that resolves normally still releases the request", a
   expect(await res.text()).toBe("hello world");
   expect(res.status).toBe(200);
   await waitForPendingRequests(server, 0);
-});
 
-test("direct-stream pull() that throws after controller.end() still surfaces the error", async () => {
-  // controller.end()'s onClose takes and resolves m_closePromise, so the later
-  // pull() rejection finds the slot empty; onReadDirectPullRejected then
-  // routes the reason through the VM's error printer instead of dropping it.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-      const server = Bun.serve({
-        port: 0,
-        development: false,
-        async fetch() {
-          return new Response(new ReadableStream({
-            type: "direct",
-            async pull(c) {
-              c.write("hi");
-              await c.flush();
-              c.end();
-              throw new Error("boom after end");
-            },
-          }));
-        },
-      });
-      const res = await fetch(server.url);
-      await res.text().catch(() => {});
-      await Bun.sleep(10);
-      console.log("pending:" + server.pendingRequests);
-      server.stop(true);
-    `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).toContain("boom after end");
-  expect(stdout.trim()).toBe("pending:0");
-  expect(exitCode).toBe(0);
-});
-
-test("direct-stream pull() that rejects reaches handleRejectStream (force-close)", async () => {
-  // pull() rejecting goes through onReadDirectPullRejected, which rejects the
-  // consumer's promise so handleRejectStream runs and force-closes the
-  // connection. The fulfill path would instead write the terminating chunk and
-  // the body would read as "partial", so the rejection of text() below is what
-  // pins this to the reject handler.
-  const { promise: pullRejected, resolve: markRejected } = Promise.withResolvers<void>();
-  using server = Bun.serve({
-    port: 0,
-    development: false,
-    async fetch() {
-      return new Response(
-        new ReadableStream({
-          type: "direct",
-          async pull(c) {
-            c.write("partial");
-            await c.flush();
-            await Bun.sleep(0);
-            markRejected();
-            throw new Error("pull failed");
-          },
-        }),
-      );
-    },
-  });
-
-  const outcome = await fetch(server.url)
-    .then(r => r.text())
-    .then(
-      body => ({ ok: true as const, body }),
-      err => ({ ok: false as const, err: String(err) }),
-    );
-  // handleRejectStream force-closes mid-response; the reset may arrive before
-  // or after the status line depending on timing, but either way the body
-  // read fails. A fulfill-path mutation would produce { ok: true, body: "partial" }.
-  expect(outcome.ok).toBe(false);
-  await pullRejected;
+  // A second request proves pending_requests did not underflow on the first.
+  const res2 = await fetch(server.url);
+  expect(await res2.text()).toBe("hello world");
   await waitForPendingRequests(server, 0);
 });

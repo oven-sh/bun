@@ -976,10 +976,7 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
 
     if (auto* pullPromise = dynamicDowncast<JSPromise>(maybePromise)) {
         auto* result = JSPromise::create(vm, globalObject->promiseStructure());
-        // Settled by whichever of readDirectStreamCloseImpl / onReadDirectPull* takes it first.
-        // Not a capability: PromiseReactionJob's resolvePromise ASSERTs Pending, and close can win.
-        state->m_closePromise.set(vm, state, result);
-        pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadDirectPullFulfilled(), runtime->onReadDirectPullRejected(), jsUndefined(), state);
+        pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReturnUndefined(), jsUndefined(), result, jsUndefined());
         return result;
     }
     if (stream->m_state == ReadableStreamState::Readable) {
@@ -1652,38 +1649,6 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onNativeSourceCallCloseMicrotask, (
     auto* adapter = uncheckedDowncast<JSNativeStreamSourceAdapter>(callFrame->argument(1));
     Bun::WebStreams::nativeSourceCallClose(vm, globalObject, adapter);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadDirectPullFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* state = uncheckedDowncast<JSDirectSinkCloseState>(callFrame->argument(1));
-    if (auto* closePromise = state->m_closePromise.get()) {
-        state->m_closePromise.clear();
-        resolvePromise(globalObject, closePromise, jsUndefined());
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadDirectPullRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* state = uncheckedDowncast<JSDirectSinkCloseState>(callFrame->argument(1));
-    JSValue reason = callFrame->argument(0);
-    if (auto* closePromise = state->m_closePromise.get()) {
-        state->m_closePromise.clear();
-        rejectPromise(globalObject, closePromise, reason);
-        RETURN_IF_EXCEPTION(scope, {});
-        return JSValue::encode(jsUndefined());
-    }
-    // The sink already closed (controller.end() or the native abort took the slot and
-    // resolved it). Surface the late rejection so it is not silently swallowed now that
-    // this handler marks pullPromise handled; print-only matches handle_reject_stream.
-    Bun__printErrorValue(globalObject, JSValue::encode(reason));
     return JSValue::encode(jsUndefined());
 }
 

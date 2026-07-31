@@ -41,9 +41,8 @@ public:
     // the JS sink controller driving the source; onClose must end() it so the cell
     // detaches from the native sink before it can be collected.
     JSC::WriteBarrier<JSC::JSObject> m_sinkController;
-    // the promise returned to the native consumer; initially null, armed by readDirectStream
-    // (both the sync-pull-still-Readable and async-pull branches), taken and settled by
-    // whichever of readDirectStreamCloseImpl / onReadDirectPull{Fulfilled,Rejected} fires first.
+    // the close-capability promise returned to the caller when `pull` returned synchronously
+    // without closing; initially null, armed by readDirectStream, resolved by onClose.
     JSC::WriteBarrier<JSC::JSPromise> m_closePromise;
 
 private:

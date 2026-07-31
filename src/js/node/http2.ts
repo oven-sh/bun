@@ -3289,11 +3289,9 @@ class ServerHttp2Stream extends Http2Stream {
     try {
       parser.pushPromise(this.id, pushId, headers, sensitiveNames);
     } catch (err) {
-      // pushPromise() can throw synchronously (invalid token, invalid pseudo-header, oversized
-      // block). The pushed stream was already created by getNextStream's streamStart; tear it
-      // down so the connection count and its context root do not leak. node reports this failure
-      // only through the callback (its stream object doesn't exist yet on this path), so destroy
-      // without an error argument: the pushed stream must not emit 'error'.
+      // pushPromise() throws synchronously on an invalid header block. The pushed stream was
+      // already created by getNextStream's streamStart; tear it down without an error so the
+      // callback is the only error channel, matching node.
       if (pushedStream && !pushedStream.destroyed) {
         // The PUSH_PROMISE never reached the wire; sending RST_STREAM for the reserved id would
         // be a protocol violation (the peer sees an idle stream). The skipped reset dispatch is

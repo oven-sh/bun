@@ -5258,7 +5258,8 @@ it("fs.statfs (callback) should work with bigint", async () => {
 // sentinel `bsize` (proving the shim actually interposed). glibc-only: the
 // shim relies on ELF symbol interposition and a libc `struct statfs` layout.
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-it.skipIf(!isGlibc || !cc)("fs.statfsSync preserves block counts above i32::MAX (#31510)", () => {
+it.skipIf(!isGlibc || !cc)("fs.statfsSync preserves values above i32::MAX (#31510)", () => {
+  const TYPE = 0x9123683e; // BTRFS_SUPER_MAGIC, > i32::MAX: .type also wrapped negative
   const BSIZE = 12288; // sentinel (3 * 4096): proves the shim ran
   const BLOCKS = 3747442852; // > i32::MAX
   const BFREE = 3248532185; // > i32::MAX
@@ -5275,6 +5276,7 @@ it.skipIf(!isGlibc || !cc)("fs.statfsSync preserves block counts above i32::MAX 
 // keep each prototype type-correct.
 #define FILL(buf) do { \\
   memset((buf), 0, sizeof(*(buf))); \\
+  (buf)->f_type = ${TYPE}ULL; \\
   (buf)->f_bsize = ${BSIZE}ULL; \\
   (buf)->f_blocks = ${BLOCKS}ULL; \\
   (buf)->f_bfree = ${BFREE}ULL; \\
@@ -5297,7 +5299,7 @@ int statfs64(const char *path, struct statfs64 *buf) { (void)path; FILL(buf); re
 
   const script = `console.log(JSON.stringify((() => {
     const s = require("fs").statfsSync(process.cwd());
-    return { bsize: s.bsize, blocks: s.blocks, bfree: s.bfree, bavail: s.bavail };
+    return { type: s.type, bsize: s.bsize, blocks: s.blocks, bfree: s.bfree, bavail: s.bavail };
   })()));`;
 
   const existing = bunEnv.LD_PRELOAD;
@@ -5312,7 +5314,7 @@ int statfs64(const char *path, struct statfs64 *buf) { (void)path; FILL(buf); re
 
   const result = JSON.parse(stdout);
   // If bsize isn't the sentinel, the shim didn't interpose: fail loudly, don't skip.
-  expect(result).toEqual({ bsize: BSIZE, blocks: BLOCKS, bfree: BFREE, bavail: BAVAIL });
+  expect(result).toEqual({ type: TYPE, bsize: BSIZE, blocks: BLOCKS, bfree: BFREE, bavail: BAVAIL });
   expect(proc.exitCode).toBe(0);
 });
 

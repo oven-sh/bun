@@ -785,7 +785,11 @@ impl ShellSubprocess {
                 // the Subprocess owns both and `Writable::on_close` is the only
                 // path that drops the FileSinkPtr.
                 pipe.source
-                    .set(webcore::streams::SourceHandle::ShellWritable(stdin_ptr));
+                    .set(webcore::streams::SourceHandle::ShellWritable(
+                        bun_ptr::BackRef::from(
+                            core::ptr::NonNull::new(stdin_ptr).expect("&raw mut"),
+                        ),
+                    ));
             }
         }
 

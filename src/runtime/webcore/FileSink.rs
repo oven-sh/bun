@@ -1545,17 +1545,12 @@ impl FileSink {
             .set(readable_stream::Strong::init(*stream, global_this));
 
         // Native ByteStream fast-path: wire SinkHandle directly, skip the JS pump.
-        if let readable_stream::Source::Bytes(bs_ptr) = stream.ptr {
-            let self_ptr = std::ptr::from_mut::<FileSink>(self);
-            // SAFETY: `Source::Bytes` stores the live `*mut ByteStream` (the JS
-            // wrapper's `m_ctx` heap payload); `self.readable_stream` pins that
-            // wrapper for this sink's lifetime.
-            let byte_stream = unsafe { &*bs_ptr };
+        if let Some(byte_stream) = stream.ptr.bytes() {
             if byte_stream.sink.get().is_none() {
-                self.source.set(streams::SourceHandle::ByteStream(bs_ptr));
+                self.source.set(streams::SourceHandle::ByteStream(byte_stream));
                 byte_stream
                     .sink
-                    .set(webcore::SinkHandle::FileSink(self_ptr));
+                    .set(webcore::SinkHandle::FileSink(bun_ptr::BackRef::new_mut(self)));
                 byte_stream.sink_paused.set(false);
                 stream.lock_native(global_this);
                 byte_stream.signal_consumer_attached();

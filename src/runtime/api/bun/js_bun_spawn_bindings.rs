@@ -1622,7 +1622,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 (*pipe.as_ptr())
                     .source
                     .set(WebCore::streams::SourceHandle::Subprocess(
-                        subprocess_ptr.cast::<SubprocessT<'static>>(),
+                        bun_ptr::BackRef::from_raw(subprocess_ptr.cast::<SubprocessT<'static>>()),
                     ));
             }
         }

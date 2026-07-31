@@ -222,16 +222,13 @@ impl FetchRequestBodySink {
             // field; detach (not cancel) so we don't re-enter the source while
             // it is still on the stack (FileReader.on_reader_error ref-leak).
             self.source.clear();
-            if let Some(task) = self.task.take() {
-                let task_ptr = task.as_ptr();
+            if let Some(mut task) = self.task.take() {
+                let err_js = err.map(|e| e.to_js(&task.global_this));
                 // SAFETY: the `+1` taken in `start_request_stream` keeps the
-                // tasklet live while `task` was `Some`.
-                let global = unsafe { (*task_ptr).global_this };
-                let err_js = err.map(|e| e.to_js(&global));
-                // SAFETY: `task_ptr` live (see above); `write_end_request` is
+                // tasklet live while `task` was `Some`; `write_end_request` is
                 // the balancing release and may free `*self` via `clear_sink`,
                 // so do not touch `self` afterwards.
-                unsafe { (*task_ptr).write_end_request(err_js) };
+                unsafe { task.get_mut() }.write_end_request(err_js);
             }
             return;
         }

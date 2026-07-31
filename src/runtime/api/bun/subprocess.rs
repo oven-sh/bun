@@ -1078,7 +1078,7 @@ impl Subprocess<'_> {
             let self_ptr = self.as_ctx_ptr().cast::<Subprocess<'static>>();
             if matches!(
                 *pipe.source.get(),
-                crate::webcore::streams::SourceHandle::Subprocess(p) if p == self_ptr
+                crate::webcore::streams::SourceHandle::Subprocess(p) if p.as_ptr() == self_ptr
             ) {
                 // `source` is a `JsCell`; `with_mut` takes `&self`, so the
                 // shared `pipe: &FileSink` deref above is sufficient.

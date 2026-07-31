@@ -357,8 +357,8 @@ pub enum PathOrFileDescriptor {
 
 pub type SinkWriteFn = fn(ctx: *mut core::ffi::c_void, data: &streams::Result) -> streams::Writable;
 
-/// Static-dispatch write/end pair for a [`SinkHandle`] pointee. `SinkHandle`'s
-/// match arms form the single `unsafe { &mut *ptr }` and call these.
+/// Static-dispatch write/end pair for a [`SinkHandle`] pointee. The match arms
+/// dispatch via [`bun_ptr::BackRef`] and call these.
 pub trait DownstreamSink {
     fn write(&mut self, data: &streams::Result) -> streams::Writable;
     fn end_from_stream(&mut self, err: Option<streams::StreamError>);
@@ -386,25 +386,14 @@ impl DownstreamSink for streams::NetworkSink {
     }
 }
 
-impl DownstreamSink for file_sink::FileSink {
-    #[inline]
-    fn write(&mut self, data: &streams::Result) -> streams::Writable {
-        Self::write(self, data)
-    }
-    #[inline]
-    fn end_from_stream(&mut self, err: Option<streams::StreamError>) {
-        Self::end_from_stream(self, err)
-    }
-}
-
 #[derive(Copy, Clone, Default)]
 pub enum SinkHandle {
     #[default]
     None,
     ServerResponse(crate::server::AnyRequestContext),
-    FetchRequestBody(*mut fetch::FetchRequestBodySink),
-    S3Upload(*mut streams::NetworkSink),
-    FileSink(*mut file_sink::FileSink),
+    FetchRequestBody(bun_ptr::BackRef<fetch::FetchRequestBodySink>),
+    S3Upload(bun_ptr::BackRef<streams::NetworkSink>),
+    FileSink(bun_ptr::BackRef<file_sink::FileSink>),
     ValueBufferer(*mut core::ffi::c_void, SinkWriteFn),
 }
 
@@ -426,11 +415,10 @@ impl SinkHandle {
             SinkHandle::None => streams::Writable::Done,
             SinkHandle::ServerResponse(any) => any.write_chunk(data),
             // SAFETY: live backref; ByteStream clears sink before free.
-            SinkHandle::FetchRequestBody(ptr) => unsafe { &mut *ptr }.write(data),
+            SinkHandle::FetchRequestBody(mut p) => unsafe { p.get_mut() }.write(data),
             // SAFETY: live backref; ByteStream clears sink before free.
-            SinkHandle::S3Upload(ptr) => unsafe { &mut *ptr }.write(data),
-            // SAFETY: live backref; ByteStream clears sink before free.
-            SinkHandle::FileSink(ptr) => unsafe { &mut *ptr }.write(data),
+            SinkHandle::S3Upload(mut p) => unsafe { p.get_mut() }.write(data),
+            SinkHandle::FileSink(p) => p.write(data),
             SinkHandle::ValueBufferer(ctx, write) => write(ctx, data),
         }
     }
@@ -443,11 +431,10 @@ impl SinkHandle {
             SinkHandle::None => {}
             SinkHandle::ServerResponse(any) => any.end_chunk(err.as_ref()),
             // SAFETY: live backref; ByteStream clears sink before free.
-            SinkHandle::FetchRequestBody(ptr) => unsafe { &mut *ptr }.end_from_stream(err),
+            SinkHandle::FetchRequestBody(mut p) => unsafe { p.get_mut() }.end_from_stream(err),
             // SAFETY: live backref; ByteStream clears sink before free.
-            SinkHandle::S3Upload(ptr) => unsafe { &mut *ptr }.end_from_stream(err),
-            // SAFETY: live backref; ByteStream clears sink before free.
-            SinkHandle::FileSink(ptr) => unsafe { &mut *ptr }.end_from_stream(err),
+            SinkHandle::S3Upload(mut p) => unsafe { p.get_mut() }.end_from_stream(err),
+            SinkHandle::FileSink(p) => p.end_from_stream(err),
             SinkHandle::ValueBufferer(ctx, write) => {
                 if let Some(e) = err {
                     let _ = write(ctx, &streams::Result::Err(e));

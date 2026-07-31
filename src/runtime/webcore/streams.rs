@@ -825,36 +825,36 @@ mod sink_abi {
     crate::decl_js_sink_externs!([signals] "FetchRequestBodySink" as fetch_request_body);
 }
 
-/// Static-dispatch signal set for a [`SourceHandle`] pointee. `SourceHandle`'s
-/// match arms form the single `unsafe { &mut *ptr }` and call these; defaults
-/// are no-ops so implementors override only the signals they actually handle.
+/// Static-dispatch signal set for a [`SourceHandle`] pointee. The match arms
+/// dispatch via [`BackRef`] deref and call these; defaults are no-ops so
+/// implementors override only the signals they actually handle.
 pub trait UpstreamSource {
     #[inline]
-    fn on_ready(&mut self) {}
+    fn on_ready(&self) {}
     #[inline]
-    fn on_close(&mut self, _err: Option<SysError>) {}
+    fn on_close(&self, _err: Option<SysError>) {}
     #[inline]
-    fn on_start(&mut self) {}
+    fn on_start(&self) {}
 }
 
 impl UpstreamSource for crate::webcore::ByteStream {
     #[inline]
-    fn on_ready(&mut self) {
+    fn on_ready(&self) {
         self.resume();
     }
     #[inline]
-    fn on_close(&mut self, err: Option<SysError>) {
+    fn on_close(&self, err: Option<SysError>) {
         self.cancel_from_sink(err);
     }
 }
 
 impl UpstreamSource for crate::webcore::FileReader {
     #[inline]
-    fn on_ready(&mut self) {
+    fn on_ready(&self) {
         self.pull_into_sink();
     }
     #[inline]
-    fn on_close(&mut self, _err: Option<SysError>) {
+    fn on_close(&self, _err: Option<SysError>) {
         self.unpipe_without_deref();
         self.on_cancel();
     }
@@ -862,37 +862,19 @@ impl UpstreamSource for crate::webcore::FileReader {
 
 impl UpstreamSource for crate::api::bun::subprocess::Subprocess<'static> {
     #[inline]
-    fn on_close(&mut self, err: Option<SysError>) {
+    fn on_close(&self, err: Option<SysError>) {
         crate::api::bun::subprocess::Writable::on_close(self, err);
-    }
-}
-
-impl UpstreamSource for crate::shell::subproc::Writable {
-    #[inline]
-    fn on_close(&mut self, err: Option<SysError>) {
-        self.on_close(err);
     }
 }
 
 impl UpstreamSource for crate::webcore::fetch::fetch_tasklet::FetchTasklet {
     #[inline]
-    fn on_ready(&mut self) {
+    fn on_ready(&self) {
         self.on_stream_drained();
     }
     #[inline]
-    fn on_close(&mut self, _err: Option<SysError>) {
-        self.on_stream_cancelled();
-    }
-    #[inline]
-    fn on_start(&mut self) {
+    fn on_start(&self) {
         self.on_consumer_attached();
-    }
-}
-
-impl UpstreamSource for crate::webcore::s3::client::S3DownloadStreamWrapper {
-    #[inline]
-    fn on_close(&mut self, _err: Option<SysError>) {
-        self.on_stream_cancelled();
     }
 }
 
@@ -910,15 +892,15 @@ pub enum SourceHandle {
         bits: usize,
         kind: SinkKind,
     },
-    ByteStream(*mut crate::webcore::ByteStream),
-    FileReader(*mut crate::webcore::FileReader),
+    ByteStream(BackRef<crate::webcore::ByteStream>),
+    FileReader(BackRef<crate::webcore::FileReader>),
     /// The `'static` bound erases the `&JSGlobalObject` borrow carried in
     /// `Subprocess<'a>`; the pointed-at allocation outlives this handle.
-    Subprocess(*mut crate::api::bun::subprocess::Subprocess<'static>),
-    ShellWritable(*mut crate::shell::subproc::Writable),
-    FetchResponseBody(*mut crate::webcore::fetch::fetch_tasklet::FetchTasklet),
+    Subprocess(BackRef<crate::api::bun::subprocess::Subprocess<'static>>),
+    ShellWritable(BackRef<crate::shell::subproc::Writable>),
+    FetchResponseBody(BackRef<crate::webcore::fetch::fetch_tasklet::FetchTasklet>),
     ServerRequestBody(crate::server::AnyRequestContext),
-    S3DownloadBody(*mut crate::webcore::s3::client::S3DownloadStreamWrapper),
+    S3DownloadBody(BackRef<crate::webcore::s3::client::S3DownloadStreamWrapper>),
 }
 
 impl SourceHandle {
@@ -989,18 +971,15 @@ impl SourceHandle {
                     Self::js_controller_on_close(kind, cpp, JSValue::UNDEFINED)
                 });
             }
+            SourceHandle::ByteStream(p) => p.on_close(err),
+            SourceHandle::FileReader(p) => p.on_close(err),
+            SourceHandle::Subprocess(p) => p.on_close(err),
             // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::ByteStream(p) => unsafe { &mut *p }.on_close(err),
+            SourceHandle::ShellWritable(mut p) => unsafe { p.get_mut() }.on_close(err),
             // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::FileReader(p) => unsafe { &mut *p }.on_close(err),
+            SourceHandle::FetchResponseBody(mut p) => unsafe { p.get_mut() }.on_stream_cancelled(),
             // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::Subprocess(p) => unsafe { &mut *p }.on_close(err),
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::ShellWritable(p) => unsafe { &mut *p }.on_close(err),
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::FetchResponseBody(p) => unsafe { &mut *p }.on_close(err),
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::S3DownloadBody(p) => unsafe { &mut *p }.on_close(err),
+            SourceHandle::S3DownloadBody(mut p) => unsafe { p.get_mut() }.on_stream_cancelled(),
             SourceHandle::ServerRequestBody(_) => {}
         }
     }
@@ -1018,12 +997,9 @@ impl SourceHandle {
                     Self::js_controller_on_ready(kind, cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
                 });
             }
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::ByteStream(p) => unsafe { &mut *p }.on_ready(),
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::FileReader(p) => unsafe { &mut *p }.on_ready(),
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::FetchResponseBody(p) => unsafe { &mut *p }.on_ready(),
+            SourceHandle::ByteStream(p) => p.on_ready(),
+            SourceHandle::FileReader(p) => p.on_ready(),
+            SourceHandle::FetchResponseBody(p) => p.on_ready(),
             SourceHandle::ServerRequestBody(any) => any.on_request_body_stream_drained(),
             // Remaining variants leave `on_ready` at the trait default (no-op).
             SourceHandle::Subprocess(_)
@@ -1034,8 +1010,7 @@ impl SourceHandle {
 
     pub fn start(&mut self) {
         match *self {
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::FetchResponseBody(p) => unsafe { &mut *p }.on_start(),
+            SourceHandle::FetchResponseBody(p) => p.on_start(),
             // Remaining variants leave `on_start` at the trait default (no-op).
             SourceHandle::None
             | SourceHandle::JSController { .. }
@@ -2487,20 +2462,18 @@ impl NetworkSink {
         // its own `sink` field, so detach (not cancel).
         self.ended = true;
         self.source.clear();
-        let Some(task) = self.task.as_ref().map(|t| t.as_ptr()) else {
+        let Some(task_ref) = self.task else {
             return;
         };
         // Captured before the terminal action: `fail()`/`write_bytes(EOF)` may
         // synchronously fire `S3UploadStreamWrapper::resolve`, which re-borrows
         // this sink and derefs the wrapper; `fail()` also derefs `task`.
-        // SAFETY: `self.task` holds a counted ref on the upload; on this path
+        // `self.task` holds a counted ref on the upload; on this path
         // `callback_context` is the `S3UploadStreamWrapper` (set in
         // `upload_stream`).
-        let wrapper = unsafe {
-            (*task)
-                .callback_context
-                .cast::<crate::webcore::s3::client::S3UploadStreamWrapper>()
-        };
+        let wrapper = task_ref
+            .callback_context
+            .cast::<crate::webcore::s3::client::S3UploadStreamWrapper>();
         if let Some(err) = &err {
             self.done = true;
             let global = self
@@ -2512,16 +2485,14 @@ impl NetworkSink {
             }
         }
         if err.is_some() {
-            // SAFETY: counted ref held by `self.task`; single-threaded.
-            let _ = unsafe {
-                (*task).fail(bun_s3_signing::error::S3Error {
+            if let Some(task) = self.task_mut() {
+                let _ = task.fail(bun_s3_signing::error::S3Error {
                     code: b"UnknownError",
                     message: b"ReadableStream ended with an error",
-                })
-            };
-        } else {
-            // SAFETY: counted ref held by `self.task`; single-threaded.
-            let _ = unsafe { (*task).write_bytes(b"", true) };
+                });
+            }
+        } else if let Some(task) = self.task_mut() {
+            let _ = task.write_bytes(b"", true);
         }
         // Balance the stream-pump +1 `upload_stream` left on the wrapper so
         // `resolve()` above saw rc 2→1 and the sink stayed allocated across

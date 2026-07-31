@@ -29,7 +29,7 @@ use crate::api::bun_x509 as X509;
 use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store as BlobStore};
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
 use crate::webcore::fetch::fetch_request_body_sink::{FetchRequestBodySink, RequestBodyChunk};
-use crate::webcore::readable_stream::{self, ReadableStream, Strong as ReadableStreamStrong};
+use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
 use crate::webcore::response::HeadersRef;
 use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
@@ -420,8 +420,9 @@ impl FetchTasklet {
     fn clear_sink(&mut self) {
         if let Some(sink_ptr) = self.sink.take() {
             // SAFETY: FetchTasklet owns the heap allocation from
-            // `start_request_stream`; JS-thread-only.
-            let sink = unsafe { &mut *sink_ptr.as_ptr() };
+            // `start_request_stream`; the JS controller's back-pointer is
+            // cleared via `detach` below before drop; sole owner.
+            let mut sink = unsafe { bun_core::heap::take(sink_ptr.as_ptr()) };
             // Prevent the sink's `finalize()` / `Drop` from double-releasing the
             // FetchTasklet ref — `write_end_request` is the canonical release.
             sink.task = None;
@@ -429,9 +430,6 @@ impl FetchTasklet {
             // here has already cleared it, so this just unprotects the cell and
             // nulls m_sinkPtr.
             JSSink::<FetchRequestBodySink>::detach(&mut sink.source, &self.global_this);
-            // SAFETY: the JS controller's back-pointer was already cleared via
-            // `detach_ptr` (inside `detach` above / `end_from_js`); sole owner.
-            unsafe { bun_core::heap::destroy(sink_ptr.as_ptr()) };
         }
         if let Some(buffer) = self.request_body_streaming_buffer.take() {
             // SAFETY: intrusive-refcounted heap allocation from `ThreadSafeStreamBuffer::new`;
@@ -647,36 +645,28 @@ impl FetchTasklet {
         }
 
         let self_ptr = std::ptr::from_mut::<FetchTasklet>(self);
-        let sink_ptr = bun_core::heap::into_raw_nn(Box::new(FetchRequestBodySink {
-            // SAFETY: `self_ptr` is the live heap tasklet; the +1 above keeps it
-            // alive until `write_end_request`/`finalize` clears `task`.
-            task: Some(unsafe { bun_ptr::BackRef::from_raw(self_ptr) }),
+        // `self_ptr` is the live heap tasklet; the +1 above keeps it alive
+        // until `write_end_request`/`finalize` clears `task`.
+        let sink: &mut FetchRequestBodySink = Box::leak(Box::new(FetchRequestBodySink {
+            task: Some(bun_ptr::BackRef::new_mut(self)),
             high_water_mark: 16384,
             ..Default::default()
         }));
-        self.sink = Some(sink_ptr);
-        // SAFETY: just allocated; sole live mutable view (self.sink only stores the ptr).
-        let sink = unsafe { &mut *sink_ptr.as_ptr() };
+        let sink_handle = SinkHandle::FetchRequestBody(bun_ptr::BackRef::new_mut(sink));
+        self.sink = Some(core::ptr::NonNull::from(&mut *sink));
 
         // Native ByteStream fast-path: wire SinkHandle directly, skip the JS pump.
-        if let readable_stream::Source::Bytes(bs_ptr) = stream.ptr {
-            // SAFETY: `Source::Bytes` stores the live `*mut ByteStream` (the
-            // `NewSource.context` field); the JS wrapper is rooted by
-            // `self.request_body`'s `Strong` for this tasklet's lifetime.
-            let byte_stream = unsafe { &*bs_ptr };
+        if let Some(byte_stream) = stream.ptr.bytes() {
             if byte_stream.sink.get().is_none() {
-                sink.source = SourceHandle::ByteStream(bs_ptr);
-                byte_stream
-                    .sink
-                    .set(SinkHandle::FetchRequestBody(sink_ptr.as_ptr()));
+                sink.source = SourceHandle::ByteStream(byte_stream);
+                byte_stream.sink.set(sink_handle);
                 byte_stream.sink_paused.set(false);
                 stream.lock_native(&global_this);
                 byte_stream.signal_consumer_attached();
 
                 if let Some(err) = byte_stream.take_pending_error() {
                     byte_stream.sink.set(SinkHandle::None);
-                    // SAFETY: `self.sink` set above; sink live.
-                    unsafe { (*sink_ptr.as_ptr()).task = None };
+                    sink.task = None;
                     let err_js = err.to_js(&global_this);
                     err_js.ensure_still_alive();
                     self.write_end_request(Some(err_js));
@@ -691,13 +681,11 @@ impl FetchTasklet {
                     } else {
                         StreamResult::Owned(buffered)
                     };
-                    // SAFETY: `self.sink` set above; sink live.
-                    match unsafe { (*sink_ptr.as_ptr()).write(&chunk) } {
+                    match sink.write(&chunk) {
                         Writable::Backpressure(_) => byte_stream.sink_paused.set(true),
                         Writable::Done | Writable::Err(_) => {
                             byte_stream.sink.set(SinkHandle::None);
-                            // SAFETY: `self.sink` set above; sink live.
-                            unsafe { (*sink_ptr.as_ptr()).task = None };
+                            sink.task = None;
                             self.write_end_request(None);
                             return;
                         }
@@ -706,8 +694,7 @@ impl FetchTasklet {
                 }
                 if has_last {
                     byte_stream.sink.set(SinkHandle::None);
-                    // SAFETY: `self.sink` set above and not cleared on this path.
-                    unsafe { (*sink_ptr.as_ptr()).task = None };
+                    sink.task = None;
                     self.write_end_request(None);
                 }
                 return;
@@ -720,39 +707,28 @@ impl FetchTasklet {
         // draining a pre-buffered chunk. Bun's file streams defer `start()`
         // to the first read, so drive it here; an error or synchronous
         // completion is delivered immediately.
-        if let readable_stream::Source::File(fr_ptr) = stream.ptr {
-            // SAFETY: `Source::File` stores the live `*mut FileReader` (the
-            // `NewSource.context` field); the JS wrapper is rooted by
-            // `self.request_body`'s `Strong` for this tasklet's lifetime.
-            let file_reader = unsafe { &*fr_ptr };
+        if let Some(file_reader) = stream.ptr.file() {
             if !file_reader.done.get() && file_reader.sink.get().is_none() {
                 match file_reader.start_for_sink(&global_this) {
                     Some(crate::webcore::streams::Start::Err(e)) => {
                         use bun_sys_jsc::SystemErrorJsc;
                         let err_js = e.to_system_error().to_error_instance(&global_this);
                         err_js.ensure_still_alive();
-                        // SAFETY: `self.sink` set above; sink live.
-                        unsafe { (*sink_ptr.as_ptr()).task = None };
+                        sink.task = None;
                         self.write_end_request(Some(err_js));
                         return;
                     }
                     Some(crate::webcore::streams::Start::OwnedAndDone(bytes)) => {
-                        // SAFETY: `self.sink` set above; sink live.
-                        let _ = unsafe {
-                            (*sink_ptr.as_ptr()).write(&StreamResult::OwnedAndDone(bytes))
-                        };
-                        // SAFETY: `self.sink` set above and not cleared on this path.
-                        unsafe { (*sink_ptr.as_ptr()).task = None };
+                        let _ = sink.write(&StreamResult::OwnedAndDone(bytes));
+                        sink.task = None;
                         self.write_end_request(None);
                         return;
                     }
                     Some(_) => {}
                     None => {}
                 }
-                sink.source = SourceHandle::FileReader(fr_ptr);
-                file_reader
-                    .sink
-                    .set(SinkHandle::FetchRequestBody(sink_ptr.as_ptr()));
+                sink.source = SourceHandle::FileReader(file_reader);
+                file_reader.sink.set(sink_handle);
                 file_reader.sink_paused.set(true);
                 stream.lock_native(&global_this);
                 file_reader.pull_into_sink();
@@ -782,15 +758,13 @@ impl FetchTasklet {
                         );
                     }
                     bun_jsc::js_promise::Status::Fulfilled => {
-                        // SAFETY: `self.sink` set above and not cleared on this path.
-                        unsafe { (*sink_ptr.as_ptr()).task = None };
+                        sink.task = None;
                         self.write_end_request(None);
                     }
                     bun_jsc::js_promise::Status::Rejected => {
                         promise.set_handled(global_this.vm());
                         let result = promise.result(global_this.vm());
-                        // SAFETY: `self.sink` set above and not cleared on this path.
-                        unsafe { (*sink_ptr.as_ptr()).task = None };
+                        sink.task = None;
                         self.write_end_request(Some(result));
                     }
                 }
@@ -801,8 +775,7 @@ impl FetchTasklet {
         // undefined/null: the stream drained synchronously inside
         // assignToStream. `end()` no longer calls `write_end_request`, so this
         // path always balances the `+1` itself.
-        // SAFETY: `self.sink` was set above and not cleared on this path.
-        unsafe { (*sink_ptr.as_ptr()).task = None };
+        sink.task = None;
         self.write_end_request(None);
     }
 
@@ -1888,7 +1861,7 @@ impl FetchTasklet {
                 Some(FetchTasklet::on_start_streaming_http_response_body_callback);
             pending.on_readable_stream_available = Some(FetchTasklet::on_readable_stream_available);
             pending.on_start_buffering = Some(FetchTasklet::on_start_buffering_callback);
-            pending.producer = SourceHandle::FetchResponseBody(std::ptr::from_mut(self));
+            pending.producer = SourceHandle::FetchResponseBody(bun_ptr::BackRef::new_mut(self));
             return BodyValue::Locked(pending);
         }
 

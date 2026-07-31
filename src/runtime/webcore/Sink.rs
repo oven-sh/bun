@@ -264,17 +264,11 @@ impl<T: JsSinkAbi> JSSink<T> {
                 });
             }
             SourceHandle::ByteStream(bs) => {
-                // SAFETY: `bs` was stored as a live `*mut ByteStream` and is
-                // cleared before the ByteStream is freed (hook-in sites hold a
-                // `readable_stream::Strong` for at least as long as this handle).
-                unsafe { (*bs).unpipe_without_deref() };
+                bs.unpipe_without_deref();
                 source.clear();
             }
             SourceHandle::FileReader(fr) => {
-                // SAFETY: `fr` was stored as a live `*mut FileReader` and is
-                // cleared before the FileReader is freed (hook-in sites hold a
-                // `readable_stream::Strong` for at least as long as this handle).
-                unsafe { (*fr).unpipe_without_deref() };
+                fr.unpipe_without_deref();
                 source.clear();
             }
             _ => {}

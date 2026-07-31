@@ -143,6 +143,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * into the shared word so the shared response-end path (internalEnd) never
          * has to touch the node-only field. */
         HTTP_NODE_HAS_RESPONSE_TRAILERS = 1 << 16,
+        /* The application already wrote a Connection header (Bun.serve's
+         * Response headers, or node:http's _storeHeader which always writes
+         * one); suppresses the automatic one in internalEnd. */
+        HTTP_WROTE_CONNECTION_HEADER = 1 << 17,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
@@ -197,6 +201,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* The parser writes this through a bool& (getHeaders / consumePostPadded),
      * so it cannot live in `state`. */
     bool isConnectRequest = false;
+    /* Brackets one onData call on THIS socket (can span several pipelined
+     * requests). Not a `state` bit: resetResponseState would clear it
+     * mid-parse. */
+    bool isParsingHttp = false;
 
     /* Chunk-extension bytes consumed on the current chunk-size line, reset per
      * chunk (llhttp's on_chunk_header); capped at MAX_CHUNK_EXTENSION_SIZE for

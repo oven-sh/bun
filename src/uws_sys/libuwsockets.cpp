@@ -1326,7 +1326,10 @@ extern "C"
       data->offset = offset;
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone(uwsRes);
-      uwsRes->resetTimeout();
+      if (!uwsRes->uncorkAndCloseIfNeeded(data, /* keepCorked: caller owns uncork */ true))
+      {
+        uwsRes->resetTimeout();
+      }
     }
     else
     {
@@ -1335,7 +1338,10 @@ extern "C"
       data->offset = offset;
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
       data->markDone(uwsRes);
-      uwsRes->resetTimeout();
+      if (!uwsRes->uncorkAndCloseIfNeeded(data, /* keepCorked: caller owns uncork */ true))
+      {
+        uwsRes->resetTimeout();
+      }
     }
   }
   void uws_res_reset_timeout(int ssl, uws_res_r res) {
@@ -1365,7 +1371,7 @@ extern "C"
       auto *data = uwsRes->getHttpResponseData();
       if (close_connection)
       {
-        if (!(data->state & uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE))
+        if (!(data->state & (uWS::HttpResponseData<true>::HTTP_WRITE_CALLED | uWS::HttpResponseData<true>::HTTP_WROTE_CONNECTION_HEADER)))
         {
           uwsRes->writeHeader("Connection", "close");
         }
@@ -1377,7 +1383,10 @@ extern "C"
       }
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone(uwsRes);
-      uwsRes->resetTimeout();
+      if (!uwsRes->uncorkAndCloseIfNeeded(data, /* keepCorked: caller owns uncork */ true))
+      {
+        uwsRes->resetTimeout();
+      }
     }
     else
     {
@@ -1385,7 +1394,7 @@ extern "C"
       auto *data = uwsRes->getHttpResponseData();
       if (close_connection)
       {
-        if (!(data->state & uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE))
+        if (!(data->state & (uWS::HttpResponseData<false>::HTTP_WRITE_CALLED | uWS::HttpResponseData<false>::HTTP_WROTE_CONNECTION_HEADER)))
         {
           uwsRes->writeHeader("Connection", "close");
         }
@@ -1399,7 +1408,10 @@ extern "C"
       }
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
       data->markDone(uwsRes);
-      uwsRes->resetTimeout();
+      if (!uwsRes->uncorkAndCloseIfNeeded(data, /* keepCorked: caller owns uncork */ true))
+      {
+        uwsRes->resetTimeout();
+      }
     }
   }
 

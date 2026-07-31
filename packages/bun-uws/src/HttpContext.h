@@ -310,7 +310,7 @@ private:
         ((AsyncSocket<SSL> *) s)->cork();
 
         /* Mark that we are inside the parser now */
-        httpContextData->flags.isParsingHttp = true;
+        httpResponseData->isParsingHttp = true;
         httpResponseData->isIdle = false;
 
         /* node:http compat: maintain the headers/request timeout window (see
@@ -548,8 +548,6 @@ private:
 
         auto httpErrorStatusCode = result.httpErrorStatusCode();
 
-        /* Mark that we are no longer parsing Http */
-        httpContextData->flags.isParsingHttp = false;
         /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
         if (httpErrorStatusCode) {
             /* node:http compat: parse errors surface as the server's 'clientError'
@@ -559,6 +557,8 @@ private:
              * parsing further requests on this connection. */
             if (IsNodeHttp && httpContextData->onClientError) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
+                /* Cleared before onClientError, which may close the socket. */
+                httpResponseData->isParsingHttp = false;
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
                 if (!us_socket_is_closed(s)) {
                     /* Balance the parsing ref taken at the top of onData (the
@@ -583,6 +583,9 @@ private:
         auto returnedData = result.returnedData;
         /* We need to uncork in all cases, except for nullptr (closed socket, or upgraded socket) */
         if (returnedData != nullptr) {
+            /* Mark that we are no longer parsing Http (inside the same liveness
+             * guard every other httpResponseData deref below already sits in). */
+            httpResponseData->isParsingHttp = false;
             /* We don't want open sockets to keep the event loop alive between HTTP requests */
             us_socket_unref((us_socket_t *) returnedData);
 
@@ -642,6 +645,12 @@ private:
 
             /* Return the new upgraded websocket */
             return (us_socket_t *) asyncSocket;
+        }
+
+        /* returnedData was nullptr without close or upgrade (the lambdas'
+         * HTTP_NODE_PARSING_STOPPED / us_socket_is_shut_down early-returns). */
+        if (!us_socket_is_closed(s)) {
+            httpResponseData->isParsingHttp = false;
         }
 
         /* It is okay to uncork a closed socket and we need to */

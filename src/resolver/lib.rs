@@ -169,10 +169,6 @@ pub mod fs {
     pub struct FileSystem {
         pub top_level_dir: &'static [u8],
 
-        // used on subsequent updates (process.chdir writes here and re-slices
-        // `top_level_dir` to point into it).
-        pub top_level_dir_buf: bun_paths::PathBuffer,
-
         pub fs: Implementation,
         pub dirname_store: &'static DirnameStore,
         pub filename_store: &'static FilenameStore,
@@ -295,11 +291,11 @@ pub mod fs {
             // `Err`). `cwd` is passed as raw bytes — POSIX paths are not
             // guaranteed UTF-8, and the lower tier stores/serves bytes.
             bun_paths::fs::FileSystem::init(cwd);
+            bun_core::set_top_level_dir(cwd);
             // SAFETY: see above.
             unsafe {
                 (*INSTANCE.get()).write(FileSystem {
                     top_level_dir: cwd,
-                    top_level_dir_buf: bun_paths::PathBuffer::uninit(),
                     fs: Implementation::init(cwd),
                     dirname_store: DirnameStore::instance(),
                     filename_store: FilenameStore::instance(),
@@ -341,20 +337,20 @@ pub mod fs {
         /// absolute path slice.
         pub fn abs_buf<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> &'b [u8] {
             use bun_paths::resolve_path::{join_abs_string_buf, platform};
-            join_abs_string_buf::<platform::Loose>(self.top_level_dir, buf, parts)
+            join_abs_string_buf::<platform::Loose>(self.top_level_dir(), buf, parts)
         }
 
         /// Returns `None` on overflow.
         pub fn abs_buf_checked<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> Option<&'b [u8]> {
             use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
-            join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir, buf, parts)
+            join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir(), buf, parts)
         }
 
         /// Like `abs_buf` but writes a
         /// NUL sentinel and returns a `ZStr` borrowing `buf`.
         pub fn abs_buf_z<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> &'b ZStr {
             use bun_paths::resolve_path::{join_abs_string_buf_z, platform};
-            join_abs_string_buf_z::<platform::Loose>(self.top_level_dir, buf, parts)
+            join_abs_string_buf_z::<platform::Loose>(self.top_level_dir(), buf, parts)
         }
 
         /// Normalizes `str` (separators, `.`/`..` segments) into `buf`.
@@ -367,7 +363,7 @@ pub mod fs {
         /// into the resolver-shared threadlocal join buffer.
         pub fn abs(&self, parts: &[&[u8]]) -> &[u8] {
             use bun_paths::resolve_path::{join_abs_string, platform};
-            join_abs_string::<platform::Loose>(self.top_level_dir, parts)
+            join_abs_string::<platform::Loose>(self.top_level_dir(), parts)
         }
 
         /// Like `abs`, but interns the joined path into `DirnameStore` and
@@ -377,7 +373,7 @@ pub mod fs {
             parts: &[&[u8]],
         ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
             use bun_paths::resolve_path::{join_abs_string, platform};
-            let joined = join_abs_string::<platform::Loose>(self.top_level_dir, parts);
+            let joined = join_abs_string::<platform::Loose>(self.top_level_dir(), parts);
             // Route through DirnameStore so
             // the resolver's `&'static [u8]` storage contract holds.
             DirnameStore::instance()
@@ -396,13 +392,15 @@ pub mod fs {
         /// `top_level_dir` to `to`. Returns a slice into the resolver-shared
         /// threadlocal relative buffer; caller must dup before the next call.
         pub fn relative_to(&self, to: &[u8]) -> &'static [u8] {
-            bun_paths::resolve_path::relative(self.top_level_dir, to)
+            bun_paths::resolve_path::relative(self.top_level_dir(), to)
         }
 
-        /// Cached cwd captured at `FileSystem::init`.
+        /// Process cwd. Routed through the `bun_core` RwLock so the (ptr, len)
+        /// fat pointer is read atomically: `process.chdir()` on the main thread
+        /// republishes this while Worker VMs are resolving modules against it.
         #[inline]
         pub fn top_level_dir(&self) -> &'static [u8] {
-            self.top_level_dir
+            bun_core::top_level_dir()
         }
 
         /// `dir` must be
@@ -419,7 +417,7 @@ pub mod fs {
         /// `top_level_dir` with any trailing separator stripped (root `/` is
         /// left intact).
         pub fn top_level_dir_without_trailing_slash(&self) -> &'static [u8] {
-            let d = self.top_level_dir;
+            let d = self.top_level_dir();
             if d.len() > 1 && d.last() == Some(&bun_paths::SEP) {
                 &d[..d.len() - 1]
             } else {

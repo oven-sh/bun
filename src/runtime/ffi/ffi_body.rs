@@ -589,7 +589,7 @@ impl CompileC {
                                 .set(bun_core::ZBox::from_vec_with_nul(include_path.to_vec()));
                         }
                         let mut lib_path = sysroot.to_vec();
-                        lib_path.extend_from_slice(b"/usr/lib");
+                        lib_path.extend_from_slice(b"/usr/lib/aarch64-linux-ohos");
                         let lib_z = ZBox::from_bytes(&lib_path);
                         if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), &lib_z).unwrap_or(false) {
                             let _ = CACHED_DEFAULT_SYSTEM_LIBRARY_DIR

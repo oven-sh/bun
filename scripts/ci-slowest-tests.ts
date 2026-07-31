@@ -36,6 +36,7 @@ export function parseLog(text: string): Map<string, number> {
   let curName: string | null = null;
   let curStart = 0;
   let concurrent = false;
+  let lastTs = 0;
   const close = (ts: number) => {
     if (!curName) return;
     const span = ts - curStart;
@@ -48,7 +49,7 @@ export function parseLog(text: string): Map<string, number> {
   for (const line of text.split("\n")) {
     const apc = /_bk;t=(\d+)\x07(.*)/.exec(line);
     if (!apc) continue;
-    const ts = parseInt(apc[1], 10);
+    const ts = (lastTs = parseInt(apc[1], 10));
     const body = apc[2].replace(/\x1b\[[0-9;]*m/g, "").replace(/\r+$/, "");
     const hdr = /^(--- )?\[\d+\/\d+\] (.+)$/.exec(body);
     if (hdr) {
@@ -58,7 +59,7 @@ export function parseLog(text: string): Map<string, number> {
         .replace(/\\/g, "/")
         .trim();
       // Parallel-bucket summaries carry the authoritative wall clock inline.
-      const timed = !hdr[1] && /^(.+?) \((\d+(?:\.\d+)?)s\)$/.exec(title);
+      const timed = !hdr[1] && /^(.+\.(?:[cm]?[jt]sx?|json)) \((\d+(?:\.\d+)?)s\)$/.exec(title);
       if (timed) {
         out.set(timed[1], (out.get(timed[1]) ?? 0) + Math.round(parseFloat(timed[2]) * 1000));
         concurrent = false;
@@ -78,6 +79,9 @@ export function parseLog(text: string): Map<string, number> {
       concurrent = false;
     }
   }
+  // A truncated log (job killed / timed out mid-run) has no `--- End`; charge
+  // the open span to the last timestamp seen so the culprit is not dropped.
+  close(lastTs);
   return out;
 }
 

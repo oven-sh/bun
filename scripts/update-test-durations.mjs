@@ -72,6 +72,7 @@ function parseLog(raw) {
   let path = null;
   let start = null;
   let concurrent = false;
+  let lastTs = null;
   const emit = ts => {
     if (path === null || start === null || ts === null) return;
     out.push([path, concurrent ? Math.min(ts - start, 500) : ts - start]);
@@ -79,7 +80,7 @@ function parseLog(raw) {
   for (let line of lines) {
     if (line.endsWith("\r")) line = line.slice(0, -1);
     const m = /^\x1b_bk;t=(\d+)\x07(.*)$/.exec(line);
-    const ts = m ? Number(m[1]) : null;
+    const ts = m ? (lastTs = Number(m[1])) : null;
     const text = m ? m[2] : line;
     const hdr = /^(--- )?\[\d+\/\d+\] (.+)$/.exec(text);
     if (hdr) {
@@ -110,6 +111,7 @@ function parseLog(raw) {
       concurrent = false;
     }
   }
+  emit(lastTs);
   return out;
 }
 

@@ -7,6 +7,7 @@ function parseLogFile(filename) {
   let currentTest = null;
   let currentAttempt = 1;
   let startTime = null;
+  let lastTs = null;
 
   const content = readFileSync(filename, "utf-8").replace(/\x1b\[[0-9;]*m/g, "");
 
@@ -28,12 +29,12 @@ function parseLogFile(filename) {
     const line = raw.replace(/\r+$/, "");
     const m = /^\x1b?_bk;t=(\d+)\x07(.*)$/.exec(line);
     if (!m) continue;
-    const ts = parseInt(m[1], 10);
+    const ts = (lastTs = parseInt(m[1], 10));
     const body = m[2];
 
     if (!body.startsWith("--- ")) {
       // Parallel-bucket summary lines carry their own wall-clock.
-      const timed = /^\[\d+\/\d+\] (.+?) \((\d+(?:\.\d+)?)s\)$/.exec(body);
+      const timed = /^\[\d+\/\d+\] (.+\.(?:[cm]?[jt]sx?|json)) \((\d+(?:\.\d+)?)s\)$/.exec(body);
       if (timed) record(timed[1].trim(), 1, Math.round(parseFloat(timed[2]) * 1000));
       continue;
     }
@@ -53,6 +54,9 @@ function parseLogFile(filename) {
     currentAttempt = attemptMatch ? parseInt(attemptMatch[1], 10) : 1;
     startTime = ts;
   }
+  // A truncated log (job killed / timed out mid-run) has no `--- End`; charge
+  // the open span to the last timestamp seen so the culprit is not dropped.
+  if (lastTs !== null) close(lastTs);
 
   // Convert to array and sort by total duration
   const testGroups = Array.from(testDetails.entries())

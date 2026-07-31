@@ -31,7 +31,7 @@ describe("scripts/ci-slowest-tests.ts parseLog", () => {
     expect(out.get("test/last-serial.test.ts")).toBe(4800);
     // p3 is the last dispatch before an 80s tail; header-gap timing would
     // charge it 79_990 ms. Parallel-safe spans are clamped.
-    expect(out.get("test/js/node/test/parallel/p3.js")).toBeLessThanOrEqual(500);
+    expect(out.get("test/js/node/test/parallel/p3.js")).toBe(500);
     expect(out.get("test/a.test.ts")).toBe(1000);
     expect(out.get("vendor/x/package.json")).toBe(200);
   });
@@ -68,6 +68,21 @@ describe("scripts/ci-slowest-tests.ts parseLog", () => {
       bk(60100, `--- End`),
     ].join("\n");
     expect(parseLog(emptyParallel).get("test/last.test.ts")).toBe(1000);
+
+    // Job killed mid-run: no `--- End`. The still-open span (usually the test
+    // that caused the timeout) is charged to the last timestamp seen rather
+    // than dropped, since it is exactly the file a slow-test report should
+    // surface.
+    const truncated = [
+      bk(100, `--- ${gray("[1/2]")} test/fast.test.ts`),
+      bk(300, `--- ${gray("[2/2]")} test/hung.test.ts`),
+      bk(400, "bun test v1.4.0"),
+      bk(600300, "still running..."),
+    ].join("\n");
+    expect(Object.fromEntries(parseLog(truncated))).toEqual({
+      "test/fast.test.ts": 200,
+      "test/hung.test.ts": 600000,
+    });
   });
 
   test("does not charge the parallel-bucket phase to the preceding serial test", () => {

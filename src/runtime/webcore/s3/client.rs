@@ -1429,7 +1429,8 @@ impl S3DownloadStreamWrapper {
     ) {
         // SAFETY: opaque_self points to a S3DownloadStreamWrapper allocated in readable_stream
         let self_: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>(opaque_self) };
-        let _ = Self::callback(chunk, has_more, err, self_); // TODO: properly propagate exception upwards
+        // Only `JsTerminated` escapes, and the loop observes that on the next tick.
+        let _ = Self::callback(chunk, has_more, err, self_);
     }
 }
 

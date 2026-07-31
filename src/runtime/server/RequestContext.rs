@@ -3280,6 +3280,7 @@ where
         this.do_render_blob();
     }
 
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn write_chunk(
         this: *mut Self,
         stream: &WebCore::streams::Result,
@@ -3311,6 +3312,7 @@ where
         }
     }
 
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn end_chunk(this: *mut Self, err: Option<&WebCore::streams::StreamError>) {
         // Drop the ref taken when the ByteStream sink was installed.
         let _ref = RequestContextRef(this);

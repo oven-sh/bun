@@ -899,7 +899,7 @@ impl TarballStream {
                     // buffered path bounds this by the decompressed tar length;
                     // here the stream is incomplete, so use a fixed ceiling.
                     const PREALLOCATE_CEILING: i64 = 64 * 1024 * 1024;
-                    let size = entry.size().max(0).min(PREALLOCATE_CEILING);
+                    let size = entry.size().clamp(0, PREALLOCATE_CEILING);
                     if size > 1_000_000 {
                         let _ = bun_sys::preallocate_file(fd.native(), 0, size);
                     }

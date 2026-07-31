@@ -188,25 +188,30 @@ pub(crate) fn uses_streaming_extraction() -> bool {
 /// extraction directory per attempt in `$TMPDIR`.
 struct TempExtractionDir<'a> {
     parent: Fd,
-    name: &'a ZStr,
+    name: Option<&'a ZStr>,
 }
 
 impl<'a> TempExtractionDir<'a> {
     #[inline]
     fn new(parent: Fd, name: &'a ZStr) -> Self {
-        Self { parent, name }
+        Self {
+            parent,
+            name: Some(name),
+        }
     }
 
     /// Disarm the drop guard after the directory has been renamed away.
     #[inline]
-    fn commit(self) {
-        core::mem::forget(self);
+    fn commit(mut self) {
+        self.name = None;
     }
 }
 
 impl Drop for TempExtractionDir<'_> {
     fn drop(&mut self) {
-        let _ = Dir::borrow(&self.parent).delete_tree(self.name.as_bytes());
+        if let Some(name) = self.name {
+            let _ = Dir::borrow(&self.parent).delete_tree(name.as_bytes());
+        }
     }
 }
 

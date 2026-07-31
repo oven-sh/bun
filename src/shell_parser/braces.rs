@@ -1146,6 +1146,11 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
                             self.eat_double_quoted()?;
                             continue;
                         }
+                        Some(q) if q == u32::from(b'{') => {
+                            let _ = self.chars.eat_raw();
+                            self.eat_dollar_brace()?;
+                            continue;
+                        }
                         _ => {}
                     },
                     c if c == u32::from(b'{') => {
@@ -1351,6 +1356,26 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
                 }
             }
             self.append_char(c)?;
+        }
+        Ok(())
+    }
+
+    /// `${…}`: bash §3.5.1 — `${` inhibits brace expansion until the
+    /// depth-matched `}`. The whole span (including `$`, `{`, `}`) is text.
+    fn eat_dollar_brace(&mut self) -> Result<(), AllocError> {
+        self.append_char(u32::from(b'$'))?;
+        self.append_char(u32::from(b'{'))?;
+        let mut depth: u32 = 1;
+        while let Some(c) = self.chars.eat_raw() {
+            self.append_char(c)?;
+            if c == u32::from(b'{') {
+                depth += 1;
+            } else if c == u32::from(b'}') {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(());
+                }
+            }
         }
         Ok(())
     }

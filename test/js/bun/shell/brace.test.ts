@@ -159,6 +159,13 @@ describe("$.braces is quote-aware (bash 5.2)", () => {
     // `$"…"`: treated like `"…"` with the `$` consumed.
     ['$"{a,b}"', ["{a,b}"]],
     ['a$"{b,c}"d', ["a{b,c}d"]],
+    // `${…}`: inhibits brace expansion until the depth-matched `}` (bash §3.5.1;
+    // parameter expansion itself is not performed here).
+    ["${a,b}", ["${a,b}"]],
+    ["{x,${a,b}}", ["x", "${a,b}"]],
+    ["${x:-{a,b}}", ["${x:-{a,b}}"]],
+    ["${a}{b,c}", ["${a}b", "${a}c"]],
+    ["\\${a,b}", ["$a", "$b"]],
     // Backslash outside quotes removes itself and makes the next char literal,
     // or both characters for `\<newline>` (line continuation).
     ["a\\{b,c\\}", ["a{b,c}"]],

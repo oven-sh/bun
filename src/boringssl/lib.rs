@@ -587,13 +587,6 @@ fn is_safe_alt_name(name: &[u8]) -> bool {
 /// Certificate name bytes (IA5 / Latin-1) for error messages.
 struct NameBytes<'a>(&'a [u8]);
 
-/// Node's `IsSafeAltName` (see `src/jsc/bindings/ncrypto.cpp`).
-#[inline]
-fn is_safe_alt_name(name: &[u8]) -> bool {
-    name.iter()
-        .all(|&c| (b' '..=b'~').contains(&c) && !matches!(c, b'"' | b'\\' | b',' | b'\''))
-}
-
 impl core::fmt::Display for NameBytes<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         use core::fmt::Write;

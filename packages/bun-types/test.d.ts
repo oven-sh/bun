@@ -95,8 +95,8 @@ declare module "bun:test" {
     function setSystemTime(now?: number | Date): typeof jest;
     /**
      * Returns the current clock time in milliseconds since the Unix epoch.
-     * When fake timers are active (via {@link useFakeTimers} or {@link setSystemTime}),
-     * this returns the fake clock value; otherwise it returns the real `Date.now()`.
+     * When the clock has been overridden (via {@link setSystemTime} or {@link useFakeTimers}),
+     * this returns the mocked time; otherwise it returns the real `Date.now()`.
      *
      * @example
      * ```ts

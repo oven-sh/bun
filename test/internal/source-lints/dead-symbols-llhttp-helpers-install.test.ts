@@ -10,7 +10,7 @@
 // built binary.
 
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
@@ -19,22 +19,13 @@ function src(p: string): string {
   return readFileSync(path.join(repoRoot, p), "utf8");
 }
 
-test("deleted dead C++ headers and sources do not reappear", () => {
-  const deleted = [
-    "src/jsc/bindings/node/http/llhttp/api.h",
-    "src/jsc/bindings/headers-cpp.h",
-    "src/jsc/bindings/ares_build.h",
-    "src/jsc/bindings/JSVMClientDataClient.h",
-    "src/jsc/bindings/webcore/TaskSource.h",
-    "src/jsc/bindings/webcore/HTTPHeaderValues.h",
-    "src/jsc/bindings/webcore/HTTPHeaderValues.cpp",
-    "src/jsc/bindings/webcore/JSDOMConvertJSON.h",
-    "src/jsc/bindings/webcore/JSDOMConvertWebGL.h",
-    "src/jsc/bindings/webcore/JSDOMConvertWebGL.cpp",
-  ];
-  const resurrected = deleted.filter(p => existsSync(path.join(repoRoot, p)));
-  expect(resurrected).toEqual([]);
-});
+// Whole-file deletions (llhttp/api.h, headers-cpp.h, ares_build.h, TaskSource.h,
+// HTTPHeaderValues.{h,cpp}, JSDOMConvertJSON.h, JSDOMConvertWebGL.{h,cpp},
+// JSVMClientDataClient.h) are asserted indirectly below via the surviving
+// files that used to reference them: if any of those deleted headers were
+// referenced anywhere, the build would fail. The headers that were never
+// `#include`d at all (api.h, ares_build.h, TaskSource.h, HTTPHeaderValues.h)
+// have no surviving-file witness to check here.
 
 test("dead C++ symbols in helpers.h / headers-handwritten.h / JSDOMWrapper.h / BunClientData do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
@@ -53,9 +44,13 @@ test("dead C++ symbols in helpers.h / headers-handwritten.h / JSDOMWrapper.h / B
     ["src/jsc/bindings/JSDOMWrapper.h", /\bJSDocumentWrapperType\b/],
     ["src/jsc/bindings/BunClientData.h", /\baddClient\b/],
     ["src/jsc/bindings/BunClientData.h", /\bm_clients\b/],
+    ["src/jsc/bindings/BunClientData.h", /JSVMClientDataClient\.h/],
+    ["src/jsc/bindings/BunClientData.h", /WeakHashSet\.h/],
     ["src/jsc/bindings/BunClientData.cpp", /\bm_clients\b/],
     ["src/jsc/bindings/webcore/JSDOMConvert.h", /JSDOMConvertJSON\.h/],
     ["src/jsc/bindings/webcore/JSDOMConvert.h", /JSDOMConvertWebGL\.h/],
+    ["src/jsc/bindings/IDLTypes.h", /\bIDLJSON\b/],
+    ["src/jsc/headergen/sizegen.cpp", /headers-cpp\.h/],
   ];
   const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);

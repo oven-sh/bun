@@ -247,7 +247,7 @@ describe.skipIf(isWindows)("console.log after process.stdout is materialized on 
       cmd: [
         "/bin/sh",
         "-c",
-        'exec "$0" -e "void Bun.file(1).writer(); console.log(Buffer.alloc(1<<20, 65).toString())" | wc -c',
+        'exec "$0" -e "void Bun.file(1).writer(); console.log(Buffer.alloc(1<<20, 65).toString())" | { sleep 0.4; exec wc -c; }',
         bunExe(),
       ],
       env: bunEnv,

@@ -1168,10 +1168,7 @@ it("--filter with a scoped glob (@scope/*) targets only those members", async ()
 
 // https://github.com/oven-sh/bun/issues/23507
 it("--recursive --latest does not bypass a root overrides entry for a member's dep", async () => {
-  await setupWorkspaces(
-    { overrides: { baz: "0.0.3" } },
-    { "pkg-a": { dependencies: { baz: "^0.0.3" } } },
-  );
+  await setupWorkspaces({ overrides: { baz: "0.0.3" } }, { "pkg-a": { dependencies: { baz: "^0.0.3" } } });
   await runUpdate(["--recursive", "--latest"]);
   // The override pins baz to 0.0.3; --latest must not resolve past it.
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
@@ -1192,10 +1189,7 @@ it("--recursive --no-save updates node_modules but not any package.json", async 
 
 // https://github.com/oven-sh/bun/issues/23507
 it("--recursive is idempotent: a second run changes nothing", async () => {
-  await setupWorkspaces(
-    { dependencies: { baz: "~0.0.3" } },
-    { "pkg-a": { dependencies: { baz: "~0.0.3" } } },
-  );
+  await setupWorkspaces({ dependencies: { baz: "~0.0.3" } }, { "pkg-a": { dependencies: { baz: "~0.0.3" } } });
   await runUpdate(["--recursive"]);
   const rootAfter = await file(join(package_dir, "package.json")).json();
   const aAfter = await pkgJson("pkg-a");
@@ -1206,10 +1200,7 @@ it("--recursive is idempotent: a second run changes nothing", async () => {
 });
 
 it("--filter matching nothing writes no package.json", async () => {
-  await setupWorkspaces(
-    { dependencies: { baz: "~0.0.3" } },
-    { "pkg-a": { dependencies: { baz: "~0.0.3" } } },
-  );
+  await setupWorkspaces({ dependencies: { baz: "~0.0.3" } }, { "pkg-a": { dependencies: { baz: "~0.0.3" } } });
   const rootBefore = await file(join(package_dir, "package.json")).text();
   const aBefore = await file(join(package_dir, "packages", "pkg-a", "package.json")).text();
   await runUpdate(["--filter", "does-not-exist"]);
@@ -1229,10 +1220,7 @@ it("--recursive tolerates a member with no dependency groups", async () => {
 
 // https://github.com/oven-sh/bun/issues/23507
 it("--recursive updates only one group when a member lists the same dep in two groups", async () => {
-  await setupWorkspaces(
-    {},
-    { "pkg-a": { dependencies: { baz: "~0.0.3" }, devDependencies: { baz: "~0.0.3" } } },
-  );
+  await setupWorkspaces({}, { "pkg-a": { dependencies: { baz: "~0.0.3" }, devDependencies: { baz: "~0.0.3" } } });
   await runUpdate(["--recursive"]);
   const a = await pkgJson("pkg-a");
   // Matches the existing single-workspace behavior: only one group's entry is rewritten.

@@ -111,14 +111,19 @@ describe("WebSocket upgrade", () => {
       },
     });
 
-    for (let i = 0; i < N; i++) {
-      const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
-      const { promise, resolve } = Promise.withResolvers<void>();
-      ws.onclose = () => resolve();
-      ws.onerror = () => {};
-      await promise;
-    }
+    let opened = 0;
+    await Promise.all(
+      Array.from({ length: N }, () => {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+        ws.onopen = () => opened++;
+        ws.onerror = () => {};
+        ws.onclose = () => resolve();
+        return promise;
+      }),
+    );
 
+    expect(opened).toBe(N);
     expect(keys).toHaveLength(N);
     const decoded = keys.map(k => Buffer.from(k, "base64"));
     for (const d of decoded) expect(d.length).toBe(16);

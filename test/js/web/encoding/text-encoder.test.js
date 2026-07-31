@@ -683,3 +683,36 @@ describe("TextEncoder UTF-16 exact-size path", () => {
     }
   });
 });
+
+describe("TextEncoder encodeInto with zero-length destination", () => {
+  const encoder = new TextEncoder();
+
+  // Detaching drives the view's byteLength to 0 and its backing pointer to null.
+  // "x" exercises the Latin-1 path; "Ā" and "💕" exercise the UTF-16 path.
+  it.each([["x"], ["Ā"], ["💕"]])("returns { read: 0, written: 0 } for a detached Uint8Array with input %j", input => {
+    const ab = new ArrayBuffer(8);
+    const dest = new Uint8Array(ab);
+    structuredClone(ab, { transfer: [ab] });
+
+    expect(dest.byteLength).toBe(0);
+    expect(encoder.encodeInto(input, dest)).toEqual({ read: 0, written: 0 });
+  });
+
+  it("returns { read: 0, written: 0 } for a non-detached zero-length destination", () => {
+    expect(encoder.encodeInto("x", new Uint8Array(0))).toEqual({ read: 0, written: 0 });
+    expect(encoder.encodeInto("Ā", new Uint8Array(0))).toEqual({ read: 0, written: 0 });
+  });
+
+  it("returns { read: 0, written: 0 } when source toString() detaches the destination mid-call", () => {
+    const ab = new ArrayBuffer(16);
+    const dest = new Uint8Array(ab);
+    const src = {
+      toString() {
+        structuredClone(ab, { transfer: [ab] });
+        return "hello";
+      },
+    };
+    expect(encoder.encodeInto(src, dest)).toEqual({ read: 0, written: 0 });
+    expect(dest.byteLength).toBe(0);
+  });
+});

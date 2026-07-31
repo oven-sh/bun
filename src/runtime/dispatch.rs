@@ -24,7 +24,6 @@
 #[path = "dispatch_js2native.rs"]
 pub mod js2native;
 
-use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::ManagedTask::ManagedTask;
 use bun_event_loop::{Task, task_tag};
 
@@ -191,7 +190,7 @@ pub(crate) enum RunTaskResult {
 // Keeping `run_task` out-of-line lets `tick_queue_with_count` stay a tight
 // drain-loop wrapper (front-clustered via `src/startup.order`), and the cold
 // Shell*/Bake* clusters are further hoisted into [`run_task_cold`] so this
-// function's hot residue (AnyTask/ManagedTask/CppTask + fs/napi) fits in 1-2
+// function's hot residue (AnyTaskJob/ManagedTask/CppTask + fs/napi) fits in 1-2
 // pages.
 #[inline(never)]
 pub(crate) fn run_task(
@@ -251,13 +250,110 @@ pub(crate) fn run_task(
     // eligible, so const patterns work directly.
     match task.tag {
         // ── erased-callback tasks (low-tier types — real) ────────────────
-        task_tag::AnyTask => {
-            let any = cast!(AnyTask);
-            // `bun_event_loop::ErasedJsError` carries the discriminant; recover
-            // the real `JsError` so `Terminated` short-circuits correctly.
-            if let Err(err) = any.run() {
+        task_tag::AnyTaskJob => {
+            // SAFETY: §Dispatch — `task.ptr` is a live heap `AnyTaskJob<C>`
+            // enqueued by `AnyTaskJob::run_task`; the erased entry frees it.
+            if let Err(err) = unsafe { bun_jsc::any_task_job::dispatch_erased(task.ptr) } {
+                report_error_or_terminate(global, err)?;
+            }
+        }
+        task_tag::AsyncModule => {
+            // SAFETY: `AsyncModule::done` boxed it; the arm consumes the box.
+            bun_jsc::async_module::AsyncModule::on_done(unsafe {
+                bun_core::heap::take(cast_ptr!(bun_jsc::async_module::AsyncModule))
+            });
+        }
+        task_tag::BundleV2PluginResolve => {
+            // SAFETY: tag identifies pointee — a live `Resolve` owned by the
+            // plugin dispatch chain.
+            unsafe { &mut *cast_ptr!(bun_bundler::bundle_v2::api::JSBundler::Resolve) }
+                .run_on_js_thread();
+        }
+        task_tag::BundleV2PluginLoad => {
+            // SAFETY: tag identifies pointee — a live `Load` owned by the plugin
+            // dispatch chain.
+            unsafe { &mut *cast_ptr!(bun_bundler::bundle_v2::api::JSBundler::Load) }
+                .run_on_js_thread();
+        }
+        task_tag::JSBundleCompletionTask => {
+            if let Err(err) =
+                crate::api::js_bundle_completion_task::JSBundleCompletionTask::on_complete_anytask(
+                    cast_ptr!(crate::api::js_bundle_completion_task::JSBundleCompletionTask),
+                )
+            {
                 report_error_or_terminate(global, bun_jsc::JsError::from(err))?;
             }
+        }
+        task_tag::FetchTaskletPromiseSettle => {
+            // SAFETY: boxed at the fetch completion site; the arm consumes it.
+            let holder = unsafe {
+                bun_core::heap::take(cast_ptr!(
+                    crate::webcore::fetch::fetch_tasklet::FetchTaskletPromiseSettle
+                ))
+            };
+            holder.run()?;
+        }
+        task_tag::FileResponseStreamEof => {
+            // SAFETY: tag identifies pointee — the in-flight read holds a ref
+            // on the stream until `on_reader_done` releases it; the guard keeps
+            // that release from freeing the stream inside its own frame.
+            let stream = cast_ptr!(crate::server::FileResponseStream);
+            // SAFETY: tag identifies pointee; the in-flight read holds a ref.
+            let _pin =
+                unsafe { bun_ptr::ScopedRef::<crate::server::FileResponseStream>::new(stream) };
+            // SAFETY: `stream` is live for this call (pinned above).
+            unsafe { (*stream).on_reader_done() };
+        }
+        task_tag::DuplexUpgradeContext => {
+            // SAFETY: tag identifies pointee; `run_event` may free the context,
+            // so it takes the raw pointer (no `&mut` at this boundary).
+            unsafe {
+                crate::socket::DuplexUpgradeContext::run_event(cast_ptr!(
+                    crate::socket::DuplexUpgradeContext
+                ))
+            };
+        }
+        #[cfg(windows)]
+        task_tag::WindowsNamedPipeContext => {
+            // Same shape as `DuplexUpgradeContext`: may free the context.
+            crate::socket::WindowsNamedPipeContext::run_event(cast_ptr!(
+                crate::socket::WindowsNamedPipeContext
+            ));
+        }
+        #[cfg(windows)]
+        task_tag::GetAddrInfoLibuvComplete => {
+            // SAFETY: boxed in `on_raw_libuv_complete`; the arm consumes it.
+            unsafe { bun_core::heap::take(cast_ptr!(crate::dns_jsc::LibuvCompleteHolder)) }.run();
+        }
+        task_tag::ValkeyDeferredClose => {
+            // SAFETY: boxed at the enqueue site; the arm consumes it.
+            unsafe {
+                bun_core::heap::take(cast_ptr!(crate::valkey_jsc::js_valkey::ValkeyDeferredClose))
+            }
+            .run();
+        }
+        task_tag::StatWatcherTimerUpdate => {
+            // SAFETY: boxed in `schedule_timer_update`; the arm consumes it.
+            unsafe {
+                bun_core::heap::take(cast_ptr!(
+                    crate::node::node_fs_stat_watcher::StatWatcherTimerUpdate
+                ))
+            }
+            .run();
+        }
+        task_tag::PasswordHashResult => {
+            crate::crypto::password_object::PasswordResult::<crate::crypto::password_object::HashOp>::run_from_js(
+                cast_ptr!(crate::crypto::password_object::PasswordResult<crate::crypto::password_object::HashOp>),
+            )?;
+        }
+        task_tag::PasswordVerifyResult => {
+            crate::crypto::password_object::PasswordResult::<
+                crate::crypto::password_object::VerifyOp,
+            >::run_from_js(cast_ptr!(
+                crate::crypto::password_object::PasswordResult<
+                    crate::crypto::password_object::VerifyOp,
+                >
+            ))?;
         }
         task_tag::ManagedTask => {
             // SAFETY: `task.ptr` was produced by `heap::alloc` in `ManagedTask::new`
@@ -481,7 +577,7 @@ pub(crate) fn run_task(
 /// Shell* / Bake* (and, when they land, Install*) tags are never seen during
 /// `bun <file>` startup or the `dot` benchmark, but their per-arm bodies pull
 /// in `bun_shell` / `bun_bake` call sites that LLVM otherwise interleaves with
-/// the hot AnyTask/ManagedTask/CppTask jump table. Splitting them behind a
+/// the hot AnyTaskJob/ManagedTask/CppTask jump table. Splitting them behind a
 /// `#[cold]` boundary lets lld place this whole cluster after the
 /// front-clustered startup window (see `src/startup.order`).
 ///
@@ -587,7 +683,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 96,
+    task_tag::COUNT == 109,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1233,7 +1329,7 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             true
         }
         // Re-queued by the caller; the box stays reachable from the
-        // static-rooted VM. Dispatching the type-erased `AnyTask` callback
+        // static-rooted VM. Dispatching an arbitrary task's callback
         // is not generally safe at shutdown (e.g. `AsyncModule::on_done`,
         // `dns::Holder::run` call straight into JS).
         _ => false,

@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::thread::{self, ThreadId};
@@ -7,7 +6,6 @@ use std::time::Instant;
 
 use bun_core::strings;
 use bun_core::{Timespec, TimespecMockMode, ZBox, ZStr};
-use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task};
 use bun_io::KeepAlive;
 use bun_jsc::call_frame::ArgumentsSlice;
@@ -289,54 +287,18 @@ impl StatWatcherScheduler {
 
     /// Schedule a task to set the timer in the main thread
     fn schedule_timer_update(this: *mut Self) {
-        struct Holder {
-            // BACKREF — `scheduler` is the refcounted singleton, kept alive by
-            // every `StatWatcher`'s `RefPtr<StatWatcherScheduler>`; the watcher
-            // that drove this `set_interval` still holds one across the hop.
-            // `ParentRef` preserves the `*mut` provenance for `set_timer` and
-            // gives a safe `&StatWatcherScheduler` projection for
-            // `get_interval()`.
-            scheduler: bun_ptr::ParentRef<StatWatcherScheduler>,
-            task: AnyTask,
-        }
-
-        fn update_timer(self_: *mut c_void) -> bun_event_loop::JsResult<()> {
-            // SAFETY: `self_` was heap-allocated below; reclaim and drop at end of scope.
-            let self_ = unsafe { bun_core::heap::take(self_.cast::<Holder>()) };
-            // `scheduler` is the refcounted singleton, kept alive across the
-            // hop by the triggering `StatWatcher`'s `RefPtr` (ParentRef
-            // invariant).
-            let interval = self_.scheduler.get_interval();
-            StatWatcherScheduler::set_timer(self_.scheduler.as_mut_ptr(), interval);
-            Ok(())
-        }
-
-        // Leak FIRST, then derive `ctx` from the leaked pointer. Deriving `ctx` from a
-        // `&mut *box` reborrow and then re-dereffing the Box (or calling `heap::alloc`)
-        // would create a sibling Unique borrow under Stacked Borrows that pops the tag
-        // backing `ctx`; `update_timer` would then `heap::take` an out-of-provenance
-        // pointer. With this ordering, `ctx` and `holder_ptr` share the same SRW tag and
-        // `heap::take(ctx)` satisfies the "must originate from `heap::alloc`" contract.
-        let holder_ptr = bun_core::heap::into_raw(Box::new(Holder {
-            // `this` is the live ref'd scheduler — never null; `NonNull → ParentRef`
-            // preserves mutable provenance for `set_timer`.
-            scheduler: ParentRef::from(NonNull::new(this).expect("scheduler")),
-            task: AnyTask::default(),
-        }));
-        // SAFETY: `holder_ptr` was just `heap::alloc`'d and is exclusively owned here
-        // until `update_timer` reclaims it; `vm` is the live per-thread VM (JSC_BORROW).
-        // `addr_of_mut!` so the field pointer inherits whole-Box provenance.
+        // SAFETY: `this` is the live ref'd scheduler (write provenance for
+        // `set_timer`), kept alive across the hop by the watcher's RefPtr.
+        let holder = Box::new(StatWatcherTimerUpdate {
+            // SAFETY: `this` is the live ref'd scheduler; write provenance for `set_timer`.
+            scheduler: unsafe { ParentRef::from_raw_mut(this) },
+        });
+        // SAFETY: `vm` is the live per-thread VM (JSC_BORROW).
         unsafe {
-            (*holder_ptr).task = AnyTask {
-                ctx: core::ptr::NonNull::new(holder_ptr.cast()),
-                callback: update_timer,
-            };
             (*this)
                 .vm
                 .event_loop_shared()
-                .enqueue_task_concurrent(ConcurrentTask::create(Task::init(
-                    core::ptr::addr_of_mut!((*holder_ptr).task),
-                )));
+                .enqueue_task_concurrent(ConcurrentTask::create(Task::from_boxed(holder)));
         }
     }
 
@@ -1255,4 +1217,26 @@ impl InitialStatTask {
         // (`initial_stat_*_on_main_thread` calls deref()). Nothing to forget —
         // `watcher` is a raw pointer.
     }
+}
+
+/// JS-thread hop for `StatWatcherScheduler::set_timer`. Boxed by
+/// `schedule_timer_update`; the `task_tag::StatWatcherTimerUpdate` dispatch
+/// arm reclaims it and calls [`Self::run`].
+pub(crate) struct StatWatcherTimerUpdate {
+    // BACKREF — `scheduler` is the refcounted singleton, kept alive by
+    // every `StatWatcher`'s `RefPtr<StatWatcherScheduler>`; the watcher
+    // that drove this `set_interval` still holds one across the hop.
+    scheduler: bun_ptr::ParentRef<StatWatcherScheduler, bun_ptr::Mut>,
+}
+
+impl StatWatcherTimerUpdate {
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub(crate) fn run(self: Box<Self>) {
+        let interval = self.scheduler.get_interval();
+        StatWatcherScheduler::set_timer(self.scheduler.as_mut_ptr(), interval);
+    }
+}
+
+impl bun_event_loop::Taskable for StatWatcherTimerUpdate {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::StatWatcherTimerUpdate;
 }

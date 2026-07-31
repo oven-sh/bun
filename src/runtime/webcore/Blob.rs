@@ -5769,22 +5769,12 @@ impl S3BlobDownloadTask {
         (self.handler)(&self.blob, self.global_this, raw_bytes)
     }
 
-    /// # Safety
-    /// `this` must be the heap-allocated task produced by [`S3BlobDownloadTask::init`];
-    /// ownership is consumed (the box is reclaimed and dropped) by this call.
-    // S3 callback ABI hands us a raw `*mut Self`; ownership is reclaimed below via
-    // `heap::take`, so the param stays a raw pointer rather than `&mut`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    /// Consumes the heap-allocated task produced by [`S3BlobDownloadTask::init`].
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
     pub(crate) fn on_s3_download_resolved(
         result: crate::webcore::__s3_client::S3DownloadResult,
-        this: *mut S3BlobDownloadTask,
+        mut this: Box<S3BlobDownloadTask>,
     ) -> Result<(), jsc::JsTerminated> {
-        // SAFETY: `this` was heap-allocated in init() and is consumed here.
-        let this = unsafe { &mut *this };
-        // SAFETY: `p` is the heap pointer from `init()`; reclaim the Box on scope exit.
-        let _drop = scopeguard::guard(std::ptr::from_mut::<S3BlobDownloadTask>(this), |p| unsafe {
-            drop(bun_core::heap::take(p));
-        });
         // Copy the `BackRef` out so the `&JSGlobalObject` borrow is detached
         // from `this` (it must coexist with `&mut this` calls below).
         let global_ref = this.global_this;
@@ -5854,13 +5844,15 @@ impl S3BlobDownloadTask {
         let proxy_owned = http_proxy_href(global_this);
         let proxy = proxy_owned.as_deref();
 
-        // Adapter: S3 download callback ABI takes `*mut c_void` context — cast
-        // back to the boxed task.
+        // Adapter: S3 download callback ABI takes `*mut c_void` context — reclaim
+        // the boxed task.
         fn s3_cb(
             result: crate::webcore::__s3_client::S3DownloadResult<'_>,
             ctx: *mut c_void,
         ) -> Result<(), jsc::JsTerminated> {
-            S3BlobDownloadTask::on_s3_download_resolved(result, ctx.cast::<S3BlobDownloadTask>())
+            // SAFETY: `ctx` is the box leaked in `init()`; the download callback fires once.
+            let task = unsafe { bun_core::heap::take(ctx.cast::<S3BlobDownloadTask>()) };
+            S3BlobDownloadTask::on_s3_download_resolved(result, task)
         }
 
         if blob.offset.get() > 0 {

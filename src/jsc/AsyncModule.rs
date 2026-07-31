@@ -61,7 +61,6 @@ pub struct AsyncModule {
 
     // This is the specific state for making it async
     pub(crate) poll_ref: KeepAlive,
-    pub(crate) any_task: bun_event_loop::AnyTask::AnyTask,
 }
 
 struct PackageDownloadError<'a> {
@@ -113,6 +112,12 @@ impl Queue {
 // borrow into `VirtualMachine.modules`, never freed by the dispatcher.
 impl bun_event_loop::Taskable for Queue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::PollPendingModulesTask;
+}
+
+// Taskable: `AsyncModule` boxes itself in `done()`; the dispatch arm
+// (`bun_runtime::dispatch::run_task`) reclaims the box and calls `on_done`.
+impl bun_event_loop::Taskable for AsyncModule {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncModule;
 }
 
 impl AsyncModule {
@@ -256,7 +261,7 @@ use bun_core::strings;
 use bun_install::package_manager::run_tasks;
 use bun_install::{self as install, LogLevel, PackageID};
 
-use crate::event_loop::{AnyTask, ConcurrentTaskItem, Task};
+use crate::event_loop::{ConcurrentTaskItem, Task};
 
 /// `RunTasksCallbacks` impl for the auto-install module queue. `onResolve` /
 /// `onPackageManifestError` / `onPackageDownloadError` forward to the `Queue`
@@ -660,42 +665,23 @@ impl AsyncModule {
             arena: opts.arena,
             ast_alloc_state: opts.ast_alloc_state,
             poll_ref: KeepAlive::default(),
-            any_task: AnyTask::AnyTask::default(),
         })
     }
 
     pub(crate) fn done(self, jsc_vm: &mut VirtualMachine) {
-        // The caller
-        // (`Queue::poll_modules`) removes the element by value and passes it
-        // here, so `Box::new(self)` is a single ownership transfer with no
-        // `ptr::read` and no double-Drop.
-        let clone = bun_core::heap::into_raw(Box::new(self));
+        // `Queue::poll_modules` removed the element by value; the box is
+        // handed to the task queue and reclaimed by `on_done`.
         jsc_vm.modules.scheduled += 1;
-        // SAFETY: clone is a valid heap::alloc allocation owned by the
-        // task queue until on_done reclaims it via heap::take; we hold
-        // the only reference here.
-        unsafe {
-            // Hand-written task shim (option (b) in event_loop/AnyTask.rs).
-            (*clone).any_task = AnyTask::AnyTask {
-                ctx: Some(core::ptr::NonNull::new_unchecked(clone).cast()),
-                callback: |p| {
-                    // SAFETY: `p` is the `clone` heap allocation registered as
-                    // `ctx` above; `on_done` reclaims it via `heap::take`.
-                    Self::on_done(p.cast());
-                    Ok(())
-                },
-            };
-            jsc_vm.enqueue_task(Task::init(&raw mut (*clone).any_task));
-        }
+        jsc_vm.enqueue_task(Task::from_boxed(Box::new(self)));
     }
 
-    /// # Safety
-    /// `this` must be the heap allocation produced by [`AsyncModule::done`]
-    /// (via `bun_core::heap::into_raw`); this fn reclaims and drops it.
-    pub(crate) unsafe fn on_done(this: *mut AsyncModule) {
+    /// Consumes the heap allocation produced by [`AsyncModule::done`].
+    #[allow(
+        clippy::boxed_local,
+        reason = "reclaim point for the box `done()` handed to the task queue"
+    )]
+    pub fn on_done(mut this: Box<AsyncModule>) {
         jsc::mark_binding();
-        // SAFETY: `this` was heap-allocated in `done`; reclaimed at end of this fn.
-        let this = unsafe { &mut *this };
         // Copy the `GlobalRef` out (it is `Copy`) so the borrow of `this` ends
         // before `&mut this` reborrows below; deref via the local for the rest
         // of the function. `GlobalRef::deref` encapsulates the JSC_BORROW
@@ -754,8 +740,6 @@ impl AsyncModule {
                 &mut ref_,
             )
         });
-        // SAFETY: reclaim the Box allocated in `done`; Drop runs deinit logic.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 
     // write! into Vec<u8>

@@ -29,7 +29,6 @@ use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl_sys as boringssl_sys;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::String as BunString;
-use bun_event_loop::AnyTask::AnyTask;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys as sys;
 use bun_uws as uws;
@@ -39,8 +38,12 @@ use bun_uws as uws;
 // `runtime::socket::UpgradedDuplex` to the opaque `bun_uws_sys::UpgradedDuplex`
 // handle (same allocation, different-crate newtype — see uws_sys/lib.rs §shim).
 #[inline]
-fn from_duplex<const SSL: bool>(duplex: &mut UpgradedDuplex) -> uws::NewSocketHandler<SSL> {
-    uws::NewSocketHandler::<SSL>::from_duplex(std::ptr::from_mut::<UpgradedDuplex>(duplex).cast())
+fn from_duplex<const SSL: bool>(duplex: &UpgradedDuplex) -> uws::NewSocketHandler<SSL> {
+    uws::NewSocketHandler::<SSL>::from_duplex(
+        std::ptr::from_ref::<UpgradedDuplex>(duplex)
+            .cast_mut()
+            .cast(),
+    )
 }
 
 /// Shorthand for the JS-side `EventLoopCtx` (replaces direct VM passing to
@@ -4154,7 +4157,13 @@ impl SocketMode {
 // DuplexUpgradeContext
 // ──────────────────────────────────────────────────────────────────────────
 
-struct DuplexUpgradeContext {
+// Taskable: enqueued as `*mut Self`; the dispatch arm forwards the raw
+// pointer to `run_event` (which may free it — no `&mut` at the boundary).
+impl bun_event_loop::Taskable for DuplexUpgradeContext {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::DuplexUpgradeContext;
+}
+
+pub(crate) struct DuplexUpgradeContext {
     pub upgrade: UpgradedDuplex,
     // We only us a tls and not a raw socket when upgrading a Duplex, Duplex dont support socketpairs
     pub tls: Option<IntrusiveRc<TLSSocket>>,
@@ -4163,8 +4172,7 @@ struct DuplexUpgradeContext {
     /// `&'static` so [`enqueue_self_task`](Self::enqueue_self_task) routes
     /// through the safe `event_loop_mut()` accessor instead of a raw deref.
     pub vm: &'static VirtualMachine,
-    pub task: AnyTask,
-    pub task_event: EventState,
+    pub(in crate::socket) task_event: EventState,
     /// Config to build a fresh `SSL_CTX` from (legacy `{ca,cert,key}` callers).
     /// Mutually exclusive with `owned_ctx` — `runEvent` prefers `owned_ctx`.
     pub ssl_config: Option<SSLConfig>,
@@ -4316,7 +4324,7 @@ impl DuplexUpgradeContext {
     /// `js_upgrade_duplex_to_tls`. May free `this` (via [`Self::deinit`]);
     /// callers must not hold a `&`/`&mut Self` across the call — pass the raw
     /// pointer directly so no Stacked Borrows protector spans the dealloc.
-    unsafe fn run_event(this: *mut Self) {
+    pub(crate) unsafe fn run_event(this: *mut Self) {
         // SAFETY: `this` is live; copy of a `Copy` field.
         match unsafe { (*this).task_event } {
             EventState::StartTLS => {
@@ -4409,15 +4417,15 @@ impl DuplexUpgradeContext {
         }
     }
 
-    /// Enqueue `self.task` on the owning VM's event loop. `vm` is the
+    /// Enqueue `self` on the owning VM's event loop. `vm` is the
     /// process-lifetime per-thread singleton stored at construction
     /// (`js_upgrade_duplex_to_tls`); `event_loop_mut()` is the safe accessor
-    /// for the VM-owned event-loop self-pointer.
+    /// for the VM-owned event-loop self-pointer. The dispatch arm calls
+    /// [`Self::run_event`] with this raw pointer.
     #[inline]
     fn enqueue_self_task(&mut self) {
-        self.vm
-            .event_loop_mut()
-            .enqueue_task(jsc::Task::init(&raw mut self.task));
+        let this = std::ptr::from_mut::<Self>(self);
+        self.vm.event_loop_mut().enqueue_task(jsc::Task::init(this));
     }
 
     fn deinit_in_next_tick(&mut self) {
@@ -4654,19 +4662,6 @@ pub fn js_upgrade_duplex_to_tls(
     unsafe {
         ptr::addr_of_mut!((*duplex_context).tls).write(Some(IntrusiveRc::from_raw(tls.as_ptr())));
         ptr::addr_of_mut!((*duplex_context).vm).write(VirtualMachine::get());
-        // `AnyTask::New` can't take the callback as a type parameter (see the
-        // notes in AnyTask.rs), so hand-write the `*mut c_void → run_event` shim.
-        ptr::addr_of_mut!((*duplex_context).task).write(AnyTask {
-            ctx: NonNull::new(duplex_context.cast::<c_void>()),
-            callback: |p| {
-                // SAFETY: `p` is the `*mut DuplexUpgradeContext` stored in
-                // `ctx`. `run_event` may free the allocation, so pass the raw
-                // pointer through — never form a `&mut` here whose protector
-                // would span the dealloc.
-                DuplexUpgradeContext::run_event(p.cast::<DuplexUpgradeContext>());
-                Ok(())
-            },
-        });
         ptr::addr_of_mut!((*duplex_context).task_event).write(EventState::StartTLS);
         // When `owned_ctx` is set, `runEvent` builds from it and ignores
         // `ssl_config` for SSL_CTX construction; servername/ALPN already
@@ -4747,7 +4742,7 @@ pub fn js_upgrade_duplex_to_tls(
     let _ = ssl_opts;
     tls_ref.ref_();
 
-    tls_ref.socket.set(from_duplex::<true>(&mut dc.upgrade));
+    tls_ref.socket.set(from_duplex::<true>(&dc.upgrade));
     tls_ref.mark_active();
     // Unlike a real socket, a TLS engine over a JS stream has no I/O of its
     // own to wait for - it is driven entirely by the stream's events - so it

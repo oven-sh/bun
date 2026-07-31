@@ -61,7 +61,8 @@ pub mod task_tag {
     }
     tags! {
         Access,
-        AnyTask,
+        AnyTaskJob,               // bun_jsc::AnyTaskJob<C> (typed job, one erased slot inside)
+        AsyncModule,
         AppendFile,
         ArchiveExtractTask,
         ArchiveBlobTask,
@@ -72,6 +73,8 @@ pub mod task_tag {
         AsyncTransformTask,
         BakeHotReloadEvent,       // bun.bake.DevServer.HotReloadEvent
         BundleV2DeferredBatchTask, // bun.bundle_v2.DeferredBatchTask
+        BundleV2PluginResolve,    // bun.bundle_v2.Resolve (JS-thread hop)
+        BundleV2PluginLoad,       // bun.bundle_v2.Load (JS-thread hop)
         ShellYesTask,             // shell.Interpreter.Builtin.Yes.YesTask
         Chmod,
         Chown,
@@ -79,19 +82,24 @@ pub mod task_tag {
         CopyFile,
         CopyFilePromiseTask,
         CppTask,
+        DuplexUpgradeContext,
         Exists,
         Fchmod,
         FChown,
         Fdatasync,
         FetchTasklet,
+        FetchTaskletPromiseSettle,
+        FileResponseStreamEof,
         Fstat,
         FSWatchTask,
         Fsync,
         FTruncate,
         Futimes,
         GetAddrInfoRequestTask,
+        GetAddrInfoLibuvComplete,
         HotReloadTask,
         ImmediateObject,
+        JSBundleCompletionTask,
         JSCDeferredWorkTask,
         Lchmod,
         Lchown,
@@ -108,6 +116,8 @@ pub mod task_tag {
         NativeZlib,
         NativeZstd,
         Open,
+        PasswordHashResult,
+        PasswordVerifyResult,
         PollPendingModulesTask,
         PosixSignalTask,
         MemoryPressureTask,
@@ -145,6 +155,7 @@ pub mod task_tag {
         ShellTouchTask,
         Stat,
         StatFS,
+        StatWatcherTimerUpdate,
         StreamPending,
         Symlink,
         ThreadSafeFunction,
@@ -152,6 +163,8 @@ pub mod task_tag {
         Truncate,
         Unlink,
         Utimes,
+        ValkeyDeferredClose,
+        WindowsNamedPipeContext,
         Write,
         WriteFile,
         WriteFileTask,
@@ -208,9 +221,6 @@ impl Task {
 }
 
 // Taskable impls for the low-tier task wrappers defined in this crate.
-impl Taskable for crate::AnyTask::AnyTask {
-    const TAG: TaskTag = task_tag::AnyTask;
-}
 impl Taskable for crate::ManagedTask::ManagedTask {
     const TAG: TaskTag = task_tag::ManagedTask;
 }

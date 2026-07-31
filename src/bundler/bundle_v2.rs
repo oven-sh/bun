@@ -71,7 +71,7 @@ pub struct BundleV2<'a> {
     /// so the safe `Deref` removes the per-accessor `unsafe { p.as_ref() }`.
     /// The two `&mut` sites in `transpiler_for_target` go through the explicit
     /// `unsafe assume_mut` escape hatch.
-    pub(crate) client_transpiler: Option<bun_ptr::ParentRef<Transpiler<'a>>>,
+    pub(crate) client_transpiler: Option<bun_ptr::ParentRef<Transpiler<'a>, bun_ptr::Mut>>,
     /// Owns the storage backing `client_transpiler` when it was lazily created
     /// by `initialize_client_transpiler` (browser-target request from a
     /// server-side build). Stays `None` when `client_transpiler` is borrowed
@@ -1083,7 +1083,6 @@ pub mod bv2_impl {
                 pub bv2: *mut BundleV2<'static>,
                 pub import_record: MiniImportRecord,
                 pub value: ResolveValue,
-                pub(crate) js_task: bun_event_loop::AnyTask::AnyTask,
                 /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue.
                 pub(crate) task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
             }
@@ -1093,10 +1092,15 @@ pub mod bv2_impl {
                     bv2: core::ptr::null_mut(),
                     import_record: MiniImportRecord::default(),
                     value: ResolveValue::Pending,
-                    js_task: bun_event_loop::AnyTask::AnyTask::default(),
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
                 }
+            }
+            // Taskable: `dispatch()` enqueues `*mut Resolve` for the JS-thread
+            // plugin hop; the arm calls `run_on_js_thread`.
+            impl bun_event_loop::Taskable for Resolve {
+                const TAG: bun_event_loop::TaskTag =
+                    bun_event_loop::task_tag::BundleV2PluginResolve;
             }
             impl Resolve {
                 pub(crate) fn init(bv2: &mut BundleV2<'_>, record: MiniImportRecord) -> Self {
@@ -1106,25 +1110,19 @@ pub mod bv2_impl {
                     bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
                     import_record: record,
                     value: ResolveValue::Pending,
-                    js_task: bun_event_loop::AnyTask::AnyTask::default(),
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
                 }
                 /// Hops to the JS thread to call the `onResolve` plugin chain.
                 pub(crate) fn dispatch(&mut self) {
-                    self.js_task = bun_event_loop::AnyTask::AnyTask {
-                        ctx: core::ptr::NonNull::new(
-                            std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>(),
-                        ),
-                        callback: Self::run_on_js_thread_wrap,
-                    };
-                    let task =
-                        bun_event_loop::ConcurrentTask::ConcurrentTask::create(self.js_task.task());
+                    let task = bun_event_loop::ConcurrentTask::ConcurrentTask::create(
+                        bun_event_loop::Task::init(std::ptr::from_mut::<Self>(self)),
+                    );
                     // SAFETY: `bv2` is a valid backref set by `init`; plugins is
                     // Some (asserted by `enqueue_on_js_loop_for_plugins`).
                     unsafe { (*self.bv2).enqueue_on_js_loop_for_plugins(task) };
                 }
-                pub(crate) fn run_on_js_thread(&mut self) {
+                pub fn run_on_js_thread(&mut self) {
                     let kind = self.import_record.kind;
                     // reshaped for borrowck — capture the erased self
                     // pointer before borrowing fields immutably for the FFI call.
@@ -1143,13 +1141,6 @@ pub mod bv2_impl {
                             self_ptr,
                             kind,
                         );
-                }
-                fn run_on_js_thread_wrap(
-                    ctx: *mut core::ffi::c_void,
-                ) -> bun_event_loop::JsResult<()> {
-                    // SAFETY: ctx was stored from `*mut Resolve` in `dispatch`.
-                    unsafe { bun_ptr::callback_ctx::<Resolve>(ctx) }.run_on_js_thread();
-                    Ok(())
                 }
             }
 
@@ -1184,12 +1175,11 @@ pub mod bv2_impl {
                 pub path: Box<[u8]>,
                 pub(crate) namespace: Box<[u8]>,
                 pub value: LoadValue,
-                pub parse_task: bun_ptr::BackRef<ParseTask>,
+                pub parse_task: bun_ptr::BackRef<ParseTask, bun_ptr::Mut>,
                 /// Faster path: skip the extra threadpool dispatch when the file is not found.
                 pub was_file: bool,
                 /// Defer may only be called once.
                 pub called_defer: bool,
-                pub(crate) js_task: bun_event_loop::AnyTask::AnyTask,
                 /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue
                 /// (used by `onDefer` to notify the bundler thread when it runs
                 /// under a `MiniEventLoop`).
@@ -1211,7 +1201,6 @@ pub mod bv2_impl {
                     namespace: parse.path.namespace.to_vec().into_boxed_slice(),
                     was_file: false,
                     called_defer: false,
-                    js_task: bun_event_loop::AnyTask::AnyTask::default(),
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
                 }
@@ -1242,21 +1231,16 @@ pub mod bv2_impl {
                 }
                 /// Hops to the JS thread to call the `onLoad` plugin chain.
                 pub(crate) fn dispatch(&mut self) {
-                    self.js_task = bun_event_loop::AnyTask::AnyTask {
-                        ctx: core::ptr::NonNull::new(
-                            std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>(),
-                        ),
-                        callback: Self::run_on_js_thread_wrap,
-                    };
-                    let concurrent_task =
-                        bun_event_loop::ConcurrentTask::ConcurrentTask::create(self.js_task.task());
+                    let concurrent_task = bun_event_loop::ConcurrentTask::ConcurrentTask::create(
+                        bun_event_loop::Task::init(std::ptr::from_mut::<Self>(self)),
+                    );
                     // SAFETY: `bv2` is a valid backref; plugins is Some (asserted
                     // by `enqueue_on_js_loop_for_plugins`).
                     unsafe {
                         (*self.bv2).enqueue_on_js_loop_for_plugins(concurrent_task);
                     }
                 }
-                pub(crate) fn run_on_js_thread(&mut self) {
+                pub fn run_on_js_thread(&mut self) {
                     let is_server_side = self.bake_graph() != crate::bake_types::Graph::Client;
                     let default_loader = self.default_loader;
                     // reshaped for borrowck — capture the erased self
@@ -1277,13 +1261,11 @@ pub mod bv2_impl {
                             is_server_side,
                         );
                 }
-                fn run_on_js_thread_wrap(
-                    ctx: *mut core::ffi::c_void,
-                ) -> bun_event_loop::JsResult<()> {
-                    // SAFETY: ctx was stored from `*mut Load` in `dispatch`.
-                    unsafe { bun_ptr::callback_ctx::<Load>(ctx) }.run_on_js_thread();
-                    Ok(())
-                }
+            }
+            // Taskable: `dispatch()` enqueues `*mut Load` for the JS-thread
+            // plugin hop; the arm calls `run_on_js_thread`.
+            impl bun_event_loop::Taskable for Load {
+                const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BundleV2PluginLoad;
             }
         }
     }
@@ -1602,7 +1584,7 @@ pub mod bv2_impl {
             // uniqueness, invalidating any previously-derived raw pointer).
             self.owned_client_transpiler = Some(boxed);
             let ct: &mut Transpiler<'a> = self.owned_client_transpiler.as_deref_mut().unwrap();
-            self.client_transpiler = Some(NonNull::from(&mut *ct).into());
+            self.client_transpiler = Some(bun_ptr::ParentRef::from_ref_mut(&mut *ct));
             Ok(ct)
         }
 
@@ -2703,7 +2685,7 @@ pub mod bv2_impl {
                 ssr_transpiler: ssr_alias,
                 framework: None,
                 graph: Graph {
-                    pool: bun_ptr::BackRef::from(NonNull::<ThreadPool>::dangling()), // set below
+                    pool: bun_ptr::BackRef::dangling(), // set below
                     heap,
                     kit_referenced_server_data: false,
                     kit_referenced_client_data: false,
@@ -2732,7 +2714,11 @@ pub mod bv2_impl {
                 requested_exports: Vec::new(),
             });
             if let Some(bo) = bake_options {
-                this.client_transpiler = Some(bo.client_transpiler.into());
+                // SAFETY: `bo.client_transpiler` is the caller's live, write-capable
+                // transpiler pointer; it outlives this BundleV2.
+                this.client_transpiler = Some(unsafe {
+                    bun_ptr::ParentRef::from_raw_mut(bo.client_transpiler.as_ptr())
+                });
                 this.ssr_transpiler = bo.ssr_transpiler.as_ptr();
                 let separate_ssr = bo
                     .framework
@@ -2824,7 +2810,7 @@ pub mod bv2_impl {
 
             let tp = ThreadPool::init(&*this, thread_pool)?;
             // errdefer this.graph.heap.deinit() — Drop handles arena teardown.
-            this.graph.pool = bun_ptr::BackRef::from(NonNull::from(this.arena().alloc(tp)));
+            this.graph.pool = bun_ptr::BackRef::new_mut(this.arena().alloc(tp));
             // Install the watcher only after `ThreadPool::init()` has succeeded —
             // the `?` above is the last early-return in this fn, so the watcher's
             // raw `*mut BundleV2` can't outlive the box it points at (the caller
@@ -3622,12 +3608,14 @@ pub mod bv2_impl {
             // result posts back to the bundle thread.
             let task = bun_core::heap::into_raw(Box::new(ServerComponentParseTask {
                 data,
-                // Lifetime-erase `'a` → `'static` for the BACKREF.
-                // `NonNull::from(&mut *self)` carries write provenance for `assume_mut`
-                // in `on_complete`; `ParentRef::from(NonNull)` is the safe wrapper.
-                ctx: Some(bun_ptr::ParentRef::from(
-                    core::ptr::NonNull::from(&mut *self).cast::<BundleV2<'static>>(),
-                )),
+                // SAFETY: `from_mut(self)` carries write provenance for `assume_mut`
+                // in `on_complete` and outlives the task; `'a` erased to `'static`
+                // for the BACKREF.
+                ctx: Some(unsafe {
+                    bun_ptr::ParentRef::from_raw_mut(
+                        core::ptr::from_mut(&mut *self).cast::<BundleV2<'static>>(),
+                    )
+                }),
                 source: task_source,
                 // `..Default::default()` supplies `task: ThreadPoolTask { callback: task_callback_wrap }`.
                 ..Default::default()
@@ -6467,11 +6455,12 @@ pub mod bv2_impl {
             // ParseTask.ctx, (b) hoist dev_server check, and (c) scope the map
             // borrow to the get_or_put so later `self.graph.*` writes don't overlap.
             // SAFETY: write provenance from `ptr::from_mut`; outlives every ParseTask.
-            let self_ptr: Option<bun_ptr::ParentRef<BundleV2<'static>>> = Some(unsafe {
-                bun_ptr::ParentRef::from_raw_mut(
-                    std::ptr::from_mut::<Self>(self).cast::<BundleV2<'static>>(),
-                )
-            });
+            let self_ptr: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>> =
+                Some(unsafe {
+                    bun_ptr::ParentRef::from_raw_mut(
+                        std::ptr::from_mut::<Self>(self).cast::<BundleV2<'static>>(),
+                    )
+                });
             let dev_server_is_none = self.dev_server.is_none();
             for (key, value) in resolve_queue.iter() {
                 let value: *mut ParseTask = *value;

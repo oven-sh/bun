@@ -8,7 +8,6 @@ use crate::socket::SSLConfig;
 use crate::socket::windows_named_pipe::{Handlers as NamedPipeHandlers, WindowsNamedPipe};
 use bun_boringssl_sys as boringssl;
 use bun_core::ZStr;
-use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::Task;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, SysErrorJsc};
@@ -34,10 +33,9 @@ pub struct WindowsNamedPipeContext {
     /// client.
     pub(super) named_pipe: WindowsNamedPipe,
 
-    // task used to deinit the context in the next tick, vm is used to enqueue the task
+    // vm is used to enqueue `run_event` (deinit in the next tick)
     vm: &'static VirtualMachine,
     global_this: GlobalRef,
-    task: AnyTask,
     task_event: EventState,
     is_open: bool,
 }
@@ -53,7 +51,7 @@ fn schedule_deinit(this: *mut WindowsNamedPipeContext) {
         debug_assert!((*this).task_event != EventState::Deinit);
         (*this).task_event = EventState::Deinit;
         let vm = ptr::from_ref::<VirtualMachine>((*this).vm).cast_mut();
-        (*vm).enqueue_task(Task::init(ptr::addr_of_mut!((*this).task)));
+        (*vm).enqueue_task(Task::init(this));
     }
 }
 
@@ -279,8 +277,9 @@ impl WindowsNamedPipeContext {
     }
 
     #[cfg(windows)]
-    fn run_event(this: *mut Self) {
-        // SAFETY: called from AnyTask; `this` is the live ctx pointer registered in create()
+    pub(crate) fn run_event(this: *mut Self) {
+        // SAFETY: called from the `task_tag::WindowsNamedPipeContext` dispatch
+        // arm; `this` is the live ctx pointer registered in create()
         match unsafe { (*this).task_event } {
             EventState::Deinit => {
                 // SAFETY: `this` was allocated via heap::alloc in create(); refcount hit zero
@@ -362,15 +361,6 @@ impl WindowsNamedPipeContext {
                 let pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());
                 WindowsNamedPipe::from(pipe, handlers, vm)
             };
-            // Build the erased AnyTask directly.
-            let task = AnyTask {
-                ctx: ptr::NonNull::new(this.cast::<c_void>()),
-                callback: |ctx| {
-                    Self::run_event(ctx.cast::<WindowsNamedPipeContext>());
-                    Ok(())
-                },
-            };
-
             // SAFETY: `this` is freshly allocated uninit storage exclusively owned here; we write
             // every field exactly once before any read.
             unsafe {
@@ -382,7 +372,6 @@ impl WindowsNamedPipeContext {
                         named_pipe,
                         vm,
                         global_this,
-                        task,
                         task_event: EventState::None,
                         is_open: false,
                     },
@@ -473,4 +462,10 @@ impl Drop for WindowsNamedPipeContext {
         );
         // `named_pipe` drops via field destructor after this.
     }
+}
+
+// Taskable: `deref()` enqueues `*mut Self`; the dispatch arm calls
+// `run_event`, which may free the context.
+impl bun_event_loop::Taskable for WindowsNamedPipeContext {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WindowsNamedPipeContext;
 }

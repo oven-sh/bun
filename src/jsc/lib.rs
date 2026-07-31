@@ -1389,7 +1389,7 @@ pub use self::event_loop as EventLoop;
 pub mod any_task_job;
 pub use self::any_task_job::{AnyTaskJob, AnyTaskJobCtx};
 pub use self::event_loop::{
-    AnyEventLoop, AnyTask, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentPromiseTask,
+    AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentPromiseTask,
     ConcurrentTask, CppTask, DeferredTaskQueue, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
     GarbageCollectionController, JsTerminated, JsTerminatedResult, ManagedTask, MiniEventLoop,
     PosixSignalHandle, PosixSignalTask, Task, WorkPool, WorkPoolTask, WorkTask, WorkTaskContext,

@@ -891,7 +891,7 @@ pub type OOM = AllocError;
 /// it as `bun_jsc::JsError` and `bun_event_loop` re-exports it as `ErasedJsError` for
 /// historical call sites.
 ///
-/// `#[repr(u8)]` with explicit discriminants: `AnyTask` stores
+/// `#[repr(u8)]` with explicit discriminants: the erased task layer stores
 /// `fn(*mut c_void) -> Result<(), JsError>` and the dispatcher relies on the 1-byte layout
 /// surviving the type-erased round-trip.
 #[repr(u8)]

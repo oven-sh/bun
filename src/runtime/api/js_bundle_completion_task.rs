@@ -23,7 +23,6 @@ use bun_bundler::transpiler::Transpiler;
 use bun_core::String as BunString;
 use bun_core::env::OperatingSystem;
 use bun_io::KeepAlive;
-use bun_jsc::AnyTask::AnyTask;
 use bun_jsc::WorkPool;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
@@ -59,7 +58,6 @@ pub struct JSBundleCompletionTask {
     // BACKREF — the JS-thread `EventLoop` outlives every completion task; safe
     // `Deref` so call sites read `self.jsc_event_loop.enqueue_task_concurrent(..)`.
     pub(crate) jsc_event_loop: BackRef<EventLoop>,
-    pub task: AnyTask,
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
@@ -123,7 +121,6 @@ pub(crate) fn create_and_schedule_completion_task(
         // `event_loop` is the live JS-thread loop (caller derives it from
         // `vm.event_loop()`); never null once `Bun.build` is reachable.
         jsc_event_loop: BackRef::from(core::ptr::NonNull::new(event_loop).expect("event_loop")),
-        task: AnyTask::default(),
         global_this: BackRef::new(global_this),
         promise: jsc::JSPromiseStrong::default(),
         poll_ref: KeepAlive::init(),
@@ -139,8 +136,6 @@ pub(crate) fn create_and_schedule_completion_task(
     }));
     // SAFETY: freshly-boxed allocation with ref_count == 1; sole handle.
     unsafe {
-        (*completion).task =
-            AnyTask::from_typed(completion, JSBundleCompletionTask::on_complete_anytask);
         if let Some(plugin) = (*completion).plugins {
             (*plugin.as_ptr()).set_config(completion.cast());
         }
@@ -531,9 +526,9 @@ impl JSBundleCompletionTask {
         result
     }
 
-    /// AnyTask trampoline: `onComplete` runs on the JS thread once the bundle
-    /// thread posts back via `complete_on_bundle_thread`.
-    fn on_complete_anytask(ctx: *mut Self) -> bun_event_loop::JsResult<()> {
+    /// `task_tag::JSBundleCompletionTask` entry: `onComplete` runs on the JS
+    /// thread once the bundle thread posts back via `complete_on_bundle_thread`.
+    pub(crate) fn on_complete_anytask(ctx: *mut Self) -> bun_event_loop::JsResult<()> {
         // SAFETY: `ctx` is the heap::alloc allocation registered in `task`.
         let this = unsafe { &mut *ctx };
         // For the +1 taken by `complete_on_bundle_thread` enqueue.
@@ -997,8 +992,9 @@ impl CompletionStruct for JSBundleCompletionTask {
         // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
         // `ConcurrentTask::create` heap-allocates a fresh task; the
         // queue takes ownership of it.
+        let this = std::ptr::from_mut::<Self>(self);
         self.jsc_event_loop
-            .enqueue_task_concurrent(jsc::ConcurrentTask::create(self.task.task()));
+            .enqueue_task_concurrent(jsc::ConcurrentTask::create(jsc::Task::init(this)));
     }
     fn set_result(&mut self, result: BundleV2Result) {
         self.result = result;
@@ -1139,4 +1135,10 @@ impl CompletionStruct for JSBundleCompletionTask {
             }
         }
     }
+}
+
+// Taskable: `complete_on_bundle_thread` enqueues `*mut Self`; the dispatch
+// arm calls `on_complete_anytask`.
+impl bun_event_loop::Taskable for JSBundleCompletionTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::JSBundleCompletionTask;
 }

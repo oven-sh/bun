@@ -1326,6 +1326,132 @@ pub(crate) fn download_stream(
     task_ptr
 }
 
+pub struct S3DownloadStreamWrapper {
+    pub readable_stream_ref: ReadableStreamStrong,
+    pub path: Box<[u8]>,
+    pub global: GlobalRef, // JSC_BORROW
+    /// Non-owning. The task frees itself on the main thread once `has_more == false`,
+    /// which first drops this wrapper (clearing the stream's producer handle), so this
+    /// pointer is never observed dangling from `on_stream_cancelled`.
+    pub task: *mut S3HttpDownloadStreamingTask,
+}
+
+impl S3DownloadStreamWrapper {
+    fn new(init: Self) -> *mut Self {
+        bun_core::heap::into_raw(Box::new(init))
+    }
+
+    fn callback(
+        chunk: &MutableString,
+        has_more: bool,
+        request_err: Option<Error::S3Error>,
+        self_: &mut Self,
+    ) -> JsTerminatedResult<()> {
+        // scope-exit cleanup via guard (keeps borrowck happy)
+        let _guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), move |s| {
+            if !has_more {
+                // SAFETY: s is a live Box-allocated pointer (heap::alloc in S3DownloadStreamWrapper::new);
+                // reconstituting and dropping the Box runs Drop::drop and frees the allocation
+                drop(unsafe { bun_core::heap::take(s) });
+            }
+        });
+
+        if let Some(readable) = self_.readable_stream_ref.get(&self_.global) {
+            // BACKREF: see `Source::bytes()` — payload live while the
+            // readable stream is rooted. R-2: `&` — `on_data` re-enters JS.
+            if let Some(bytes) = readable.ptr.bytes() {
+                if let Some(err) = request_err {
+                    bytes.on_data(crate::webcore::streams::StreamResult::Err(
+                        crate::webcore::streams::StreamError::JSValue(
+                            bun_jsc::strong::Optional::create(
+                                s3_error_to_js(&err, &self_.global, Some(&self_.path)),
+                                &self_.global,
+                            ),
+                        ),
+                    ))?;
+                    return Ok(());
+                }
+                if has_more {
+                    bytes.on_data(crate::webcore::streams::StreamResult::Temporary(
+                        // chunk.list is borrowed for the duration of on_data.
+                        bun_ptr::RawSlice::new(chunk.list.as_slice()),
+                    ))?;
+                    return Ok(());
+                }
+
+                bytes.on_data(crate::webcore::streams::StreamResult::TemporaryAndDone(
+                    // chunk.list is borrowed for the duration of on_data.
+                    bun_ptr::RawSlice::new(chunk.list.as_slice()),
+                ))?;
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    /// Clear the producer handle on the ByteStream.Source to prevent use-after-free.
+    /// Must be called before releasing readable_stream_ref.
+    fn clear_stream_cancel_handler(&mut self) {
+        if let Some(readable) = self.readable_stream_ref.get(&self.global) {
+            // BACKREF: see `Source::bytes()` — payload live while the
+            // readable stream is rooted. R-2: shared deref + `Cell::set`.
+            if let Some(bytes) = readable.ptr.bytes() {
+                let source = bytes.parent_const();
+                source
+                    .producer
+                    .set(crate::webcore::streams::SourceHandle::None);
+            }
+        }
+    }
+
+    pub(crate) fn on_stream_cancelled(this: *mut Self) {
+        // SAFETY: `this` points to a S3DownloadStreamWrapper allocated in readable_stream
+        let self_: &mut Self = unsafe { &mut *this };
+        // Release the Strong ref so the ReadableStream can be GC'd.
+        // The download may still be in progress, but the callback will
+        // see readable_stream_ref.get() return null and skip data delivery.
+        // When the download finishes (has_more == false), deinit() will
+        // clean up the remaining resources.
+        self_.readable_stream_ref.deinit();
+        // Abort the in-flight HTTP request so the HTTP thread delivers a final
+        // callback with `has_more == false`, which frees the task and this wrapper.
+        // Without this, a server that never sends the terminal chunk would leak both.
+        let task = core::mem::replace(&mut self_.task, core::ptr::null_mut());
+        if !task.is_null() {
+            // SAFETY: task is live until its own `on_response` frees it on this thread,
+            // which has not happened yet (it would have dropped this wrapper first).
+            unsafe {
+                (*task)
+                    .signal_store
+                    .aborted
+                    .store(true, core::sync::atomic::Ordering::Relaxed);
+                // Wake the HTTP thread so it observes the abort even when the
+                // socket is idle; otherwise the final `has_more == false`
+                // callback never fires and both the task and wrapper leak.
+                bun_http::http_thread().schedule_shutdown_by_id((*task).async_http_id);
+            }
+        }
+    }
+
+    fn opaque_callback(
+        chunk: &MutableString,
+        has_more: bool,
+        err: Option<Error::S3Error>,
+        opaque_self: *mut c_void,
+    ) {
+        // SAFETY: opaque_self points to a S3DownloadStreamWrapper allocated in readable_stream
+        let self_: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>(opaque_self) };
+        let _ = Self::callback(chunk, has_more, err, self_); // TODO: properly propagate exception upwards
+    }
+}
+
+impl Drop for S3DownloadStreamWrapper {
+    /// readable_stream_ref / path are freed by their own field Drop.
+    fn drop(&mut self) {
+        self.clear_stream_cancel_handler();
+    }
+}
+
 /// returns a readable stream that reads from the s3 path
 pub fn readable_stream(
     this: &S3Credentials,
@@ -1336,134 +1462,9 @@ pub fn readable_stream(
     request_payer: bool,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    struct S3DownloadStreamWrapper {
-        pub readable_stream_ref: ReadableStreamStrong,
-        pub path: Box<[u8]>,
-        pub global: GlobalRef, // JSC_BORROW
-        /// Non-owning. The task frees itself on the main thread once `has_more == false`,
-        /// which first drops this wrapper (clearing `cancel_handler`), so this pointer is
-        /// never observed dangling from `on_stream_cancelled`.
-        pub task: *mut S3HttpDownloadStreamingTask,
-    }
-
-    impl S3DownloadStreamWrapper {
-        fn new(init: Self) -> *mut Self {
-            bun_core::heap::into_raw(Box::new(init))
-        }
-
-        fn callback(
-            chunk: &MutableString,
-            has_more: bool,
-            request_err: Option<Error::S3Error>,
-            self_: &mut Self,
-        ) -> JsTerminatedResult<()> {
-            // scope-exit cleanup via guard (keeps borrowck happy)
-            let _guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), move |s| {
-                if !has_more {
-                    // SAFETY: s is a live Box-allocated pointer (heap::alloc in S3DownloadStreamWrapper::new);
-                    // reconstituting and dropping the Box runs Drop::drop and frees the allocation
-                    drop(unsafe { bun_core::heap::take(s) });
-                }
-            });
-
-            if let Some(readable) = self_.readable_stream_ref.get(&self_.global) {
-                // BACKREF: see `Source::bytes()` — payload live while the
-                // readable stream is rooted. R-2: `&` — `on_data` re-enters JS.
-                if let Some(bytes) = readable.ptr.bytes() {
-                    if let Some(err) = request_err {
-                        bytes.on_data(crate::webcore::streams::StreamResult::Err(
-                            crate::webcore::streams::StreamError::JSValue(
-                                bun_jsc::strong::Optional::create(
-                                    s3_error_to_js(&err, &self_.global, Some(&self_.path)),
-                                    &self_.global,
-                                ),
-                            ),
-                        ))?;
-                        return Ok(());
-                    }
-                    if has_more {
-                        bytes.on_data(crate::webcore::streams::StreamResult::Temporary(
-                            // chunk.list is borrowed for the duration of on_data.
-                            bun_ptr::RawSlice::new(chunk.list.as_slice()),
-                        ))?;
-                        return Ok(());
-                    }
-
-                    bytes.on_data(crate::webcore::streams::StreamResult::TemporaryAndDone(
-                        // chunk.list is borrowed for the duration of on_data.
-                        bun_ptr::RawSlice::new(chunk.list.as_slice()),
-                    ))?;
-                    return Ok(());
-                }
-            }
-            Ok(())
-        }
-
-        /// Clear the cancel_handler on the ByteStream.Source to prevent use-after-free.
-        /// Must be called before releasing readable_stream_ref.
-        fn clear_stream_cancel_handler(&mut self) {
-            if let Some(readable) = self.readable_stream_ref.get(&self.global) {
-                // BACKREF: see `Source::bytes()` — payload live while the
-                // readable stream is rooted. R-2: shared deref + `Cell::set`.
-                if let Some(bytes) = readable.ptr.bytes() {
-                    let source = bytes.parent_const();
-                    source.cancel_handler.set(None);
-                    source.cancel_ctx.set(None);
-                }
-            }
-        }
-
-        fn on_stream_cancelled(ctx: Option<*mut c_void>) {
-            // SAFETY: ctx points to a S3DownloadStreamWrapper allocated in readable_stream
-            let self_: &mut Self = unsafe { &mut *ctx.unwrap().cast::<Self>() };
-            // Release the Strong ref so the ReadableStream can be GC'd.
-            // The download may still be in progress, but the callback will
-            // see readable_stream_ref.get() return null and skip data delivery.
-            // When the download finishes (has_more == false), deinit() will
-            // clean up the remaining resources.
-            self_.readable_stream_ref.deinit();
-            // Abort the in-flight HTTP request so the HTTP thread delivers a final
-            // callback with `has_more == false`, which frees the task and this wrapper.
-            // Without this, a server that never sends the terminal chunk would leak both.
-            let task = core::mem::replace(&mut self_.task, core::ptr::null_mut());
-            if !task.is_null() {
-                // SAFETY: task is live until its own `on_response` frees it on this thread,
-                // which has not happened yet (it would have dropped this wrapper first).
-                unsafe {
-                    (*task)
-                        .signal_store
-                        .aborted
-                        .store(true, core::sync::atomic::Ordering::Relaxed);
-                    // Wake the HTTP thread so it observes the abort even when the
-                    // socket is idle; otherwise the final `has_more == false`
-                    // callback never fires and both the task and wrapper leak.
-                    bun_http::http_thread().schedule_shutdown_by_id((*task).async_http_id);
-                }
-            }
-        }
-
-        fn opaque_callback(
-            chunk: &MutableString,
-            has_more: bool,
-            err: Option<Error::S3Error>,
-            opaque_self: *mut c_void,
-        ) {
-            // SAFETY: opaque_self points to a S3DownloadStreamWrapper allocated in readable_stream
-            let self_: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>(opaque_self) };
-            let _ = Self::callback(chunk, has_more, err, self_); // TODO: properly propagate exception upwards
-        }
-    }
-
-    impl Drop for S3DownloadStreamWrapper {
-        /// readable_stream_ref / path are freed by their own field Drop.
-        fn drop(&mut self) {
-            self.clear_stream_cancel_handler();
-        }
-    }
-
     // SAFETY (JSC_BORROW): `global_this` outlives the wrapper (it owns the JS heap that
-    // owns the readable stream which keeps the wrapper reachable via cancel_ctx); store as
-    // `'static` for the heap-allocated wrapper.
+    // owns the readable stream which keeps the wrapper reachable via the producer handle);
+    // store as `'static` for the heap-allocated wrapper.
     let global_static = GlobalRef::from(global_this);
 
     // Ownership of the heap-allocated NewSource transfers to the JS wrapper (m_ctx) via
@@ -1494,9 +1495,8 @@ pub fn readable_stream(
     });
 
     reader_mut
-        .cancel_handler
-        .set(Some(S3DownloadStreamWrapper::on_stream_cancelled));
-    reader_mut.cancel_ctx.set(Some(wrapper.cast::<c_void>()));
+        .producer
+        .set(crate::webcore::streams::SourceHandle::S3DownloadBody(wrapper));
 
     let task = download_stream(
         this,

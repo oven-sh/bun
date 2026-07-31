@@ -249,7 +249,12 @@ impl AnyRequestContext {
     }
 
     pub fn on_request_body_stream_drained(self) {
-        dispatch!(self, (), ptr |T, ptr| T::on_request_body_stream_drained(ptr))
+        dispatch!(
+            self,
+            (),
+            ptr | T,
+            ptr | T::on_request_body_stream_drained(ptr)
+        )
     }
 
     pub fn write_chunk(
@@ -259,11 +264,12 @@ impl AnyRequestContext {
         dispatch!(
             self,
             crate::webcore::streams::Writable::Done,
-            ptr |T, ptr| T::write_chunk(ptr, data)
+            ptr | T,
+            ptr | T::write_chunk(ptr, data)
         )
     }
 
     pub fn end_chunk(self, err: Option<&crate::webcore::streams::StreamError>) {
-        dispatch!(self, (), ptr |T, ptr| T::end_chunk(ptr, err))
+        dispatch!(self, (), ptr | T, ptr | T::end_chunk(ptr, err))
     }
 }

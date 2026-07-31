@@ -1553,7 +1553,9 @@ impl FileSink {
             let byte_stream = unsafe { &*bs_ptr };
             if byte_stream.sink.get().is_none() {
                 self.source.set(streams::SourceHandle::ByteStream(bs_ptr));
-                byte_stream.sink.set(webcore::SinkHandle::FileSink(self_ptr));
+                byte_stream
+                    .sink
+                    .set(webcore::SinkHandle::FileSink(self_ptr));
                 byte_stream.sink_paused.set(false);
                 stream.lock_native(global_this);
                 byte_stream.signal_consumer_attached();

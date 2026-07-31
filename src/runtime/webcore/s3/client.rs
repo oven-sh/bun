@@ -50,10 +50,10 @@ use crate::webcore::readable_stream::Strong as ReadableStreamStrong;
 use crate::webcore::s3::multipart::State as MultiPartUploadState;
 use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{NetworkSink, NetworkSinkJSSink};
-use bun_jsc::CallFrame;
 use bun_collections::IntegerBitSet;
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
+use bun_jsc::CallFrame;
 
 bun_core::declare_scope!(S3UploadStream, visible);
 
@@ -702,8 +702,9 @@ impl S3UploadStreamWrapper {
                     // SAFETY: sink is live while held in `self_.sink`.
                     unsafe { (*p.as_ptr()).upstream_error.try_swap() }
                 });
-                let js_err = stashed
-                    .unwrap_or_else(|| s3_error_to_js(err, &self_.global, Some(self_.path.slice())));
+                let js_err = stashed.unwrap_or_else(|| {
+                    s3_error_to_js(err, &self_.global, Some(self_.path.slice()))
+                });
                 js_err.ensure_still_alive();
                 let mut is_native = false;
                 if let Some(sink_ptr) = self_.sink {
@@ -1494,7 +1495,9 @@ pub(crate) fn readable_stream(
 
     reader_mut
         .producer
-        .set(crate::webcore::streams::SourceHandle::S3DownloadBody(wrapper));
+        .set(crate::webcore::streams::SourceHandle::S3DownloadBody(
+            wrapper,
+        ));
 
     let task = download_stream(
         this,

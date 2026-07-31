@@ -116,7 +116,7 @@ macro_rules! decl_js_sink_externs {
 macro_rules! impl_js_sink_abi {
     ($Ty:ty, $abi:literal, $kind:ident) => {
         const _: () = {
-            $crate::decl_js_sink_externs!([abi] $abi as __abi);
+    $crate::decl_js_sink_externs!([abi] $abi as __abi);
             impl $crate::webcore::sink::JsSinkAbi for $Ty {
                 const SINK_KIND: $crate::webcore::streams::SinkKind =
                     $crate::webcore::streams::SinkKind::$kind;
@@ -223,7 +223,10 @@ impl<T: JsSinkAbi> JSSink<T> {
         // Pre-seed JSController{bits:0} so a sync drain's __controllerDetached can match-and-clear;
         // only install real bits if the placeholder survived.
         if let Some(src) = ptr.source() {
-            *src = streams::SourceHandle::JSController { bits: 0, kind: T::SINK_KIND };
+            *src = streams::SourceHandle::JSController {
+                bits: 0,
+                kind: T::SINK_KIND,
+            };
         }
         let mut bits: usize = 0;
         let result = T::assign_to_stream_extern(
@@ -235,7 +238,10 @@ impl<T: JsSinkAbi> JSSink<T> {
         if let Some(src) = ptr.source() {
             if matches!(*src, streams::SourceHandle::JSController { .. }) {
                 *src = if bits != 0 {
-                    streams::SourceHandle::JSController { bits, kind: T::SINK_KIND }
+                    streams::SourceHandle::JSController {
+                        bits,
+                        kind: T::SINK_KIND,
+                    }
                 } else {
                     streams::SourceHandle::None
                 };

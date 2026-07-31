@@ -535,10 +535,7 @@ impl FileReader {
     /// must drive it itself. Returns `None` if the reader was already started
     /// (or nothing to do); otherwise the `on_start` result the caller must
     /// handle (`Err` / `OwnedAndDone`).
-    pub(crate) fn start_for_sink(
-        &self,
-        global: &jsc::JSGlobalObject,
-    ) -> Option<streams::Start> {
+    pub(crate) fn start_for_sink(&self, global: &jsc::JSGlobalObject) -> Option<streams::Start> {
         if self.started.get() {
             return None;
         }

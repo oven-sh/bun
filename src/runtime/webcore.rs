@@ -31,9 +31,9 @@ pub mod text_encoder_stream_encoder;
 // ─── flat re-exports ─────────────────────────────────────────────────────────
 pub use bun_jsc::js_error_code::DOMExceptionCode;
 pub use bun_jsc::web_worker;
-pub use s3_stat::S3Stat;
 pub use cookie_map::{CookieMap, CookieMapRef};
 pub use s3_client::S3Client;
+pub use s3_stat::S3Stat;
 pub use streams::{
     H3ResponseSink, HTTPResponseSink, HTTPSResponseSink, HTTPServerWritable, NetworkSink,
 };

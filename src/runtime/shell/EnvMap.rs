@@ -103,6 +103,10 @@ impl EnvMap {
         Some(val)
     }
 
+    pub(crate) fn contains(&self, key: &EnvStr) -> bool {
+        self.map.contains(key)
+    }
+
     pub(crate) fn clone(&self) -> EnvMap {
         let new = EnvMap {
             map: self.map.clone().expect("OOM"),

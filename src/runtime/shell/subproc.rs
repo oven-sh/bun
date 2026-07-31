@@ -1369,6 +1369,7 @@ impl<'a> SpawnArgs<'a> {
     pub(crate) fn fill_env<const DISABLE_PATH_LOOKUP_FOR_ARV0: bool>(
         &mut self,
         env_iter: &mut crate::shell::env_map::Iterator<'_>,
+        skip: Option<&crate::shell::env_map::EnvMap>,
     ) {
         self.override_env = true;
         // Note: `bun_collections::array_hash_map::Iter` doesn't impl
@@ -1381,12 +1382,10 @@ impl<'a> SpawnArgs<'a> {
             self.path = b"";
         }
 
-        // `export_env` then `cmd_local_env` can both carry the same key; replace
-        // an earlier call's entry instead of appending a getenv-shadowed
-        // duplicate. Each `EnvMap` is internally uniqued, hence the bounded scan.
-        let scan_end = self.env_array.len();
-
         while let Some(entry) = env_iter.next() {
+            if skip.is_some_and(|m| m.contains(entry.key_ptr)) {
+                continue;
+            }
             let key = entry.key_ptr.slice();
             let value = entry.value_ptr.slice();
 
@@ -1408,31 +1407,7 @@ impl<'a> SpawnArgs<'a> {
                 self.path = &line[b"PATH=".len()..len];
             }
 
-            let line_ptr = line.as_ptr().cast::<c_char>();
-            let existing = self.env_array[..scan_end].iter().position(|&p| {
-                // SAFETY: every entry is a NUL-terminated `key=value` line
-                // pushed by an earlier `fill_env` call.
-                let e = unsafe { core::ffi::CStr::from_ptr(p).to_bytes() };
-                e.len() > key.len()
-                    && e[key.len()] == b'='
-                    && Self::env_key_eql(&e[..key.len()], key)
-            });
-            match existing {
-                Some(i) => self.env_array[i] = line_ptr,
-                None => self.env_array.push(line_ptr),
-            }
-        }
-    }
-
-    #[inline]
-    fn env_key_eql(a: &[u8], b: &[u8]) -> bool {
-        #[cfg(windows)]
-        {
-            return bun_core::strings::eql_case_insensitive_asciii_check_length(a, b);
-        }
-        #[cfg(not(windows))]
-        {
-            a == b
+            self.env_array.push(line.as_ptr().cast::<c_char>());
         }
     }
 }

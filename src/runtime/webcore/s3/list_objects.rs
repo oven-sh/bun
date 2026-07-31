@@ -98,11 +98,16 @@ impl<'a> S3ListObjectsV2Result<'a> {
                 );
 
                 object_info.put_optional_utf8(global_object, b"eTag", item.etag.as_deref())?;
-                object_info.put_optional_utf8(
-                    global_object,
-                    b"checksumAlgorithm",
-                    item.checksum_algorithm,
-                )?;
+                if let Some(algorithm) = item.checksum_algorithm {
+                    let js_algorithm = create_utf8_for_js(global_object, algorithm)?;
+                    object_info.put(global_object, b"checksumAlgorithm", js_algorithm);
+                    // Back-compat alias for the original misspelling (#19142).
+                    object_info.put_non_enumerable(
+                        global_object,
+                        b"checksumAlgorithme",
+                        js_algorithm,
+                    );
+                }
                 object_info.put_optional_utf8(
                     global_object,
                     b"checksumType",

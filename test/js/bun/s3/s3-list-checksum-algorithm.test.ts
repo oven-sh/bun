@@ -4,6 +4,8 @@ import { bunEnv, bunExe } from "harness";
 // https://github.com/oven-sh/bun/issues/19142
 // S3Client.list() exposed contents[i].checksumAlgorithme (trailing 'e') instead
 // of checksumAlgorithm, contradicting the declared type in bun-types/s3.d.ts.
+// The correct spelling is now the enumerable property; the old spelling is kept
+// as a non-enumerable alias so existing code that read it does not break.
 //
 // The S3 client does not honor NO_PROXY, so an inherited proxy would hijack
 // the request to the stub server. Run in a subprocess with proxy env cleared.
@@ -43,10 +45,18 @@ const client = new S3Client({
 });
 
 const res = await client.list();
-console.log(JSON.stringify(res.contents?.[0]));
+const entry = res.contents?.[0];
+console.log(
+  JSON.stringify({
+    keys: Object.keys(entry).sort(),
+    checksumAlgorithm: entry.checksumAlgorithm,
+    checksumAlgorithme: entry.checksumAlgorithme,
+    aliasDescriptor: Object.getOwnPropertyDescriptor(entry, "checksumAlgorithme"),
+  }),
+);
 `;
 
-test("S3Client.list() exposes contents[].checksumAlgorithm (not checksumAlgorithme)", async () => {
+test("S3Client.list() exposes contents[].checksumAlgorithm with a non-enumerable checksumAlgorithme alias", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", fixture],
     env: envWithoutProxy,
@@ -57,12 +67,16 @@ test("S3Client.list() exposes contents[].checksumAlgorithm (not checksumAlgorith
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  const entry = JSON.parse(stdout.trim());
-  expect(entry).toEqual({
-    key: "file.txt",
+  expect(JSON.parse(stdout.trim())).toEqual({
+    keys: ["checksumAlgorithm", "checksumType", "key"],
     checksumAlgorithm: "SHA256",
-    checksumType: "FULL_OBJECT",
+    checksumAlgorithme: "SHA256",
+    aliasDescriptor: {
+      value: "SHA256",
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    },
   });
-  expect(entry).not.toHaveProperty("checksumAlgorithme");
   expect(exitCode).toBe(0);
 });

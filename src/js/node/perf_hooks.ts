@@ -108,15 +108,16 @@ if (PerformanceEntry) {
   Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
 }
 
-// Node exposes the entry accessors as own enumerable properties of the
-// nodeTiming object, not only on the prototype. Null-prototype descriptors so
-// prototype pollution before this module loads cannot inject extra keys.
+// Node exposes name/entryType/startTime as own enumerable data properties of
+// the nodeTiming object (writable:false), and duration as an own enumerable
+// getter. Null-prototype descriptors so prototype pollution before this module
+// loads cannot inject extra keys.
 const performanceNodeTimingEntryDescriptors = {
   __proto__: null,
-  name: { __proto__: null, get: () => "node", configurable: true, enumerable: true },
-  entryType: { __proto__: null, get: () => "node", configurable: true, enumerable: true },
-  startTime: { __proto__: null, get: () => 0, configurable: true, enumerable: true },
-  duration: { __proto__: null, get: () => performance.now(), configurable: true, enumerable: true },
+  name: { __proto__: null, value: "node", enumerable: true, configurable: true },
+  entryType: { __proto__: null, value: "node", enumerable: true, configurable: true },
+  startTime: { __proto__: null, value: 0, enumerable: true, configurable: true },
+  duration: { __proto__: null, get: () => performance.now(), enumerable: true, configurable: true },
 };
 
 function createPerformanceNodeTiming() {

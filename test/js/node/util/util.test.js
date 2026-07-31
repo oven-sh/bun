@@ -459,14 +459,12 @@ describe("util", () => {
     });
 
     it("leaves exponent-form numbers intact", () => {
-      // The old integer-length split corrupted these: 1e-7 became "0.-7",
-      // -1e-7 lost its sign as "0.e-7", and 1.23456e-7 became "0.234_56e_-7".
+      // https://github.com/oven-sh/bun/issues/23098
       expect(sep(1e-7)).toBe("1e-7");
       expect(sep(-1e-7)).toBe("-1e-7");
       expect(sep(2e-7)).toBe("2e-7");
       expect(sep(1.23456e-7)).toBe("1.23456e-7");
       expect(sep(-0.5)).toBe("-0.5");
-      // Integers large enough to stringify in exponent form take the same path.
       expect(sep(1234567891234567891234)).toBe("1.234567891234568e+21");
     });
 

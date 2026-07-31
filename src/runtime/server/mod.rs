@@ -288,10 +288,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub(crate) all_closed_promise: jsc::JSPromiseStrong,
 
     pub poll_ref: KeepAlive,
-    /// Ref'd while `pending_requests > 0`. Separate from `poll_ref` so
-    /// `server.unref()` only releases the *listener's* hold on the event loop;
-    /// in-flight requests keep the process alive on their own (Node semantics:
-    /// an accepted connection is its own handle).
+    /// Ref'd while `pending_requests > 0` so `server.unref()` doesn't drop in-flight requests.
     in_flight_keep_alive: KeepAlive,
 
     pub(crate) flags: ServerFlags,

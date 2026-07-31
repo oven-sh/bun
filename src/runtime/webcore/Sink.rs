@@ -51,50 +51,61 @@ pub struct JSSink<T> {
 // Const-generic `&'static str` cannot drive `#[link_name]`, so the abi name is
 // taken as a macro literal and `concat!`-ed.
 //
-// `decl_js_sink_externs!` emits the 7-fn extern set into a named submodule;
-// `impl_js_sink_abi!` wraps it in a 1:1-forwarding `JsSinkAbi` impl. The
-// extern-only form is exposed separately so `HTTPServerWritable<SSL,HTTP3>`
-// can declare three sets and keep its const-generic 3-way dispatch impl.
+// `decl_js_sink_externs!` emits the codegen `${abi}__*` externs into a named
+// submodule; `impl_js_sink_abi!` wraps the `@abi` subset in a 1:1-forwarding
+// `JsSinkAbi` impl. The extern-only form is exposed separately so
+// `HTTPServerWritable<SSL,HTTP3>` can declare three sets and keep its
+// const-generic 3-way dispatch impl.
 
-/// Declare the codegen-emitted `${abi}__{fromJS,createObject,setDestroyCallback,
-/// assignToStream,onClose,onReady,detachPtr}` C externs into `pub mod $m`.
+/// Declare the codegen-emitted `${abi}__*` C externs. The `@abi` / `@signals`
+/// arms expand to bare foreign items (invoke inside `unsafe extern "C" { }`);
+/// the `[$sel] $abi as $m` / `$abi as $m` arms wrap them in `pub(crate) mod $m`.
+/// Split so each caller emits only the subset it uses — no `dead_code` escape.
 ///
 /// `safe fn`: `&JSGlobalObject` discharges the only deref'd-param precondition;
 /// `*mut c_void` args are stored opaquely in the JS wrapper — module-private,
 /// sole callers are the `JsSinkAbi` forwards which pass live pointers.
 #[macro_export]
 macro_rules! decl_js_sink_externs {
-    ($abi:literal as $m:ident) => {
-        #[allow(non_snake_case, dead_code)]
+    (@abi $abi:literal) => {
+        #[link_name = concat!($abi, "__fromJS")]
+        pub(crate) safe fn from_js(value: ::bun_jsc::JSValue) -> usize;
+        #[link_name = concat!($abi, "__createObject")]
+        pub(crate) safe fn create_object(
+            g: &::bun_jsc::JSGlobalObject,
+            o: *mut ::core::ffi::c_void,
+            d: usize,
+        ) -> ::bun_jsc::JSValue;
+        #[link_name = concat!($abi, "__setDestroyCallback")]
+        pub(crate) safe fn set_destroy_callback(v: ::bun_jsc::JSValue, cb: usize);
+        #[link_name = concat!($abi, "__assignToStream")]
+        pub(crate) safe fn assign_to_stream(
+            g: &::bun_jsc::JSGlobalObject,
+            s: ::bun_jsc::JSValue,
+            p: *mut ::core::ffi::c_void,
+            jp: *mut *mut ::core::ffi::c_void,
+        ) -> ::bun_jsc::JSValue;
+    };
+    (@signals $abi:literal) => {
+        #[link_name = concat!($abi, "__onClose")]
+        pub(crate) safe fn on_close(p: ::bun_jsc::JSValue, r: ::bun_jsc::JSValue);
+        #[link_name = concat!($abi, "__onReady")]
+        pub(crate) safe fn on_ready(
+            p: ::bun_jsc::JSValue,
+            a: ::bun_jsc::JSValue,
+            o: ::bun_jsc::JSValue,
+        );
+        #[link_name = concat!($abi, "__detachPtr")]
+        pub(crate) safe fn detach_ptr(p: ::bun_jsc::JSValue);
+    };
+    ([$($sel:tt)+] $abi:literal as $m:ident) => {
+        #[allow(non_snake_case)]
         pub(crate) mod $m {
-            use ::bun_jsc::{JSGlobalObject, JSValue};
-            use ::core::ffi::c_void;
-            unsafe extern "C" {
-                #[link_name = concat!($abi, "__fromJS")]
-                pub(crate) safe fn from_js(value: JSValue) -> usize;
-                #[link_name = concat!($abi, "__createObject")]
-                pub(crate) safe fn create_object(
-                    g: &JSGlobalObject,
-                    o: *mut c_void,
-                    d: usize,
-                ) -> JSValue;
-                #[link_name = concat!($abi, "__setDestroyCallback")]
-                pub(crate) safe fn set_destroy_callback(v: JSValue, cb: usize);
-                #[link_name = concat!($abi, "__assignToStream")]
-                pub(crate) safe fn assign_to_stream(
-                    g: &JSGlobalObject,
-                    s: JSValue,
-                    p: *mut c_void,
-                    jp: *mut *mut c_void,
-                ) -> JSValue;
-                #[link_name = concat!($abi, "__onClose")]
-                pub(crate) safe fn on_close(p: JSValue, r: JSValue);
-                #[link_name = concat!($abi, "__onReady")]
-                pub(crate) safe fn on_ready(p: JSValue, a: JSValue, o: JSValue);
-                #[link_name = concat!($abi, "__detachPtr")]
-                pub(crate) safe fn detach_ptr(p: JSValue);
-            }
+            unsafe extern "C" { $( $crate::decl_js_sink_externs!(@$sel $abi); )+ }
         }
+    };
+    ($abi:literal as $m:ident) => {
+        $crate::decl_js_sink_externs!([abi signals] $abi as $m);
     };
 }
 
@@ -105,7 +116,7 @@ macro_rules! decl_js_sink_externs {
 macro_rules! impl_js_sink_abi {
     ($Ty:ty, $abi:literal, $kind:ident) => {
         const _: () = {
-            $crate::decl_js_sink_externs!($abi as __abi);
+            $crate::decl_js_sink_externs!([abi] $abi as __abi);
             impl $crate::webcore::sink::JsSinkAbi for $Ty {
                 const SINK_KIND: $crate::webcore::streams::SinkKind =
                     $crate::webcore::streams::SinkKind::$kind;

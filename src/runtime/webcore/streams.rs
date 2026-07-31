@@ -851,10 +851,10 @@ pub enum SinkKind {
 }
 
 mod sink_abi {
-    crate::decl_js_sink_externs!("ArrayBufferSink" as array_buffer);
-    crate::decl_js_sink_externs!("FileSink" as file);
-    crate::decl_js_sink_externs!("NetworkSink" as network);
-    crate::decl_js_sink_externs!("FetchRequestBodySink" as fetch_request_body);
+    crate::decl_js_sink_externs!([signals] "ArrayBufferSink" as array_buffer);
+    crate::decl_js_sink_externs!([signals] "FileSink" as file);
+    crate::decl_js_sink_externs!([signals] "NetworkSink" as network);
+    crate::decl_js_sink_externs!([signals] "FetchRequestBodySink" as fetch_request_body);
 }
 
 /// Static-dispatch signal set for a [`SourceHandle`] pointee. `SourceHandle`'s

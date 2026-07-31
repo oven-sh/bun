@@ -1275,7 +1275,7 @@ mod draft {
             super::out_of_memory();
         } else if matches!(
             name,
-            b"InvalidArgument" | b"Invalid Bunfig" | b"InstallFailed"
+            b"InvalidArgument" | b"Invalid Bunfig" | b"InstallFailed" | b"EnvFileNotFound"
         ) {
             if !show_trace {
                 Global::exit(1);

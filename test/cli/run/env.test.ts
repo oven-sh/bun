@@ -673,6 +673,19 @@ describe.concurrent("--env-file", () => {
     };
   }
 
+  async function spawnEnvFile(cmd: string[], cwd = dir) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd,
+      env: { ...bunEnv, NODE_ENV: undefined },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
   test("single arg", async () => {
     expect((await runEnvFile(["--env-file", ".env.a"])).stdout).toBe("BUNTEST_A=1");
     expect((await runEnvFile(["--env-file=.env.a"])).stdout).toBe("BUNTEST_A=1");
@@ -726,7 +739,7 @@ describe.concurrent("--env-file", () => {
   });
 
   test("empty string disables default dotenv behavior", async () => {
-    expect((await runEnvFile(["--env-file=''"])).stdout).toBe("");
+    expect((await runEnvFile(["--env-file="])).stdout).toBe("");
   });
 
   test("should correctly ignore invalid values and parse the rest", async () => {
@@ -734,9 +747,58 @@ describe.concurrent("--env-file", () => {
     expect(res.stdout).toBe("BUNTEST_A=1,BUNTEST_B=1,BUNTEST_C=1,BUNTEST_D=,BUNTEST_E=1");
   });
 
-  test("should ignore a file that doesn't exist", async () => {
-    const res = await runEnvFile(["--env-file=.env.nonexisting"]);
-    expect(res.stdout).toBe("");
+  // #21105: an explicitly requested --env-file that can't be opened must fail
+  // (like Node), not silently run without the variables. Default .env
+  // discovery (which stays silent when the file is missing) goes through a
+  // separate path and is covered by "when arg missing, fallback to default
+  // dotenv behavior" above.
+  describe("errors when an explicit env file does not exist", () => {
+    function check({ stdout, stderr, exitCode }: { stdout: string; stderr: string; exitCode: number | null }) {
+      expect(stdout).toBe("");
+      expect(stderr).toContain(".env.nonexisting");
+      expect(stderr).not.toContain("EnvFileNotFound");
+      expect(stderr).not.toContain("Failed to run");
+      expect(stderr).not.toContain("internal error");
+      expect(exitCode).not.toBe(0);
+    }
+
+    test("bun <file>", async () => {
+      check(await spawnEnvFile(["--env-file=.env.nonexisting", `${dir}/index.ts`]));
+    });
+
+    test("bun -e", async () => {
+      check(await spawnEnvFile(["--env-file=.env.nonexisting", "-e", "0"]));
+    });
+
+    test("bun run <script>", async () => {
+      using scriptDir = tempDir("dotenv-missing-script", {
+        "package.json": JSON.stringify({ scripts: { go: "echo hi" } }),
+      });
+      check(await spawnEnvFile(["--env-file=.env.nonexisting", "run", "go"], String(scriptDir)));
+    });
+
+    test("bun <file.sh>", async () => {
+      using shDir = tempDir("dotenv-missing-sh", { "script.sh": "echo hi\n" });
+      check(await spawnEnvFile(["--env-file=.env.nonexisting", `${shDir}/script.sh`], String(shDir)));
+    });
+
+    test("bun test", async () => {
+      using testDir = tempDir("dotenv-missing-test", {
+        "a.test.ts": "import {test,expect} from 'bun:test'; test('x',()=>expect(1).toBe(1));",
+      });
+      const { stderr, exitCode } = await spawnEnvFile(
+        ["--env-file=.env.nonexisting", "test", "a.test.ts"],
+        String(testDir),
+      );
+      expect(stderr).toContain(".env.nonexisting");
+      expect(stderr).not.toContain("EnvFileNotFound");
+      expect(stderr).not.toContain("internal error");
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("one missing in a comma list of several", async () => {
+      check(await spawnEnvFile(["--env-file=.env.a,.env.nonexisting,.env.b", `${dir}/index.ts`]));
+    });
   });
 });
 

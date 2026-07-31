@@ -522,10 +522,6 @@ pub mod lib {
                     .expect("archive_read_new returned null"),
             )
         }
-        #[inline]
-        pub fn as_ptr(&self) -> *mut Archive {
-            self.0.as_ptr()
-        }
     }
     impl core::ops::Deref for ReadArchive {
         type Target = Archive;
@@ -554,10 +550,6 @@ pub mod lib {
                     .expect("archive_write_new returned null"),
             )
         }
-        #[inline]
-        pub fn as_ptr(&self) -> *mut Archive {
-            self.0.as_ptr()
-        }
     }
     impl core::ops::Deref for WriteArchive {
         type Target = Archive;
@@ -582,10 +574,6 @@ pub mod lib {
         #[inline]
         pub fn new() -> Self {
             Self(core::ptr::NonNull::new(Entry::new()).expect("archive_entry_new returned null"))
-        }
-        #[inline]
-        pub fn as_ptr(&self) -> *mut Entry {
-            self.0.as_ptr()
         }
     }
     impl core::ops::Deref for OwnedEntry {

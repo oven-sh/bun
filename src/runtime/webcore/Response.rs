@@ -378,8 +378,8 @@ impl Response {
     }
 
     /// R-2 `JsCell` escape hatch — single-JS-thread invariant. Centralises the
-    /// `unsafe { self.init.get_mut() }` deref so the four call sites
-    /// ([`get_init_headers_mut`], [`header`], [`get_or_create_headers`],
+    /// `unsafe { self.init.get_mut() }` deref so the three call sites
+    /// ([`get_init_headers_mut`], [`get_or_create_headers`],
     /// [`get_content_type`]) read it as a plain `&mut Init`.
     ///
     /// # Safety (encapsulated)

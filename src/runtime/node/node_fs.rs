@@ -4552,12 +4552,6 @@ pub enum StatOrNotFound {
     NotFound,
 }
 impl StatOrNotFound {
-    pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        match self {
-            StatOrNotFound::Stats(s) => s.to_js_newly_created(global_object),
-            StatOrNotFound::NotFound => Ok(JSValue::UNDEFINED),
-        }
-    }
     pub(crate) fn to_js_newly_created(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             StatOrNotFound::Stats(s) => s.to_js_newly_created(global_object),
@@ -4583,11 +4577,6 @@ impl StringOrUndefined {
 
 /// For use in `Return`'s definitions to act as `void` while returning `null` to JavaScript
 pub struct Null;
-impl Null {
-    pub fn to_js(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::NULL
-    }
-}
 
 pub mod ret {
     use super::*;

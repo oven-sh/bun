@@ -1,6 +1,7 @@
 import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
+import dc from "node:diagnostics_channel";
 import fs from "node:fs";
 import http2 from "node:http2";
 import https from "node:https";
@@ -3082,7 +3083,6 @@ it("http2 pushStream failure reports only via callback, never via stream 'error'
   // teardown must stay silent: the callback is the sole error channel. The diagnostics_channel
   // publish is the only way user code can observe the pushed stream before the callback, so use
   // it to attach a listener and prove nothing is emitted.
-  const dc = require("node:diagnostics_channel");
   const pushedStreams = [];
   const onCreated = ({ stream, headers }) => {
     if (headers[":path"] !== "/pushed") return;

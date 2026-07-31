@@ -840,21 +840,21 @@ pub struct MarkedArrayBuffer {
 
 impl MarkedArrayBuffer {
     #[inline]
-    const fn new(buffer: ArrayBuffer, owns_buffer: bool, pinned: bool) -> Self {
+    const fn new(buffer: ArrayBuffer, owns_buffer: bool) -> Self {
         Self {
             buffer: Cell::new(buffer),
             owns_buffer: Cell::new(owns_buffer),
-            pinned: Cell::new(pinned),
-            settled: Cell::new(owns_buffer || pinned),
+            pinned: Cell::new(false),
+            settled: Cell::new(owns_buffer),
         }
     }
 
     pub fn from_typed_array(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
-        Self::new(ArrayBuffer::from_typed_array(ctx, value), false, false)
+        Self::new(ArrayBuffer::from_typed_array(ctx, value), false)
     }
 
     pub fn from_array_buffer(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
-        Self::new(ArrayBuffer::from_array_buffer(ctx, value), false, false)
+        Self::new(ArrayBuffer::from_array_buffer(ctx, value), false)
     }
 
     /// A non-owning view that neither owns the allocation nor the original's
@@ -862,21 +862,21 @@ impl MarkedArrayBuffer {
     /// counter), released by its own `Drop`.
     #[inline]
     pub fn borrow(&self) -> MarkedArrayBuffer {
-        Self::new(self.buffer.get(), false, false)
+        Self::new(self.buffer.get(), false)
     }
 
     /// Adopt a Rust-owned byte descriptor (freed by [`destroy`] /
     /// [`to_js`], not by `Drop`).
     #[inline]
     pub fn from_owned(buffer: ArrayBuffer) -> MarkedArrayBuffer {
-        Self::new(buffer, true, false)
+        Self::new(buffer, true)
     }
 
     /// Wrap a JS-backed descriptor (its `value` must be set). [`bytes`] pins
     /// on first access.
     #[inline]
     pub fn from_unpinned(buffer: ArrayBuffer) -> MarkedArrayBuffer {
-        Self::new(buffer, false, false)
+        Self::new(buffer, false)
     }
 
     pub fn from_string(str: &[u8]) -> Result<MarkedArrayBuffer, bun_alloc::AllocError> {
@@ -896,14 +896,10 @@ impl MarkedArrayBuffer {
     }
 
     pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> MarkedArrayBuffer {
-        Self::new(
-            ArrayBuffer::from_bytes(bytes, typed_array_type),
-            true,
-            false,
-        )
+        Self::new(ArrayBuffer::from_bytes(bytes, typed_array_type), true)
     }
 
-    pub const EMPTY: MarkedArrayBuffer = Self::new(ArrayBuffer::EMPTY, false, false);
+    pub const EMPTY: MarkedArrayBuffer = Self::new(ArrayBuffer::EMPTY, false);
 
     /// Copy of the inner descriptor. `ptr`/`byte_len` reflect whatever the
     /// most recent [`bytes`] call cached (or the construction-time snapshot
@@ -916,16 +912,6 @@ impl MarkedArrayBuffer {
     #[inline]
     pub fn value(&self) -> JSValue {
         self.buffer.get().value
-    }
-
-    #[inline]
-    pub fn is_pinned(&self) -> bool {
-        self.pinned.get()
-    }
-
-    #[inline]
-    pub fn owns_buffer(&self) -> bool {
-        self.owns_buffer.get()
     }
 
     /// Release the pin taken by [`bytes`]/[`to_thread_safe`] and clear the

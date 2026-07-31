@@ -67,10 +67,11 @@ MessagePort::MessagePort(ScriptExecutionContext& context, Ref<MessagePortPipe>&&
 
 MessagePort::~MessagePort()
 {
-    if (auto* context = scriptExecutionContext()) {
-        if (m_listenerLoopRefActive)
-            context->unrefEventLoop();
-        if (m_hasRef)
+    // jsRef() takes a self-ref() alongside m_hasRef, so the destructor cannot
+    // run while m_hasRef is set. The listener keepalive takes no self-ref.
+    ASSERT(!m_hasRef);
+    if (m_listenerLoopRefActive) {
+        if (auto* context = scriptExecutionContext())
             context->unrefEventLoop();
     }
     if (!m_isDetached)

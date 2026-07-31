@@ -388,7 +388,7 @@ describe("MessagePort pipe", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe("");
     expect(exitCode).toBe(0);
-  }, 15_000);
+  });
 });
 
 // worker.postMessage / parentPort.postMessage go through the same coalesced

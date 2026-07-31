@@ -10,9 +10,6 @@ pub(crate) type RawStatFS = libc::statfs;
 #[cfg(not(unix))]
 pub(crate) type RawStatFS = bun_sys::StatFS;
 
-// Both variants store fields as `i64`; they differ only in the JS conversion
-// (Number vs BigInt). The macro just stamps out the two aliases; the exported
-// `StatFSSmall`/`StatFSBig` are the only call sites.
 macro_rules! define_statfs_type {
     ($name:ident, big = $big:expr) => {
         #[allow(non_snake_case)]

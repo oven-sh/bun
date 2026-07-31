@@ -824,21 +824,11 @@ impl TypedArrayType {
 // MarkedArrayBuffer
 // ──────────────────────────────────────────────────────────────────────────
 
-/// A byte-slice view over either a JS `ArrayBuffer`/typed array or a
-/// Rust-owned allocation.
-///
-/// For a JS-backed buffer the `(ptr, byte_len)` snapshot is taken lazily on
-/// the first [`slice`]/[`bytes`] call: the backing `JSC::ArrayBuffer` is
-/// pinned, its `vector()`/`byteLength()` is read once, and the result is
-/// cached. Until then only the `JSValue` is meaningful, so user JS that runs
-/// between construction and first use (argument coercion on a later
-/// parameter) may freely `transfer()`/`resize()` the backing store and the
-/// first `slice()` observes the post-coercion state.
-///
-/// `Drop` releases the pin on the JS thread. A `MarkedArrayBuffer` that will
-/// be dropped off the JS thread must be routed through the
-/// [`crate::Unprotect`] hook (see `StringOrBuffer::unprotect`) which clears
-/// the pin first so `Drop` becomes a no-op.
+/// Byte view over a JS `ArrayBuffer`/view or a Rust-owned allocation. For a
+/// JS-backed buffer the `(ptr, byte_len)` is taken lazily on the first
+/// [`bytes`]/[`slice`] call: pin, read `vector()`/`byteLength()` once, cache.
+/// `Drop` releases the pin (JS thread); off-thread users route through
+/// [`crate::Unprotect`] which clears the pin first.
 #[derive(Default)]
 pub struct MarkedArrayBuffer {
     buffer: Cell<ArrayBuffer>,

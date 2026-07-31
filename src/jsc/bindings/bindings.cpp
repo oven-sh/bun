@@ -3212,13 +3212,8 @@ bool JSC__JSValue__asArrayBuffer(
     return true;
 }
 
-// Re-read the current vector()/byteLength() from a buffer-type cell without an
-// exception scope. Caller guarantees `encodedValue` is a live
-// JSArrayBuffer/JSArrayBufferView cell (type-checked at the point the
-// Bun::ArrayBuffer descriptor was constructed). A detached buffer yields
-// (nullptr, 0). Used by `MarkedArrayBuffer::slice()` to compute the byte view
-// lazily so a later argument's toString()/valueOf() that transfers or resizes
-// the buffer is observed instead of leaving a stale (ptr, len).
+// Read the current vector()/byteLength() from a buffer-type cell (caller
+// already type-checked it). Detached -> (nullptr, 0). No exception scope.
 CPP_DECL void JSC__JSValue__arrayBufferLiveBytes(
     JSC::EncodedJSValue encodedValue, uint8_t** out_ptr, size_t* out_byte_len)
 {

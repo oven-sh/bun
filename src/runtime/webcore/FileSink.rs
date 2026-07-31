@@ -39,7 +39,7 @@ pub struct FileSink {
     pub event_loop_handle: EventLoopHandle,
     pub written: Cell<usize>,
     pub pending: JsCell<streams::WritablePending>,
-    pub source: JsCell<streams::SourceHandle<FileSink>>,
+    pub source: JsCell<streams::SourceHandle>,
     pub done: Cell<bool>,
     pub started: Cell<bool>,
     pub must_be_kept_alive_until_eof: Cell<bool>,
@@ -1340,7 +1340,7 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     fn start(&mut self, config: streams::Start) -> sys::Result<()> {
         Self::start(self, &config)
     }
-    fn source(&mut self) -> Option<&mut streams::SourceHandle<Self>> {
+    fn source(&mut self) -> Option<&mut streams::SourceHandle> {
         // SAFETY: JsCell — trait receiver is `&mut self`; sole borrow of `source`.
         Some(unsafe { self.source.get_mut() })
     }

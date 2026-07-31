@@ -1092,7 +1092,7 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
 
     // allocator field dropped — global mimalloc per §Allocators
     pub done: bool,
-    pub source: SourceHandle<HTTPServerWritable<SSL, HTTP3>>,
+    pub source: SourceHandle,
     pub pending_flush: Option<*mut JSPromise>,
     /// Backpressure promise returned from `write()` to a JS controller (direct
     /// stream `pull` or `readStreamIntoSink`). Resolved on drain via
@@ -2198,7 +2198,7 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
     fn start(&mut self, config: Start) -> bun_sys::Result<()> {
         Self::start(self, &config)
     }
-    fn source(&mut self) -> Option<&mut SourceHandle<Self>> {
+    fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
     }
     fn done(&self) -> bool {
@@ -2219,7 +2219,7 @@ pub struct NetworkSink {
     // (set-once); while `Some` the sink holds a counted ref on the intrusively
     // ref-counted `MultiPartUpload`, released in `detach_writable`.
     pub task: Option<BackRef<bun_s3::MultiPartUpload>>,
-    pub source: SourceHandle<NetworkSink>,
+    pub source: SourceHandle,
     // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
     pub global_this: Option<BackRef<JSGlobalObject>>,
     pub high_water_mark: BlobSizeType,
@@ -2644,7 +2644,7 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     fn start(&mut self, config: Start) -> bun_sys::Result<()> {
         Self::start(self, &config)
     }
-    fn source(&mut self) -> Option<&mut SourceHandle<Self>> {
+    fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
     }
     fn done(&self) -> bool {

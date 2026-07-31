@@ -11,7 +11,7 @@ pub struct ArrayBufferSink {
     pub bytes: Vec<u8>,
     // allocator field dropped — global mimalloc (non-AST crate, see PORTING.md §Allocators)
     pub done: bool,
-    pub source: SourceHandle<ArrayBufferSink>,
+    pub source: SourceHandle,
     pub streaming: bool,
     pub as_uint8array: bool,
 }
@@ -258,7 +258,7 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     fn start(&mut self, config: streams::Start) -> bun_sys::Result<()> {
         Self::start(self, &config)
     }
-    fn source(&mut self) -> Option<&mut SourceHandle<Self>> {
+    fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
     }
     fn done(&self) -> bool {

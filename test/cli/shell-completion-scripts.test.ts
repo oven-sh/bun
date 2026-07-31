@@ -4,10 +4,18 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 // `bun completions` writes the embedded completion script for the shell named
 // by $SHELL to stdout when stdout is not a TTY. This lets us assert on the
 // bytes that ship inside the binary (from completions/bun.{zsh,bash,fish}).
+// HOME / BUN_INSTALL are cleared so the `install_bunx_symlink` step that runs
+// before the piped-stdout write has nowhere outside the build tree to land.
 async function emitCompletions(shell: "zsh" | "bash" | "fish"): Promise<string> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "completions"],
-    env: { ...bunEnv, SHELL: `/bin/${shell}`, IS_BUN_AUTO_UPDATE: undefined },
+    env: {
+      ...bunEnv,
+      SHELL: `/bin/${shell}`,
+      IS_BUN_AUTO_UPDATE: undefined,
+      HOME: undefined,
+      BUN_INSTALL: undefined,
+    },
     stdout: "pipe",
     stderr: "pipe",
   });

@@ -1012,6 +1012,167 @@ it("--filter with a negated pattern updates everything except the excluded works
   expect(root.dependencies.baz).toBe("~0.0.5");
 });
 
+async function setupWorkspaces(
+  root: object,
+  members: Record<string, object>,
+  versions: Record<string, object> = { "0.0.3": {}, "0.0.5": {}, latest: "0.0.5" },
+) {
+  setHandler(dummyRegistry([], versions));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"], ...root }),
+  );
+  for (const [name, body] of Object.entries(members)) {
+    await mkdir(join(package_dir, "packages", name), { recursive: true });
+    await writeFile(join(package_dir, "packages", name, "package.json"), JSON.stringify({ name, ...body }));
+  }
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [err, code] = await Promise.all([stderr.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(code).toBe(0);
+}
+
+async function runUpdate(args: string[], cwd = package_dir) {
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "update", ...args, "--linker=hoisted"],
+    cwd,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [err, code] = await Promise.all([stderr.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(code).toBe(0);
+}
+
+const pkgJson = (name: string) => file(join(package_dir, "packages", name, "package.json")).json();
+
+// https://github.com/oven-sh/bun/issues/23507
+for (const group of ["dependencies", "devDependencies", "optionalDependencies"] as const) {
+  it(`--recursive --latest updates a member's ${group}`, async () => {
+    await setupWorkspaces({}, { "pkg-a": { [group]: { baz: "0.0.3" } } });
+    await runUpdate(["--recursive", "--latest"]);
+    expect((await pkgJson("pkg-a"))[group]).toEqual({ baz: "0.0.5" });
+  });
+}
+
+// https://github.com/oven-sh/bun/issues/23507
+it("--recursive --latest updates an npm: aliased dep in a member, preserving the alias", async () => {
+  await setupWorkspaces({}, { "pkg-a": { dependencies: { aliased: "npm:baz@0.0.3" } } });
+  await runUpdate(["--recursive", "--latest"]);
+  expect((await pkgJson("pkg-a")).dependencies).toEqual({ aliased: "npm:baz@0.0.5" });
+});
+
+// https://github.com/oven-sh/bun/issues/23507
+it("--recursive does not rewrite workspace: protocol references between members", async () => {
+  await setupWorkspaces(
+    {},
+    {
+      "pkg-a": { version: "1.0.0", dependencies: { baz: "~0.0.3" } },
+      "pkg-b": { dependencies: { "pkg-a": "workspace:*", baz: "~0.0.3" } },
+    },
+  );
+  await runUpdate(["--recursive"]);
+  expect((await pkgJson("pkg-b")).dependencies).toEqual({ "pkg-a": "workspace:*", baz: "~0.0.5" });
+  expect((await pkgJson("pkg-a")).dependencies).toEqual({ baz: "~0.0.5" });
+});
+
+// https://github.com/oven-sh/bun/issues/23507
+it("--recursive from inside a member updates siblings and root", async () => {
+  await setupWorkspaces(
+    { dependencies: { baz: "~0.0.3" } },
+    {
+      "pkg-a": { dependencies: { baz: "~0.0.3" } },
+      "pkg-b": { dependencies: { baz: "~0.0.3" } },
+    },
+  );
+  await runUpdate(["--recursive"], join(package_dir, "packages", "pkg-a"));
+  expect({
+    root: (await file(join(package_dir, "package.json")).json()).dependencies.baz,
+    a: (await pkgJson("pkg-a")).dependencies.baz,
+    b: (await pkgJson("pkg-b")).dependencies.baz,
+  }).toEqual({ root: "~0.0.5", a: "~0.0.5", b: "~0.0.5" });
+});
+
+// https://github.com/oven-sh/bun/issues/23507
+it("--filter with a glob plus a negation scopes to the matched set minus the exclusion", async () => {
+  await setupWorkspaces(
+    { dependencies: { baz: "~0.0.3" } },
+    {
+      "pkg-a": { dependencies: { baz: "~0.0.3" } },
+      "pkg-b": { dependencies: { baz: "~0.0.3" } },
+      "pkg-c": { dependencies: { baz: "~0.0.3" } },
+    },
+  );
+  await runUpdate(["--filter", "pkg-*", "--filter", "!pkg-c"]);
+  expect({
+    root: (await file(join(package_dir, "package.json")).json()).dependencies.baz,
+    a: (await pkgJson("pkg-a")).dependencies.baz,
+    b: (await pkgJson("pkg-b")).dependencies.baz,
+    c: (await pkgJson("pkg-c")).dependencies.baz,
+  }).toEqual({ root: "~0.0.3", a: "~0.0.5", b: "~0.0.5", c: "~0.0.3" });
+});
+
+// https://github.com/oven-sh/bun/issues/23507
+it("--recursive --dry-run writes no workspace package.json", async () => {
+  await setupWorkspaces(
+    { dependencies: { baz: "~0.0.3" } },
+    { "pkg-a": { dependencies: { baz: "~0.0.3" } } },
+  );
+  const rootBefore = await file(join(package_dir, "package.json")).text();
+  const aBefore = await file(join(package_dir, "packages", "pkg-a", "package.json")).text();
+  await runUpdate(["--recursive", "--latest", "--dry-run"]);
+  expect(await file(join(package_dir, "package.json")).text()).toBe(rootBefore);
+  expect(await file(join(package_dir, "packages", "pkg-a", "package.json")).text()).toBe(aBefore);
+});
+
+// https://github.com/oven-sh/bun/issues/23507
+it("--recursive preserves each member's pin style independently", async () => {
+  await setupWorkspaces(
+    {},
+    {
+      "pkg-a": { dependencies: { baz: "^0.0.3" } },
+      "pkg-b": { dependencies: { baz: "~0.0.3" } },
+      "pkg-c": { dependencies: { baz: "0.0.3" } },
+    },
+  );
+  await runUpdate(["--recursive", "--latest"]);
+  expect({
+    a: (await pkgJson("pkg-a")).dependencies.baz,
+    b: (await pkgJson("pkg-b")).dependencies.baz,
+    c: (await pkgJson("pkg-c")).dependencies.baz,
+  }).toEqual({ a: "^0.0.5", b: "~0.0.5", c: "0.0.5" });
+});
+
+// https://github.com/oven-sh/bun/issues/23507
+it("bun outdated -r is empty after bun update -r --latest", async () => {
+  await setupWorkspaces(
+    { dependencies: { baz: "~0.0.3" } },
+    {
+      "pkg-a": { dependencies: { baz: "~0.0.3" } },
+      "pkg-b": { devDependencies: { baz: "0.0.3" } },
+    },
+  );
+  await runUpdate(["--recursive", "--latest"]);
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "outdated", "--recursive"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(out).not.toContain("baz");
+  expect(code).toBe(0);
+});
+
 it("should print UTF-8 arrows correctly with colors enabled", async () => {
   const urls: string[] = [];
   const registry = {

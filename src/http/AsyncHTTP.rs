@@ -542,6 +542,7 @@ impl<'a> AsyncHTTP<'a> {
 pub(crate) struct SingleHTTPChannel {
     slot: bun_threading::Guarded<Option<HTTPClientResult<'static>>>,
     cv: bun_threading::Condvar,
+    response_buffer: *mut MutableString,
 }
 
 impl SingleHTTPChannel {
@@ -549,6 +550,7 @@ impl SingleHTTPChannel {
         SingleHTTPChannel {
             slot: bun_threading::Guarded::new(None),
             cv: bun_threading::Condvar::new(),
+            response_buffer: core::ptr::null_mut(),
         }
     }
     fn write_item(&self, item: HTTPClientResult<'static>) {
@@ -593,23 +595,32 @@ fn send_sync_callback(
         real.err = async_http.err;
         real.elapsed = async_http.elapsed;
     }
-    // SAFETY: `this` is the leaked `SingleHTTPChannel` from `send_sync` and is
-    // alive for the process lifetime; `result` borrows the HTTP-thread copy's
-    // response buffer, which is the caller's buffer — outlives the read in
-    // `send_sync`.
+    // SAFETY: `this` is the heap `SingleHTTPChannel` from `send_sync`;
+    // `response_buffer` is the caller's `&mut MutableString` which outlives
+    // `read_item`. `result.body` borrows the HTTP-thread `decoded_body` which
+    // is live for the duration of this callback.
     unsafe {
+        (*(*this).response_buffer)
+            .list
+            .extend_from_slice(result.body);
         (*this).write_item(result.detach_lifetime());
     }
 }
 
 impl<'a> AsyncHTTP<'a> {
-    pub fn send_sync(&mut self) -> crate::Result<crate::HTTPResponseMetadata> {
+    pub fn send_sync(
+        &mut self,
+        response_buffer: &mut MutableString,
+    ) -> crate::Result<crate::HTTPResponseMetadata> {
         crate::http_thread::init(&Default::default());
 
         // Note: `Box::leak` is forbidden (PORTING.md §Forbidden);
         // allocate via `heap::alloc` and reclaim once
         // the single sync callback has fired and we've read the result.
         let ctx = bun_core::heap::into_raw_nn(Box::new(SingleHTTPChannel::init()));
+        // SAFETY: `ctx` is uniquely owned here; no other reference exists until
+        // `schedule` below hands the callback to the HTTP thread.
+        unsafe { (*ctx.as_ptr()).response_buffer = &raw mut *response_buffer };
         self.result_callback =
             HTTPClientResultCallback::new::<SingleHTTPChannel>(ctx.as_ptr(), send_sync_callback);
 

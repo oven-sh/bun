@@ -1692,7 +1692,6 @@ pub(crate) fn download_to_path(
                 url,
                 Default::default(),
                 b"",
-                &raw mut *compressed_archive_bytes,
                 b"",
                 http_proxy,
                 None,
@@ -1701,7 +1700,7 @@ pub(crate) fn download_to_path(
             async_http.client.progress_node =
                 core::ptr::NonNull::new(core::ptr::from_mut(progress));
             async_http.client.flags.reject_unauthorized = reject_unauthorized;
-            let send_result = async_http.send_sync();
+            let send_result = async_http.send_sync(&mut compressed_archive_bytes);
 
             progress.end();
             let status_code = send_result?.status_code() as u16;

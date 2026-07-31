@@ -485,13 +485,12 @@ fn send_audit_request(
         url,
         headers.entries,
         headers_buf,
-        &raw mut response_buf,
         &final_compressed_body,
         http_proxy,
         None,
         http::FetchRedirect::Follow,
     );
-    let res = match req.send_sync() {
+    let res = match req.send_sync(&mut response_buf) {
         Ok(r) => r,
         Err(err) => {
             Output::err(err, "audit request failed", ());

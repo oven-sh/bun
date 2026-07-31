@@ -1,4 +1,5 @@
 use bun_collections::StringHashMap;
+use bun_paths::fs::is_file_namespace;
 
 use crate::IndexStringMap::IndexInt;
 
@@ -41,11 +42,6 @@ pub(crate) type GetOrPutResult<'a> = bun_collections::string_hash_map::GetOrPutR
 /// `text`; other namespaces key on `namespace ++ '\0' ++ text`.
 impl PathToSourceIndexMap {
     #[inline]
-    fn is_file_namespace(namespace: &[u8]) -> bool {
-        namespace.is_empty() || namespace == b"file"
-    }
-
-    #[inline]
     fn composite_key(namespace: &[u8], text: &[u8]) -> Vec<u8> {
         let mut v = Vec::with_capacity(namespace.len() + 1 + text.len());
         v.extend_from_slice(namespace);
@@ -59,7 +55,7 @@ impl PathToSourceIndexMap {
     }
 
     pub(crate) fn get(&self, namespace: &[u8], text: &[u8]) -> Option<IndexInt> {
-        if Self::is_file_namespace(namespace) {
+        if is_file_namespace(namespace) {
             self.map.get(text).copied()
         } else {
             self.map
@@ -76,7 +72,7 @@ impl PathToSourceIndexMap {
     ) -> Result<(), bun_alloc::AllocError> {
         // PERF: bun_collections::StringHashMap is keyed by `Box<[u8]>`, so we dupe here.
         // Revisit once StringHashMap gains a borrowed-key variant.
-        if Self::is_file_namespace(namespace) {
+        if is_file_namespace(namespace) {
             self.map.put(text, value)
         } else {
             self.map
@@ -90,7 +86,7 @@ impl PathToSourceIndexMap {
         text: &[u8],
     ) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
         // PERF: see note in `put` re: key duplication.
-        if Self::is_file_namespace(namespace) {
+        if is_file_namespace(namespace) {
             self.map.get_or_put(text)
         } else {
             self.map
@@ -99,7 +95,7 @@ impl PathToSourceIndexMap {
     }
 
     pub fn remove(&mut self, namespace: &[u8], text: &[u8]) -> bool {
-        if Self::is_file_namespace(namespace) {
+        if is_file_namespace(namespace) {
             self.map.remove(text).is_some()
         } else {
             self.map

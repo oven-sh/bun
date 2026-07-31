@@ -102,7 +102,8 @@ impl CrossThreadShutdownSignal {
 
     #[inline]
     pub fn is_shutting_down(&self) -> bool {
-        self.shutting_down.load(core::sync::atomic::Ordering::Acquire)
+        self.shutting_down
+            .load(core::sync::atomic::Ordering::Acquire)
     }
 
     #[inline]
@@ -143,7 +144,10 @@ impl CrossThreadShutdownSignal {
     pub fn try_begin_vm_read(&self) -> bool {
         self.readers
             .fetch_add(1, core::sync::atomic::Ordering::SeqCst);
-        if self.shutting_down.load(core::sync::atomic::Ordering::SeqCst) {
+        if self
+            .shutting_down
+            .load(core::sync::atomic::Ordering::SeqCst)
+        {
             self.readers
                 .fetch_sub(1, core::sync::atomic::Ordering::SeqCst);
             return false;

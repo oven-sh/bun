@@ -6270,11 +6270,8 @@ impl Drop for TemporaryBytes {
     }
 }
 
-/// Off-thread counterpart of `to_string_with_bytes::<Temporary>`: same BOM
-/// handling and UTF-8 decode, but produces a thread-safe `BunString`
-/// (`WTF::ExternalStringImpl`) instead of a `JSValue`. Keep in sync with
-/// `to_string_with_bytes`.
-#[cfg_attr(windows, allow(dead_code))]
+/// Off-thread counterpart of `to_string_with_bytes::<Temporary>`; keep in sync.
+#[cfg(not(windows))]
 pub(crate) fn decode_blob_text_owned(mut bytes: Vec<u8>) -> BunString {
     let (bom, bom_len) = {
         let (bom, rest) = strings::BOM::detect_and_split(&bytes);

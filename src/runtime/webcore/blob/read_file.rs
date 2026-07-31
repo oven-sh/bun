@@ -53,10 +53,7 @@ macro_rules! log {
 /// `F` provides the callback that converts the read bytes to a JSValue.
 /// Modelled as a trait so each instantiation monomorphizes.
 pub trait ReadFileToJs {
-    /// When `true`, the read task decodes the bytes to a `BunString` on the
-    /// work pool (same path `fs.promises.readFile(..., "utf8")` uses) so the
-    /// JS-thread completion is just a `transfer_to_js` instead of a full
-    /// UTF-8→UTF-16 decode.
+    /// Decode to a `BunString` on the work pool instead of on the JS thread.
     const WANTS_TEXT: bool = false;
     /// `by` carries the caller's allocation provenance unchanged:
     /// `Lifetime::Temporary` ⇒ a `Box::<[u8]>::into_raw` the callee MUST take
@@ -111,9 +108,6 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
         match maybe_bytes {
             ReadFileResultType::Result(result) => {
                 if let Some(mut decoded) = result.decoded_text {
-                    // The work-pool thread already produced the WTF string; just
-                    // hand it to JS. `result.buf` is an empty Box when this arm
-                    // is taken.
                     // SAFETY: `buf` is `Box::<[u8]>::into_raw` from the producer.
                     unsafe { drop(bun_core::heap::take(result.buf)) };
                     AnyPromise::Normal(promise).wrap(global_this, move |g| {
@@ -165,9 +159,7 @@ pub struct ReadFileRead {
     /// `to_*_with_bytes::<Temporary>(*mut [u8])`, which itself decides whether
     /// the bytes are freed locally or transferred to a JSC external string.
     pub(crate) buf: *mut [u8],
-    /// Populated when `ReadFile::convert_to_text` was set: the work-pool thread
-    /// already ran the UTF-8 decode, so the JS-thread completion just wraps the
-    /// string. `buf` is an empty Box when this is `Some`.
+    /// Pre-decoded on the work pool; `buf` is an empty Box when this is `Some`.
     pub(crate) decoded_text: Option<BunString>,
 }
 
@@ -954,9 +946,7 @@ impl ReadFile {
                 self.buffer.shrink_to_fit();
             }
 
-            // `.text()`: decode here (on the work pool) so the JS thread only
-            // has to wrap the resulting WTF string. This is the same split
-            // `fs.promises.readFile(path, "utf8")` uses.
+            // `.text()`: decode here (on the work pool) instead of the JS thread.
             if self.convert_to_text && self.system_error.is_none() {
                 let bytes = core::mem::take(&mut self.buffer);
                 self.decoded_text = Some(crate::webcore::blob::decode_blob_text_owned(bytes));

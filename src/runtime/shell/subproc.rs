@@ -1413,7 +1413,9 @@ impl<'a> SpawnArgs<'a> {
                 // SAFETY: every entry is a NUL-terminated `key=value` line
                 // pushed by `fill_env` (this call or an earlier one).
                 let e = unsafe { core::ffi::CStr::from_ptr(p).to_bytes() };
-                e.len() > key.len() && e[key.len()] == b'=' && Self::env_key_eql(&e[..key.len()], key)
+                e.len() > key.len()
+                    && e[key.len()] == b'='
+                    && Self::env_key_eql(&e[..key.len()], key)
             });
             match existing {
                 Some(i) => self.env_array[i] = line_ptr,

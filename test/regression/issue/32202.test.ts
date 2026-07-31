@@ -14,7 +14,10 @@ import { isWindows } from "harness";
 // and getenv-based children would see the first match. Hence posix-only.
 
 const envLines = async (cmd: $.ShellPromise, name: string) =>
-  (await cmd).text().split("\n").filter(l => l.startsWith(`${name}=`));
+  (await cmd)
+    .text()
+    .split("\n")
+    .filter(l => l.startsWith(`${name}=`));
 
 test.skipIf(isWindows)("prefix assignment of an inherited var replaces the environ entry", async () => {
   const saved = process.env.BUN_32202_INHERITED;

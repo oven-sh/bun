@@ -164,7 +164,8 @@ console.log(syncGen());
 console.log(asyncGen());
 console.log(Bun.inspect(syncGen()), "|", Bun.inspect(asyncGen()));
 const gen = syncGen();
-gen.foo = 1;
+gen.z = 1;
+gen.a = 2;
 process.stdout.write(Bun.inspect(gen) + "\\n");
 const agen = asyncGen();
 agen.x = "hi";
@@ -183,7 +184,7 @@ process.stdout.write(Bun.inspect(agen) + "\\n");
       "Generator {}",
       "AsyncGenerator {}",
       "Generator {} | AsyncGenerator {}",
-      "Generator {\n  foo: 1,\n}",
+      "Generator {\n  z: 1,\n  a: 2,\n}",
       'AsyncGenerator {\n  x: "hi",\n}',
       "",
     ].join("\n"),

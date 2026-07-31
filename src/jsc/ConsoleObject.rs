@@ -5465,8 +5465,14 @@ pub mod formatter {
                 i: 0,
             };
 
-            if ordered_properties || own_only {
+            if ordered_properties {
                 value.for_each_property_ordered(
+                    global_this,
+                    (&raw mut iter).cast::<c_void>(),
+                    PropertyIteratorCtx::<C>::for_each,
+                )?;
+            } else if own_only {
+                value.for_each_own_property(
                     global_this,
                     (&raw mut iter).cast::<c_void>(),
                     PropertyIteratorCtx::<C>::for_each,

@@ -2692,10 +2692,8 @@ impl<'a> EqlSorter<'a> {
                 let r_name = self.pkg_names[r.pkg_id as usize];
                 l_name.order(r_name, self.string_buf, self.string_buf)
             })
-            // npm aliases can place several packages with the same name in one
-            // tree (e.g. `foo` plus `bar@npm:foo@1`), so the name alone is not
-            // a total order; without this tie-break the pairing between the
-            // two lockfiles is unstable and `eql` can report a spurious diff.
+            // npm: aliases allow same-named packages in one tree node, so the
+            // resolution is needed for a total order.
             .then_with(|| {
                 let l_res = &self.pkg_resolutions[l.pkg_id as usize];
                 let r_res = &self.pkg_resolutions[r.pkg_id as usize];

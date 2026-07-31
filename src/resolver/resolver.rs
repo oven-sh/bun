@@ -2684,33 +2684,33 @@ impl<'a> Resolver<'a> {
         if !node_path.is_empty() {
             let delim = if cfg!(windows) { b';' } else { b':' };
             for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {
-                if let Some(ref esm) = esm_ {
-                    let abs_package_path: &[u8] = self
+                if let Some(ref esm) = esm_
+                    && let Some(abs_package_path) = self
                         .fs_ref()
-                        .abs_buf(&[path, esm.name], bufs!(esm_absolute_package_path));
-                    if let Ok(Some(pkg_dir_info)) = self.dir_info_cached(abs_package_path) {
-                        let prev_extension_order = self.extension_order;
-                        self.extension_order = match kind {
-                            ast::ImportKind::Url
-                            | ast::ImportKind::AtConditional
-                            | ast::ImportKind::At => options::ExtOrder::Css,
-                            _ => self.opts.extension_order.kind(kind, true),
-                        };
-                        if let Some(status) = self.resolve_from_package_exports(
-                            esm,
-                            abs_package_path,
-                            pkg_dir_info,
-                            kind,
-                            out,
-                        ) {
-                            self.extension_order = prev_extension_order;
-                            if let Some(d) = self.debug_logs.as_mut() {
-                                d.decrease_indent();
-                            }
-                            return status;
-                        }
+                        .abs_buf_checked(&[path, esm.name], bufs!(esm_absolute_package_path))
+                    && let Ok(Some(pkg_dir_info)) = self.dir_info_cached(abs_package_path)
+                {
+                    let prev_extension_order = self.extension_order;
+                    self.extension_order = match kind {
+                        ast::ImportKind::Url
+                        | ast::ImportKind::AtConditional
+                        | ast::ImportKind::At => options::ExtOrder::Css,
+                        _ => self.opts.extension_order.kind(kind, true),
+                    };
+                    if let Some(status) = self.resolve_from_package_exports(
+                        esm,
+                        abs_package_path,
+                        pkg_dir_info,
+                        kind,
+                        out,
+                    ) {
                         self.extension_order = prev_extension_order;
+                        if let Some(d) = self.debug_logs.as_mut() {
+                            d.decrease_indent();
+                        }
+                        return status;
                     }
+                    self.extension_order = prev_extension_order;
                 }
 
                 let Some(abs_path) = self

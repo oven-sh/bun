@@ -1,0 +1,81 @@
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+
+// `bun completions` writes the embedded completion script for the shell named
+// by $SHELL to stdout when stdout is not a TTY. This lets us assert on the
+// bytes that ship inside the binary (from completions/bun.{zsh,bash,fish}).
+async function emitCompletions(shell: "zsh" | "bash" | "fish"): Promise<string> {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "completions"],
+    env: { ...bunEnv, SHELL: `/bin/${shell}`, IS_BUN_AUTO_UPDATE: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("error");
+  expect(exitCode).toBe(0);
+  return stdout;
+}
+
+// `bun completions` is a no-op on Windows (PowerShell completions are not
+// implemented), so these tests can only run on POSIX.
+describe.skipIf(isWindows)("shell completion scripts", () => {
+  test("zsh: -i optspec has closing bracket inside the quote", async () => {
+    // #31665: the line was `...=fallback'] \` (bracket outside the quote),
+    // which zsh _arguments sees as a stray literal `]` argument.
+    const script = await emitCompletions("zsh");
+    expect(script).toContain("--install=fallback]' \\");
+    expect(script).not.toContain("--install=fallback'] \\");
+  });
+
+  test("zsh: _bun_add_param_package_completion prints history instead of executing it", async () => {
+    // #34062: `$($inexact | grep ...)` runs the first history entry as a
+    // command. It should be `$(print -l -- $inexact | grep ...)`.
+    const script = await emitCompletions("zsh");
+    expect(script).toContain("print -l -- $inexact | grep");
+    expect(script).not.toContain("($($inexact | grep");
+  });
+
+  test("bash: no reference to undeclared re_comp_word_script", async () => {
+    // #28744: ${re_comp_word_script} was never defined; the OR arm expanded
+    // to `=~ ` which is an empty pattern.
+    const script = await emitCompletions("bash");
+    expect(script).not.toContain("re_comp_word_script");
+  });
+
+  test("bash: script passes bash -n", async () => {
+    const script = await emitCompletions("bash");
+    using dir = tempDir("bun-bash-completion", { "bun.bash": script });
+    await using proc = Bun.spawn({
+      cmd: ["bash", "-n", "bun.bash"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("fish: install boolean flags include frozen-lockfile and descriptions line up", async () => {
+    // #29364: frozen-lockfile was missing and dry-run's description was wrong.
+    const script = await emitCompletions("fish");
+    const flagsLine = script.split("\n").find(l => l.startsWith("set -l bun_install_boolean_flags "));
+    const descLine = script
+      .split("\n")
+      .find(l => l.startsWith("set -l bun_install_boolean_flags_descriptions "));
+    expect(flagsLine).toBeDefined();
+    expect(descLine).toBeDefined();
+
+    const flags = flagsLine!.replace("set -l bun_install_boolean_flags ", "").trim().split(/\s+/);
+    // Descriptions are quoted with "..." and separated by a single space.
+    const descs = [...descLine!.matchAll(/"[^"]*"/g)].map(m => m[0]);
+
+    expect(flags).toContain("frozen-lockfile");
+    // The two parallel lists must stay in lockstep or every flag after the
+    // first mismatch gets the wrong help text.
+    expect(descs.length).toBe(flags.length);
+  });
+});

@@ -299,6 +299,21 @@ pub mod registry {
     // `unreachable!()`.
     bun_collections::object_pool!(pub BodyPool: MutableString, threadsafe, 8);
 
+    /// `bun_url::join` drops the last path segment of a base without a
+    /// trailing `/`; npm does not. Normalize http(s) registry URLs only.
+    pub(crate) fn ensure_trailing_slash(href: Box<[u8]>) -> Box<[u8]> {
+        if href.last() == Some(&b'/')
+            || !(strings::has_prefix_comptime(&href, b"https://")
+                || strings::has_prefix_comptime(&href, b"http://"))
+        {
+            return href;
+        }
+        let mut v = Vec::with_capacity(href.len() + 1);
+        v.extend_from_slice(&href);
+        v.push(b'/');
+        v.into_boxed_slice()
+    }
+
     #[derive(Default, Clone)]
     pub struct Scope {
         pub name: Box<[u8]>,
@@ -508,6 +523,8 @@ pub mod registry {
                 // mutated `url.pathname` also set `needs_normalize = true`).
                 registry_url
             };
+
+            let final_href = ensure_trailing_slash(final_href);
 
             let url_hash = Self::hash(strings::without_trailing_slash(&final_href));
 

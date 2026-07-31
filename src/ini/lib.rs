@@ -185,7 +185,7 @@ bun_core::comptime_string_map! {
 }
 
 pub use draft::{
-    ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter, load_npmrc,
+    ConfigIterator, NpmrcPreset, Parser, ScopeItem, ScopeIterator, ToStringFormatter, load_npmrc,
     load_npmrc_config,
 };
 pub mod config_iterator {
@@ -1206,6 +1206,107 @@ mod draft {
     // loadNpmrcConfig / loadNpmrc
     // ──────────────────────────────────────────────────────────────────────────
 
+    #[derive(Default, Clone, Copy)]
+    pub struct RegistryCredPreset {
+        pub token: bool,
+        pub username: bool,
+        pub password: bool,
+    }
+
+    impl RegistryCredPreset {
+        fn from(r: &NpmRegistry) -> Self {
+            Self {
+                token: !r.token.is_empty(),
+                username: !r.username.is_empty(),
+                password: !r.password.is_empty(),
+            }
+        }
+
+        fn blocks(self, opt: ConfigOpt) -> bool {
+            match opt {
+                ConfigOpt::_AuthToken => self.token,
+                ConfigOpt::Username => self.username,
+                ConfigOpt::_Password => self.password,
+                ConfigOpt::_Auth => self.username || self.password,
+                ConfigOpt::Email | ConfigOpt::Certfile | ConfigOpt::Keyfile => false,
+            }
+        }
+    }
+
+    /// Snapshot of which `BunInstall` fields bunfig.toml already set;
+    /// `load_npmrc` skips those keys so bunfig wins over `.npmrc`.
+    #[derive(Default)]
+    pub struct NpmrcPreset {
+        pub default_registry: bool,
+        pub default_registry_creds: RegistryCredPreset,
+        pub cache_directory: bool,
+        pub disable_cache: bool,
+        pub dry_run: bool,
+        pub ca: bool,
+        pub cafile: bool,
+        pub save_dev: bool,
+        pub save_peer: bool,
+        pub save_optional: bool,
+        pub ignore_scripts: bool,
+        pub link_workspace_packages: bool,
+        pub exact: bool,
+        pub node_linker: bool,
+        pub public_hoist_pattern: bool,
+        pub hoist_pattern: bool,
+        pub scoped: Vec<(Box<[u8]>, RegistryCredPreset)>,
+    }
+
+    impl NpmrcPreset {
+        pub fn from(install: &BunInstall) -> Self {
+            Self {
+                default_registry: install.default_registry.is_some(),
+                default_registry_creds: install
+                    .default_registry
+                    .as_ref()
+                    .map(RegistryCredPreset::from)
+                    .unwrap_or_default(),
+                cache_directory: install.cache_directory.is_some(),
+                disable_cache: install.disable_cache.is_some(),
+                dry_run: install.dry_run.is_some(),
+                ca: install.ca.is_some(),
+                cafile: install.cafile.is_some(),
+                save_dev: install.save_dev.is_some(),
+                save_peer: install.save_peer.is_some(),
+                save_optional: install.save_optional.is_some(),
+                ignore_scripts: install.ignore_scripts.is_some(),
+                link_workspace_packages: install.link_workspace_packages.is_some(),
+                exact: install.exact.is_some(),
+                node_linker: install.node_linker.is_some(),
+                public_hoist_pattern: install.public_hoist_pattern.is_some(),
+                hoist_pattern: install.hoist_pattern.is_some(),
+                scoped: install
+                    .scoped
+                    .as_ref()
+                    .map(|m| {
+                        m.scopes
+                            .keys()
+                            .iter()
+                            .zip(m.scopes.values())
+                            .map(|(k, v)| (k.clone(), RegistryCredPreset::from(v)))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            }
+        }
+
+        fn has_scope(&self, name: &[u8]) -> bool {
+            self.scoped.iter().any(|(n, _)| &**n == name)
+        }
+
+        fn scope_creds(&self, name: &[u8]) -> RegistryCredPreset {
+            self.scoped
+                .iter()
+                .find(|(n, _)| &**n == name)
+                .map(|(_, c)| *c)
+                .unwrap_or_default()
+        }
+    }
+
     pub fn load_npmrc_config(
         install: &mut BunInstall,
         env: &DotEnvLoader,
@@ -1218,6 +1319,8 @@ mod draft {
         // so we need to collect them as we go for the final registry map
         // to be created at the end.
         let mut configs: Vec<ConfigItem> = Vec::new();
+
+        let preset = NpmrcPreset::from(install);
 
         for &npmrc_path in npmrc_paths {
             let source = match bun_ast::source_from_file(
@@ -1239,7 +1342,7 @@ mod draft {
             };
             // `source.contents` is owned; drops at end of loop iteration.
 
-            match load_npmrc(install, env, &mut log, &source, &mut configs) {
+            match load_npmrc(install, env, &mut log, &source, &mut configs, &preset) {
                 Ok(()) => {}
                 Err(AllocError) => bun_core::out_of_memory(),
             }
@@ -1269,6 +1372,7 @@ mod draft {
         log: &mut Log,
         source: &Source,
         configs: &mut Vec<ConfigItem>,
+        preset: &NpmrcPreset,
     ) -> OOM<()> {
         let arena = Arena::new();
         let bump = &arena;
@@ -1280,172 +1384,170 @@ mod draft {
         // We need to dupe all strings
         let out = &parser.out;
 
-        if let Some(query) = out.as_property(b"registry") {
-            if let Some(str_) = query.expr.as_utf8_string_literal() {
-                let mut p = bun_api::npm_registry::Parser {
-                    log: &mut *log,
-                    source,
-                };
-                install.default_registry =
-                    Some(p.parse_registry_url_string_impl(&Box::<[u8]>::from(str_))?);
+        if !preset.default_registry {
+            if let Some(query) = out.as_property(b"registry") {
+                if let Some(str_) = query.expr.as_utf8_string_literal() {
+                    let mut p = bun_api::npm_registry::Parser {
+                        log: &mut *log,
+                        source,
+                    };
+                    install.default_registry =
+                        Some(p.parse_registry_url_string_impl(&Box::<[u8]>::from(str_))?);
+                }
             }
         }
 
         if let Some(query) = out.as_property(b"cache") {
             if let Some(str_) = query.expr.as_utf8_string_literal() {
-                install.cache_directory = Some(Box::<[u8]>::from(str_));
-            } else if let Some(b) = query.expr.as_bool() {
-                install.disable_cache = Some(!b);
-            }
-        }
-
-        if let Some(query) = out.as_property(b"dry-run") {
-            if let Some(str_) = query.expr.as_utf8_string_literal() {
-                install.dry_run = Some(str_ == b"true");
-            } else if let Some(b) = query.expr.as_bool() {
-                install.dry_run = Some(b);
-            }
-        }
-
-        if let Some(query) = out.as_property(b"ca") {
-            if let Some(str_) = query.expr.as_utf8_string_literal() {
-                install.ca = Some(bun_api::Ca::Str(Box::<[u8]>::from(str_)));
-            } else if let ExprData::EArray(arr) = &query.expr.data {
-                let mut list: Vec<Box<[u8]>> = Vec::with_capacity(arr.items.len_u32() as usize);
-                for item in arr.items.slice() {
-                    if let Some(s) = item.as_string_cloned(bump)? {
-                        list.push(Box::<[u8]>::from(s));
-                    }
+                if !preset.cache_directory {
+                    install.cache_directory = Some(Box::<[u8]>::from(str_));
                 }
-                install.ca = Some(bun_api::Ca::List(list.into_boxed_slice()));
-            }
-        }
-
-        if let Some(query) = out.as_property(b"cafile") {
-            if let Some(cafile) = query.expr.as_string_cloned(bump)? {
-                install.cafile = Some(Box::<[u8]>::from(cafile));
-            }
-        }
-
-        if let Some(omit) = out.as_property(b"omit") {
-            match &omit.expr.data {
-                ExprData::EString(str_) => {
-                    if str_.eql_comptime(b"dev") {
-                        install.save_dev = Some(false);
-                    } else if str_.eql_comptime(b"peer") {
-                        install.save_peer = Some(false);
-                    } else if str_.eql_comptime(b"optional") {
-                        install.save_optional = Some(false);
-                    }
+            } else if let Some(b) = query.expr.as_bool() {
+                if !preset.disable_cache {
+                    install.disable_cache = Some(!b);
                 }
-                ExprData::EArray(arr) => {
+            }
+        }
+
+        if !preset.dry_run {
+            if let Some(query) = out.as_property(b"dry-run") {
+                if let Some(str_) = query.expr.as_utf8_string_literal() {
+                    install.dry_run = Some(str_ == b"true");
+                } else if let Some(b) = query.expr.as_bool() {
+                    install.dry_run = Some(b);
+                }
+            }
+        }
+
+        if !preset.ca {
+            if let Some(query) = out.as_property(b"ca") {
+                if let Some(str_) = query.expr.as_utf8_string_literal() {
+                    install.ca = Some(bun_api::Ca::Str(Box::<[u8]>::from(str_)));
+                } else if let ExprData::EArray(arr) = &query.expr.data {
+                    let mut list: Vec<Box<[u8]>> = Vec::with_capacity(arr.items.len_u32() as usize);
                     for item in arr.items.slice() {
-                        if let ExprData::EString(str_) = &item.data {
-                            if str_.eql_comptime(b"dev") {
-                                install.save_dev = Some(false);
-                            } else if str_.eql_comptime(b"peer") {
-                                install.save_peer = Some(false);
-                            } else if str_.eql_comptime(b"optional") {
-                                install.save_optional = Some(false);
+                        if let Some(s) = item.as_string_cloned(bump)? {
+                            list.push(Box::<[u8]>::from(s));
+                        }
+                    }
+                    install.ca = Some(bun_api::Ca::List(list.into_boxed_slice()));
+                }
+            }
+        }
+
+        if !preset.cafile {
+            if let Some(query) = out.as_property(b"cafile") {
+                if let Some(cafile) = query.expr.as_string_cloned(bump)? {
+                    install.cafile = Some(Box::<[u8]>::from(cafile));
+                }
+            }
+        }
+
+        let mut apply_save = |str_: &E::String, value: bool| {
+            if str_.eql_comptime(b"dev") {
+                if !preset.save_dev {
+                    install.save_dev = Some(value);
+                }
+            } else if str_.eql_comptime(b"peer") {
+                if !preset.save_peer {
+                    install.save_peer = Some(value);
+                }
+            } else if str_.eql_comptime(b"optional") {
+                if !preset.save_optional {
+                    install.save_optional = Some(value);
+                }
+            }
+        };
+
+        for (key, value) in [(b"omit" as &[u8], false), (b"include", true)] {
+            if let Some(prop) = out.as_property(key) {
+                match &prop.expr.data {
+                    ExprData::EString(str_) => apply_save(str_, value),
+                    ExprData::EArray(arr) => {
+                        for item in arr.items.slice() {
+                            if let ExprData::EString(str_) = &item.data {
+                                apply_save(str_, value);
                             }
                         }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
         }
 
-        if let Some(omit) = out.as_property(b"include") {
-            match &omit.expr.data {
-                ExprData::EString(str_) => {
-                    if str_.eql_comptime(b"dev") {
-                        install.save_dev = Some(true);
-                    } else if str_.eql_comptime(b"peer") {
-                        install.save_peer = Some(true);
-                    } else if str_.eql_comptime(b"optional") {
-                        install.save_optional = Some(true);
+        if !preset.ignore_scripts {
+            if let Some(ignore_scripts) = out.get(b"ignore-scripts") {
+                if let Some(ignore) = ignore_scripts.as_bool() {
+                    install.ignore_scripts = Some(ignore);
+                }
+            }
+        }
+
+        if !preset.link_workspace_packages {
+            if let Some(link_workspace_packages) = out.get(b"link-workspace-packages") {
+                if let Some(link) = link_workspace_packages.as_bool() {
+                    install.link_workspace_packages = Some(link);
+                }
+            }
+        }
+
+        if !preset.exact {
+            if let Some(save_exact) = out.get(b"save-exact") {
+                if let Some(exact) = save_exact.as_bool() {
+                    install.exact = Some(exact);
+                }
+            }
+        }
+
+        if !preset.node_linker {
+            if let Some(install_strategy_expr) = out.get(b"install-strategy") {
+                if let Some(install_strategy_str) = install_strategy_expr.as_string(bump) {
+                    if install_strategy_str == b"hoisted" {
+                        install.node_linker = Some(NodeLinker::Hoisted);
+                    } else if install_strategy_str == b"linked" {
+                        install.node_linker = Some(NodeLinker::Isolated);
                     }
                 }
-                ExprData::EArray(arr) => {
-                    for item in arr.items.slice() {
-                        if let ExprData::EString(str_) = &item.data {
-                            if str_.eql_comptime(b"dev") {
-                                install.save_dev = Some(true);
-                            } else if str_.eql_comptime(b"peer") {
-                                install.save_peer = Some(true);
-                            } else if str_.eql_comptime(b"optional") {
-                                install.save_optional = Some(true);
-                            }
+            }
+
+            // yarn & pnpm option
+            if let Some(node_linker_expr) = out.get(b"node-linker") {
+                if let Some(node_linker_str) = node_linker_expr.as_string(bump) {
+                    if let Some(node_linker) = NODE_LINKER_MAP.get(node_linker_str) {
+                        install.node_linker = Some(*node_linker);
+                    }
+                }
+            }
+        }
+
+        if !preset.public_hoist_pattern {
+            if let Some(public_hoist_pattern_expr) = out.get(b"public-hoist-pattern") {
+                install.public_hoist_pattern =
+                    match pnpm_matcher_from_expr(&public_hoist_pattern_expr, log, source, bump) {
+                        Ok(v) => Some(v),
+                        Err(FromExprError::OutOfMemory) => return Err(AllocError),
+                        Err(_) => {
+                            // error.InvalidRegExp, error.UnexpectedExpr
+                            log.reset();
+                            None
                         }
-                    }
-                }
-                _ => {}
+                    };
             }
         }
 
-        if let Some(ignore_scripts) = out.get(b"ignore-scripts") {
-            if let Some(ignore) = ignore_scripts.as_bool() {
-                install.ignore_scripts = Some(ignore);
+        if !preset.hoist_pattern {
+            if let Some(hoist_pattern_expr) = out.get(b"hoist-pattern") {
+                install.hoist_pattern =
+                    match pnpm_matcher_from_expr(&hoist_pattern_expr, log, source, bump) {
+                        Ok(v) => Some(v),
+                        Err(FromExprError::OutOfMemory) => return Err(AllocError),
+                        Err(_) => {
+                            // error.InvalidRegExp, error.UnexpectedExpr
+                            log.reset();
+                            None
+                        }
+                    };
             }
-        }
-
-        if let Some(link_workspace_packages) = out.get(b"link-workspace-packages") {
-            if let Some(link) = link_workspace_packages.as_bool() {
-                install.link_workspace_packages = Some(link);
-            }
-        }
-
-        if let Some(save_exact) = out.get(b"save-exact") {
-            if let Some(exact) = save_exact.as_bool() {
-                install.exact = Some(exact);
-            }
-        }
-
-        if let Some(install_strategy_expr) = out.get(b"install-strategy") {
-            if let Some(install_strategy_str) = install_strategy_expr.as_string(bump) {
-                if install_strategy_str == b"hoisted" {
-                    install.node_linker = Some(NodeLinker::Hoisted);
-                } else if install_strategy_str == b"linked" {
-                    install.node_linker = Some(NodeLinker::Isolated);
-                } else if install_strategy_str == b"nested" || install_strategy_str == b"shallow" {
-                    // TODO
-                }
-            }
-        }
-
-        // yarn & pnpm option
-        if let Some(node_linker_expr) = out.get(b"node-linker") {
-            if let Some(node_linker_str) = node_linker_expr.as_string(bump) {
-                if let Some(node_linker) = NODE_LINKER_MAP.get(node_linker_str) {
-                    install.node_linker = Some(*node_linker);
-                }
-            }
-        }
-
-        if let Some(public_hoist_pattern_expr) = out.get(b"public-hoist-pattern") {
-            install.public_hoist_pattern =
-                match pnpm_matcher_from_expr(&public_hoist_pattern_expr, log, source, bump) {
-                    Ok(v) => Some(v),
-                    Err(FromExprError::OutOfMemory) => return Err(AllocError),
-                    Err(_) => {
-                        // error.InvalidRegExp, error.UnexpectedExpr
-                        log.reset();
-                        None
-                    }
-                };
-        }
-
-        if let Some(hoist_pattern_expr) = out.get(b"hoist-pattern") {
-            install.hoist_pattern =
-                match pnpm_matcher_from_expr(&hoist_pattern_expr, log, source, bump) {
-                    Ok(v) => Some(v),
-                    Err(FromExprError::OutOfMemory) => return Err(AllocError),
-                    Err(_) => {
-                        // error.InvalidRegExp, error.UnexpectedExpr
-                        log.reset();
-                        None
-                    }
-                };
         }
 
         let mut registry_map = install.scoped.take().unwrap_or_default();
@@ -1487,6 +1589,9 @@ mod draft {
 
             while let Some(val) = iter.next()? {
                 if let Some(result) = val.get() {
+                    if preset.has_scope(&result.scope) {
+                        continue;
+                    }
                     let registry = result.registry.dupe();
                     registry_map.scopes.put(&*result.scope, registry)?;
                 }
@@ -1607,8 +1712,9 @@ mod draft {
             for conf_item in configs.iter() {
                 let conf_item_url = URL::parse(&conf_item.registry_url);
 
-                if bun_core::without_trailing_slash(&default_registry_host)
-                    == bun_core::without_trailing_slash(conf_item_url.host)
+                if !preset.default_registry_creds.blocks(conf_item.optname)
+                    && bun_core::without_trailing_slash(&default_registry_host)
+                        == bun_core::without_trailing_slash(conf_item_url.host)
                     && bun_core::without_trailing_slash(&default_registry_pathname)
                         == bun_core::without_trailing_slash(conf_item_url.pathname)
                 {
@@ -1662,9 +1768,10 @@ mod draft {
                 // `url_map` was filled in lockstep with `registry_map.scopes` (same
                 // ArrayHashMap insertion order), zip its values directly instead
                 // of looking each one up by key.
-                for (url_bytes, v) in url_map
-                    .values()
+                for ((scope_name, url_bytes), v) in url_map
+                    .keys()
                     .iter()
+                    .zip(url_map.values().iter())
                     .zip(registry_map.scopes.values_mut())
                 {
                     let url = URL::parse(url_bytes);
@@ -1680,6 +1787,9 @@ mod draft {
                             {
                                 continue;
                             }
+                        }
+                        if preset.scope_creds(scope_name).blocks(conf_item.optname) {
+                            continue;
                         }
                         // Apply config to scoped registry
                         match conf_item.optname {

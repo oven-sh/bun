@@ -8763,7 +8763,10 @@ describe.concurrent("bun-install", () => {
             if (fails === -1) {
               expect(err).toContain(`Registry URL must be http:// or https://`);
             } else if (fails) {
-              expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
+              // http(s) registry URLs get a trailing slash appended for npm
+              // compatibility; the error message reports the normalized URL.
+              const shown = /^https?:\/\//.test(regURL) && !regURL.endsWith("/") ? `${regURL}/` : regURL;
+              expect(err).toContain(`Failed to join registry "${shown}" and package "notapackage" URLs`);
             } else {
               expect(err).toContain("error: notapackage@0.0.2 failed to resolve");
             }

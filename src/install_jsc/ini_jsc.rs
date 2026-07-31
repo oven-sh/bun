@@ -83,7 +83,8 @@ impl IniTestingAPIs {
 
         let mut install = Box::new(BunInstall::default());
         let mut configs: Vec<config_iterator::Item> = Vec::new();
-        if load_npmrc(&mut install, env, &mut log, &source, &mut configs).is_err() {
+        let preset = bun_ini::NpmrcPreset::default();
+        if load_npmrc(&mut install, env, &mut log, &source, &mut configs, &preset).is_err() {
             return bun_ast_jsc::log_to_js(&log, global, b"error");
         }
 

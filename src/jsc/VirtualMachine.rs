@@ -69,25 +69,17 @@ pub type ExceptionList = Vec<crate::schema_api::JsException>;
 // VirtualMachine struct (file-level @This())
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Per-VM shutdown flag readable from threads that may outlive the VM.
-///
-/// A worker's [`WebWorker::shutdown`] raw-`dealloc`s the `VirtualMachine`
-/// while the shared HTTP client thread can still hold tasklets that captured
-/// `&'static VirtualMachine`. Those tasklets clone this `Arc` at creation and
-/// use it, instead of the VM reference, to decide whether the VM is still
-/// accepting work. The reader count lets shutdown wait out any callback that
-/// loaded `shutting_down == false` and is mid-enqueue, so the VM is never
-/// freed underneath an `enqueue_task_concurrent`.
+/// Arc'd per-VM shutdown flag + reader fence for threads that may outlive the
+/// VM. A worker's [`WebWorker::shutdown`] raw-`dealloc`s the `VirtualMachine`
+/// while the shared HTTP client thread can still be delivering `FetchTasklet`
+/// callbacks that dereference it; those callbacks hold a clone of this Arc
+/// and bracket every VM access with [`Self::try_begin_vm_read`] /
+/// [`Self::end_vm_read`] so shutdown can spin the readers out first.
 ///
 /// [`WebWorker::shutdown`]: crate::web_worker::WebWorker::shutdown
 pub struct CrossThreadShutdownSignal {
     shutting_down: core::sync::atomic::AtomicBool,
     readers: core::sync::atomic::AtomicUsize,
-    /// `true` for the process-lifetime main-thread VM. Main-thread shutdown
-    /// already parks the HTTP thread via `bun_http::shutdown_for_exit()` and
-    /// then drains parked tasklets before `destructOnExit`; worker shutdown has
-    /// no such drain, so a tasklet orphaned by a dead worker VM is leaked
-    /// instead of parked (its JSC handles point into freed storage).
     is_main_thread: bool,
 }
 
@@ -111,16 +103,11 @@ impl CrossThreadShutdownSignal {
         self.is_main_thread
     }
 
-    /// Mark the VM as shutting down for cross-thread readers. Idempotent.
     pub fn mark_shutting_down(&self) {
         self.shutting_down
             .store(true, core::sync::atomic::Ordering::SeqCst);
     }
 
-    /// Spin until every cross-thread reader that entered via
-    /// [`Self::try_begin_vm_read`] has called [`Self::end_vm_read`]. Must be
-    /// preceded by [`Self::mark_shutting_down`] so new readers bail instead of
-    /// re-entering; otherwise this can spin indefinitely.
     pub fn wait_for_readers(&self) {
         debug_assert!(self.is_shutting_down());
         while self.readers.load(core::sync::atomic::Ordering::SeqCst) > 0 {
@@ -128,17 +115,12 @@ impl CrossThreadShutdownSignal {
         }
     }
 
-    /// Enter a read-side critical section in which the caller may dereference
-    /// the `VirtualMachine` that owns this signal. Returns `false` if shutdown
-    /// has begun; in that case the caller must not touch the VM and no
-    /// matching [`Self::end_vm_read`] is owed. On `true` the caller must pair
-    /// with exactly one [`Self::end_vm_read`].
-    ///
-    /// SeqCst on both the increment and the flag load, together with the
-    /// SeqCst store + load in [`Self::mark_shutting_down`] /
-    /// [`Self::wait_for_readers`], establishes a total order: a reader that
-    /// observes `shutting_down == false` incremented `readers` before the
-    /// writer loaded it as zero, so the writer spins until the reader exits.
+    /// On `true` the caller may dereference the owning VM until the paired
+    /// [`Self::end_vm_read`]; on `false` the VM is (or is about to be) freed
+    /// and no `end_vm_read` is owed. SeqCst on all four ops (this increment +
+    /// flag load, and the writer's flag store + reader-count load) is the
+    /// Dekker-style fence that keeps "reader saw `false`" ordered before
+    /// "writer saw `readers == 0`".
     #[inline]
     #[must_use]
     pub fn try_begin_vm_read(&self) -> bool {
@@ -300,14 +282,8 @@ pub struct VirtualMachine {
     pub(crate) hide_bun_stackframes: bool,
 
     pub is_shutting_down: bool,
-    /// Arc'd mirror of [`Self::is_shutting_down`] for readers on other
-    /// threads. The HTTP client thread is shared across every worker and may
-    /// deliver a `FetchTasklet` callback after a worker's `shutdown()` has
-    /// `dealloc`'d this struct, so those callbacks read the flag (and fence
-    /// against the dealloc) through this handle instead of `&VirtualMachine`.
-    /// `Some` from `init()` through `destroy()`; `Option` only so `destroy()`
-    /// can release this VM's strong ref (the box is raw-`dealloc`'d without
-    /// running field `Drop`s).
+    /// See [`CrossThreadShutdownSignal`]. `Option` only so `destroy()` can
+    /// release the strong ref (the box is raw-`dealloc`'d, no field `Drop`s).
     pub cross_thread_shutdown: Option<std::sync::Arc<CrossThreadShutdownSignal>>,
     /// Set once `on_exit()` has finished draining `RareData::cleanup_hooks`.
     /// After this point the cleanup-hook list is never iterated again, so
@@ -1081,9 +1057,6 @@ impl VirtualMachine {
         self.is_shutting_down
     }
 
-    /// The per-VM [`CrossThreadShutdownSignal`]. `Some` from `init()` until
-    /// `destroy()`; every path that can call `fetch()` (and so clone the
-    /// handle) runs between those two points.
     #[inline]
     pub fn cross_thread_shutdown(&self) -> &std::sync::Arc<CrossThreadShutdownSignal> {
         self.cross_thread_shutdown
@@ -4578,8 +4551,6 @@ impl VirtualMachine {
         // proxy strings; `ProxyEnvStorage: Default` so take()+drop suffices.
         drop(core::mem::take(&mut self.proxy_env_storage));
 
-        // Release this VM's strong ref; in-flight tasklets on the HTTP thread
-        // may still hold clones past the raw dealloc below.
         drop(self.cross_thread_shutdown.take());
 
         // The VM box is `dealloc`'d raw by the worker (see `web_worker.rs`

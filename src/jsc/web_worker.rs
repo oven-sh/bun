@@ -1248,9 +1248,6 @@ impl WebWorker {
             // re-sets it for the JSC VM teardown.
             vm.jsc_vm().clear_has_termination_request();
             vm.is_shutting_down = true;
-            // Publish shutdown to HTTP-thread FetchTasklet callbacks before
-            // on_exit()'s user JS runs, so fewer of them enter the reader
-            // fence. on_exit() re-stores it (idempotent).
             vm.cross_thread_shutdown().mark_shutting_down();
             vm.on_exit();
             if let Some(hooks) = runtime_hooks() {
@@ -1306,14 +1303,9 @@ impl WebWorker {
             // or observes m_isShuttingDown under m_lock and drops. Idempotent;
             // teardownJSCVM sets it again.
             Bun__JSCTaskScheduler__markShuttingDown(vm.global());
-            // Fence the HTTP client thread: any FetchTasklet callback that
-            // loaded `shutting_down == false` and is about to push to / wake
-            // this VM's event loop has incremented the reader count. Spin
-            // until they exit, so the drain below sees every such task and
-            // `enqueue_task_concurrent` never touches the storage freed in
-            // step 5. The main-thread `global_exit()` path parks the whole
-            // HTTP thread via `bun_http::shutdown_for_exit()` instead; that is
-            // process-global and cannot be used per-worker.
+            // Per-worker fence for HTTP-thread FetchTasklet callbacks (the
+            // main-thread equivalent is `bun_http::shutdown_for_exit()`, a
+            // process-global one-shot). See `CrossThreadShutdownSignal`.
             vm.cross_thread_shutdown().wait_for_readers();
             // Reclaim queued CppTasks (the per-worker stdio/messaging
             // MessagePort drain tasks that can be in self.tasks mid-tick when

@@ -68,12 +68,8 @@ pub struct FetchTasklet {
     pub(crate) result: HTTPClientResult<'static>,
     pub(crate) metadata: Option<HTTPResponseMetadata>,
     pub(crate) javascript_vm: &'static VirtualMachine,
-    /// Clone of `javascript_vm.cross_thread_shutdown`. The HTTP-thread
-    /// callbacks below read the shutdown state and fence the
-    /// `enqueue_task_concurrent` against `WebWorker::shutdown` through this
-    /// handle: `javascript_vm` is a lifetime-erased reference that dangles
-    /// once a worker has `dealloc`'d its VM, so it may only be dereferenced
-    /// inside a successful `try_begin_vm_read` section.
+    /// `javascript_vm` dangles once a worker VM is `dealloc`'d; HTTP-thread
+    /// callbacks fence every VM deref through this (see the struct doc).
     pub(crate) vm_shutdown_signal: std::sync::Arc<CrossThreadShutdownSignal>,
     pub global_this: GlobalRef,
     pub(crate) request_body: HTTPRequestBody,
@@ -532,11 +528,9 @@ impl FetchTasklet {
     /// `destructOnExit`, so `deinit()` there can release every handle on the
     /// right thread and the Weak is cleared before its referent is finalized.
     ///
-    /// Worker VM: there is no per-worker drain point (`shutdown_for_exit` is
-    /// process-global) and by the time this runs the worker's JSC heap is, or
-    /// is about to be, freed, so the parked `deinit()` would dereference dead
-    /// handles. Leak the box instead; the large buffers were already released
-    /// by the caller.
+    /// Worker VM: no such drain exists and the JSC heap is (about to be)
+    /// freed, so a parked `deinit()` would dereference dead handles. Leak the
+    /// box; the large buffers were already released by the caller.
     ///
     /// SAFETY: `this` must be the last reference (ref_count == 0) and have
     /// been allocated via heap::alloc.

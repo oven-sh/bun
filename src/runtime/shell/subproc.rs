@@ -1399,7 +1399,12 @@ impl<'a> SpawnArgs<'a> {
             line[len] = 0;
             let line: &'a [u8] = line;
 
-            if key == b"PATH" {
+            let is_path = if cfg!(windows) {
+                bun_core::strings::eql_case_insensitive_asciii_check_length(key, b"PATH")
+            } else {
+                key == b"PATH"
+            };
+            if is_path {
                 self.path = &line[b"PATH=".len()..len];
             }
 

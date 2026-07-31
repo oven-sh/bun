@@ -78,7 +78,7 @@ pub mod auto_installer;
 pub mod config_version;
 pub mod dependency;
 pub mod hosted_git_info;
-pub mod integrity;
+pub use bun_install_types::integrity;
 pub mod padding_checker;
 pub mod postinstall_optimizer;
 

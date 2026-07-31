@@ -782,4 +782,224 @@ describe("compiled binary in a deleted cwd", () => {
   );
 });
 
+describe("compile --target executable download", () => {
+  // The current platform with a version that isn't the running build, so
+  // `--compile` has to fetch the executable from the registry.
+  const os = isMacOS ? "darwin" : isLinux ? "linux" : isWindows ? "windows" : "unknown";
+  const arch = isArm64 ? "aarch64" : "x64";
+  const musl = isMusl ? "-musl" : "";
+  const version = "0.0.1";
+  const packageName = `bun-${os}-${arch}${musl}`;
+  const target = `${packageName}-v${version}`;
+
+  async function makeTarball() {
+    const executableName = isWindows ? "bun.exe" : "bun";
+    const archive = new Bun.Archive(
+      { [`package/bin/${executableName}`]: Buffer.alloc(1024, "not really an executable") },
+      { compress: "gzip" },
+    );
+    return new Uint8Array(await (await archive.blob()).arrayBuffer());
+  }
+
+  function sriFor(bytes: Uint8Array) {
+    return "sha512-" + new Bun.CryptoHasher("sha512").update(bytes).digest("base64");
+  }
+
+  async function compileWithRegistry(
+    dir: string,
+    integrity: (tarball: Uint8Array) => string,
+    manifest?: (defaults: Record<string, unknown>) => Record<string, unknown>,
+    registryEnvKey: "BUN_CONFIG_REGISTRY" | "NPM_CONFIG_REGISTRY" | "npm_config_registry" = "BUN_CONFIG_REGISTRY",
+  ) {
+    const tarball = await makeTarball();
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const pathname = decodeURIComponent(new URL(req.url).pathname);
+        if (pathname === `/@oven/${packageName}`) {
+          const defaults = {
+            name: `@oven/${packageName}`,
+            versions: {
+              [version]: {
+                name: `@oven/${packageName}`,
+                version,
+                dist: {
+                  tarball: `${server.url.origin}/-/${packageName}-${version}.tgz`,
+                  integrity: integrity(tarball),
+                },
+              },
+            },
+          };
+          return Response.json(manifest ? manifest(defaults) : defaults);
+        }
+        if (pathname === `/-/${packageName}-${version}.tgz`) {
+          return new Response(tarball);
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    const cacheDir = join(dir, "cache");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", `--target=${target}`, join(dir, "app.js"), "--outfile", "out/app"],
+      env: {
+        ...bunEnv,
+        BUN_CONFIG_REGISTRY: undefined,
+        NPM_CONFIG_REGISTRY: undefined,
+        npm_config_registry: undefined,
+        [registryEnvKey]: server.url.origin,
+        BUN_INSTALL_CACHE_DIR: cacheDir,
+        // A released bun ignores BUN_CONFIG_REGISTRY here; keep it from
+        // reaching the public registry by pointing the proxy at ourselves.
+        HTTP_PROXY: server.url.origin,
+        HTTPS_PROXY: server.url.origin,
+        NO_PROXY: "127.0.0.1,localhost",
+      },
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, cachedExecutable: join(cacheDir, target) };
+  }
+
+  function shasumOnly(manifest: Record<string, any>) {
+    const versionEntry = manifest.versions[version];
+    versionEntry.dist.shasum = versionEntry.dist.integrity;
+    delete versionEntry.dist.integrity;
+    return manifest;
+  }
+
+  test("installs the downloaded executable when it matches the registry integrity", async () => {
+    using dir = tempDir("build-compile-target-integrity-match", {
+      "app.js": `console.log("hi");`,
+    });
+    const { stderr, cachedExecutable } = await compileWithRegistry(String(dir), sriFor);
+
+    // The payload is not a real bun executable, so linking the module
+    // graph into it may fail afterwards; the download itself must have
+    // been verified and installed into the cache.
+    expect(stderr).not.toContain("did not match the integrity value");
+    expect(existsSync(cachedExecutable)).toBe(true);
+  });
+
+  test("rejects the downloaded executable when it does not match the registry integrity", async () => {
+    using dir = tempDir("build-compile-target-integrity-mismatch", {
+      "app.js": `console.log("hi");`,
+    });
+    const { stderr, exitCode, cachedExecutable } = await compileWithRegistry(String(dir), tarball =>
+      sriFor(Buffer.alloc(tarball.byteLength, "x")),
+    );
+
+    expect(stderr).toContain("did not match the integrity value reported by the npm registry");
+    expect(existsSync(cachedExecutable)).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  for (const registryEnvKey of ["NPM_CONFIG_REGISTRY", "npm_config_registry"] as const) {
+    test(`resolves the target through ${registryEnvKey} when BUN_CONFIG_REGISTRY is not set`, async () => {
+      using dir = tempDir("build-compile-target-npm-config-registry", {
+        "app.js": `console.log("hi");`,
+      });
+      const { stderr, cachedExecutable } = await compileWithRegistry(
+        String(dir),
+        tarball => sriFor(tarball),
+        undefined,
+        registryEnvKey,
+      );
+
+      expect(stderr).not.toContain("did not match the integrity value");
+      expect(stderr).not.toContain("appears to be corrupted");
+      expect(existsSync(cachedExecutable)).toBe(true);
+    });
+  }
+
+  test("installs the downloaded executable when it matches the registry shasum", async () => {
+    using dir = tempDir("build-compile-target-shasum-match", {
+      "app.js": `console.log("hi");`,
+    });
+    const { stderr, cachedExecutable } = await compileWithRegistry(
+      String(dir),
+      tarball => new Bun.CryptoHasher("sha1").update(tarball).digest("hex"),
+      defaults => shasumOnly(defaults),
+    );
+
+    expect(stderr).not.toContain("did not match the integrity value");
+    expect(stderr).not.toContain("appears to be corrupted");
+    expect(existsSync(cachedExecutable)).toBe(true);
+  });
+
+  test("rejects the downloaded executable when it does not match the registry shasum", async () => {
+    using dir = tempDir("build-compile-target-shasum-mismatch", {
+      "app.js": `console.log("hi");`,
+    });
+    const { stderr, exitCode, cachedExecutable } = await compileWithRegistry(
+      String(dir),
+      tarball => new Bun.CryptoHasher("sha1").update(Buffer.alloc(tarball.byteLength, "x")).digest("hex"),
+      defaults => shasumOnly(defaults),
+    );
+
+    expect(stderr).toContain("did not match the integrity value reported by the npm registry");
+    expect(existsSync(cachedExecutable)).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  test("reports unusable registry metadata as a metadata error, not a corrupted download", async () => {
+    using dir = tempDir("build-compile-target-registry-metadata", {
+      "app.js": `console.log("hi");`,
+    });
+    const { stderr, exitCode, cachedExecutable } = await compileWithRegistry(
+      String(dir),
+      tarball => sriFor(tarball),
+      () => ({ name: `@oven/${packageName}`, versions: { [version]: { name: `@oven/${packageName}`, version } } }),
+    );
+
+    expect(stderr).toContain("registry returned unusable metadata");
+    expect(stderr).not.toContain("appears to be corrupted");
+    expect(existsSync(cachedExecutable)).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  test("BUN_COMPILE_TARGET_TARBALL_URL skips the manifest lookup and integrity verification", async () => {
+    using dir = tempDir("build-compile-target-url-override", {
+      "app.js": `console.log("hi");`,
+    });
+    const tarball = await makeTarball();
+    let manifestRequests = 0;
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const pathname = decodeURIComponent(new URL(req.url).pathname);
+        if (pathname.endsWith(".tgz")) return new Response(tarball);
+        manifestRequests++;
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    const cacheDir = join(String(dir), "cache");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", `--target=${target}`, join(String(dir), "app.js"), "--outfile", "out/app"],
+      env: {
+        ...bunEnv,
+        BUN_CONFIG_REGISTRY: undefined,
+        NPM_CONFIG_REGISTRY: undefined,
+        npm_config_registry: undefined,
+        BUN_COMPILE_TARGET_TARBALL_URL: `${server.url.origin}/${packageName}.tgz`,
+        BUN_INSTALL_CACHE_DIR: cacheDir,
+        HTTP_PROXY: server.url.origin,
+        HTTPS_PROXY: server.url.origin,
+        NO_PROXY: "127.0.0.1,localhost",
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(manifestRequests).toBe(0);
+    expect(stderr).not.toContain("did not match the integrity value");
+    expect(existsSync(join(cacheDir, target))).toBe(true);
+  });
+});
+
 // file command test works well

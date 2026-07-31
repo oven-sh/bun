@@ -20,7 +20,7 @@ pub struct CompileTarget {
     pub os: OperatingSystem,
     pub(crate) arch: Architecture,
     pub(crate) baseline: bool,
-    pub(crate) version: Version,
+    pub version: Version,
     pub(crate) libc: Libc,
 }
 
@@ -111,19 +111,74 @@ impl CompileTarget {
         self.eql(&CompileTarget::default())
     }
 
-    pub fn to_npm_registry_url<'a>(&self, buf: &'a mut [u8]) -> crate::Result<&'a [u8]> {
-        if let Some(url) = env_var::BUN_COMPILE_TARGET_TARBALL_URL.get() {
-            if strings::has_prefix(url, b"http://") || strings::has_prefix(url, b"https://") {
-                // The env var slice is `&'static [u8]`,
-                // which outlives `'a`, so return it directly instead of copying into `buf`.
-                return Ok(url);
-            }
-        }
+    pub const DEFAULT_NPM_REGISTRY: &[u8] = b"https://registry.npmjs.org";
 
-        self.to_npm_registry_url_with_url(buf, b"https://registry.npmjs.org")
+    /// An explicit tarball URL from `BUN_COMPILE_TARGET_TARBALL_URL`, if set.
+    pub fn tarball_url_override() -> Option<&'static [u8]> {
+        env_var::BUN_COMPILE_TARGET_TARBALL_URL.get().filter(|url| {
+            strings::has_prefix(url, b"http://") || strings::has_prefix(url, b"https://")
+        })
     }
 
-    pub(crate) fn to_npm_registry_url_with_url<'a>(
+    /// The npm registry to fetch the target executable from.
+    pub fn npm_registry_url<'e>(env: &'e bun_dotenv::Loader) -> &'e [u8] {
+        // technically, npm_config is case in-sensitive
+        const REGISTRY_KEYS: [&[u8]; 3] = [
+            b"BUN_CONFIG_REGISTRY",
+            b"NPM_CONFIG_REGISTRY",
+            b"npm_config_registry",
+        ];
+        for registry_key in REGISTRY_KEYS {
+            if let Some(registry) = env.get(registry_key) {
+                if strings::has_prefix(registry, b"http://")
+                    || strings::has_prefix(registry, b"https://")
+                {
+                    return bun_core::without_trailing_slash(registry);
+                }
+            }
+        }
+        Self::DEFAULT_NPM_REGISTRY
+    }
+
+    /// `@oven/bun-linux-x64-musl-baseline` (`scope_separator` is `/` or `%2f`)
+    fn write_npm_package_name(
+        &self,
+        w: &mut impl std::io::Write,
+        scope_separator: &[u8],
+    ) -> std::io::Result<()> {
+        w.write_all(b"@oven")?;
+        w.write_all(scope_separator)?;
+        w.write_all(b"bun-")?;
+        w.write_all(self.os.npm_name().as_bytes())?;
+        w.write_all(b"-")?;
+        w.write_all(self.arch.npm_name().as_bytes())?;
+        w.write_all(self.libc.npm_name().as_bytes())?;
+        if self.baseline {
+            w.write_all(b"-baseline")?;
+        }
+        Ok(())
+    }
+
+    /// The registry document URL for this target's npm package, e.g.
+    /// `https://registry.npmjs.org/@oven%2fbun-linux-x64`
+    pub fn to_npm_manifest_url_with_url<'a>(
+        &self,
+        buf: &'a mut [u8],
+        registry_url: &[u8],
+    ) -> crate::Result<&'a [u8]> {
+        if !self.is_supported() {
+            return Err(crate::Error::UnsupportedTarget);
+        }
+
+        Self::finish_url(buf, |cursor: &mut &mut [u8]| {
+            cursor.write_all(registry_url)?;
+            cursor.write_all(b"/")?;
+            self.write_npm_package_name(cursor, b"%2f")?;
+            Ok(())
+        })
+    }
+
+    pub fn to_npm_registry_url_with_url<'a>(
         &self,
         buf: &'a mut [u8],
         registry_url: &[u8],
@@ -139,17 +194,11 @@ impl CompileTarget {
         let libc = self.libc.npm_name();
         let baseline: &[u8] = if self.baseline { b"-baseline" } else { b"" };
 
-        let total = buf.len();
-        let mut cursor: &mut [u8] = buf;
         // https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-0.1.6.tgz
-        let res = (|| -> std::io::Result<()> {
+        Self::finish_url(buf, |cursor: &mut &mut [u8]| {
             cursor.write_all(registry_url)?;
-            cursor.write_all(b"/@oven/bun-")?;
-            cursor.write_all(os)?;
-            cursor.write_all(b"-")?;
-            cursor.write_all(arch.as_bytes())?;
-            cursor.write_all(libc.as_bytes())?;
-            cursor.write_all(baseline)?;
+            cursor.write_all(b"/")?;
+            self.write_npm_package_name(cursor, b"/")?;
             cursor.write_all(b"/-/bun-")?;
             cursor.write_all(os)?;
             cursor.write_all(b"-")?;
@@ -162,7 +211,16 @@ impl CompileTarget {
                 self.version.major, self.version.minor, self.version.patch,
             )?;
             Ok(())
-        })();
+        })
+    }
+
+    fn finish_url<'a>(
+        buf: &'a mut [u8],
+        write: impl FnOnce(&mut &mut [u8]) -> std::io::Result<()>,
+    ) -> crate::Result<&'a [u8]> {
+        let total = buf.len();
+        let mut cursor: &mut [u8] = buf;
+        let res = write(&mut cursor);
 
         match res {
             Ok(()) => {

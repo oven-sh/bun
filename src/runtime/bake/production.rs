@@ -193,7 +193,9 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         }
         MacroOptions::Unspecified => {}
     }
-    if vm.transpiler.configure_defines().is_err() {
+    if let Err(err) = vm.transpiler.configure_defines() {
+        // `fail_with_build_error` only dumps `vm.log`, which this path may not have written to.
+        Output::err(err, "Failed to load environment variables and defines", ());
         fail_with_build_error(vm);
     }
     // `vm.log` was set from `ctx.log` above (non-null, process-lifetime);

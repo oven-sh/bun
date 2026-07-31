@@ -826,42 +826,38 @@ impl Loader {
             return Ok(());
         }
 
-        // `bun_sys` is errno-based; the match arms below group the recoverable
-        // errnos. Any errno not listed propagates.
+        // Default .env loads are optimistic: an open failure is never fatal.
+        // ENOENT/EISDIR stay silent; EACCES/EBUSY respect `quiet`; anything
+        // else (ELOOP, …) is always printed so the user can fix it.
         let file =
             match bun_sys::File::openat(dir, base, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0) {
                 Ok(file) => file,
                 Err(err) => {
                     use bun_sys::E;
-                    match err.get_errno() {
-                        E::EISDIR | E::ENOENT => {
-                            // prevent retrying
-                            *self.default_file_slot(base) =
-                                Some(bun_ast::Source::init_path_string(base, b""));
-                            return Ok(());
-                        }
-                        E::EBUSY | E::EACCES => {
-                            if !self.quiet {
-                                bun_core::pretty_errorln!(
-                                    "<r><red>{}<r> error loading {} file",
-                                    bstr::BStr::new(err.name()),
-                                    bstr::BStr::new(base)
-                                );
-                            }
-                            // prevent retrying
-                            *self.default_file_slot(base) =
-                                Some(bun_ast::Source::init_path_string(base, b""));
-                            return Ok(());
-                        }
-                        _ => return Err(err.into()),
+                    let print = match err.get_errno() {
+                        E::EISDIR | E::ENOENT => false,
+                        E::EBUSY | E::EACCES => !self.quiet,
+                        _ => true,
+                    };
+                    if print {
+                        bun_core::pretty_errorln!(
+                            "<r><red>{}<r> error loading {} file",
+                            bstr::BStr::new(err.name()),
+                            bstr::BStr::new(base)
+                        );
                     }
+                    // prevent retrying
+                    *self.default_file_slot(base) =
+                        Some(bun_ast::Source::init_path_string(base, b""));
+                    return Ok(());
                 }
             };
 
-        match read_env_file_contents(&file)? {
+        match read_env_file_contents(&file) {
             ReadEnvFile::Empty => {}
             ReadEnvFile::ReadErr(err) => {
-                if !self.quiet {
+                // EISDIR = "directory named .env"; every other read errno is surfaced.
+                if err.get_errno() != bun_sys::E::EISDIR {
                     bun_core::pretty_errorln!(
                         "<r><red>{}<r> error loading {} file",
                         bstr::BStr::new(err.name()),
@@ -905,10 +901,10 @@ impl Loader {
             }
         };
 
-        match read_env_file_contents(&file)? {
+        match read_env_file_contents(&file) {
             ReadEnvFile::Empty => {}
             ReadEnvFile::ReadErr(err) => {
-                if !self.quiet {
+                if err.get_errno() != bun_sys::E::EISDIR {
                     bun_core::pretty_errorln!(
                         "<r><red>{}<r> error loading {} file",
                         bstr::BStr::new(err.name()),
@@ -929,32 +925,20 @@ impl Loader {
     }
 }
 
-/// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`:
-/// `File::read_to_end` (fstat-presized) with the recoverable-errno filter.
-/// The two callers differ in their open path, open-error handling, and the
-/// memo slot they write — those stay in the callers. Only the shared read
-/// tail is factored here.
+/// Shared post-open `File::read_to_end` tail for `load_env_file` and
+/// `load_env_file_dynamic`; callers handle open and slot bookkeeping.
 enum ReadEnvFile {
-    /// Zero-length — caller marks the slot and returns.
     Empty,
-    /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — caller prints
-    /// (unless `quiet`), marks the slot, and returns.
+    /// Caller prints (unless EISDIR) and skips. Never fatal.
     ReadErr(bun_sys::Error),
-    /// File contents; `buf.len()` is the amount read.
     Bytes(Vec<u8>),
 }
 
-fn read_env_file_contents(file: &bun_sys::File) -> crate::Result<ReadEnvFile> {
+fn read_env_file_contents(file: &bun_sys::File) -> ReadEnvFile {
     match file.read_to_end() {
-        Ok(buf) if buf.is_empty() => Ok(ReadEnvFile::Empty),
-        Ok(buf) => Ok(ReadEnvFile::Bytes(buf)),
-        Err(err) => {
-            use bun_sys::E;
-            match err.get_errno() {
-                E::ENOMEM | E::EPIPE | E::EACCES | E::EISDIR => Ok(ReadEnvFile::ReadErr(err)),
-                _ => Err(err.into()),
-            }
-        }
+        Ok(buf) if buf.is_empty() => ReadEnvFile::Empty,
+        Ok(buf) => ReadEnvFile::Bytes(buf),
+        Err(err) => ReadEnvFile::ReadErr(err),
     }
 }
 

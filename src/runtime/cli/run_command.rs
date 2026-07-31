@@ -1038,13 +1038,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // reshaped for borrowck — `b` borrows `vm.transpiler`
         // exclusively; `fail_with_build_error(vm)` needs the whole `vm`, so
         // capture the defines result, drop `b`, then branch.
-        let defines_ok = {
+        let defines_result = {
             let b = &mut vm.transpiler;
             Self::wire_transpiler_from_ctx(b, ctx);
             b.options.env.behavior = api::DotEnvBehavior::LoadAllWithoutInlining;
-            b.configure_defines().is_ok()
+            b.configure_defines()
         };
-        if !defines_ok {
+        if let Err(err) = defines_result {
+            // `fail_with_build_error` only dumps `vm.log`, which this path may not have written to.
+            Output::err(err, "Failed to load environment variables and defines", ());
             crate::run_main::fail_with_build_error(vm);
         }
 
@@ -1190,7 +1192,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // reshaped for borrowck — `b` borrows `vm.transpiler`
         // exclusively; `fail_with_build_error(vm)` needs the whole `vm`, so
         // capture the defines result, drop `b`, then branch.
-        let defines_ok = {
+        let defines_result = {
             let b = &mut vm.transpiler;
             Self::wire_transpiler_from_ctx(b, ctx);
 
@@ -1200,9 +1202,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
             crate::run_main::apply_standalone_runtime_flags(b, graph);
 
-            b.configure_defines().is_ok()
+            b.configure_defines()
         };
-        if !defines_ok {
+        if let Err(err) = defines_result {
+            // `fail_with_build_error` only dumps `vm.log`, which this path may not have written to.
+            Output::err(err, "Failed to load environment variables and defines", ());
             crate::run_main::fail_with_build_error(vm);
         }
 

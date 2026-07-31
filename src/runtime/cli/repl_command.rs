@@ -124,7 +124,8 @@ impl ReplCommand {
         b.options.env.behavior = EnvBehavior::LoadAllWithoutInlining;
         b.options.dead_code_elimination = false; // REPL needs all code
 
-        if b.configure_defines().is_err() {
+        if let Err(err) = b.configure_defines() {
+            Output::err(err, "Failed to load environment variables and defines", ());
             Self::dump_build_error(VirtualMachine::get());
             Global::exit(1);
         }

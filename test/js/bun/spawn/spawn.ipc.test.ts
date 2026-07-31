@@ -157,6 +157,50 @@ describe("ipc mode advanced", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  it.skipIf(isWindows)(
+    "closes the channel when a frame carries a Blob tag, which the sender never emits on this channel",
+    async () => {
+      // The advanced channel's serializer refuses to encode Blob (it sends an empty
+      // object instead), so the receiver must not accept the Blob tag from the wire.
+      // The child builds a real serialized Blob with bun:jsc and frames it by hand.
+      // prettier-ignore
+      const parent = `
+      const child = Bun.spawn({
+        cmd: [
+          process.execPath, "-e",
+          'process.on("disconnect", () => process.exit(42));' +
+          'const payload = Buffer.from(new Uint8Array(require("bun:jsc").serialize(new Blob(["abc"]))));' +
+          'const header = Buffer.alloc(5); header[0] = 0x02; header.writeUInt32LE(payload.length, 1);' +
+          'require("fs").writeSync(3, Buffer.concat([header, payload]));',
+        ],
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: "advanced",
+        ipc(msg) { console.error("UNEXPECTED_IPC_MESSAGE", Object.prototype.toString.call(msg)); child.kill(); },
+      });
+      console.log("CHILD_EXIT", await child.exited);
+    `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", parent],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout.trim()).toBe("CHILD_EXIT 42");
+      expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it("Blob still round-trips through in-process structuredClone", async () => {
+    const cloned = structuredClone(new Blob(["abc"]));
+    expect(cloned).toBeInstanceOf(Blob);
+    expect(await cloned.text()).toBe("abc");
+  });
 });
 
 // getIPCInstance error path: on Windows, windowsConfigureClient can open the

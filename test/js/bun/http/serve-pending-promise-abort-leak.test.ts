@@ -258,3 +258,116 @@ test("resolve() after abort does not crash and cleans up", async () => {
 
   expect(server.pendingRequests).toBe(0);
 });
+
+test("RequestContext is freed when client aborts a parked direct-stream pull()", async () => {
+  // readDirectStream's async-pull branch returns a promise chained off the user's pull()
+  // promise. If the client disconnects while pull() is suspended on a promise that is
+  // still rooted (e.g. the resolver is stashed in user state), that chain never settles,
+  // so on_abort's sink teardown is the request's only release path.
+  const parked: Array<() => void> = [];
+  const pullEntered: Array<() => void> = [];
+
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    async fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(c) {
+            c.write("x");
+            await c.flush();
+            pullEntered.shift()?.();
+            await new Promise<void>(r => parked.push(r));
+          },
+        }),
+        { headers: { "Content-Length": "100000" } },
+      );
+    },
+  });
+
+  const iterations = 3;
+  for (let i = 0; i < iterations; i++) {
+    const { promise: entered, resolve: markEntered } = Promise.withResolvers<void>();
+    pullEntered.push(markEntered);
+    const ac = new AbortController();
+    const res = await fetch(server.url, { signal: ac.signal });
+    const reader = res.body!.getReader();
+    await reader.read();
+    await entered;
+    ac.abort();
+    await reader.closed.catch(() => {});
+  }
+
+  // pull() is still suspended (its resolver is rooted in `parked`), so the
+  // pull promise and its reaction chain are still alive. The request must
+  // nonetheless be released once the sink observes the abort.
+  await waitForPendingRequests(server, 0);
+  expect(parked.length).toBe(iterations);
+
+  // Late resolution of pull() is a no-op: the close path already took
+  // m_closePromise, so the pull-settlement reaction finds it empty.
+  for (const r of parked.splice(0)) r();
+  await Bun.sleep(0);
+  expect(server.pendingRequests).toBe(0);
+});
+
+test("direct-stream pull() that resolves normally still releases the request", async () => {
+  // The non-abort twin: pull() settles first, its reaction takes m_closePromise
+  // and resolves the native consumer's promise; the later sink close finds the
+  // slot empty and no-ops.
+  using server = Bun.serve({
+    port: 0,
+    async fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(c) {
+            c.write("hello");
+            await c.flush();
+            await Bun.sleep(0);
+            c.write(" world");
+          },
+        }),
+      );
+    },
+  });
+
+  const res = await fetch(server.url);
+  expect(await res.text()).toBe("hello world");
+  expect(res.status).toBe(200);
+  await waitForPendingRequests(server, 0);
+});
+
+test("direct-stream pull() that rejects still releases the request", async () => {
+  // pull() rejecting goes through onReadDirectPullRejected, which rejects the
+  // consumer's promise so handleRejectStream runs and force-closes the connection.
+  // This is a release-path guard: the request must not hang.
+  const { promise: pullRejected, resolve: markRejected } = Promise.withResolvers<void>();
+  using server = Bun.serve({
+    port: 0,
+    development: false,
+    async fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(c) {
+            c.write("partial");
+            await c.flush();
+            await Bun.sleep(0);
+            markRejected();
+            throw new Error("pull failed");
+          },
+        }),
+      );
+    },
+  });
+
+  // handleRejectStream force-closes mid-response; whether the reset arrives
+  // before or after the status line is a timing detail, so consume both.
+  await fetch(server.url)
+    .then(r => r.text())
+    .catch(() => {});
+  await pullRejected;
+  await waitForPendingRequests(server, 0);
+});

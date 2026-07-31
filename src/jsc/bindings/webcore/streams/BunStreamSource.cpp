@@ -976,7 +976,13 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
 
     if (auto* pullPromise = dynamicDowncast<JSPromise>(maybePromise)) {
         auto* result = JSPromise::create(vm, globalObject->promiseStructure());
-        pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReturnUndefined(), jsUndefined(), result, jsUndefined());
+        // The sink's close path (readDirectStreamCloseImpl, reached from both controller.end()
+        // and the native abort's signal.close) and pull()'s own settlement both settle `result`
+        // by taking it from m_closePromise, so whichever fires first wins and the other no-ops.
+        // `result` is not passed as a capability because PromiseReactionJob would then call
+        // JSPromise::resolvePromise on it unconditionally (ASSERT(Pending)).
+        state->m_closePromise.set(vm, state, result);
+        pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadDirectPullFulfilled(), runtime->onReadDirectPullRejected(), jsUndefined(), state);
         return result;
     }
     if (stream->m_state == ReadableStreamState::Readable) {
@@ -1649,6 +1655,32 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onNativeSourceCallCloseMicrotask, (
     auto* adapter = uncheckedDowncast<JSNativeStreamSourceAdapter>(callFrame->argument(1));
     Bun::WebStreams::nativeSourceCallClose(vm, globalObject, adapter);
     RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadDirectPullFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* state = uncheckedDowncast<JSDirectSinkCloseState>(callFrame->argument(1));
+    if (auto* closePromise = state->m_closePromise.get()) {
+        state->m_closePromise.clear();
+        resolvePromise(globalObject, closePromise, jsUndefined());
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadDirectPullRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* state = uncheckedDowncast<JSDirectSinkCloseState>(callFrame->argument(1));
+    if (auto* closePromise = state->m_closePromise.get()) {
+        state->m_closePromise.clear();
+        rejectPromise(globalObject, closePromise, callFrame->argument(0));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     return JSValue::encode(jsUndefined());
 }
 

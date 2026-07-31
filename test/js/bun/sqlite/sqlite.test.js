@@ -1553,6 +1553,53 @@ it("close(true) should throw an error if the database is in use", () => {
   expect(() => db.close(true)).not.toThrow();
 });
 
+it("close(true) finalizes query() statements created after the cache filled up (#36572)", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (a INTEGER)");
+  // One more distinct query string than MAX_QUERY_CACHE_SIZE, so the last
+  // statement does not fit in the query cache.
+  for (let i = 0; i <= Database.MAX_QUERY_CACHE_SIZE; i++) {
+    db.query(`SELECT a + ${i} AS v FROM foo`).all();
+  }
+  expect(() => db.close(true)).not.toThrow();
+});
+
+it("close(true) finalizes query() statements past the cache limit that are still referenced (#36572)", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (a INTEGER)");
+  const statements = [];
+  for (let i = 0; i <= Database.MAX_QUERY_CACHE_SIZE; i++) {
+    statements.push(db.query(`SELECT a + ${i} AS v FROM foo`));
+  }
+  expect(() => db.close(true)).not.toThrow();
+  expect(statements.every(stmt => stmt.isFinalized)).toBe(true);
+});
+
+it("close(true) succeeds after unreferenced query() statements were GC'd (#36572)", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (a INTEGER)");
+  for (let i = 0; i <= Database.MAX_QUERY_CACHE_SIZE * 2; i++) {
+    db.query(`SELECT a + ${i} AS v FROM foo`).all();
+  }
+  // Collects the statement wrappers; close(true) must not fail over
+  // statements that are pending sweep.
+  Bun.gc(true);
+  expect(() => db.close(true)).not.toThrow();
+});
+
+it("close(true) works when query() statements past the cache limit were already finalized", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (a INTEGER)");
+  const statements = [];
+  for (let i = 0; i <= Database.MAX_QUERY_CACHE_SIZE; i++) {
+    statements.push(db.query(`SELECT a + ${i} AS v FROM foo`));
+  }
+  for (const stmt of statements) {
+    stmt.finalize();
+  }
+  expect(() => db.close(true)).not.toThrow();
+});
+
 it("close() should NOT throw an error if the database is in use", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");

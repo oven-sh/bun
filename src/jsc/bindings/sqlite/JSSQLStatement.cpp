@@ -1842,7 +1842,19 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
     }
 
     // sqlite3_close_v2 is used for automatic GC cleanup
-    int statusCode = shouldThrowOnError ? sqlite3_close(db) : sqlite3_close_v2(db);
+    int statusCode;
+    if (shouldThrowOnError) {
+        statusCode = sqlite3_close(db);
+        if (statusCode == SQLITE_BUSY) {
+            // Statements whose JS wrappers are already unreachable still pin
+            // their sqlite3_stmt until GC runs their destructors. Collect now
+            // and retry once before reporting the connection as busy.
+            vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+            statusCode = sqlite3_close(db);
+        }
+    } else {
+        statusCode = sqlite3_close_v2(db);
+    }
     if (statusCode != SQLITE_OK) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(statusCode))));
         return {};

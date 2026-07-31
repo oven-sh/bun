@@ -429,6 +429,11 @@ class Database implements SqliteTypes.Database {
   #cachedQueriesKeys: string[] = [];
   #cachedQueriesLengths: number[] = [];
   #cachedQueriesValues: Statement[] = [];
+  // Statements created by query() after the cache filled up. Held weakly so GC
+  // can still collect them, but tracked so close() can finalize the survivors;
+  // otherwise sqlite3_close() fails with SQLITE_BUSY ("database is locked").
+  #uncachedQueryStatements?: Set<WeakRef<Statement>>;
+  #uncachedQueryRegistry?: FinalizationRegistry<WeakRef<Statement>>;
   filename;
   #hasClosed = false;
   get handle() {
@@ -526,6 +531,14 @@ class Database implements SqliteTypes.Database {
     this.#cachedQueriesKeys.length = 0;
     this.#cachedQueriesValues.length = 0;
     this.#cachedQueriesLengths.length = 0;
+
+    const uncached = this.#uncachedQueryStatements;
+    if (uncached) {
+      for (const ref of uncached) {
+        ref.deref()?.finalize?.();
+      }
+      uncached.clear();
+    }
   }
 
   run(query, ...params) {
@@ -590,6 +603,14 @@ class Database implements SqliteTypes.Database {
       this.#cachedQueriesKeys.push(query);
       this.#cachedQueriesLengths.push(query.length);
       this.#cachedQueriesValues.push(stmt);
+    } else {
+      const statements = (this.#uncachedQueryStatements ??= new Set());
+      const registry = (this.#uncachedQueryRegistry ??= new FinalizationRegistry(ref => {
+        this.#uncachedQueryStatements?.delete(ref);
+      }));
+      const ref = new WeakRef(stmt);
+      statements.add(ref);
+      registry.register(stmt, ref);
     }
 
     return stmt;

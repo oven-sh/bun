@@ -128,6 +128,68 @@ console.log(JSON.stringify(Bun.$.braces("{" + inner)));`,
   });
 });
 
+// `$.braces()` tokenized the raw string with no quote state, so `{`, `,`, `}`
+// inside `'…'`/`"…"` were treated as brace metacharacters and the quote
+// characters were left in the output. Bun's own `$` shell already handled the
+// same source text correctly because it brace-expands over atoms the shell
+// lexer has already quote-parsed. Each expected value below is the exact
+// `printf '[%s]\n' <input>` output under bash 5.2.
+describe("$.braces is quote-aware (bash 5.2)", () => {
+  const cases: [string, string[]][] = [
+    // Single-quoted span: literal content, quote characters dropped.
+    ["a'{b,c}'", ["a{b,c}"]],
+    ["'{a,b}'", ["{a,b}"]],
+    ["{a,'x,y'}", ["a", "x,y"]],
+    ["{a,'{b,c}'}", ["a", "{b,c}"]],
+    ["pre{a,'b,c','d,e'}post", ["preapost", "preb,cpost", "pred,epost"]],
+    ["{a,''}", ["a", ""]],
+    ["'a'\"b\"{c,d}", ["abc", "abd"]],
+    ["'a\\b'", ["a\\b"]],
+    // Double-quoted span: literal content, `\` escapes only `"`/`\`/`$`/`` ` ``.
+    ['a"{b,c}"', ["a{b,c}"]],
+    ['{a,"x,y"}', ["a", "x,y"]],
+    ['"a\\"b"', ['a"b']],
+    ['"a\\\\b"', ["a\\b"]],
+    ['"a\\nb"', ["a\\nb"]],
+    ['"a\\{b,c\\}"', ["a\\{b,c\\}"]],
+    // `$'…'`: literal content for brace purposes, `$` consumed along with the
+    // quotes (C-style escape sequences inside are not processed here).
+    ["$'{a,b}'", ["{a,b}"]],
+    ["{x,$'a,b'}", ["x", "a,b"]],
+    // Backslash outside quotes removes itself and makes the next char literal.
+    ["a\\{b,c\\}", ["a{b,c}"]],
+    ["\\'{a,b}\\'", ["'a'", "'b'"]],
+    ['\\"{a,b}\\"', ['"a"', '"b"']],
+    // Unicode content inside a quoted span.
+    ["{😂,'🫵,🤣'}", ["😂", "🫵,🤣"]],
+    // No brace group: the quote-stripped text is returned, not the raw input.
+    ["'hello'", ["hello"]],
+    ["x\\y", ["xy"]],
+    // An unterminated quote consumes to end of input (no throw).
+    ["'{a,b}", ["{a,b}"]],
+  ];
+
+  for (const [input, expected] of cases) {
+    test(`$.braces(${JSON.stringify(input)}) → ${JSON.stringify(expected)}`, () => {
+      expect($.braces(input)).toEqual(expected);
+    });
+  }
+
+  test("the shell still treats a literal quote byte inside a brace word as data", async () => {
+    // `\'` in shell source is a literal `'` byte in the expanded word. The
+    // brace expander must not start a quote span at that byte (the shell path
+    // backslash-escapes it before handing it to the brace lexer).
+    const out = (await $`echo ${{ raw: "{a,\\'x,y\\'}" }}`.text()).trim();
+    expect(out.split(" ")).toEqual(["a", "'x", "y'"]);
+    // And a quote byte arriving via JS interpolation is data too.
+    const out2 = (await $`echo {a,${"'x,y'"}}`.text()).trim();
+    expect(out2.split(" ")).toEqual(["a", "'x,y'"]);
+    // `$` inside a brace variant survives expansion.
+    const out3 = (await $`echo {a,${"$b"}}c`.text()).trim();
+    expect(out3.split(" ")).toEqual(["ac", "$bc"]);
+  });
+});
+
 // A shell word combining brace + glob (`src/*.{ts,tsx}`, `{src,lib}/*.ts`) was
 // brace-expanded but the resulting `*` patterns were never globbed (the
 // brace-expand state always transitioned to Done instead of re-entering glob).

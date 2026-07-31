@@ -234,6 +234,28 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
     }
 }
 
+impl<const E: StringEncoding> ShellCharIter<E> {
+    /// Return the current codepoint without backslash-escape processing.
+    #[inline]
+    fn peek_raw(&self) -> Option<u32> {
+        match &self.src {
+            ShellSrc::Ascii(a) => Some(a.index()?.char),
+            ShellSrc::Unicode(u) => Some(u.index()?.char),
+        }
+    }
+
+    /// Consume and return one codepoint without backslash-escape processing.
+    #[inline]
+    fn eat_raw(&mut self) -> Option<u32> {
+        let ch = self.peek_raw()?;
+        match &mut self.src {
+            ShellSrc::Ascii(a) => a.eat(false),
+            ShellSrc::Unicode(u) => u.eat(false),
+        }
+        Some(ch)
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 
 bun_core::declare_scope!(BRACES, visible);
@@ -1105,6 +1127,24 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             if !escaped {
                 // `char` is u32 (CodepointType unified across encodings).
                 match char {
+                    c if c == u32::from(b'\'') => {
+                        self.eat_single_quoted()?;
+                        continue;
+                    }
+                    c if c == u32::from(b'"') => {
+                        self.eat_double_quoted()?;
+                        continue;
+                    }
+                    c if c == u32::from(b'$')
+                        && self.chars.peek_raw() == Some(u32::from(b'\'')) =>
+                    {
+                        // `$'…'` (ANSI-C quoting): for brace-expansion purposes
+                        // the content is literal and the `$` is consumed. C-style
+                        // escape sequences are not processed here.
+                        let _ = self.chars.eat_raw();
+                        self.eat_single_quoted()?;
+                        continue;
+                    }
                     c if c == u32::from(b'{') => {
                         brace_stack.push(OpenBrace {
                             tok_idx: u32::try_from(self.tokens.len()).expect("int cast"),
@@ -1267,6 +1307,47 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
     fn eat(&mut self) -> Option<<Chars<ENCODING> as CharIter>::InputChar> {
         self.chars.eat()
     }
+
+    /// Consume a single-quoted span: everything up to the next `'` is literal
+    /// text (including `\`), and both quote characters are dropped.
+    /// An unterminated quote consumes to end of input.
+    fn eat_single_quoted(&mut self) -> Result<(), AllocError> {
+        while let Some(c) = self.chars.eat_raw() {
+            if c == u32::from(b'\'') {
+                return Ok(());
+            }
+            self.append_char(c)?;
+        }
+        Ok(())
+    }
+
+    /// Consume a double-quoted span: `{`, `,`, `}` are literal text, both quote
+    /// characters are dropped, and `\` is an escape only before `"`/`\`/`$`/`` ` ``
+    /// (bash quote-removal). An unterminated quote consumes to end of input.
+    fn eat_double_quoted(&mut self) -> Result<(), AllocError> {
+        while let Some(c) = self.chars.eat_raw() {
+            if c == u32::from(b'"') {
+                return Ok(());
+            }
+            if c == u32::from(b'\\') {
+                match self.chars.peek_raw() {
+                    Some(next)
+                        if next == u32::from(b'"')
+                            || next == u32::from(b'\\')
+                            || next == u32::from(b'$')
+                            || next == u32::from(b'`') =>
+                    {
+                        let _ = self.chars.eat_raw();
+                        self.append_char(next)?;
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            self.append_char(c)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1298,6 +1379,40 @@ mod tests {
                     Token::Comma,
                     Token::Text(SmolStr::from_slice(b"b").unwrap()),
                     Token::Close,
+                    Token::Eof,
+                ],
+            ),
+            // Single-quoted span: braces/commas literal, quote chars dropped.
+            TestCase(
+                b"{a,'x,y'}",
+                vec![
+                    Token::Open(ExpansionVariants::default()),
+                    Token::Text(SmolStr::from_slice(b"a").unwrap()),
+                    Token::Comma,
+                    Token::Text(SmolStr::from_slice(b"x,y").unwrap()),
+                    Token::Close,
+                    Token::Eof,
+                ],
+            ),
+            // Double-quoted span: same.
+            TestCase(
+                br#"a"{b,c}""#,
+                vec![
+                    Token::Text(SmolStr::from_slice(b"a{b,c}").unwrap()),
+                    Token::Eof,
+                ],
+            ),
+            // Backslash-escaped quote is a literal quote byte.
+            TestCase(
+                br"\'{a,b}\'",
+                vec![
+                    Token::Text(SmolStr::from_slice(b"'").unwrap()),
+                    Token::Open(ExpansionVariants::default()),
+                    Token::Text(SmolStr::from_slice(b"a").unwrap()),
+                    Token::Comma,
+                    Token::Text(SmolStr::from_slice(b"b").unwrap()),
+                    Token::Close,
+                    Token::Text(SmolStr::from_slice(b"'").unwrap()),
                     Token::Eof,
                 ],
             ),

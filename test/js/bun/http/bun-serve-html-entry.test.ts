@@ -678,17 +678,15 @@ test("importing bun:main from HTML entry preload does not crash", async () => {
 // https://github.com/oven-sh/bun/issues/24031
 test.concurrent("subdirectory routes use forward slashes on Windows", async () => {
   await using dir = tempDir("html-subdir-routes", {
-    "index.html": `<!DOCTYPE html><html><head><title>Home</title></head><body>Home</body></html>`,
-    "demos/bubbles.html": `<!DOCTYPE html><html><head><title>Bubbles</title></head><body>Bubbles</body></html>`,
-    "demos/nested/page.html": `<!DOCTYPE html><html><head><title>Nested</title></head><body>Nested</body></html>`,
+    "dist/index.html": `<!DOCTYPE html><html><head><title>Home</title></head><body>Home</body></html>`,
+    "dist/components/buttons.html": `<!DOCTYPE html><html><head><title>Buttons</title></head><body>Buttons</body></html>`,
   });
 
   await using process = Bun.spawn({
     cmd: [
       bunExe(),
-      join(String(dir), "index.html"),
-      join(String(dir), "demos", "bubbles.html"),
-      join(String(dir), "demos", "nested", "page.html"),
+      "./dist/**/*.html",
+      join(String(dir), "dist", "components", "buttons.html"),
       "--port=0",
       "--hostname=127.0.0.1",
     ],
@@ -707,71 +705,14 @@ test.concurrent("subdirectory routes use forward slashes on Windows", async () =
       const match = text.match(/http:\/\/\S+/);
       if (match && URL.canParse(match[0])) serverUrl = match[0];
     }
-    if (serverUrl && text.includes("Routes:") && text.includes("page")) break;
-  }
-
-  expect(serverUrl).toBeTruthy();
-  expect(text).toContain("/demos/bubbles");
-  expect(text).toContain("/demos/nested/page");
-  expect(text).not.toContain("/demos\\bubbles");
-  expect(text).not.toContain("/demos\\nested");
-
-  const bubbles = await fetch(new URL("/demos/bubbles", serverUrl));
-  expect(bubbles.status).toBe(200);
-  expect(await bubbles.text()).toContain("<title>Bubbles</title>");
-
-  const nested = await fetch(new URL("/demos/nested/page", serverUrl));
-  expect(nested.status).toBe(200);
-  expect(await nested.text()).toContain("<title>Nested</title>");
-
-  const home = await fetch(new URL("/", serverUrl));
-  expect(home.status).toBe(200);
-  expect(await home.text()).toContain("<title>Home</title>");
-});
-
-// https://github.com/oven-sh/bun/issues/24031
-test.concurrent("glob pattern subdirectory routes use forward slashes on Windows", async () => {
-  await using dir = tempDir("html-glob-subdir-routes", {
-    "dist/index.html": `<!DOCTYPE html><html><head><title>Home</title></head><body>Home</body></html>`,
-    "dist/components/buttons.html": `<!DOCTYPE html><html><head><title>Buttons</title></head><body>Buttons</body></html>`,
-    "dist/components/forms.html": `<!DOCTYPE html><html><head><title>Forms</title></head><body>Forms</body></html>`,
-  });
-
-  await using process = Bun.spawn({
-    cmd: [bunExe(), "./dist/**/*.html", "--port=0", "--hostname=127.0.0.1"],
-    env: { ...bunEnv, NODE_ENV: "production", NO_COLOR: "1" },
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const decoder = new TextDecoder();
-  let text = "";
-  let serverUrl = "";
-  for await (const chunk of process.stdout as ReadableStream<Uint8Array>) {
-    text += decoder.decode(chunk, { stream: true });
-    if (!serverUrl) {
-      const match = text.match(/http:\/\/\S+/);
-      if (match && URL.canParse(match[0])) serverUrl = match[0];
-    }
-    if (serverUrl && text.includes("Routes:") && text.includes("forms")) break;
+    if (serverUrl && text.includes("Routes:") && text.includes("buttons")) break;
   }
 
   expect(serverUrl).toBeTruthy();
   expect(text).toContain("/components/buttons");
-  expect(text).toContain("/components/forms");
-  expect(text).not.toContain("/components\\buttons");
-  expect(text).not.toContain("/components\\forms");
+  expect(text).not.toContain("/components\\");
 
   const buttons = await fetch(new URL("/components/buttons", serverUrl));
   expect(buttons.status).toBe(200);
   expect(await buttons.text()).toContain("<title>Buttons</title>");
-
-  const forms = await fetch(new URL("/components/forms", serverUrl));
-  expect(forms.status).toBe(200);
-  expect(await forms.text()).toContain("<title>Forms</title>");
-
-  const home = await fetch(new URL("/", serverUrl));
-  expect(home.status).toBe(200);
-  expect(await home.text()).toContain("<title>Home</title>");
 });

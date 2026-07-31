@@ -137,46 +137,47 @@ test(
 test.skipIf(!isDebug)(
   "terminate() while dynamic-import transpiler jobs are in flight does not report TerminationException as uncaught",
   async () => {
+    // w.mjs lives in the temp dir so it can use relative ./modN imports;
+    // main.mjs uses the global Web Worker (no preloads): node:worker_threads
+    // injects a "node:worker_threads" preload whose load_preloads spin uses the
+    // non-termination-aware wait_for_promise and independently hits the WebKit
+    // assertNoException() termination bug.
     using dir = tempDir("worker-terminate-dynimport", {
       "mod0.mjs": "export default 0; ++++;",
       "mod1.mjs": "export default 1; ++++;",
       "mod2.mjs": "export default 2; ++++;",
       "mod3.mjs": "export default 3; ++++;",
+      "w.mjs": `
+        postMessage("ready");
+        let k = 0;
+        while (true) {
+          const i = k % 4;
+          try { await import("./mod" + i + ".mjs?v=" + ((k / 4) | 0)); } catch {}
+          k++;
+        }
+      `,
+      "main.mjs": `
+        const rounds = 60;
+        function one(delay) {
+          return new Promise((resolve) => {
+            const w = new Worker(new URL("./w.mjs", import.meta.url).href);
+            w.onerror = () => {};
+            // Key terminate off the ready signal so every round is past
+            // startup and inside the import loop.
+            w.onmessage = () => setTimeout(() => { w.terminate(); setTimeout(resolve, 5); }, delay);
+          });
+        }
+        async function lane(offset) {
+          for (let i = 0; i < rounds; i++) await one((i * 7 + offset) % 30);
+        }
+        await Promise.all([lane(0), lane(3)]);
+        console.log("survived");
+      `,
     });
-    const rounds = 100;
-    // Uses the global Web Worker (no preloads); node:worker_threads injects a
-    // "node:worker_threads" preload whose load_preloads spin uses the non-
-    // termination-aware wait_for_promise and independently hits the WebKit
-    // assertNoException() termination bug.
-    const code = `
-      import { writeFileSync } from "node:fs";
-      import { join } from "node:path";
-      const D = ${JSON.stringify(String(dir) + "/")};
-      writeFileSync(join(D, "w.mjs"),
-        'const D = ' + JSON.stringify(D) + ';' +
-        'postMessage("ready");' +
-        'let k = 0;' +
-        'while (true) {' +
-        '  const i = k % 4;' +
-        '  try { await import(D + "mod" + i + ".mjs?v=" + ((k / 4) | 0)); } catch {}' +
-        '  k++;' +
-        '}');
-      function one(delay) {
-        return new Promise((resolve) => {
-          const w = new Worker(join(D, "w.mjs"));
-          w.onmessage = () => {}; w.onerror = () => {};
-          setTimeout(() => { w.terminate(); setTimeout(resolve, 5); }, delay);
-        });
-      }
-      async function lane(offset) {
-        for (let i = 0; i < ${rounds}; i++) await one(20 + ((i * 37 + offset) % 120));
-      }
-      await Promise.all([lane(0), lane(17)]);
-      console.log("survived");
-    `;
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", code],
+      cmd: [bunExe(), "main.mjs"],
       env: bunEnv,
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });

@@ -192,7 +192,7 @@ test("net entries are instanceof PerformanceEntry", async () => {
 
 // The Performance Timeline startTime sort is spec'd as a stable Infra list-sort,
 // so entries with equal startTime keep insertion order. Verified against Node v26.3.0.
-test("getEntries()/getEntriesByType() keep insertion order for equal startTime", async () => {
+test("getEntries()/getEntriesByType()/getEntriesByName() keep insertion order for equal startTime", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -206,6 +206,9 @@ test("getEntries()/getEntriesByType() keep insertion order for equal startTime",
        // getEntries() mixes types: all measures (startTime 50) sort before all marks (100),
        // and within each tied group insertion order is preserved.
        const all = performance.getEntries().map(e => e.entryType[1] + e.name).join(",");
+       // getEntriesByName(): same name, same startTime, distinguished by detail.
+       for (let i = 0; i < 8; i++) performance.mark("dup", { startTime: 100, detail: i });
+       const byName = performance.getEntriesByName("dup", "mark").map(e => e.detail).join(",");
        // Entries with distinct startTimes are still ordered by startTime, and
        // interleaving with the tied group keeps the tied group's insertion order.
        performance.clearMarks();
@@ -213,19 +216,22 @@ test("getEntries()/getEntriesByType() keep insertion order for equal startTime",
        for (const n of names) performance.mark(n, { startTime: 100 });
        performance.mark("hi", { startTime: 200 });
        const mixed = performance.getEntriesByType("mark").map(e => e.name).join(",");
-       console.log(JSON.stringify({ marks, measures, all, mixed }));`,
+       console.log(JSON.stringify({ marks, measures, all, byName, mixed }));`,
     ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    marks: "a,b,c,d,e,f,g,h",
-    measures: "a,b,c,d,e,f,g,h",
-    all: "ea,eb,ec,ed,ee,ef,eg,eh,aa,ab,ac,ad,ae,af,ag,ah",
-    mixed: "lo,a,b,c,d,e,f,g,h,hi",
+  expect({ stderr, stdout: stdout.trim(), exitCode }).toEqual({
+    stderr: "",
+    stdout: JSON.stringify({
+      marks: "a,b,c,d,e,f,g,h",
+      measures: "a,b,c,d,e,f,g,h",
+      all: "ea,eb,ec,ed,ee,ef,eg,eh,aa,ab,ac,ad,ae,af,ag,ah",
+      byName: "0,1,2,3,4,5,6,7",
+      mixed: "lo,a,b,c,d,e,f,g,h,hi",
+    }),
+    exitCode: 0,
   });
-  expect(exitCode).toBe(0);
 });

@@ -443,7 +443,12 @@ linker = "hoisted"
     expect(existsSync(hoistedBin)).toBeTrue();
     expect(existsSync(nestedBin)).toBeTrue();
     expect(realpathSync(hoistedBin)).toContain("test-postinstall-skip-native");
-    expect(realpathSync(nestedBin)).toContain("test-postinstall-skip-native");
+    // The nested platform package lands in the child tree under
+    // `test-postinstall-skip/node_modules/`, so the redirect has to cross
+    // trees (covers the `target_tree_id != tree_id` defer-and-relink path).
+    expect(realpathSync(nestedBin)).toContain(
+      join("test-postinstall-skip", "node_modules", "test-postinstall-skip-native"),
+    );
 
     expect(await runBin(hoistedBin)).toEqual({ out: "native v2.0.0", err: "", code: 0 });
     expect(await runBin(nestedBin)).toEqual({ out: "native v1.0.0", err: "", code: 0 });

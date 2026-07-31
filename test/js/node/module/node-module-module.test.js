@@ -386,6 +386,7 @@ describe.concurrent("node-module-module", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe('{"a":1}');
-    expect({ stderr, exitCode }).toEqual({ stderr, exitCode: 0 });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });

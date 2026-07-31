@@ -1135,9 +1135,8 @@ describe.concurrent("S3 - List Objects", () => {
         assign: { key: "k", owner: { id: "oid", displayName: "dn" } },
       }),
     );
-    // stderr is reported for context on failure but not asserted exactly; a
-    // regressing debug assert shows up as empty stdout above.
-    expect({ stderr, exitCode }).toEqual({ stderr, exitCode: 0 });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });
 

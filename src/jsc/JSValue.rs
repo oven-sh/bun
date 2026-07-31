@@ -1417,9 +1417,7 @@ impl JSValue {
     pub fn put<K: PutKey>(self, global: &JSGlobalObject, key: K, value: JSValue) {
         key.put(self, global, value)
     }
-    /// [`put`] with `PropertyAttribute::DontEnum`: the property is readable by
-    /// name but hidden from `Object.keys`, `for..in`, `JSON.stringify`, and
-    /// spread. Used for deprecated/back-compat property aliases.
+    /// [`put`] with `PropertyAttribute::DontEnum`.
     pub fn put_non_enumerable(
         self,
         global: &JSGlobalObject,

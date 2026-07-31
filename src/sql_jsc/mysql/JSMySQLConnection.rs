@@ -816,11 +816,17 @@ impl JSMySQLConnection {
         // outlives this fn (held via `request`'s intrusive ref), satisfying
         // the `ParentRef` liveness invariant.
         let cached_structure: Option<ParentRef<CachedStructure>> = match result_mode {
-            ResultMode::Objects => self.js_value.get().try_get().map(|value| {
-                let cs = statement.structure(value, &self.global_object);
+            ResultMode::Objects => {
+                // Always build the Structure for object-mode rows so
+                // `JSC__constructObjectFromDataCell` never sees neither a
+                // Structure nor a names array (which would trip its
+                // RELEASE_ASSERT). Matches the postgres path: a missing
+                // js_value just means no write-barrier owner.
+                let owner = self.js_value.get().try_get().unwrap_or(JSValue::ZERO);
+                let cs = statement.structure(owner, &self.global_object);
                 structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
-                ParentRef::new(cs)
-            }),
+                Some(ParentRef::new(cs))
+            }
             // no need to check for duplicate fields or structure
             ResultMode::Raw | ResultMode::Values => None,
         };

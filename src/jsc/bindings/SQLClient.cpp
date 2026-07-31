@@ -328,8 +328,18 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                 if (names.has_value()) {
                     auto name = names.value()[i];
                     object->putDirect(vm, Identifier::fromString(vm, name.name.toWTFString()), value);
-
-                } else if (structure && structure->isValidOffset(i)) {
+                } else {
+                    // Invariant: when no `names` array was passed, the cached
+                    // Structure was built from exactly this column set
+                    // (CachedStructure::build_from_columns only takes the
+                    // Structure path when non_duplicated_count <=
+                    // maxInlineCapacity, and this fast path requires
+                    // !hasDuplicateColumns && !hasIndexedColumns, so every
+                    // column index has a matching offset). Never drop a column
+                    // value silently; if this fires, structure construction and
+                    // the row's column count have diverged.
+                    RELEASE_ASSERT_WITH_MESSAGE(structure && structure->isValidOffset(i),
+                        "SQL row column %u has no matching Structure offset", i);
                     object->putDirectOffset(vm, i, value);
                 }
             }
@@ -380,7 +390,14 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                             auto name = names.value()[structureOffsetIndex++];
                             object->putDirect(vm, Identifier::fromString(vm, name.name.toWTFString()), value);
                         }
-                    } else if (structure && structure->isValidOffset(structureOffsetIndex)) {
+                    } else {
+                        // Invariant: JSC__createStructure added one property
+                        // transition per named column from the same field set
+                        // this row was decoded against, so the k-th named cell
+                        // always has offset k. Never drop a column value
+                        // silently.
+                        RELEASE_ASSERT_WITH_MESSAGE(structure && structure->isValidOffset(structureOffsetIndex),
+                            "SQL row named column has no matching Structure offset (index %u)", structureOffsetIndex);
                         object->putDirectOffset(vm, structureOffsetIndex++, value);
                     }
                 } else if (cell.isDuplicateColumn()) {

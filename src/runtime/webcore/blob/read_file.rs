@@ -53,6 +53,11 @@ macro_rules! log {
 /// `F` provides the callback that converts the read bytes to a JSValue.
 /// Modelled as a trait so each instantiation monomorphizes.
 pub trait ReadFileToJs {
+    /// When `true`, the read task decodes the bytes to a `BunString` on the
+    /// work pool (same path `fs.promises.readFile(..., "utf8")` uses) so the
+    /// JS-thread completion is just a `transfer_to_js` instead of a full
+    /// UTF-8→UTF-16 decode.
+    const WANTS_TEXT: bool = false;
     /// `by` carries the caller's allocation provenance unchanged:
     /// `Lifetime::Temporary` ⇒ a `Box::<[u8]>::into_raw` the callee MUST take
     /// ownership of (every `to_*_with_bytes::<Temporary>` arm reclaims it);
@@ -105,6 +110,20 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
         drop(handler);
         match maybe_bytes {
             ReadFileResultType::Result(result) => {
+                if let Some(mut decoded) = result.decoded_text {
+                    // The work-pool thread already produced the WTF string; just
+                    // hand it to JS. `result.buf` is an empty Box when this arm
+                    // is taken.
+                    // SAFETY: `buf` is `Box::<[u8]>::into_raw` from the producer.
+                    unsafe { drop(bun_core::heap::take(result.buf)) };
+                    AnyPromise::Normal(promise).wrap(global_this, move |g| {
+                        if decoded.is_dead() {
+                            return Err(g.throw_out_of_memory());
+                        }
+                        bun_jsc::StringJsc::transfer_to_js(&mut decoded, g)
+                    })?;
+                    return Ok(());
+                }
                 let bytes = result.buf;
                 if blob.size.get() > 0 {
                     blob.size
@@ -146,6 +165,10 @@ pub struct ReadFileRead {
     /// `to_*_with_bytes::<Temporary>(*mut [u8])`, which itself decides whether
     /// the bytes are freed locally or transferred to a JSC external string.
     pub(crate) buf: *mut [u8],
+    /// Populated when `ReadFile::convert_to_text` was set: the work-pool thread
+    /// already ran the UTF-8 decode, so the JS-thread completion just wraps the
+    /// string. `buf` is an empty Box when this is `Some`.
+    pub(crate) decoded_text: Option<BunString>,
 }
 
 /// Result-or-error union for a completed read.
@@ -198,6 +221,9 @@ pub struct ReadFile {
     #[cfg(not(windows))]
     pub(crate) size: SizeType,
     pub(crate) buffer: Vec<u8>,
+    #[cfg(not(windows))]
+    pub(crate) convert_to_text: bool,
+    pub(crate) decoded_text: Option<BunString>,
     pub task: WorkPoolTask,
     pub(crate) system_error: Option<SystemError>,
     pub(crate) errno: Option<Error>,
@@ -347,6 +373,7 @@ impl ReadFile {
         on_complete_callback: ReadFileOnReadFileCallback,
         off: SizeType,
         max_len: SizeType,
+        convert_to_text: bool,
     ) -> Result<Box<ReadFile>, Error> {
         // store.ref() — `StoreRef` carries the +1; held in `self.store`.
         let file_store = store.data.as_file().clone();
@@ -362,6 +389,8 @@ impl ReadFile {
             read_eof: false,
             size: 0,
             buffer: Vec::new(),
+            convert_to_text,
+            decoded_text: None,
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::do_read_loop_task,
@@ -390,6 +419,7 @@ impl ReadFile {
         off: SizeType,
         max_len: SizeType,
         context: *mut C,
+        convert_to_text: bool,
     ) -> Result<Box<ReadFile>, Error> {
         // `ReadFileCompletion`
         // monomorphizes per `C`, so `handler_run::<C>` calls `C::run` directly
@@ -408,6 +438,7 @@ impl ReadFile {
             handler_run::<C>,
             off,
             max_len,
+            convert_to_text,
         )
     }
 
@@ -609,6 +640,7 @@ impl ReadFile {
         let _store = this.store.take().unwrap();
         // reshaped for borrowck — take buffer out so it survives `drop(this)`.
         let buf = core::mem::take(&mut this.buffer);
+        let decoded_text = this.decoded_text.take();
 
         // `_store` is dropped at end of scope (= store.deref()).
         let system_error = this.system_error.take();
@@ -625,6 +657,7 @@ impl ReadFile {
             cb_ctx,
             ReadFileResultType::Result(ReadFileRead {
                 buf: bun_core::heap::into_raw(buf.into_boxed_slice()),
+                decoded_text,
             }),
         );
         Ok(())
@@ -920,6 +953,15 @@ impl ReadFile {
             if self.buffer.len() + 16_000 < self.buffer.capacity() {
                 self.buffer.shrink_to_fit();
             }
+
+            // `.text()`: decode here (on the work pool) so the JS thread only
+            // has to wrap the resulting WTF string. This is the same split
+            // `fs.promises.readFile(path, "utf8")` uses.
+            if self.convert_to_text && self.system_error.is_none() {
+                let bytes = core::mem::take(&mut self.buffer);
+                self.decoded_text = Some(crate::webcore::blob::decode_blob_text_owned(bytes));
+            }
+
             // `Bytes` is owning, and `then()` delivers `self.buffer` directly,
             // so do not also stash it in `byte_store` — that would double-free.
             self.on_finish();
@@ -1146,6 +1188,7 @@ impl<'a> ReadFileUV<'a> {
             let boxed = core::mem::take(&mut this_box.byte_store).into_boxed_slice();
             ReadFileResultType::Result(ReadFileRead {
                 buf: bun_core::heap::into_raw(boxed),
+                decoded_text: None,
             })
         };
 

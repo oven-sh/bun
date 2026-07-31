@@ -4030,8 +4030,7 @@ where
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
                 );
                 let source = bytes.parent_const();
-                source.drain_handler.set(None);
-                source.drain_ctx.set(None);
+                source.producer.set(WebCore::streams::SourceHandle::None);
                 // TODO: properly propagate exception upwards
                 let _ = bytes.on_data(WebCore::streams::Result::TemporaryAndDone(borrowed));
             }
@@ -4169,15 +4168,14 @@ where
         false
     }
 
-    /// Detach the body ByteStream's `drain_handler` (the stream can outlive this ctx in JS).
+    /// Detach the body ByteStream's drain producer (the stream can outlive this ctx in JS).
     fn clear_request_body_stream_drain_handler(&self, global_this: &JSGlobalObject) {
         let Some(readable) = self.request_body_readable_stream_ref.get(global_this) else {
             return;
         };
         if let Some(bytes) = readable.ptr.bytes() {
             let source = bytes.parent_const();
-            source.drain_handler.set(None);
-            source.drain_ctx.set(None);
+            source.producer.set(WebCore::streams::SourceHandle::None);
         }
     }
 

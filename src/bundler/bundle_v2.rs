@@ -2362,7 +2362,8 @@ pub mod bv2_impl {
                     bun_paths::resolve_path::platform::Loose,
                     false,
                 >(
-                    bun_resolver::fs::FileSystem::get().top_level_dir(), path.text
+                    bun_resolver::fs::FileSystem::get().top_level_dir(),
+                    path.text,
                 );
                 // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
                 // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
@@ -6195,7 +6196,9 @@ pub mod bv2_impl {
                                                 Fs::FileSystem::instance().top_level_dir(),
                                             ) {
                                             let specifier_to_use = &import_record.path.text
-                                                [Fs::FileSystem::instance().top_level_dir().len()..];
+                                                [Fs::FileSystem::instance()
+                                                    .top_level_dir()
+                                                    .len()..];
                                             #[cfg(windows)]
                                             {
                                                 &*bun_paths::resolve_path::path_to_posix_buf::<u8>(

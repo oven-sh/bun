@@ -36,6 +36,17 @@ function uncurryThis(func) {
   return FunctionPrototypeCall.bind(func);
 }
 
+const ArrayPrototypeForEach = uncurryThis(Array.prototype.forEach);
+const ArrayPrototypeMap = uncurryThis(Array.prototype.map);
+const ArrayPrototypeSymbolIterator = uncurryThis(Array.prototype[Symbol.iterator]);
+const ArrayIteratorPrototypeNext = uncurryThis(Array.prototype[Symbol.iterator]().next);
+const StringPrototypeSymbolIterator = uncurryThis(String.prototype[Symbol.iterator]);
+const StringIteratorPrototypeNext = uncurryThis(
+  Reflect.getPrototypeOf(String.prototype[Symbol.iterator].$call("")).next,
+);
+const PromiseAll = Promise.all;
+const PromiseResolve = Promise.$resolve.bind(Promise);
+
 const copyProps = (src, dest) => {
   ArrayPrototypeForEach(Reflect.ownKeys(src), key => {
     if (!Reflect.getOwnPropertyDescriptor(dest, key)) {
@@ -77,26 +88,23 @@ const makeSafe = (unsafe, safe) => {
   return safe;
 };
 
-const StringIterator = uncurryThis(String.prototype[Symbol.iterator]);
-const StringIteratorPrototype = Reflect.getPrototypeOf(StringIterator(""));
-const ArrayPrototypeForEach = uncurryThis(Array.prototype.forEach);
-const ArrayPrototypeSymbolIterator = uncurryThis(Array.prototype[Symbol.iterator]);
-const ArrayIteratorPrototypeNext = uncurryThis(Array.prototype[Symbol.iterator]().next);
-const SafeArrayIterator = createSafeIterator(ArrayPrototypeSymbolIterator, ArrayIteratorPrototypeNext);
+let SafeArrayIterator;
+function getSafeArrayIterator() {
+  return (SafeArrayIterator ??= createSafeIterator(ArrayPrototypeSymbolIterator, ArrayIteratorPrototypeNext));
+}
 
-const ArrayPrototypeMap = Array.prototype.map;
 const PromisePrototypeThen = $Promise.prototype.$then;
 
-const arrayToSafePromiseIterable = (promises, mapFn) =>
-  new SafeArrayIterator(
-    ArrayPrototypeMap.$call(
+const arrayToSafePromiseIterable = (promises, mapFn) => {
+  const SafeArrayIterator = getSafeArrayIterator();
+  return new SafeArrayIterator(
+    ArrayPrototypeMap(
       promises,
       (promise, i) =>
         new Promise((a, b) => PromisePrototypeThen.$call(mapFn == null ? promise : mapFn(promise, i), a, b)),
     ),
   );
-const PromiseAll = Promise.all;
-const PromiseResolve = Promise.$resolve.bind(Promise);
+};
 const SafePromiseAll = (promises, mapFn) => PromiseAll(arrayToSafePromiseIterable(promises, mapFn));
 // Shared scheduler for SafePromiseAllReturnVoid/ReturnArrayLike: `returnVal`
 // is null for the void variant (no result bookkeeping, resolves with nothing).
@@ -126,53 +134,15 @@ const SafePromiseAllReturnArrayLike = (promises, mapFn) => {
   return safePromiseAllCollect(promises, mapFn, returnVal);
 };
 
-export default {
+const primordials = {
   Array,
-  SafeArrayIterator,
-  MapPrototypeGetSize: getGetter(Map, "size"),
   Number,
   Object,
   RegExp,
-  SafeStringIterator: createSafeIterator(StringIterator, uncurryThis(StringIteratorPrototype.next)),
-  SafeMap: makeSafe(
-    Map,
-    class SafeMap extends Map {
-      constructor(i) {
-        super(i);
-      }
-    },
-  ),
   SafePromiseAll,
   SafePromiseAllReturnArrayLike,
   SafePromiseAllReturnVoid,
-  SafeSet: makeSafe(
-    Set,
-    class SafeSet extends Set {
-      constructor(i) {
-        super(i);
-      }
-    },
-  ),
-  SafeWeakSet: makeSafe(
-    WeakSet,
-    class SafeWeakSet extends WeakSet {
-      constructor(i) {
-        super(i);
-      }
-    },
-  ),
-  SafeWeakMap: makeSafe(
-    WeakMap,
-    class SafeWeakMap extends WeakMap {
-      constructor(i) {
-        super(i);
-      }
-    },
-  ),
-  SetPrototypeGetSize: getGetter(Set, "size"),
   String,
-  TypedArrayPrototypeGetLength: getGetter(Uint8Array, "length"),
-  TypedArrayPrototypeGetSymbolToStringTag: getGetter(Uint8Array, Symbol.toStringTag),
   Uint8ClampedArray,
   Uint8Array,
   Uint16Array,
@@ -187,3 +157,64 @@ export default {
   BigInt64Array,
   uncurryThis,
 };
+
+function defineLazy(name, initialize) {
+  Object.defineProperty(primordials, name, {
+    get() {
+      const value = initialize();
+      Reflect.defineProperty(primordials, name, { value, writable: true, enumerable: true, configurable: true });
+      return value;
+    },
+    enumerable: true,
+    configurable: true,
+  });
+}
+
+defineLazy("SafeArrayIterator", getSafeArrayIterator);
+defineLazy("MapPrototypeGetSize", () => getGetter(Map, "size"));
+defineLazy("SetPrototypeGetSize", () => getGetter(Set, "size"));
+defineLazy("TypedArrayPrototypeGetLength", () => getGetter(Uint8Array, "length"));
+defineLazy("TypedArrayPrototypeGetSymbolToStringTag", () => getGetter(Uint8Array, Symbol.toStringTag));
+defineLazy("SafeStringIterator", () => createSafeIterator(StringPrototypeSymbolIterator, StringIteratorPrototypeNext));
+defineLazy("SafeMap", () =>
+  makeSafe(
+    Map,
+    class SafeMap extends Map {
+      constructor(i) {
+        super(i);
+      }
+    },
+  ),
+);
+defineLazy("SafeSet", () =>
+  makeSafe(
+    Set,
+    class SafeSet extends Set {
+      constructor(i) {
+        super(i);
+      }
+    },
+  ),
+);
+defineLazy("SafeWeakSet", () =>
+  makeSafe(
+    WeakSet,
+    class SafeWeakSet extends WeakSet {
+      constructor(i) {
+        super(i);
+      }
+    },
+  ),
+);
+defineLazy("SafeWeakMap", () =>
+  makeSafe(
+    WeakMap,
+    class SafeWeakMap extends WeakMap {
+      constructor(i) {
+        super(i);
+      }
+    },
+  ),
+);
+
+export default primordials;

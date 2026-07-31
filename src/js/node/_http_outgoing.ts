@@ -1,9 +1,8 @@
 // Hardcoded module "node:_http_outgoing"
 // This is a port of Node.js's lib/_http_outgoing.js
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js
-const { Stream } = require("internal/stream");
+const { Stream } = require("internal/streams/legacy");
 const { isUint8Array, validateString } = require("internal/validators");
-const { deprecate } = require("internal/util/deprecate");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
 const { kOutHeaders, kNeedDrain, utcDate } = require("internal/http");
 const {
@@ -13,8 +12,15 @@ const {
   chunkExpression: RE_TE_CHUNKED,
   isLenient,
 } = require("node:_http_common");
-const { FakeSocket } = require("internal/http/FakeSocket");
-const EE = require("node:events");
+
+let deprecate;
+function lazyDeprecate(fn, msg, code) {
+  let wrapped;
+  return function (this: any) {
+    wrapped ??= (deprecate ??= require("internal/util/deprecate").deprecate)(fn, msg, code);
+    return wrapped.$apply(this, arguments);
+  };
+}
 
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectKeys = Object.keys;
@@ -1189,20 +1195,20 @@ OutgoingMessage.prototype.pipe = function pipe() {
   this.emit("error", $ERR_STREAM_CANNOT_PIPE());
 };
 
-OutgoingMessage.prototype[EE.captureRejectionSymbol] = function (err, _event) {
+OutgoingMessage.prototype[Symbol.for("nodejs.rejection")] = function (err, _event) {
   this.destroy(err);
 };
 
 ObjectDefineProperty(OutgoingMessage.prototype, "_headers", {
   __proto__: null,
-  get: deprecate(
+  get: lazyDeprecate(
     function (this: any) {
       return this.getHeaders();
     },
     "OutgoingMessage.prototype._headers is deprecated",
     "DEP0066",
   ),
-  set: deprecate(
+  set: lazyDeprecate(
     function (this: any, val) {
       if (val == null) {
         this[kOutHeaders] = null;
@@ -1251,7 +1257,7 @@ ObjectDefineProperty(OutgoingMessage.prototype, "headers", {
 
 ObjectDefineProperty(OutgoingMessage.prototype, "_headerNames", {
   __proto__: null,
-  get: deprecate(
+  get: lazyDeprecate(
     function (this: any) {
       const headers = this[kOutHeaders];
       if (headers !== null) {
@@ -1271,7 +1277,7 @@ ObjectDefineProperty(OutgoingMessage.prototype, "_headerNames", {
     "OutgoingMessage.prototype._headerNames is deprecated",
     "DEP0066",
   ),
-  set: deprecate(
+  set: lazyDeprecate(
     function (this: any, val) {
       if (typeof val === "object" && val !== null) {
         const headers = this[kOutHeaders];
@@ -1290,7 +1296,7 @@ ObjectDefineProperty(OutgoingMessage.prototype, "_headerNames", {
   ),
 });
 
-export default {
+const outgoing_exports = {
   kHighWaterMark,
   kUniqueHeaders,
   kOutHeaders,
@@ -1301,5 +1307,17 @@ export default {
   validateHeaderName,
   validateHeaderValue,
   OutgoingMessage,
-  FakeSocket,
+  get FakeSocket() {
+    return defineFakeSocket(require("internal/http/FakeSocket").FakeSocket);
+  },
+  set FakeSocket(value) {
+    defineFakeSocket(value);
+  },
 };
+
+function defineFakeSocket(value) {
+  ObjectDefineProperty(outgoing_exports, "FakeSocket", { value, writable: true, enumerable: true, configurable: true });
+  return value;
+}
+
+export default outgoing_exports;

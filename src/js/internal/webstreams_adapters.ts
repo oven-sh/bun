@@ -1,12 +1,6 @@
 "use strict";
 
-const {
-  SafePromiseAllReturnVoid,
-  SafeSet,
-  TypedArrayPrototypeGetBuffer,
-  TypedArrayPrototypeGetByteOffset,
-  TypedArrayPrototypeGetByteLength,
-} = require("internal/primordials");
+const { SafePromiseAllReturnVoid, SafeSet } = require("internal/primordials");
 
 const Writable = require("internal/streams/writable");
 const Readable = require("internal/streams/readable");
@@ -373,11 +367,7 @@ function newStreamWritableFromWritableStream(writableStream, options = kEmptyObj
           chunk = encoder.encode(chunk);
         } else {
           chunk = Buffer.from(chunk, encoding);
-          chunk = new Uint8Array(
-            TypedArrayPrototypeGetBuffer(chunk),
-            TypedArrayPrototypeGetByteOffset(chunk),
-            TypedArrayPrototypeGetByteLength(chunk),
-          );
+          chunk = new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
         }
       }
 
@@ -721,11 +711,7 @@ function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = 
           chunk = encoder.encode(chunk);
         } else {
           chunk = Buffer.from(chunk, encoding);
-          chunk = new Uint8Array(
-            TypedArrayPrototypeGetBuffer(chunk),
-            TypedArrayPrototypeGetByteOffset(chunk),
-            TypedArrayPrototypeGetByteLength(chunk),
-          );
+          chunk = new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
         }
       }
 

@@ -1,6 +1,5 @@
 // Hardcoded module "node:_http_server"
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
-const { Stream } = require("node:stream");
 const { Socket: NetSocket } = require("node:net");
 const {
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
@@ -21,13 +20,6 @@ const { ConnResetException, hasObserver, startPerf, stopPerf } = require("intern
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
-const {
-  throwOnInvalidTLSArray,
-  tlsStringToProtocolVersion,
-  secureProtocolToVersionRange,
-  processPfxOptions,
-  validateSecureProtocol,
-} = require("internal/tls");
 const {
   kInternalSocketData,
   serverSymbol,
@@ -67,10 +59,7 @@ const {
   onDataIncomingMessage,
   validateMsecs,
 } = require("internal/http");
-const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
-
-const { format } = require("internal/util/inspect");
 
 const { IncomingMessage, kReqShouldKeepAlive } = require("node:_http_incoming");
 const {
@@ -319,6 +308,14 @@ function Server(options, callback): void {
   } else {
     validateObject(options, "options");
     options = { ...options };
+
+    const {
+      throwOnInvalidTLSArray,
+      tlsStringToProtocolVersion,
+      secureProtocolToVersionRange,
+      processPfxOptions,
+      validateSecureProtocol,
+    } = require("internal/tls");
 
     // Node's https.Server accepts PKCS#12 bundles (pfx [+ passphrase]); fold
     // them into plain key/cert/ca so the native TLS config sees PEM material.
@@ -2075,7 +2072,7 @@ function _writeHead(statusCode, reason, obj, response) {
   const originalStatusCode = statusCode;
   statusCode |= 0;
   if (statusCode < 100 || statusCode > 999) {
-    throw $ERR_HTTP_INVALID_STATUS_CODE(format("%s", originalStatusCode));
+    throw $ERR_HTTP_INVALID_STATUS_CODE(require("internal/util/inspect").format("%s", originalStatusCode));
   }
 
   if (typeof reason === "string") {
@@ -2863,7 +2860,7 @@ Object.defineProperty(ServerResponse.prototype, "socket", {
       // response is assigned the socket.
       return null;
     }
-    return (this[fakeSocketSymbol] ??= new FakeSocket(this));
+    return (this[fakeSocketSymbol] ??= new (require("internal/http/FakeSocket").FakeSocket)(this));
   },
   set(value) {
     this[fakeSocketSymbol] = value;
@@ -3626,7 +3623,7 @@ ServerResponse.prototype.emit = function (event) {
   if (event === "close") {
     callCloseCallback(this);
   }
-  return Stream.prototype.emit.$apply(this, arguments);
+  return EventEmitter.prototype.emit.$apply(this, arguments);
 };
 
 ServerResponse.prototype.flushHeaders = function () {

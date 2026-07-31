@@ -2,13 +2,13 @@
 
 const ArrayPrototypePop = Array.prototype.pop;
 
-const { isIterable, isNodeStream, isWebStream } = require("internal/streams/utils");
-const { pipelineImpl: pl } = require("internal/streams/pipeline");
 const { finished } = require("internal/streams/end-of-stream");
 
 // require("internal/stream");
 
 function pipeline(...streams) {
+  const { isIterable, isNodeStream, isWebStream } = require("internal/streams/utils");
+  const { pipelineImpl: pl } = require("internal/streams/pipeline");
   return new Promise((resolve, reject) => {
     let signal;
     let end;

@@ -1,5 +1,3 @@
-const { throwNotImplemented } = require("internal/shared");
-
 var timersPromisesValue;
 
 export default {
@@ -19,7 +17,7 @@ export default {
     if ($isCallable(timer?.refresh)) {
       timer.refresh();
     } else {
-      throwNotImplemented("'timers.active'");
+      require("internal/shared").throwNotImplemented("'timers.active'");
     }
   },
   unenroll(timer) {
@@ -28,7 +26,7 @@ export default {
       return;
     }
 
-    throwNotImplemented("'timers.unenroll'");
+    require("internal/shared").throwNotImplemented("'timers.unenroll'");
   },
   enroll(timer, _msecs) {
     if ($isCallable(timer?.refresh)) {
@@ -36,6 +34,6 @@ export default {
       return;
     }
 
-    throwNotImplemented("'timers.enroll'");
+    require("internal/shared").throwNotImplemented("'timers.enroll'");
   },
 };

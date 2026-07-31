@@ -3,12 +3,21 @@ import type { FileSink } from "bun";
 const { Readable, Writable, finished } = require("node:stream");
 const fs: typeof import("node:fs") = require("node:fs");
 const { read, write, fsync, writev } = fs;
-const { FileHandle, kRef, kUnref, kFd } = (fs.promises as any).$data as {
-  FileHandle: { new (): FileHandle };
-  readonly kRef: unique symbol;
-  readonly kUnref: unique symbol;
-  readonly kFd: unique symbol;
-};
+let FileHandle: { new (): FileHandle };
+let kRef, kUnref, kFd;
+let fileHandlePrototypeRead, fileHandlePrototypeWrite, fileHandlePrototypeFsync, fileHandlePrototypeWritev;
+function loadFileHandle() {
+  if (FileHandle === undefined) {
+    ({ FileHandle, kRef, kUnref, kFd } = (require("node:fs/promises") as any).$data);
+    ({
+      read: fileHandlePrototypeRead,
+      write: fileHandlePrototypeWrite,
+      fsync: fileHandlePrototypeFsync,
+      writev: fileHandlePrototypeWritev,
+    } = FileHandle.prototype);
+  }
+  return FileHandle;
+}
 type FileHandle = import("node:fs/promises").FileHandle & {
   on(event: any, listener: any): FileHandle;
 };
@@ -33,21 +42,12 @@ type FSStream = import("node:fs").ReadStream &
   };
 type FD = number;
 
-const { validateInteger, validateInt32, validateFunction } = require("internal/validators");
-
 const kIsPerformingIO = Symbol("kIsPerformingIO");
 const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
 const kFs = Symbol("kFs");
-
-const {
-  read: fileHandlePrototypeRead,
-  write: fileHandlePrototypeWrite,
-  fsync: fileHandlePrototypeFsync,
-  writev: fileHandlePrototypeWritev,
-} = FileHandle.prototype;
 
 const fileHandleStreamFs = (fh: FileHandle) => ({
   // try to use the basic fs.read/write/fsync if available, since they are less
@@ -132,6 +132,7 @@ function ReadStream(this: FSStream, path, options): void {
     return new ReadStream(path, options);
   }
 
+  const { validateInteger, validateInt32, validateFunction } = require("internal/validators");
   options = copyObject(getStreamOptions(options));
 
   // Only buffers are supported.
@@ -161,7 +162,7 @@ function ReadStream(this: FSStream, path, options): void {
     }
     this.fd = fd;
     this[kFs] = customFs || fs;
-  } else if (typeof fd === "object" && fd instanceof FileHandle) {
+  } else if (typeof fd === "object" && fd instanceof loadFileHandle()) {
     if (options.fs) {
       throw $ERR_METHOD_NOT_IMPLEMENTED("fs.FileHandle with custom fs operations");
     }
@@ -393,6 +394,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
   }
 
   let fastPath = options?.$fastPath;
+  const { validateInteger, validateInt32, validateFunction } = require("internal/validators");
 
   options = copyObject(getStreamOptions(options));
 
@@ -422,7 +424,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     }
     this.fd = fd;
     this[kFs] = customFs || fs;
-  } else if (typeof fd === "object" && fd instanceof FileHandle) {
+  } else if (typeof fd === "object" && fd instanceof loadFileHandle()) {
     if (options.fs) {
       throw $ERR_METHOD_NOT_IMPLEMENTED("fs.FileHandle with custom fs operations");
     }

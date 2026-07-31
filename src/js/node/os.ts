@@ -148,7 +148,14 @@ function bound(binding) {
     get EOL() {
       return process.platform === "win32" ? "\r\n" : "\n";
     },
-    constants: $processBindingConstants.os,
+    get constants() {
+      const value = $processBindingConstants.os;
+      Reflect.defineProperty(this, "constants", { value, writable: true, enumerable: true, configurable: true });
+      return value;
+    },
+    set constants(value) {
+      Reflect.defineProperty(this, "constants", { value, writable: true, enumerable: true, configurable: true });
+    },
   };
 }
 

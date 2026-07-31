@@ -1,6 +1,5 @@
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
-const path = require("node:path");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperChild", 3);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessageChild", 2);
@@ -62,7 +61,8 @@ cluster._getServer = function (obj, options, cb) {
   let address = options.address;
 
   // Resolve unix socket paths to absolute paths
-  if (options.port < 0 && typeof address === "string" && process.platform !== "win32") address = path.resolve(address);
+  if (options.port < 0 && typeof address === "string" && process.platform !== "win32")
+    address = require("node:path").resolve(address);
 
   const indexesKey = ArrayPrototypeJoin.$call([address, options.port, options.addressType, options.fd], ":");
 

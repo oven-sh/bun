@@ -1,7 +1,13 @@
 // Hardcoded module "node:fs"
 import type { Dirent as DirentType, PathLike, Stats as StatsType } from "fs";
-const promises = require("node:fs/promises");
-const types = require("node:util/types");
+var _lazyPromises;
+function lazyPromises() {
+  return (_lazyPromises ??= require("node:fs/promises"));
+}
+var _types;
+function types() {
+  return (_types ??= require("node:util/types"));
+}
 const {
   validateFunction,
   validateInteger,
@@ -11,8 +17,6 @@ const {
 } = require("internal/validators");
 
 const kEmptyObject = Object.freeze(Object.create(null));
-
-const isDate = types.isDate;
 
 // The native `node:fs` binding, shared via `internal/fs/binding`.
 const fs = require("internal/fs/binding");
@@ -82,7 +86,7 @@ var access = function access(path, mode, callback) {
 
     ensureCallback(callback);
     // route through promises.rm for the JS-side ERR_FS_EISDIR validation
-    promises.rm(path, options).then(nullcallback(callback), callback);
+    lazyPromises().rm(path, options).then(nullcallback(callback), callback);
   },
   rmdir = function rmdir(path, options, callback) {
     if ($isCallable(options)) {
@@ -246,7 +250,7 @@ var access = function access(path, mode, callback) {
         params = offsetOrOptions;
       } else if (argc === 3) {
         // This is fs.read(fd, bufferOrParams, callback)
-        if (!types.isArrayBufferView(buffer)) {
+        if (!types().isArrayBufferView(buffer)) {
           // fs.read(fd, bufferOrParams, callback)
           params = buffer;
           ({ buffer = Buffer.alloc(16384) } = params ?? {});
@@ -281,7 +285,7 @@ var access = function access(path, mode, callback) {
 
     // $isTypedArrayView excludes DataView, so a DataView would fall through
     // to the string signature. Use Node's predicate, like writeSync below.
-    if (types.isArrayBufferView(buffer)) {
+    if (types().isArrayBufferView(buffer)) {
       callback ||= position || length || offsetOrOptions;
       ensureCallback(callback);
 
@@ -499,7 +503,7 @@ var access = function access(path, mode, callback) {
   },
   writeSync = function writeSync(fd, buffer, offsetOrOptions, length, position) {
     try {
-      if (types.isArrayBufferView(buffer)) {
+      if (types().isArrayBufferView(buffer)) {
         let offset = offsetOrOptions;
         if (typeof offset === "object" && offset !== null) {
           ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions);
@@ -983,7 +987,7 @@ function cp(src, dest, options, callback) {
   src = getValidatedFsPath(src, "src");
   dest = getValidatedFsPath(dest, "dest");
 
-  promises.cp(src, dest, options).then(callOnceWithNull.bind(null, callback), callback);
+  lazyPromises().cp(src, dest, options).then(callOnceWithNull.bind(null, callback), callback);
 }
 
 function _toUnixTimestamp(time: any, name = "time") {
@@ -998,7 +1002,7 @@ function _toUnixTimestamp(time: any, name = "time") {
     }
     return time;
   }
-  if (isDate(time)) {
+  if (types().isDate(time)) {
     // Convert to 123.456 UNIX timestamp
     return time.getTime() / 1000;
   }
@@ -1410,7 +1414,12 @@ var exports = {
       configurable: true,
     });
   },
-  promises,
+  get promises() {
+    return lazyPromises();
+  },
+  set promises(value) {
+    Reflect.defineProperty(exports, "promises", { value, writable: true, enumerable: true, configurable: true });
+  },
 };
 export default exports;
 

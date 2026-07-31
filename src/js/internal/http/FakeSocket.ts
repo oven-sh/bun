@@ -1,6 +1,5 @@
 const { kInternalSocketData, serverSymbol } = require("internal/http");
-const { kAutoDestroyed } = require("internal/shared");
-const { Duplex } = require("internal/stream");
+const Duplex = require("internal/streams/duplex");
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
@@ -38,7 +37,7 @@ var FakeSocket = class Socket extends Duplex {
   _destroy(_err, _callback) {
     const socketData = this[kInternalSocketData];
     if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
-    if (!socketData[1]["req"][kAutoDestroyed]) socketData[1].end();
+    if (!socketData[1]["req"][require("internal/shared").kAutoDestroyed]) socketData[1].end();
   }
 
   _final(_callback) {}

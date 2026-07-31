@@ -1,6 +1,5 @@
 "use strict";
 
-const { aggregateTwoErrors } = require("internal/errors");
 const {
   kIsDestroyed,
   isDestroyed,
@@ -66,7 +65,7 @@ function destroy(err, cb) {
   // If still constructing then defer calling _destroy.
   if ((s[kState] & kConstructed) === 0) {
     this.once(kDestroy, function (er) {
-      _destroy(this, aggregateTwoErrors(er, err), cb);
+      _destroy(this, require("internal/errors").aggregateTwoErrors(er, err), cb);
     });
   } else {
     _destroy(this, err, cb);

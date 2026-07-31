@@ -1,9 +1,6 @@
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
-const RoundRobinHandle = require("internal/cluster/RoundRobinHandle");
-const SharedHandle = require("internal/cluster/SharedHandle");
-const path = require("node:path");
-const { throwNotImplemented, kHandle } = require("internal/shared");
+const { kHandle } = require("internal/shared");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
@@ -240,7 +237,7 @@ function queryServer(worker, message) {
 
     // Find shortest path for unix sockets because of the ~100 byte limit
     if (message.port < 0 && typeof address === "string" && process.platform !== "win32") {
-      address = path.relative(process.cwd(), address);
+      address = require("node:path").relative(process.cwd(), address);
 
       if (message.address.length < address.length) address = message.address;
     }
@@ -260,11 +257,11 @@ function queryServer(worker, message) {
         worker.emit("error", error);
         return;
       }
-      handle = new SharedHandle(key, address, message);
+      handle = new (require("internal/cluster/SharedHandle"))(key, address, message);
     } else if (schedulingPolicy !== SCHED_RR) {
-      throwNotImplemented("node:cluster SCHED_NONE");
+      require("internal/shared").throwNotImplemented("node:cluster SCHED_NONE");
     } else {
-      handle = new RoundRobinHandle(key, address, message);
+      handle = new (require("internal/cluster/RoundRobinHandle"))(key, address, message);
     }
 
     handles.set(key, handle);

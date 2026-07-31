@@ -1,6 +1,5 @@
 // Hardcoded module "node:child_process"
 const EventEmitter = require("node:events");
-const OsModule = require("node:os");
 const { kHandle } = require("internal/shared");
 const {
   validateBoolean,
@@ -20,7 +19,10 @@ var BufferConcat = Buffer.concat;
 var BufferIsEncoding = Buffer.isEncoding;
 
 var kEmptyObject = ObjectCreate(null);
-var signals = OsModule.constants.signals;
+var signals;
+function lazySignals() {
+  return (signals ??= require("node:os").constants.signals);
+}
 
 var ArrayPrototypeJoin = Array.prototype.join;
 var ArrayPrototypeIncludes = Array.prototype.includes;
@@ -813,7 +815,7 @@ function convertToValidSignal(signal) {
   if (typeof signal === "number" && getSignalsToNamesMapping()[signal]) return signal;
 
   if (typeof signal === "string") {
-    const signalName = signals[StringPrototypeToUpperCase.$call(signal)];
+    const signalName = lazySignals()[StringPrototypeToUpperCase.$call(signal)];
     if (signalName) return signalName;
   }
 
@@ -833,7 +835,7 @@ function getSignalsToNamesMapping() {
   if (signalsToNamesMapping !== undefined) return signalsToNamesMapping;
 
   signalsToNamesMapping = ObjectCreate(null);
-  for (const key in signals) {
+  for (const key in lazySignals()) {
     signalsToNamesMapping[signals[key]] = key;
   }
 

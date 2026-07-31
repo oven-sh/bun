@@ -4,12 +4,11 @@ const EventEmitter = require("node:events");
 const { parseProxyConfigFromEnv, kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
 const { getLazy, kEmptyObject, once } = require("internal/shared");
 const { validateNumber, validateOneOf, validateString } = require("internal/validators");
-const { isIP } = require("internal/net/isIP");
 
 const kOnKeylog = Symbol("onkeylog");
 const kRequestOptions = Symbol("requestOptions");
 const kRequestAsyncResource = Symbol("requestAsyncResource");
-const { AsyncResource } = require("node:async_hooks");
+let AsyncResource;
 
 function freeSocketErrorListener(err) {
   const socket = this;
@@ -257,6 +256,7 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
     // Used to create sockets for pending requests from different origin
     req[kRequestOptions] = options;
     // Used to capture the original async context.
+    AsyncResource ??= require("node:async_hooks").AsyncResource;
     req[kRequestAsyncResource] = new AsyncResource("QueuedRequest");
 
     this.requests[name].push(req);
@@ -336,7 +336,7 @@ function calculateServerName(options, req) {
     }
   }
   // Don't implicitly set invalid (IP) servernames.
-  if (isIP(servername)) servername = "";
+  if (require("internal/net/isIP").isIP(servername)) servername = "";
   return servername;
 }
 
@@ -533,13 +533,30 @@ function shouldUseEnvProxy() {
   return true;
 }
 
-export default {
-  Agent,
-  globalAgent: new Agent({
+function createGlobalAgent(proxyEnv) {
+  return new Agent({
     keepAlive: true,
     scheduling: "lifo",
     timeout: 5000,
-    proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
-  }),
+    proxyEnv,
+  });
+}
+// With an env proxy configured, construct eagerly so an invalid proxy URL still throws at load.
+let globalAgent = shouldUseEnvProxy() ? createGlobalAgent(process.env) : undefined;
+let globalAgentSet = globalAgent !== undefined;
+
+export default {
+  Agent,
+  get globalAgent() {
+    if (!globalAgentSet) {
+      globalAgentSet = true;
+      globalAgent = createGlobalAgent(undefined);
+    }
+    return globalAgent;
+  },
+  set globalAgent(value) {
+    globalAgentSet = true;
+    globalAgent = value;
+  },
   shouldUseEnvProxy,
 };

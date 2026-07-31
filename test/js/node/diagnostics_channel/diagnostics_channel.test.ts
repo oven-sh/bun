@@ -4,6 +4,17 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
 
 describe("Channel", () => {
+  test("a subscribed channel with no other references survives GC", () => {
+    const name = "gc-survival-" + Math.random();
+    let calls = 0;
+    subscribe(name, () => calls++);
+    gc(true);
+    // Publisher looks the channel up by name after the GC.
+    expect(hasSubscribers(name)).toBeTrue();
+    channel(name).publish({});
+    expect(calls).toBe(1);
+  });
+
   // test-diagnostics-channel-has-subscribers.js
   test("can have subscribers", () => {
     const name = "channel1";

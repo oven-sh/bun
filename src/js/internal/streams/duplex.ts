@@ -8,9 +8,6 @@
 const Stream = require("internal/streams/legacy").Stream;
 const Readable = require("internal/streams/readable");
 const Writable = require("internal/streams/writable");
-const { addAbortSignal } = require("internal/streams/add-abort-signal");
-const destroyImpl = require("internal/streams/destroy");
-const { kOnConstructed } = require("internal/streams/utils");
 
 const ObjectKeys = Object.keys;
 const ObjectDefineProperties = Object.defineProperties;
@@ -69,7 +66,7 @@ function Duplex(options): void {
 
     if (typeof construct === "function") this._construct = construct;
 
-    if (signal) addAbortSignal(signal, this);
+    if (signal) require("internal/streams/add-abort-signal").addAbortSignal(signal, this);
   } else {
     this.allowHalfOpen = true;
   }
@@ -77,7 +74,8 @@ function Duplex(options): void {
   Stream.$call(this, options);
 
   if (this._construct != null) {
-    destroyImpl.construct(this, () => {
+    const { kOnConstructed } = require("internal/streams/utils");
+    require("internal/streams/destroy").construct(this, () => {
       this._readableState[kOnConstructed](this);
       this._writableState[kOnConstructed](this);
     });

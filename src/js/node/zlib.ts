@@ -1,7 +1,5 @@
 // Hardcoded module "node:zlib"
 
-const BufferModule = require("node:buffer");
-
 const crc32 = $newRustFunction("node_zlib_binding.rs", "crc32", 1);
 const NativeZlib = $rust("node_zlib_binding.rs", "NativeZlib");
 const NativeBrotli = $rust("node_zlib_binding.rs", "NativeBrotli");
@@ -20,9 +18,10 @@ const MathMax = Math.max;
 const ArrayBufferIsView = ArrayBuffer.isView;
 const isArrayBufferView = ArrayBufferIsView;
 const isAnyArrayBuffer = b => b instanceof ArrayBuffer || b instanceof SharedArrayBuffer;
-const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
+const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? require("node:buffer").kMaxLength;
 
-const { Transform, finished } = require("node:stream");
+const Transform = require("internal/streams/transform");
+const finished = require("internal/streams/end-of-stream");
 const owner_symbol = Symbol("owner_symbol");
 const { checkRangesOrGetDefault, validateFunction, validateFiniteNumber } = require("internal/validators");
 
@@ -809,23 +808,27 @@ class Zstd extends ZlibBase {
   }
 }
 
-const kMaxZstdCParam = MathMax(...ObjectKeys(constants).map(key => (key.startsWith("ZSTD_c_") ? constants[key] : 0)));
+function zstdMaxParam(prefix) {
+  return MathMax(...ObjectKeys(constants).map(key => (key.startsWith(prefix) ? constants[key] : 0)));
+}
 
-const zstdInitCParamsArray = new Uint32Array(kMaxZstdCParam + 1);
+let kMaxZstdCParam;
+let zstdInitCParamsArray;
 
 class ZstdCompress extends Zstd {
   constructor(opts) {
-    super(opts, ZSTD_COMPRESS, zstdInitCParamsArray, kMaxZstdCParam);
+    kMaxZstdCParam ??= zstdMaxParam("ZSTD_c_");
+    super(opts, ZSTD_COMPRESS, (zstdInitCParamsArray ??= new Uint32Array(kMaxZstdCParam + 1)), kMaxZstdCParam);
   }
 }
 
-const kMaxZstdDParam = MathMax(...ObjectKeys(constants).map(key => (key.startsWith("ZSTD_d_") ? constants[key] : 0)));
-
-const zstdInitDParamsArray = new Uint32Array(kMaxZstdDParam + 1);
+let kMaxZstdDParam;
+let zstdInitDParamsArray;
 
 class ZstdDecompress extends Zstd {
   constructor(opts) {
-    super(opts, ZSTD_DECOMPRESS, zstdInitDParamsArray, kMaxZstdDParam);
+    kMaxZstdDParam ??= zstdMaxParam("ZSTD_d_");
+    super(opts, ZSTD_DECOMPRESS, (zstdInitDParamsArray ??= new Uint32Array(kMaxZstdDParam + 1)), kMaxZstdDParam);
   }
 }
 
@@ -928,50 +931,52 @@ ObjectDefineProperties(zlib, {
 {
   // prettier-ignore
   const { Z_OK, Z_STREAM_END, Z_NEED_DICT, Z_ERRNO, Z_STREAM_ERROR, Z_DATA_ERROR, Z_MEM_ERROR, Z_BUF_ERROR, Z_VERSION_ERROR, Z_NO_COMPRESSION, Z_BEST_SPEED, Z_BEST_COMPRESSION, Z_DEFAULT_COMPRESSION, Z_FILTERED, Z_HUFFMAN_ONLY, Z_RLE, ZLIB_VERNUM, Z_MAX_CHUNK, Z_DEFAULT_LEVEL } = constants;
-  ObjectDefineProperty(zlib, "Z_NO_FLUSH", { value: Z_NO_FLUSH });
-  ObjectDefineProperty(zlib, "Z_PARTIAL_FLUSH", { value: Z_PARTIAL_FLUSH });
-  ObjectDefineProperty(zlib, "Z_SYNC_FLUSH", { value: Z_SYNC_FLUSH });
-  ObjectDefineProperty(zlib, "Z_FULL_FLUSH", { value: Z_FULL_FLUSH });
-  ObjectDefineProperty(zlib, "Z_FINISH", { value: Z_FINISH });
-  ObjectDefineProperty(zlib, "Z_BLOCK", { value: Z_BLOCK });
-  ObjectDefineProperty(zlib, "Z_OK", { value: Z_OK });
-  ObjectDefineProperty(zlib, "Z_STREAM_END", { value: Z_STREAM_END });
-  ObjectDefineProperty(zlib, "Z_NEED_DICT", { value: Z_NEED_DICT });
-  ObjectDefineProperty(zlib, "Z_ERRNO", { value: Z_ERRNO });
-  ObjectDefineProperty(zlib, "Z_STREAM_ERROR", { value: Z_STREAM_ERROR });
-  ObjectDefineProperty(zlib, "Z_DATA_ERROR", { value: Z_DATA_ERROR });
-  ObjectDefineProperty(zlib, "Z_MEM_ERROR", { value: Z_MEM_ERROR });
-  ObjectDefineProperty(zlib, "Z_BUF_ERROR", { value: Z_BUF_ERROR });
-  ObjectDefineProperty(zlib, "Z_VERSION_ERROR", { value: Z_VERSION_ERROR });
-  ObjectDefineProperty(zlib, "Z_NO_COMPRESSION", { value: Z_NO_COMPRESSION });
-  ObjectDefineProperty(zlib, "Z_BEST_SPEED", { value: Z_BEST_SPEED });
-  ObjectDefineProperty(zlib, "Z_BEST_COMPRESSION", { value: Z_BEST_COMPRESSION });
-  ObjectDefineProperty(zlib, "Z_DEFAULT_COMPRESSION", { value: Z_DEFAULT_COMPRESSION });
-  ObjectDefineProperty(zlib, "Z_FILTERED", { value: Z_FILTERED });
-  ObjectDefineProperty(zlib, "Z_HUFFMAN_ONLY", { value: Z_HUFFMAN_ONLY });
-  ObjectDefineProperty(zlib, "Z_RLE", { value: Z_RLE });
-  ObjectDefineProperty(zlib, "Z_FIXED", { value: Z_FIXED });
-  ObjectDefineProperty(zlib, "Z_DEFAULT_STRATEGY", { value: Z_DEFAULT_STRATEGY });
-  ObjectDefineProperty(zlib, "ZLIB_VERNUM", { value: ZLIB_VERNUM });
-  ObjectDefineProperty(zlib, "DEFLATE", { value: DEFLATE });
-  ObjectDefineProperty(zlib, "INFLATE", { value: INFLATE });
-  ObjectDefineProperty(zlib, "GZIP", { value: GZIP });
-  ObjectDefineProperty(zlib, "GUNZIP", { value: GUNZIP });
-  ObjectDefineProperty(zlib, "DEFLATERAW", { value: DEFLATERAW });
-  ObjectDefineProperty(zlib, "INFLATERAW", { value: INFLATERAW });
-  ObjectDefineProperty(zlib, "UNZIP", { value: UNZIP });
-  ObjectDefineProperty(zlib, "Z_MIN_WINDOWBITS", { value: Z_MIN_WINDOWBITS });
-  ObjectDefineProperty(zlib, "Z_MAX_WINDOWBITS", { value: Z_MAX_WINDOWBITS });
-  ObjectDefineProperty(zlib, "Z_DEFAULT_WINDOWBITS", { value: Z_DEFAULT_WINDOWBITS });
-  ObjectDefineProperty(zlib, "Z_MIN_CHUNK", { value: Z_MIN_CHUNK });
-  ObjectDefineProperty(zlib, "Z_MAX_CHUNK", { value: Z_MAX_CHUNK });
-  ObjectDefineProperty(zlib, "Z_DEFAULT_CHUNK", { value: Z_DEFAULT_CHUNK });
-  ObjectDefineProperty(zlib, "Z_MIN_MEMLEVEL", { value: Z_MIN_MEMLEVEL });
-  ObjectDefineProperty(zlib, "Z_MAX_MEMLEVEL", { value: Z_MAX_MEMLEVEL });
-  ObjectDefineProperty(zlib, "Z_DEFAULT_MEMLEVEL", { value: Z_DEFAULT_MEMLEVEL });
-  ObjectDefineProperty(zlib, "Z_MIN_LEVEL", { value: Z_MIN_LEVEL });
-  ObjectDefineProperty(zlib, "Z_MAX_LEVEL", { value: Z_MAX_LEVEL });
-  ObjectDefineProperty(zlib, "Z_DEFAULT_LEVEL", { value: Z_DEFAULT_LEVEL });
+  ObjectDefineProperties(zlib, {
+    Z_NO_FLUSH: { value: Z_NO_FLUSH },
+    Z_PARTIAL_FLUSH: { value: Z_PARTIAL_FLUSH },
+    Z_SYNC_FLUSH: { value: Z_SYNC_FLUSH },
+    Z_FULL_FLUSH: { value: Z_FULL_FLUSH },
+    Z_FINISH: { value: Z_FINISH },
+    Z_BLOCK: { value: Z_BLOCK },
+    Z_OK: { value: Z_OK },
+    Z_STREAM_END: { value: Z_STREAM_END },
+    Z_NEED_DICT: { value: Z_NEED_DICT },
+    Z_ERRNO: { value: Z_ERRNO },
+    Z_STREAM_ERROR: { value: Z_STREAM_ERROR },
+    Z_DATA_ERROR: { value: Z_DATA_ERROR },
+    Z_MEM_ERROR: { value: Z_MEM_ERROR },
+    Z_BUF_ERROR: { value: Z_BUF_ERROR },
+    Z_VERSION_ERROR: { value: Z_VERSION_ERROR },
+    Z_NO_COMPRESSION: { value: Z_NO_COMPRESSION },
+    Z_BEST_SPEED: { value: Z_BEST_SPEED },
+    Z_BEST_COMPRESSION: { value: Z_BEST_COMPRESSION },
+    Z_DEFAULT_COMPRESSION: { value: Z_DEFAULT_COMPRESSION },
+    Z_FILTERED: { value: Z_FILTERED },
+    Z_HUFFMAN_ONLY: { value: Z_HUFFMAN_ONLY },
+    Z_RLE: { value: Z_RLE },
+    Z_FIXED: { value: Z_FIXED },
+    Z_DEFAULT_STRATEGY: { value: Z_DEFAULT_STRATEGY },
+    ZLIB_VERNUM: { value: ZLIB_VERNUM },
+    DEFLATE: { value: DEFLATE },
+    INFLATE: { value: INFLATE },
+    GZIP: { value: GZIP },
+    GUNZIP: { value: GUNZIP },
+    DEFLATERAW: { value: DEFLATERAW },
+    INFLATERAW: { value: INFLATERAW },
+    UNZIP: { value: UNZIP },
+    Z_MIN_WINDOWBITS: { value: Z_MIN_WINDOWBITS },
+    Z_MAX_WINDOWBITS: { value: Z_MAX_WINDOWBITS },
+    Z_DEFAULT_WINDOWBITS: { value: Z_DEFAULT_WINDOWBITS },
+    Z_MIN_CHUNK: { value: Z_MIN_CHUNK },
+    Z_MAX_CHUNK: { value: Z_MAX_CHUNK },
+    Z_DEFAULT_CHUNK: { value: Z_DEFAULT_CHUNK },
+    Z_MIN_MEMLEVEL: { value: Z_MIN_MEMLEVEL },
+    Z_MAX_MEMLEVEL: { value: Z_MAX_MEMLEVEL },
+    Z_DEFAULT_MEMLEVEL: { value: Z_DEFAULT_MEMLEVEL },
+    Z_MIN_LEVEL: { value: Z_MIN_LEVEL },
+    Z_MAX_LEVEL: { value: Z_MAX_LEVEL },
+    Z_DEFAULT_LEVEL: { value: Z_DEFAULT_LEVEL },
+  });
 }
 
 export default zlib;

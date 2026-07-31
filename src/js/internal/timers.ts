@@ -1,11 +1,9 @@
-const { validateNumber } = require("internal/validators");
-
 const NumberIsFinite = Number.isFinite;
 
 const TIMEOUT_MAX = 2 ** 31 - 1;
 
 function getTimerDuration(msecs, name) {
-  validateNumber(msecs, name);
+  require("internal/validators").validateNumber(msecs, name);
   if (msecs < 0 || !NumberIsFinite(msecs)) {
     throw $ERR_OUT_OF_RANGE(name, "a non-negative finite number", msecs);
   }

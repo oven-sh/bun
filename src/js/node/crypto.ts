@@ -1,5 +1,5 @@
 // Hardcoded module "node:crypto"
-const StringDecoder = require("node:string_decoder").StringDecoder;
+let StringDecoder;
 const LazyTransform = require("internal/streams/lazy_transform");
 const { defineCustomPromisifyArgs } = require("internal/promisify");
 const Writable = require("internal/streams/writable");
@@ -70,7 +70,6 @@ const {
 
 const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
 
-const { validateString } = require("internal/validators");
 const { deprecate } = require("internal/util/deprecate");
 
 const kHandle = Symbol("kHandle");
@@ -100,9 +99,9 @@ Certificate.exportPublicKey = exportPublicKey;
 Certificate.exportChallenge = exportChallenge;
 
 var Buffer = globalThis.Buffer;
-const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 
 function getArrayBufferOrView(buffer, name, encoding?) {
+  const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
   if (buffer instanceof KeyObject) {
     if (buffer.type !== "secret") {
       const error = new TypeError(
@@ -149,7 +148,6 @@ crypto_exports.createPublicKey = createPublicKey;
 crypto_exports.createPrivateKey = createPrivateKey;
 
 var webcrypto = crypto;
-var _subtle = webcrypto.subtle;
 
 crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
   return CryptoHasher.hash(algorithm, input, outputEncoding);
@@ -184,7 +182,19 @@ crypto_exports.getCurves = getCurves;
 crypto_exports.getCipherInfo = getCipherInfo;
 crypto_exports.timingSafeEqual = timingSafeEqual;
 crypto_exports.webcrypto = webcrypto;
-crypto_exports.subtle = _subtle;
+Object.defineProperty(crypto_exports, "subtle", {
+  __proto__: null,
+  get() {
+    const value = webcrypto.subtle;
+    Reflect.defineProperty(crypto_exports, "subtle", { value, writable: true, enumerable: true, configurable: true });
+    return value;
+  },
+  set(value) {
+    Reflect.defineProperty(crypto_exports, "subtle", { value, writable: true, enumerable: true, configurable: true });
+  },
+  enumerable: true,
+  configurable: true,
+});
 crypto_exports.X509Certificate = X509Certificate;
 crypto_exports.Certificate = Certificate;
 
@@ -193,6 +203,7 @@ function Sign(algorithm, options): void {
     return new Sign(algorithm, options);
   }
 
+  const { validateString } = require("internal/validators");
   validateString(algorithm, "algorithm");
   this[kHandle] = new _Sign();
   this[kHandle].init(algorithm);
@@ -228,6 +239,7 @@ function Verify(algorithm, options): void {
     return new Verify(algorithm, options);
   }
 
+  const { validateString } = require("internal/validators");
   validateString(algorithm, "algorithm");
   this[kHandle] = new _Verify();
   this[kHandle].init(algorithm);
@@ -386,6 +398,7 @@ crypto_exports.createECDH = function createECDH(curve) {
 {
   function getDecoder(decoder, encoding) {
     const normalizedEncoding = normalizeEncoding(encoding);
+    StringDecoder ??= require("node:string_decoder").StringDecoder;
     decoder ||= new StringDecoder(encoding);
     if (decoder.encoding !== normalizedEncoding) {
       if (normalizedEncoding === undefined) {

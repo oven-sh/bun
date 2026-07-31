@@ -4,29 +4,25 @@ declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
+// SafeMap is snapshotted when this module loads (later Map.prototype tampering can't affect it).
 const { SafeMap } = require("internal/primordials");
-const Readable = require("internal/streams/readable");
-const Writable = require("internal/streams/writable");
-const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
-const {
-  validateString,
-  validateObject,
-  validateInteger,
-  validateNumber,
-  validateBoolean,
-} = require("internal/validators");
+let _Readable, _Writable;
+function Readable() {
+  return (_Readable ??= require("internal/streams/readable"));
+}
+function Writable() {
+  return (_Writable ??= require("internal/streams/writable"));
+}
 
 // node's name handling (lib/internal/worker.js): truthy → validateString + trim,
 // falsy (undefined/null/0/"") → default "". So {name: 0|null} is silently ignored.
 function normalizeWorkerName(rawName) {
   if (rawName) {
-    validateString(rawName, "options.name");
+    require("internal/validators").validateString(rawName, "options.name");
     return rawName.trim();
   }
   return "";
 }
-
-const { isAbsolute: pathIsAbsolute } = require("node:path");
 
 // node's filename validation for non-eval workers: absolute or "./"/"../"-relative
 // paths and file: URL objects; bare specifiers and string URLs are rejected.
@@ -41,7 +37,7 @@ function validateWorkerFilename(filename) {
     // throws the canonical ERR_INVALID_ARG_TYPE with the exact node message.
     return filename;
   }
-  if (pathIsAbsolute(filename) || /^\.\.?[\\/]/.test(filename)) {
+  if (require("node:path").isAbsolute(filename) || /^\.\.?[\\/]/.test(filename)) {
     return filename;
   }
   let message =
@@ -349,7 +345,7 @@ function makePortReadable(port, incrementsPortRef) {
       }
     }
   }
-  const stream = new Readable({
+  const stream = new (Readable())({
     read() {
       if (startedReading === false && incrementsPortRef) {
         startedReading = true;
@@ -404,7 +400,7 @@ function makePortWritable(port) {
   }
   port.on("message", onAck);
   port.unref();
-  return new Writable({
+  return new (Writable())({
     decodeStrings: false,
     writev(chunks, cb) {
       const payload = new Array(chunks.length);
@@ -468,7 +464,7 @@ function setupWorkerStdio(stdio) {
   Object.defineProperty(process, "stdin", {
     value: stdin
       ? makePortReadable(stdin, true)
-      : new Readable({
+      : new (Readable())({
           read() {
             this.push(null);
           },
@@ -921,7 +917,7 @@ function moveMessagePortToContext(port, _context) {
   } else {
     throw $ERR_INVALID_ARG_TYPE("port", "MessagePort", port);
   }
-  throwNotImplemented("worker_threads.moveMessagePortToContext");
+  require("internal/shared").throwNotImplemented("worker_threads.moveMessagePortToContext");
 }
 
 class Worker extends EventEmitter {
@@ -1134,7 +1130,7 @@ class Worker extends EventEmitter {
   get performance() {
     return (this.#performance ??= {
       eventLoopUtilization() {
-        warnNotImplementedOnce("worker_threads.Worker.performance");
+        require("internal/shared").warnNotImplementedOnce("worker_threads.Worker.performance");
         return {
           idle: 0,
           active: 0,
@@ -1185,7 +1181,7 @@ class Worker extends EventEmitter {
 
   getHeapSnapshot(options: unknown) {
     const stringPromise = this.#worker.getHeapSnapshot(options);
-    return stringPromise.then(s => new HeapSnapshotStream(s));
+    return stringPromise.then(s => new (getHeapSnapshotStreamClass())(s));
   }
 
   getHeapStatistics() {
@@ -1196,6 +1192,7 @@ class Worker extends EventEmitter {
     // node validates synchronously before starting; the underlying JSC sampler
     // ignores these knobs but the range checks must still match.
     if (options !== undefined && options !== null) {
+      const { validateObject, validateInteger, validateNumber } = require("internal/validators");
       validateObject(options, "options");
       const { maxBufferSize, sampleInterval } = options;
       if (maxBufferSize !== undefined) validateInteger(maxBufferSize, "options.maxBufferSize", 1);
@@ -1215,6 +1212,7 @@ class Worker extends EventEmitter {
     let prevUser = 0;
     let prevSystem = 0;
     if (prevValue) {
+      const { validateObject, validateNumber } = require("internal/validators");
       validateObject(prevValue, "prevValue");
       ({ user: prevUser, system: prevSystem } = prevValue);
       validateNumber(prevUser, "prevValue.user");
@@ -1233,6 +1231,7 @@ class Worker extends EventEmitter {
 
   startHeapProfile(options?: object) {
     if (options !== undefined && options !== null) {
+      const { validateObject, validateInteger, validateBoolean } = require("internal/validators");
       validateObject(options, "options");
       const {
         sampleInterval,
@@ -1337,21 +1336,24 @@ class Worker extends EventEmitter {
   }
 }
 
-class HeapSnapshotStream extends Readable {
-  #json: string | undefined;
+let _HeapSnapshotStream;
+function getHeapSnapshotStreamClass() {
+  return (_HeapSnapshotStream ??= class HeapSnapshotStream extends Readable() {
+    #json: string | undefined;
 
-  constructor(json: string) {
-    super();
-    this.#json = json;
-  }
-
-  _read() {
-    if (this.#json !== undefined) {
-      this.push(this.#json);
-      this.push(null);
-      this.#json = undefined;
+    constructor(json: string) {
+      super();
+      this.#json = json;
     }
-  }
+
+    _read() {
+      if (this.#json !== undefined) {
+        this.push(this.#json);
+        this.push(null);
+        this.#json = undefined;
+      }
+    }
+  });
 }
 
 export default {

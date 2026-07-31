@@ -143,12 +143,9 @@ const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
 const kpendingRead = Symbol("kpendingRead");
 const kupgraded = Symbol("kupgraded");
-// Holds the TLS data feeder when a net.Socket takes the upgradeDuplexToTLS path
-// (Windows named pipe, or a TCP socket with unflushed plain writes). Its native
-// handle keeps delivering post-upgrade bytes, so the raw data handlers route
-// them straight to the TLS engine instead of pushing onto the connection and
-// re-emitting ciphertext as `data` on any pre-existing user listener. #32242
-// Shared with _http2_upgrade.ts (it calls upgradeDuplexToTLS directly).
+// TLS data feeder for the upgradeDuplexToTLS path: raw data handlers call it
+// directly so post-upgrade ciphertext never re-emits as `data` (#32242).
+// Symbol.for: also set from _http2_upgrade.ts.
 const kDuplexTLSFeeder = Symbol.for("::bunDuplexTLSFeeder::");
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
 const ksocket = Symbol("ksocket");
@@ -1898,19 +1895,13 @@ Socket.prototype[kCloseRawConnection] = function () {
   connection.destroy();
 };
 
-// Wires the TLS data feeder for a duplex-upgraded connection. A net.Socket with
-// a native handle keeps that handle after upgradeDuplexToTLS, so its raw data
-// handler routes post-upgrade bytes straight to the TLS engine instead of
-// through the public `data` event (which would re-emit ciphertext on any
-// pre-existing user listener; #32242). A plain Duplex, or a Socket subclass
-// whose bytes arrive via push() rather than a native handler, is fed via its
-// `data` event.
+// #32242: a net.Socket's native handle survives upgradeDuplexToTLS, so feed
+// post-upgrade bytes to the TLS engine directly instead of via the public
+// `data` event. A plain Duplex (or handleless Socket) keeps the event wiring.
 function attachDuplexTLSFeeder(connection, onData) {
   if (connection instanceof Socket && connection._handle) {
     connection[kDuplexTLSFeeder] = onData;
-    // Bytes that arrived before the feeder was installed are sitting in the
-    // readable buffer; the `on("data")` wiring this replaces would have drained
-    // them on the next tick. read() returns one chunk at a time, so loop.
+    // Drain every already-buffered chunk into the feeder; read() returns one.
     let chunk;
     while ((chunk = connection.read()) !== null) onData(chunk);
   } else {

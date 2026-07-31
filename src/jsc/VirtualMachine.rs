@@ -4644,8 +4644,10 @@ impl VirtualMachine {
             bun_sys::Result::Ok(r) => r,
             bun_sys::Result::Err(err) => {
                 let mut rollback = bun_paths::PathBuffer::uninit();
-                let _ =
-                    bun_sys::chdir(bun_paths::resolve_path::z(fs.top_level_dir(), &mut rollback));
+                let _ = bun_sys::chdir(bun_paths::resolve_path::z(
+                    fs.top_level_dir(),
+                    &mut rollback,
+                ));
                 return bun_sys::Result::Err(err);
             }
         };

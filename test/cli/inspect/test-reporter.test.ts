@@ -316,137 +316,141 @@ afterAll(async () => {
     expect(exitCode).toBe(0);
   });
 
-  test("flushes pending inspector messages to the frontend before process exit", async () => {
-    // Regression test for the exit-race fixed by Bun__debugger__drain: the
-    // main thread queues the final TestReporter events for the detached
-    // debugger thread to deliver, then calls exit() -- and without draining
-    // first, exit() can kill that thread mid-delivery.
-    //
-    // The fixture uses fast SYNCHRONOUS tests on purpose: synchronous tests
-    // let the runner fall straight through from the last test's `end` event
-    // into process exit within the same tick, which maximizes the race
-    // window (an async test would yield the event loop at least once,
-    // giving the debugger thread a natural opportunity to catch up).
-    //
-    // A single lone run of this on an idle many-core machine may well pass
-    // even without the fix -- the debugger thread usually gets scheduled
-    // quickly enough. What makes the race bite reliably is CPU contention:
-    // running a batch of these subprocesses in parallel starves the
-    // debugger thread of scheduler time relative to each subprocess's own
-    // main thread, which is what actually reproduces the loss. This test is
-    // reliably-failing-under-parallel-load pre-fix, not deterministic on a
-    // single idle run.
-    //
-    // COVERAGE SCOPE: this uses `--inspect-wait=unix:...`, which routes
-    // through debugger.ts's #connectOverSocket() / SocketFramer path, NOT the
-    // ws:/ws+unix: server path that uses webSocketWriter/bufferedWriter. So it
-    // exercises the layer-(a) main->debugger-thread drain only; it does NOT
-    // cover WebSocket-level backpressure delivery, which is a separate
-    // concern tracked independently.
-    const testCount = 5;
-    const body = Array.from(
-      { length: testCount },
-      (_, i) => `test("t${i}", () => { expect(${i}).toBe(${i}); });`,
-    ).join("\n");
+  test(
+    "flushes pending inspector messages to the frontend before process exit",
+    async () => {
+      // Regression test for the exit-race fixed by Bun__debugger__drain: the
+      // main thread queues the final TestReporter events for the detached
+      // debugger thread to deliver, then calls exit() -- and without draining
+      // first, exit() can kill that thread mid-delivery.
+      //
+      // The fixture uses fast SYNCHRONOUS tests on purpose: synchronous tests
+      // let the runner fall straight through from the last test's `end` event
+      // into process exit within the same tick, which maximizes the race
+      // window (an async test would yield the event loop at least once,
+      // giving the debugger thread a natural opportunity to catch up).
+      //
+      // A single lone run of this on an idle many-core machine may well pass
+      // even without the fix -- the debugger thread usually gets scheduled
+      // quickly enough. What makes the race bite reliably is CPU contention:
+      // running a batch of these subprocesses in parallel starves the
+      // debugger thread of scheduler time relative to each subprocess's own
+      // main thread, which is what actually reproduces the loss. This test is
+      // reliably-failing-under-parallel-load pre-fix, not deterministic on a
+      // single idle run.
+      //
+      // COVERAGE SCOPE: this uses `--inspect-wait=unix:...`, which routes
+      // through debugger.ts's #connectOverSocket() / SocketFramer path, NOT the
+      // ws:/ws+unix: server path that uses webSocketWriter/bufferedWriter. So it
+      // exercises the layer-(a) main->debugger-thread drain only; it does NOT
+      // cover WebSocket-level backpressure delivery, which is a separate
+      // concern tracked independently.
+      const testCount = 5;
+      const body = Array.from(
+        { length: testCount },
+        (_, i) => `test("t${i}", () => { expect(${i}).toBe(${i}); });`,
+      ).join("\n");
 
-    using dir = tempDir("test-reporter-drain", {
-      "drain.test.ts": `
+      using dir = tempDir("test-reporter-drain", {
+        "drain.test.ts": `
 import { test, expect } from "bun:test";
 ${body}
 `,
-    });
-
-    async function once() {
-      const socketPath = join(String(dir), `inspector-${Math.random().toString(36).substring(2)}.sock`);
-
-      const session = new TestReporterSession();
-      const framer = new SocketFramer((message: string) => {
-        session.onMessage(message);
       });
 
-      let localSocket: Awaited<ReturnType<typeof connect>>;
-      const socketClosed = Promise.withResolvers<void>();
-      const socketPromise = connect(`unix://${socketPath}`, () => socketClosed.resolve()).then(s => {
-        localSocket = s;
-        session.socket = s;
-        session.framer = framer;
-        s.data = {
-          onData: framer.onData.bind(framer),
+      async function once() {
+        const socketPath = join(String(dir), `inspector-${Math.random().toString(36).substring(2)}.sock`);
+
+        const session = new TestReporterSession();
+        const framer = new SocketFramer((message: string) => {
+          session.onMessage(message);
+        });
+
+        let localSocket: Awaited<ReturnType<typeof connect>>;
+        const socketClosed = Promise.withResolvers<void>();
+        const socketPromise = connect(`unix://${socketPath}`, () => socketClosed.resolve()).then(s => {
+          localSocket = s;
+          session.socket = s;
+          session.framer = framer;
+          s.data = {
+            onData: framer.onData.bind(framer),
+          };
+          return s;
+        });
+
+        const localProc = spawn({
+          cmd: [bunExe(), `--inspect-wait=unix:${socketPath}`, "test", "drain.test.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          // "ignore" (not "pipe") for stdout: we only read stderr below, and an
+          // undrained "pipe" can deadlock the child once the OS pipe buffer fills.
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        spawnedProcs.add(localProc);
+
+        await socketPromise;
+
+        // Enable TestReporter *before* Inspector.initialized so every test is
+        // reported via the normal (non-retroactive) live-collection path --
+        // this test is isolating the exit-drain bug, not the ID-collision bug
+        // covered by the previous test.
+        session.enableInspector();
+        session.enableTestReporter();
+        session.initialize();
+
+        const [stderr, exitCode] = await Promise.all([localProc.stderr.text(), localProc.exited]);
+        spawnedProcs.delete(localProc);
+
+        // Wait for the socket's FIN, not just process exit. On a Unix stream
+        // socket, FIN is ordered after data: once `close` fires, every byte
+        // the subprocess wrote has already been delivered through `onData` and
+        // into `session.onMessage`, so this is what actually guarantees the
+        // snapshot below reflects everything the subprocess sent (process exit
+        // alone would not -- the kernel can still be delivering already-queued
+        // bytes after the process is gone).
+        // @ts-ignore - close the socket if it exists
+        localSocket?.end?.();
+        await socketClosed.promise;
+
+        return {
+          stderr,
+          exitCode,
+          found: session.getFoundTests(),
+          started: session.getStartedTests(),
+          ended: session.getEndedTests(),
         };
-        return s;
-      });
+      }
 
-      const localProc = spawn({
-        cmd: [bunExe(), `--inspect-wait=unix:${socketPath}`, "test", "drain.test.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        // "ignore" (not "pipe") for stdout: we only read stderr below, and an
-        // undrained "pipe" can deadlock the child once the OS pipe buffer fills.
-        stdout: "ignore",
-        stderr: "pipe",
-      });
-      spawnedProcs.add(localProc);
+      // Run a batch of subprocesses in parallel (see comment above for why
+      // that matters for reproducing the race) and check every one delivered
+      // everything. Under ASAN/debug builds subprocess startup itself is slow
+      // enough that this loses its ability to reproduce the pre-fix race
+      // within a reasonable timeout, so dial down the batch size there --
+      // the test still verifies correctness, just with less contention.
+      const slow = isASAN || isDebug;
+      const width = slow ? 4 : 8;
+      const rounds = slow ? 1 : 2;
 
-      await socketPromise;
+      const results: Awaited<ReturnType<typeof once>>[] = [];
+      for (let round = 0; round < rounds; round++) {
+        results.push(...(await Promise.all(Array.from({ length: width }, () => once()))));
+      }
 
-      // Enable TestReporter *before* Inspector.initialized so every test is
-      // reported via the normal (non-retroactive) live-collection path --
-      // this test is isolating the exit-drain bug, not the ID-collision bug
-      // covered by the previous test.
-      session.enableInspector();
-      session.enableTestReporter();
-      session.initialize();
-
-      const [stderr, exitCode] = await Promise.all([localProc.stderr.text(), localProc.exited]);
-      spawnedProcs.delete(localProc);
-
-      // Wait for the socket's FIN, not just process exit. On a Unix stream
-      // socket, FIN is ordered after data: once `close` fires, every byte
-      // the subprocess wrote has already been delivered through `onData` and
-      // into `session.onMessage`, so this is what actually guarantees the
-      // snapshot below reflects everything the subprocess sent (process exit
-      // alone would not -- the kernel can still be delivering already-queued
-      // bytes after the process is gone).
-      // @ts-ignore - close the socket if it exists
-      localSocket?.end?.();
-      await socketClosed.promise;
-
-      return {
-        stderr,
-        exitCode,
-        found: session.getFoundTests(),
-        started: session.getStartedTests(),
-        ended: session.getEndedTests(),
-      };
-    }
-
-    // Run a batch of subprocesses in parallel (see comment above for why
-    // that matters for reproducing the race) and check every one delivered
-    // everything. Under ASAN/debug builds subprocess startup itself is slow
-    // enough that this loses its ability to reproduce the pre-fix race
-    // within a reasonable timeout, so dial down the batch size there --
-    // the test still verifies correctness, just with less contention.
-    const slow = isASAN || isDebug;
-    const width = slow ? 4 : 8;
-    const rounds = slow ? 1 : 2;
-
-    const results: Awaited<ReturnType<typeof once>>[] = [];
-    for (let round = 0; round < rounds; round++) {
-      results.push(...(await Promise.all(Array.from({ length: width }, () => once()))));
-    }
-
-    for (const { stderr, exitCode, found, started, ended } of results) {
-      expect(stderr).toContain(`${testCount} pass`);
-      // Every test must have a `found`, a `start`, and an `end` event, and
-      // every `end` event must report a pass -- zero trailing loss across
-      // exit at any of the three reporting stages.
-      expect(found.size).toBe(testCount);
-      expect(started.size).toBe(testCount);
-      expect(ended.size).toBe(testCount);
-      expect([...ended.values()].map(e => e.status)).toEqual(Array(testCount).fill("pass"));
-      expect(exitCode).toBe(0);
-    }
-    // Per-test timeout: spawns a batch of `bun test --inspect-wait` subprocesses
-    // in parallel; ASAN/debug subprocess startup alone is several seconds each.
-  }, (isASAN || isDebug ? 120 : 60) * 1000);
+      for (const { stderr, exitCode, found, started, ended } of results) {
+        expect(stderr).toContain(`${testCount} pass`);
+        // Every test must have a `found`, a `start`, and an `end` event, and
+        // every `end` event must report a pass -- zero trailing loss across
+        // exit at any of the three reporting stages.
+        expect(found.size).toBe(testCount);
+        expect(started.size).toBe(testCount);
+        expect(ended.size).toBe(testCount);
+        expect([...ended.values()].map(e => e.status)).toEqual(Array(testCount).fill("pass"));
+        expect(exitCode).toBe(0);
+      }
+      // Per-test timeout: spawns a batch of `bun test --inspect-wait` subprocesses
+      // in parallel; ASAN/debug subprocess startup alone is several seconds each.
+    },
+    (isASAN || isDebug ? 120 : 60) * 1000,
+  );
 });

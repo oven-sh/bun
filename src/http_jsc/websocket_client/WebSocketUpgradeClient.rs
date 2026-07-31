@@ -2011,31 +2011,20 @@ fn build_request_body(
     let mut encoded_buf = [0u8; 24];
     let key: &[u8] = 'blk: {
         if let Some(k_slice) = user_key {
-            // Validate that it's a valid base64-encoded 16-byte value
-            let mut decoded_buf = [0u8; 24]; // Max possible decoded size
-            let Ok(decoded_len) = B64_STD.decoder.calc_size_for_slice(k_slice) else {
-                // Invalid base64, fall through to generate
-                break 'blk B64_STD
-                    .encoder
-                    .encode(&mut encoded_buf, &vm.rare_data().next_uuid().bytes);
-            };
-
-            if decoded_len == 16 {
-                // Try to decode to verify it's valid base64
-                if B64_STD.decoder.decode(&mut decoded_buf, k_slice).is_err() {
-                    // Invalid base64, fall through to generate
-                    break 'blk B64_STD
-                        .encoder
-                        .encode(&mut encoded_buf, &vm.rare_data().next_uuid().bytes);
-                }
-                // Valid 16-byte key, use it as-is
+            // Accept only a valid base64 encoding of exactly 16 bytes.
+            let mut decoded_buf = [0u8; 24];
+            if B64_STD.decoder.calc_size_for_slice(k_slice) == Ok(16)
+                && B64_STD.decoder.decode(&mut decoded_buf, k_slice).is_ok()
+            {
                 break 'blk k_slice;
             }
         }
-        // Generate a new key if user key is invalid or not provided
+        // RFC 6455 §4.1: "a nonce consisting of a randomly selected 16-byte
+        // value that has been base64-encoded". Use raw CSPRNG output rather
+        // than a v4 UUID, whose version/variant bits are constant.
         B64_STD
             .encoder
-            .encode(&mut encoded_buf, &vm.rare_data().next_uuid().bytes)
+            .encode(&mut encoded_buf, vm.rare_data().entropy_slice(16))
     };
 
     // Compute the expected Sec-WebSocket-Accept value per RFC 6455 §4.2.2:

@@ -75,7 +75,7 @@ describe.skipIf(isWindows)("shell completion scripts", () => {
         "COMPREPLY=()\n" +
         "_bun_completions\n" +
         'echo "count=${#COMPREPLY[@]}"\n' +
-        'printf \'%s\\n\' "${COMPREPLY[@]}"\n',
+        "printf '%s\\n' \"${COMPREPLY[@]}\"\n",
     });
     await using proc = Bun.spawn({
       cmd: ["bash", "probe.sh"],

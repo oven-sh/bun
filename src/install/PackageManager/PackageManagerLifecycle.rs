@@ -24,9 +24,7 @@ use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::Command;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::lockfile::{self, Lockfile, Package};
-use bun_install::{
-    PackageID, PackageManager, PreinstallState, invalid_package_id,
-};
+use bun_install::{PackageID, PackageManager, PreinstallState, invalid_package_id};
 
 #[derive(Default)]
 pub struct LifecycleScriptTimeLog {
@@ -469,11 +467,13 @@ impl PackageManager {
                             continue;
                         }
 
-                        let entry = handle_oom(set.get_or_put(
-                            root_dep
-                                .name
-                                .slice(self.lockfile.buffers.string_bytes.as_slice()),
-                        ));
+                        let entry = handle_oom(
+                            set.get_or_put(
+                                root_dep
+                                    .name
+                                    .slice(self.lockfile.buffers.string_bytes.as_slice()),
+                            ),
+                        );
                         if !entry.found_existing {
                             let dependency_slice =
                                 self.lockfile.packages.items_dependencies()[package_id as usize];
@@ -506,9 +506,8 @@ fn add_dependencies_to_set(
         }
 
         let dep = &lockfile.buffers.dependencies[dep_id as usize];
-        let entry = handle_oom(
-            names.get_or_put(dep.name.slice(lockfile.buffers.string_bytes.as_slice())),
-        );
+        let entry =
+            handle_oom(names.get_or_put(dep.name.slice(lockfile.buffers.string_bytes.as_slice())));
         if !entry.found_existing {
             let dependency_slice = lockfile.packages.items_dependencies()[package_id as usize];
             add_dependencies_to_set(names, lockfile, dependency_slice);

@@ -187,7 +187,12 @@ impl TrustedDependenciesSet {
     /// Truncated hashes of every entry, for the binary lockfile format.
     pub(crate) fn truncated_hashes(&self) -> Vec<TruncatedPackageNameHash> {
         let mut out = Vec::with_capacity(self.count());
-        out.extend(self.names.keys().iter().map(|name| Self::truncated_hash(name)));
+        out.extend(
+            self.names
+                .keys()
+                .iter()
+                .map(|name| Self::truncated_hash(name)),
+        );
         out.extend_from_slice(self.legacy_hashes.keys());
         out
     }

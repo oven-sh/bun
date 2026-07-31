@@ -229,13 +229,7 @@ describe.skipIf(isWindows)("console.log after process.stdout is materialized on 
       `,
     });
     await using proc = Bun.spawn({
-      cmd: [
-        "/bin/sh",
-        "-c",
-        'exec "$0" "$1" | { sleep 1; wc -l; }',
-        bunExe(),
-        path.join(String(dir), "parent.mjs"),
-      ],
+      cmd: ["/bin/sh", "-c", 'exec "$0" "$1" | { sleep 1; wc -l; }', bunExe(), path.join(String(dir), "parent.mjs")],
       env: bunEnv,
       stdout: "pipe",
       stderr: "inherit",

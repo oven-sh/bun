@@ -3212,22 +3212,26 @@ bool JSC__JSValue__asArrayBuffer(
     return true;
 }
 
-// Read the current vector()/byteLength() from a buffer-type cell (caller
-// already type-checked it). Detached -> (nullptr, 0). No exception scope.
+// Read the current vector()/byteLength() from a buffer-type cell.
+// Detached or non-buffer -> (nullptr, 0). No exception scope.
 CPP_DECL void JSC__JSValue__arrayBufferLiveBytes(
     JSC::EncodedJSValue encodedValue, uint8_t** out_ptr, size_t* out_byte_len)
 {
+    *out_ptr = nullptr;
+    *out_byte_len = 0;
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
-    auto* cell = value.asCell();
-    if (cell->type() == JSC::JSType::ArrayBufferType) {
-        auto* buffer = uncheckedDowncast<JSC::JSArrayBuffer>(cell)->impl();
-        *out_ptr = static_cast<uint8_t*>(buffer->data());
-        *out_byte_len = buffer->byteLength();
+    if (!value.isCell()) [[unlikely]]
+        return;
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
+        *out_ptr = static_cast<uint8_t*>(view->vector());
+        *out_byte_len = view->byteLength();
         return;
     }
-    auto* view = uncheckedDowncast<JSC::JSArrayBufferView>(cell);
-    *out_ptr = static_cast<uint8_t*>(view->vector());
-    *out_byte_len = view->byteLength();
+    if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
+        auto* buffer = jsBuffer->impl();
+        *out_ptr = static_cast<uint8_t*>(buffer->data());
+        *out_byte_len = buffer->byteLength();
+    }
 }
 
 // Pin/unpin the backing ArrayBuffer of a JSArrayBuffer or JSArrayBufferView so

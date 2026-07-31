@@ -945,6 +945,21 @@ impl MarkedArrayBuffer {
         }
     }
 
+    /// Pin-and-snapshot via [`bytes`] then `protect()` the JS value for a
+    /// threadpool hand-off. Paired with [`unprotect`].
+    #[inline]
+    pub fn to_thread_safe(&self) {
+        self.bytes();
+        self.value().protect();
+    }
+
+    /// Undo [`to_thread_safe`]. JS-thread only.
+    #[inline]
+    pub fn unprotect(&self) {
+        self.unpin();
+        self.value().unprotect();
+    }
+
     /// Pin the backing `JSC::ArrayBuffer`, read its `vector()`/`byteLength()`
     /// once, and cache the result; subsequent calls return the cache. For a
     /// Rust-owned or already-pinned buffer this returns the existing

@@ -639,20 +639,23 @@ test.concurrent("redis.set reads a Buffer key only after every later argument ha
     const url = "redis://127.0.0.1:" + server.address().port;
 
     const client = new Bun.RedisClient(url, { enableAutoPipelining: false });
-    await client.connect();
-
     const key = Buffer.from(new ArrayBuffer(19));
-    key.set(Buffer.from("lazy-pin-test:key-A"));
-    class DetachKey extends String {
-      toString() {
-        structuredClone(key.buffer, { transfer: [key.buffer] });
-        Bun.gc(true);
-        return "the-value";
+    try {
+      await client.connect();
+
+      key.set(Buffer.from("lazy-pin-test:key-A"));
+      class DetachKey extends String {
+        toString() {
+          structuredClone(key.buffer, { transfer: [key.buffer] });
+          Bun.gc(true);
+          return "the-value";
+        }
       }
+      await client.set(key, new DetachKey("x"));
+    } finally {
+      client.close();
+      server.close();
     }
-    await client.set(key, new DetachKey("x"));
-    client.close();
-    server.close();
 
     // RESP: *3\\r\\n$3\\r\\nSET\\r\\n$<keylen>\\r\\n<key>\\r\\n$9\\r\\nthe-value\\r\\n
     const text = received.toString("latin1");

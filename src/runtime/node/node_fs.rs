@@ -3913,15 +3913,13 @@ pub mod args {
     }
     impl Read {
         pub(crate) fn to_thread_safe(&self) {
-            self.buffer.bytes();
-            self.buffer.value().protect();
+            self.buffer.to_thread_safe();
         }
     }
     impl Unprotect for Read {
         #[inline]
         fn unprotect(&mut self) {
-            self.buffer.unpin();
-            self.buffer.value().unprotect();
+            self.buffer.unprotect();
         }
     }
     impl Read {

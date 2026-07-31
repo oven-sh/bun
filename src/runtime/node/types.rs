@@ -299,8 +299,7 @@ impl bun_jsc::Unprotect for StringOrBuffer {
     #[inline]
     fn unprotect(&mut self) {
         if let Self::Buffer(buffer) = self {
-            buffer.unpin();
-            buffer.value().unprotect();
+            buffer.unprotect();
         }
     }
 }
@@ -316,8 +315,7 @@ impl StringOrBuffer {
             Self::ThreadsafeString(_) => {}
             Self::EncodedSlice(_) => {}
             Self::Buffer(buffer) => {
-                buffer.bytes();
-                buffer.value().protect();
+                buffer.to_thread_safe();
             }
         }
     }
@@ -439,8 +437,7 @@ impl StringOrBuffer {
                 let buffer = Buffer::from_array_buffer(global, value);
 
                 if is_async {
-                    buffer.bytes();
-                    buffer.value().protect();
+                    buffer.to_thread_safe();
                 }
 
                 *out = Self::Buffer(buffer);
@@ -505,8 +502,7 @@ impl StringOrBuffer {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
             let buffer = Buffer::from_array_buffer(global, value);
             if is_async {
-                buffer.bytes();
-                buffer.value().protect();
+                buffer.to_thread_safe();
             }
             *out = Self::Buffer(buffer);
             return Ok(true);

@@ -200,8 +200,7 @@ impl PathLike {
                 *self = Self::ThreadsafeString(owned);
             }
             Self::Buffer(b) => {
-                b.bytes();
-                b.value().protect();
+                b.to_thread_safe();
             }
             Self::String(_) | Self::ThreadsafeString(_) | Self::EncodedSlice(_) => {}
         }
@@ -215,8 +214,7 @@ impl Unprotect for PathLike {
     #[inline]
     fn unprotect(&mut self) {
         if let Self::Buffer(b) = self {
-            b.unpin();
-            b.value().unprotect();
+            b.unprotect();
         }
     }
 }

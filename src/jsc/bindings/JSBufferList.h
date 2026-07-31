@@ -168,6 +168,4 @@ private:
     void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSBufferListPrototype* prototype);
 };
 
-JSValue getBufferList(Zig::GlobalObject* globalObject);
-
 }

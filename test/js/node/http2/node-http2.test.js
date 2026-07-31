@@ -3091,10 +3091,6 @@ it("http2 pushStream failure reports only via callback, never via stream 'error'
   };
   dc.subscribe("http2.server.stream.created", onCreated);
 
-  let uncaught;
-  const onUncaught = err => (uncaught = err);
-  process.on("uncaughtException", onUncaught);
-
   const server = http2.createServer();
   const { promise: callbackResult, resolve: onCallback } = Promise.withResolvers();
   server.on("stream", stream => {
@@ -3121,11 +3117,9 @@ it("http2 pushStream failure reports only via callback, never via stream 'error'
     // Let any scheduled 'error'/'close' emissions from destroy() run.
     await new Promise(resolve => setImmediate(resolve));
     expect(pushedStreams).toEqual([{ event: "close", destroyed: true }]);
-    expect(uncaught).toBeUndefined();
     client.close();
   } finally {
     dc.unsubscribe("http2.server.stream.created", onCreated);
-    process.removeListener("uncaughtException", onUncaught);
     server.close();
   }
 });

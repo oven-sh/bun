@@ -1266,6 +1266,49 @@ describe.skipIf(isWindows)("REPL history file permissions", () => {
   });
 });
 
+describe("REPL history file", () => {
+  // A history file written on Windows (or edited in a CRLF editor) has CRLF
+  // line endings. Loading it must strip the trailing '\r' so entries don't
+  // carry a stray CR into recall, .history output, or the next save.
+  test("strips CRLF when loading existing history", async () => {
+    using dir = tempDir("repl-history-crlf", {
+      ".bun_repl_history": "old_one\r\nold_two\r\n",
+    });
+    const home = String(dir);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repl"],
+      stdin: Buffer.from(".history\nnew_three\n.exit\n"),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...bunEnv,
+        TERM: "dumb",
+        NO_COLOR: "1",
+        HOME: home,
+        USERPROFILE: home,
+      },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // .history prints the loaded entries verbatim; a kept '\r' would appear
+    // between the entry text and the line's trailing '\n'.
+    const historyLines = stripAnsi(stdout)
+      .split("\n")
+      .filter(l => l.includes("old_one") || l.includes("old_two"));
+    for (const line of historyLines) {
+      expect(line).not.toContain("\r");
+    }
+
+    const saved = await Bun.file(path.join(home, ".bun_repl_history")).text();
+    expect(saved).not.toContain("\r");
+    expect(saved.split("\n").filter(Boolean)).toEqual(["old_one", "old_two", "new_three"]);
+
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // `bun --interactive` boots the full node:repl + readline + acorn stack; on a
 // debug+asan build that is ~4–5s per spawn, so the 5s default is too tight.
 const interactiveTimeout = 20_000;

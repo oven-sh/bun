@@ -107,10 +107,8 @@ pub(crate) type ExternalStringBuffer = Vec<ExternalString>;
 
 pub(crate) type NameHashMap = ArrayHashMap<PackageNameHash, SemverString, ArrayIdentityContextU64>;
 
-/// Set of trusted dependency names. Named entries are keyed on the name bytes
-/// (the string-keyed table compares names on hash-bucket hits, so truncated
-/// hash collisions can't produce false matches). Entries loaded from the
-/// legacy binary lockfile carry only a truncated hash and no name.
+/// Trusted dependency names. Entries loaded from the legacy binary lockfile
+/// carry only a truncated name hash.
 #[derive(Default)]
 pub struct TrustedDependenciesSet {
     names: bun_collections::StringArrayHashMap<()>,

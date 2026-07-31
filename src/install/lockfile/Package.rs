@@ -893,8 +893,7 @@ impl Package<u64> {
 
 pub(crate) struct Diff;
 
-/// A trusted dependency newly added by the current diff, keyed by name in
-/// `DiffSummary::added_trusted_dependencies`.
+/// A trusted dependency newly added by the current diff.
 pub struct AddedTrustedDependency {
     /// Whether this dependency should be added to lockfile trusted
     /// dependencies. It is false when the new trusted dependency is coming
@@ -911,6 +910,9 @@ pub struct DiffSummary {
     pub(crate) catalogs_changed: bool,
 
     pub(crate) added_trusted_dependencies: StringArrayHashMap<AddedTrustedDependency>,
+    /// Newly added legacy bun.lockb entries, which have no name to record in
+    /// `added_trusted_dependencies`.
+    pub(crate) added_legacy_trusted_hashes: u32,
     pub(crate) removed_trusted_dependencies: TrustedDependenciesSet,
 
     pub(crate) patched_dependencies_changed: bool,
@@ -925,6 +927,7 @@ impl DiffSummary {
             || self.overrides_changed
             || self.catalogs_changed
             || self.added_trusted_dependencies.count() > 0
+            || self.added_legacy_trusted_hashes > 0
             || self.removed_trusted_dependencies.count() > 0
             || self.patched_dependencies_changed
     }
@@ -1156,8 +1159,6 @@ impl Diff {
             ) {
                 // added
                 for to_name in to_trusted_dependencies.names() {
-                    // A matching legacy bun.lockb hash-only entry counts as
-                    // already trusted and learns its name from the new lockfile.
                     let already_trusted = from_trusted_dependencies.contains_name(to_name)
                         || from_trusted_dependencies.promote_legacy(to_name)?;
                     if !already_trusted {
@@ -1171,14 +1172,7 @@ impl Diff {
                 }
                 for &to_hash in to_trusted_dependencies.legacy_hashes() {
                     if !from_trusted_dependencies.contains_truncated_hash(to_hash) {
-                        // Hash-only entry with no name to trust scripts by;
-                        // recorded so `has_diffs` still reflects the change.
-                        summary.added_trusted_dependencies.put(
-                            b"",
-                            AddedTrustedDependency {
-                                add_to_lockfile: true,
-                            },
-                        )?;
+                        summary.added_legacy_trusted_hashes += 1;
                     }
                 }
 
@@ -1250,14 +1244,8 @@ impl Diff {
                         },
                     )?;
                 }
-                for _ in to_trusted_dependencies.legacy_hashes() {
-                    summary.added_trusted_dependencies.put(
-                        b"",
-                        AddedTrustedDependency {
-                            add_to_lockfile: true,
-                        },
-                    )?;
-                }
+                summary.added_legacy_trusted_hashes +=
+                    to_trusted_dependencies.legacy_hashes().len() as u32;
 
                 {
                     // removed

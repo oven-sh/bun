@@ -103,8 +103,6 @@ pub struct PackageInstaller<'a> {
     pub(crate) tree_ids_to_trees_the_id_depends_on: bun_collections::DynamicBitSetList,
     pub(crate) pending_lifecycle_scripts: Vec<PendingLifecycleScript>,
 
-    /// Keyed on the alias bytes; the string-keyed table compares names on
-    /// hash-bucket hits.
     pub(crate) trusted_dependencies_from_update_requests: StringArrayHashMap<()>,
 
     /// uses same ids as lockfile.trees

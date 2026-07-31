@@ -96,9 +96,7 @@ pub struct Installer<'a> {
     /// round-trip via `Method::from_u8` at the load sites below.
     pub(crate) supported_backend: AtomicU8,
 
-    /// Keyed on the alias bytes; the string-keyed table compares names on
-    /// hash-bucket hits. Built before tasks spawn and only read concurrently
-    /// afterwards.
+    /// Built before tasks spawn and only read concurrently afterwards.
     pub(crate) trusted_dependencies_from_update_requests: StringArrayHashMap<()>,
 
     /// Absolute path to the global virtual store (`<cache_dir>/links`). When

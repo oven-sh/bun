@@ -256,7 +256,6 @@ pub(crate) fn save(
         if trusted_dependencies.count() > 0 {
             stream.write_all(&HAS_TRUSTED_DEPENDENCIES_TAG.to_ne_bytes())?;
 
-            // The binary format stores only the truncated name hashes.
             let hashes = trusted_dependencies.truncated_hashes();
             write_array::<u32>(&mut stream, &hashes, PREFIX_U32)?;
         } else {
@@ -533,8 +532,6 @@ pub(crate) fn load(
 
                 lockfile.trusted_dependencies = Some(Default::default());
                 let td = lockfile.trusted_dependencies.as_mut().unwrap();
-                // The binary lockfile only stores the truncated hashes, not
-                // the names they were computed from.
                 for &hash in &trusted_dependencies_hashes {
                     td.insert_legacy_hash(hash)?;
                 }

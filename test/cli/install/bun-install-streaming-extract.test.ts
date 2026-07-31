@@ -423,7 +423,9 @@ describe("streaming tarball extraction", () => {
 
     const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
     expect(readFileSync(join(pkgRoot, "after.txt"), "utf8")).toBe("after\n");
-    expect(existsSync(join(pkgRoot, "package.json"))).toBe(true);
+    // The overlong entry must produce no on-disk artifact, not even under
+    // the truncated ustar fallback name.
+    expect(await readdirSorted(pkgRoot)).toEqual(["after.txt", "package.json"]);
     expect(exitCode).toBe(0);
   });
 

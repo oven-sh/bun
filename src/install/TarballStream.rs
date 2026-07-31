@@ -802,8 +802,10 @@ impl TarballStream {
         // `normalize_buf_t` writes into a fixed-size OSPathBuffer and assumes
         // the input fits. PAX tar headers can carry arbitrarily long paths,
         // so skip entries that would overflow (same guard as
-        // `Archiver::extract_to_dir`).
-        if rest.len() >= norm_buf.len() {
+        // `Archiver::extract_to_dir`). On Windows a bare UNC volume name
+        // normalizes to one character longer than its input and we write a
+        // trailing NUL afterwards, so keep one slot of headroom.
+        if rest.len() + 1 >= norm_buf.len() {
             self.phase = Phase::WantData;
             self.out_fd = None;
             return Ok(());

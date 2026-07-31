@@ -871,24 +871,34 @@ pub trait UpstreamSource {
     fn on_start(_this: *mut Self) {}
 }
 
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl UpstreamSource for crate::webcore::ByteStream {
     #[inline]
     fn on_ready(this: *mut Self) {
+        // SAFETY: `this` was stored as a live `*mut ByteStream` in
+        // `SourceHandle` and is cleared before the ByteStream is freed.
         unsafe { (*this).resume() };
     }
     #[inline]
     fn on_close(this: *mut Self, err: Option<SysError>) {
+        // SAFETY: `this` was stored as a live `*mut ByteStream` in
+        // `SourceHandle` and is cleared before the ByteStream is freed.
         unsafe { (*this).cancel_from_sink(err) };
     }
 }
 
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl UpstreamSource for crate::webcore::FileReader {
     #[inline]
     fn on_ready(this: *mut Self) {
+        // SAFETY: `this` was stored as a live `*mut FileReader` in
+        // `SourceHandle` and is cleared before the FileReader is freed.
         unsafe { (*this).pull_into_sink() };
     }
     #[inline]
     fn on_close(this: *mut Self, _err: Option<SysError>) {
+        // SAFETY: `this` was stored as a live `*mut FileReader` in
+        // `SourceHandle` and is cleared before the FileReader is freed.
         unsafe {
             (*this).unpipe_without_deref();
             (*this).on_cancel();
@@ -896,16 +906,22 @@ impl UpstreamSource for crate::webcore::FileReader {
     }
 }
 
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl UpstreamSource for crate::api::bun::subprocess::Subprocess<'static> {
     #[inline]
     fn on_close(this: *mut Self, err: Option<SysError>) {
+        // SAFETY: `this` is the boxed `*mut Subprocess` registered at spawn
+        // time; it outlives the FileSink that holds this handle.
         unsafe { crate::api::bun::subprocess::Writable::on_close(&*this, err) };
     }
 }
 
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl UpstreamSource for crate::shell::subproc::Writable {
     #[inline]
     fn on_close(this: *mut Self, err: Option<SysError>) {
+        // SAFETY: `this` is the `*mut shell::subproc::Writable` stdin
+        // registered at spawn time; it outlives this handle.
         unsafe { (*this).on_close(err) };
     }
 }

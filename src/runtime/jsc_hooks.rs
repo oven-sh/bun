@@ -1698,7 +1698,9 @@ unsafe fn retroactively_report_discovered_tests(
     use crate::test_runner::jest::Jest;
     use bun_jsc::debugger::{TestReporterHandle, TestType};
 
-    let Some(runner) = Jest::runner() else { return next_test_id };
+    let Some(runner) = Jest::runner() else {
+        return next_test_id;
+    };
     let Some(active_file) = runner.bun_test_root.active_file.as_ref() else {
         return next_test_id;
     };

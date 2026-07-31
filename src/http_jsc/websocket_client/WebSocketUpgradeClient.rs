@@ -2011,7 +2011,6 @@ fn build_request_body(
     let mut encoded_buf = [0u8; 24];
     let key: &[u8] = 'blk: {
         if let Some(k_slice) = user_key {
-            // Accept only a valid base64 encoding of exactly 16 bytes.
             let mut decoded_buf = [0u8; 24];
             if B64_STD.decoder.calc_size_for_slice(k_slice) == Ok(16)
                 && B64_STD.decoder.decode(&mut decoded_buf, k_slice).is_ok()
@@ -2019,9 +2018,7 @@ fn build_request_body(
                 break 'blk k_slice;
             }
         }
-        // RFC 6455 §4.1: "a nonce consisting of a randomly selected 16-byte
-        // value that has been base64-encoded". Use raw CSPRNG output rather
-        // than a v4 UUID, whose version/variant bits are constant.
+        // RFC 6455 §4.1: base64 of a randomly selected 16-byte value.
         B64_STD
             .encoder
             .encode(&mut encoded_buf, vm.rare_data().entropy_slice(16))

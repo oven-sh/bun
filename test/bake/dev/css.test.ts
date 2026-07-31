@@ -356,6 +356,81 @@ devTest("asset index stays valid after another css root is freed", {
     }
   },
 });
+devTest("css hot update carries the edited stylesheet when another root fails in the same rebuild", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./css-plugin.ts"]
+    `,
+    "css-plugin.ts": `
+      export default {
+        name: "css-plugin",
+        setup(build) {
+          build.onResolve({ filter: /missing\\.png$/ }, () => undefined);
+        },
+      };
+    `,
+    "first.html": emptyHtmlFile({
+      styles: ["first.css"],
+      body: `<div class="first">hello</div>`,
+    }),
+    "second.html": emptyHtmlFile({
+      styles: ["second.css"],
+      body: `<div class="second">hello</div>`,
+    }),
+    "first.css": `
+      .first { color: red; }
+    `,
+    "second.css": `
+      .second { color: blue; }
+    `,
+  },
+  async test(dev) {
+    {
+      await using c1 = await dev.client("/first");
+      await c1.style(".first").color.expect.toBe("red");
+      await c1.style(".second").notFound();
+
+      await using c2 = await dev.client("/second");
+      await c2.style(".second").color.expect.toBe("#00f");
+
+      {
+        await using batch = await dev.batchChanges({ errors: null });
+        await dev.write(
+          "first.css",
+          `
+            .first {
+              background-image: url(./missing.png);
+            }
+          `,
+        );
+        await dev.write(
+          "second.css",
+          `
+            .second { color: green; }
+          `,
+        );
+      }
+      await c2.style(".second").color.expect.toBe("green");
+      await c1.style(".second").notFound();
+    }
+
+    await dev.write(
+      "first.css",
+      `
+        .first { color: yellow; }
+      `,
+    );
+    {
+      await using c2 = await dev.client("/second");
+      await c2.style(".second").color.expect.toBe("green");
+    }
+    {
+      await using c1 = await dev.client("/first");
+      await c1.style(".first").color.expect.toBe("#ff0");
+    }
+  },
+});
 devTest("multiple stylesheets importing same dependency", {
   files: {
     "first.html": emptyHtmlFile({

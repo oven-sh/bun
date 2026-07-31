@@ -93,8 +93,8 @@ use bun_collections::StringArrayHashMap;
 use bun_core::Mutex;
 
 /// Memoised SigV4 derived signing key, keyed by `(numeric_day,
-/// region+service+secret)`. The lock owns the data — the mutex wraps both
-/// `cache` and `date`.
+/// sha256(region, service, secret))`. The lock owns the data — the mutex
+/// wraps both `cache` and `date`.
 #[derive(Default)]
 pub struct AWSSignatureCache(Mutex<AWSSignatureCacheInner>);
 
@@ -487,19 +487,19 @@ impl S3Credentials {
             let mut hmac_sig_service2 = [0u8; bun_sha_hmac::hmac::EVP_MAX_MD_SIZE];
 
             let sig_date_region_service_req: [u8; DIGESTED_HMAC_256_LEN] = 'brk_sign: {
-                let key = buf_print(
-                    &mut tmp_buffer,
-                    format_args!(
-                        "{}{}{}",
-                        BStr::new(region),
-                        service_name,
-                        BStr::new(&self.secret_access_key)
-                    ),
-                )
-                .map_err(|_| SignError::NoSpaceLeft)?;
+                let mut cache_key = [0u8; bun_sha_hmac::sha::hashers::SHA256::DIGEST];
+                {
+                    let mut hasher = bun_sha_hmac::sha::hashers::SHA256::init();
+                    hasher.update(region);
+                    hasher.update(b"\0");
+                    hasher.update(service_name.as_bytes());
+                    hasher.update(b"\0");
+                    hasher.update(&self.secret_access_key);
+                    hasher.r#final(&mut cache_key);
+                }
                 // was `bun_jsc::VirtualMachine::get*().rare_data().aws_cache()`.
                 // Storage moved DOWN — `AWS_SIGNATURE_CACHE` is a process static here.
-                if let Some(cached) = aws_cache_get(date_result.numeric_day, key) {
+                if let Some(cached) = aws_cache_get(date_result.numeric_day, &cache_key) {
                     break 'brk_sign cached;
                 }
                 // not cached yet lets generate a new one
@@ -541,20 +541,7 @@ impl S3Credentials {
                     [0..DIGESTED_HMAC_256_LEN]
                     .try_into()
                     .expect("infallible: size matches");
-                // The earlier `key` was a slice into `tmp_buffer`, which has since been
-                // overwritten by the `AWS4{secret}` buf_print, so recompute the correct
-                // `{region}{service}{secret}` key here before caching.
-                let key = buf_print(
-                    &mut tmp_buffer,
-                    format_args!(
-                        "{}{}{}",
-                        BStr::new(region),
-                        service_name,
-                        BStr::new(&self.secret_access_key)
-                    ),
-                )
-                .map_err(|_| SignError::NoSpaceLeft)?;
-                aws_cache_set(date_result.numeric_day, key, digest);
+                aws_cache_set(date_result.numeric_day, &cache_key, digest);
                 break 'brk_sign digest;
             };
 

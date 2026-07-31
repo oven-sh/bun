@@ -906,18 +906,6 @@ pub fn utf16_codepoint(input: &[u16]) -> UTF16Replacement {
     }
 }
 
-/// `b"..."` for u8, `$crate::w!("...")` for u16.
-/// New callers should use byte/wide literals directly.
-#[macro_export]
-macro_rules! literal {
-    (u8, $s:literal) => {
-        concat!($s, "\0").as_bytes()
-    };
-    (u16, $s:literal) => {
-        $crate::w!($s)
-    };
-}
-
 pub(super) use crate::strings_impl::push_codepoint_utf16;
 
 // `unreachable_pub`: these are re-exported externally via the parent's

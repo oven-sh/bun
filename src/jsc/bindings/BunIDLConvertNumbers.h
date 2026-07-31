@@ -57,8 +57,8 @@ struct WebCore::Converter<Bun::IDLStrictInteger<T>>
 
         if (value.isInt32()) {
             auto intValue = value.asInt32();
-            if (intValue >= minInt && intValue <= maxInt) {
-                return intValue;
+            if (std::cmp_greater_equal(intValue, minInt) && std::cmp_less_equal(intValue, maxInt)) {
+                return static_cast<T>(intValue);
             }
             ctx.throwIntegerOutOfRange(globalObject, scope, intValue, minInt, maxInt);
             return {};

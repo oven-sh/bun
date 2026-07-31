@@ -171,6 +171,138 @@ describe("otp", async () => {
     expect(err).toContain(" - Received invalid OTP");
   });
 
+  test("non-http auth url is shown without launching a browser and login completes via done url polling", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const token = await registry.generateUser("otp-classic-fallback", "otp");
+
+    let doneHits = 0;
+    using mockRegistry = Bun.serve({
+      port: 0,
+      fetch(req: Request) {
+        if (req.method === "PUT") {
+          if (req.headers.get("npm-otp") === token) {
+            return new Response("OK", { status: 200 });
+          }
+          return new Response(
+            JSON.stringify({
+              authUrl: "customapp://login",
+              doneUrl: `http://localhost:${mockRegistry.port}/done`,
+            }),
+            { status: 401, headers: { "www-authenticate": "OTP" } },
+          );
+        }
+        if (req.url.endsWith("done")) {
+          doneHits++;
+          return new Response(JSON.stringify({ token }), { status: 200 });
+        }
+        return new Response("unexpected url", { status: 500 });
+      },
+    });
+
+    const bunfig = `
+      [install]
+      cache = false
+      registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
+
+    await Promise.all([
+      rm(join(registry.packagesPath, "otp-pkg-5"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "otp-pkg-5",
+          version: "5.5.5",
+          dependencies: {
+            "otp-pkg-5": "5.5.5",
+          },
+        }),
+      ),
+    ]);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "publish"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env,
+    });
+
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(out).toContain("Authenticate your account at:");
+    expect(out).toContain("customapp://login");
+    expect(out).not.toContain("open in browser");
+    expect(out).not.toContain("Enter OTP: ");
+    expect(doneHits).toBeGreaterThan(0);
+    expect(out).toContain(" + otp-pkg-5@5.5.5");
+    expect(exitCode).toBe(0);
+  });
+
+  test("done url on a different origin is not polled and login falls back to the OTP prompt", async () => {
+    const packageDir = tmpdirSync();
+    const otpCode = "424242";
+
+    let foreignDoneHits = 0;
+    using foreign = Bun.serve({
+      port: 0,
+      fetch() {
+        foreignDoneHits++;
+        return new Response(JSON.stringify({ token: otpCode }), { status: 200 });
+      },
+    });
+
+    let localDoneHits = 0;
+    using mockRegistry = Bun.serve({
+      port: 0,
+      fetch(req: Request) {
+        if (req.method === "PUT") {
+          if (req.headers.get("npm-otp") === otpCode) {
+            return new Response("OK", { status: 200 });
+          }
+          return new Response(
+            JSON.stringify({
+              authUrl: "customapp://login",
+              doneUrl: `http://127.0.0.1:${foreign.port}/done`,
+            }),
+            { status: 401, headers: { "www-authenticate": "OTP" } },
+          );
+        }
+        if (req.url.endsWith("done")) {
+          localDoneHits++;
+          return new Response(JSON.stringify({ token: otpCode }), { status: 200 });
+        }
+        return new Response("unexpected url", { status: 500 });
+      },
+    });
+
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        `[install]\ncache = false\nregistry = { url = "http://localhost:${mockRegistry.port}", token = "unused" }\n`,
+      ),
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "otp-pkg-6", version: "6.6.6" })),
+    ]);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "publish"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: Buffer.from(otpCode + "\n"),
+      env,
+    });
+
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(out).toContain("Enter OTP: ");
+    expect(out).not.toContain("Authenticate your account at");
+    expect(foreignDoneHits).toBe(0);
+    expect(localDoneHits).toBe(0);
+    expect(out).toContain(" + otp-pkg-6@6.6.6");
+    expect(exitCode).toBe(0);
+  });
+
   for (const shouldIgnoreNotice of [false, true]) {
     test(`npm-notice with login url${shouldIgnoreNotice ? " (ignored)" : ""}`, async () => {
       const { packageDir, packageJson } = await registry.createTestDir();
@@ -564,6 +696,21 @@ describe("--dry-run", async () => {
 
     expect(await exists(join(registry.packagesPath, "dry-run-2"))).toBeFalse();
   });
+  test("registry summary line does not print userinfo from the registry url", async () => {
+    const packageDir = tmpdirSync();
+    await write(join(packageDir, "package.json"), JSON.stringify({ name: "dry-run-3", version: "3.3.3" }));
+
+    const { out, err, exitCode } = await publish(
+      { ...env, npm_config_registry: "http://someuser:hunter2@127.0.0.1:1/" },
+      packageDir,
+      "--dry-run",
+    );
+    expect(out).toContain("Registry: http://127.0.0.1:1/\n");
+    expect(out).not.toContain("someuser");
+    expect(out).not.toContain("hunter2");
+    expect(err).not.toContain("hunter2");
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("lifecycle scripts", async () => {
@@ -954,6 +1101,35 @@ describe("readme", () => {
       readmeFilename: "README.md",
     });
   });
+});
+
+test("dist.tarball in the published manifest does not include userinfo from the registry url", async () => {
+  let captured: any = null;
+  using mock = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      if (req.method === "PUT") captured = await req.json();
+      return new Response("OK", { status: 200 });
+    },
+  });
+
+  const packageDir = tmpdirSync();
+  await write(join(packageDir, "package.json"), JSON.stringify({ name: "tarball-url-pkg", version: "1.0.0" }));
+
+  const { out, err, exitCode } = await publish(
+    env,
+    packageDir,
+    "--registry",
+    `http://pubuser:hunter2@localhost:${mock.port}/`,
+  );
+  expect(err).not.toContain("error:");
+  expect(out).toContain(" + tarball-url-pkg@1.0.0");
+  const tarball: string = captured.versions["1.0.0"].dist.tarball;
+  expect(tarball).not.toContain("pubuser");
+  expect(tarball).not.toContain("hunter2");
+  expect(tarball).not.toContain("@");
+  expect(tarball).toBe(`http://localhost:${mock.port}/tarball-url-pkg/-/tarball-url-pkg-1.0.0.tgz`);
+  expect(exitCode).toBe(0);
 });
 
 describe("--tolerate-republish", async () => {

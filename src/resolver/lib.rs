@@ -204,7 +204,7 @@ pub mod fs {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
                 .unwrap_or(0);
-            let hex_value: u64 = (u128::from(hash) | nanos) as u64;
+            let hex_value: u64 = hash ^ (nanos as u64);
 
             let len = buf.len();
             let mut cursor = &mut buf[..];
@@ -686,8 +686,8 @@ pub mod fs {
     // Canonical definitions live in `fs.rs` (mounted as `crate::fs_full`).
     // Re-exported here so the public path `bun_resolver::fs::*` is preserved.
     pub use crate::fs_full::{
-        DifferentCase, DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver,
-        EntryLookup, FilenameStoreAppender, dir_entry,
+        DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver, EntryLookup,
+        FilenameStoreAppender, dir_entry,
     };
 
     use bun_core::Generation;
@@ -1765,11 +1765,6 @@ pub mod fs {
 
     pub mod file_system {
         pub use super::{DirEntry, DirnameStore, Entry, EntryKind, FilenameStore, RealFS};
-        pub mod entry {
-            pub mod lookup {
-                pub use crate::fs::DifferentCase;
-            }
-        }
         pub mod real_fs {
             pub use crate::fs::EntriesOption;
         }

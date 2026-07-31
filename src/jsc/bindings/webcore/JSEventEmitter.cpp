@@ -1,7 +1,6 @@
 #include "config.h"
 #include "JSEventEmitter.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"

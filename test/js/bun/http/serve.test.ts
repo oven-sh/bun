@@ -2991,6 +2991,39 @@ it("Bun.serve hostname with interior NUL byte does not crash the process", async
   });
 });
 
+it("development error log prints the request pathname verbatim", async () => {
+  const script = `
+    const net = require("node:net");
+    const server = Bun.serve({
+      port: 0,
+      development: true,
+      fetch() {
+        throw new Error("boom");
+      },
+    });
+    const socket = net.connect(server.port, "127.0.0.1", () => {
+      socket.write("GET /a<b>c>d HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n");
+    });
+    socket.on("data", () => {});
+    socket.on("close", () => {
+      server.stop(true);
+      process.exit(0);
+    });
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("GET - /a<b>c>d failed");
+  expect(exitCode).toBe(0);
+});
+
 // The HTTP parser shares HttpParser.h between Bun.serve and node:http. When a request
 // handler tears the connection down from inside the request-body data callback, the
 // parser must stop consuming the rest of the TCP segment instead of routing a request

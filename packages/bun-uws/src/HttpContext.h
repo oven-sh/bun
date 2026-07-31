@@ -170,6 +170,8 @@ private:
              * report _secureEstablished = false. Peer-cert authorization is
              * surfaced separately (rejectUnauthorized above / tls.authorized). */
             httpResponseData->isAuthorized = success;
+            httpResponseData->peerCertVerified = success && verify_error.error == 0;
+            httpResponseData->peerCertVerifyErrorCode = verify_error.code;
 
             /* Any connected socket should timeout until it has a request */
             ((HttpResponse<SSL> *) s)->resetTimeout();

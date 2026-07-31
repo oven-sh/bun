@@ -298,9 +298,9 @@ fn caa_reply_to_js(
         JSValue::js_number(this.critical as f64),
     );
 
-    let property = this.property_bytes();
+    let property = bstr::String::borrow_utf8(this.property_bytes());
     let value = this.value_bytes();
-    obj.put(global_this, property, utf8_to_js(global_this, value)?);
+    obj.put_may_be_index(global_this, &property, utf8_to_js(global_this, value)?)?;
 
     Ok(obj)
 }

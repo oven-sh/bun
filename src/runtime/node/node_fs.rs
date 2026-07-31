@@ -4786,7 +4786,12 @@ impl NodeFS {
             }
             PathOrFileDescriptor::Path(path_) => {
                 let path = path_.slice_z(&mut self.sync_error_buf);
-                let fd = Syscall::open(path, FileSystemFlags::A.as_int(), args.mode)?;
+                let flags = if args.flag == FileSystemFlags::W {
+                    FileSystemFlags::A
+                } else {
+                    args.flag
+                };
+                let fd = Syscall::open(path, flags.as_int(), args.mode)?;
                 let _close = scopeguard::guard(fd, |fd| fd.close());
                 while !data.is_empty() {
                     let written = Syscall::write(fd, data)?;

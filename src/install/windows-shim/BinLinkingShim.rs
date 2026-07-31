@@ -362,8 +362,9 @@ mod host {
 
         /// The buffer must be exactly the correct length given by encoded_length.
         ///
-        /// The `Result` is kept only because the caller (`bin.rs`) treats it as
-        /// a fallible API — this always returns `Ok(())`.
+        /// Returns `Err` when the shebang launcher does not encode to exactly
+        /// `utf16_len` UTF-16 units (invalid UTF-8); the caller (`bin.rs`) reports
+        /// that as an invalid bin.
         pub(crate) fn encode_into(&self, buf: &mut [u8]) -> Result<(), bun_core::Error> {
             debug_assert!(buf.len() == self.encoded_length());
             debug_assert!(self.bin_path[0] != b'/' as u16);
@@ -402,11 +403,15 @@ mod host {
                     debug_assert!(flags.is_node_or_bun());
                 }
 
-                let encoded = strings::convert_utf8_to_utf16_in_buffer(
+                let Some(encoded) = strings::try_convert_utf8_to_utf16_in_buffer(
                     &mut wbuf[0..s.utf16_len as usize],
                     s.launcher,
-                );
-                debug_assert!(encoded.len() == s.utf16_len as usize);
+                ) else {
+                    return Err(bun_core::Error::InvalidByteSequence);
+                };
+                if encoded.len() != s.utf16_len as usize {
+                    return Err(bun_core::Error::InvalidByteSequence);
+                }
                 wbuf = &mut wbuf[s.utf16_len as usize..];
 
                 wbuf[0] = b' ' as u16;

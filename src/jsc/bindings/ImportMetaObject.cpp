@@ -4,7 +4,6 @@
 
 #include "ImportMetaObject.h"
 #include "ZigGlobalObject.h"
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"

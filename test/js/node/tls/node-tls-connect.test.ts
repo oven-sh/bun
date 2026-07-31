@@ -285,6 +285,37 @@ for (const { name, connect } of tests) {
       });
     });
 
+    it("emits error (not secureConnect) on a handshake_failure alert with rejectUnauthorized: false", async () => {
+      // Peer answers the ClientHello with a fatal handshake_failure alert: the
+      // TLS layer was never established, so the socket must error. It cannot
+      // fall through to secureConnect even with verification disabled.
+      await using server = net.createServer(s => {
+        s.resume();
+        s.end(Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]));
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const port = (server.address() as AddressInfo).port;
+
+      const result = await new Promise<{ kind: string; code?: string }>(resolve => {
+        const socket = connect({ host: "127.0.0.1", port, servername: "localhost", rejectUnauthorized: false });
+        socket.on("secureConnect", () => {
+          resolve({ kind: "secureConnect" });
+          socket.destroy();
+        });
+        socket.on("error", (err: NodeJS.ErrnoException) => {
+          resolve({ kind: "error", code: err.code });
+        });
+      });
+
+      expect(result).toEqual({
+        kind: "error",
+        // The native-socket and duplex paths derive the reason from different
+        // OpenSSL error stack positions (sslv3_alert_handshake_failure vs.
+        // handshake_failure_on_client_hello); both describe the same alert.
+        code: expect.stringMatching(/^ERR_SSL_.*HANDSHAKE_FAILURE/),
+      });
+    });
+
     it("Bun.serve() should work with tls and Bun.file()", async () => {
       using server = Bun.serve({
         port: 0,

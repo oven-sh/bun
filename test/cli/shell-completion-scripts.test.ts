@@ -64,7 +64,7 @@ describe.skipIf(isWindows)("shell completion scripts", () => {
     expect(script).not.toContain("${re_comp_word_script}");
   });
 
-  test.concurrent("bash: script passes bash -n", async () => {
+  test.concurrent.skipIf(bashMajor < 1)("bash: script passes bash -n", async () => {
     const script = await emitCompletions("bash");
     using dir = tempDir("bun-bash-completion", { "bun.bash": script });
     await using proc = Bun.spawn({

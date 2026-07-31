@@ -209,11 +209,14 @@ describe("Bun.file().text()", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const { dur, maxGap, len } = JSON.parse(stdout);
+    expect(len).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
     // When the decode ran on the JS thread the heartbeat stalled for the
     // whole decode, so maxGap was essentially equal to dur. With the decode
-    // on the work pool the loop keeps ticking throughout.
-    expect(len).toBeGreaterThan(0);
+    // on the work pool the loop keeps ticking throughout. Skip the ratio
+    // check when the whole operation was faster than setInterval can
+    // meaningfully sample.
+    if (dur < 50) return;
     expect(maxGap).toBeLessThan(dur / 2);
-    expect(exitCode).toBe(0);
   });
 });

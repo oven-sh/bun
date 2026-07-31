@@ -505,129 +505,90 @@ impl ShellMvBatchedTask {
         dst_dir: bun_sys::Fd,
         dst: &ZStr,
     ) -> Result<(), bun_sys::Error> {
+        use bun_sys::{Dir, E, File, O, S, Tag};
+
         let st = bun_sys::lstatat(src_dir, src)?;
         let mode = st.st_mode as bun_core::Mode;
 
         // Bind mounts can alias one inode through two vfsmounts (renameat()
         // still returns EXDEV); treat same-inode as the POSIX rename() no-op.
-        if let Ok(dst_st) = bun_sys::lstatat(dst_dir, dst) {
-            if st.st_dev == dst_st.st_dev && st.st_ino == dst_st.st_ino {
+        if let Ok(d) = bun_sys::lstatat(dst_dir, dst) {
+            if st.st_dev == d.st_dev && st.st_ino == d.st_ino {
                 return Ok(());
             }
         }
 
-        if bun_sys::S::ISLNK(mode) {
+        if S::ISLNK(mode) {
             let mut buf = bun_paths::path_buffer_pool::get();
             let n = bun_sys::readlinkat(src_dir, src, &mut buf[..])?;
             if n >= bun_paths::MAX_PATH_BYTES {
-                return Err(bun_sys::Error::from_code(
-                    bun_sys::E::ENAMETOOLONG,
-                    bun_sys::Tag::readlink,
-                ));
+                return Err(bun_sys::Error::from_code(E::ENAMETOOLONG, Tag::readlink));
             }
             buf[n] = 0;
-            let target = ZStr::from_buf(&buf[..], n);
             let _ = bun_sys::unlinkat(dst_dir, dst);
-            bun_sys::symlinkat(target, dst_dir, dst)?;
+            bun_sys::symlinkat(ZStr::from_buf(&buf[..], n), dst_dir, dst)?;
             return bun_sys::unlinkat(src_dir, src);
         }
 
-        if bun_sys::S::ISDIR(mode) {
+        if S::ISDIR(mode) {
             // `| 0o700` so children can be written even when the source mode is read-only; restored via `fchmod` below.
-            match bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700) {
-                Ok(()) => {}
-                Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
-                    // Refuse to merge into a non-empty dest (matches same-device `ENOTEMPTY`).
-                    bun_sys::rmdirat(dst_dir, dst)?;
-                    bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700)?;
+            if let Err(e) = bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700) {
+                if e.get_errno() != E::EEXIST {
+                    return Err(e);
                 }
-                Err(e) => return Err(e),
+                // Refuse to merge into a non-empty dest (matches same-device `ENOTEMPTY`).
+                bun_sys::rmdirat(dst_dir, dst)?;
+                bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700)?;
             }
-            let src_fd = shell_openat(src_dir, src, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0)?;
-            let dst_fd =
-                match shell_openat(dst_dir, dst, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0) {
-                    Ok(fd) => fd,
-                    Err(e) => {
-                        closefd(src_fd);
-                        return Err(e);
-                    }
-                };
+            let sd = Dir::from_fd(shell_openat(src_dir, src, O::RDONLY | O::DIRECTORY, 0)?);
+            let dd = Dir::from_fd(shell_openat(dst_dir, dst, O::RDONLY | O::DIRECTORY, 0)?);
             // Boxed: `WrappedIterator` embeds an 8 KB inline readdir buffer.
-            let mut iter = Box::new(bun_sys::dir_iterator::iterate(src_fd));
+            let mut iter = Box::new(bun_sys::dir_iterator::iterate(sd.fd()));
             let mut nbuf = bun_paths::path_buffer_pool::get();
-            let result: Result<(), bun_sys::Error> = loop {
-                match iter.next() {
-                    Ok(Some(entry)) => {
-                        let name = entry.name.slice_u8();
-                        if name.len() >= bun_paths::MAX_PATH_BYTES {
-                            break Err(bun_sys::Error::from_code(
-                                bun_sys::E::ENAMETOOLONG,
-                                bun_sys::Tag::rename,
-                            ));
-                        }
-                        nbuf[..name.len()].copy_from_slice(name);
-                        nbuf[name.len()] = 0;
-                        let name_z = ZStr::from_buf(&nbuf[..], name.len());
-                        if let Err(e) = Self::move_across_devices(src_fd, name_z, dst_fd, name_z) {
-                            break Err(e);
-                        }
-                    }
-                    Ok(None) => break Ok(()),
-                    Err(e) => break Err(e),
+            while let Some(entry) = iter.next()? {
+                let name = entry.name.slice_u8();
+                if name.len() >= bun_paths::MAX_PATH_BYTES {
+                    return Err(bun_sys::Error::from_code(E::ENAMETOOLONG, Tag::rename));
                 }
-            };
-            if result.is_ok() {
-                #[cfg(unix)]
-                let _ = bun_sys::fchown(dst_fd, st.st_uid as _, st.st_gid as _);
-                let _ = bun_sys::fchmod(dst_fd, mode & 0o7777);
+                nbuf[..name.len()].copy_from_slice(name);
+                nbuf[name.len()] = 0;
+                let name_z = ZStr::from_buf(&nbuf[..], name.len());
+                Self::move_across_devices(sd.fd(), name_z, dd.fd(), name_z)?;
             }
-            closefd(dst_fd);
-            closefd(src_fd);
-            result?;
+            #[cfg(unix)]
+            let _ = bun_sys::fchown(dd.fd(), st.st_uid as _, st.st_gid as _);
+            let _ = bun_sys::fchmod(dd.fd(), mode & 0o7777);
+            drop((sd, dd));
             return bun_sys::rmdirat(src_dir, src);
         }
 
-        if !bun_sys::S::ISREG(mode) {
+        if !S::ISREG(mode) {
             // Opening a FIFO `O_RDONLY` without `O_NONBLOCK` would block forever.
-            return Err(bun_sys::Error::from_code(
-                bun_sys::E::ENOTSUP,
-                bun_sys::Tag::rename,
-            ));
+            return Err(bun_sys::Error::from_code(E::ENOTSUP, Tag::rename));
         }
 
-        let in_fd = bun_sys::openat(src_dir, src, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?;
+        let in_ = File::openat(src_dir, src.as_bytes(), O::RDONLY | O::CLOEXEC, 0)?;
         // Unlink first so a symlink-at-dest isn't followed by `O_TRUNC`; also avoids ETXTBUSY.
         let _ = bun_sys::unlinkat(dst_dir, dst);
-        let out_fd = match bun_sys::openat(
+        let out = File::openat(
             dst_dir,
-            dst,
-            bun_sys::O::WRONLY
-                | bun_sys::O::CREAT
-                | bun_sys::O::TRUNC
-                | bun_sys::O::CLOEXEC
-                | bun_sys::O::NOFOLLOW,
+            dst.as_bytes(),
+            O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC | O::NOFOLLOW,
             mode & 0o7777,
-        ) {
-            Ok(fd) => fd,
-            Err(e) => {
-                closefd(in_fd);
-                return Err(e);
-            }
-        };
-        let _ = bun_sys::preallocate_file(out_fd.native(), 0, st.st_size as _);
-        let copied = bun_sys::copy_file(in_fd, out_fd);
-        #[cfg(unix)]
-        if copied.is_ok() {
-            // `fchown` first: Linux clears S_ISUID/S_ISGID on chown.
-            let _ = bun_sys::fchown(out_fd, st.st_uid as _, st.st_gid as _);
-            let _ = bun_sys::fchmod(out_fd, mode & 0o7777);
-        }
-        closefd(out_fd);
-        closefd(in_fd);
-        if let Err(e) = copied {
+        )?;
+        let _ = bun_sys::preallocate_file(out.fd().native(), 0, st.st_size as _);
+        if let Err(e) = bun_sys::copy_file(in_.fd(), out.fd()) {
+            drop(out);
             let _ = bun_sys::unlinkat(dst_dir, dst);
             return Err(e);
         }
+        #[cfg(unix)]
+        {
+            // `fchown` first: Linux clears S_ISUID/S_ISGID on chown.
+            let _ = bun_sys::fchown(out.fd(), st.st_uid as _, st.st_gid as _);
+            let _ = bun_sys::fchmod(out.fd(), mode & 0o7777);
+        }
+        drop((in_, out));
         bun_sys::unlinkat(src_dir, src)
     }
 

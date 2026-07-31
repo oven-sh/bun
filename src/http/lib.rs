@@ -4179,18 +4179,20 @@ impl<'a> HTTPClient<'a> {
             bun_core::scoped_log!(fetch, "done");
         }
 
-        // `parent_async_http()` reborrows `self` mutably; compute it before
-        // borrowing `state.decoded_body` for the slice.
+        // Move the body bytes onto this frame so the slice outlives
+        // `on_async_http_callback_raw`, which on the terminal callback drops
+        // `self.state` and deallocates the embedding `ThreadlocalAsyncHTTP`
+        // (making `self` dangle) before dispatching to the user callback.
+        let mut decoded_body = core::mem::take(&mut self.state.decoded_body);
         let parent = self.parent_async_http();
-        result.body = self.state.decoded_body.list.as_slice();
+        result.body = decoded_body.list.as_slice();
         callback.run(parent, result);
-        if self.state.decoded_body.list.capacity() > 512 * 1024 {
-            self.state.decoded_body = MutableString::default();
-        } else {
-            self.state.decoded_body.list.clear();
-        }
 
         if has_more {
+            if decoded_body.list.capacity() <= 512 * 1024 {
+                decoded_body.list.clear();
+                self.state.decoded_body = decoded_body;
+            }
             self.maybe_pause_receive(socket);
         }
 
@@ -4223,13 +4225,15 @@ impl<'a> HTTPClient<'a> {
             self.state.stage = Stage::Done;
             self.flags.proxy_tunneling = false;
         }
+        // See `send_progress_update_without_stage_check`: lift the body onto
+        // this frame so it outlives the terminal callback's `self` teardown.
+        let mut decoded_body = core::mem::take(&mut self.state.decoded_body);
         let parent = self.parent_async_http();
-        result.body = self.state.decoded_body.list.as_slice();
+        result.body = decoded_body.list.as_slice();
         callback.run(parent, result);
-        if self.state.decoded_body.list.capacity() > 512 * 1024 {
-            self.state.decoded_body = MutableString::default();
-        } else {
-            self.state.decoded_body.list.clear();
+        if !is_done && decoded_body.list.capacity() <= 512 * 1024 {
+            decoded_body.list.clear();
+            self.state.decoded_body = decoded_body;
         }
     }
 

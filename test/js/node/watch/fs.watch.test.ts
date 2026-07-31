@@ -682,7 +682,18 @@ describe("fs.watch", () => {
       const root = fs.realpathSync(String(dir));
       // The de-privileged child must be able to traverse into `root`, read it,
       // and write inside `open/`, while `locked/` denies read so
-      // inotify_add_watch on it returns EACCES.
+      // inotify_add_watch on it returns EACCES. CI's runner.node.mjs points
+      // TMPDIR at a mode-0700 mkdtemp dir, so every ancestor of `root` needs
+      // +x for uid 65534 or the child fails at path resolution on the root
+      // itself before the recursive walk ever reaches `locked/`.
+      const ancestors: [string, number][] = [];
+      for (let p = path.dirname(root); p !== path.dirname(p); p = path.dirname(p)) {
+        const mode = fs.statSync(p).mode;
+        if ((mode & 0o011) !== 0o011) {
+          ancestors.push([p, mode & 0o7777]);
+          fs.chmodSync(p, (mode & 0o7777) | 0o011);
+        }
+      }
       fs.chownSync(root, NOBODY, NOBODY);
       fs.chownSync(path.join(root, "open"), NOBODY, NOBODY);
       fs.chmodSync(root, 0o755);
@@ -782,6 +793,7 @@ describe("fs.watch", () => {
         expect(exitCode2).toBe(0);
       } finally {
         fs.chmodSync(path.join(root, "locked"), 0o755);
+        for (const [p, mode] of ancestors) fs.chmodSync(p, mode);
       }
     },
   );

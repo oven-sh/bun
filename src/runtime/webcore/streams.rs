@@ -835,45 +835,54 @@ impl StreamResult {
 // SourceHandle
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Which JS-side sink ABI a `JSController` cell belongs to. One entry per
+/// `generate-jssink.ts` sink class; used by the non-generic `SourceHandle` to
+/// pick the correct `${abi}__onReady` / `${abi}__onClose` / `${abi}__detachPtr`
+/// extern at dispatch time.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SinkKind {
+    ArrayBuffer,
+    HttpResponse,
+    HttpsResponse,
+    H3Response,
+    NetworkSink,
+    FileSink,
+    FetchRequestBody,
+}
+
+mod sink_abi {
+    crate::decl_js_sink_externs!("ArrayBufferSink" as array_buffer);
+    crate::decl_js_sink_externs!("FileSink" as file);
+    crate::decl_js_sink_externs!("NetworkSink" as network);
+    crate::decl_js_sink_externs!("FetchRequestBodySink" as fetch_request_body);
+}
+
 /// Tagged handle a sink holds to its upstream source — a closed set of
 /// variants so native source↔sink pairs can pump without a JS round-trip.
-///
-/// Generic over the sink's [`JsSinkAbi`] so the `JSController` arm can call
-/// the correct `${abi}__onReady` / `${abi}__onClose` externs.
-pub enum SourceHandle<T: crate::webcore::sink::JsSinkAbi> {
+#[derive(Copy, Clone, Default)]
+pub enum SourceHandle {
     /// No source attached.
+    #[default]
     None,
     /// Encoded `JSValue` bits of the C++ controller cell written by
-    /// `${abi}__assignToStream`. Never dereferenced as a Rust pointer.
-    JSController(usize),
+    /// `${abi}__assignToStream`, plus the sink's ABI kind. `bits` is never
+    /// dereferenced as a Rust pointer; `bits == 0` is the pre-seed sentinel.
+    JSController {
+        bits: usize,
+        kind: SinkKind,
+    },
     ByteStream(*mut crate::webcore::ByteStream),
     FileReader(*mut crate::webcore::FileReader),
-    /// `*mut Subprocess<'_>` — type-erased to keep this enum lifetime-free.
-    Subprocess(*mut c_void),
-    /// `*mut shell::subproc::Writable` — type-erased to avoid a module cycle.
-    ShellWritable(*mut c_void),
-    #[doc(hidden)]
-    _Marker(
-        core::marker::PhantomData<fn() -> T>,
-        core::convert::Infallible,
-    ),
+    /// The `'static` bound erases the `&JSGlobalObject` borrow carried in
+    /// `Subprocess<'a>`; the pointed-at allocation outlives this handle.
+    Subprocess(*mut crate::api::bun::subprocess::Subprocess<'static>),
+    ShellWritable(*mut crate::shell::subproc::Writable),
+    FetchResponseBody(*mut crate::webcore::fetch::fetch_tasklet::FetchTasklet),
+    ServerRequestBody(crate::server::AnyRequestContext),
+    S3DownloadBody(*mut crate::webcore::s3::client::S3DownloadStreamWrapper),
 }
 
-impl<T: crate::webcore::sink::JsSinkAbi> Copy for SourceHandle<T> {}
-impl<T: crate::webcore::sink::JsSinkAbi> Clone for SourceHandle<T> {
-    #[inline]
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<T: crate::webcore::sink::JsSinkAbi> Default for SourceHandle<T> {
-    #[inline]
-    fn default() -> Self {
-        SourceHandle::None
-    }
-}
-
-impl<T: crate::webcore::sink::JsSinkAbi> SourceHandle<T> {
+impl SourceHandle {
     #[inline]
     pub fn is_dead(&self) -> bool {
         matches!(self, SourceHandle::None)
@@ -884,20 +893,61 @@ impl<T: crate::webcore::sink::JsSinkAbi> SourceHandle<T> {
         *self = SourceHandle::None;
     }
 
+    #[inline]
+    fn js_controller_on_close(kind: SinkKind, cpp: JSValue, reason: JSValue) {
+        match kind {
+            SinkKind::ArrayBuffer => sink_abi::array_buffer::on_close(cpp, reason),
+            SinkKind::HttpResponse => http_sink_abi::http::on_close(cpp, reason),
+            SinkKind::HttpsResponse => http_sink_abi::https::on_close(cpp, reason),
+            SinkKind::H3Response => http_sink_abi::h3::on_close(cpp, reason),
+            SinkKind::NetworkSink => sink_abi::network::on_close(cpp, reason),
+            SinkKind::FileSink => sink_abi::file::on_close(cpp, reason),
+            SinkKind::FetchRequestBody => sink_abi::fetch_request_body::on_close(cpp, reason),
+        }
+    }
+
+    #[inline]
+    fn js_controller_on_ready(kind: SinkKind, cpp: JSValue, amount: JSValue, offset: JSValue) {
+        match kind {
+            SinkKind::ArrayBuffer => sink_abi::array_buffer::on_ready(cpp, amount, offset),
+            SinkKind::HttpResponse => http_sink_abi::http::on_ready(cpp, amount, offset),
+            SinkKind::HttpsResponse => http_sink_abi::https::on_ready(cpp, amount, offset),
+            SinkKind::H3Response => http_sink_abi::h3::on_ready(cpp, amount, offset),
+            SinkKind::NetworkSink => sink_abi::network::on_ready(cpp, amount, offset),
+            SinkKind::FileSink => sink_abi::file::on_ready(cpp, amount, offset),
+            SinkKind::FetchRequestBody => {
+                sink_abi::fetch_request_body::on_ready(cpp, amount, offset)
+            }
+        }
+    }
+
+    #[inline]
+    pub fn js_controller_detach_ptr(kind: SinkKind, cpp: JSValue) {
+        match kind {
+            SinkKind::ArrayBuffer => sink_abi::array_buffer::detach_ptr(cpp),
+            SinkKind::HttpResponse => http_sink_abi::http::detach_ptr(cpp),
+            SinkKind::HttpsResponse => http_sink_abi::https::detach_ptr(cpp),
+            SinkKind::H3Response => http_sink_abi::h3::detach_ptr(cpp),
+            SinkKind::NetworkSink => sink_abi::network::detach_ptr(cpp),
+            SinkKind::FileSink => sink_abi::file::detach_ptr(cpp),
+            SinkKind::FetchRequestBody => sink_abi::fetch_request_body::detach_ptr(cpp),
+        }
+    }
+
     pub fn close(&mut self, err: Option<SysError>) {
         match *self {
-            // `JSController(0)` is the `assign_to_stream` pre-seed placeholder;
-            // the real controller bits haven't been installed yet, so there is
-            // no cell to notify.
-            SourceHandle::None | SourceHandle::JSController(0) => {}
-            SourceHandle::JSController(bits) => {
+            // `JSController { bits: 0, .. }` is the `assign_to_stream` pre-seed
+            // placeholder; the real controller bits haven't been installed yet,
+            // so there is no cell to notify.
+            SourceHandle::None | SourceHandle::JSController { bits: 0, .. } => {}
+            SourceHandle::JSController { bits, kind } => {
                 let cpp = JSValue::from_encoded(bits);
                 let global = VirtualMachine::get().global();
                 if global.has_exception() {
                     return;
                 }
                 let _ = ::bun_jsc::call_check_slow(global, || {
-                    T::on_close_extern(cpp, JSValue::UNDEFINED)
+                    Self::js_controller_on_close(kind, cpp, JSValue::UNDEFINED)
                 });
             }
             SourceHandle::ByteStream(ptr) => {
@@ -916,30 +966,34 @@ impl<T: crate::webcore::sink::JsSinkAbi> SourceHandle<T> {
             SourceHandle::Subprocess(ptr) => {
                 // SAFETY: `ptr` is the boxed `*mut Subprocess` registered at
                 // spawn time; it outlives the FileSink that holds this handle.
-                let p = ptr.cast::<crate::api::bun::subprocess::Subprocess<'static>>();
-                unsafe { crate::api::bun::subprocess::Writable::on_close(&*p, err) };
+                unsafe { crate::api::bun::subprocess::Writable::on_close(&*ptr, err) };
             }
             SourceHandle::ShellWritable(ptr) => {
                 // SAFETY: `ptr` is the `*mut shell::subproc::Writable` stdin
                 // registered at spawn time; it outlives this handle.
-                let p = ptr.cast::<crate::shell::subproc::Writable>();
-                unsafe { crate::shell::subproc::Writable::on_close(&mut *p, err) };
+                unsafe { crate::shell::subproc::Writable::on_close(&mut *ptr, err) };
             }
-            SourceHandle::_Marker(_, never) => match never {},
+            SourceHandle::FetchResponseBody(ptr) => {
+                crate::webcore::fetch::fetch_tasklet::FetchTasklet::on_stream_cancelled(ptr);
+            }
+            SourceHandle::ServerRequestBody(_) => {}
+            SourceHandle::S3DownloadBody(ptr) => {
+                crate::webcore::s3::client::S3DownloadStreamWrapper::on_stream_cancelled(ptr);
+            }
         }
     }
 
     pub fn ready(&mut self, _amount: Option<BlobSizeType>, _offset: Option<BlobSizeType>) {
         match *self {
-            SourceHandle::None | SourceHandle::JSController(0) => {}
-            SourceHandle::JSController(bits) => {
+            SourceHandle::None | SourceHandle::JSController { bits: 0, .. } => {}
+            SourceHandle::JSController { bits, kind } => {
                 let cpp = JSValue::from_encoded(bits);
                 let global = VirtualMachine::get().global();
                 if global.has_exception() {
                     return;
                 }
                 let _ = ::bun_jsc::call_check_slow(global, || {
-                    T::on_ready_extern(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
+                    Self::js_controller_on_ready(kind, cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
                 });
             }
             SourceHandle::ByteStream(ptr) => {
@@ -953,19 +1007,29 @@ impl<T: crate::webcore::sink::JsSinkAbi> SourceHandle<T> {
                 unsafe { (*ptr).pull_into_sink() };
             }
             SourceHandle::Subprocess(_) | SourceHandle::ShellWritable(_) => {}
-            SourceHandle::_Marker(_, never) => match never {},
+            SourceHandle::FetchResponseBody(ptr) => {
+                crate::webcore::fetch::fetch_tasklet::FetchTasklet::on_stream_drained(ptr);
+            }
+            SourceHandle::ServerRequestBody(any) => {
+                any.on_request_body_stream_drained();
+            }
+            SourceHandle::S3DownloadBody(_) => {}
         }
     }
 
     pub fn start(&mut self) {
         match *self {
+            SourceHandle::FetchResponseBody(ptr) => {
+                crate::webcore::fetch::fetch_tasklet::FetchTasklet::on_consumer_attached(ptr);
+            }
             SourceHandle::None
-            | SourceHandle::JSController(_)
+            | SourceHandle::JSController { .. }
             | SourceHandle::ByteStream(_)
             | SourceHandle::FileReader(_)
             | SourceHandle::Subprocess(_)
-            | SourceHandle::ShellWritable(_) => {}
-            SourceHandle::_Marker(_, never) => match never {},
+            | SourceHandle::ShellWritable(_)
+            | SourceHandle::ServerRequestBody(_)
+            | SourceHandle::S3DownloadBody(_) => {}
         }
     }
 }
@@ -1121,6 +1185,13 @@ macro_rules! http_sink_dispatch {
 impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
     for HTTPServerWritable<SSL, HTTP3>
 {
+    const SINK_KIND: SinkKind = if HTTP3 {
+        SinkKind::H3Response
+    } else if SSL {
+        SinkKind::HttpsResponse
+    } else {
+        SinkKind::HttpResponse
+    };
     fn from_js_extern(value: JSValue) -> usize {
         http_sink_dispatch!(from_js(value))
     }
@@ -2497,7 +2568,7 @@ impl NetworkSink {
     pub const NAME: &'static str = "NetworkSink";
 }
 
-crate::impl_js_sink_abi!(NetworkSink, "NetworkSink");
+crate::impl_js_sink_abi!(NetworkSink, "NetworkSink", NetworkSink);
 
 impl crate::webcore::sink::JsSinkType for NetworkSink {
     const NAME: &'static str = Self::NAME;

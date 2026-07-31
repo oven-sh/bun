@@ -317,10 +317,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.react_compiler_candidate_name = Some(id.r#ref);
                     self.react_compiler_in_react_hoc = in_hoc;
                 }
-                // The visit may inline `import.meta.url` to a string (CJS output
-                // format, Bake), so the argument shape is captured before
-                // visiting. The callee ref is only resolved by the visit, so it
-                // is checked afterwards.
+                // The visit may inline `import.meta.url` to a string (CJS output,
+                // Bake), so check the argument shape first; callee refs only
+                // resolve during the visit, so that check happens after.
                 let arg_was_import_meta_url = was_const
                     && self.create_require_ref.is_valid()
                     && matches!(decl.binding.data, BData::BIdentifier(_))
@@ -371,9 +370,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                // Track `const req = createRequire(import.meta.url)` so e_call can
-                // bundle `req("...")` like a regular `require("...")`. Restricted
-                // to `const` so the binding can never be reassigned.
+                // `const` only, so the binding can never be reassigned.
                 if arg_was_import_meta_url
                     && let BData::BIdentifier(id) = decl.binding.data
                     && let Some(value) = decl.value

@@ -260,14 +260,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) bundler_feature_flag_ref: Ref,
 
     /// Local binding of `createRequire` imported from "module"/"node:module"
-    /// (only set when bundling). Used to detect
-    /// `const req = createRequire(import.meta.url)` during the visit pass.
+    /// (only set when bundling).
     pub(crate) create_require_ref: Ref,
-    /// Refs of `const` bindings initialized with `createRequire(import.meta.url)`.
-    /// Calls on these with a static string argument resolve relative to the
-    /// current module, exactly like `require()`, so e_call bundles them the
-    /// same way instead of leaving a runtime lookup that breaks when the
-    /// output file is moved away from node_modules.
+    /// `const` bindings initialized with `createRequire(import.meta.url)`.
+    /// e_call bundles string-literal calls on these like `require()`.
     pub(crate) create_require_target_refs: RefMap,
     /// Set to true when visiting an if/ternary condition. feature() calls are only valid in this context.
     pub(crate) in_branch_condition: bool,

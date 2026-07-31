@@ -2007,10 +2007,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // Calls through a `const req = createRequire(import.meta.url)` binding
-        // resolve relative to the current module, exactly like `require()`, so
-        // bundle static string arguments the same way. Dynamic arguments keep
-        // calling the binding at runtime.
+        // A call through a `const req = createRequire(import.meta.url)` binding
+        // resolves like `require()`: bundle string-literal arguments the same
+        // way and leave dynamic arguments as runtime calls on the binding.
         if !p.create_require_target_refs.is_empty() && e_.args.len_u32() == 1 {
             let target_ref = match &e_.target.data {
                 Data::EIdentifier(ident) => Some(ident.ref_),

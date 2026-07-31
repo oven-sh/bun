@@ -378,7 +378,14 @@ linker = "${opts.linker}"
       );
 
       async function install() {
-        const proc = spawn({ cmd: [bunExe(), "install"], cwd: packageDir, stdout: "pipe", stdin: "ignore", stderr: "pipe", env });
+        const proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
         const [, stderr, exit] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stderr).not.toContain("error:");
         expect(exit).toBe(0);
@@ -470,10 +477,12 @@ linker = "${opts.linker}"
       expect(existsSync(join(nested, "test-postinstall-skip-native"))).toBeTrue();
       expect(existsSync(join(nested, "test-postinstall-skip", "node_modules"))).toBeFalse();
 
-      expect(postinstallRanMarkers({
-        hoisted: join(packageDir, "node_modules", "test-postinstall-skip"),
-        nested: join(nested, "test-postinstall-skip"),
-      })).toEqual({ hoisted: false, nested: false });
+      expect(
+        postinstallRanMarkers({
+          hoisted: join(packageDir, "node_modules", "test-postinstall-skip"),
+          nested: join(nested, "test-postinstall-skip"),
+        }),
+      ).toEqual({ hoisted: false, nested: false });
 
       const nestedBin = join(nested, ".bin", "skip-test-cmd");
       expect(realpathSync(nestedBin)).toBe(realpathSync(join(nested, "test-postinstall-skip-native", "bin", "cmd.js")));
@@ -496,13 +505,19 @@ linker = "${opts.linker}"
 
       const nested = join(packageDir, "node_modules", "test-postinstall-skip-parent", "node_modules");
       // native@1.0.0 is at root; nothing under the nested tree.
-      expect(JSON.parse(readFileSync(join(packageDir, "node_modules", "test-postinstall-skip-native", "package.json"), "utf8")).version).toBe("1.0.0");
+      expect(
+        JSON.parse(
+          readFileSync(join(packageDir, "node_modules", "test-postinstall-skip-native", "package.json"), "utf8"),
+        ).version,
+      ).toBe("1.0.0");
       expect(existsSync(join(nested, "test-postinstall-skip-native"))).toBeFalse();
       expect(existsSync(join(nested, "test-postinstall-skip", "node_modules"))).toBeFalse();
 
-      expect(postinstallRanMarkers({
-        nested: join(nested, "test-postinstall-skip"),
-      })).toEqual({ nested: false });
+      expect(
+        postinstallRanMarkers({
+          nested: join(nested, "test-postinstall-skip"),
+        }),
+      ).toEqual({ nested: false });
 
       const nestedBin = join(nested, ".bin", "skip-test-cmd");
       expect(realpathSync(nestedBin)).toBe(
@@ -519,16 +534,18 @@ linker = "${opts.linker}"
       });
       await install();
 
-      expect(postinstallRanMarkers({
-        hoisted: join(packageDir, "node_modules", "test-postinstall-skip"),
-        nested: join(
-          packageDir,
-          "node_modules",
-          "test-postinstall-skip-parent",
-          "node_modules",
-          "test-postinstall-skip",
-        ),
-      })).toEqual({ hoisted: true, nested: true });
+      expect(
+        postinstallRanMarkers({
+          hoisted: join(packageDir, "node_modules", "test-postinstall-skip"),
+          nested: join(
+            packageDir,
+            "node_modules",
+            "test-postinstall-skip-parent",
+            "node_modules",
+            "test-postinstall-skip",
+          ),
+        }),
+      ).toEqual({ hoisted: true, nested: true });
     });
   });
 });

@@ -1,8 +1,8 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
+import { isWindows, tempDir } from "harness";
 import { chmod } from "node:fs/promises";
 import { delimiter, join } from "node:path";
-import { isWindows, tempDir } from "harness";
 
 // Regression tests for shell command resolution ignoring PATH changes:
 // https://github.com/oven-sh/bun/issues/25885 (.env() PATH ignored)

@@ -4993,11 +4993,6 @@ pub(crate) fn write_file_with_source_destination(
 // writeFileInternal / writeFile (Bun.write)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// A `Bytes` store that borrows `data`'s pinned+protected ArrayBuffer in place.
-/// The store's allocator `free` releases the pin+protect, so the last
-/// `StoreRef` drop MUST be on the JS thread (`WriteFile::then` /
-/// `WriteFileWindows::run_from_js_thread` are). `None` for non-buffer, empty,
-/// or resizable input.
 fn borrow_array_buffer_for_write(global_this: &JSGlobalObject, data: JSValue) -> Option<Blob> {
     let buffer = data.as_pinned_arraybuffer(global_this)?;
     if buffer.byte_len == 0 || buffer.resizable {
@@ -5014,7 +5009,9 @@ fn borrow_array_buffer_for_write(global_this: &JSGlobalObject, data: JSValue) ->
     static VTABLE: bun_alloc::AllocatorVTable = bun_alloc::AllocatorVTable::free_only(free);
 
     // SAFETY: `buffer.ptr[..byte_len]` is the pinned+protected ArrayBuffer's
-    // storage, kept valid until `free` releases both.
+    // storage, kept valid until `free` above releases both. `free` runs
+    // unprotect/unpin, so the last `StoreRef` drop MUST be on the JS thread;
+    // `WriteFile::then` / `WriteFileWindows::run_from_js_thread` are.
     let bytes = unsafe {
         store::Bytes::from_raw_parts(
             buffer.ptr,
@@ -5326,7 +5323,6 @@ pub(crate) fn write_file_internal(
             break 'brk Blob::init_with_store(archive.store_ref().clone(), global_this);
         }
 
-        // Borrow buffer sources instead of `Blob::get`'s O(n) JS-thread copy.
         // S3 excluded: its store may outlive the JS-thread drop the borrow needs.
         if !destination_blob.is_s3() {
             if let Some(blob) = borrow_array_buffer_for_write(global_this, data) {

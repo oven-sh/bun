@@ -6,6 +6,7 @@ import {
   getMaxFD,
   isBroken,
   isDebug,
+  isGlibc,
   isIntelMacOS,
   isLinux,
   isPosix,
@@ -5248,6 +5249,73 @@ it("fs.statfs (callback) should work with bigint", async () => {
     expect(stats.bsize > 0n).toBe(true);
     expect(stats.blocks > 0n).toBe(true);
   }
+});
+
+// Regression for oven-sh/bun#31510: the non-bigint statfs path stored block
+// counts as i32, so values above i32::MAX (e.g. `bavail` on a filesystem past
+// ~8 TiB) wrapped negative. We can't mount a multi-TiB filesystem in CI, so we
+// LD_PRELOAD a shim that makes `statfs(2)` report large block counts and a
+// sentinel `bsize` (proving the shim actually interposed). glibc-only: the
+// shim relies on ELF symbol interposition and a libc `struct statfs` layout.
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+it.skipIf(!isGlibc || !cc)("fs.statfsSync preserves values above i32::MAX (#31510)", () => {
+  const TYPE = 0x9123683e; // BTRFS_SUPER_MAGIC, > i32::MAX: .type also wrapped negative
+  const BSIZE = 12288; // sentinel (3 * 4096): proves the shim ran
+  const BLOCKS = 3747442852; // > i32::MAX
+  const BFREE = 3248532185; // > i32::MAX
+  const BAVAIL = 3248532185; // > i32::MAX
+
+  using dir = tempDir("statfs-i32", {
+    "shim.c": `
+#define _GNU_SOURCE
+#include <sys/statfs.h>
+#include <string.h>
+
+// glibc declares statfs() with \`struct statfs *\` and statfs64() with
+// \`struct statfs64 *\`; both share these field names, so fill via a macro to
+// keep each prototype type-correct.
+#define FILL(buf) do { \\
+  memset((buf), 0, sizeof(*(buf))); \\
+  (buf)->f_type = ${TYPE}ULL; \\
+  (buf)->f_bsize = ${BSIZE}ULL; \\
+  (buf)->f_blocks = ${BLOCKS}ULL; \\
+  (buf)->f_bfree = ${BFREE}ULL; \\
+  (buf)->f_bavail = ${BAVAIL}ULL; \\
+} while (0)
+
+int statfs(const char *path, struct statfs *buf) { (void)path; FILL(buf); return 0; }
+int statfs64(const char *path, struct statfs64 *buf) { (void)path; FILL(buf); return 0; }
+`,
+  });
+
+  const soPath = path.join(String(dir), "shim.so");
+  const compile = Bun.spawnSync({
+    cmd: [cc!, "-shared", "-fPIC", "-o", soPath, path.join(String(dir), "shim.c")],
+    env: bunEnv,
+  });
+  if (compile.exitCode !== 0) {
+    throw new Error(`Failed to build statfs shim:\n${compile.stderr.toString()}`);
+  }
+
+  const script = `console.log(JSON.stringify((() => {
+    const s = require("fs").statfsSync(process.cwd());
+    return { type: s.type, bsize: s.bsize, blocks: s.blocks, bfree: s.bfree, bavail: s.bavail };
+  })()));`;
+
+  const existing = bunEnv.LD_PRELOAD;
+  const proc = Bun.spawnSync({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, LD_PRELOAD: existing ? `${soPath}:${existing}` : soPath },
+    cwd: String(dir),
+  });
+
+  const stdout = proc.stdout.toString().trim();
+  expect(proc.stderr.toString()).toBe("");
+
+  const result = JSON.parse(stdout);
+  // If bsize isn't the sentinel, the shim didn't interpose: fail loudly, don't skip.
+  expect(result).toEqual({ type: TYPE, bsize: BSIZE, blocks: BLOCKS, bfree: BFREE, bavail: BAVAIL });
+  expect(proc.exitCode).toBe(0);
 });
 
 it("fs.Stat constructor", () => {

@@ -920,6 +920,8 @@ pub(crate) fn scan_imports_and_exports(
                                 // - The "default" and "__esModule" exports must not be accessed
                                 //
                                 if kind != ImportKind::Require
+                                    && !rec_flags
+                                        .contains(ImportRecordFlags::WAS_ORIGINALLY_REQUIRE)
                                     && (kind != ImportKind::Stmt
                                         || rec_flags
                                             .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
@@ -978,6 +980,7 @@ pub(crate) fn scan_imports_and_exports(
                         // This is an ES6 import of a CommonJS module, so it needs the
                         // "__toESM" wrapper as long as it's not a bare "require()"
                         if kind != ImportKind::Require
+                            && !rec_flags.contains(ImportRecordFlags::WAS_ORIGINALLY_REQUIRE)
                             && other_export_kind == ExportsKind::Cjs
                             && output_format != Format::InternalBakeDev
                         {

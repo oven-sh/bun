@@ -619,6 +619,46 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
   });
 });
 
+describe.concurrent.each(["arraybuffer", "nodebuffer", "blob"] as const)(
+  "WebSocket MessageEvent.origin (binaryType=%s)",
+  binaryType => {
+    it("is the URL's origin, not the full URL", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response("no", { status: 400 });
+        },
+        websocket: {
+          open(ws) {
+            ws.send("hello");
+            ws.send(new Uint8Array([1, 2, 3]));
+          },
+          message() {},
+        },
+      });
+
+      const expectedOrigin = `ws://127.0.0.1:${server.port}`;
+      const ws = new WebSocket(`${expectedOrigin}/some/path?token=secret`);
+      ws.binaryType = binaryType;
+      try {
+        const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+        const origins: string[] = [];
+        ws.addEventListener("message", ev => {
+          origins.push(ev.origin);
+          if (origins.length === 2) resolve(origins);
+        });
+        ws.addEventListener("error", e => reject((e as ErrorEvent).error ?? new Error("error")));
+        ws.addEventListener("close", e => reject(new Error(`closed ${e.code} before messages`)));
+
+        expect(await promise).toEqual([expectedOrigin, expectedOrigin]);
+      } finally {
+        ws.terminate();
+      }
+    });
+  },
+);
+
 async function listen(): Promise<URL> {
   const pathname = path.join(import.meta.dir, "./websocket-server-echo.mjs");
   const { promise, resolve, reject } = Promise.withResolvers();

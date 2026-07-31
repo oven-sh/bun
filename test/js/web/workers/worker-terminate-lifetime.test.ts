@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, tls } from "harness";
 import { join } from "path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
@@ -119,6 +119,76 @@ test(
     expect(exitCode).toBe(0);
   },
   timeout,
+);
+
+// Regression: RuntimeTranspilerStore::run_from_js_thread reported the
+// TerminationException as an uncaught exception. A worker dynamic-importing
+// in a loop and terminated mid-iteration has an in-flight TranspilerJob whose
+// JS-thread completion (AsyncModule::fulfill -> promise resolve/reject) raises
+// the TerminationException; the old report_uncaught_exception_from_error path
+// then reached Bun__handleUncaughtException -> process->get("_fatalException"),
+// whose static-property reification transitions process's Structure mid-walk
+// and trips ASSERT(object->structure() == this) in Structure::storedPrototype.
+//
+// Modules have a syntax error so the fetch promise rejects: the rejected
+// ModuleLoadTopSettled branch does not call loadModule -> hostLoadImportedModule,
+// whose separate scope.assertNoException() termination bug (WebKit-side) would
+// otherwise also fire here.
+test.skipIf(!isDebug)(
+  "terminate() while dynamic-import transpiler jobs are in flight does not report TerminationException as uncaught",
+  async () => {
+    using dir = tempDir("worker-terminate-dynimport", {
+      "mod0.mjs": "export default 0; ++++;",
+      "mod1.mjs": "export default 1; ++++;",
+      "mod2.mjs": "export default 2; ++++;",
+      "mod3.mjs": "export default 3; ++++;",
+    });
+    const rounds = 100;
+    // Uses the global Web Worker (no preloads); node:worker_threads injects a
+    // "node:worker_threads" preload whose load_preloads spin uses the non-
+    // termination-aware wait_for_promise and independently hits the WebKit
+    // assertNoException() termination bug.
+    const code = `
+      import { writeFileSync } from "node:fs";
+      import { join } from "node:path";
+      const D = ${JSON.stringify(String(dir) + "/")};
+      writeFileSync(join(D, "w.mjs"),
+        'const D = ' + JSON.stringify(D) + ';' +
+        'postMessage("ready");' +
+        'let k = 0;' +
+        'while (true) {' +
+        '  const i = k % 4;' +
+        '  try { await import(D + "mod" + i + ".mjs?v=" + ((k / 4) | 0)); } catch {}' +
+        '  k++;' +
+        '}');
+      function one(delay) {
+        return new Promise((resolve) => {
+          const w = new Worker(join(D, "w.mjs"));
+          w.onmessage = () => {}; w.onerror = () => {};
+          setTimeout(() => { w.terminate(); setTimeout(resolve, 5); }, delay);
+        });
+      }
+      async function lane(offset) {
+        for (let i = 0; i < ${rounds}; i++) await one(20 + ((i * 37 + offset) % 120));
+      }
+      await Promise.all([lane(0), lane(17)]);
+      console.log("survived");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+      stderr: "",
+      stdout: "survived\n",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+  timeout * 2,
 );
 
 // Regression: the per-VM c-ares channel was destroyed in deinit_runtime_state

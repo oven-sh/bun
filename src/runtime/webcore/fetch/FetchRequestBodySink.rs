@@ -121,26 +121,31 @@ impl FetchRequestBodySink {
             Some(task) => task.write_request_data(chunk, high_water_mark as usize),
             None => return Writable::Done,
         };
-        match result {
-            Writable::Owned(len) if len > 0 => {
-                self.pending_bytes = self.pending_bytes.saturating_add(len);
+        let (len, backed_up) = match result {
+            Writable::Owned(len) if len > 0 => (len, false),
+            Writable::Backpressure(len) => (len, true),
+            other => return other,
+        };
+        self.pending_bytes = self.pending_bytes.saturating_add(len);
+        if matches!(
+            self.source,
+            SourceHandle::ByteStream(_) | SourceHandle::FileReader(_)
+        ) {
+            // Native sources are push-driven by a macrotask (on_body_received);
+            // only park them when the cross-thread buffer is actually over HWM.
+            return if backed_up {
+                Writable::Backpressure(len)
+            } else {
                 Writable::Owned(len)
-            }
-            Writable::Backpressure(len) => {
-                self.pending_bytes = self.pending_bytes.saturating_add(len);
-                if matches!(
-                    self.source,
-                    SourceHandle::ByteStream(_) | SourceHandle::FileReader(_)
-                ) {
-                    Writable::Backpressure(len)
-                } else {
-                    self.pending.consumed = len;
-                    self.pending.result = Writable::Owned(len);
-                    Writable::Pending(core::ptr::from_mut(&mut self.pending))
-                }
-            }
-            other => other,
+            };
         }
+        // JS pump: every scheduled write owes an `on_drain` ConcurrentTask. Park
+        // on each so the event loop reaches the I/O poll before resuming; batching
+        // sync writes here lets the HTTP thread re-enqueue the drain ack before
+        // the microtask loop yields and starves uWS callbacks and timers.
+        self.pending.consumed = len;
+        self.pending.result = Writable::Owned(len);
+        Writable::Pending(core::ptr::from_mut(&mut self.pending))
     }
 
     pub fn write(&mut self, data: &StreamResult) -> Writable {

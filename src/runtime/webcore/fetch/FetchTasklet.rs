@@ -400,7 +400,11 @@ impl FetchTasklet {
             return;
         }
         let self_ = Self::from_raw_ref(this);
-        if !self_.vm_shutdown_signal.try_begin_vm_read() {
+        // The enqueued `deinit_callback` may free `this` before we return, so
+        // snapshot what's needed past the enqueue into locals now.
+        let signal = std::sync::Arc::clone(&self_.vm_shutdown_signal);
+        let vm = self_.javascript_vm;
+        if !signal.try_begin_vm_read() {
             // SAFETY: last ref; exclusive access. `deinit()` would run
             // `clear_data()` + `Drop` for the JSC `Strong`/`Weak` fields, which
             // reach into the VM's StrongRootBlock list / WeakSet from this
@@ -414,10 +418,10 @@ impl FetchTasklet {
         // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`; the queue
         // takes ownership of it.
         Self::enqueue_concurrent(
-            self_.javascript_vm,
+            vm,
             ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback),
         );
-        self_.vm_shutdown_signal.end_vm_read();
+        signal.end_vm_read();
     }
 
     // ConcurrentTask::from_callback takes `fn(*mut T) -> bun_event_loop::JsResult<()>`

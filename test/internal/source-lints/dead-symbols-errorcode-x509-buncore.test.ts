@@ -41,7 +41,10 @@ test("dead Bun::ERR:: throw wrappers and binding declarations do not reappear", 
     ["src/jsc/bindings/ErrorCode.cpp", /EncodedJSValue CRYPTO_TIMING_SAFE_EQUAL_LENGTH\(/],
     ["src/jsc/bindings/ErrorCode.cpp", /EncodedJSValue KEY_GENERATION_JOB_FAILED\(/],
     ["src/jsc/bindings/ErrorCode.cpp", /EncodedJSValue CLOSED_MESSAGE_PORT\(/],
-    ["src/jsc/bindings/ErrorCode.cpp", /CRYPTO_INVALID_KEYTYPE\(JSC::ThrowScope& throwScope, JSC::JSGlobalObject\* globalObject\)\n/],
+    [
+      "src/jsc/bindings/ErrorCode.cpp",
+      /CRYPTO_INVALID_KEYTYPE\(JSC::ThrowScope& throwScope, JSC::JSGlobalObject\* globalObject\)\n/,
+    ],
     // Forward-declared template that was never defined or instantiated.
     ["src/jsc/bindings/JSDOMWrapperCache.h", /deprecatedGetDOMStructure/],
     ["src/jsc/bindings/JSDOMWrapperCache.h", /getOrCreateWrapper/],

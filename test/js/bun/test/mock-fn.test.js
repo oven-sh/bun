@@ -1224,7 +1224,7 @@ describe("spyOn", () => {
       expect(fn).not.toHaveBeenCalled();
     });
 
-    test("restores a Proxy spy after the Proxy itself is collected", () => {
+    test("keeps a Proxy spy target reachable until restore", () => {
       const target = { m: () => "orig" };
       (() => {
         spyOn(new Proxy(target, {}), "m").mockReturnValue("MRV");

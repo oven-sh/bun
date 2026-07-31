@@ -17,7 +17,6 @@
 #include <JavaScriptCore/JSPromiseConstructor.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
-#include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/WeakMapImpl.h>
 #include <JavaScriptCore/WeakMapImplInlines.h>
@@ -272,9 +271,7 @@ public:
     mutable JSC::WriteBarrier<JSC::JSArray> instances;
     mutable JSC::WriteBarrier<JSC::JSArray> returnValues;
 
-    JSC::Weak<JSObject> spyTarget;
-    // Proxy spies write through to the proxy's target; keep the proxy reachable for restore.
-    mutable JSC::WriteBarrier<JSObject> spyStrongTarget;
+    mutable JSC::WriteBarrier<JSObject> spyTarget;
     JSC::Identifier spyIdentifier;
     unsigned spyAttributes = 0;
 
@@ -404,7 +401,6 @@ public:
         }
 
         this->spyTarget.clear();
-        this->spyStrongTarget.clear();
         this->spyIdentifier = JSC::Identifier();
         this->spyAttributes = 0;
     }
@@ -500,7 +496,7 @@ void JSMockFunction::visitAdditionalChildrenInGCThread(Visitor& visitor)
     visitor.append(fn->returnValues);
     visitor.append(fn->invocationCallOrder);
     visitor.append(fn->spyOriginal);
-    visitor.append(fn->spyStrongTarget);
+    visitor.append(fn->spyTarget);
     fn->mock.visit(visitor);
 }
 
@@ -620,17 +616,6 @@ static const HashTableValue JSMockFunctionPrototypeTableValues[] = {
 };
 
 const ClassInfo JSMockFunction::s_info = { "Mock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockFunction) };
-
-class SpyWeakHandleOwner final : public JSC::WeakHandleOwner {
-public:
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
-};
-
-static SpyWeakHandleOwner& weakValueHandleOwner()
-{
-    static NeverDestroyed<SpyWeakHandleOwner> jscWeakValueHandleOwner;
-    return jscWeakValueHandleOwner;
-}
 
 const ClassInfo JSMockFunctionPrototype::s_info = { "Mock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockFunctionPrototype) };
 
@@ -1561,9 +1546,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         }
 
         auto* mock = JSMockFunction::create(vm, globalObject, globalObject->mockModule.mockFunctionStructure.getInitializedOnMainThread(globalObject), CallbackKind::GetterSetter);
-        mock->spyTarget = JSC::Weak<JSObject>(object, &weakValueHandleOwner(), nullptr);
-        if (isProxy)
-            mock->spyStrongTarget.set(vm, mock, object);
+        mock->spyTarget.set(vm, mock, object);
         mock->spyIdentifier = propertyKey.isSymbol() ? Identifier::fromUid(vm, propertyKey.uid()) : Identifier::fromString(vm, propertyKey.publicName());
         mock->spyAttributes = slot.attributes();
         unsigned attributes = slot.attributes();

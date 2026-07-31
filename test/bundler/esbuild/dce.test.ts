@@ -1509,7 +1509,6 @@ describe("bundler", () => {
     dce: true,
   });
   itBundled("dce/TreeShakingClassProperty", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         let remove1 = class { x }
@@ -1536,16 +1535,13 @@ describe("bundler", () => {
         let keep4 = class { set [x](_) {} }
         let keep5 = class { async [x]() {} }
         let keep6 = class { [{ toString() { console.log(1); } }] = 'x' }
-
-        let POSSIBLE_REMOVAL_1 = class { [{ toString() {} }] = 'x' }
+        let keep7 = class { [{ toString() {} }] = 'x' }
       `,
     },
-    bundling: false,
     treeShaking: true,
     dce: true,
   });
   itBundled("dce/TreeShakingClassStaticProperty", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         let remove1 = class { static x }
@@ -1572,12 +1568,49 @@ describe("bundler", () => {
         let keep6 = class { static set [x](_) {} }
         let keep7 = class { static async [x]() {} }
         let keep8 = class { static [{ toString() { console.log(1); } }] = 'x' }
-
-        let POSSIBLE_REMOVAL_1 = class { static [{ toString() {} }] = 'x' }
+        let keep9 = class { static [{ toString() {} }] = 'x' }
       `,
     },
-    bundling: false,
     treeShaking: true,
+    dce: true,
+  });
+  // https://github.com/oven-sh/bun/issues/20866
+  itBundled("dce/TreeShakingClassPrivateProperty", {
+    files: {
+      "/entry.js": /* js */ `
+        let remove1 = class { #x }
+        let remove2 = class { #x = x }
+        let remove3 = class { #x() {} }
+        let remove4 = class { get #x() {} }
+        let remove5 = class { set #x(_) {} }
+        let remove6 = class { async #x() {} }
+        let remove7 = class { static #x }
+        let remove8 = class { static #x = 1 }
+        let remove9 = class { static #x() {} }
+        let remove10 = class { static get #x() {} }
+        let remove11 = class { static set #x(_) {} }
+
+        let keep1 = class { static #x = x }
+        let keep2 = class { #x; static { x() } }
+      `,
+    },
+    treeShaking: true,
+    dce: true,
+  });
+  // https://github.com/oven-sh/bun/issues/20866
+  itBundled("dce/TreeShakingClassPrivatePropertyDeclaration", {
+    files: {
+      "/entry.js": /* js */ `
+        class REMOVE1 { #x }
+        class REMOVE2 { #x = x }
+        class REMOVE3 { #x() {} }
+        class REMOVE4 { static #x }
+        class REMOVE5 { static #x = 1 }
+        class REMOVE6 { static #x() {} }
+
+        class KEEP1 { static #x = x }
+      `,
+    },
     dce: true,
   });
   itBundled("dce/TreeShakingUnaryOperators", {

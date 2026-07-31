@@ -1074,7 +1074,12 @@ static std::optional<bool> rsisWriteChunk(JSC::VM& vm, JSGlobalObject* globalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue wrote = rsisSinkWrite(vm, globalObject, op, chunk);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
-    if (wrote.isNumber() && wrote.asNumber() < 0) {
+    bool shouldSuspend = wrote.isNumber() && wrote.asNumber() < 0;
+    if (auto* wrotePromise = dynamicDowncast<JSPromise>(wrote)) {
+        markPromiseAsHandled(vm, wrotePromise);
+        shouldSuspend = wrotePromise->status() == JSPromise::Status::Pending;
+    }
+    if (shouldSuspend) {
         if (batchValues && nextIndex < length) {
             auto* tail = constructEmptyArray(globalObject, nullptr, 0);
             RETURN_IF_EXCEPTION(scope, std::nullopt);
@@ -1092,8 +1097,6 @@ static std::optional<bool> rsisWriteChunk(JSC::VM& vm, JSGlobalObject* globalObj
         op->m_waitingOnSink = true;
         return false;
     }
-    if (auto* wrotePromise = dynamicDowncast<JSPromise>(wrote))
-        markPromiseAsHandled(vm, wrotePromise);
     return true;
 }
 

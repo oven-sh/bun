@@ -193,6 +193,18 @@ extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStrea
     stream->m_disturbed = true;
 }
 
+// A native sink (fetch body / S3 / FileSink) has attached directly without a reader.
+// Mark the stream disturbed+locked so .locked, .getReader(), and the body-mixin
+// disturbed checks behave as they do after readStreamIntoSink acquires a reader.
+extern "C" void ReadableStream__lockNative(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
+    if (!stream) [[unlikely]]
+        return;
+    stream->m_disturbed = true;
+    stream->m_lockedWithoutReader = true;
+}
+
 extern "C" JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

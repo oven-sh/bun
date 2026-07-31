@@ -3238,6 +3238,8 @@ where
                                     },
                                 ),
                             );
+                            stream.lock_native(global_this);
+                            byte_stream.signal_native_sink_attached();
                             // Deinit the old Strong reference before creating a new one
                             // to avoid leaking the Strong.Impl memory
                             this.response_body_readable_stream_ref.deinit();

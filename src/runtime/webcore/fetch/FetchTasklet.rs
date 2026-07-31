@@ -670,6 +670,8 @@ impl FetchTasklet {
                     .sink
                     .set(SinkHandle::FetchRequestBody(sink_ptr.as_ptr()));
                 byte_stream.sink_paused.set(false);
+                stream.lock_native(&global_this);
+                byte_stream.signal_native_sink_attached();
 
                 if let Some(err) = byte_stream.take_pending_error() {
                     byte_stream.sink.set(SinkHandle::None);
@@ -710,8 +712,7 @@ impl FetchTasklet {
                 }
                 return;
             }
-            // sink already attached: fall through to `assign_to_stream`, which
-            // surfaces the proper locked-stream error.
+            // sink already attached: fall through to the JS pump.
         }
 
         // Native FileReader fast-path: same wiring as ByteStream, but the
@@ -753,6 +754,7 @@ impl FetchTasklet {
                     .sink
                     .set(SinkHandle::FetchRequestBody(sink_ptr.as_ptr()));
                 file_reader.sink_paused.set(true);
+                stream.lock_native(&global_this);
                 file_reader.pull_into_sink();
                 return;
             }
@@ -1801,6 +1803,7 @@ impl FetchTasklet {
                 source.cancel_ctx.set(None);
                 source.drain_handler.set(None);
                 source.drain_ctx.set(None);
+                source.reengage_handler.set(None);
             }
         }
     }
@@ -1824,6 +1827,17 @@ impl FetchTasklet {
         {
             this.schedule_receive_resume();
         }
+    }
+
+    /// A native sink attached after `drop_backpressure_if_unobserved` had
+    /// already flipped to `BufferAll`. Move to `Paused`: the socket is still
+    /// reading, so the next `maybe_pause_receive` stops it; the sink's drain
+    /// then resumes via `on_stream_drained_callback`.
+    fn on_stream_reengage_backpressure_callback(ctx: Option<*mut c_void>) {
+        let this = Self::from_ctx(ctx.expect("ctx"));
+        let _ = this
+            .signal_store
+            .try_transition_receive_mode(BodyReceiveMode::BufferAll, BodyReceiveMode::Paused);
     }
 
     fn on_start_buffering_callback(ctx: *mut c_void) {
@@ -1887,6 +1901,8 @@ impl FetchTasklet {
             pending.on_start_buffering = Some(FetchTasklet::on_start_buffering_callback);
             pending.on_stream_cancelled = Some(FetchTasklet::on_stream_cancelled_callback);
             pending.on_stream_drained = Some(FetchTasklet::on_stream_drained_callback);
+            pending.on_reengage_backpressure =
+                Some(FetchTasklet::on_stream_reengage_backpressure_callback);
             return BodyValue::Locked(pending);
         }
 
@@ -2477,11 +2493,9 @@ impl FetchTasklet {
         }
         self.abort_task();
         // Re-borrow after the `&mut self` calls above.
-        let global_this = self.global_this;
         if let Some(sink) = self.sink_mut() {
-            if sink.flush_promise.has_value() {
-                let _ = sink.flush_promise.reject(&global_this, Ok(reason));
-            }
+            sink.pending.result = Writable::Done;
+            sink.pending.run();
             sink.source.close(None);
             if is_native {
                 sink.task = None;

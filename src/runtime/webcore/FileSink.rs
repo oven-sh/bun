@@ -422,7 +422,8 @@ impl FileSink {
                 return;
             }
 
-            if (*this).pending.get().state == streams::PendingState::Pending {
+            let was_pending = (*this).pending.get().state == streams::PendingState::Pending;
+            if was_pending {
                 // `consumed` was credited when the pending operation accepted its
                 // bytes; `amount` is only what this drain pushed to the fd.
                 let consumed = (*this).pending.get().consumed;
@@ -440,8 +441,7 @@ impl FileSink {
                 FileSink::run_pending(this);
             }
 
-            if status == WriteStatus::Drained
-                && !has_pending_data
+            if (was_pending || (status == WriteStatus::Drained && !has_pending_data))
                 && (*this).source_pending_pull.replace(false)
             {
                 let mut src = *(*this).source.get();
@@ -1411,11 +1411,10 @@ impl FileSink {
                     self.must_be_kept_alive_until_eof.set(true);
                     self.ref_();
                 }
+                self.source_pending_pull.set(true);
                 if self.writer.get().is_backed_up()
                     && matches!(self.source.get(), streams::SourceHandle::ByteStream(_))
                 {
-                    // ByteStream parks on `Backpressure`; JSController must stay on the `Pending` path.
-                    self.source_pending_pull.set(true);
                     return streams::Writable::Backpressure(accepted);
                 }
                 self.pending.with_mut(|p| {
@@ -1563,6 +1562,8 @@ impl FileSink {
                 self.source.set(streams::SourceHandle::ByteStream(bs_ptr));
                 byte_stream.sink.set(webcore::SinkHandle::FileSink(self_ptr));
                 byte_stream.sink_paused.set(false);
+                stream.lock_native(global_this);
+                byte_stream.signal_native_sink_attached();
 
                 if let Some(err) = byte_stream.take_pending_error() {
                     byte_stream.sink.set(webcore::SinkHandle::None);
@@ -1603,8 +1604,7 @@ impl FileSink {
                 }
                 return JSValue::UNDEFINED;
             }
-            // sink already attached: fall through to `assign_to_stream`, which
-            // surfaces the proper locked-stream error.
+            // sink already attached: fall through to the JS pump.
         }
 
         // No per-wrapper +1 for the controller (only the transient `_guard`

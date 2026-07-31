@@ -1041,6 +1041,8 @@ pub fn upload_stream(
                 .set(crate::webcore::SinkHandle::S3Upload(sink_ptr));
             byte_stream.sink_paused.set(false);
             ctx.readable_stream_ref = ReadableStreamStrong::init(readable_stream, global_this);
+            readable_stream.lock_native(global_this);
+            byte_stream.signal_native_sink_attached();
 
             if let Some(err) = byte_stream.take_pending_error() {
                 let err_js = err.to_js(global_this);
@@ -1090,8 +1092,7 @@ pub fn upload_stream(
             // sink outlives the synchronous `resolve()` re-entry.
             return Ok(end_promise_value);
         }
-        // sink already attached: fall through to `assign_to_stream`, which
-        // surfaces the proper locked-stream error.
+        // sink already attached: fall through to the JS pump.
     }
 
     // The controller cell is installed into `sink.source` by `assign_to_stream`.

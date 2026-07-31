@@ -231,6 +231,15 @@ impl ByteStream {
         }
     }
 
+    /// Called by native fast-paths after wiring `self.sink`. Restores
+    /// producer-side backpressure if it was already dropped (BufferAll).
+    pub fn signal_native_sink_attached(&self) {
+        let source = self.parent_const();
+        if let Some(handler) = source.reengage_handler.get() {
+            handler(source.drain_ctx.get());
+        }
+    }
+
     pub(crate) fn on_data(&self, mut stream: streams::Result) -> Result<(), bun_jsc::JsTerminated> {
         bun_jsc::mark_binding!();
         if self.done.get() {

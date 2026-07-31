@@ -358,21 +358,20 @@ describe("spawn stdin ReadableStream", () => {
           });
         }
 
-        // The child never reads its stdin, so a 256 KiB write can never finish
-        // and the sink always holds an in-flight write. Once a few chunks have
-        // been handed to the sink, kill the child. How far the pump gets before
-        // the parent notices the death varies, so run several rounds.
+        // The child never reads its stdin, so a 256 KiB write can never
+        // finish and the sink always holds an in-flight write. The pump
+        // suspends on backpressure after the first chunk; kill the child
+        // once that write is in flight. Run several rounds to cover timing.
         function round() {
-          let produced = 0;
+          let firstProduced;
+          const onFirst = new Promise(r => { firstProduced = r; });
           const child = Bun.spawn({
             cmd: [process.execPath, "-e", "setTimeout(() => {}, 1e9)"],
-            stdin: (${useIterator} ? iterate : readable)(() => {
-              if (++produced === 4) child.kill();
-            }),
+            stdin: (${useIterator} ? iterate : readable)(firstProduced),
             stdout: "ignore",
             stderr: "ignore",
           });
-          return child.exited;
+          return onFirst.then(() => { child.kill(); return child.exited; });
         }
         await Promise.all(Array.from({ length: 8 }, round));
 
@@ -412,14 +411,12 @@ describe("spawn stdin ReadableStream", () => {
         "-e",
         `
         const chunk = Buffer.alloc(256 * 1024, "x");
-        let produced = 0;
-        function producedOne() {
-          if (++produced === 4) child.kill();
-        }
+        let firstProduced;
+        const onFirst = new Promise(r => { firstProduced = r; });
         async function* iterate() {
           while (true) {
             await Bun.sleep(1);
-            producedOne();
+            firstProduced();
             yield chunk;
           }
         }
@@ -427,14 +424,15 @@ describe("spawn stdin ReadableStream", () => {
           return new ReadableStream({
             async pull(controller) {
               await Bun.sleep(1);
-              producedOne();
+              firstProduced();
               controller.enqueue(chunk);
             },
           });
         }
 
-        // The child never reads its stdin, so a 256 KiB write can never finish
-        // and the sink holds an in-flight write when the child is killed.
+        // The child never reads its stdin, so a 256 KiB write can never
+        // finish and the sink holds an in-flight write when the child is
+        // killed (the pump suspends on backpressure after the first chunk).
         const child = Bun.spawn({
           cmd: [process.execPath, "-e", "setTimeout(() => {}, 1e9)"],
           stdin: (${useIterator} ? iterate : readable)(),
@@ -442,6 +440,8 @@ describe("spawn stdin ReadableStream", () => {
           stderr: "ignore",
         });
 
+        await onFirst;
+        child.kill();
         await child.exited;
         console.log("child exited");
         // No process.exit(): the point is that the event loop drains on its own.

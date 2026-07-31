@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, tls } from "harness";
 import { join } from "path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
@@ -339,36 +339,38 @@ test.skipIf(!isDebug)(
 test.skipIf(!isDebug)(
   "terminate() while a worker is inside require() does not trip ASSERT(wasRemoved)",
   async () => {
+    // Build the CJS graph in the outer test so cleanup is guaranteed even when
+    // the subprocess SIGABRTs (the fail-before behavior) or is SIGKILLed by
+    // the outer timeout; process.on('exit') inside the subprocess would not
+    // run on either path.
+    const N = 200;
+    const files: Record<string, string> = {
+      "w.mjs":
+        `postMessage('ready');\n` +
+        `while (true) {\n` +
+        `  for (const k of Object.keys(require.cache)) delete require.cache[k];\n` +
+        `  require('./c0.cjs');\n` +
+        `}\n`,
+    };
+    for (let i = 0; i < N; i++) {
+      const a = (i + 1) % N;
+      const b = (i * 13 + 5) % N;
+      files[`c${i}.cjs`] = `require('./c${a}.cjs');\nrequire('./c${b}.cjs');\nexports.id = ${i};\n`;
+    }
+    using dir = tempDir("cjsreq", files);
+
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-        import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-        import { tmpdir } from "node:os";
-        import { join } from "node:path";
-        const N = 200;
-        const dir = mkdtempSync(join(tmpdir(), "cjsreq-"));
-        for (let i = 0; i < N; i++) {
-          const a = (i + 1) % N, b = (i * 13 + 5) % N;
-          writeFileSync(join(dir, "c" + i + ".cjs"),
-            "require('./c" + a + ".cjs');\\nrequire('./c" + b + ".cjs');\\nexports.id = " + i + ";\\n");
-        }
-        writeFileSync(join(dir, "w.mjs"),
-          "const D = " + JSON.stringify(dir + "/") + ";\\n" +
-          "postMessage('ready');\\n" +
-          "while (true) {\\n" +
-          "  for (const k of Object.keys(require.cache)) delete require.cache[k];\\n" +
-          "  require(D + 'c0.cjs');\\n" +
-          "}\\n");
-        process.on("exit", () => { try { rmSync(dir, { recursive: true, force: true }); } catch {} });
         // Three lanes, each terminates its worker at a sweep of offsets so at
         // least one lands mid-require. The worker spends ~all its time inside
         // require(), so the unpatched build aborts within the first few
         // iterations.
         async function lane(offset) {
           for (let i = 0; i < 25; i++) {
-            const w = new Worker(join(dir, "w.mjs"));
+            const w = new Worker("./w.mjs");
             w.onerror = () => {};
             await new Promise((res) => {
               w.onmessage = () => res();
@@ -383,6 +385,7 @@ test.skipIf(!isDebug)(
       `,
       ],
       env: bunEnv,
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });

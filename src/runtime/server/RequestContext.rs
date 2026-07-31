@@ -1445,12 +1445,10 @@ where
         if let Some(sink_ptr) = this.sink {
             // The sink abort runs the stream's JS onClose through its signal.
             any_js_calls.set(true);
-            // A parked direct pull() keeps the stream-result promise (and the
-            // NativePromiseContext reaction on it) pending until user code
-            // releases the resolver, so this context may not deinit for an
-            // arbitrarily long time. `pending_requests` must stay > 0 until it
-            // does (it gates `deinit_if_we_can`'s `js_value` downgrade), so
-            // only the user-visible in-flight count is adjusted here.
+            // A parked direct pull() can hold this ctx (via the
+            // NativePromiseContext reaction) until user code releases the
+            // resolver; `pending_requests` must stay > 0 until deinit (it
+            // gates `deinit_if_we_can`), so only the getter's offset moves.
             if !this.flags.counted_aborted_live() {
                 this.flags.set_counted_aborted_live(true);
                 server.note_request_aborted_with_live_ctx();

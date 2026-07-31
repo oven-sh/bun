@@ -262,12 +262,10 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub(crate) base_url_string_for_joining: Box<[u8]>,
     pub(crate) config: ServerConfig,
     pub(crate) pending_requests: usize,
-    /// RequestContexts whose client has aborted (so they no longer count toward
-    /// the user-visible `server.pendingRequests`) but are still held live by a
-    /// parked stream-result reaction. Incremented in `RequestContext::on_abort`'s
-    /// sink branch, decremented in `RequestContext::deinit`. `deinit_if_we_can`
-    /// keeps gating on `pending_requests` so `js_value` stays `Strong` until
-    /// every ctx backref is released.
+    /// Contexts whose client aborted but are still held live by a parked
+    /// stream-result reaction. Subtracted in [`in_flight_requests`]; NOT a
+    /// [`deinit_if_we_can`] gate (so `js_value` stays `Strong` until every
+    /// ctx backref is released).
     pub(crate) aborted_with_live_ctx: core::cell::Cell<usize>,
     /// Live `ServerWebSocket` count. Lives on the server (not the websocket
     /// context) so a reload's context swap cannot reset it, and sits in a
@@ -1508,9 +1506,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             .set(self.aborted_with_live_ctx.get().saturating_sub(1));
     }
 
-    /// The user-visible `server.pendingRequests`: contexts whose client has
-    /// aborted no longer count as in-flight even though `pending_requests`
-    /// (which gates `deinit_if_we_can`) still holds them until `deinit()`.
+    /// `server.pendingRequests` getter value; see [`aborted_with_live_ctx`].
     #[inline]
     pub(crate) fn in_flight_requests(&self) -> usize {
         self.pending_requests

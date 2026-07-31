@@ -1885,7 +1885,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
         let handlers = this.get_handlers();
-        if handlers.vm.is_shutting_down() {
+        if handlers.vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
             return Ok(());
         }
         let callback = handlers.on_session();
@@ -1932,7 +1932,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
         let handlers = this.get_handlers();
-        if handlers.vm.is_shutting_down() {
+        if handlers.vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
             return Ok(());
         }
         let callback = handlers.on_keylog();

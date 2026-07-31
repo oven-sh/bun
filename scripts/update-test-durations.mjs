@@ -100,7 +100,11 @@ function parseLog(raw) {
       concurrent = isPath && !hdr[1];
       continue;
     }
-    if (/^--- (?:End\b|Running \d+ parallel-safe)/.test(text)) {
+    // Any other `--- ` group header (End, `Running N parallel-safe ...`,
+    // `napi prebuild: ...`, `[A-B/M] K files in parallel`, etc.) closes the
+    // open span so the preceding serial test is not charged for the phase
+    // that follows.
+    if (text.startsWith("--- ")) {
       emit(ts);
       path = start = null;
       concurrent = false;

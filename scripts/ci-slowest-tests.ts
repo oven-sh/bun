@@ -20,11 +20,17 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 // Per-file cost is the gap between the APC timestamps Buildkite injects into
-// consecutive `[N/M] <path>` headers (ESC `_bk;t=<ms>` BEL). Serial-phase
-// tests print `--- [N/M] path` via startGroup; the parallel-safe phase
-// (runner.node.mjs runTest with concurrent=true) prints the bare `[N/M] path`
-// without `--- `. If the `--- ` is treated as mandatory the last serial test
-// on every shard absorbs the entire parallel phase's wall clock.
+// consecutive `[N/M] <path>` headers (ESC `_bk;t=<ms>` BEL). runner.node.mjs
+// emits several header shapes that must each close the open span:
+//   - serial test start: `--- [N/M] <path>` (startGroup)
+//   - retry/error label: `--- [N/M] <path> - <error>` (not a path)
+//   - parallel-bucket phase: `--- [A-B/M] K files in parallel`, then after the
+//     single `bun test --parallel` run a summary `[N/M] <path> (X.XXs)` per file
+//   - parallel-safe phase: `--- Running N parallel-safe tests`, then a bare
+//     `[N/M] <path>` per concurrent dispatch (no recoverable wall clock)
+//   - other startGroup phases: `--- napi prebuild: ...`, `--- End`
+// A parser that only recognises the first shape folds the entire following
+// phase into whichever serial test happened to precede it.
 export function parseLog(text: string): Map<string, number> {
   const out = new Map<string, number>();
   let curName: string | null = null;
@@ -51,6 +57,13 @@ export function parseLog(text: string): Map<string, number> {
         .replace(/ \[attempt #\d+\]$/, "")
         .replace(/\\/g, "/")
         .trim();
+      // Parallel-bucket summaries carry the authoritative wall clock inline.
+      const timed = !hdr[1] && /^(.+?) \((\d+(?:\.\d+)?)s\)$/.exec(title);
+      if (timed) {
+        out.set(timed[1], (out.get(timed[1]) ?? 0) + Math.round(parseFloat(timed[2]) * 1000));
+        concurrent = false;
+        continue;
+      }
       // Retry/error labels (`<path> - code 1`) are not file paths; treat them
       // as a delimiter so the preceding span closes without the retry backoff
       // landing on either attempt.
@@ -60,7 +73,10 @@ export function parseLog(text: string): Map<string, number> {
       concurrent = !hdr[1];
       continue;
     }
-    if (/^--- (?:End\b|Running \d+ parallel-safe)/.test(body)) close(ts);
+    if (body.startsWith("--- ")) {
+      close(ts);
+      concurrent = false;
+    }
   }
   return out;
 }

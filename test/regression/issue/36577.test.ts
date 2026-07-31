@@ -13,11 +13,11 @@
 // peer (`carrier` -> `pdep`, held by `zz-late`) whose subtree is enqueued at a
 // different time on the two sides, and enough filler packages that the sort does
 // not fall back to a stable insertion sort.
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "path";
+import { expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "fs";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { tmpdir } from "os";
+import { join } from "path";
 
 type Ver = {
   dependencies?: Record<string, string>;

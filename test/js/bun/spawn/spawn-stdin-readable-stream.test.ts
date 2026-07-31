@@ -868,9 +868,7 @@ describe("spawn stdin ReadableStream", () => {
     const baseline = fileSinkInternals.liveCount();
     const iterations = 8;
 
-    for (let i = 0; i < iterations; i++) {
-      await once(i);
-    }
+    await Promise.all(Array.from({ length: iterations }, (_, i) => once(i)));
 
     // Allow controller/sink JS wrappers to be collected so their finalizers
     // release the refs they legitimately hold.

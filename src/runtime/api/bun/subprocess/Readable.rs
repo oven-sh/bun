@@ -309,10 +309,13 @@ impl Readable {
 
                 // Ownership of the mimalloc-backed buffer transfers to JSC
                 // (freed via `MarkedArrayBuffer_deallocator`).
-                Ok(jsc::MarkedArrayBuffer::from_owned(
-                    jsc::ArrayBuffer::from_owned_bytes(own, jsc::JSType::Uint8Array),
+                Ok(
+                    jsc::MarkedArrayBuffer::from_owned(jsc::ArrayBuffer::from_owned_bytes(
+                        own,
+                        jsc::JSType::Uint8Array,
+                    ))
+                    .to_node_buffer(global),
                 )
-                .to_node_buffer(global))
             }
             _ => Ok(JSValue::UNDEFINED),
         }

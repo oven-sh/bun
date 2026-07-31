@@ -914,7 +914,11 @@ impl MarkedArrayBuffer {
     }
 
     pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> MarkedArrayBuffer {
-        Self::new(ArrayBuffer::from_bytes(bytes, typed_array_type), true, false)
+        Self::new(
+            ArrayBuffer::from_bytes(bytes, typed_array_type),
+            true,
+            false,
+        )
     }
 
     pub const EMPTY: MarkedArrayBuffer = Self::new(ArrayBuffer::EMPTY, false, false);

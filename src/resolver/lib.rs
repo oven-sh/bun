@@ -395,9 +395,7 @@ pub mod fs {
             bun_paths::resolve_path::relative(self.top_level_dir(), to)
         }
 
-        /// Process cwd. Routed through the `bun_core` RwLock so the (ptr, len)
-        /// fat pointer is read atomically: `process.chdir()` on the main thread
-        /// republishes this while Worker VMs are resolving modules against it.
+        /// Process cwd, via the `bun_core` RwLock (tear-safe under `process.chdir`).
         #[inline]
         pub fn top_level_dir(&self) -> &'static [u8] {
             bun_core::top_level_dir()

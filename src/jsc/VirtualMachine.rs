@@ -4655,11 +4655,7 @@ impl VirtualMachine {
             buf[len] = bun_paths::SEP;
             len += 1;
         }
-        // Worker VMs resolve modules against the shared `FileSystem` singleton
-        // concurrently with main-thread `process.chdir()`, so the published
-        // slice must be immutable. Intern into the process-lifetime
-        // `DirnameStore` and publish that; never mutate the previously
-        // published bytes in place.
+        // Interned so Worker resolvers never observe bytes mutated in place.
         let interned = bun_core::handle_oom(fs.dirname_store().append(&buf[..len]));
         fs.set_top_level_dir(interned);
         Ok(())

@@ -3280,17 +3280,14 @@ where
         this.do_render_blob();
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn write_chunk(
-        this: *mut Self,
+        &mut self,
         stream: &WebCore::streams::Result,
     ) -> WebCore::streams::Writable {
-        // SAFETY: caller passes the live `*mut RequestContext` stored as the sink ctx.
-        let this = unsafe { &mut *this };
-        if this.is_aborted_or_ended() {
+        if self.is_aborted_or_ended() {
             return WebCore::streams::Writable::Done;
         }
-        let resp = this.resp.expect("infallible: resp bound");
+        let resp = self.resp.expect("infallible: resp bound");
 
         let chunk = stream.slice();
         // on failure, it will continue to allocate
@@ -3301,37 +3298,34 @@ where
         match resp.write(chunk) {
             uws::WriteResult::WantMore(n) => WebCore::streams::Writable::Owned(n as BlobSizeType),
             uws::WriteResult::Backpressure(n) => {
-                this.flags.set_has_marked_pending(true);
+                self.flags.set_has_marked_pending(true);
                 // SAFETY: FFI handle
                 resp.on_writable(
                     |this, off, resp| Self::on_writable_byte_stream(this, off, resp),
-                    this,
+                    self,
                 );
                 WebCore::streams::Writable::Backpressure(n as BlobSizeType)
             }
         }
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn end_chunk(this: *mut Self, err: Option<&WebCore::streams::StreamError>) {
+    pub(crate) fn end_chunk(&mut self, err: Option<&WebCore::streams::StreamError>) {
         // Drop the ref taken when the ByteStream sink was installed.
-        let _ref = RequestContextRef(this);
-        // SAFETY: caller passes the live `*mut RequestContext` stored as the sink ctx.
-        let this = unsafe { &mut *this };
+        let _ref = RequestContextRef(std::ptr::from_mut(self));
 
-        if this.is_aborted_or_ended() {
+        if self.is_aborted_or_ended() {
             return;
         }
         if err.is_some()
-            && let Some(resp) = this.resp
+            && let Some(resp) = self.resp
         {
             let state = resp.state();
             if state.is_http_write_called() && state.is_response_pending() {
-                this.force_close();
+                self.force_close();
                 return;
             }
         }
-        this.end_stream(this.should_close_connection());
+        self.end_stream(self.should_close_connection());
     }
 
     /// # Safety
@@ -3342,12 +3336,14 @@ where
         _resp: uws::AnyResponse,
     ) -> bool {
         ctx_log!("onWritableByteStream");
-        // SAFETY: fn-level contract; resume() re-enters write_chunk, so dispatch off raw ptr.
-        debug_assert!(unsafe { (*this).resp.is_some() });
-        if unsafe { (*this).is_aborted_or_ended() } {
+        // SAFETY: `this` is the live RequestContext user-data pointer registered
+        // with uWS and cleared before the context is freed.
+        let this = unsafe { &mut *this };
+        debug_assert!(this.resp.is_some());
+        if this.is_aborted_or_ended() {
             return false;
         }
-        if let Some(bs) = unsafe { (*this).byte_stream } {
+        if let Some(bs) = this.byte_stream {
             bun_ptr::BackRef::from(bs).resume();
         }
         true
@@ -4182,34 +4178,20 @@ where
         }
     }
 
-    /// # Safety
-    /// `this` must be the live `*mut RequestContext` previously registered as the
-    /// body stream's drain producer.
-    pub(crate) fn on_request_body_stream_drained(this: *mut Self) {
-        // SAFETY: `this` is the registered `*mut RequestContext`. `ByteStream::
-        // on_data` can re-enter here while `on_buffered_body_chunk` already
-        // holds `&mut Self` (borrow = ptr), so dispatch via the raw pointer.
-        unsafe {
-            let flags = &raw mut (*this).flags;
-            if !(*flags).request_body_paused() {
-                return;
-            }
-            (*flags).set_request_body_paused(false);
-            if (*this).resp.is_none()
-                || (*flags).aborted()
-                || (*this).server.is_none_or(|s| s.terminated())
-            {
-                return;
-            }
-            // Inline `resp_may_be_freed()` via raw ptr (borrow = ptr; see above).
-            if let Some(sink) = (*this).sink {
-                if (*sink.as_ptr()).sink.ended_response {
-                    return;
-                }
-            }
-            if let Some(resp) = (*this).resp {
-                resp.resume();
-            }
+    pub(crate) fn on_request_body_stream_drained(&mut self) {
+        if !self.flags.request_body_paused() {
+            return;
+        }
+        self.flags.set_request_body_paused(false);
+        if self.resp.is_none() || self.flags.aborted() || self.server.is_none_or(|s| s.terminated())
+        {
+            return;
+        }
+        if self.resp_may_be_freed() {
+            return;
+        }
+        if let Some(resp) = self.resp {
+            resp.resume();
         }
     }
 

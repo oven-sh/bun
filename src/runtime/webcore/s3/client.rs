@@ -1393,9 +1393,8 @@ impl S3DownloadStreamWrapper {
         Ok(())
     }
 
-    pub(crate) fn on_stream_cancelled(this: *mut Self) {
-        // SAFETY: `this` points to a S3DownloadStreamWrapper allocated in readable_stream
-        let self_: &mut Self = unsafe { &mut *this };
+    pub(crate) fn on_stream_cancelled(&mut self) {
+        let self_ = self;
         // Release the Strong ref so the ReadableStream can be GC'd.
         // The download may still be in progress, but the callback will
         // see readable_stream_ref.get() return null and skip data delivery.

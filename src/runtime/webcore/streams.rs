@@ -826,93 +826,73 @@ mod sink_abi {
 }
 
 /// Static-dispatch signal set for a [`SourceHandle`] pointee. `SourceHandle`'s
-/// match arms call these as `UpstreamSource::on_*(ptr)`; defaults are no-ops so
-/// implementors override only the signals they actually handle. Methods take
-/// `*mut Self` because the callee may free the allocation (e.g. `Subprocess` on
-/// close), so forming `&mut` at the boundary would violate provenance.
+/// match arms form the single `unsafe { &mut *ptr }` and call these; defaults
+/// are no-ops so implementors override only the signals they actually handle.
 pub trait UpstreamSource {
     #[inline]
-    fn on_ready(_this: *mut Self) {}
+    fn on_ready(&mut self) {}
     #[inline]
-    fn on_close(_this: *mut Self, _err: Option<SysError>) {}
+    fn on_close(&mut self, _err: Option<SysError>) {}
     #[inline]
-    fn on_start(_this: *mut Self) {}
+    fn on_start(&mut self) {}
 }
 
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl UpstreamSource for crate::webcore::ByteStream {
     #[inline]
-    fn on_ready(this: *mut Self) {
-        // SAFETY: `this` was stored as a live `*mut ByteStream` in
-        // `SourceHandle` and is cleared before the ByteStream is freed.
-        unsafe { (*this).resume() };
+    fn on_ready(&mut self) {
+        self.resume();
     }
     #[inline]
-    fn on_close(this: *mut Self, err: Option<SysError>) {
-        // SAFETY: `this` was stored as a live `*mut ByteStream` in
-        // `SourceHandle` and is cleared before the ByteStream is freed.
-        unsafe { (*this).cancel_from_sink(err) };
+    fn on_close(&mut self, err: Option<SysError>) {
+        self.cancel_from_sink(err);
     }
 }
 
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl UpstreamSource for crate::webcore::FileReader {
     #[inline]
-    fn on_ready(this: *mut Self) {
-        // SAFETY: `this` was stored as a live `*mut FileReader` in
-        // `SourceHandle` and is cleared before the FileReader is freed.
-        unsafe { (*this).pull_into_sink() };
+    fn on_ready(&mut self) {
+        self.pull_into_sink();
     }
     #[inline]
-    fn on_close(this: *mut Self, _err: Option<SysError>) {
-        // SAFETY: `this` was stored as a live `*mut FileReader` in
-        // `SourceHandle` and is cleared before the FileReader is freed.
-        unsafe {
-            (*this).unpipe_without_deref();
-            (*this).on_cancel();
-        }
+    fn on_close(&mut self, _err: Option<SysError>) {
+        self.unpipe_without_deref();
+        self.on_cancel();
     }
 }
 
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl UpstreamSource for crate::api::bun::subprocess::Subprocess<'static> {
     #[inline]
-    fn on_close(this: *mut Self, err: Option<SysError>) {
-        // SAFETY: `this` is the boxed `*mut Subprocess` registered at spawn
-        // time; it outlives the FileSink that holds this handle.
-        unsafe { crate::api::bun::subprocess::Writable::on_close(&*this, err) };
+    fn on_close(&mut self, err: Option<SysError>) {
+        crate::api::bun::subprocess::Writable::on_close(self, err);
     }
 }
 
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl UpstreamSource for crate::shell::subproc::Writable {
     #[inline]
-    fn on_close(this: *mut Self, err: Option<SysError>) {
-        // SAFETY: `this` is the `*mut shell::subproc::Writable` stdin
-        // registered at spawn time; it outlives this handle.
-        unsafe { (*this).on_close(err) };
+    fn on_close(&mut self, err: Option<SysError>) {
+        self.on_close(err);
     }
 }
 
 impl UpstreamSource for crate::webcore::fetch::fetch_tasklet::FetchTasklet {
     #[inline]
-    fn on_ready(this: *mut Self) {
-        Self::on_stream_drained(this);
+    fn on_ready(&mut self) {
+        self.on_stream_drained();
     }
     #[inline]
-    fn on_close(this: *mut Self, _err: Option<SysError>) {
-        Self::on_stream_cancelled(this);
+    fn on_close(&mut self, _err: Option<SysError>) {
+        self.on_stream_cancelled();
     }
     #[inline]
-    fn on_start(this: *mut Self) {
-        Self::on_consumer_attached(this);
+    fn on_start(&mut self) {
+        self.on_consumer_attached();
     }
 }
 
 impl UpstreamSource for crate::webcore::s3::client::S3DownloadStreamWrapper {
     #[inline]
-    fn on_close(this: *mut Self, _err: Option<SysError>) {
-        Self::on_stream_cancelled(this);
+    fn on_close(&mut self, _err: Option<SysError>) {
+        self.on_stream_cancelled();
     }
 }
 
@@ -1009,12 +989,18 @@ impl SourceHandle {
                     Self::js_controller_on_close(kind, cpp, JSValue::UNDEFINED)
                 });
             }
-            SourceHandle::ByteStream(p) => UpstreamSource::on_close(p, err),
-            SourceHandle::FileReader(p) => UpstreamSource::on_close(p, err),
-            SourceHandle::Subprocess(p) => UpstreamSource::on_close(p, err),
-            SourceHandle::ShellWritable(p) => UpstreamSource::on_close(p, err),
-            SourceHandle::FetchResponseBody(p) => UpstreamSource::on_close(p, err),
-            SourceHandle::S3DownloadBody(p) => UpstreamSource::on_close(p, err),
+            // SAFETY: live backref; cleared before the pointee is freed.
+            SourceHandle::ByteStream(p) => unsafe { &mut *p }.on_close(err),
+            // SAFETY: live backref; cleared before the pointee is freed.
+            SourceHandle::FileReader(p) => unsafe { &mut *p }.on_close(err),
+            // SAFETY: live backref; cleared before the pointee is freed.
+            SourceHandle::Subprocess(p) => unsafe { &mut *p }.on_close(err),
+            // SAFETY: live backref; cleared before the pointee is freed.
+            SourceHandle::ShellWritable(p) => unsafe { &mut *p }.on_close(err),
+            // SAFETY: live backref; cleared before the pointee is freed.
+            SourceHandle::FetchResponseBody(p) => unsafe { &mut *p }.on_close(err),
+            // SAFETY: live backref; cleared before the pointee is freed.
+            SourceHandle::S3DownloadBody(p) => unsafe { &mut *p }.on_close(err),
             SourceHandle::ServerRequestBody(_) => {}
         }
     }
@@ -1032,27 +1018,33 @@ impl SourceHandle {
                     Self::js_controller_on_ready(kind, cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
                 });
             }
-            SourceHandle::ByteStream(p) => UpstreamSource::on_ready(p),
-            SourceHandle::FileReader(p) => UpstreamSource::on_ready(p),
-            SourceHandle::Subprocess(p) => UpstreamSource::on_ready(p),
-            SourceHandle::ShellWritable(p) => UpstreamSource::on_ready(p),
-            SourceHandle::FetchResponseBody(p) => UpstreamSource::on_ready(p),
-            SourceHandle::S3DownloadBody(p) => UpstreamSource::on_ready(p),
+            // SAFETY: live backref; cleared before the pointee is freed.
+            SourceHandle::ByteStream(p) => unsafe { &mut *p }.on_ready(),
+            // SAFETY: live backref; cleared before the pointee is freed.
+            SourceHandle::FileReader(p) => unsafe { &mut *p }.on_ready(),
+            // SAFETY: live backref; cleared before the pointee is freed.
+            SourceHandle::FetchResponseBody(p) => unsafe { &mut *p }.on_ready(),
             SourceHandle::ServerRequestBody(any) => any.on_request_body_stream_drained(),
+            // Remaining variants leave `on_ready` at the trait default (no-op).
+            SourceHandle::Subprocess(_)
+            | SourceHandle::ShellWritable(_)
+            | SourceHandle::S3DownloadBody(_) => {}
         }
     }
 
     pub fn start(&mut self) {
         match *self {
+            // SAFETY: live backref; cleared before the pointee is freed.
+            SourceHandle::FetchResponseBody(p) => unsafe { &mut *p }.on_start(),
+            // Remaining variants leave `on_start` at the trait default (no-op).
             SourceHandle::None
             | SourceHandle::JSController { .. }
-            | SourceHandle::ServerRequestBody(_) => {}
-            SourceHandle::ByteStream(p) => UpstreamSource::on_start(p),
-            SourceHandle::FileReader(p) => UpstreamSource::on_start(p),
-            SourceHandle::Subprocess(p) => UpstreamSource::on_start(p),
-            SourceHandle::ShellWritable(p) => UpstreamSource::on_start(p),
-            SourceHandle::FetchResponseBody(p) => UpstreamSource::on_start(p),
-            SourceHandle::S3DownloadBody(p) => UpstreamSource::on_start(p),
+            | SourceHandle::ServerRequestBody(_)
+            | SourceHandle::ByteStream(_)
+            | SourceHandle::FileReader(_)
+            | SourceHandle::Subprocess(_)
+            | SourceHandle::ShellWritable(_)
+            | SourceHandle::S3DownloadBody(_) => {}
         }
     }
 }

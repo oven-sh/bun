@@ -1800,24 +1800,22 @@ impl FetchTasklet {
         }
     }
 
-    pub(crate) fn on_stream_cancelled(this: *mut Self) {
-        let this = unsafe { &mut *this };
-        if this.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
+    pub(crate) fn on_stream_cancelled(&mut self) {
+        if self.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
             return;
         }
         // reader.cancel() / body.cancel() aborts the fetch so the server sees the
         // close (Node/Deno/browsers abort unconditionally). abort_task() is idempotent.
-        this.abort_task();
-        this.ignore_remaining_response_body(false);
+        self.abort_task();
+        self.ignore_remaining_response_body(false);
     }
 
-    pub(crate) fn on_stream_drained(this: *mut Self) {
-        let this = unsafe { &mut *this };
-        if this
+    pub(crate) fn on_stream_drained(&self) {
+        if self
             .signal_store
             .try_transition_receive_mode(BodyReceiveMode::Paused, BodyReceiveMode::AutoPause)
         {
-            this.schedule_receive_resume();
+            self.schedule_receive_resume();
         }
     }
 
@@ -1825,9 +1823,8 @@ impl FetchTasklet {
     /// already flipped to `BufferAll`. Move to `Paused`: the socket is still
     /// reading, so the next `maybe_pause_receive` stops it; the sink's drain
     /// then resumes via `on_stream_drained`.
-    pub(crate) fn on_consumer_attached(this: *mut Self) {
-        let this = unsafe { &mut *this };
-        let _ = this
+    pub(crate) fn on_consumer_attached(&self) {
+        let _ = self
             .signal_store
             .try_transition_receive_mode(BodyReceiveMode::BufferAll, BodyReceiveMode::Paused);
     }

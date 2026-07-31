@@ -463,12 +463,8 @@ impl Cmd {
         // SAFETY: `shell_ptr` is the live env owned by this Cmd's scope chain.
         spawn_args.cwd = unsafe { &*shell_ptr }.cwd();
 
-        // Fill env from export_env + cmd_local_env. Must happen BEFORE argv[0]
-        // resolution: `fill_env` updates `spawn_args.path` when it copies a
-        // PATH entry, so resolution honours PATH set via `.env()`, `export`,
-        // or a `PATH=... cmd` prefix (cmd_local_env filled last, so it wins).
-        // The `which` builtin already resolves through the shell environment;
-        // this keeps external commands consistent with it. See #25885.
+        // Fill env before argv[0] resolution: `fill_env` updates
+        // `spawn_args.path` from export_env / cmd_local_env (#25885).
         {
             let env = interp.as_cmd_mut(this).base.shell_mut();
             let mut iter = env.export_env.iterator();

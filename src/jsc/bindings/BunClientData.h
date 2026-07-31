@@ -19,7 +19,6 @@ class DOMWrapperWorld;
 // #include "WorkerThreadType.h"
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
-#include <wtf/WeakHashSet.h>
 #include <wtf/RefPtr.h>
 #include <JavaScriptCore/WeakInlines.h>
 #include <wtf/StdLibExtras.h>

@@ -606,6 +606,13 @@ function _write(data, encoding, cb) {
 }
 writeStreamPrototype._write = _write;
 
+// Encoded byte count for a fast-path write. `writeFast` is the public
+// `.write()`, so strings reach the sink undecoded and must be measured with
+// Buffer.byteLength (not .length, which is UTF-16 code units).
+function bytesForWrite(data: any, encoding?: BufferEncoding): number {
+  return typeof data === "string" ? Buffer.byteLength(data, encoding) : (data?.byteLength ?? data?.length ?? 0);
+}
+
 function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) {
   let fileSink = this[kWriteStreamFastPath];
   if (!fileSink) {
@@ -620,7 +627,9 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
       this.fd = fileSink._getFd();
     }
 
+    const bytes = bytesForWrite(data, encoding);
     const maybePromise = fileSink.write(data);
+    this.bytesWritten += bytes;
     if ($isPromise(maybePromise)) {
       maybePromise.then(
         () => {
@@ -667,7 +676,9 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
 
   const fileSink = this[kWriteStreamFastPath];
   if (fileSink && fileSink !== true) {
+    const bytes = bytesForWrite(data, encoding);
     const maybePromise = fileSink.write(data);
+    this.bytesWritten += bytes;
     if ($isPromise(maybePromise)) {
       // Two-arg then(): a throw from the fulfillment handler must not be
       // mistaken for a write failure.
@@ -712,7 +723,9 @@ writeStreamPrototype._writev = function (data, cb) {
 
   const fileSink = this[kWriteStreamFastPath];
   if (fileSink && fileSink !== true) {
-    const maybePromise = fileSink.write(Buffer.concat(chunks));
+    const buffer = Buffer.concat(chunks);
+    const maybePromise = fileSink.write(buffer);
+    this.bytesWritten += buffer.length;
     if ($isPromise(maybePromise)) {
       maybePromise
         .then(() => {

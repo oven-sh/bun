@@ -1463,12 +1463,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let handlers = this.get_handlers();
-        // A worker's terminate() can land between spin()'s check and this
-        // dispatch; `is_shutting_down` is still false then, but entering JS
-        // fires the trap and leaves the TerminationException pending for the
-        // second call below. The other on_* callbacks guard their single JS
-        // entry with `is_shutting_down()`; this one has two, so it needs the
-        // worker-aware gate.
+        // Two JS entries below (resolve_promise then callback.call); a worker
+        // terminate() raised in the first trips assertNoException() in the
+        // second, and is_shutting_down() is still false at that point.
         if handlers.vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
             return;
         }

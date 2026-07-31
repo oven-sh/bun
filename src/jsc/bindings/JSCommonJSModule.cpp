@@ -247,9 +247,6 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         this->m_filename.get());
 
     if (auto exception = scope.exception()) {
-        // tryClearException() cannot clear a termination, and JSMap::remove
-        // with it still pending bails out (and RELEASE_ASSERTs in the HashMapImpl
-        // path). The worker is dying, so leave the entry in place.
         if (vm.hasPendingTerminationException()) [[unlikely]]
             return false;
         (void)scope.tryClearException();
@@ -1271,9 +1268,8 @@ ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObj
     auto& vm = JSC::getVM(globalObject);
     JSC::JSValue exception = throwScope.exception();
     ASSERT(exception);
-    // tryClearException() cannot clear a termination, and JSMap::remove with it
-    // still pending returns false, tripping the assert below. The worker is
-    // dying, so leave the entry in place and propagate.
+    // tryClearException() cannot clear a termination, and JSMap::remove with
+    // it still pending returns false, tripping ASSERT(wasRemoved).
     if (vm.hasPendingTerminationException()) [[unlikely]]
         RELEASE_AND_RETURN(throwScope, {});
     (void)throwScope.tryClearException();

@@ -483,7 +483,7 @@ impl EditorContext {
                     editor_,
                     // SAFETY: see note above — exclusive per-call reborrow.
                     unsafe { &mut *buf_ptr },
-                    Fs::FileSystem::instance().top_level_dir,
+                    Fs::FileSystem::instance().top_level_dir(),
                     &mut out,
                 ) {
                     self.editor = Some(editor_);
@@ -514,7 +514,7 @@ impl EditorContext {
                 editor_,
                 // SAFETY: see note above — exclusive per-call reborrow.
                 unsafe { &mut *buf_ptr },
-                Fs::FileSystem::instance().top_level_dir,
+                Fs::FileSystem::instance().top_level_dir(),
                 &mut out,
             ) {
                 self.editor = Some(editor_);
@@ -542,7 +542,7 @@ impl EditorContext {
             env,
             // SAFETY: see note above — exclusive per-call reborrow.
             unsafe { &mut *buf_ptr },
-            Fs::FileSystem::instance().top_level_dir,
+            Fs::FileSystem::instance().top_level_dir(),
             &mut out,
         ) {
             self.editor = Some(editor_);

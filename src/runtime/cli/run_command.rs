@@ -610,7 +610,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
-        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
         let root_dir_info: bun_resolver::DirInfoRef =
             match this_transpiler.resolver.read_dir_info(top_level_dir) {
                 Err(err) => {
@@ -1487,7 +1487,7 @@ impl Run {
         if entry == b"." {
             // SAFETY: `vm.transpiler.fs` is the process-static `FileSystem`
             // singleton (set in `Transpiler::init`).
-            let tld = unsafe { (*vm.transpiler.fs).top_level_dir };
+            let tld = unsafe { (*vm.transpiler.fs).top_level_dir() };
             if !tld.is_empty() {
                 entry = tld;
             }
@@ -2543,7 +2543,7 @@ impl RunCommand {
         // load module and run that module
         // TODO: run module resolution here - try the next condition if the module can't be found
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
-        let fs_top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+        let fs_top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
         bun_core::scoped_log!(
             RUN_LOG,
             "Try resolve `{}` in `{}`",
@@ -2560,7 +2560,7 @@ impl RunCommand {
                         .get()
                         .unwrap_or(false);
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
-            let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+            let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
             let resolved = match this_transpiler.resolver.resolve(
                 top_level_dir,
                 target_name,
@@ -2670,7 +2670,7 @@ impl RunCommand {
             let _ = force_using_bun;
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let fs = unsafe { &mut *this_transpiler.fs };
-            let top_level_dir = fs.top_level_dir;
+            let top_level_dir = fs.top_level_dir();
             let path = env_loader.get(b"PATH").unwrap_or(b"");
             let mut path_for_which = path;
             if bin_dirs_only {
@@ -3608,7 +3608,7 @@ impl RunCommand {
         this_transpiler.configure_linker();
 
         // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
-        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
         let Some(root_dir_info) = this_transpiler
             .resolver
             .read_dir_info(top_level_dir)

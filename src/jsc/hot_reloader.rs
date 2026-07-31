@@ -831,6 +831,7 @@ where
         let ctx = unsafe { &mut *ctx };
 
         let fs: &mut FileSystem = FileSystem::instance();
+        let top_level_dir = fs.top_level_dir();
         let rfs: &mut Fs::file_system::RealFS = &mut fs.fs;
         #[cfg(windows)]
         let _ = (changed_files, parents, file_descriptors, rfs);
@@ -862,11 +863,8 @@ where
                     if self.verbose {
                         Self::debug(format_args!(
                             "File changed: {}",
-                            // Note: `fs.relative_to(file_path)` would borrow `&*fs`
-                            // while `rfs = &mut fs.fs` is live; inline the body so the
-                            // split-borrow on `fs.top_level_dir` is visible to borrowck.
                             bstr::BStr::new(bun_paths::resolve_path::relative(
-                                fs.top_level_dir,
+                                top_level_dir,
                                 file_path
                             ))
                         ));
@@ -1197,7 +1195,7 @@ where
                                         Self::debug(format_args!(
                                             "File change: {}",
                                             bstr::BStr::new(bun_paths::resolve_path::relative(
-                                                fs.top_level_dir,
+                                                top_level_dir,
                                                 abs_path,
                                             ))
                                         ));
@@ -1210,7 +1208,7 @@ where
                             Self::debug(format_args!(
                                 "Dir change: {} (affecting {})",
                                 bstr::BStr::new(bun_paths::resolve_path::relative(
-                                    fs.top_level_dir,
+                                    top_level_dir,
                                     file_path
                                 )),
                                 affected_len
@@ -1302,7 +1300,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     }
 
     fn watcher_top_level_dir(&self) -> &'static [u8] {
-        FileSystem::get().top_level_dir
+        FileSystem::get().top_level_dir()
     }
 
     fn install_bun_watcher(

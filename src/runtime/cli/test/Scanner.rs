@@ -103,7 +103,7 @@ impl<'a> Scanner<'a> {
     #[inline]
     fn top_level_dir(&self) -> &'static [u8] {
         // SAFETY: field-precise projection; never spans the mutably-borrowed `fs` field.
-        unsafe { (*self.fs).top_level_dir }
+        unsafe { (*self.fs).top_level_dir() }
     }
 
     #[inline]

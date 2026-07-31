@@ -1344,7 +1344,7 @@ impl<'a> Resolver<'a> {
                             });
                         }
                     }
-                    break 'brk Fs::FileSystem::instance().top_level_dir();
+                    break 'brk self.fs_ref().top_level_dir();
                 }
             }
 
@@ -1361,7 +1361,7 @@ impl<'a> Resolver<'a> {
                 //     let _ = self.flush_debug_logs(FlushMode::Fail);
                 // }
                 // return ResultUnion::Failure(crate::Error::MissingResolveDir);
-                break 'brk Fs::FileSystem::instance().top_level_dir();
+                break 'brk self.fs_ref().top_level_dir();
             }
 
             // This can also be hit if you use plugins with non-file namespaces,
@@ -1373,7 +1373,7 @@ impl<'a> Resolver<'a> {
                 //     let _ = self.flush_debug_logs(FlushMode::Fail);
                 // }
                 // return ResultUnion::Failure(crate::Error::InvalidResolveDir);
-                break 'brk Fs::FileSystem::instance().top_level_dir();
+                break 'brk self.fs_ref().top_level_dir();
             }
 
             break 'brk source_dir_resolver

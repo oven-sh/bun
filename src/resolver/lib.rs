@@ -163,12 +163,10 @@ pub mod fs {
 
     // ── FileSystem ───────────────────────────────────────────────────────
 
-    /// Process-global filesystem facade for the resolver: holds the cached
-    /// top-level dir, the real-FS backend, and the dirname/filename interning
-    /// stores.
+    /// Process-global filesystem facade for the resolver: the real-FS backend
+    /// and the dirname/filename interning stores. The cwd lives in
+    /// `bun_core::TOP_LEVEL_DIR`; read it via [`FileSystem::top_level_dir`].
     pub struct FileSystem {
-        pub top_level_dir: &'static [u8],
-
         pub fs: Implementation,
         pub dirname_store: &'static DirnameStore,
         pub filename_store: &'static FilenameStore,
@@ -295,7 +293,6 @@ pub mod fs {
             // SAFETY: see above.
             unsafe {
                 (*INSTANCE.get()).write(FileSystem {
-                    top_level_dir: cwd,
                     fs: Implementation::init(cwd),
                     dirname_store: DirnameStore::instance(),
                     filename_store: FilenameStore::instance(),
@@ -401,14 +398,11 @@ pub mod fs {
             bun_core::top_level_dir()
         }
 
-        /// `dir` must be
-        /// `'static` (interned in `DirnameStore` or a process-lifetime buffer
-        /// like `cwd_buf`). Takes `&mut self` — callers hold `&'static mut
-        /// FileSystem` from `instance()`; only called during single-threaded
-        /// CLI init.
+        /// `dir` must borrow immutable process-lifetime storage (interned in
+        /// `DirnameStore` or similar): concurrent Worker resolvers may hold
+        /// the previously published slice after this returns.
         #[inline]
-        pub fn set_top_level_dir(&mut self, dir: &'static [u8]) {
-            self.top_level_dir = dir;
+        pub fn set_top_level_dir(&self, dir: &'static [u8]) {
             bun_core::set_top_level_dir(dir);
         }
 

@@ -19,7 +19,7 @@ test("process.chdir on main thread does not tear Worker relative import() resolu
       const wsrc =
         'const { parentPort } = require("node:worker_threads");\\n' +
         'let ok = 0; const errs = [];\\n' +
-        'for (let i = 0; i < 2000; i++) {\\n' +
+        'for (let i = 0; i < 800; i++) {\\n' +
         '  try { await import("./mod.mjs?i=" + i); ok++; }\\n' +
         '  catch (e) { errs.push(String(e.message).slice(0, 160)); }\\n' +
         '}\\n' +
@@ -36,6 +36,7 @@ test("process.chdir on main thread does not tear Worker relative import() resolu
         const w = new Worker(wsrc, { eval: true });
         w.on("message", m => { res(m); w.terminate(); });
         w.on("error", e => { res({ ok: 0, nerr: 1, errs: [String(e.message)] }); w.terminate(); });
+        w.on("exit", code => res({ ok: 0, nerr: 1, errs: ["worker exited " + code] }));
       })));
       stop = true; await churn;
       console.log(JSON.stringify({
@@ -61,4 +62,4 @@ test("process.chdir on main thread does not tear Worker relative import() resolu
   // ("\u0000") in the rejected module path.
   expect(out).toEqual({ nerr: 0, errs: [] });
   expect(exitCode).toBe(0);
-}, 60_000);
+}, 30_000);

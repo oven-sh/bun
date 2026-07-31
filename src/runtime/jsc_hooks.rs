@@ -689,7 +689,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     // failure and `VirtualMachine::init` propagates it via `?`, so a VM that
     // failed to build its transpiler never reaches `load_preloads` (this hook
     // only runs via `reload_entry_point*`, which operate on an already-`Ok` VM).
-    let top_level_dir: *const [u8] = Fs::FileSystem::get().top_level_dir;
+    let top_level_dir: *const [u8] = Fs::FileSystem::get().top_level_dir();
     // SAFETY: per fn contract.
     let global_cache = if unsafe { &*vm }.standalone_module_graph.is_none() {
         GlobalCache::read_only
@@ -3427,7 +3427,7 @@ fn transpile_source_code_inner(
                 // need to copy the ~12 borrowed slices out (perf: was a
                 // per-asset-import `url::URL::clone`).
                 let origin = unsafe { &(*jsc_vm).origin };
-                let top_level_dir = Fs::FileSystem::get().top_level_dir;
+                let top_level_dir = Fs::FileSystem::get().top_level_dir();
                 crate::api::bun_object::get_public_path_with_asset_prefix(
                     specifier,
                     top_level_dir,
@@ -4955,7 +4955,7 @@ unsafe fn resolve<'a>(
     let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
     // `Fs.PathName.init(source).dirWithTrailingSlash()` slices
     // `source` in place, so the `'a` lifetime is preserved.
-    let top_level_dir: &'a [u8] = Fs::FileSystem::get().top_level_dir;
+    let top_level_dir: &'a [u8] = Fs::FileSystem::get().top_level_dir();
     let source_to_use: &[u8] = if !is_special_source {
         if is_a_file_path {
             Fs::PathName::init(source).dir_with_trailing_slash()

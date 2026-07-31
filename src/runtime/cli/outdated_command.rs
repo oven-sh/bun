@@ -244,7 +244,7 @@ impl OutdatedCommand {
 
         // SAFETY: `FileSystem::init` runs during `PackageManager::init` so the
         // process-singleton is populated.
-        let top_level_dir = FileSystem::get().top_level_dir;
+        let top_level_dir = FileSystem::get().top_level_dir();
 
         // move all matched workspaces to front of array
         let mut i: usize = 0;

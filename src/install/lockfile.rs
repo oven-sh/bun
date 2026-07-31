@@ -1735,7 +1735,7 @@ impl<'a> Printer<'a> {
 
         // Capture the `'static` cwd slice
         // before borrowing `fs.fs` mutably.
-        let top_level_dir = fs.top_level_dir;
+        let top_level_dir = fs.top_level_dir();
         let entries_option = fs.fs.read_directory(top_level_dir, None, 0, true)?;
         let entries: &mut Fs::DirEntry = match entries_option {
             Fs::EntriesOption::Entries(e) => &mut **e,

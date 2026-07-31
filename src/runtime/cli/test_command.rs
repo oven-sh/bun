@@ -378,7 +378,7 @@ impl JunitReporter {
             }
         }
         body.push(b'\n');
-        let dir = FileSystem::instance().top_level_dir;
+        let dir = FileSystem::instance().top_level_dir();
         for frame in exception.stack.frames() {
             let source_url = frame.source_url.to_utf8();
             let file = resolve_path::relative(dir, source_url.slice());
@@ -1216,7 +1216,7 @@ impl CommandLineReporter {
 
         {
             let filename: &[u8] = 'brk: {
-                let top = FileSystem::instance().top_level_dir;
+                let top = FileSystem::instance().top_level_dir();
                 if strings::has_prefix(file, top) {
                     break 'brk without_leading_path_separator(&file[top.len()..]);
                 } else {
@@ -1615,7 +1615,7 @@ impl CommandLineReporter {
         }
         byte_ranges.sort_by(coverage::is_less_than_cmp);
 
-        let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+        let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
         let mut buffered: Vec<u8> = Vec::with_capacity(64 * 1024);
         let writer = &mut buffered;
 
@@ -1673,7 +1673,7 @@ impl CommandLineReporter {
             unreachable!("No reporters enabled");
         }
 
-        let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+        let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
 
         // --- Text ---
         let max_filepath_length: usize = if REPORTERS_TEXT {
@@ -2392,7 +2392,7 @@ impl TestCommand {
                                 pretty_errorln!(
                                     "Test filter <b>{}<r> had no matches in --cwd={}",
                                     bun_fmt::quote(arg),
-                                    bun_fmt::quote(FileSystem::instance().top_level_dir)
+                                    bun_fmt::quote(FileSystem::instance().top_level_dir())
                                 );
                             } else {
                                 pretty_errorln!(
@@ -2471,14 +2471,14 @@ impl TestCommand {
             let dir_to_scan: &[u8] = 'brk: {
                 if !ctx.debug.test_directory.is_empty() {
                     dir_to_scan_owned = resolve_path::join_abs::<bun_path::platform::Auto>(
-                        scanner.fs().top_level_dir,
+                        scanner.fs().top_level_dir(),
                         &ctx.debug.test_directory,
                     )
                     .into();
                     break 'brk &dir_to_scan_owned;
                 }
 
-                break 'brk scanner.fs().top_level_dir;
+                break 'brk scanner.fs().top_level_dir();
             };
 
             match scanner.scan(dir_to_scan) {
@@ -2489,7 +2489,7 @@ impl TestCommand {
                         pretty_errorln!(
                             "<red>Failed to scan non-existent root directory for tests:<r> {} in --cwd={}",
                             bun_fmt::quote(dir_to_scan),
-                            bun_fmt::quote(FileSystem::instance().top_level_dir)
+                            bun_fmt::quote(FileSystem::instance().top_level_dir())
                         );
                     } else {
                         pretty_errorln!(
@@ -2779,7 +2779,7 @@ impl TestCommand {
                     // Be very clear to ai.
                     Output::err_generic(
                         "0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={}",
-                        (bun_fmt::quote(FileSystem::instance().top_level_dir),),
+                        (bun_fmt::quote(FileSystem::instance().top_level_dir()),),
                     );
                 } else {
                     // Be friendlier to humans.
@@ -2791,7 +2791,7 @@ impl TestCommand {
                 if Output::is_ai_agent() {
                     pretty_errorln!(
                         "<yellow>The following filters did not match any test files in --cwd={}:<r>",
-                        bun_fmt::quote(FileSystem::instance().top_level_dir)
+                        bun_fmt::quote(FileSystem::instance().top_level_dir())
                     );
                 } else {
                     pretty_errorln!(
@@ -3198,7 +3198,7 @@ impl TestCommand {
             .filename_store
             .append_slice(resolution.path_pair.primary.text)
             .expect("oom");
-        let file_title = resolve_path::relative(FileSystem::instance().top_level_dir, file_path);
+        let file_title = resolve_path::relative(FileSystem::instance().top_level_dir(), file_path);
         let file_id = jest::Jest::runner()
             .unwrap()
             .get_or_put_file(file_path)

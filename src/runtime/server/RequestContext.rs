@@ -1051,7 +1051,7 @@ where
 
         let mut message: Vec<u8> = Vec::new();
         let _ = write!(&mut message, "{}", fmt);
-        let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
+        let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
         let fallback_container = Box::new(Api::FallbackMessageContainer {
             message: Some(message.into_boxed_slice()),
             router: None,
@@ -3026,7 +3026,7 @@ where
                         }
 
                         // Create error message for the stream rejection
-                        let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
+                        let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
                         let fallback_container = Box::new(Api::FallbackMessageContainer {
                             message: Some(
                                 b"Stream error during server-side rendering"

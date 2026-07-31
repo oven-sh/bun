@@ -840,7 +840,7 @@ impl VirtualMachine {
     }
 
     /// Safe accessor for the process-lifetime cwd string
-    /// (`vm.transpiler.fs.top_level_dir`). The `FileSystem` singleton is
+    /// (`vm.transpiler.fs.top_level_dir()`). The `FileSystem` singleton is
     /// allocated once during VM init and never freed.
     #[inline]
     pub fn top_level_dir(&self) -> &'static [u8] {
@@ -4637,7 +4637,7 @@ impl VirtualMachine {
     }
 
     pub fn set_process_cwd(&mut self, to: &bun_core::ZStr) -> bun_sys::Result<()> {
-        let fs = self.transpiler.fs_mut();
+        let fs = self.fs();
         bun_sys::chdir(to)?;
         let mut buf = bun_paths::PathBuffer::uninit();
         let mut len = match bun_sys::getcwd(&mut buf[..]) {
@@ -4651,14 +4651,27 @@ impl VirtualMachine {
                 return bun_sys::Result::Err(err);
             }
         };
-        if len == 0 || buf[len - 1] != bun_paths::SEP {
+        if len > 0 && buf[len - 1] != bun_paths::SEP && len < buf.len() {
             buf[len] = bun_paths::SEP;
             len += 1;
         }
-        // Interned so Worker resolvers never observe bytes mutated in place.
-        let interned = bun_core::handle_oom(fs.dirname_store().append(&buf[..len]));
-        fs.set_top_level_dir(interned);
+        fs.set_top_level_dir(Self::intern_cwd(fs, &buf[..len]));
         Ok(())
+    }
+
+    /// Intern `cwd` into `DirnameStore` so the published `top_level_dir` slice
+    /// is immutable (Worker resolvers read it concurrently), deduplicated by
+    /// content so repeated `process.chdir()` between the same directories does
+    /// not grow the never-freed store.
+    fn intern_cwd(fs: &bun_resolver::fs::FileSystem, cwd: &[u8]) -> &'static [u8] {
+        static CACHE: bun_core::Mutex<Vec<&'static [u8]>> = bun_core::Mutex::new(Vec::new());
+        let mut cache = CACHE.lock();
+        if let Some(&s) = cache.iter().find(|&&s| s == cwd) {
+            return s;
+        }
+        let s = bun_core::handle_oom(fs.dirname_store().append(cwd));
+        cache.push(s);
+        s
     }
 
     /// Replaces the global object between test files so each file runs in a fresh realm.
@@ -6285,7 +6298,7 @@ impl VirtualMachine {
         let frames = exception.stack.frames();
         let top_frame = frames.first();
         let dir = bun_core::env_var::GITHUB_WORKSPACE::get()
-            .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::instance().top_level_dir);
+            .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::instance().top_level_dir());
         bun_core::Output::flush();
 
         let writer = bun_core::Output::error_writer();

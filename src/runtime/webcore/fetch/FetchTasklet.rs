@@ -2581,7 +2581,8 @@ impl FetchTasklet {
         // above before the lifetime-erasing assignment; the bytes are already in place, so
         // no copy is needed and the `reset()` calls below operate on the right allocation.
 
-        if task_ref.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
+        let receive_mode = task_ref.signal_store.body_receive_mode();
+        if receive_mode == BodyReceiveMode::Ignore {
             task_ref.response_buffer.reset();
 
             if task_ref.scheduled_response_buffer.list.capacity() > 0 {
@@ -2608,13 +2609,17 @@ impl FetchTasklet {
                 }
                 // Grow to Content-Length once so the per-packet append below
                 // doesn't leave the ~2x doubling over-capacity that the
-                // ArrayBuffer would adopt. Capped to bound a hostile header.
-                if let http::BodySize::ContentLength(n) = task_ref.body_size {
-                    if n > scheduled.list.capacity() {
-                        let additional = n
-                            .min(SCHEDULED_PRERESERVE_MAX)
-                            .saturating_sub(scheduled.list.len());
-                        let _ = scheduled.list.try_reserve_exact(additional);
+                // ArrayBuffer would adopt. Streaming consumers drain per
+                // chunk, so only the BufferAll path reserves. Capped to bound
+                // a hostile header.
+                if receive_mode == BodyReceiveMode::BufferAll {
+                    if let http::BodySize::ContentLength(n) = task_ref.body_size {
+                        if n > scheduled.list.capacity() {
+                            let additional = n
+                                .min(SCHEDULED_PRERESERVE_MAX)
+                                .saturating_sub(scheduled.list.len());
+                            let _ = scheduled.list.try_reserve_exact(additional);
+                        }
                     }
                 }
                 if !incoming.list.is_empty() {

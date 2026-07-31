@@ -31,8 +31,14 @@ describe("test/expected-durations.json", () => {
   test("covers the parallel-safe phase and clamps its spans", () => {
     // js/{node,bun}/test/parallel/ run N-wide and log without a `--- ` group
     // prefix; a parser that only matches `--- [N/M]` drops ~3k entries here.
+    // Keep this predicate in sync with isParallelSafeTest in
+    // scripts/runner.node.mjs: the memory-heavy opt-outs run in the serial
+    // phase, so their recorded spans are real wall clock, not clamped
+    // inter-dispatch gaps.
+    const memoryHeavy = (k: string) =>
+      k.startsWith("js/bun/test/parallel/test-docker-build-") || k === "js/node/test/parallel/test-buffer-constants.js";
     const parallelSafe = entries.filter(
-      ([k]) => k.startsWith("js/node/test/parallel/") || k.startsWith("js/bun/test/parallel/"),
+      ([k]) => (k.startsWith("js/node/test/parallel/") || k.startsWith("js/bun/test/parallel/")) && !memoryHeavy(k),
     );
     expect(parallelSafe.length).toBeGreaterThan(1000);
     // Concurrent-phase spans are inter-dispatch gaps; without the clamp the

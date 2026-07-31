@@ -16,9 +16,10 @@ const responseTimeout = 'HTTP/1.1 408 Request Timeout\r\n';
 
 // Upstream Node uses platformTimeout(2000). Every delay below is a ratio of
 // headersTimeout, so halving the base keeps the same relative margins while
-// halving wall-clock time (the narrowest window, request2's 408 before the
-// 1.4x checkpoint, is 0.075 * headersTimeout and stays above 150 ms on debug
-// builds where platformTimeout doubles the value).
+// halving wall-clock time. The narrowest window (request2's 408 before the
+// 1.4x checkpoint) is 0.075 * headersTimeout: 75 ms on release lanes
+// including release+ASAN where process.features.debug is false, and 150 ms on
+// local debug builds where platformTimeout doubles the value.
 const headersTimeout = common.platformTimeout(1000);
 const connectionsCheckingInterval = headersTimeout / 8;
 

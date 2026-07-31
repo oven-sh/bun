@@ -25002,7 +25002,7 @@
   },
   "js/node/test/sequential/test-http-server-request-timeouts-mixed.js": {
     "default": 3153,
-    "asan": 6255,
+    "asan": 9384,
     "musl": 3154,
     "windows": 3174
   },

@@ -682,14 +682,17 @@ impl S3UploadStreamWrapper {
                 if let Some(sink) = self_.sink_mut() {
                     sink.pending.run();
                     if sink.flush_promise.has_value() {
-                        sink.flush_promise.resolve(&global, JSValue::js_number(0.0))?;
+                        sink.flush_promise
+                            .resolve(&global, JSValue::js_number(0.0))?;
                     }
                     if sink.end_promise.has_value() {
                         sink.end_promise.resolve(&global, JSValue::js_number(0.0))?;
                     }
                 }
                 if self_.end_promise.has_value() {
-                    self_.end_promise.resolve(&global, JSValue::js_number(0.0))?;
+                    self_
+                        .end_promise
+                        .resolve(&global, JSValue::js_number(0.0))?;
                     self_.end_promise = bun_jsc::JSPromiseStrong::empty();
                 }
             }
@@ -697,12 +700,9 @@ impl S3UploadStreamWrapper {
                 // If the native ByteStream source errored, prefer the original
                 // JS error it stashed on the sink (preserves `.code` /
                 // `.name`) over the generic `UnknownError` passed to `fail()`.
-                let stashed = self_
-                    .sink_mut()
-                    .and_then(|s| s.upstream_error.try_swap());
-                let js_err = stashed.unwrap_or_else(|| {
-                    s3_error_to_js(err, &global, Some(self_.path.slice()))
-                });
+                let stashed = self_.sink_mut().and_then(|s| s.upstream_error.try_swap());
+                let js_err = stashed
+                    .unwrap_or_else(|| s3_error_to_js(err, &global, Some(self_.path.slice())));
                 js_err.ensure_still_alive();
                 let mut is_native = false;
                 if let Some(sink) = self_.sink_mut() {

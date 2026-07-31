@@ -1550,10 +1550,13 @@ impl FileSink {
         // Native ByteStream fast-path: wire SinkHandle directly, skip the JS pump.
         if let Some(byte_stream) = stream.ptr.bytes() {
             if byte_stream.sink.get().is_none() {
-                self.source.set(streams::SourceHandle::ByteStream(byte_stream));
+                self.source
+                    .set(streams::SourceHandle::ByteStream(byte_stream));
                 byte_stream
                     .sink
-                    .set(webcore::SinkHandle::FileSink(bun_ptr::BackRef::new_mut(self)));
+                    .set(webcore::SinkHandle::FileSink(bun_ptr::BackRef::new_mut(
+                        self,
+                    )));
                 byte_stream.sink_paused.set(false);
                 stream.lock_native(global_this);
                 byte_stream.signal_consumer_attached();

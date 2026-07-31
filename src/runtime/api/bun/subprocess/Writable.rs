@@ -501,7 +501,8 @@ impl<'a> Writable<'a> {
         match subprocess.stdin.replace(Writable::Ignore) {
             Writable::Pipe(pipe_nn) => {
                 let pipe = Self::pipe_sink_mut(&pipe_nn);
-                if matches!(*pipe.source.get(), SourceHandle::Subprocess(p) if p.as_ptr() == parent_ptr) {
+                if matches!(*pipe.source.get(), SourceHandle::Subprocess(p) if p.as_ptr() == parent_ptr)
+                {
                     pipe.source.with_mut(|s| s.clear());
                 }
 

@@ -404,7 +404,9 @@ fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult
 
     let mut outbuf: Vec<u8> = Vec::new();
 
-    if bun_shell_parser::needs_escape_bunstr(*bunstr) {
+    if bun_shell_parser::needs_escape_bunstr(*bunstr)
+        || bun_shell_parser::parse::is_reserved_word_bunstr(*bunstr)
+    {
         let result = bun_shell_parser::escape_bun_str::<true>(*bunstr, &mut outbuf)?;
         if !result {
             return Err(global_this.throw(format_args!(

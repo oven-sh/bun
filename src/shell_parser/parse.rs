@@ -1007,6 +1007,33 @@ impl<'bump> Parser<'bump> {
             _ => {}
         }
 
+        if let Token::Text(range) = self.peek() {
+            if self.delimits(self.peek_n(1))
+                && !self.is_interpolated_position(range.start)
+                && is_unsupported_reserved_word(self.text(range))
+            {
+                self.add_error(format_args!(
+                    "\"{}\" is a reserved shell keyword that Bun Shell does not support yet.",
+                    bstr::BStr::new(self.text(range))
+                ))?;
+                return Err(ParseError::Unsupported.into());
+            }
+        }
+
+        if matches!(self.peek().tag(), TokenTag::BraceBegin | TokenTag::BraceEnd)
+            && self.delimits(self.peek_n(1))
+        {
+            let word: &str = if self.peek().tag() == TokenTag::BraceBegin {
+                "{"
+            } else {
+                "}"
+            };
+            self.add_error(format_args!(
+                "\"{word}\" is a reserved shell keyword that Bun Shell does not support yet."
+            ))?;
+            return Err(ParseError::Unsupported.into());
+        }
+
         self.parse_simple_cmd()?
             .to_expr(self.alloc)
             .map_err(Into::into)
@@ -1925,6 +1952,24 @@ fn join_error_msgs<'bump>(
 struct ParsedRedirect<'bump> {
     flags: ast::RedirectFlags,
     redirect: Option<ast::Redirect<'bump>>,
+}
+
+/// Reserved words `parse_compound_cmd` rejects instead of dispatching as commands.
+const UNSUPPORTED_RESERVED_WORDS: &[&[u8]] = &[
+    b"!",
+    b"while",
+    b"until",
+    b"for",
+    b"do",
+    b"done",
+    b"case",
+    b"esac",
+    b"select",
+    b"function",
+];
+
+pub fn is_unsupported_reserved_word(txt: &[u8]) -> bool {
+    UNSUPPORTED_RESERVED_WORDS.contains(&txt)
 }
 
 /// We make it so that `if`/`else`/`elif`/`then`/`fi` need to be single,
@@ -4121,6 +4166,17 @@ pub fn is_if_clause_keyword_bunstr(bunstr: BunString) -> bool {
     [If, Else, Elif, Then, Fi]
         .iter()
         .any(|&kw| bunstr.eql_comptime(<&'static str>::from(kw)))
+}
+
+pub fn is_reserved_word_text(txt: &[u8]) -> bool {
+    IfClauseTok::from_text(txt).is_some() || is_unsupported_reserved_word(txt)
+}
+
+pub fn is_reserved_word_bunstr(bunstr: BunString) -> bool {
+    is_if_clause_keyword_bunstr(bunstr)
+        || UNSUPPORTED_RESERVED_WORDS
+            .iter()
+            .any(|&w| bunstr.eql_comptime(core::str::from_utf8(w).expect("ascii table")))
 }
 
 // ───────────────────────────── SmolList ─────────────────────────────

@@ -64,6 +64,18 @@ describe("single-chunk stream consumers return a fresh buffer", () => {
       expect(out).toEqual(new Uint8Array(new Float32Array([1.5]).buffer));
     });
 
+    test("subarray over a larger backing store copies only the view", async () => {
+      const backing = new Uint8Array(300).fill(0xee);
+      const view = backing.subarray(100, 200).fill(0x11);
+      const out = await consume(one(view));
+      expect(out.byteLength).toBe(100);
+      expect(out.buffer.byteLength).toBe(100);
+      expect(out.buffer).not.toBe(backing.buffer);
+      expect(out.every(x => x === 0x11)).toBe(true);
+      out[0] = 0;
+      expect(backing[100]).toBe(0x11);
+    });
+
     test("detached chunk yields a fresh empty result", async () => {
       const src = detached();
       const out = await consume(one(src));
@@ -122,6 +134,18 @@ describe("single-chunk stream consumers return a fresh buffer", () => {
       expect(out).toBeInstanceOf(ArrayBuffer);
       expect(out).not.toBe(src.buffer);
       expect(new Uint8Array(out)).toEqual(new Uint8Array(new Float32Array([1.5]).buffer));
+    });
+
+    test("subarray over a larger backing store copies only the view", async () => {
+      const backing = new Uint8Array(300).fill(0xee);
+      const view = backing.subarray(100, 200).fill(0x11);
+      const out = await consume(one(view));
+      expect(out).toBeInstanceOf(ArrayBuffer);
+      expect(out.byteLength).toBe(100);
+      expect(out).not.toBe(backing.buffer);
+      expect(new Uint8Array(out).every(x => x === 0x11)).toBe(true);
+      new Uint8Array(out)[0] = 0;
+      expect(backing[100]).toBe(0x11);
     });
 
     test("detached chunk yields a fresh empty result", async () => {

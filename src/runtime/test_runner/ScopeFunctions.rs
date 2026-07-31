@@ -199,11 +199,11 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
             let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
             return Err(global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&mut formatter))));
         }
-        // Compute the widest array row once. Short array rows are padded to this width
-        // (below) so an omitted optional trailing tuple element binds as `undefined`
-        // instead of receiving the `done` callback in that slot. Jest does not pad and
-        // so exhibits oven-sh/bun#24347; this intentionally matches Vitest instead so
-        // TypeScript's inferred tuple type for the callback parameter holds at runtime.
+        // Compute the widest array row once. `done` arity is derived from this width
+        // (not each row's own length) so an omitted optional trailing tuple element
+        // binds as `undefined` instead of receiving `done`. Jest derives `done` per
+        // row and so exhibits oven-sh/bun#24347; this intentionally diverges so the
+        // callback parameter's inferred `T | undefined` type holds at runtime.
         let max_row_width: usize = {
             let mut width: usize = 0;
             let mut width_iter = this.each.array_iterator(global)?;
@@ -240,11 +240,6 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                         rooted.append(array_item);
                         args_list.push(array_item);
                     }
-                    // Pad a short row to the table's widest row so omitted trailing
-                    // tuple elements land as `undefined` and `done` stays past them.
-                    while args_list.len() < max_row_width {
-                        args_list.push(JSValue::UNDEFINED);
-                    }
                 } else {
                     args_list.push(item);
                 }
@@ -254,6 +249,20 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 } else {
                     None
                 };
+
+                // `done` arity is computed from the table's widest row so it lands in
+                // the same slot for every array row (#24347). When a `done` follows,
+                // pad the short row's bound args so `done` ends up past the omitted
+                // optional slots; otherwise bind the row as-is so `arguments.length`
+                // and rest parameters still reflect the row's own length.
+                let bound_width =
+                    if item.is_array() { args_list.len().max(max_row_width) } else { args_list.len() };
+                let residual_length = callback_length.saturating_sub(bound_width);
+                if residual_length > 0 {
+                    while args_list.len() < bound_width {
+                        args_list.push(JSValue::UNDEFINED);
+                    }
+                }
 
                 let bound = if let Some(cb) = args.callback {
                     Some(JSValueTestExt::bind(cb, global, item, &BunString::static_str("cb"), 0.0, args_list.as_slice())?)
@@ -269,7 +278,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     bound,
                     formatted_label.as_deref(),
                     &args.options,
-                    callback_length.saturating_sub(args_list.len()),
+                    residual_length,
                     line_no,
                 )
             })?;

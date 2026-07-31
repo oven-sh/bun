@@ -1148,6 +1148,132 @@ it("--recursive preserves each member's pin style independently", async () => {
 });
 
 // https://github.com/oven-sh/bun/issues/23507
+it("--filter with a scoped glob (@scope/*) targets only those members", async () => {
+  await setupWorkspaces(
+    { dependencies: { baz: "~0.0.3" } },
+    {
+      "scope-a": { name: "@scope/a", dependencies: { baz: "~0.0.3" } },
+      "scope-b": { name: "@scope/b", dependencies: { baz: "~0.0.3" } },
+      "other": { dependencies: { baz: "~0.0.3" } },
+    },
+  );
+  await runUpdate(["--filter", "@scope/*"]);
+  expect({
+    root: (await file(join(package_dir, "package.json")).json()).dependencies.baz,
+    a: (await pkgJson("scope-a")).dependencies.baz,
+    b: (await pkgJson("scope-b")).dependencies.baz,
+    other: (await pkgJson("other")).dependencies.baz,
+  }).toEqual({ root: "~0.0.3", a: "~0.0.5", b: "~0.0.5", other: "~0.0.3" });
+});
+
+// https://github.com/oven-sh/bun/issues/23507
+it("--recursive --latest does not bypass a root overrides entry for a member's dep", async () => {
+  await setupWorkspaces(
+    { overrides: { baz: "0.0.3" } },
+    { "pkg-a": { dependencies: { baz: "^0.0.3" } } },
+  );
+  await runUpdate(["--recursive", "--latest"]);
+  // The override pins baz to 0.0.3; --latest must not resolve past it.
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
+    version: "0.0.3",
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/23507
+it("--recursive --no-save updates node_modules but not any package.json", async () => {
+  await setupWorkspaces({}, { "pkg-a": { dependencies: { baz: "~0.0.3" } } });
+  const aBefore = await file(join(package_dir, "packages", "pkg-a", "package.json")).text();
+  await runUpdate(["--recursive", "--no-save"]);
+  expect(await file(join(package_dir, "packages", "pkg-a", "package.json")).text()).toBe(aBefore);
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
+    version: "0.0.5",
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/23507
+it("--recursive is idempotent: a second run changes nothing", async () => {
+  await setupWorkspaces(
+    { dependencies: { baz: "~0.0.3" } },
+    { "pkg-a": { dependencies: { baz: "~0.0.3" } } },
+  );
+  await runUpdate(["--recursive"]);
+  const rootAfter = await file(join(package_dir, "package.json")).json();
+  const aAfter = await pkgJson("pkg-a");
+  expect(aAfter.dependencies.baz).toBe("~0.0.5");
+  await runUpdate(["--recursive"]);
+  expect(await file(join(package_dir, "package.json")).json()).toEqual(rootAfter);
+  expect(await pkgJson("pkg-a")).toEqual(aAfter);
+});
+
+it("--filter matching nothing writes no package.json", async () => {
+  await setupWorkspaces(
+    { dependencies: { baz: "~0.0.3" } },
+    { "pkg-a": { dependencies: { baz: "~0.0.3" } } },
+  );
+  const rootBefore = await file(join(package_dir, "package.json")).text();
+  const aBefore = await file(join(package_dir, "packages", "pkg-a", "package.json")).text();
+  await runUpdate(["--filter", "does-not-exist"]);
+  expect(await file(join(package_dir, "package.json")).text()).toBe(rootBefore);
+  expect(await file(join(package_dir, "packages", "pkg-a", "package.json")).text()).toBe(aBefore);
+});
+
+it("--recursive tolerates a member with no dependency groups", async () => {
+  await setupWorkspaces(
+    { dependencies: { baz: "~0.0.3" } },
+    { empty: { version: "1.0.0" }, "pkg-a": { dependencies: { baz: "~0.0.3" } } },
+  );
+  await runUpdate(["--recursive"]);
+  expect((await pkgJson("pkg-a")).dependencies.baz).toBe("~0.0.5");
+  expect(await pkgJson("empty")).toEqual({ name: "empty", version: "1.0.0" });
+});
+
+// https://github.com/oven-sh/bun/issues/23507
+it("--recursive updates only one group when a member lists the same dep in two groups", async () => {
+  await setupWorkspaces(
+    {},
+    { "pkg-a": { dependencies: { baz: "~0.0.3" }, devDependencies: { baz: "~0.0.3" } } },
+  );
+  await runUpdate(["--recursive"]);
+  const a = await pkgJson("pkg-a");
+  // Matches the existing single-workspace behavior: only one group's entry is rewritten.
+  expect([a.dependencies.baz, a.devDependencies.baz].sort()).toEqual(["~0.0.3", "~0.0.5"]);
+});
+
+// https://github.com/oven-sh/bun/issues/23507
+it("--recursive with multiple workspace globs fans out to every matched directory", async () => {
+  setHandler(dummyRegistry([], { "0.0.3": {}, "0.0.5": {}, latest: "0.0.5" }));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "root", private: true, workspaces: ["apps/*", "packages/*"] }),
+  );
+  for (const [dir, name] of [
+    ["apps", "app-a"],
+    ["packages", "pkg-a"],
+  ] as const) {
+    await mkdir(join(package_dir, dir, name), { recursive: true });
+    await writeFile(
+      join(package_dir, dir, name, "package.json"),
+      JSON.stringify({ name, dependencies: { baz: "~0.0.3" } }),
+    );
+  }
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, code] = await Promise.all([stderr.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect(code).toBe(0);
+  }
+  await runUpdate(["--recursive"]);
+  expect((await file(join(package_dir, "apps", "app-a", "package.json")).json()).dependencies.baz).toBe("~0.0.5");
+  expect((await file(join(package_dir, "packages", "pkg-a", "package.json")).json()).dependencies.baz).toBe("~0.0.5");
+});
+
+// https://github.com/oven-sh/bun/issues/23507
 it("bun outdated -r is empty after bun update -r --latest", async () => {
   await setupWorkspaces(
     { dependencies: { baz: "~0.0.3" } },

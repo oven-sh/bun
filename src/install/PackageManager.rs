@@ -407,7 +407,7 @@ pub struct PackageManager {
     pub updating_catalogs: Vec<CatalogUpdateInfo>,
 
     // `bun update -r`/`--filter`: workspaces whose deps update. None = cwd only.
-    pub(crate) update_target_workspaces: Option<Box<[(PackageNameHash, Box<[u8]>)]>>,
+    pub(crate) update_target_workspaces: Option<Box<[UpdateTargetWorkspace]>>,
 
     pub(crate) patched_dependencies_to_remove:
         ArrayHashMap<PackageNameAndVersionHash, () /* , ArrayIdentityContext::U64, false */>,
@@ -657,6 +657,12 @@ pub struct CatalogUpdateInfo {
     pub dep_name: Box<[u8]>,
     pub original_version_literal: Box<[u8]>,
     pub is_alias: bool,
+}
+
+pub struct UpdateTargetWorkspace {
+    pub is_root: bool,
+    pub name_hash: PackageNameHash,
+    pub name: Box<[u8]>,
 }
 
 #[derive(Default)]

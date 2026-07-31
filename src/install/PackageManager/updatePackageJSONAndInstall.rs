@@ -190,15 +190,15 @@ fn update_package_json_and_install_with_manager_with_updates(
         );
         let name_hashes = manager.lockfile.packages.items_name_hash();
         let names = manager.lockfile.packages.items_name();
+        let resolutions = manager.lockfile.packages.items_resolution();
         let sbuf = manager.lockfile.buffers.string_bytes.as_slice();
         manager.update_target_workspaces = Some(
             selected
                 .iter()
-                .map(|&id| {
-                    (
-                        name_hashes[id as usize],
-                        Box::from(names[id as usize].slice(sbuf)),
-                    )
+                .map(|&id| super::UpdateTargetWorkspace {
+                    is_root: resolutions[id as usize].tag == crate::resolution::Tag::Root,
+                    name_hash: name_hashes[id as usize],
+                    name: Box::from(names[id as usize].slice(sbuf)),
                 })
                 .collect(),
         );
@@ -599,12 +599,10 @@ fn update_package_json_and_install_with_manager_with_updates(
             );
         }
 
-        let root_is_targeted = manager.update_target_workspaces.as_deref().is_none_or(|t| {
-            let h = manager.lockfile.packages.items_name_hash()[0];
-            let n = manager.lockfile.packages.items_name()[0]
-                .slice(manager.lockfile.buffers.string_bytes.as_slice());
-            t.iter().any(|(th, tn)| *th == h && &**tn == n)
-        });
+        let root_is_targeted = manager
+            .update_target_workspaces
+            .as_deref()
+            .is_none_or(|t| t.iter().any(|w| w.is_root));
 
         if subcommand == Subcommand::Update
             && manager.update_requests.is_empty()
@@ -951,7 +949,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
 fn write_resolved_versions_to_targets(
     manager: &mut PackageManager,
-    targets: &[(crate::PackageNameHash, Box<[u8]>)],
+    targets: &[super::UpdateTargetWorkspace],
 ) -> Result<(), Error> {
     let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
     let update_to_latest = manager.options.do_.contains(Do::UPDATE_TO_LATEST);
@@ -965,6 +963,7 @@ fn write_resolved_versions_to_targets(
     let pkg_names = packages.items_name();
     for pkg_id in 0..packages.len() {
         let res = pkg_resolutions[pkg_id];
+        let is_root = res.tag == crate::resolution::Tag::Root;
         let (ws_name_hash, rel): (Option<crate::PackageNameHash>, &[u8]) = match res.tag {
             crate::resolution::Tag::Root => (None, b""),
             crate::resolution::Tag::Workspace => (
@@ -976,7 +975,10 @@ fn write_resolved_versions_to_targets(
         };
         let hash = pkg_name_hashes[pkg_id];
         let name = pkg_names[pkg_id].slice(manager.lockfile.buffers.string_bytes.as_slice());
-        if !targets.iter().any(|(h, n)| *h == hash && &**n == name) {
+        if !targets
+            .iter()
+            .any(|t| t.is_root == is_root && t.name_hash == hash && &*t.name == name)
+        {
             continue;
         }
         let mut path_buf = PathBuffer::uninit();

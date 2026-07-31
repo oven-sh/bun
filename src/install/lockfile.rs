@@ -863,20 +863,24 @@ impl Lockfile {
         self.packages.items_dependencies()[root_id as usize].contains(id)
     }
 
-    /// Is `id` a direct dependency of one of the `targets` workspaces (by name-hash then name)?
+    /// Is `id` a direct dependency of one of the `targets` workspaces?
     pub fn is_dependency_of_workspace_in(
         &self,
-        targets: &[(PackageNameHash, Box<[u8]>)],
+        targets: &[crate::package_manager::UpdateTargetWorkspace],
         id: DependencyID,
     ) -> bool {
         let pkg_id = self.get_workspace_pkg_if_workspace_dep(id);
         if pkg_id == invalid_package_id {
             return false;
         }
+        let is_root =
+            self.packages.items_resolution()[pkg_id as usize].tag == crate::resolution::Tag::Root;
         let hash = self.packages.items_name_hash()[pkg_id as usize];
         let name =
             self.packages.items_name()[pkg_id as usize].slice(self.buffers.string_bytes.as_slice());
-        targets.iter().any(|(h, n)| *h == hash && &**n == name)
+        targets
+            .iter()
+            .any(|t| t.is_root == is_root && t.name_hash == hash && &*t.name == name)
     }
 
     /// Is this a direct dependency of any workspace (including workspace root)?

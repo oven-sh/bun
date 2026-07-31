@@ -1167,14 +1167,16 @@ it("--filter with a scoped glob (@scope/*) targets only those members", async ()
 });
 
 // https://github.com/oven-sh/bun/issues/23507
-it("--recursive --latest does not bypass a root overrides entry for a member's dep", async () => {
-  await setupWorkspaces({ overrides: { baz: "0.0.3" } }, { "pkg-a": { dependencies: { baz: "^0.0.3" } } });
-  await runUpdate(["--recursive", "--latest"]);
-  // The override pins baz to 0.0.3; --latest must not resolve past it.
-  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
-    version: "0.0.3",
+for (const depLiteral of ["^0.0.3", "0.0.3"]) {
+  it(`--recursive --latest does not bypass a root overrides entry (member dep literal ${depLiteral})`, async () => {
+    await setupWorkspaces({ overrides: { baz: "0.0.3" } }, { "pkg-a": { dependencies: { baz: depLiteral } } });
+    await runUpdate(["--recursive", "--latest"]);
+    // The override pins baz to 0.0.3; --latest must not resolve past it.
+    expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
+      version: "0.0.3",
+    });
   });
-});
+}
 
 // https://github.com/oven-sh/bun/issues/23507
 it("--recursive --no-save updates node_modules but not any package.json", async () => {

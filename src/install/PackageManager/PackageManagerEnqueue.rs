@@ -654,6 +654,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         _ => dependency.name_hash,
     };
 
+    let mut version_was_replaced = true;
     let version: dependency::Version = 'version: {
         if dependency.version.tag == dependency::version::Tag::Npm {
             if let Some(aliased) = this.known_npm_aliases.get(&name_hash) {
@@ -746,6 +747,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 
         // explicit copy here due to `dependency.version` becoming undefined
         // when `getOrPutResolvedPackageWithFindResult` is called and resizes the list.
+        version_was_replaced = false;
         break 'version dependency.version.clone();
     };
     let mut loaded_manifest: Option<Npm::PackageManifest> = None;
@@ -761,6 +763,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     name,
                     dependency,
                     &version,
+                    version_was_replaced,
                     dependency.behavior,
                     id,
                     resolution,
@@ -1360,6 +1363,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 name,
                 dependency,
                 &version,
+                version_was_replaced,
                 dependency.behavior,
                 id,
                 resolution,
@@ -2173,6 +2177,7 @@ fn get_or_put_resolved_package(
     name: SemverString,
     dependency: &Dependency,
     version: &dependency::Version,
+    version_was_replaced: bool,
     behavior: Behavior,
     dependency_id: DependencyID,
     resolution: PackageID,
@@ -2383,14 +2388,11 @@ fn get_or_put_resolved_package(
             let manifest: &Npm::PackageManifest = manifest;
 
             // `bun update -r/--filter --latest`: resolve targeted workspaces' npm deps by dist-tag `latest`.
-            let latest_for_target = matches!(
-                dependency.version.tag,
-                dependency::version::Tag::Npm | dependency::version::Tag::DistTag
-            ) && version.tag == dependency.version.tag
-                && {
-                    let buf = this.lockfile.buffers.string_bytes.as_slice();
-                    version.literal.eql(dependency.version.literal, buf, buf)
-                }
+            let latest_for_target = !version_was_replaced
+                && matches!(
+                    version.tag,
+                    dependency::version::Tag::Npm | dependency::version::Tag::DistTag
+                )
                 && this.to_update
                 && this.update_requests.is_empty()
                 && this

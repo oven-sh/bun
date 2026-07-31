@@ -6191,14 +6191,16 @@ pub mod bv2_impl {
                                     } else {
                                         #[cfg(windows)]
                                         let mut buf = bun_paths::path_buffer_pool::get();
+                                        let top_level_dir =
+                                            Fs::FileSystem::get().top_level_dir();
                                         let specifier_to_use: &[u8] = if loader == Loader::Html
-                                            && import_record.path.text.starts_with(
-                                                Fs::FileSystem::instance().top_level_dir(),
-                                            ) {
-                                            let specifier_to_use = &import_record.path.text
-                                                [Fs::FileSystem::instance()
-                                                    .top_level_dir()
-                                                    .len()..];
+                                            && import_record
+                                                .path
+                                                .text
+                                                .starts_with(top_level_dir)
+                                        {
+                                            let specifier_to_use =
+                                                &import_record.path.text[top_level_dir.len()..];
                                             #[cfg(windows)]
                                             {
                                                 &*bun_paths::resolve_path::path_to_posix_buf::<u8>(

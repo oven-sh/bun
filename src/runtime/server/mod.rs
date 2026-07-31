@@ -288,6 +288,11 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub(crate) all_closed_promise: jsc::JSPromiseStrong,
 
     pub poll_ref: KeepAlive,
+    /// Ref'd while `pending_requests > 0`. Separate from `poll_ref` so
+    /// `server.unref()` only releases the *listener's* hold on the event loop;
+    /// in-flight requests keep the process alive on their own (Node semantics:
+    /// an accepted connection is its own handle).
+    in_flight_keep_alive: KeepAlive,
 
     pub(crate) flags: ServerFlags,
 
@@ -486,6 +491,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub(crate) fn on_pending_request(&mut self) {
+        if self.pending_requests == 0 {
+            // SAFETY: `self.vm` is the live per-thread VM singleton backref.
+            self.in_flight_keep_alive
+                .ref_(unsafe { jsc::VirtualMachine::event_loop_ctx(self.vm.as_ptr()) });
+        }
         self.pending_requests += 1;
     }
 
@@ -1486,6 +1496,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     #[inline]
     pub(crate) fn on_request_complete(&mut self) {
         self.pending_requests -= 1;
+        if self.pending_requests == 0 {
+            // SAFETY: `self.vm` is the live per-thread VM singleton backref.
+            self.in_flight_keep_alive
+                .unref(unsafe { jsc::VirtualMachine::event_loop_ctx(self.vm.as_ptr()) });
+        }
         self.deinit_if_we_can();
     }
 
@@ -2031,6 +2046,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             h3_request_pool: core::ptr::null_mut(),
             all_closed_promise: jsc::JSPromiseStrong::default(),
             poll_ref: KeepAlive::default(),
+            in_flight_keep_alive: KeepAlive::default(),
             flags: ServerFlags::default(),
             plugins: None,
             user_routes: Vec::new(),

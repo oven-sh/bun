@@ -497,6 +497,36 @@ test("unref keeps process alive for ongoing connections", async () => {
   expect(await bunRun(path.join(import.meta.dir, "unref-fixture-2.ts"))).toSpawn();
 });
 
+test("unref: an in-flight request keeps the process alive on its own", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "unref-fixture-3.ts")],
+    env: bunEnv,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  // Read the port line while the subprocess keeps running.
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (!buf.includes("\n")) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+  }
+  reader.releaseLock();
+  const port = Number(buf.trim());
+  expect(port).toBeGreaterThan(0);
+
+  const res = await fetch(`http://127.0.0.1:${port}/`);
+  expect(await res.text()).toBe("ok");
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 test("Bun does not crash when given invalid config", async () => {
   await using server1 = Bun.serve({
     fetch(request, server) {

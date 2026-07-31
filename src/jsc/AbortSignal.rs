@@ -126,8 +126,7 @@ impl AbortSignal {
         WebCore__AbortSignal__abortReason(self)
     }
 
-    /// Same value the JS `signal.reason` getter returns; materializes the
-    /// default `DOMException` that [`abort_reason`]'s raw-weak read misses.
+    /// Same as JS `signal.reason`; materializes the default `DOMException` that [`abort_reason`] misses.
     pub fn js_reason(&self, global: &JSGlobalObject) -> JSValue {
         WebCore__AbortSignal__jsReason(self, global)
     }

@@ -58,9 +58,7 @@ Ref<AbortSignal> AbortSignal::abort(JSDOMGlobalObject& globalObject, ScriptExecu
 {
     UNUSED_PARAM(globalObject);
     ASSERT(reason);
-    // Defer the default DOMException to jsReason(): m_reason is a JSC::Weak
-    // with no owner until toJSNewlyCreated() creates the wrapper, so an eager
-    // allocation here could be collected by a GC during that allocation.
+    // Defer the default to jsReason(); m_reason's JSC::Weak has no owner until toJSNewlyCreated().
     auto signal = adoptRef(*new AbortSignal(&context, Aborted::Yes, reason));
     if (reason.isUndefined())
         signal->m_commonReason = CommonAbortReason::UserAbort;

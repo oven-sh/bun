@@ -15,6 +15,24 @@
 import { spawnSync } from "node:child_process";
 import { allRustTargets } from "./build/rust.ts";
 
+// Ban the fn-long `let this = unsafe { &mut *this };` reborrow. It asserts
+// exclusive access for the whole function on objects that are re-entered
+// through their own callbacks; the fix is `&self` + `Cell`/`JsCell` state or
+// scoped raw place access, never this line.
+const banned = /let\s+this\b[^=]*=\s*unsafe\s*\{\s*&mut\s+\*this\s*\}/;
+const offenders: string[] = [];
+for await (const path of new Bun.Glob("src/**/*.rs").scan({ cwd: import.meta.dir + "/.." })) {
+  const text = await Bun.file(`${import.meta.dir}/../${path}`).text();
+  text.split("\n").forEach((line, i) => {
+    if (banned.test(line)) offenders.push(`${path}:${i + 1}: ${line.trim()}`);
+  });
+}
+if (offenders.length > 0) {
+  console.error("\x1b[31mfn-long `&mut *this` reborrow is banned:\x1b[0m");
+  for (const o of offenders) console.error(`  ${o}`);
+  process.exit(1);
+}
+
 let failed = 0;
 let skipped = 0;
 

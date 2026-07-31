@@ -658,16 +658,13 @@ impl us_socket_stream_buffer_t {
     /// Explicit teardown — this struct is `#[repr(C)]` and freed via the
     /// exported `us_socket_free_stream_buffer`, so no `Drop` impl.
     ///
-    /// SAFETY: `this` must point to a live `us_socket_stream_buffer_t` whose
-    /// `list_ptr`/`list_cap` were produced by `update` (decomposed `Vec<u8>` on
-    /// the global mimalloc allocator). Not called more than once.
-    pub(crate) unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract — `this` is non-null and exclusively borrowed
-        let this = unsafe { &mut *this };
-        if !this.list_ptr.is_null() {
+    /// SAFETY: `list_ptr`/`list_cap` were produced by `update` (decomposed
+    /// `Vec<u8>` on the global mimalloc allocator). Not called more than once.
+    pub(crate) unsafe fn destroy(&mut self) {
+        if !self.list_ptr.is_null() {
             unsafe {
                 // SAFETY: list_ptr/list_cap came from a decomposed Vec<u8> (global mimalloc).
-                drop(Vec::from_raw_parts(this.list_ptr, 0, this.list_cap));
+                drop(Vec::from_raw_parts(self.list_ptr, 0, self.list_cap));
             }
         }
     }
@@ -676,6 +673,6 @@ impl us_socket_stream_buffer_t {
 #[unsafe(no_mangle)]
 extern "C" fn us_socket_free_stream_buffer(buffer: *mut us_socket_stream_buffer_t) {
     // SAFETY: caller (C) passes a live us_socket_stream_buffer_t*
-    unsafe { us_socket_stream_buffer_t::destroy(buffer) };
+    unsafe { (*buffer).destroy() };
 }
 // us_socket_buffered_js_write moved to src/runtime/socket/uws_jsc.rs

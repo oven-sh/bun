@@ -1617,19 +1617,25 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         debug_assert_eq!(id, 0);
         // SAFETY: DevServer always registers `*mut Self` with `id == 0`
         // (`set_routes` → `app.ws(prefix, this, 0, ..)`); live for the upgrade
-        // callback's duration.
-        let this = unsafe { &mut *this };
+        // callback's duration. `res.upgrade(..)` synchronously runs `on_open`
+        // → `HmrSocket::dev()`, which materializes a second `&mut DevServer`
+        // from the socket's backref, so no `&mut DevServer` may span it — the
+        // pre-upgrade borrows below are scoped to their statements.
+        //
         // SAFETY: uWS guarantees `res` is non-null and live for the upgrade
         // callback; `Response<SSL>` is an opaque handle.
         let res = unsafe { &mut *res };
-        if !is_allowed_dev_host(this, req) {
+        // SAFETY: `this` is the live DevServer registered for the upgrade callback.
+        if !is_allowed_dev_host(unsafe { &*this }, req) {
             return host_forbidden(res.as_any_response());
         }
         if !is_allowed_dev_origin(req) {
             return origin_forbidden(res.as_any_response());
         }
-        let dw = bun_core::heap::into_raw(HmrSocket::new(this));
-        let _ = this.active_websocket_connections.insert(dw, ());
+        // SAFETY: as above; the borrow is statement-scoped, ending before `upgrade`.
+        let dw = bun_core::heap::into_raw(HmrSocket::new(unsafe { &mut *this }));
+        // SAFETY: `this` is live (see above).
+        let _ = unsafe { (*this).active_websocket_connections.insert(dw, ()) };
         let _ = res.upgrade(
             dw,
             req.header(b"sec-websocket-key").unwrap_or(b""),

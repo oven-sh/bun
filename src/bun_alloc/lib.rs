@@ -2128,15 +2128,17 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
         // `&mut *this` formed below does not alias a live guard borrow.
         let _guard = unsafe { (*this).mutex.lock() };
-        // SAFETY: inner mutex held ⇒ this thread has exclusive access.
-        let this = unsafe { &mut *this };
-        if this.used as usize > Self::MAX_INDEX {
-            this.append_overflow_uninit()
-        } else {
-            let index = this.used as usize;
-            this.used += 1;
-            // SAFETY: `index <= MAX_INDEX < COUNT` checked above.
-            Ok(unsafe { this.backing_buf.as_mut_ptr().add(index) })
+        // SAFETY: the inner mutex is held, so this call has exclusive access
+        // to `*this` (the receiver is raw precisely so nothing exclusive is
+        // formed before the lock); `index <= MAX_INDEX < COUNT` is checked.
+        unsafe {
+            if (*this).used as usize > Self::MAX_INDEX {
+                (*this).append_overflow_uninit()
+            } else {
+                let index = (*this).used as usize;
+                (*this).used += 1;
+                Ok((*this).backing_buf.as_mut_ptr().add(index))
+            }
         }
     }
 }

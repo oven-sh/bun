@@ -2282,7 +2282,7 @@ mod spawn_process_body {
             pub(crate) err: bun_sys::E,
             pub(crate) context: *mut SyncWindowsProcess,
             pub(crate) on_done_callback:
-                fn(*mut SyncWindowsProcess, OutFd, Vec<Box<[u8]>>, bun_sys::E),
+                fn(&mut SyncWindowsProcess, OutFd, Vec<Box<[u8]>>, bun_sys::E),
             pub(crate) tag: OutFd,
         }
 
@@ -2407,7 +2407,10 @@ mod spawn_process_body {
                 // bun.default_allocator.destroy(this)
                 // SAFETY: this was heap-allocated in start(); reclaim and drop
                 drop(unsafe { bun_core::heap::take(this) });
-                on_done_callback(context, tag, chunks, err);
+                // SAFETY: `context` is the live `SyncWindowsProcess` that owns
+                // this reader (set in `spawn_windows_with_pipes`); the callback
+                // is non-reentrant field writes only.
+                on_done_callback(unsafe { &mut *context }, tag, chunks, err);
             }
 
             pub(crate) fn start(self: Box<Self>) -> Maybe<()> {
@@ -2504,21 +2507,19 @@ mod spawn_process_body {
             }
 
             pub(crate) fn on_reader_done(
-                this: *mut SyncWindowsProcess,
+                &mut self,
                 tag: OutFd,
                 chunks: Vec<Box<[u8]>>,
                 err: bun_sys::E,
             ) {
-                // SAFETY: this is valid (back-ref from SyncWindowsPipeReader)
-                let this = unsafe { &mut *this };
                 match tag {
-                    OutFd::Stderr => this.stderr = chunks,
-                    OutFd::Stdout => this.stdout = chunks,
+                    OutFd::Stderr => self.stderr = chunks,
+                    OutFd::Stdout => self.stdout = chunks,
                 }
                 if err != bun_sys::E::SUCCESS {
-                    this.err = err;
+                    self.err = err;
                 }
-                this.waiting_count -= 1;
+                self.waiting_count -= 1;
             }
         }
 

@@ -90,10 +90,12 @@ macro_rules! marked_argument_buffer_wrap {
             ) {
                 // SAFETY: `this` is the `&mut ctx` passed to `MarkedArgumentBuffer::run` below;
                 // `marked_argument_buffer` is the live stack-allocated buffer C++ hands us.
-                let this = unsafe { &mut *this };
-                this.result = $function(this.global_this, this.callframe, unsafe {
-                    &mut *marked_argument_buffer
-                });
+                let result = $function(
+                    unsafe { (*this).global_this },
+                    unsafe { (*this).callframe },
+                    unsafe { &mut *marked_argument_buffer },
+                );
+                unsafe { (*this).result = result };
             }
 
             let mut ctx = Context {

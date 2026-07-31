@@ -359,7 +359,7 @@ unsafe extern "C" {
         source_id: i32,
         ctx: *mut c_void,
         ignore_sourcemap: bool,
-        cb: extern "C" fn(*mut Generator, *const BasicBlockRange, usize, usize, bool),
+        cb: extern "C" fn(&mut Generator, *const BasicBlockRange, usize, usize, bool),
     ) -> bool;
 }
 
@@ -369,16 +369,16 @@ struct Generator<'a> {
 }
 
 impl<'a> Generator<'a> {
+    // C++ (CodeCoverage.cpp) invokes this once, synchronously, with the stack `Generator`
+    // passed as `ctx` to CodeCoverage__withBlocksAndFunctions; `&mut Generator` is
+    // ABI-identical to the non-null `Generator*` it hands back.
     extern "C" fn do_(
-        this: *mut Generator,
+        this: &mut Generator,
         blocks_ptr: *const BasicBlockRange,
         blocks_len: usize,
         function_start_offset: usize,
         ignore_sourcemap: bool,
     ) {
-        // SAFETY: `this` was passed as &mut Generator to CodeCoverage__withBlocksAndFunctions
-        // and is valid for the duration of this synchronous callback.
-        let this = unsafe { &mut *this };
         // The C++ side (CodeCoverage.cpp) invokes this callback with `(nullptr, 0, 0)` when
         // basicBlocks is empty. `core::slice::from_raw_parts` requires a non-null, aligned
         // pointer even for zero-length slices, so we must bail before constructing the slice.

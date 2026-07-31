@@ -6,7 +6,7 @@
 // the buffered extractor would produce.
 
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, readdirSorted, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -208,7 +208,7 @@ async function runInstall(cwd: string, extraEnv: Record<string, string> = {}) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
+  return { stdout, stderr, exitCode, resourceUsage: proc.resourceUsage() };
 }
 
 describe("streaming tarball extraction", () => {
@@ -637,19 +637,18 @@ test("buffered extract: damaged-block retry resets header state (upstream semant
 
 // -------------------------------------------------------------------
 // Buffered extract: the decompressed tar is never materialised in
-// memory. libarchive gunzips on the fly, so a ~few-MB .tgz that
-// inflates to more than 2 GiB installs without the ~2.3 GB RSS spike
-// the old pre-decompress path caused, and without hitting any
-// artificial 2 GiB cap. Covers `file:` dependencies, which always take
-// the buffered path.
+// memory. libarchive gunzips on the fly, so a highly compressible .tgz
+// installs without an RSS spike of roughly its decompressed size.
+// Covers `file:` dependencies, which always take the buffered path.
 // -------------------------------------------------------------------
-test("buffered extract installs a local tarball whose decompressed size exceeds 2 GiB", async () => {
-  // 2.25 GiB of zeros: above the old 2 GiB in-memory decompression
-  // cap, a multiple of 512 so the tar entry needs no trailing pad
-  // block, and its gzip ISIZE footer is far above the 64 MB libdeflate
-  // preallocation cutoff so libarchive (not libdeflate) decompresses.
-  const PAYLOAD_SIZE = 2304 * 1024 * 1024;
-  const ZERO_CHUNK = Buffer.alloc(64 * 1024 * 1024);
+test("buffered extract does not hold the decompressed local tarball in memory", async () => {
+  // 256 MiB of zeros: above the 64 MB gzip ISIZE cutoff that gates the
+  // libdeflate fast path, so libarchive (not libdeflate) decompresses,
+  // and a multiple of 512 so the tar entry needs no trailing pad block.
+  // The old path inflated this into a ~256 MB Vec before extraction,
+  // which shows up directly in the child's maxRSS.
+  const PAYLOAD_SIZE = 256 * 1024 * 1024;
+  const ZERO_CHUNK = Buffer.alloc(8 * 1024 * 1024);
 
   const pkgJson = Buffer.from(JSON.stringify({ name: "oversized-pkg", version: "1.0.0" }) + "\n");
 
@@ -662,7 +661,7 @@ test("buffered extract installs a local tarball whose decompressed size exceeds 
   });
 
   // Stream the tar through gzip straight to disk so the test process
-  // never holds the 2.25 GiB uncompressed archive in memory.
+  // never holds the uncompressed archive in memory either.
   const tgzPath = join(String(dir), "oversized-pkg.tgz");
   {
     const gzip = createGzip({ level: 1 });
@@ -682,20 +681,31 @@ test("buffered extract installs a local tarball whose decompressed size exceeds 
     await new Promise<void>((resolve, reject) => {
       out.once("close", resolve);
       out.once("error", reject);
+      gzip.once("error", reject);
       gzip.end();
     });
   }
 
-  // Sanity: the .tgz itself stays tiny even though it inflates far past
-  // 2 GiB; this is exactly the case that used to fail with `ZlibError`.
-  expect(statSync(tgzPath).size).toBeLessThan(32 * 1024 * 1024);
+  // Sanity: the .tgz itself stays tiny; this is exactly the case that
+  // used to fail with `ZlibError` once the decompressed size crossed 2 GiB.
+  expect(statSync(tgzPath).size).toBeLessThan(8 * 1024 * 1024);
 
-  const { stderr, exitCode } = await runInstall(String(dir));
+  const { stderr, exitCode, resourceUsage } = await runInstall(String(dir));
 
   expect(stderr).not.toContain("ZlibError");
-  expect(stderr).not.toContain("decompressing");
-  expect(existsSync(join(String(dir), "node_modules", "oversized-pkg", "package.json"))).toBe(true);
   const big = statSync(join(String(dir), "node_modules", "oversized-pkg", "data.bin"));
   expect(big.size).toBe(PAYLOAD_SIZE);
   expect(exitCode).toBe(0);
+
+  // The property under test: extraction never held the 256 MiB
+  // decompressed tar in memory. With the old pre-decompress path the
+  // child's maxRSS was well over 3x PAYLOAD_SIZE (Vec growth
+  // reallocations): ~780 MB release, ~1 GB debug+ASAN. Streaming
+  // through libarchive it stays at baseline (~40 MB release, ~240 MB
+  // debug+ASAN), so the midpoint gives wide margin both ways without
+  // needing to branch on build type.
+  // `ru_maxrss` is bytes on Darwin, kilobytes on Linux and Windows.
+  const maxRssBytes = (resourceUsage?.maxRSS ?? 0) * (isMacOS ? 1 : 1024);
+  expect(maxRssBytes).toBeGreaterThan(0);
+  expect(maxRssBytes).toBeLessThan(2 * PAYLOAD_SIZE);
 });

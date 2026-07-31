@@ -1559,49 +1559,52 @@ impl FileSink {
             // wrapper's `m_ctx` heap payload); `self.readable_stream` pins that
             // wrapper for this sink's lifetime.
             let byte_stream = unsafe { &*bs_ptr };
-            debug_assert!(byte_stream.sink.get().is_none());
-            self.source.set(streams::SourceHandle::ByteStream(bs_ptr));
-            byte_stream.sink.set(webcore::SinkHandle::FileSink(self_ptr));
-            byte_stream.sink_paused.set(false);
+            if byte_stream.sink.get().is_none() {
+                self.source.set(streams::SourceHandle::ByteStream(bs_ptr));
+                byte_stream.sink.set(webcore::SinkHandle::FileSink(self_ptr));
+                byte_stream.sink_paused.set(false);
 
-            if let Some(err) = byte_stream.take_pending_error() {
-                byte_stream.sink.set(webcore::SinkHandle::None);
-                self.end_from_stream(Some(err));
+                if let Some(err) = byte_stream.take_pending_error() {
+                    byte_stream.sink.set(webcore::SinkHandle::None);
+                    self.end_from_stream(Some(err));
+                    return JSValue::UNDEFINED;
+                }
+
+                let buffered = byte_stream.drain();
+                let has_last = byte_stream.has_received_last_chunk.get();
+                if !buffered.is_empty() {
+                    let chunk = if has_last {
+                        streams::Result::OwnedAndDone(buffered)
+                    } else {
+                        streams::Result::Owned(buffered)
+                    };
+                    match self.write(&chunk) {
+                        streams::Writable::Backpressure(_) => byte_stream.sink_paused.set(true),
+                        streams::Writable::Done | streams::Writable::Err(_) => {
+                            byte_stream.sink.set(webcore::SinkHandle::None);
+                            self.source.set(streams::SourceHandle::None);
+                            let _ = self.end(None);
+                            return JSValue::UNDEFINED;
+                        }
+                        _ => {}
+                    }
+                }
+                if has_last {
+                    byte_stream.sink.set(webcore::SinkHandle::None);
+                    self.source.set(streams::SourceHandle::None);
+                    let _ = self.end(None);
+                } else {
+                    self.writer
+                        .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
+                    if !self.must_be_kept_alive_until_eof.get() {
+                        self.must_be_kept_alive_until_eof.set(true);
+                        self.ref_();
+                    }
+                }
                 return JSValue::UNDEFINED;
             }
-
-            let buffered = byte_stream.drain();
-            let has_last = byte_stream.has_received_last_chunk.get();
-            if !buffered.is_empty() {
-                let chunk = if has_last {
-                    streams::Result::OwnedAndDone(buffered)
-                } else {
-                    streams::Result::Owned(buffered)
-                };
-                match self.write(&chunk) {
-                    streams::Writable::Backpressure(_) => byte_stream.sink_paused.set(true),
-                    streams::Writable::Done | streams::Writable::Err(_) => {
-                        byte_stream.sink.set(webcore::SinkHandle::None);
-                        self.source.set(streams::SourceHandle::None);
-                        let _ = self.end(None);
-                        return JSValue::UNDEFINED;
-                    }
-                    _ => {}
-                }
-            }
-            if has_last {
-                byte_stream.sink.set(webcore::SinkHandle::None);
-                self.source.set(streams::SourceHandle::None);
-                let _ = self.end(None);
-            } else {
-                self.writer
-                    .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
-                if !self.must_be_kept_alive_until_eof.get() {
-                    self.must_be_kept_alive_until_eof.set(true);
-                    self.ref_();
-                }
-            }
-            return JSValue::UNDEFINED;
+            // sink already attached: fall through to `assign_to_stream`, which
+            // surfaces the proper locked-stream error.
         }
 
         // No per-wrapper +1 for the controller (only the transient `_guard`

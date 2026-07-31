@@ -1296,6 +1296,7 @@ describe("REPL history file", () => {
     const historyLines = stripAnsi(stdout)
       .split("\n")
       .filter(l => l.includes("old_one") || l.includes("old_two"));
+    expect(historyLines).toHaveLength(2);
     for (const line of historyLines) {
       expect(line).not.toContain("\r");
     }

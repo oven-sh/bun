@@ -137,9 +137,9 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
             return None;
         }
 
-        // Strip trailing SEP bytes from cwd.
+        // Strip trailing SEP bytes from cwd, keeping a bare "/".
         let mut cwd_trimmed = cwd;
-        while cwd_trimmed.last() == Some(&SEP) {
+        while cwd_trimmed.len() > 1 && cwd_trimmed.last() == Some(&SEP) {
             cwd_trimmed = &cwd_trimmed[..cwd_trimmed.len() - 1];
         }
 
@@ -159,15 +159,22 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
             return None;
         }
 
+        // execvp resolves a relative $PATH entry after chdir, so `.` means the
+        // child's cwd. The existence check runs in the parent, so join
+        // relative segments with `cwd` to stat the same file the child would
+        // exec. Only prepend an absolute `cwd`: the returned path is consumed
+        // after the child's chdir, and a relative prefix would be re-resolved
+        // there (double-applied).
+        let cwd_for_relative_segment: &[u8] = if is_absolute(cwd) {
+            cwd_trimmed
+        } else {
+            b""
+        };
         for segment in path.split(|b| *b == DELIMITER).filter(|s| !s.is_empty()) {
-            // execvp resolves a relative $PATH entry after chdir, so `.` means
-            // the child's cwd. The existence check runs in the parent, so join
-            // relative segments with `cwd` to stat the same file the child
-            // would exec.
             let cwd_prefix: &[u8] = if is_absolute(segment) {
                 b""
             } else {
-                cwd_trimmed
+                cwd_for_relative_segment
             };
             if let Some(len) = is_valid(buf, cwd_prefix, segment, bin) {
                 // SAFETY: is_valid wrote NUL at buf[len]

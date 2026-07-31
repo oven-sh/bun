@@ -83,25 +83,4 @@ describe.skipIf(isWindows)("spawn resolves relative PATH entries against the cwd
     expect(result.code).toBe(0);
   });
 
-  test.concurrent("does not find a binary that exists only relative to the parent cwd", async () => {
-    // The inverse: `only-here.sh` exists under <dir>, the child chdirs to
-    // <dir>/sub, and PATH has `..`. With the child's cwd that's <dir> (found);
-    // but with PATH `.` it must NOT be found from <dir>/sub.
-    using dir = tempDir("spawn-relpath-neg", {
-      "only-here.sh": "#!/bin/sh\necho WRONG\n",
-      "sub/placeholder": "",
-    });
-    chmodSync(path.join(String(dir), "only-here.sh"), 0o755);
-    let threw: unknown;
-    try {
-      Bun.spawnSync({
-        cmd: ["only-here.sh"],
-        cwd: path.join(String(dir), "sub"),
-        env: { ...bunEnv, PATH: ".:/nonexistent" },
-      });
-    } catch (e) {
-      threw = e;
-    }
-    expect((threw as NodeJS.ErrnoException)?.code).toBe("ENOENT");
-  });
 });

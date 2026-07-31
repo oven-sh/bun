@@ -2436,9 +2436,13 @@ impl PostgresSQLConnection {
                 } else {
                     &mut stack_buf[..statement.fields.len().min(max_inline)]
                 };
-                // make sure all cells are reset if reader short breaks the fields will just be null which is better than undefined behavior
-                for c in cells.iter_mut() {
-                    *c = DataCell::SQLDataCell::default();
+                // Seed with the field's column kind so a short DataRow still
+                // matches the Structure built from these fields.
+                for (i, c) in cells.iter_mut().enumerate() {
+                    *c = DataCell::SQLDataCell::null_for_column(
+                        i as u32,
+                        &statement.fields[i].name_or_index,
+                    );
                 }
                 putter.list = cells;
 

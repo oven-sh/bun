@@ -642,8 +642,7 @@ impl<'a> PackageInstaller<'a> {
                                 };
 
                                 if target_tree_id != tree_id {
-                                    if can_defer
-                                        && !completed_trees.is_set(target_tree_id as usize)
+                                    if can_defer && !completed_trees.is_set(target_tree_id as usize)
                                     {
                                         // Platform package's tree isn't installed
                                         // yet: link the package's own bin now and

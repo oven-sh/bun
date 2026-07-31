@@ -54,9 +54,8 @@ Ref<AbortSignal> AbortSignal::create(ScriptExecutionContext* context)
 }
 
 // https://dom.spec.whatwg.org/#dom-abortsignal-abort
-Ref<AbortSignal> AbortSignal::abort(JSDOMGlobalObject& globalObject, ScriptExecutionContext& context, JSC::JSValue reason)
+Ref<AbortSignal> AbortSignal::abort(ScriptExecutionContext& context, JSC::JSValue reason)
 {
-    UNUSED_PARAM(globalObject);
     ASSERT(reason);
     // Defer the default to jsReason(); m_reason's JSC::Weak has no owner until toJSNewlyCreated().
     auto signal = adoptRef(*new AbortSignal(&context, Aborted::Yes, reason));

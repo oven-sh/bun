@@ -58,7 +58,7 @@ pub struct FetchRequestBodySink {
     /// `None` first. `finalize` releases it as a fallback if that path never
     /// ran.
     pub task: Option<BackRef<FetchTasklet>>,
-    pub source: SourceHandle<FetchRequestBodySink>,
+    pub source: SourceHandle,
     pub high_water_mark: BlobSizeType,
     /// Shared pending drain promise for `write()` and `flush(true)`; resolved
     /// in `on_drain()`.
@@ -307,7 +307,7 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
     fn start(&mut self, config: Start) -> bun_sys::Result<()> {
         Self::start(self, &config)
     }
-    fn source(&mut self) -> Option<&mut SourceHandle<Self>> {
+    fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
     }
     fn done(&self) -> bool {

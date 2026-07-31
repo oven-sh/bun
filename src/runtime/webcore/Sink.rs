@@ -65,7 +65,7 @@ pub struct JSSink<T> {
 #[macro_export]
 macro_rules! decl_js_sink_externs {
     ($abi:literal as $m:ident) => {
-        #[allow(non_snake_case)]
+        #[allow(non_snake_case, dead_code)]
         pub(crate) mod $m {
             use ::bun_jsc::{JSGlobalObject, JSValue};
             use ::core::ffi::c_void;

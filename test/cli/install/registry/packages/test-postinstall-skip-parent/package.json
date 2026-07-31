@@ -1,0 +1,22 @@
+{
+  "_id": "test-postinstall-skip-parent",
+  "name": "test-postinstall-skip-parent",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "test-postinstall-skip-parent",
+      "version": "1.0.0",
+      "dependencies": {
+        "test-postinstall-skip": "1.0.0"
+      },
+      "_id": "test-postinstall-skip-parent@1.0.0",
+      "dist": {
+        "integrity": "sha512-IRb8ahbRgcecEul7LTZ74GQJvU/kYcgNtgjHd6lgZjdLsXxcZ6RBA3ucRpXUz/cD9fURC7l88KUD8XeHk3p9RQ==",
+        "shasum": "5094a82879f19284bbb95c2ee79c5ef0b13a1060",
+        "tarball": "http://localhost:4873/test-postinstall-skip-parent/-/test-postinstall-skip-parent-1.0.0.tgz"
+      }
+    }
+  }
+}

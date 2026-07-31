@@ -1875,7 +1875,6 @@ impl<'a> PackageInstaller<'a> {
                                     self.lockfile().packages.items_meta(),
                                     self.manager().options.cpu,
                                     self.manager().options.os,
-                                    Some(self.current_tree_id),
                                 )
                             {
                                 if PackageManager::verbose_install() {
@@ -2183,7 +2182,6 @@ impl<'a> PackageInstaller<'a> {
                             self.lockfile().packages.items_meta(),
                             self.manager().options.cpu,
                             self.manager().options.os,
-                            Some(self.current_tree_id),
                         )
                     {
                         if PackageManager::verbose_install() {

@@ -1673,7 +1673,6 @@ impl Task {
                                     pkg_metas,
                                     manager.options.cpu,
                                     manager.options.os,
-                                    None,
                                 )
                         {
                             break 'enqueue_lifecycle_scripts;

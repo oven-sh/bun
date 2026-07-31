@@ -9,7 +9,6 @@ use bun_ast as js_ast;
 use bun_semver as semver;
 
 use crate::lockfile::package::Meta;
-use crate::lockfile::tree::Id as TreeId;
 use crate::npm;
 use crate::{PackageID, PackageNameHash};
 
@@ -179,7 +178,6 @@ impl List {
         metas: &[Meta],
         target_cpu: npm::Architecture,
         target_os: npm::OperatingSystem,
-        tree_id: Option<TreeId>,
     ) -> bool {
         // The feature flag defaults to false; see note on the binlinker flag above.
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS
@@ -195,22 +193,25 @@ impl List {
 
         match mode {
             PostinstallOptimizer::NativeBinlink => {
-                // TODO: support hoisted.
-                (tree_id.is_none() || tree_id.unwrap() == 0)
-
-                    // It's not as simple as checking `get(name_hash) != null` because if the
-                    // specific versions of the package do not have optional
-                    // dependencies then we cannot do this optimization without
-                    // breaking the code.
-                    //
-                    // This shows up in test/integration/esbuild/esbuild.test.ts
-                    && PostinstallOptimizer::get_native_binlink_replacement_package_id(
-                        resolutions,
-                        metas,
-                        target_cpu,
-                        target_os,
-                    )
-                    .is_some()
+                // It's not as simple as checking `get(name_hash) != null` because if the
+                // specific versions of the package do not have optional
+                // dependencies then we cannot do this optimization without
+                // breaking the code.
+                //
+                // This shows up in test/integration/esbuild/esbuild.test.ts
+                //
+                // The skip applies regardless of where the package lands in the
+                // tree: the platform optionalDependency is resolved per package,
+                // and the package's own `bin` shim locates it via Node module
+                // resolution at runtime, so a nested copy works the same as a
+                // hoisted one without its postinstall.
+                PostinstallOptimizer::get_native_binlink_replacement_package_id(
+                    resolutions,
+                    metas,
+                    target_cpu,
+                    target_os,
+                )
+                .is_some()
             }
 
             PostinstallOptimizer::Ignore => true,

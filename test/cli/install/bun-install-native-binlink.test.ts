@@ -344,6 +344,133 @@ linker = "${linker}"
       expect(binExitCode2).toBe(0);
     });
   }
+
+  // The postinstall skip must apply to every copy of a nativeDependencies
+  // package in the tree, not just the hoisted one. Previously a second,
+  // differently-versioned esbuild nested under a transitive dependent would
+  // still run `node install.js`.
+  test("skips postinstall for nested copies of a nativeDependencies package", async () => {
+    let env = { ...bunEnv };
+    const { packageDir, packageJson } = await verdaccio.createTestDir();
+    env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
+    env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
+
+    await writeFile(
+      join(packageDir, "bunfig.toml"),
+      `
+[install]
+cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
+registry = "${verdaccio.registryUrl()}"
+linker = "hoisted"
+`,
+    );
+
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "test-app",
+        version: "1.0.0",
+        dependencies: {
+          "test-postinstall-skip": "2.0.0",
+          "test-postinstall-skip-parent": "1.0.0",
+        },
+        nativeDependencies: ["test-postinstall-skip"],
+        trustedDependencies: ["test-postinstall-skip"],
+      }),
+    );
+
+    const installProc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [, installStderr, installExit] = await Promise.all([
+      installProc.stdout.text(),
+      installProc.stderr.text(),
+      installProc.exited,
+    ]);
+    expect(installStderr).not.toContain("error:");
+    expect(installExit).toBe(0);
+
+    const hoisted = join(packageDir, "node_modules", "test-postinstall-skip");
+    const nested = join(
+      packageDir,
+      "node_modules",
+      "test-postinstall-skip-parent",
+      "node_modules",
+      "test-postinstall-skip",
+    );
+
+    // Both copies must be installed with distinct versions.
+    expect(JSON.parse(readFileSync(join(hoisted, "package.json"), "utf8")).version).toBe("2.0.0");
+    expect(JSON.parse(readFileSync(join(nested, "package.json"), "utf8")).version).toBe("1.0.0");
+
+    // postinstall must not have run for either copy.
+    expect({
+      hoisted: existsSync(join(hoisted, "postinstall-ran")),
+      nested: existsSync(join(nested, "postinstall-ran")),
+    }).toEqual({ hoisted: false, nested: false });
+
+    // Both bins must be present and runnable. The hoisted bin is redirected
+    // straight to the platform package; the nested bin remains the package's
+    // own shim, which must work without postinstall.
+    async function runBin(binPath: string) {
+      const proc = spawn({
+        cmd: [binPath],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out: out.trim(), err, code };
+    }
+
+    const hoistedBin = join(packageDir, "node_modules", ".bin", "skip-test-cmd");
+    const nestedBin = join(
+      packageDir,
+      "node_modules",
+      "test-postinstall-skip-parent",
+      "node_modules",
+      ".bin",
+      "skip-test-cmd",
+    );
+
+    expect(existsSync(hoistedBin)).toBeTrue();
+    expect(existsSync(nestedBin)).toBeTrue();
+
+    expect(await runBin(hoistedBin)).toEqual({ out: "native v2.0.0", err: "", code: 0 });
+    expect(await runBin(nestedBin)).toEqual({ out: "shim v1.0.0", err: "", code: 0 });
+
+    // Re-install from the lockfile with node_modules removed.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    const installProc2 = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [, , installExit2] = await Promise.all([
+      installProc2.stdout.text(),
+      installProc2.stderr.text(),
+      installProc2.exited,
+    ]);
+    expect(installExit2).toBe(0);
+
+    expect({
+      hoisted: existsSync(join(hoisted, "postinstall-ran")),
+      nested: existsSync(join(nested, "postinstall-ran")),
+    }).toEqual({ hoisted: false, nested: false });
+
+    expect(await runBin(hoistedBin)).toEqual({ out: "native v2.0.0", err: "", code: 0 });
+    expect(await runBin(nestedBin)).toEqual({ out: "shim v1.0.0", err: "", code: 0 });
+  });
 });
 
 // The bin linker must not create a `node_modules/.bin` entry (nor chmod or rewrite the

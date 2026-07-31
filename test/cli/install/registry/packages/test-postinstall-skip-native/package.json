@@ -1,0 +1,47 @@
+{
+  "_id": "test-postinstall-skip-native",
+  "name": "test-postinstall-skip-native",
+  "dist-tags": {
+    "latest": "2.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "test-postinstall-skip-native",
+      "version": "1.0.0",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "cpu": [
+        "arm64",
+        "x64"
+      ],
+      "_id": "test-postinstall-skip-native@1.0.0",
+      "dist": {
+        "integrity": "sha512-SktXp+7UTTNoqdxOQVSBT03qSXVnmiGLS60Q2ln5KOMPfUlzgyU6yKdkOce3k0Piz2Y5mMeyzhxzK0DI8YWCQA==",
+        "shasum": "6b009145d434d5652e81b276cf59438b463029dc",
+        "tarball": "http://localhost:4873/test-postinstall-skip-native/-/test-postinstall-skip-native-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "test-postinstall-skip-native",
+      "version": "2.0.0",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "cpu": [
+        "arm64",
+        "x64"
+      ],
+      "_id": "test-postinstall-skip-native@2.0.0",
+      "dist": {
+        "integrity": "sha512-AZnsjMqYOYJQsftdwXTpzcnt86bKD9OPYs58J/cTddSZu67v4+2IRKdJHBW3eOzMWn96CIMtlqQ3+NMGdPVXkg==",
+        "shasum": "7fb4f6b369020ed21d5d0f10a0ead1495373072c",
+        "tarball": "http://localhost:4873/test-postinstall-skip-native/-/test-postinstall-skip-native-2.0.0.tgz"
+      }
+    }
+  }
+}

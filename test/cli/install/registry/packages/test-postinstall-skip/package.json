@@ -1,0 +1,51 @@
+{
+  "_id": "test-postinstall-skip",
+  "name": "test-postinstall-skip",
+  "dist-tags": {
+    "latest": "2.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "test-postinstall-skip",
+      "version": "1.0.0",
+      "bin": {
+        "skip-test-cmd": "./bin/cmd.js"
+      },
+      "scripts": {
+        "postinstall": "node -e \"require('fs').writeFileSync(require('path').join(__dirname,'postinstall-ran'),'')\""
+      },
+      "optionalDependencies": {
+        "test-postinstall-skip-native": "1.0.0"
+      },
+      "_id": "test-postinstall-skip@1.0.0",
+      "_hasInstallScript": true,
+      "hasInstallScript": true,
+      "dist": {
+        "integrity": "sha512-CzqDZuiXae38S87+FRbHVD5AXutC/Twj7HkAqqnaBa5hykpJgicbMruxd4nO7wsXvl1hx4Xgz8BYGqxdnsBlCg==",
+        "shasum": "108f2af8384ec686db33bbe489c5eb10bc68755c",
+        "tarball": "http://localhost:4873/test-postinstall-skip/-/test-postinstall-skip-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "test-postinstall-skip",
+      "version": "2.0.0",
+      "bin": {
+        "skip-test-cmd": "./bin/cmd.js"
+      },
+      "scripts": {
+        "postinstall": "node -e \"require('fs').writeFileSync(require('path').join(__dirname,'postinstall-ran'),'')\""
+      },
+      "optionalDependencies": {
+        "test-postinstall-skip-native": "2.0.0"
+      },
+      "_id": "test-postinstall-skip@2.0.0",
+      "_hasInstallScript": true,
+      "hasInstallScript": true,
+      "dist": {
+        "integrity": "sha512-Gly/v6IP8/eiGE+DHedFjyumVv2zuN921v00S98n25daLVCkM1ZSKEi/RJPE+you4psysHqx6KEN4rDSEIxmTA==",
+        "shasum": "268e9f364a6b6ee93763243512f94e39b94b651f",
+        "tarball": "http://localhost:4873/test-postinstall-skip/-/test-postinstall-skip-2.0.0.tgz"
+      }
+    }
+  }
+}

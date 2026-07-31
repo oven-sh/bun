@@ -1608,6 +1608,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 self.unref();
                 self.notify_inspector_server_stopped();
                 if abrupt {
+                    self.in_flight_keep_alive.disable();
                     self.flags.insert(ServerFlags::TERMINATED);
                 }
             }
@@ -1615,6 +1616,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         };
         if abrupt || (self.pending_requests == 0 && !self.has_active_web_sockets()) {
             self.unref();
+        }
+        if abrupt {
+            self.in_flight_keep_alive.disable();
         }
         // A graceful stop with work in flight keeps the ref (deinit_if_we_can
         // unrefs when the drain completes): on Windows uv_run skips I/O with

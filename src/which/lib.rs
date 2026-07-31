@@ -157,15 +157,13 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
             return None;
         }
 
-        // execvp resolves relative $PATH entries after chdir; stat them here
-        // against `cwd` so the parent-side check matches. Only an absolute
-        // `cwd` is safe to prepend (the result is exec'd after chdir).
         let cwd_for_relative_segment: &[u8] = if is_absolute(cwd) {
             cwd_trimmed
         } else {
             b""
         };
         for segment in path.split(|b| *b == DELIMITER).filter(|s| !s.is_empty()) {
+            // execvp resolves relative $PATH entries after the child's chdir.
             let cwd_prefix: &[u8] = if is_absolute(segment) {
                 b""
             } else {

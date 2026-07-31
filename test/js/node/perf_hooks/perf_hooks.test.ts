@@ -32,7 +32,11 @@ test("nodeTiming reports offsets from timeOrigin, not epoch timestamps", () => {
 
   // Node defines name/entryType/startTime as own data properties
   // (writable:false) and duration as an own getter.
-  for (const [key, value] of [["name", "node"], ["entryType", "node"], ["startTime", 0]] as const) {
+  for (const [key, value] of [
+    ["name", "node"],
+    ["entryType", "node"],
+    ["startTime", 0],
+  ] as const) {
     expect({ key, ...Object.getOwnPropertyDescriptor(nt, key) }).toEqual({
       key,
       value,

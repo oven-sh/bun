@@ -47,7 +47,7 @@ test("Bun.write(path, largeTypedArray) does not block the JS thread copying the 
   expect(exitCode).toBe(0);
 });
 
-test("Bun.write(path, typedArray) writes the correct bytes for borrowed ArrayBuffer sources", async () => {
+test.concurrent("Bun.write(path, typedArray) writes the correct bytes for borrowed ArrayBuffer sources", async () => {
   using dir = tempDir("bun-write-large-buffer-content", {});
   const script = `
     const crypto = require("crypto");
@@ -56,11 +56,16 @@ test("Bun.write(path, typedArray) writes the correct bytes for borrowed ArrayBuf
     const out = path.join(process.cwd(), "out.bin");
     // large enough to have skipped the synchronous <256KB fast path.
     const buf = crypto.randomBytes(1 << 20);
+    const resizable = new ArrayBuffer(512 * 1024, { maxByteLength: 1 << 20 });
+    new Uint8Array(resizable).set(new Uint8Array(buf.buffer, buf.byteOffset, 512 * 1024));
     const cases = [
       ["Uint8Array", buf],
       ["ArrayBuffer", buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)],
       ["DataView", new DataView(buf.buffer, buf.byteOffset, buf.byteLength)],
       ["offset view", new Uint8Array(buf.buffer, buf.byteOffset + 1024, 512 * 1024)],
+      // resizable and empty inputs exercise the borrow -> None fallback.
+      ["resizable", new Uint8Array(resizable)],
+      ["empty", new Uint8Array(0)],
     ];
     const writers = {
       "Bun.write": (p, i) => Bun.write(p, i),
@@ -92,12 +97,14 @@ test("Bun.write(path, typedArray) writes the correct bytes for borrowed ArrayBuf
     expected[`${how} ArrayBuffer`] = { wrote: 1 << 20, len: 1 << 20, ok: true };
     expected[`${how} DataView`] = { wrote: 1 << 20, len: 1 << 20, ok: true };
     expected[`${how} offset view`] = { wrote: 512 * 1024, len: 512 * 1024, ok: true };
+    expected[`${how} resizable`] = { wrote: 512 * 1024, len: 512 * 1024, ok: true };
+    expected[`${how} empty`] = { wrote: 0, len: 0, ok: true };
   }
   expect(JSON.parse(stdout)).toEqual(expected);
   expect(exitCode).toBe(0);
 });
 
-test("Bun.write(path, typedArray) releases its pin+protect on the source ArrayBuffer", async () => {
+test.concurrent("Bun.write(path, typedArray) releases its pin+protect on the source ArrayBuffer", async () => {
   using dir = tempDir("bun-write-large-buffer-gcstress", {});
   const script = `
     const { heapStats } = require("bun:jsc");

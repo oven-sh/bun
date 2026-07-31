@@ -856,20 +856,17 @@ where
             cb.deref();
         }
 
-        let already_reported = self.flags.request_complete_reported();
+        let counted_aborted = self.flags.counted_aborted_live();
         if let Some(server) = self.server.take() {
+            if counted_aborted {
+                server.note_aborted_ctx_released();
+            }
             // server is a BACKREF; pool put + onRequestComplete
             server
                 .release_request_context(std::ptr::from_mut::<Self>(self).cast::<c_void>(), HTTP3);
             // SAFETY: `&mut` through the backref — the server outlives this
             // context and no other borrow of it is live here.
-            unsafe {
-                let srv = &mut *server.as_ptr();
-                if !already_reported {
-                    srv.note_request_complete();
-                }
-                srv.deinit_if_we_can();
-            }
+            unsafe { (*server.as_ptr()).on_request_complete() };
         }
     }
 
@@ -1448,18 +1445,15 @@ where
         if let Some(sink_ptr) = this.sink {
             // The sink abort runs the stream's JS onClose through its signal.
             any_js_calls.set(true);
-            // A parked direct pull() keeps the stream-result promise pending,
-            // so the NativePromiseContext reaction holds ref_count at 1 until
-            // user code releases the resolver. Decrement pending_requests now
-            // (deinit's flag check prevents a second decrement). Not
-            // `on_request_complete`: that runs `deinit_if_we_can`, which may
-            // downgrade `js_value` while this context's backref is still live.
-            if !this.flags.request_complete_reported() {
-                this.flags.set_request_complete_reported(true);
-                let server_ref = this.server.expect("asserted Some above");
-                // SAFETY: BACKREF; server outlives `this` and no other borrow
-                // of it is live across this call.
-                unsafe { (*server_ref.as_ptr()).note_request_complete() };
+            // A parked direct pull() keeps the stream-result promise (and the
+            // NativePromiseContext reaction on it) pending until user code
+            // releases the resolver, so this context may not deinit for an
+            // arbitrarily long time. `pending_requests` must stay > 0 until it
+            // does (it gates `deinit_if_we_can`'s `js_value` downgrade), so
+            // only the user-visible in-flight count is adjusted here.
+            if !this.flags.counted_aborted_live() {
+                this.flags.set_counted_aborted_live(true);
+                server.note_request_aborted_with_live_ctx();
             }
             // SAFETY: `sink_ptr` is the live JSSink allocated by do_render_stream
             // (repr(transparent) over the sink). `abort` takes the raw pointer
@@ -4648,9 +4642,9 @@ bitflags::bitflags! {
         const REQUEST_BODY_PAUSED         = 1 << 16;
         /// `on_start_buffering` fired (`.text()` etc.); skip pre-stream backpressure.
         const REQUEST_BODY_BUFFER_ALL     = 1 << 17;
-        /// `server.note_request_complete()` has already run for this context (from
-        /// `on_abort`'s sink branch); `deinit` must not decrement again.
-        const REQUEST_COMPLETE_REPORTED   = 1 << 18;
+        /// `on_abort` has counted this context in `aborted_with_live_ctx`;
+        /// `deinit` balances it.
+        const COUNTED_ABORTED_LIVE        = 1 << 18;
     }
 }
 
@@ -4741,9 +4735,9 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         REQUEST_BODY_BUFFER_ALL
     );
     flag_accessor!(
-        request_complete_reported,
-        set_request_complete_reported,
-        REQUEST_COMPLETE_REPORTED
+        counted_aborted_live,
+        set_counted_aborted_live,
+        COUNTED_ABORTED_LIVE
     );
 
     #[inline]

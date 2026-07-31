@@ -323,64 +323,65 @@ test("pendingRequests drops when client aborts a parked direct-stream pull()", a
   await waitForPendingRequests(server, 0);
 });
 
-test("server stays alive while a parked direct-stream ctx outlives the abort decrement", async () => {
-  // on_abort decrements pending_requests before the RequestContext deinits
-  // (the parked pull()'s reaction still holds it). The idle-server check
-  // (deinit_if_we_can) must not run from on_abort, or pending_requests == 0
-  // after stop() would downgrade js_value and let GC free the NewServer while
-  // the ctx's backref still points into it.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-      let release;
-      let seenAbort;
-      const gate = new Promise(r => (release = r));
-      const abortSeen = new Promise(r => (seenAbort = r));
-      let server = Bun.serve({
-        port: 0,
-        idleTimeout: 0,
-        async fetch(req) {
-          req.signal.addEventListener("abort", seenAbort, { once: true });
-          return new Response(new ReadableStream({
-            type: "direct",
-            async pull(c) {
-              c.write("x");
-              await c.flush();
-              await gate;
-            },
-          }), { headers: { "Content-Length": "100000" } });
-        },
-      });
-      const port = server.port;
-      const ac = new AbortController();
-      const r = (await fetch("http://127.0.0.1:" + port, { signal: ac.signal })).body.getReader();
-      await r.read();
-      server.stop(); // graceful: listener gone, pending_requests == 1
-      ac.abort();
-      await r.closed.catch(() => {});
-      await abortSeen;
-      // on_abort has run: pending_requests == 0. Drop the last JS root and GC.
-      server = undefined;
-      for (let i = 0; i < 5; i++) { Bun.gc(true); await Bun.sleep(0); }
-      // The RequestContext's backref must still reach a live NewServer when
-      // the reaction chain settles and deinit runs.
-      release();
-      for (let i = 0; i < 5; i++) { Bun.gc(true); await Bun.sleep(0); }
-      console.log("ok");
-    `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+for (const stopFirst of [true, false]) {
+  test(`server stays alive while a parked direct-stream ctx outlives the abort (${stopFirst ? "stop-then-abort" : "abort-then-stop"})`, async () => {
+    // The user-visible server.pendingRequests drops on abort, but the internal
+    // pending_requests (which gates deinit_if_we_can's js_value downgrade)
+    // stays > 0 until the RequestContext deinits. Both orderings of stop() vs
+    // abort must leave the NewServer live until the parked ctx's backref is
+    // released.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let release;
+        let seenAbort;
+        const gate = new Promise(r => (release = r));
+        const abortSeen = new Promise(r => (seenAbort = r));
+        let server = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          async fetch(req) {
+            req.signal.addEventListener("abort", seenAbort, { once: true });
+            return new Response(new ReadableStream({
+              type: "direct",
+              async pull(c) {
+                c.write("x");
+                await c.flush();
+                await gate;
+              },
+            }), { headers: { "Content-Length": "100000" } });
+          },
+        });
+        const port = server.port;
+        const ac = new AbortController();
+        const r = (await fetch("http://127.0.0.1:" + port, { signal: ac.signal })).body.getReader();
+        await r.read();
+        ${stopFirst ? "server.stop();" : ""}
+        ac.abort();
+        await r.closed.catch(() => {});
+        await abortSeen;
+        ${stopFirst ? "" : "server.stop();"}
+        if (server.pendingRequests !== 0) throw new Error("pendingRequests=" + server.pendingRequests);
+        server = undefined;
+        for (let i = 0; i < 5; i++) { Bun.gc(true); await Bun.sleep(0); }
+        release();
+        for (let i = 0; i < 5; i++) { Bun.gc(true); await Bun.sleep(0); }
+        console.log("ok");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("ok");
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  });
+}
 
 test("direct-stream pull() that resolves normally still releases exactly once", async () => {
   // The non-abort twin: pull() settles, handle_resolve_stream runs, deinit

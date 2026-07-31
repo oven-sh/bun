@@ -262,6 +262,13 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub(crate) base_url_string_for_joining: Box<[u8]>,
     pub(crate) config: ServerConfig,
     pub(crate) pending_requests: usize,
+    /// RequestContexts whose client has aborted (so they no longer count toward
+    /// the user-visible `server.pendingRequests`) but are still held live by a
+    /// parked stream-result reaction. Incremented in `RequestContext::on_abort`'s
+    /// sink branch, decremented in `RequestContext::deinit`. `deinit_if_we_can`
+    /// keeps gating on `pending_requests` so `js_value` stays `Strong` until
+    /// every ctx backref is released.
+    pub(crate) aborted_with_live_ctx: core::cell::Cell<usize>,
     /// Live `ServerWebSocket` count. Lives on the server (not the websocket
     /// context) so a reload's context swap cannot reset it, and sits in a
     /// `Cell` because the open/close accounting arrives through shared
@@ -1483,20 +1490,31 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.on_request_complete();
     }
 
-    /// Decrement-only. Callers that have fully released the `RequestContext`
-    /// use [`on_request_complete`] (which also runs the idle-server check);
-    /// this exists so `on_abort` can drop the counter while a parked stream
-    /// reaction still holds the context, without letting `deinit_if_we_can`
-    /// downgrade `js_value` out from under that backref.
     #[inline]
-    pub(crate) fn note_request_complete(&mut self) {
+    pub(crate) fn on_request_complete(&mut self) {
         self.pending_requests -= 1;
+        self.deinit_if_we_can();
     }
 
     #[inline]
-    pub(crate) fn on_request_complete(&mut self) {
-        self.note_request_complete();
-        self.deinit_if_we_can();
+    pub(crate) fn note_request_aborted_with_live_ctx(&self) {
+        self.aborted_with_live_ctx
+            .set(self.aborted_with_live_ctx.get() + 1);
+    }
+
+    #[inline]
+    pub(crate) fn note_aborted_ctx_released(&self) {
+        self.aborted_with_live_ctx
+            .set(self.aborted_with_live_ctx.get().saturating_sub(1));
+    }
+
+    /// The user-visible `server.pendingRequests`: contexts whose client has
+    /// aborted no longer count as in-flight even though `pending_requests`
+    /// (which gates `deinit_if_we_can`) still holds them until `deinit()`.
+    #[inline]
+    pub(crate) fn in_flight_requests(&self) -> usize {
+        self.pending_requests
+            .saturating_sub(self.aborted_with_live_ctx.get())
     }
 
     pub(crate) fn active_sockets_count(&self) -> u32 {
@@ -2032,6 +2050,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             h3_alt_svc: Box::<[u8]>::default(),
             js_value: jsc::JsRef::empty(),
             pending_requests: 0,
+            aborted_with_live_ctx: core::cell::Cell::new(0),
             active_websocket_count: core::cell::Cell::new(0),
             deinit_running: core::cell::Cell::new(false),
             request_pool: <Self as ServerPools<SSL, DEBUG>>::request_pool(),
@@ -3399,8 +3418,8 @@ pub trait ServerLike {
     fn vm_mut(&self) -> *mut jsc::VirtualMachine;
     fn config(&self) -> &ServerConfig;
     fn on_request_complete(&mut self);
-    fn note_request_complete(&mut self);
-    fn deinit_if_we_can(&mut self);
+    fn note_request_aborted_with_live_ctx(&self);
+    fn note_aborted_ctx_released(&self);
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer>;
     fn js_value(&self) -> &jsc::JsRef;
     fn h3_alt_svc(&self) -> Option<&[u8]>;
@@ -3441,12 +3460,12 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
         Self::on_request_complete(self)
     }
     #[inline]
-    fn note_request_complete(&mut self) {
-        Self::note_request_complete(self)
+    fn note_request_aborted_with_live_ctx(&self) {
+        Self::note_request_aborted_with_live_ctx(self)
     }
     #[inline]
-    fn deinit_if_we_can(&mut self) {
-        Self::deinit_if_we_can(self)
+    fn note_aborted_ctx_released(&self) {
+        Self::note_aborted_ctx_released(self)
     }
     #[inline]
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {

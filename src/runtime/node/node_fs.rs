@@ -4089,8 +4089,6 @@ pub mod args {
                 None
             };
 
-            let _ = buffer_value;
-
             Ok(Read {
                 fd,
                 buffer,

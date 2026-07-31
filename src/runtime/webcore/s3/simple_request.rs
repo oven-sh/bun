@@ -429,49 +429,56 @@ impl S3HttpSimpleTask {
         async_http: *mut AsyncHTTP<'static>,
         mut result: HTTPClientResult<'_>,
     ) {
-        // SAFETY: `this` was produced by `S3HttpSimpleTask::new` and is exclusively owned by the
-        // HTTP thread until enqueued back to the JS thread below.
-        let this = unsafe { &mut *this };
         let is_done = !result.has_more;
-        // `metadata` is handed over exactly once, on the first callback carrying response headers.
-        // A close-delimited body (no Content-Length, no Transfer-Encoding) reports progress again
-        // at EOF with `metadata: None`, so carry the earlier one across the assignment below.
-        let previous_metadata = this.result.metadata.take();
-        result.body_into(&mut this.response_buffer.list);
-        // SAFETY: `body` is the only lifetime-carrying field and `body_into`
-        // just consumed it; the stored `&'static []` is never read.
-        this.result = unsafe { result.detach_lifetime() };
-        if this.result.metadata.is_none() {
-            this.result.metadata = previous_metadata;
-        }
-        // `AsyncHTTP` transitively owns Drop types (`HTTPClient`, header
-        // `EntryList`s), so a plain `=` here would (a) drop the old `this.http`, freeing heap
-        // buffers that `*async_http` (a bitwise clone created by the HTTP thread) still aliases,
-        // and (b) leave the http-thread side to drop them again → double-free. We instead write
-        // through `MaybeUninit` to suppress the LHS drop, doing a bitwise struct overwrite
-        // with no destructor on either side. Ownership of the inner heap data conceptually
-        // transfers here; the http-thread side must free only its outer allocation
-        // (TrivialDeinit).
-        // SAFETY: `async_http` is a valid live pointer for the duration of this callback;
-        // `this.http` was previously initialised in `execute_simple_s3_request`.
-        unsafe { core::ptr::write(this.http.as_mut_ptr(), core::ptr::read(async_http)) };
-        if is_done {
-            // compute the raw self-pointer before borrowing `this.concurrent_task`
-            // to avoid a stacked-borrows / aliasing diagnostic on `*this`.
-            let this_ptr = std::ptr::from_mut::<Self>(this);
-            let task = core::ptr::NonNull::from(
-                this.concurrent_task
-                    .from(this_ptr, AutoDeinit::ManualDeinit),
-            );
-            // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
-            // is set during VM init and outlives this task. `enqueue_task_concurrent` is `&self`.
-            // `task` is the inline `concurrent_task` field of this heap request;
-            // the queue takes ownership of its `next` link.
-            this.vm
-                .expect("vm set at task creation")
-                .event_loop_shared()
-                .enqueue_task_concurrent(task);
-        }
+        let handoff = {
+            // SAFETY: `this` was produced by `S3HttpSimpleTask::new` and is exclusively owned
+            // by the HTTP thread until the handoff below; this borrow ends before it.
+            let task = unsafe { &mut *this };
+            // `metadata` is handed over exactly once, on the first callback carrying response
+            // headers. A close-delimited body (no Content-Length, no Transfer-Encoding) reports
+            // progress again at EOF with `metadata: None`, so carry the earlier one across the
+            // assignment below.
+            let previous_metadata = task.result.metadata.take();
+            result.body_into(&mut task.response_buffer.list);
+            // SAFETY: `result.body` (the only borrowed field) points at `this.response_buffer`,
+            // which lives for the task's lifetime — extending to `'static` here is sound for
+            // self-reference.
+            task.result = unsafe { result.detach_lifetime() };
+            if task.result.metadata.is_none() {
+                task.result.metadata = previous_metadata;
+            }
+            // `AsyncHTTP` transitively owns Drop types (`HTTPClient`, header
+            // `EntryList`s), so a plain `=` here would (a) drop the old `this.http`, freeing heap
+            // buffers that `*async_http` (a bitwise clone created by the HTTP thread) still
+            // aliases, and (b) leave the http-thread side to drop them again → double-free. We
+            // instead write through `MaybeUninit` to suppress the LHS drop, doing a bitwise struct
+            // overwrite with no destructor on either side. Ownership of the inner heap data
+            // conceptually transfers here; the http-thread side must free only its outer
+            // allocation (TrivialDeinit).
+            // SAFETY: `async_http` is a valid live pointer for the duration of this callback;
+            // `this.http` was previously initialised in `execute_simple_s3_request`.
+            unsafe { core::ptr::write(task.http.as_mut_ptr(), core::ptr::read(async_http)) };
+            // `async_http.response_buffer == &this.response_buffer`, so copying it back would be
+            // a self-assignment: the `=` would drop the live Vec before re-installing a stale
+            // bitwise duplicate (UAF + double-free), so we simply omit it —
+            // `this.response_buffer` already holds the body.
+            if is_done {
+                // `task` is the inline `concurrent_task` field of this heap request;
+                // the queue takes ownership of its `next` link.
+                let queued = core::ptr::NonNull::from(
+                    task.concurrent_task.from(this, AutoDeinit::ManualDeinit),
+                );
+                // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
+                // is set during VM init and outlives this task.
+                Some((task.vm.expect("vm set at task creation"), queued))
+            } else {
+                None
+            }
+        };
+        // Handing `this` to the JS thread transfers ownership (`on_response` `heap::take`s
+        // it), so the enqueue is the terminal action.
+        if let Some((vm, queued)) = handoff {
+            vm.event_loop_shared().enqueue_task_concurrent(queued);        }
     }
 }
 

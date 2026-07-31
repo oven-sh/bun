@@ -80,6 +80,7 @@ pub use ssl_config::{SSLConfig, SSLConfigFromJs, resolve_reject_unauthorized, tl
 pub use handlers::{Handlers, SocketConfig};
 pub use listener::Listener;
 pub use socket_address::SocketAddress;
+pub(crate) use socket_body::DuplexUpgradeContext;
 pub use socket_body::{
     Flags as SocketFlags, NativeCallbacks, NewSocket, SocketMode, TCPSocket, TLSSocket,
 };

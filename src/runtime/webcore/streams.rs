@@ -2175,17 +2175,6 @@ impl NetworkSink {
         self.task.as_ref().map(BackRef::get)
     }
 
-    /// Exclusive borrow of the upload task, if attached.
-    ///
-    /// SAFETY (invariant): the `MultiPartUpload` is single-threaded and the sink
-    /// is its sole writer once attached; `&mut self` ensures no overlapping
-    /// borrow from this sink. Mirrors the prior `task.as_ptr().as_mut()` sites.
-    #[inline]
-    fn task_mut(&mut self) -> Option<&mut bun_s3::MultiPartUpload> {
-        // SAFETY: see doc comment — exclusive while `&mut self` held.
-        self.task.as_mut().map(|p| unsafe { p.get_mut() })
-    }
-
     pub(crate) fn new(init: NetworkSink) -> Box<NetworkSink> {
         Box::new(init)
     }
@@ -2226,7 +2215,7 @@ impl NetworkSink {
     /// Narrowed like
     /// `flushPromise`; promise resolution only fails on VM termination.
     pub(crate) fn on_writable(
-        task: &mut bun_s3::MultiPartUpload,
+        task: &bun_s3::MultiPartUpload,
         this: &mut NetworkSink,
         flushed: u64,
     ) -> core::result::Result<(), jsc::JsTerminated> {
@@ -2234,7 +2223,7 @@ impl NetworkSink {
             NetworkSinkLog,
             "onWritable flushed: {} state: {}",
             flushed,
-            task.state as u8
+            task.state.get() as u8
         );
         let _ = task;
         if this.flush_promise.has_value() {
@@ -2312,7 +2301,7 @@ impl NetworkSink {
         // the pump paths consume `Backpressure`/`Done`.
         let has_source = !matches!(self.source, SourceHandle::None);
 
-        let result = match self.task_mut() {
+        let result = match self.task_ref() {
             Some(task) => task.write_bytes(bytes, false),
             None => return Writable::Owned(len),
         };
@@ -2335,7 +2324,7 @@ impl NetworkSink {
         let len = bytes.len() as BlobSizeType;
         let has_source = !matches!(self.source, SourceHandle::None);
 
-        let result = match self.task_mut() {
+        let result = match self.task_ref() {
             Some(task) => task.write_latin1(bytes, false),
             None => return Writable::Owned(len),
         };
@@ -2358,7 +2347,7 @@ impl NetworkSink {
         let has_source = !matches!(self.source, SourceHandle::None);
         // we must always buffer UTF-16
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
-        let result = match self.task_mut() {
+        let result = match self.task_ref() {
             Some(task) => task.write_utf16(bytes, false),
             None => return Writable::Owned(len),
         };
@@ -2382,7 +2371,7 @@ impl NetworkSink {
         self.pending.result = Writable::Done;
         self.pending.run();
         // flush everything and send EOF
-        if let Some(task) = self.task_mut() {
+        if let Some(task) = self.task_ref() {
             let _ = task.write_bytes(b"", true);
             // bun.handleOom → Rust aborts on OOM
         }
@@ -2474,7 +2463,7 @@ impl NetworkSink {
             if !self.ended {
                 self.ended = true;
                 // we need to send EOF
-                if let Some(task) = self.task_mut() {
+                if let Some(task) = self.task_ref() {
                     let _ = task.write_bytes(b"", true);
                 }
                 self.source.close(None);
@@ -2493,7 +2482,7 @@ impl NetworkSink {
         // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
         if let Some(task) = self.task_ref() {
             //TODO: we could do better here
-            return task.buffered.memory_cost();
+            return task.buffered.get().memory_cost();
         }
         0
     }

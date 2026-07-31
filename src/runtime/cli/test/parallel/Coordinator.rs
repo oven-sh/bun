@@ -107,13 +107,16 @@ impl<'a> Coordinator<'a> {
 
     pub(crate) fn drive(&mut self) {
         let _ = self.spawn_worker();
+        self.run_pending_reaps();
         while !self.is_done() {
             if abort_handler::SHOULD_ABORT.load(Ordering::Acquire) {
                 self.abort_all();
                 return;
             }
             self.vm.event_loop_ref().tick();
+            self.run_pending_reaps();
             self.maybe_scale_up();
+            self.run_pending_reaps();
             if self.is_done() {
                 break;
             }
@@ -135,6 +138,7 @@ impl<'a> Coordinator<'a> {
             } else {
                 self.vm.event_loop_ref().auto_tick();
             }
+            self.run_pending_reaps();
         }
     }
 
@@ -504,14 +508,39 @@ impl<'a> Coordinator<'a> {
         self.try_reap(w);
     }
 
+    /// Reap once both the process-exit notification and channel EOF have
+    /// arrived. This runs inside a channel/process callback, so only mark the
+    /// worker; `run_pending_reaps` does the teardown after the callback frame
+    /// has unwound (the reap drops `w.ipc`).
     pub(crate) fn try_reap(&mut self, w: &mut Worker) {
-        // SpawnStatus is not Copy (Err arm owns a path); take()
-        // instead of pattern-match-by-copy.
-        if w.exit_status.is_none() || !w.ipc.done {
+        if w.exit_status.is_none() || !w.ipc.done.get() {
             return;
         }
-        let status = w.exit_status.take().expect("checked above");
-        self.reap_worker(w, &status);
+        w.reap_pending = true;
+    }
+
+    /// Runs from `drive()` between event-loop ticks — never inside a channel
+    /// or process callback — so `reap_worker` may drop and rebuild `w.ipc`.
+    fn run_pending_reaps(&mut self) {
+        // Iterate via raw pointers: `reap_worker` needs `&mut self` while the
+        // slot borrow is live (same shape as the on_frame callback paths).
+        let base: *mut Worker = self.workers.as_mut_ptr();
+        let n = self.spawned_count as usize;
+        for i in 0..n {
+            // SAFETY: `i < spawned_count <= workers.len()`; this is the only
+            // live `&mut Worker` into the slice for the duration of the reap.
+            let w = unsafe { &mut *base.add(i) };
+            if !core::mem::take(&mut w.reap_pending) {
+                continue;
+            }
+            // SpawnStatus is not Copy (Err arm owns a path); take()
+            // instead of pattern-match-by-copy.
+            let status = w
+                .exit_status
+                .take()
+                .expect("reap_pending set only after exit_status");
+            self.reap_worker(w, &status);
+        }
     }
 
     fn reap_worker(&mut self, w: &mut Worker, status: &SpawnStatus) {

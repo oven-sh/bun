@@ -70,6 +70,9 @@ pub struct Worker {
     /// Set when the process-exit notification arrives. Reaping waits for both
     /// this and `ipc.done` so trailing IPC frames are decoded first.
     pub(crate) exit_status: Option<Status>,
+    /// Set by `Coordinator::try_reap` from inside a channel/process
+    /// callback; `Coordinator::drive` reaps once the callback has unwound.
+    pub(crate) reap_pending: bool,
 }
 
 impl Worker {
@@ -176,7 +179,7 @@ impl Worker {
                     return Err(crate::Error::ChannelAdoptFailed);
                 }
             } else {
-                this.ipc.done = true;
+                this.ipc.done.set(true);
             }
         }
         #[cfg(not(unix))]

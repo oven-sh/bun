@@ -225,7 +225,7 @@ impl WebSocketProxyTunnel {
         // Snapshot the `*mut SSL` *before* moving `wrapper` into `*this` and before
         // forming any `&mut SslWrapper`, so callbacks can read it from a tunnel
         // field disjoint from `wrapper` (see `self.ssl` doc).
-        let ssl = wrapper.ssl;
+        let ssl = wrapper.ssl.get();
 
         // SAFETY: caller contract — `this` is live. Short-lived raw derefs to assign
         // fields; no `&mut Self` is bound across the re-entrant `start*()` below.

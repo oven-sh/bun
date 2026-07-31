@@ -82,9 +82,19 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
 ) -> Result<(), crate::Error> {
     let mut filename_buf = PathBuffer::uninit();
     let mut filename: &[u8] = source.path.text;
-    let top_level_dir: &[u8] = FileSystem::instance().top_level_dir();
-    if strings::has_prefix(filename, top_level_dir) {
-        filename = &filename[top_level_dir.len() - 1..];
+    let top_level_dir: &[u8] =
+        strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    if filename.len() > top_level_dir.len()
+        && strings::has_prefix(filename, top_level_dir)
+        && bun_paths::is_sep_native(filename[top_level_dir.len()])
+    {
+        filename = &filename[top_level_dir.len()..];
+        if cfg!(windows) {
+            let n = filename.len();
+            filename_buf[..n].copy_from_slice(filename);
+            bun_paths::resolve_path::platform_to_posix_in_place(&mut filename_buf[..n]);
+            filename = &filename_buf[..n];
+        }
     } else if !filename.is_empty() && filename[0] != b'/' {
         filename_buf[0] = b'/';
         filename_buf[1..][..filename.len()].copy_from_slice(filename);

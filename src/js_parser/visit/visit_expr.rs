@@ -2007,6 +2007,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // Calls through a `const req = createRequire(import.meta.url)` binding
+        // resolve relative to the current module, exactly like `require()`, so
+        // bundle static string arguments the same way. Dynamic arguments keep
+        // calling the binding at runtime.
+        if !p.create_require_target_refs.is_empty() && e_.args.len_u32() == 1 {
+            let target_ref = match &e_.target.data {
+                Data::EIdentifier(ident) => Some(ident.ref_),
+                _ => None,
+            };
+            if let Some(target_ref) = target_ref
+                && p.create_require_target_refs.contains_key(&target_ref)
+                && matches!(e_.args.slice()[0].data, Data::EString(..))
+            {
+                let first = e_.args.slice()[0];
+                let state = TransposeState {
+                    is_require_immediately_assigned_to_decl: in_.is_immediately_assigned_to_decl,
+                    ..Default::default()
+                };
+                *e = p.transpose_require(first, &state);
+                p.ignore_usage(target_ref);
+                return;
+            }
+        }
+
         if matches!(e_.target.data, Data::ERequireCallTarget) {
             e_.can_be_unwrapped_if_unused = E::CallUnwrap::Never;
 

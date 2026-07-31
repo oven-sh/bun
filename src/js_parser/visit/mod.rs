@@ -352,6 +352,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
+                // Track `const req = createRequire(import.meta.url)` so e_call can
+                // bundle `req("...")` like a regular `require("...")`. Restricted
+                // to `const` so the binding can never be reassigned.
+                if was_const
+                    && self.create_require_ref.is_valid()
+                    && let BData::BIdentifier(id) = decl.binding.data
+                    && let Some(value) = decl.value
+                    && let Some(call) = value.data.e_call()
+                    && call.args.len_u32() == 1
+                {
+                    let target_ref = match &call.target.data {
+                        ExprData::EIdentifier(ident) => Some(ident.ref_),
+                        ExprData::EImportIdentifier(ident) => Some(ident.ref_),
+                        _ => None,
+                    };
+                    let arg_is_import_meta_url = match &call.args.slice()[0].data {
+                        ExprData::EDot(dot) => {
+                            matches!(dot.target.data, ExprData::EImportMeta(_))
+                                && (dot.name == b"url" || dot.name == b"filename")
+                        }
+                        _ => false,
+                    };
+                    if arg_is_import_meta_url
+                        && target_ref.is_some_and(|r| r.eql(self.create_require_ref))
+                    {
+                        self.create_require_target_refs.insert(id.r#ref, ());
+                    }
+                }
+
                 if self.should_unwrap_common_js_to_esm() {
                     if prev_require_to_convert_count < self.imports_to_convert_from_require.len() {
                         if let BData::BIdentifier(id) = decl.binding.data {

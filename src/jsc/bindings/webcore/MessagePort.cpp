@@ -67,6 +67,19 @@ MessagePort::MessagePort(ScriptExecutionContext& context, Ref<MessagePortPipe>&&
 
 MessagePort::~MessagePort()
 {
+    // Release the listener / jsRef keepalives if the wrapper was collected
+    // before peerClosed() reached jsUnref(); otherwise the ref outlives the
+    // port and the event loop never idles.
+    if (m_listenerLoopRefActive) {
+        m_listenerLoopRefActive = false;
+        if (auto* context = scriptExecutionContext())
+            context->unrefEventLoop();
+    }
+    if (m_hasRef) {
+        m_hasRef = false;
+        if (auto* context = scriptExecutionContext())
+            context->unrefEventLoop();
+    }
     if (!m_isDetached)
         m_pipe->close(m_side, MessagePortPipe::CloseKind::Collected);
 }

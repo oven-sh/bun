@@ -4993,17 +4993,11 @@ pub(crate) fn write_file_with_source_destination(
 // writeFileInternal / writeFile (Bun.write)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Creates a `Bytes`-backed `Blob` that borrows `data`'s ArrayBuffer in place
-/// instead of copying it, so large `Bun.write(path, typedArray)` payloads
-/// don't stall the JS thread snapshotting into a memfd or Vec. The buffer is
-/// pinned (JS cannot detach it) and GC-protected; both are released by the
-/// store's allocator `free`, which MUST therefore run on the JS thread. The
-/// only caller is `write_file_internal` for regular-file destinations, where
-/// the sole surviving store ref is dropped in `WriteFile::then` /
-/// `WriteFileWindows::run_from_js_thread`.
-///
-/// Returns `None` when `data` is not buffer-backed, is empty, or is resizable
-/// (a concurrent shrink would invalidate the borrowed slice).
+/// A `Bytes` store that borrows `data`'s pinned+protected ArrayBuffer in place.
+/// The store's allocator `free` releases the pin+protect, so the last
+/// `StoreRef` drop MUST be on the JS thread (`WriteFile::then` /
+/// `WriteFileWindows::run_from_js_thread` are). `None` for non-buffer, empty,
+/// or resizable input.
 fn borrow_array_buffer_for_write(global_this: &JSGlobalObject, data: JSValue) -> Option<Blob> {
     let buffer = data.as_pinned_arraybuffer(global_this)?;
     if buffer.byte_len == 0 || buffer.resizable {
@@ -5332,12 +5326,8 @@ pub(crate) fn write_file_internal(
             break 'brk Blob::init_with_store(archive.store_ref().clone(), global_this);
         }
 
-        // For ArrayBuffer/TypedArray sources going to a regular file, borrow
-        // the bytes in place so the pool-thread write reads them directly
-        // (matching `fs.promises.writeFile`), instead of `Blob::get`
-        // snapshotting the whole payload into a memfd/Vec on this thread.
-        // S3 destinations keep the copying path because the store may outlive
-        // the JS-thread drop there.
+        // Borrow buffer sources instead of `Blob::get`'s O(n) JS-thread copy.
+        // S3 excluded: its store may outlive the JS-thread drop the borrow needs.
         if !destination_blob.is_s3() {
             if let Some(blob) = borrow_array_buffer_for_write(global_this, data) {
                 break 'brk blob;

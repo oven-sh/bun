@@ -69,6 +69,12 @@ pub struct WindowsNamedPipe {
     /// An `on_close` that arrived while [`Flags::WRITER_BUSY`] was set; run
     /// from [`Self::close_writer`]'s epilogue once the writer borrow ends.
     pub(crate) deferred_writer_close: Cell<bool>,
+    /// This pipe's own address with write provenance (the owning
+    /// `WindowsNamedPipeContext` allocation root's field), recorded by the
+    /// context right after construction. Every raw `*mut Self` handed to
+    /// libuv / the writer / the TLS engine derives from it, never from a
+    /// `&self`.
+    pub(crate) root: Cell<*mut WindowsNamedPipe>,
     /// Non-owning alias of the heap `uv::Pipe`. The owning
     /// `Box<uv::Pipe>` is leaked in [`from`] and adopted by
     /// `self.writer.source` (`Source::Pipe`) inside [`start`]; this field only
@@ -314,16 +320,34 @@ impl WindowsNamedPipe {
     /// `Parent::on_close`; that runs deferred (via [`Flags::WRITER_BUSY`])
     /// so `release_resources` never re-borrows the `writer` cell while this
     /// exclusive borrow is live.
+    /// The recorded allocation root; see [`Self::root`].
+    #[inline]
+    fn root_ptr(&self) -> *mut WindowsNamedPipe {
+        let p = self.root.get();
+        debug_assert!(!p.is_null(), "WindowsNamedPipe root not recorded");
+        p
+    }
+
     fn close_writer(&self) {
+        self.with_writer(|w| w.close());
+    }
+
+    /// Run `op` on the writer with [`Flags::WRITER_BUSY`] held. `close()`
+    /// and `end()` can synchronously fire `Parent::on_close`, which defers
+    /// itself while the flag is set and runs from this epilogue — so
+    /// `release_resources` never re-borrows the `writer` cell while `op`'s
+    /// exclusive borrow is live.
+    fn with_writer<R>(&self, op: impl FnOnce(&mut StreamingWriter<Self>) -> R) -> R {
         let was_busy = self.flags.get().contains(Flags::WRITER_BUSY);
         self.update_flags(|f| f.insert(Flags::WRITER_BUSY));
-        self.writer.with_mut(|w| w.close());
+        let r = self.writer.with_mut(op);
         if !was_busy {
             self.update_flags(|f| f.remove(Flags::WRITER_BUSY));
             if self.deferred_writer_close.replace(false) {
                 self.on_close();
             }
         }
+        r
     }
 
     #[cfg(windows)]
@@ -405,7 +429,7 @@ impl WindowsNamedPipe {
     #[cfg(windows)]
     fn wrapper_handlers(&self) -> ssl_wrapper::Handlers<*mut WindowsNamedPipe> {
         ssl_wrapper::Handlers {
-            ctx: core::ptr::from_ref(self).cast_mut(),
+            ctx: self.root_ptr(),
             on_open: Self::ssl_on_open,
             on_handshake: Self::ssl_on_handshake,
             on_data: Self::ssl_on_data,
@@ -481,7 +505,7 @@ impl WindowsNamedPipe {
             let _ = self.with_wrapper(|w| {
                 let _ = w.shutdown(false);
             });
-            self.writer.with_mut(|w| w.end());
+            self.with_writer(|w| w.end());
         }
     }
 
@@ -503,7 +527,7 @@ impl WindowsNamedPipe {
             let Some(stream) = self.writer.with_mut(|w| w.get_stream()) else {
                 return false;
             };
-            let this: *mut Self = core::ptr::from_ref(self).cast_mut();
+            let this: *mut Self = self.root_ptr();
             // SAFETY: `stream` is the live `*mut uv_stream_t` for our pipe
             // (returned by `writer.get_stream()`); the `StreamReader` impl
             // below routes the trampolines back to `self`.
@@ -580,6 +604,7 @@ impl WindowsNamedPipe {
             pipe: Cell::new(Some(NonNull::from(Box::leak(pipe)))),
             wrapper: JsCell::new(None),
             deferred_writer_close: Cell::new(false),
+            root: Cell::new(core::ptr::null_mut()),
             handlers,
             // defaults:
             writer: JsCell::new(StreamingWriter::default()),
@@ -780,7 +805,7 @@ impl WindowsNamedPipe {
             return Err(e);
         }
 
-        let ctx: *mut Self = core::ptr::from_ref(self).cast_mut();
+        let ctx: *mut Self = self.root_ptr();
         let req: *mut uv::uv_connect_t = self.connect_req.as_ptr();
         // SAFETY: `req` is our own cell storage; libuv stashes `req`/`ctx` until
         // the connect callback fires (this struct outlives that).
@@ -876,7 +901,7 @@ impl WindowsNamedPipe {
             };
             // SAFETY: live libuv handle alias; see `pipe`.
             unsafe { (*pipe_nn.as_ptr()).unref() };
-            let this: *mut Self = core::ptr::from_ref(self).cast_mut();
+            let this: *mut Self = self.root_ptr();
             // After this call `self.writer.source` holds the SOLE `Box` for the
             // allocation; `self.pipe` remains a non-owning alias for
             // `pause_stream`, nulled by `on_close`, and `Drop` only reclaims
@@ -946,7 +971,7 @@ impl WindowsNamedPipe {
         let _ = self.with_wrapper(|w| {
             let _ = w.shutdown(false);
         });
-        self.writer.with_mut(|w| w.end());
+        self.with_writer(|w| w.end());
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__shutdown")]
@@ -960,7 +985,7 @@ impl WindowsNamedPipe {
             // named pipe (endNT → shutdown()) never signals the peer, and an
             // allowHalfOpen peer waiting on 'end' hangs. `writer.end()` is
             // idempotent and mirrors `close`'s unconditional writer teardown.
-            self.writer.with_mut(|w| w.end());
+            self.with_writer(|w| w.end());
         }
     }
 

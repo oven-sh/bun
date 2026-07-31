@@ -515,7 +515,7 @@ pub(crate) fn writable_stream(
         multipart_upload_list: JsCell::new(Vec::new()),
         state: Cell::new(MultiPartUploadState::NotStarted),
         callback: wrapper_callback_thunk,
-        on_writable: Some(on_writable_thunk), // assigned below after response_stream exists
+        on_writable: Some(on_writable_thunk),
         callback_context: Cell::new(core::ptr::null_mut()), // assigned below
     }));
     // SAFETY: `task_ptr` is the fresh, non-null allocation root.
@@ -961,7 +961,7 @@ pub(crate) fn upload_stream(
         multipart_upload_list: JsCell::new(Vec::new()),
         state: Cell::new(MultiPartUploadState::WaitStreamCheck),
         callback: resolve_thunk,
-        on_writable: Some(on_writable_thunk), // assigned below after ctx exists
+        on_writable: Some(on_writable_thunk),
         callback_context: Cell::new(core::ptr::null_mut()), // assigned below
     }));
     // SAFETY: `task_ptr` is the fresh, non-null allocation root.

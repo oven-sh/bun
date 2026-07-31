@@ -176,6 +176,16 @@ impl<'a> LinkerContext<'a> {
         bun_core::from_field_ptr!(BundleV2, linker, linker)
     }
 
+    /// Read-only container-of for callers holding a `*const Self`.
+    ///
+    /// # Safety
+    /// Same contract as [`Self::bundle_v2_ptr`].
+    #[inline]
+    pub(crate) unsafe fn bundle_v2_const_ptr(linker: *const Self) -> *const BundleV2<'a> {
+        // SAFETY: address computation only; constness restored on return.
+        unsafe { Self::bundle_v2_ptr(linker.cast_mut()).cast_const() }
+    }
+
     /// Shared-read accessor for the parse-side graph.
     ///
     /// `parse_graph` is a backref into `BundleV2.graph`, a sibling field of
@@ -539,9 +549,15 @@ impl<'a> LinkerContext<'a> {
 
         // Note: erase `'a` → `'static` for the task backref. The tasks are
         // joined before `self` is dropped (see `SourceMapData.*_wait_group`).
-        // SAFETY: write provenance from `ptr::from_mut`; outlives every task.
-        let ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>, bun_ptr::Mut>> = Some(unsafe {
-            bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext<'a>>(self).cast())
+        // Shared provenance: worker tasks only read the context (they never
+        // form `&mut LinkerContext`); peer tasks hold the same pointer.
+        // SAFETY: `self` outlives every task (joined before drop).
+        let ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>>> = Some(unsafe {
+            bun_ptr::ParentRef::from_raw(
+                std::ptr::from_ref::<LinkerContext<'a>>(self)
+                    .cast::<LinkerContext<'static>>()
+                    .cast_mut(),
+            )
         });
         let mut batch = ThreadPoolLib::Batch::default();
         let mut second_batch = ThreadPoolLib::Batch::default();
@@ -1297,7 +1313,7 @@ pub struct SourceMapData {
 pub struct SourceMapDataTask {
     /// `None` only in `Default` (the per-index slot is overwritten before
     /// scheduling).
-    pub(crate) ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>, bun_ptr::Mut>>,
+    pub(crate) ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>>>,
     pub(crate) source_index: crate::IndexInt,
     pub(crate) thread_task: ThreadPoolLib::Task,
 }
@@ -1351,7 +1367,8 @@ impl SourceMapDataTask {
         // any `&mut` to the shared `BundleV2`/`LinkerContext` would be aliased
         // UB. `Worker::get` only needs `&BundleV2` (reads `graph.pool`), and
         // that shared borrow ends before any per-slot write below.
-        let bundle: *const BundleV2 = unsafe { LinkerContext::bundle_v2_ptr(ctx.as_mut_ptr()) };
+        let bundle: *const BundleV2 =
+            unsafe { LinkerContext::bundle_v2_const_ptr(ctx.as_const_ptr()) };
         // SAFETY: `bundle` is a valid backref into the owning `BundleV2` (see above);
         // only a shared borrow is formed and it ends before any per-slot write.
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
@@ -1383,7 +1400,8 @@ impl SourceMapDataTask {
 
         // SAFETY: see `run_line_offset` — raw-ptr container_of, no `&mut`
         // materialized over the shared `BundleV2` while peer tasks are live.
-        let bundle: *const BundleV2 = unsafe { LinkerContext::bundle_v2_ptr(ctx.as_mut_ptr()) };
+        let bundle: *const BundleV2 =
+            unsafe { LinkerContext::bundle_v2_const_ptr(ctx.as_const_ptr()) };
         // SAFETY: `bundle` is a valid backref (see `run_line_offset`); only a shared
         // borrow is formed for `Worker::get`, which reads `graph.pool` under a mutex.
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
@@ -1411,7 +1429,7 @@ impl SourceMapData {
     /// writes only `graph.files[source_index].line_offset_table` (disjoint by
     /// `source_index`) via a raw column pointer.
     pub(crate) fn compute_line_offsets(
-        this: bun_ptr::ParentRef<LinkerContext<'_>, bun_ptr::Mut>,
+        this: bun_ptr::ParentRef<LinkerContext<'_>>,
         alloc: &Bump,
         source_index: crate::IndexInt,
     ) {
@@ -1468,7 +1486,7 @@ impl SourceMapData {
     /// Runs concurrently across the worker pool — see `compute_line_offsets`
     /// for the `ParentRef` aliasing contract.
     pub(crate) fn compute_quoted_source_contents(
-        this: bun_ptr::ParentRef<LinkerContext<'_>, bun_ptr::Mut>,
+        this: bun_ptr::ParentRef<LinkerContext<'_>>,
         _alloc: &Bump,
         source_index: crate::IndexInt,
     ) {

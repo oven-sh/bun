@@ -787,13 +787,7 @@ impl ShellSubprocess {
                 pipe.source
                     .set(webcore::streams::SourceHandle::ShellWritable(
                         // SAFETY: `stdin_ptr` is the live `&raw mut` writable (write provenance).
-                        unsafe {
-                            bun_ptr::BackRef::from_raw_mut(
-                                core::ptr::NonNull::new(stdin_ptr)
-                                    .expect("&raw mut")
-                                    .as_ptr(),
-                            )
-                        },
+                        unsafe { bun_ptr::BackRef::from_raw_mut(stdin_ptr) },
                     ));
             }
         }

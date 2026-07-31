@@ -160,7 +160,11 @@ pub struct WindowsBackend {
     /// detached. Reclaimed by `close_and_destroy`.
     pub(crate) pipe: Cell<*mut uv::Pipe>,
     /// Read scratch — libuv asks us to allocate before each read.
-    pub(crate) read_chunk: [u8; 16 * 1024],
+    /// Wrapped so every byte is interior-mutable: libuv forms
+    /// `&mut Channel` from the stored root on each read; a plain array here
+    /// would be the one field where that retag pops the shared views held
+    /// during frame decoding.
+    pub(crate) read_chunk: JsCell<[u8; 16 * 1024]>,
     /// Payload owned by the in-flight uv_write; must stay stable until the
     /// callback. New writes go to `out` until this completes, then the buffers
     /// swap.
@@ -174,7 +178,7 @@ impl Default for WindowsBackend {
     fn default() -> Self {
         Self {
             pipe: Cell::new(core::ptr::null_mut()),
-            read_chunk: [0u8; 16 * 1024],
+            read_chunk: JsCell::new([0u8; 16 * 1024]),
             inflight: JsCell::new(Vec::new()),
             write_req: JsCell::new(bun_core::ffi::zeroed::<uv::uv_write_t>()),
             write_buf: JsCell::new(uv::uv_buf_t::init(b"")),
@@ -679,7 +683,10 @@ struct WindowsHandlers<Owner: ChannelOwner>(PhantomData<Owner>);
 impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
     fn on_alloc(self_: &mut Channel<Owner>, suggested: usize) -> &mut [u8] {
         let _ = suggested;
-        &mut self_.backend.read_chunk[..]
+        // SAFETY: hands libuv the cell payload; the buffer is only written by
+        // libuv until `on_read` consumes it, all on this thread.
+        let buf: &mut [u8; 16 * 1024] = unsafe { &mut *self_.backend.read_chunk.as_ptr() };
+        &mut buf[..]
     }
     fn on_error(self_: &Channel<Owner>, _err: bun_sys::E) {
         // Mirror the POSIX on_close path: detach the transport before

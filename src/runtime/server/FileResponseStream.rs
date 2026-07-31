@@ -213,7 +213,7 @@ impl FileResponseStream {
 
         // SAFETY: `start()`/`start_file_offset()` re-enter this object through
         // the parent pointer (`loop_`/`event_loop`), so no cell borrow spans them.
-        let reader = unsafe { &mut *this_ref.reader.as_ptr() };
+        let reader = this_ref.reader_mut();
         let start_result = if opts.offset > 0 {
             reader.start_file_offset(opts.fd, opts.pollable, opts.offset as usize)
         } else {
@@ -225,7 +225,7 @@ impl FileResponseStream {
         }
 
         // SAFETY: as above — `update_ref` re-enters `event_loop` through the parent pointer.
-        unsafe { &mut *this_ref.reader.as_ptr() }.update_ref(true);
+        this_ref.reader_mut().update_ref(true);
 
         #[cfg(unix)]
         if let Some(poll) = this_ref.reader.get().handle.get_poll() {
@@ -248,7 +248,7 @@ impl FileResponseStream {
         this_ref.hold_read_ref();
         // SAFETY: `read()` dispatches `on_read_chunk`/`on_reader_done` back into
         // this object through the parent pointer, so no cell borrow spans it.
-        unsafe { &mut *this_ref.reader.as_ptr() }.read();
+        this_ref.reader_mut().read();
     }
 
     #[inline]
@@ -262,6 +262,24 @@ impl FileResponseStream {
     }
 
     // ───────────────────────── reader backend ─────────────────────────
+
+    /// Exclusive view of the reader. `pause()`/`read()` are entered both
+    /// from our own drive sites and, on Windows, re-entrantly from inside
+    /// `on_read_chunk`; `bun_io::PipeReader` documents and defends that
+    /// re-entry (it launders its own state around the vtable callback,
+    /// PORT_NOTES_PLAN R-2, and expects streaming parents to call
+    /// `reader().pause()` because a `false` return does not pause on
+    /// Windows). This accessor is the single place that contract is relied
+    /// upon.
+    #[allow(
+        clippy::mut_from_ref,
+        reason = "reader is a separate cell payload; see doc"
+    )]
+    fn reader_mut(&self) -> &mut BufferedReader {
+        // SAFETY: `reader` is live for the stream's lifetime; the io crate's
+        // re-entrancy contract (see doc) covers the nested call.
+        unsafe { &mut *self.reader.as_ptr() }
+    }
 
     fn on_read_chunk(&self, chunk_: &[u8], state_: ReadState) -> bool {
         if self.state.get().contains(State::RESPONSE_DONE) {
@@ -277,7 +295,7 @@ impl FileResponseStream {
                     #[cfg(not(unix))]
                     // SAFETY: reader entry point; `pause()` does not call back
                     // into this object.
-                    unsafe { &mut *self.reader.as_ptr() }.pause();
+                    self.reader_mut().pause();
                     // SAFETY: `vm.event_loop()` returns the live JS loop; the
                     // ref taken for the in-flight read keeps `*self` alive until
                     // the `task_tag::FileResponseStreamEof` arm calls
@@ -322,7 +340,7 @@ impl FileResponseStream {
                 #[cfg(not(unix))]
                 // SAFETY: reader entry point; `pause()` does not call back into
                 // this object.
-                unsafe { &mut *self.reader.as_ptr() }.pause();
+                self.reader_mut().pause();
                 false
             }
             WriteResult::WantMore(_) => true,
@@ -376,7 +394,7 @@ impl FileResponseStream {
         // SAFETY: `read()` dispatches `on_read_chunk`/`on_reader_done` back
         // into this object through the parent pointer, so no cell borrow
         // spans it.
-        unsafe { &mut *self.reader.as_ptr() }.read();
+        self.reader_mut().read();
         true
     }
 

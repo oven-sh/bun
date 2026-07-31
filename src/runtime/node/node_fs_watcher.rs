@@ -751,7 +751,7 @@ impl FSWatcher {
             if s.aborted() {
                 // safely abort next tick
                 this_ref.current_task.set(FSWatchTask {
-                    // SAFETY: `this` is the live boxed FSWatcher; write provenance.
+                    // SAFETY: `this` is the live boxed FSWatcher (shared; the task only reads).
                     ctx: Some(unsafe { bun_ptr::ParentRef::from_raw(this) }),
                     ..Default::default()
                 });
@@ -1129,7 +1129,7 @@ impl FSWatcher {
         // SAFETY: `ctx` is the freshly-boxed payload; uniquely owned here.
         // R-2: deref as shared; mutation goes through `JsCell`.
         let ctx_ref = unsafe { &*ctx };
-        // SAFETY: `ctx` is the heap-stable Box address; write provenance.
+        // SAFETY: `ctx` is the heap-stable Box address (shared; the task only reads).
         let parent = unsafe { bun_ptr::ParentRef::from_raw(ctx) };
         ctx_ref.current_task.with_mut(|t| t.ctx = Some(parent));
 

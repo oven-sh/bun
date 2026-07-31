@@ -95,10 +95,12 @@ impl Handler {
         }
 
         let _ = vm;
-        let _ = self
-            .vm
-            .as_mut()
-            .uncaught_exception(global_object, error_value, false);
+        // `self.vm` is a Shared backref; the mutable call goes through the
+        // per-thread singleton accessor rather than promoting its provenance.
+        let _ =
+            VirtualMachine::get()
+                .as_mut()
+                .uncaught_exception(global_object, error_value, false);
     }
 
     pub fn from_js(global_object: &JSGlobalObject, object: JSValue) -> JsResult<Handler> {

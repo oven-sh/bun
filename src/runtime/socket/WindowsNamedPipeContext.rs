@@ -378,6 +378,11 @@ impl WindowsNamedPipeContext {
                         is_open: false,
                     },
                 );
+                // Record the pipe's allocation-root address (write provenance)
+                // before anything registers it with libuv/the writer.
+                (*ptr::addr_of_mut!((*this).named_pipe))
+                    .root
+                    .set(ptr::addr_of_mut!((*this).named_pipe));
             }
 
             // Take a +1 intrusive ref so the wrapped JS socket outlives this context.

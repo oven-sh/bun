@@ -149,8 +149,12 @@ macro_rules! dispatch {
 impl AnyRequestContext {
     pub(crate) fn set_additional_on_abort_callback(self, cb: Option<AdditionalOnAbortCallback>) {
         dispatch!(self, (), |_T, ctx| {
-            let old = ctx.additional_on_abort.replace(cb);
-            debug_assert!(old.is_none());
+            if let Some(old) = ctx.additional_on_abort.replace(cb) {
+                // A previous callback owns a ref; release it rather than
+                // leaking (the debug-only invariant is "set at most once").
+                debug_assert!(false, "additional_on_abort set twice");
+                old.deref();
+            }
         })
     }
 

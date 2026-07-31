@@ -1632,21 +1632,13 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                     }
                 }
             });
-            // PROVENANCE: `windows_configure_server` STORES the `*mut SendQueue`
-            // in `uv_handle_t.data` for the pipe's lifetime, so it takes a raw
-            // pointer (not `&mut self`) — see its safety doc. NOTE: this still
-            // derives from the `ipc_data` reborrow (same as the unix branch's
-            // `ptr::from_mut(ipc_data)` above); a true root-raw projection
-            // through `Option<SendQueue>` is tracked separately.
-            // SAFETY: `ipc_data` points at the live SendQueue inline in
-            // `*subprocess_ptr`; no other `&mut` to it is live in this scope.
-            if let Some(err) = unsafe {
-                IPC::SendQueue::windows_configure_server(
-                    core::ptr::from_ref(ipc_data).cast_mut(),
-                    ipc_pipe,
-                )
-            }
-            .as_err()
+            // `windows_configure_server` stores the pointer in `uv_handle_t.data`
+            // for the pipe's lifetime, so it must be the allocation root
+            // (write provenance), never one re-derived from `&SendQueue`.
+            // SAFETY: `ipc_data` is the live SendQueue owned by `subprocess`.
+            if let Some(err) =
+                unsafe { IPC::SendQueue::windows_configure_server(ipc_data.as_ctx_ptr(), ipc_pipe) }
+                    .as_err()
             {
                 let err_js = err.to_js(global_this);
                 subprocess.deref();

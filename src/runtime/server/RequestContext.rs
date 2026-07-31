@@ -139,6 +139,10 @@ pub struct RequestContext<
     // here would root the Response unconditionally and change GC behavior.
     pub(crate) response_jsvalue: Cell<JSValue>,
     pub(crate) ref_count: Cell<u8>,
+    /// References currently held by [`RequestContextRef::pin`] frame guards.
+    /// The refcount predicates subtract this so a frame's own pin does not
+    /// perturb "is the only reference" (`ref_count - pin_count == 1`).
+    pub(crate) pin_count: Cell<u8>,
 
     /// Weak: for plain Blob/InternalBlob bodies the Response JSValue is
     /// not protected (hot path), so GC may finalize it while we're parked
@@ -272,11 +276,15 @@ use bun_jsc::SysErrorJsc as _;
 /// pointer as the first statement: the guard's ref keeps the pooled context
 /// alive for the whole frame even if the body drops the base ref, and the
 /// actual pool release happens here at drop.
-struct RequestContextRef<ThisServer, const SSL: bool, const DBG: bool, const H3: bool>(
-    *mut RequestContext<ThisServer, SSL, DBG, H3>,
-)
+struct RequestContextRef<ThisServer, const SSL: bool, const DBG: bool, const H3: bool>
 where
-    ThisServer: ServerLike + 'static;
+    ThisServer: ServerLike + 'static,
+{
+    ctx: *mut RequestContext<ThisServer, SSL, DBG, H3>,
+    /// Whether this guard's ref was taken by `pin` (counted in `pin_count`)
+    /// rather than adopted.
+    is_pin: bool,
+}
 
 impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool>
     RequestContextRef<ThisServer, SSL, DBG, H3>
@@ -288,16 +296,33 @@ where
     fn pin(this: *mut RequestContext<ThisServer, SSL, DBG, H3>) -> Self {
         // SAFETY: `this` is a live context registered as the callback's
         // user-data; the base ref cannot be released before this returns.
-        unsafe { (*this).ref_() };
-        Self(this)
+        unsafe {
+            (*this).ref_();
+            (*this).pin_count.set((*this).pin_count.get() + 1);
+        }
+        Self {
+            ctx: this,
+            is_pin: true,
+        }
+    }
+
+    /// Adopt a reference the caller already owns (a matching `ref_()`
+    /// exists elsewhere); it is released at drop. Use [`Self::pin`] instead
+    /// when you need a *new* reference for the frame's duration.
+    #[inline]
+    fn adopt(this: *mut RequestContext<ThisServer, SSL, DBG, H3>) -> Self {
+        Self {
+            ctx: this,
+            is_pin: false,
+        }
     }
 
     /// Shared view of the pinned context. The guard's ref keeps the pointee
     /// alive for the guard's whole lifetime.
     #[inline]
     fn ctx(&self) -> &RequestContext<ThisServer, SSL, DBG, H3> {
-        // SAFETY: this guard owns a ref, so `*self.0` is live for `&self`.
-        unsafe { &*self.0 }
+        // SAFETY: this guard owns a ref, so `*self.ctx` is live for `&self`.
+        unsafe { &*self.ctx }
     }
 }
 
@@ -310,7 +335,12 @@ where
     fn drop(&mut self) {
         // SAFETY: pointer was live when wrapped (this guard owns one ref) and
         // `deref()` itself handles the pool release when count hits zero.
-        unsafe { (*self.0).deref() };
+        unsafe {
+            if self.is_pin {
+                (*self.ctx).pin_count.set((*self.ctx).pin_count.get() - 1);
+            }
+            (*self.ctx).deref()
+        };
     }
 }
 
@@ -722,7 +752,7 @@ where
             return Ok(JSValue::UNDEFINED);
         };
         // Adopts the promise cell's +1 ref; released at scope exit.
-        let ctx = RequestContextRef(ctx.as_ptr());
+        let ctx = RequestContextRef::adopt(ctx.as_ptr());
 
         let result = arguments[0];
         result.ensure_still_alive();
@@ -814,6 +844,13 @@ where
         unsafe { self.render(response) };
     }
 
+    /// The refcount excluding frame pins (see `pin_count`); what the
+    /// "only reference of the context" predicates actually measure.
+    #[inline]
+    fn unpinned_ref_count(&self) -> u8 {
+        self.ref_count.get() - self.pin_count.get()
+    }
+
     pub(crate) fn should_render_missing(&self) -> bool {
         // If we did not respond yet, we should render missing
         // To allow this all the conditions above should be true:
@@ -847,7 +884,7 @@ where
             } else {
                 "not marked pending"
             },
-            if self.ref_count.get() == 1 {
+            if self.unpinned_ref_count() == 1 {
                 "only reference"
             } else {
                 "not only reference"
@@ -867,14 +904,14 @@ where
             && !self.flags.aborted()
             && !self.flags.has_marked_complete()
             && !self.flags.has_marked_pending()
-            && self.ref_count.get() == 1
+            && self.unpinned_ref_count() == 1
             && !self.flags.is_waiting_for_request_body()
             && !self.flags.has_sendfile_ctx()
     }
 
     pub(crate) fn is_dead_request(&self) -> bool {
         // check if has pending promise or extra reference (aka not the only reference)
-        if self.ref_count.get() > 1 {
+        if self.unpinned_ref_count() > 1 {
             return false;
         }
         // check if the body is Locked (streaming)
@@ -972,7 +1009,7 @@ where
             return Ok(JSValue::UNDEFINED);
         };
         // Adopts the promise cell's +1 ref; released at scope exit.
-        let ctx = RequestContextRef(ctx.as_ptr());
+        let ctx = RequestContextRef::adopt(ctx.as_ptr());
 
         let err = arguments[0];
         // Pass the rejection reason through verbatim (including `null` and
@@ -1370,6 +1407,7 @@ where
                 upgrade_context: Cell::new(None),
                 response_jsvalue: Cell::new(JSValue::ZERO),
                 ref_count: Cell::new(1),
+                pin_count: Cell::new(0),
                 response_weakref: JsCell::new(response::WeakRef::EMPTY),
                 blob: JsCell::new(AnyBlob::Blob(Blob::default())),
                 sendfile: Cell::new(SendfileContext::default()),
@@ -1462,7 +1500,7 @@ where
         // The abort releases the base ref on every exit path (the pin above
         // survives it). Declared before the microtask drain so it runs
         // *after* (LIFO).
-        let _ref = RequestContextRef(this.as_ctx_ptr());
+        let _ref = RequestContextRef::adopt(this.as_ctx_ptr());
         // This is a task in the event loop.
         // If we called into JavaScript, we must drain the microtask queue.
         scopeguard::defer! {
@@ -2004,7 +2042,9 @@ where
     fn do_render_with_body_locked(this: *mut c_void, value: &mut Body::Value) {
         // Pin: the render below can end the request and release refs.
         let pinned = RequestContextRef::pin(this.cast::<Self>());
-        pinned.ctx().do_render_with_body(value, None);
+        pinned
+            .ctx()
+            .do_render_with_body(std::ptr::from_mut(value), None);
     }
 
     fn render_with_blob_from_body_value(&self) {
@@ -2492,7 +2532,7 @@ where
     ) -> Result<(), jsc::JsTerminated> {
         // Adopts the ref taken for the S3 stat (`do_render_head_response`);
         // released at scope exit, after the body's own base-ref release.
-        let stat_ref = RequestContextRef(this.cast::<Self>());
+        let stat_ref = RequestContextRef::adopt(this.cast::<Self>());
         stat_ref.ctx().on_s3_size_resolved(result);
         Ok(())
     }
@@ -2993,7 +3033,7 @@ where
             return Ok(JSValue::UNDEFINED);
         };
         // Adopts the promise cell's +1 ref; released at scope exit.
-        let req = RequestContextRef(req.as_ptr());
+        let req = RequestContextRef::adopt(req.as_ptr());
         req.ctx().handle_resolve_stream();
         Ok(JSValue::UNDEFINED)
     }
@@ -3009,7 +3049,7 @@ where
         };
         let err = args[0];
         // Adopts the promise cell's +1 ref; released at scope exit.
-        let req = RequestContextRef(req.as_ptr());
+        let req = RequestContextRef::adopt(req.as_ptr());
 
         req.ctx().handle_reject_stream(global_this, err);
         Ok(JSValue::UNDEFINED)
@@ -3166,11 +3206,18 @@ where
         self.end_stream(self.should_close_connection());
     }
 
+    /// `value` points at the response body slot (a separate JSC-owned
+    /// allocation). It is passed raw, not as a protected `&mut` argument:
+    /// the render paths below re-derive `&mut Response` internally
+    /// (`render_metadata`), and each of them returns immediately after, so
+    /// the working reference is never used across such a re-entry.
     pub(crate) fn do_render_with_body(
         &self,
-        value: &mut Body::Value,
+        value: *mut Body::Value,
         owned_readable: Option<WebCore::ReadableStream>,
     ) {
+        // SAFETY: `value` is the live body slot of the response being rendered.
+        let value = unsafe { &mut *value };
         let this = self;
         this.drain_microtasks();
 
@@ -3359,7 +3406,7 @@ where
                         return;
                     }; // TODO: properly propagate exception upwards
                     readable.ensure_still_alive();
-                    this.do_render_with_body(value, None);
+                    this.do_render_with_body(std::ptr::from_mut(value), None);
                     return;
                 }
 
@@ -3415,7 +3462,7 @@ where
     /// was installed (`_ref` adopts it).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn end_chunk(this: *mut Self, err: Option<&WebCore::streams::StreamError>) {
-        let _ref = RequestContextRef(this);
+        let _ref = RequestContextRef::adopt(this);
         // SAFETY: caller passes the live `*mut RequestContext` stored as the
         // sink ctx; `_ref` keeps it alive for this call.
         let this = unsafe { &*this };
@@ -3553,11 +3600,20 @@ where
         if self.is_aborted_or_ended() {
             return;
         }
-        let response: &mut Response = self.response_mut().unwrap();
         // BACKREF
         let global_this = self.server().global_this();
-        let owned_readable = response.get_body_readable_stream(global_this);
-        self.do_render_with_body(response.get_body_value(), owned_readable);
+        // Scope the `&mut Response` here: `do_render_with_body` re-derives
+        // the response internally (`render_metadata`), so only the body-value
+        // slot pointer crosses the call.
+        let (value, owned_readable) = {
+            let response: &mut Response = self.response_mut().unwrap();
+            let owned_readable = response.get_body_readable_stream(global_this);
+            (
+                std::ptr::from_mut(response.get_body_value()),
+                owned_readable,
+            )
+        };
+        self.do_render_with_body(value, owned_readable);
     }
 
     pub(crate) fn render_production_error(&self, status: u16) {

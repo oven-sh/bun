@@ -3612,10 +3612,9 @@ pub mod bv2_impl {
             // result posts back to the bundle thread.
             let task = bun_core::heap::into_raw(Box::new(ServerComponentParseTask {
                 data,
-                // SAFETY: `from_mut(self)` carries write provenance for `assume_mut`
-                // in `on_complete` and outlives the task; `'a` erased to `'static`
-                // for the BACKREF.
-                // SAFETY: `&mut *self` is the live bundle (write provenance).
+                // SAFETY: `from_mut(self)` is the live bundle (write provenance for
+                // `on_complete`'s `assume_mut`) and outlives the task; `'a` erased to
+                // `'static` for the BACKREF.
                 ctx: Some(unsafe {
                     bun_ptr::ParentRef::from_raw_mut(
                         core::ptr::from_mut(&mut *self).cast::<BundleV2<'static>>(),
@@ -4628,8 +4627,8 @@ pub mod bv2_impl {
                                 })
                                 .expect("unreachable");
                             let task_val = ParseTask {
-                                // SAFETY: write provenance from `ptr::from_mut`; outlives the task.
-                                // SAFETY: `self`/`this` is the live bundle (write provenance).
+                                // SAFETY: `from_mut(this)` is the live bundle (write provenance);
+                                // outlives the task.
                                 ctx: Some(
                                     unsafe {
                                         bun_ptr::ParentRef::from_raw_mut(

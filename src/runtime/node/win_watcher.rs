@@ -136,17 +136,13 @@ impl PathWatcherManager {
             // the borrow ends before the free below.
             let me = unsafe { &*this };
 
+            // `unregister_watcher` only calls `deinit` once the map is empty;
+            // a displaced manager with live watchers defers its own teardown
+            // (`deinit_on_last_watcher`) — manager-side watcher teardown does
+            // not exist.
             if me.watchers.get().len() != 0 {
                 me.deinit_on_last_watcher.set(true);
                 return;
-            }
-
-            for &watcher in me.watchers.get().values() {
-                // SAFETY: watcher pointers are valid until their own deinit runs.
-                unsafe {
-                    (*watcher).manager.set(None);
-                    PathWatcher::deinit(watcher);
-                }
             }
         }
 
@@ -241,8 +237,13 @@ impl PathWatcher {
         if let Some(err) = status.to_error(sys::Tag::watch) {
             me.emit_in_progress.set(true);
 
-            for i in 0..me.handlers.get().len() {
-                let ctx = me.handlers.get().keys()[i];
+            // Snapshot the keys: the JS callbacks below can `close()` and
+            // `swap_remove` a handler mid-loop; a removed key is skipped.
+            let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
+            for ctx in keys {
+                if !me.handlers.get().contains_key(&ctx) {
+                    continue;
+                }
                 on_path_update_fn(
                     Some(ctx),
                     Event::Error {
@@ -306,12 +307,18 @@ impl PathWatcher {
             #[cfg(debug_assertions)]
             let mut debug_count: usize = 0;
 
-            for i in 0..me.handlers.get().len() {
-                let fire = me
+            let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
+            for key in keys {
+                // The JS callbacks below can remove a handler; a key removed
+                // mid-loop yields `None` and is skipped rather than indexed.
+                let Some(fire) = me
                     .handlers
-                    .with_mut(|h| h.values_mut()[i].emit(hash, timestamp, event_type));
+                    .with_mut(|h| h.get_mut(&key).map(|v| v.emit(hash, timestamp, event_type)))
+                else {
+                    continue;
+                };
                 if fire {
-                    let ctx: *mut FSWatcher = me.handlers.get().keys()[i].cast::<FSWatcher>();
+                    let ctx: *mut FSWatcher = key.cast::<FSWatcher>();
                     // SAFETY: handlers keys are `*mut FSWatcher` erased to `*mut c_void` in `watch()`.
                     let encoding = unsafe { (*ctx).encoding };
                     // `EventPathString` on Windows is `StringOrBytesToDecode`.

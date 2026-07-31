@@ -838,14 +838,13 @@ impl PublishCommand {
             package_url,
             headers.entries,
             headers.content.written_slice(),
-            &raw mut response_buf,
             b"",
             None,
             None,
             http::FetchRedirect::Follow,
         );
 
-        let Ok(res) = req.send_sync() else {
+        let Ok(res) = req.send_sync(&mut response_buf) else {
             return false;
         };
         if res.status_code() != 200 {
@@ -964,14 +963,13 @@ impl PublishCommand {
             publish_url.clone(),
             publish_headers.entries,
             publish_headers.content.written_slice(),
-            &raw mut response_buf,
             publish_req_body,
             None,
             None,
             http::FetchRedirect::Follow,
         );
 
-        let res = match req.send_sync() {
+        let res = match req.send_sync(&mut response_buf) {
             Ok(r) => r,
             Err(e) => {
                 if e == bun_http::Error::Alloc(bun_alloc::AllocError) {
@@ -1059,14 +1057,13 @@ impl PublishCommand {
                     publish_url,
                     otp_headers.entries,
                     otp_headers.content.written_slice(),
-                    &raw mut response_buf,
                     publish_req_body,
                     None,
                     None,
                     http::FetchRedirect::Follow,
                 );
 
-                let otp_res = match otp_req.send_sync() {
+                let otp_res = match otp_req.send_sync(&mut response_buf) {
                     Ok(r) => r,
                     Err(e) => {
                         if e == bun_http::Error::Alloc(bun_alloc::AllocError) {
@@ -1297,14 +1294,13 @@ impl PublishCommand {
                         done_url.clone(),
                         auth_headers.entries.clone()?,
                         auth_headers.content.written_slice(),
-                        response_buf,
                         b"",
                         None,
                         None,
                         http::FetchRedirect::Follow,
                     );
 
-                    let res = match req.send_sync() {
+                    let res = match req.send_sync(response_buf) {
                         Ok(r) => r,
                         Err(e) => {
                             if e == bun_http::Error::Alloc(bun_alloc::AllocError) {

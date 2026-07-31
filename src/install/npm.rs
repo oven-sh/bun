@@ -158,14 +158,13 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         url,
         headers.entries,
         header_buf,
-        &raw mut response_buf,
         b"",
         None,
         None,
         http::FetchRedirect::Follow,
     );
 
-    let res = match req.send_sync() {
+    let res = match req.send_sync(&mut response_buf) {
         Ok(res) => res,
         Err(bun_http::Error::Alloc(bun_alloc::AllocError)) => {
             return Err(WhoamiError::OutOfMemory);

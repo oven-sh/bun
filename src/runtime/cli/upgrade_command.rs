@@ -264,7 +264,6 @@ impl UpgradeCommand {
             api_url,
             header_entries,
             headers_buf,
-            std::ptr::from_mut::<MutableString>(metadata_body),
             b"",
             http_proxy,
             None,
@@ -278,7 +277,7 @@ impl UpgradeCommand {
             // frame returns, so the pointee outlives every use.
             async_http.client.progress_node = Some(NonNull::from(progress.as_deref_mut().unwrap()));
         }
-        let response = async_http.send_sync()?;
+        let response = async_http.send_sync(metadata_body)?;
 
         match response.status_code() {
             404 => return Err(crate::Error::HTTP404),
@@ -657,7 +656,6 @@ impl UpgradeCommand {
                 zip_url,
                 headers::EntryList::default(),
                 b"",
-                std::ptr::from_mut::<MutableString>(zip_file_buffer),
                 b"",
                 http_proxy,
                 None,
@@ -669,7 +667,7 @@ impl UpgradeCommand {
                 Some(NonNull::new(progress).expect("leaked Box is non-null"));
             async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
-            let response = async_http.send_sync()?;
+            let response = async_http.send_sync(zip_file_buffer)?;
 
             match response.status_code() {
                 404 => {

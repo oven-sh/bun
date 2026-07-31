@@ -123,8 +123,6 @@ pub struct S3HttpSimpleTask {
     pub(crate) callback_context: *mut c_void,
     pub callback: Callback,
     pub(crate) response_buffer: MutableString,
-    // `'static` here because `result.body` (when set) points at our own
-    // `response_buffer` — self-referential, so the borrow lives as long as the task.
     pub(crate) result: HTTPClientResult<'static>,
     pub(crate) concurrent_task: ConcurrentTask,
     /// Owned dupe of the proxy URL. The env-derived proxy slice can be freed
@@ -238,8 +236,8 @@ impl S3HttpSimpleTask {
         if let Some(err) = self.result.fail {
             code = err.name().as_bytes();
             has_error_code = true;
-        } else if let Some(body) = &self.result.body {
-            let bytes = body.list.as_slice();
+        } else {
+            let bytes = self.response_buffer.list.as_slice();
             if !bytes.is_empty() {
                 message = bytes;
                 if let Some(start) = strings::index_of(bytes, b"<Code>") {
@@ -281,8 +279,8 @@ impl S3HttpSimpleTask {
 
         if let Some(err) = self.result.fail {
             code = err.name().as_bytes();
-        } else if let Some(body) = &self.result.body {
-            let bytes = body.list.as_slice();
+        } else {
+            let bytes = self.response_buffer.list.as_slice();
             let mut has_error = false;
             if !bytes.is_empty() {
                 message = bytes;
@@ -309,8 +307,6 @@ impl S3HttpSimpleTask {
             if (!has_error && status == 200) || status == 206 {
                 return Ok(false);
             }
-        } else if status == 200 || status == 206 {
-            return Ok(false);
         }
         self.callback.fail(code, message, self.callback_context)?;
         Ok(true)
@@ -365,18 +361,15 @@ impl S3HttpSimpleTask {
             },
             Callback::ListObjects(callback) => match response.status_code {
                 200 => {
-                    if let Some(body) = &this.result.body {
-                        // parse_s3_list_objects_result is infallible (alloc-only
-                        // failure modes abort).
-                        let success =
-                            list_objects::parse_s3_list_objects_result(body.list.as_slice());
-                        callback(
-                            S3ListObjectsResult::Success(Box::new(success)),
-                            this.callback_context,
-                        )?;
-                    } else {
-                        this.error_with_body(ErrorType::Failure)?;
-                    }
+                    // parse_s3_list_objects_result is infallible (alloc-only
+                    // failure modes abort).
+                    let success = list_objects::parse_s3_list_objects_result(
+                        this.response_buffer.list.as_slice(),
+                    );
+                    callback(
+                        S3ListObjectsResult::Success(Box::new(success)),
+                        this.callback_context,
+                    )?;
                 }
                 404 => this.error_with_body(ErrorType::NotFound)?,
                 _ => this.error_with_body(ErrorType::Failure)?,
@@ -434,7 +427,7 @@ impl S3HttpSimpleTask {
     pub(crate) fn http_callback(
         this: *mut Self,
         async_http: *mut AsyncHTTP<'static>,
-        result: HTTPClientResult<'_>,
+        mut result: HTTPClientResult<'_>,
     ) {
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` and is exclusively owned by the
         // HTTP thread until enqueued back to the JS thread below.
@@ -444,8 +437,9 @@ impl S3HttpSimpleTask {
         // A close-delimited body (no Content-Length, no Transfer-Encoding) reports progress again
         // at EOF with `metadata: None`, so carry the earlier one across the assignment below.
         let previous_metadata = this.result.metadata.take();
-        // SAFETY: `result.body` (the only borrowed field) points at `this.response_buffer`, which
-        // lives for the task's lifetime — extending to `'static` here is sound for self-reference.
+        result.body_into(&mut this.response_buffer.list);
+        // SAFETY: `body` is the only lifetime-carrying field and `body_into`
+        // just consumed it; the stored `&'static []` is never read.
         this.result = unsafe { result.detach_lifetime() };
         if this.result.metadata.is_none() {
             this.result.metadata = previous_metadata;
@@ -461,10 +455,6 @@ impl S3HttpSimpleTask {
         // SAFETY: `async_http` is a valid live pointer for the duration of this callback;
         // `this.http` was previously initialised in `execute_simple_s3_request`.
         unsafe { core::ptr::write(this.http.as_mut_ptr(), core::ptr::read(async_http)) };
-        // `async_http.response_buffer == &this.response_buffer`, so copying it back would be
-        // a self-assignment: the `=` would drop the live Vec before re-installing a stale
-        // bitwise duplicate (UAF + double-free), so we simply omit it —
-        // `this.response_buffer` already holds the body.
         if is_done {
             // compute the raw self-pointer before borrowing `this.concurrent_task`
             // to avoid a stacked-borrows / aliasing diagnostic on `*this`.
@@ -669,7 +659,6 @@ pub(crate) fn execute_simple_s3_request(
         url,
         task.headers.entries.clone().expect("OOM"),
         headers_buf,
-        &raw mut task.response_buffer,
         body,
         HTTPClientResultCallback::new::<S3HttpSimpleTask>(
             task_ptr,

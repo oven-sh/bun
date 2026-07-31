@@ -1291,7 +1291,7 @@ impl FileSink {
 // `Sink.JSSink(@This(), "FileSink")` — generic-fn-returning-type → monomorphized type alias.
 pub type JSSink = crate::webcore::sink::JSSink<FileSink>;
 
-crate::impl_js_sink_abi!(FileSink, "FileSink");
+crate::impl_js_sink_abi!(FileSink, "FileSink", FileSink);
 
 // `JsSinkType` impl: routes the codegen `FileSink__*` thunks (via
 // `JSSink::<Self>::js_*`) into the inherent streaming methods. Mirrors

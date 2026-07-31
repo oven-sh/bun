@@ -63,9 +63,7 @@ describe.skipIf(isWindows)("shell completion scripts", () => {
     // #29364: frozen-lockfile was missing and dry-run's description was wrong.
     const script = await emitCompletions("fish");
     const flagsLine = script.split("\n").find(l => l.startsWith("set -l bun_install_boolean_flags "));
-    const descLine = script
-      .split("\n")
-      .find(l => l.startsWith("set -l bun_install_boolean_flags_descriptions "));
+    const descLine = script.split("\n").find(l => l.startsWith("set -l bun_install_boolean_flags_descriptions "));
     expect(flagsLine).toBeDefined();
     expect(descLine).toBeDefined();
 

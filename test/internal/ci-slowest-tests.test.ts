@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { parseLog } from "../../scripts/ci-slowest-tests";
+import { isPhaseGroupHeader, parseLog } from "../../scripts/ci-slowest-tests";
+import { parseLog as parseDurations } from "../../scripts/update-test-durations.mjs";
 
 // Buildkite prefixes each line with an APC timestamp: ESC `_bk;t=<ms>` BEL.
 const bk = (ts: number, body: string) => `\x1b_bk;t=${ts}\x07${body}`;
@@ -117,6 +118,81 @@ describe("scripts/ci-slowest-tests.ts parseLog", () => {
       "test/e.test.ts": 200,
       "test/after.test.ts": 100,
     });
+  });
+
+  test("ignores stray `--- ` lines that are test output, not group headers", () => {
+    // pipeTestStdout in runner.node.mjs sanitises `--- ` in streamed test
+    // output, but a chunk boundary can split the token and the coordinator/
+    // retry-preview paths write raw. Seen in build #86086: a `bun patch` diff
+    // inside `test/cli/install/bun-patch.test.ts`'s span and `--- ps ---`
+    // from test/docker/index.ts inside the `test/package.json` span.
+    const log = [
+      bk(100, `--- ${gray("[1/3]")} test/package.json`),
+      bk(150, `--- ps ---`),
+      bk(160, `--- logs ---`),
+      bk(1000, `--- ${gray("[2/3]")} test/cli/install/bun-patch.test.ts`),
+      bk(1500, `diff --git a/index.js b/index.js`),
+      bk(1500, `--- a/index.js`),
+      bk(1500, `+++ b/index.js`),
+      bk(12643, `--- ${gray("[3/3]")} test/next.test.ts`),
+      bk(12743, `--- End`),
+    ].join("\n");
+    expect(Object.fromEntries(parseLog(log))).toEqual({
+      "test/package.json": 900,
+      "test/cli/install/bun-patch.test.ts": 11643,
+      "test/next.test.ts": 100,
+    });
+  });
+});
+
+describe("phase-header boundary", () => {
+  // The three log parsers share this allowlist; if runner.node.mjs grows a new
+  // phase between the serial tests and the next `[N/M]` header, add it here and
+  // to isPhaseGroupHeader.
+  test.each([
+    [true, `--- napi prebuild: 3 addon(s), 23.9s`],
+    [true, `--- [52-257/829] 206 files in parallel (3\u00d7)`],
+    [true, `--- Running 444 parallel-safe tests (3-wide)`],
+    [true, `--- End`],
+    [true, `--- Summary`],
+    [true, `--- Received SIGTERM, exiting...`],
+    [false, `--- a/index.js`],
+    [false, `--- ps ---`],
+    [false, `--- logs ---`],
+    [false, `------`],
+    [false, `--- `],
+    [false, `--- [52/829] test/a.test.ts`],
+  ])("%p %s", (expected, body) => {
+    expect(isPhaseGroupHeader(body)).toBe(expected);
+  });
+});
+
+describe("scripts/update-test-durations.mjs parseLog", () => {
+  test("does not charge napi prebuild or the parallel-bucket phase to the preceding serial test", () => {
+    const log = [
+      bk(0, `--- ${gray("[1/8]")} test/before.test.ts`),
+      bk(61, `--- napi prebuild: 3 addon(s), 23.9s`),
+      bk(24000, `--- ${gray("[2-5/8]")} 4 files in parallel (3\u00d7)`),
+      bk(84000, `${gray("[2/8]")} test/b.test.ts ${gray("(0.50s)")}`),
+      bk(84000, `${gray("[3/8]")} test/c.test.ts ${gray("(1.25s)")}`),
+      bk(84010, `--- ${gray("[4/8]")} test/cli/install/bun-patch.test.ts`),
+      bk(84500, `--- a/index.js`),
+      bk(95653, `--- Running 2 parallel-safe tests (4-wide)`),
+      bk(95654, `${gray("[5/8]")} test/js/node/test/parallel/p1.js`),
+      bk(95657, `${gray("[6/8]")} test/js/node/test/parallel/p2.js`),
+      bk(98000, `--- End`),
+    ].join("\r\r\n");
+
+    // parseDurations returns [path, ms][]; multiple entries per path are
+    // median'd downstream so we can compare raw output.
+    expect(parseDurations(log)).toEqual([
+      ["test/before.test.ts", 61],
+      ["test/b.test.ts", 500],
+      ["test/c.test.ts", 1250],
+      ["test/cli/install/bun-patch.test.ts", 11643],
+      ["test/js/node/test/parallel/p1.js", 3],
+      ["test/js/node/test/parallel/p2.js", 500],
+    ]);
   });
 });
 

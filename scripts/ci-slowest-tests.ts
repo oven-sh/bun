@@ -31,6 +31,16 @@ import { join } from "path";
 //   - other startGroup phases: `--- napi prebuild: ...`, `--- End`
 // A parser that only recognises the first shape folds the entire following
 // phase into whichever serial test happened to precede it.
+//
+// runner.node.mjs's pipeTestStdout sanitises `--- ` in streamed test output,
+// but a chunk boundary mid-token or one of the raw-write paths (coordinator
+// stdout, retry stdoutPreview) can still deliver a line that starts `--- `
+// without being a group header (unified-diff `--- a/<file>`, `--- ps ---`).
+// The boundary check is therefore limited to the phase headers runner.node.mjs
+// actually emits rather than any `--- `.
+export const isPhaseGroupHeader = (body: string) =>
+  /^--- (?:\[\d+-\d+\/\d+\]|napi prebuild:|Running \d+ parallel-safe|End\b|Summary\b|Received \w+, exiting)/.test(body);
+
 export function parseLog(text: string): Map<string, number> {
   const out = new Map<string, number>();
   let curName: string | null = null;
@@ -74,7 +84,7 @@ export function parseLog(text: string): Map<string, number> {
       concurrent = !hdr[1];
       continue;
     }
-    if (body.startsWith("--- ")) {
+    if (isPhaseGroupHeader(body)) {
       close(ts);
       concurrent = false;
     }

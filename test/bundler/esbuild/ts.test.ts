@@ -2236,11 +2236,6 @@ describe("bundler", () => {
       ]);
     },
   });
-  // Cross-module enum inlining happens at print time after
-  // WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS has already bypassed the
-  // `(0, ...)` re-wrap in the EUnary print arm. When the inlined value prints as `NaN`
-  // or `Infinity` that yields `delete NaN`, a strict-mode SyntaxError in the ESM bundle.
-  // Finite numbers and strings are fine (`delete 42` / `delete "s"` are valid and true).
   itBundled("ts/EnumCrossModuleInliningDeleteTarget", {
     files: {
       "/entry.ts": /* ts */ `

@@ -62,23 +62,53 @@ describe.concurrent("process.argv passthrough", () => {
 
   test.each([
     // [argv after bunExe, expected process.argv.slice(2)]
-    [["<file>", "--", "rest"], ["--", "rest"]],
+    [
+      ["<file>", "--", "rest"],
+      ["--", "rest"],
+    ],
     [["<file>", "--"], ["--"]],
-    [["<file>", "--", "--", "rest"], ["--", "--", "rest"]],
-    [["<file>", "foo", "--", "rest"], ["foo", "--", "rest"]],
-    [["<file>", "--", "--watch"], ["--", "--watch"]],
-    [["run", "<file>", "--", "rest"], ["--", "rest"]],
+    [
+      ["<file>", "--", "--", "rest"],
+      ["--", "--", "rest"],
+    ],
+    [
+      ["<file>", "foo", "--", "rest"],
+      ["foo", "--", "rest"],
+    ],
+    [
+      ["<file>", "--", "--watch"],
+      ["--", "--watch"],
+    ],
+    [
+      ["run", "<file>", "--", "rest"],
+      ["--", "rest"],
+    ],
     [["run", "<file>", "--"], ["--"]],
-    [["run", "<file>", "foo", "--", "rest"], ["foo", "--", "rest"]],
-    [["--", "<file>", "--", "rest"], ["--", "rest"]],
+    [
+      ["run", "<file>", "foo", "--", "rest"],
+      ["foo", "--", "rest"],
+    ],
+    [
+      ["--", "<file>", "--", "rest"],
+      ["--", "rest"],
+    ],
   ] as const)("bun %j -> %j", async (args, expected) => {
     expect(await runFile([...args])).toEqual([...expected]);
   });
 
   test.each([
-    [["--", "a", "b"], ["a", "b"]],
-    [["a", "b"], ["a", "b"]],
-    [["--", "--", "a"], ["--", "a"]],
+    [
+      ["--", "a", "b"],
+      ["a", "b"],
+    ],
+    [
+      ["a", "b"],
+      ["a", "b"],
+    ],
+    [
+      ["--", "--", "a"],
+      ["--", "a"],
+    ],
   ] as const)("package.json script: bun run go %j -> %j (npm compat)", async (extra, expected) => {
     using dir = tempDir("argv-script", {
       "argv.js": argvJs,

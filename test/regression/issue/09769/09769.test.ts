@@ -15,7 +15,7 @@ import { join } from "node:path";
 // `oldProgram`), chaining every Program ever created. Under tsserver this
 // leaked several MB of JS heap per file save.
 
-describe("issue #9769 / #15857: shorthand property in arrow should not force the enclosing function to capture `arguments`", () => {
+describe.concurrent("issue #9769 / #15857: shorthand property in arrow should not force the enclosing function to capture `arguments`", () => {
   test("closure returned from a function with `(x) => ({ x })` does not retain the call arguments", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--smol", join(import.meta.dir, "fixture.cjs")],

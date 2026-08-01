@@ -185,7 +185,7 @@ impl ResultFlags {
     pub(crate) fn set_experimental_decorators(&mut self, v: bool) {
         self.set(Self::EXPERIMENTAL_DECORATORS, v)
     }
-    /// `true` when the nearest tsconfig set `"useDefineForClassFields": false`.
+    /// Effective `useDefineForClassFields`; `false` only when tsconfig set it to `false`.
     #[inline]
     pub fn use_define_for_class_fields(self) -> bool {
         !self.contains(Self::SET_SEMANTICS_FOR_CLASS_FIELDS)

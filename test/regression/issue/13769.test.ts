@@ -53,6 +53,12 @@ async function publishCommit(env: Record<string, string | undefined>, upstream: 
   return git(env, upstream, "rev-parse", "HEAD");
 }
 
+async function publishTag(env: Record<string, string | undefined>, upstream: string, serve: string, tag: string) {
+  await git(env, upstream, "tag", tag);
+  await git(env, serve, "fetch", "-q", upstream, "+refs/tags/*:refs/tags/*");
+  await git(env, serve, "update-server-info");
+}
+
 function serveGit(serve: string) {
   return Bun.serve({
     port: 0,
@@ -190,5 +196,39 @@ describe("bun update re-resolves git dependencies", () => {
     await assertInstalled(app, "COMMIT_A");
     const lockAfter = await Bun.file(join(app, "bun.lock")).text();
     expect(lockAfter).toBe(lockBefore);
+  });
+
+  // https://github.com/oven-sh/bun/issues/11548
+  test.concurrent("`bun install` resolves a tag that was pushed after the repo was first cached", async () => {
+    using root = tempDir("issue-13769-tag", {});
+    const { env, upstream, serve, server, repoUrl, app, cache } = await setup(String(root));
+    await using _server = server;
+
+    await publishTag(env, upstream, serve, "v1");
+    {
+      const { stderr, exitCode } = await runBun(app, cache, env, "add", "--no-progress", `${repoUrl}#v1`);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      await assertInstalled(app, "COMMIT_A");
+    }
+
+    // Publish v2 as a tag-only push: the served branch heads are left at
+    // commit A so the `+refs/tags/*` refspec (not tag auto-follow on heads) is
+    // what makes `find_commit` able to see v2.
+    await Bun.write(join(upstream, "index.js"), "module.exports = 'COMMIT_B';\n");
+    await git(env, upstream, "add", "-A");
+    await git(env, upstream, "commit", "-q", "-m", "B");
+    await publishTag(env, upstream, serve, "v2");
+
+    await Bun.write(
+      join(app, "package.json"),
+      JSON.stringify({ name: "app", version: "0.0.0", dependencies: { issue13769lib: `${repoUrl}#v2` } }),
+    );
+
+    const { stderr, exitCode } = await runBun(app, cache, env, "install", "--no-progress");
+    expect(stderr).not.toContain("no commit matching");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    await assertInstalled(app, "COMMIT_B");
   });
 });

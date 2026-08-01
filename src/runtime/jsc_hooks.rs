@@ -5036,12 +5036,8 @@ unsafe fn resolve<'a>(
                         bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
                     )
                 };
-                // The join above treats the specifier as a relative path; a
-                // tsconfig `paths` alias needs to be mapped through the
-                // tsconfig to find the real directory to bust. Do this even
-                // when the naive bust above returned true, because that hit
-                // may have been a cached negative for the literal
-                // `<source>/<alias>/..` path probed by the baseUrl fallback.
+                // Unconditional: the literal-join bust above may have hit
+                // only a cached negative for `<source>/<alias>`.
                 if bun_paths::is_package_path(normalized_specifier) {
                     // SAFETY: see above.
                     busted |= unsafe {

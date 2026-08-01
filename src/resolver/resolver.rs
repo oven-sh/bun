@@ -2501,11 +2501,9 @@ impl<'a> Resolver<'a> {
         a || b
     }
 
-    /// Bust the directory cache for every absolute target that the enclosing
-    /// tsconfig's `paths` (and `baseUrl`) map `specifier` to. This mirrors the
-    /// substitution logic in [`match_tsconfig_paths`] so that the runtime
-    /// retry-on-miss can find files created after the first resolve cached the
-    /// parent directory listing.
+    /// Bust the dir cache for every absolute target the enclosing tsconfig's
+    /// `paths`/`baseUrl` map `specifier` to (same substitution as
+    /// [`match_tsconfig_paths`]).
     pub fn bust_dir_cache_from_tsconfig_paths(
         &mut self,
         source_dir: &[u8],
@@ -2560,8 +2558,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // Wildcard match: same "longest prefix, then longest suffix" rule as
-        // `match_tsconfig_paths`.
+        // Wildcard match (longest prefix, then longest suffix).
         let mut longest: Option<(&[u8], &[u8], &[Box<[u8]>])> = None;
         let mut best_prefix: i32 = -1;
         let mut best_suffix: i32 = -1;
@@ -2641,8 +2638,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // `baseUrl` fallback (load_node_modules tries `baseUrl + specifier`
-        // after paths matching fails).
+        // `baseUrl` fallback: `load_node_modules` probes `baseUrl + specifier`.
         if tsconfig.has_base_url() {
             let base: &[u8] = &tsconfig.base_url;
             if let Some(abs) = self.fs_ref().abs_buf_checked(

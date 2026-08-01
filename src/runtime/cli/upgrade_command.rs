@@ -182,6 +182,7 @@ impl UpgradeCommand {
         refresher: Option<&mut Progress::Progress>,
         mut progress: Option<&mut Progress::Node>,
         use_profile: bool,
+        use_canary: bool,
     ) -> crate::Result<Option<Version>> {
         let mut headers_buf: Vec<u8> = Self::DEFAULT_GITHUB_HEADERS.to_vec();
 
@@ -212,8 +213,13 @@ impl UpgradeCommand {
         let url_buf: &'static mut Vec<u8> = crate::cli::cli_arena().alloc(Vec::new());
         write!(
             url_buf,
-            "https://{}/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest",
+            "https://{}/repos/{}",
             bstr::BStr::new(github_api_domain),
+            if use_canary {
+                "oven-sh/bun/releases/tags/canary"
+            } else {
+                "Jarred-Sumner/bun-releases-for-updater/releases/latest"
+            },
         )
         .expect("oom");
         let api_url = URL::parse(&url_buf[..]);
@@ -576,6 +582,7 @@ impl UpgradeCommand {
                 // SAFETY: progress points into the same leaked allocation (see above).
                 Some(unsafe { &mut *progress }),
                 use_profile,
+                false,
             )?
             else {
                 return Ok(());
@@ -620,7 +627,17 @@ impl UpgradeCommand {
 
             version
         } else {
-            Version {
+            // Ask the API for the canary asset URL so `GITHUB_API_DOMAIN`
+            // applies to canary upgrades too, and so the download is
+            // integrity-checked against the release's published digest. Any
+            // lookup failure (API down, release shape changed, asset not
+            // listed) falls back to the long-standing hardcoded download URL.
+            let from_api =
+                Self::get_latest_version::<true>(&mut env_loader, None, None, use_profile, true)
+                    .ok()
+                    .flatten()
+                    .filter(|v| &*v.tag == b"canary" && !v.zip_url.is_empty());
+            from_api.unwrap_or_else(|| Version {
                 tag: b"canary"[..].into(),
                 zip_url: const_format::concatcp!(
                     "https://github.com/oven-sh/bun/releases/download/canary/",
@@ -630,7 +647,7 @@ impl UpgradeCommand {
                 .into(),
                 size: 0,
                 digest: Integrity::default(),
-            }
+            })
         };
 
         let zip_url_bytes = core::mem::take(&mut version.zip_url);

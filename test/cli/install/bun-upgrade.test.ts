@@ -99,70 +99,42 @@ describe.concurrent(() => {
   });
 
   it("zero arguments, should succeed", async () => {
-    const tagName = bunExe().includes("-debug") ? "canary" : `bun-v${Bun.version}`;
+    // Cover every platform/arch/abi combination so whichever zip name the
+    // upgrade command asks for is listed.
+    const assetNames: string[] = [];
+    for (const os of ["windows", "linux", "darwin"]) {
+      for (const arch of ["x64", "aarch64"]) {
+        for (const abi of ["", "-musl"]) {
+          for (const cpu of ["", "-baseline"]) {
+            assetNames.push(`bun-${os}-${arch}${abi}${cpu}.zip`);
+          }
+        }
+      }
+    }
+
+    let downloadHits = 0;
     using server = Bun.serve({
       tls: tls,
       port: 0,
-      async fetch() {
+      async fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (pathname.startsWith("/download/")) {
+          downloadHits++;
+          return new Response("this is not a real zip archive");
+        }
+        // Both the stable-releases endpoint and the canary-tag endpoint land
+        // here; the upgrade command only looks at tag_name and the asset list,
+        // so one response shape serves both.
+        const tagName = pathname.endsWith("/tags/canary") ? "canary" : `bun-v9.9.9`;
         return new Response(
           JSON.stringify({
             "tag_name": tagName,
-            "assets": [
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-windows-x64.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-windows-x64.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-windows-x64-baseline.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-windows-x64-baseline.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-windows-aarch64.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-windows-aarch64.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-linux-x64.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-linux-x64.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-linux-x64-baseline.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-linux-x64-baseline.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-linux-aarch64.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-linux-aarch64.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-darwin-x64.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-darwin-x64.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-darwin-x64-baseline.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-darwin-x64-baseline.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-darwin-aarch64.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-darwin-aarch64.zip`,
-              },
-            ],
+            "assets": assetNames.map(name => ({
+              "url": "foo",
+              "content_type": "application/zip",
+              "name": name,
+              "browser_download_url": `https://${server.hostname}:${server.port}/download/${tagName}/${name}`,
+            })),
           }),
         );
       },
@@ -185,17 +157,32 @@ describe.concurrent(() => {
         ...env,
         NODE_TLS_REJECT_UNAUTHORIZED: "0",
         GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+        // The bogus archive makes the upgrade exit via Global::exit(1) while
+        // the HTTP thread and the intentionally-leaked progress buffers are
+        // still live; not what this test asserts.
+        ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
       },
     });
 
     closeTempDirHandle();
 
-    // Should not contain error message
-    expect(await proc.stderr.text()).not.toContain("error:");
-    // Reap the subprocess: stderr can close before the child exits, and an
-    // unreaped child is force-killed by the test runner at test end without
-    // draining the Subprocess refcount — LSan then flags it as a leak.
-    await proc.exited;
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    // Zero positional arguments must not be rejected as package names.
+    expect(stderr).not.toContain("does not take package names");
+    // The archive is resolved via GITHUB_API_DOMAIN (for both the stable and
+    // canary code paths) and fetched from the local server, not github.com or
+    // any other public host.
+    expect(downloadHits).toBe(1);
+    // Staging the download in the temporary directory must not fail with
+    // EBUSY while another handle on that directory (opened above without
+    // FILE_SHARE_DELETE) is held.
+    expect(stderr).not.toContain("Failed to open temporary directory");
+    expect(stderr).not.toContain("Failed to create temporary directory");
+    expect(stderr).not.toContain("Failed to read temporary directory");
+    // Unpacking the bogus archive is expected to fail; the test only needs to
+    // have reached that point.
+    expect(exitCode).toBe(1);
   });
 });
 

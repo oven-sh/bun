@@ -165,25 +165,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.s(S::Function { func }, loc))
     }
 
-    fn take_arg_leading_comments(&mut self, base: usize) -> bun_ast::StoreSlice<G::Comment> {
+    fn drain_arg_leading_comments_into(
+        &mut self,
+        out: &mut bun_alloc::ArenaVec<'a, G::Comment>,
+        base: usize,
+    ) {
         let buf = &mut self.lexer.comments_to_preserve_before;
-        let base = base.min(buf.len());
-        if buf.len() <= base {
-            return bun_ast::StoreSlice::EMPTY;
-        }
-        let mut taken = bun_alloc::ArenaVec::<G::Comment>::new_in(self.arena);
-        let mut i = base;
+        let mut i = base.min(buf.len());
         while i < buf.len() {
             if is_legal_comment(buf[i].text.slice()) {
                 i += 1;
             } else {
-                taken.push(buf.remove(i));
+                out.push(buf.remove(i));
             }
         }
-        if taken.is_empty() {
-            return bun_ast::StoreSlice::EMPTY;
-        }
-        bun_ast::StoreSlice::from_bump(taken)
     }
 
     fn discard_non_legal_comments_from(&mut self, base: usize) {
@@ -276,10 +271,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
 
+            let mut leading = bun_alloc::ArenaVec::<G::Comment>::new_in(p.arena);
+
             let mut ts_decorators = bun_alloc::AstAlloc::vec();
             if opts.allow_ts_decorators {
+                p.drain_arg_leading_comments_into(&mut leading, comments_base);
                 p.lexer.preserve_all_comments_before = old_preserve_comments;
                 ts_decorators = p.parse_type_script_decorators()?;
+                comments_base = p.lexer.comments_to_preserve_before.len();
                 p.lexer.preserve_all_comments_before = true;
                 if ts_decorators.len_u32() > 0 {
                     arg_has_decorators = true;
@@ -293,7 +292,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 func.flags.insert(Flags::Function::HasRestArg);
             }
 
-            let leading_comments = p.take_arg_leading_comments(comments_base);
+            p.drain_arg_leading_comments_into(&mut leading, comments_base);
+            let leading_comments = if leading.is_empty() {
+                bun_ast::StoreSlice::EMPTY
+            } else {
+                bun_ast::StoreSlice::from_bump(leading)
+            };
             p.lexer.preserve_all_comments_before = old_preserve_comments;
 
             let mut is_typescript_ctor_field = false;

@@ -1,7 +1,7 @@
 import { file } from "bun";
+import { expect, test } from "bun:test";
 import { realpathSync } from "fs";
 import path from "path";
-import { expect, test } from "bun:test";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
 
 // `let this = unsafe { &mut *this };` — the fn-long exclusive reborrow of a

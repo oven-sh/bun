@@ -139,6 +139,56 @@ describe("Bun.Transpiler", () => {
     it("works nested", () => {
       ts.expectPrintedMin_('const a = ["hey"][0][0];', 'const a = "h"');
     });
+    it("bails out when the array item is an optional chain", () => {
+      // Folding `[a?.b][0]` to `a?.b` is unsafe when the result lands as the
+      // target of a surrounding optional-chain continuation: the two chains
+      // would be spliced into one. `[[a?.b]][0]?.[0].c` must not become
+      // `a?.b.c`, which short-circuits to `undefined` for `a == null` instead
+      // of throwing on the trailing `.c`.
+      ts.expectPrintedMin_("x = [[a?.b]][0]?.[0].c", "x = [a?.b]?.[0].c");
+      ts.expectPrintedMin_("x = [[a?.b]][0]?.[0]()", "x = [a?.b]?.[0]()");
+      ts.expectPrintedMin_("x = [[a?.b]][0]?.[0][c]", "x = [a?.b]?.[0][c]");
+      ts.expectPrintedMin_("x = ({ f: [a?.b] }).f?.[0].c", "x = [a?.b]?.[0].c");
+      ts.expectPrintedMin_("x = [[a?.[b]]][0]?.[0].c", "x = [a?.[b]]?.[0].c");
+      ts.expectPrintedMin_("x = [[a?.()]][0]?.[0].c", "x = [a?.()]?.[0].c");
+
+      // The outer `?.` on an array literal is dropped at parse time, so these
+      // reach the fold with `optional_chain == None` on the index and the
+      // printer adds the `(a?.b)` wrapper itself. Keep bailing on the fold so
+      // the wrapper isn't load-bearing.
+      ts.expectPrintedMin_("x = [a?.b][0]", "x = [a?.b][0]");
+      ts.expectPrintedMin_("x = [a?.b]?.[0]", "x = [a?.b][0]");
+      ts.expectPrintedMin_("x = [a?.b][0].c", "x = [a?.b][0].c");
+      ts.expectPrintedMin_("x = [a?.b]?.[0].c", "x = [a?.b][0].c");
+      ts.expectPrintedMin_("x = [a?.b][0]()", "x = [a?.b][0]()");
+
+      // Non-chain items are still inlined.
+      ts.expectPrintedMin_("x = [[y]][0]?.[0].c", "x = y.c");
+      ts.expectPrintedMin_("x = [a.b][0].c", "x = a.b.c");
+      ts.expectPrintedMin_("x = [(a?.b)][0]", "x = [a?.b][0]");
+    });
+    it("preserves the TypeError when an inlined optional chain is followed by a non-optional access", async () => {
+      const cases = [
+        "[[a?.b]][0]?.[0].c",
+        "[[a?.b]][0]?.[0]()",
+        "[[a?.b]][0]?.[0][0]",
+        "({ f: [a?.b] }).f?.[0].c",
+        "[a?.b][0].c",
+        "[a?.b]?.[0].c",
+      ];
+      const src = cases
+        .map(e => `try { void (${e}); console.log("no throw"); } catch (e) { console.log(e.constructor.name); }`)
+        .join("\n");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `var a = null;\n${src}`],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim().split("\n")).toEqual(cases.map(() => "TypeError"));
+      expect(exitCode).toBe(0);
+    });
     it("bails out on optional-chain index into enum", () => {
       const pre = "enum Foo { A }\nenum Bar { 'a-b' = 1 }\n";
       const lastLine = out => out.trimEnd().split("\n").at(-1);

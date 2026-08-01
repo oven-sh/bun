@@ -1105,9 +1105,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 *e = p.new_expr(E::Undefined {}, inlined.loc);
                                 return;
                             }
-                            debug_assert!(inlined.can_be_inlined_from_property_access());
-                            *e = inlined;
-                            return;
+                            if inlined.can_be_inlined_from_property_access() {
+                                *e = inlined;
+                                return;
+                            }
                         }
                     }
                 }

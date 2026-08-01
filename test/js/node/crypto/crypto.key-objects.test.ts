@@ -23,7 +23,7 @@ import {
   verify,
 } from "crypto";
 import fs from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows } from "harness";
 import { createContext, runInContext, runInThisContext, Script } from "node:vm";
 import path from "path";
 
@@ -1800,3 +1800,40 @@ test("ECDSA should work", async () => {
 function randomProp() {
   return "prop" + crypto.randomUUID().replace(/-/g, "");
 }
+
+// The generateKeyPair callback re-enters JS while the job ctx still owns a
+// RefPtr<KeyObjectData>; process.exit() inside the callback never unwinds so
+// that ref is never released and the EVP_PKEY survives past VM teardown. With
+// OPENSSL_malloc routed through the default allocator (libc under ASAN) LSan
+// reports it. The fix drops the ctx's ref before invoking the callback so the
+// JS key objects become the only owners and lastChanceToFinalize frees them.
+test.skipIf(!isASAN)(
+  "generateKeyPair: process.exit() in the callback does not strand the EVP_PKEY past VM teardown",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `require("crypto").generateKeyPair("rsa", { modulusLength: 512 }, (err, pub, priv) => {
+           if (err) { console.error(err); process.exit(2); }
+           if (pub.type !== "public" || priv.type !== "private") process.exit(3);
+           process.exit(0);
+         });`,
+      ],
+      env: {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("LeakSanitizer");
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  },
+  // LSan symbolizes the leak stack through llvm-symbolizer before the child
+  // can exit, which is several seconds against the debug binary.
+  30_000,
+);

@@ -271,8 +271,7 @@ pub mod default_alloc {
     /// # Safety
     /// `ptr` must be null or a live allocation from the default allocator.
     #[inline]
-    #[cfg(any(debug_assertions, bun_asan))]
-    pub(crate) unsafe fn usable_size(ptr: *const c_void) -> usize {
+    pub unsafe fn usable_size(ptr: *const c_void) -> usize {
         if ptr.is_null() {
             return 0;
         }

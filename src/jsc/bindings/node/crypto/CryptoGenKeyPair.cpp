@@ -48,6 +48,7 @@ void KeyPairJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callb
     if (scope.exception()) [[unlikely]] {
         JSValue exceptionValue = scope.exception();
         (void)scope.tryClearException();
+        m_keyObj = {};
         exceptionCallback(exceptionValue);
         return;
     }
@@ -56,9 +57,16 @@ void KeyPairJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callb
     if (scope.exception()) [[unlikely]] {
         JSValue exceptionValue = scope.exception();
         (void)scope.tryClearException();
+        m_keyObj = {};
         exceptionCallback(exceptionValue);
         return;
     }
+
+    // The exported JS wrappers hold their own RefPtr<KeyObjectData>; drop the
+    // ctx's ref before re-entering JS. The ctx is freed (and with it this ref)
+    // only after the callback returns, so a callback that never returns
+    // (process.exit) would otherwise strand the EVP_PKEY past VM teardown.
+    m_keyObj = {};
 
     Bun__EventLoop__runCallback3(
         lexicalGlobalObject,

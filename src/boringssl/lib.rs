@@ -94,30 +94,36 @@ pub unsafe fn ssl_ctx_setup(ctx: *mut boring::SSL_CTX) {
 // into the process, including pthreads locks. Failing to meet these constraints
 // may result in deadlocks, crashes, or memory corruption.
 
+// Routed through `default_alloc` (mimalloc, or libc under `cfg(bun_asan)`)
+// rather than `mimalloc` directly. The BoringSSL build already drops
+// `BORINGSSL_REQUIRE_MEMORY_HOOKS` under ASAN so Mach-O/COFF fall back to
+// libc, but on ELF the weak hook symbols still resolve to these definitions;
+// hard-coding mimalloc here put every `OPENSSL_malloc` allocation outside
+// LeakSanitizer's view.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn OPENSSL_memory_alloc(size: usize) -> *mut c_void {
-    bun_alloc::mimalloc::mi_malloc(size)
+    bun_alloc::default_alloc::malloc(size)
 }
 
 // BoringSSL always expects memory to be zero'd
 /// # Safety
-/// `ptr` must be non-null and have been returned by `OPENSSL_memory_alloc`
-/// (i.e. `mi_malloc`); BoringSSL guarantees both for this hook.
+/// `ptr` must be non-null and returned by `OPENSSL_memory_alloc`; BoringSSL
+/// guarantees both for this hook.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn OPENSSL_memory_free(ptr: *mut c_void) {
     // SAFETY: BoringSSL guarantees ptr is non-null and was returned by
-    // OPENSSL_memory_alloc above (i.e. mi_malloc).
+    // OPENSSL_memory_alloc above.
     unsafe {
-        let len = bun_alloc::usable_size(ptr.cast());
+        let len = bun_alloc::default_alloc::usable_size(ptr);
         ptr::write_bytes(ptr.cast::<u8>(), 0, len);
-        bun_alloc::mimalloc::mi_free(ptr);
+        bun_alloc::default_alloc::free(ptr);
     }
 }
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn OPENSSL_memory_get_size(ptr: *const c_void) -> usize {
-    // ptr was returned by mi_malloc (or is null, which usable_size handles).
-    bun_alloc::usable_size(ptr.cast())
+    // SAFETY: ptr was returned by OPENSSL_memory_alloc (null-safe).
+    unsafe { bun_alloc::default_alloc::usable_size(ptr) }
 }
 
 pub use bun_sys::posix::INET6_ADDRSTRLEN;

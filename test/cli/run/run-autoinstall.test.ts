@@ -125,13 +125,14 @@ test("--install=fallback to install missing packages", async () => {
 // When the `.npm` manifest is cached on disk, `enqueue_dependency_to_root`
 // resolves the version synchronously and only *queues* the tarball download
 // into `network_task_fifo`. The fast-path returned a Resolution without ever
-// scheduling that task, so `path_for_resolution` readlinked a cache entry that
-// was never extracted. Two ways to reach that state:
+// scheduling that task, so `path_for_resolution` readlinked an index symlink
+// that was never created. Three ways to reach that state:
 //   - importing a second `pkg@version` after a different version was installed
 //     (manifest cached from the first run, second version never downloaded);
-//   - the extracted package was removed but the manifest kept (or a transient
-//     tarball failure left only the manifest behind).
-describe("auto-install with a cached .npm manifest schedules the tarball download", () => {
+//   - the extracted package was removed but the manifest kept;
+//   - a concurrent writer has renamed the data folder into place but not yet
+//     created the index symlink.
+describe("auto-install with a disk-cached manifest resolves from the global cache", () => {
   function makeTgz(files: Record<string, string>) {
     const enc = new TextEncoder();
     const entry = (name: string, body: Uint8Array) => {
@@ -324,6 +325,74 @@ describe("auto-install with a cached .npm manifest schedules the tarball downloa
         stdout: "IMPORT_OK OK",
         exitCode: 0,
         tarballRequests: 2,
+      });
+    },
+    timeout,
+  );
+
+  // Concurrent-writer window: the data folder `<cache>/pkg@ver...` is renamed
+  // into place before the version-index symlink `<cache>/pkg/ver...` is
+  // created. `determine_preinstall_state` probes the data folder (present, so
+  // `Done`), then `path_for_cached_npm_path` readlinks the index symlink
+  // (absent). The fallback probes the data folder directly.
+  test(
+    "when the version-index symlink is absent but the data folder exists",
+    async () => {
+      const good = makeTgz({
+        "package/package.json": JSON.stringify({ name: "race-pkg", version: "1.0.0", main: "index.js" }),
+        "package/index.js": 'module.exports = "race-ok";',
+      });
+
+      let tarballRequests = 0;
+      await using registry = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          const url = new URL(req.url);
+          if (url.pathname === "/t.tgz") {
+            tarballRequests++;
+            return new Response(good);
+          }
+          return Response.json({
+            name: "race-pkg",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "race-pkg",
+                version: "1.0.0",
+                dist: { tarball: `http://127.0.0.1:${registry.port}/t.tgz`, integrity: integrityOf(good) },
+              },
+            },
+          });
+        },
+      });
+
+      using dir = tempDir("autoinstall-index-race", {
+        "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+        "imp.mjs": `try { const m = await import("race-pkg"); console.log("IMPORT_OK " + m.default) } catch (e) { console.log("IMPORT_FAIL " + (e.code || e.message)) }`,
+      });
+      const cache = join(String(dir), ".cache");
+      mkdirSync(cache, { recursive: true });
+
+      const r1 = await runScript(String(dir), cache, "imp.mjs");
+      expect({ stdout: r1.stdout, exitCode: r1.exitCode }).toEqual({
+        stdout: "IMPORT_OK race-ok",
+        exitCode: 0,
+      });
+
+      // Remove only the `<cache>/race-pkg/` index directory; leave the
+      // `<cache>/race-pkg@1.0.0...` data folder in place.
+      const entries = readdirSync(cache);
+      expect(entries).toContain("race-pkg");
+      expect(entries.some(e => e.startsWith("race-pkg@1.0.0"))).toBe(true);
+      rmSync(join(cache, "race-pkg"), { recursive: true, force: true });
+
+      const r2 = await runScript(String(dir), cache, "imp.mjs");
+      expect({ stdout: r2.stdout, exitCode: r2.exitCode, tarballRequests }).toEqual({
+        stdout: "IMPORT_OK race-ok",
+        exitCode: 0,
+        // The data folder is already present; no second download is needed.
+        tarballRequests: 1,
       });
     },
     timeout,

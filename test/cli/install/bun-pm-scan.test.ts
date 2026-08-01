@@ -319,7 +319,11 @@ describe.concurrent("bun pm scan", () => {
       const [stdout, stderr, exitCode] = await runScan(dir);
 
       expect(stdout).toContain("FATAL: is-even");
-      expect(stdout).toContain("via my-app › is-even");
+      // is-even and is-odd depend on each other in the fixture registry; anchor
+      // the end of the path so a shortest-path regression that prints
+      // "… › is-even › is-odd › is-even" is caught.
+      expect(stdout).toMatch(/via my-app › is-even$/m);
+      expect(stdout).not.toContain("is-odd");
       expect(stderr).not.toContain("error:");
       expect(exitCode).toBe(1);
     });
@@ -350,7 +354,7 @@ describe.concurrent("bun pm scan", () => {
       const [stdout, stderr, exitCode] = await runScan(dir);
 
       expect(stdout).toContain("WARNING: is-odd");
-      expect(stdout).toContain("via my-app › is-even › is-odd");
+      expect(stdout).toMatch(/via my-app › is-even › is-odd$/m);
       expect(stderr).not.toContain("error:");
       expect(exitCode).toBe(1);
     });

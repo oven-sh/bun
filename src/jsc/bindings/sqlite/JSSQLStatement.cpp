@@ -225,11 +225,10 @@ public:
     sqlite3* db;
     std::atomic<uint64_t> version;
     size_t reference_count;
-    // Set when close() finalized every statement on the connection via
-    // sqlite3_next_stmt(). Statement wrappers then hold dangling sqlite3_stmt
-    // pointers and must not pass them to sqlite again. The termination path
-    // and release() leave this false: they close with sqlite3_close_v2(),
-    // which keeps outstanding statements valid until each is finalized.
+    // close() finalized every statement on this connection, so statement
+    // wrappers hold dangling sqlite3_stmt pointers they must never pass to
+    // sqlite again. Stays false on the sqlite3_close_v2() paths (GC release,
+    // termination), where outstanding statements remain valid.
     bool finalizedStatementsOnClose = false;
 
     void release()
@@ -1559,9 +1558,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
 
                 SQLiteBindingsMap bindings { static_cast<uint16_t>(count > -1 ? count : 0), strict };
                 JSC::JSValue reb = rebindStatement(lexicalGlobalObject, bindingsAliveScope.value(), scope, db, versionDB, sql.stmt, bindings, safeIntegers, nullptr);
-                // close() during binding already finalized sql.stmt via
-                // sqlite3_next_stmt(); keep the auto-destructor from
-                // finalizing it again.
+                // A close() during binding finalized sql.stmt; keep the
+                // auto-destructor from finalizing it again.
                 if (versionDB->finalizedStatementsOnClose) [[unlikely]]
                     sql.stmt = nullptr;
                 RETURN_IF_EXCEPTION(scope, {});
@@ -1870,10 +1868,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
         return JSValue::encode(jsUndefined());
     }
 
-    // Finalize every outstanding prepared statement on this connection so
-    // sqlite3_close() cannot fail with SQLITE_BUSY. Statement wrappers detect
-    // this through version_db->finalizedStatementsOnClose and never touch
-    // their now-freed sqlite3_stmt again.
+    // Finalize every outstanding prepared statement so sqlite3_close() cannot
+    // fail with SQLITE_BUSY; wrappers see finalizedStatementsOnClose.
     while (sqlite3_stmt* stmt = sqlite3_next_stmt(db, nullptr)) {
         sqlite3_finalize(stmt);
     }

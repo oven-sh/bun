@@ -2015,11 +2015,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.options.bundle && e_.args.len_u32() == 1 {
             if let Data::ERequireString(req) = e_.target.data {
                 let target_loc = e_.target.loc;
-                let record =
-                    &mut p.import_records.items_mut()[req.import_record_index as usize];
-                if record.path.text == b"bindings"
-                    && record.tag == js_ast::ImportRecordTag::None
-                {
+                let record = &mut p.import_records.items_mut()[req.import_record_index as usize];
+                if record.path.text == b"bindings" && record.tag == js_ast::ImportRecordTag::None {
                     let arg = e_.args.slice()[0];
                     let addon_name = match arg.data {
                         Data::EString(mut s) => {
@@ -2029,11 +2026,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         _ => None,
                     };
                     if let Some(addon_name) = addon_name {
-                        record
-                            .flags
-                            .insert(js_ast::ImportRecordFlags::IS_UNUSED);
-                        let handles_import_errors =
-                            p.fn_or_arrow_data_visit.try_body_count != 0;
+                        record.flags.insert(js_ast::ImportRecordFlags::IS_UNUSED);
+                        let handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
                         let range = p.source.range_of_string(arg.loc);
                         let addon_record_index = p.add_import_record_by_range(
                             js_ast::ImportKind::Require,
@@ -2041,8 +2035,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             addon_name,
                         );
                         {
-                            let addon_record = &mut p.import_records.items_mut()
-                                [addon_record_index as usize];
+                            let addon_record =
+                                &mut p.import_records.items_mut()[addon_record_index as usize];
                             addon_record.tag = js_ast::ImportRecordTag::NativeBindings;
                             addon_record.flags.set(
                                 js_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS,

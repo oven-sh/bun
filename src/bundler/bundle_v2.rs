@@ -6051,9 +6051,7 @@ pub mod bv2_impl {
                         source_dir,
                         import_record.path.text,
                     )
-                    .map(|abs| unsafe {
-                        interned_slice(self.arena().alloc_slice_copy(&abs))
-                    });
+                    .map(|abs| unsafe { interned_slice(self.arena().alloc_slice_copy(&abs)) });
                     match resolved {
                         Some(abs) => {
                             import_record.path = Fs::Path::init(abs);

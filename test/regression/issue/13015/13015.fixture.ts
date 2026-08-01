@@ -32,3 +32,9 @@ test("Set diff with Promise after long sibling", () => {
   const long = Buffer.alloc(100, "a").toString();
   expect(new Set([p, long])).toEqual(new Set([long, p, "extra"]));
 });
+
+test("sibling after a Set is order-independent", () => {
+  const p = Promise.resolve();
+  const long = Buffer.alloc(100, "a").toString();
+  expect([new Set(["a", long]), p]).toEqual([new Set([long, "a"]), p, "extra"]);
+});

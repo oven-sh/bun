@@ -1841,6 +1841,7 @@ impl<'a> Formatter<'a> {
                             for entry in &entries {
                                 writer.write_all(entry);
                             }
+                            self.reset_line();
                             result
                         } else {
                             let mut iter = MapIterator::<W, ENABLE_ANSI_COLORS> {
@@ -1904,6 +1905,7 @@ impl<'a> Formatter<'a> {
                             for entry in &entries {
                                 writer.write_all(entry);
                             }
+                            self.reset_line();
                             result
                         } else {
                             let mut iter = SetIterator::<W, ENABLE_ANSI_COLORS> {

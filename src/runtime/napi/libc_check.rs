@@ -13,18 +13,23 @@ use core::ffi::c_char;
 /// `dlopen`. Returns `1` when the file at `path_ptr[..path_len]` is an ELF
 /// shared object whose `DT_NEEDED` list references glibc and this process is
 /// musl-linked (or the test-only `BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK` env var
-/// is set). Returns `0` for every other outcome, including I/O and parse
-/// errors: a false negative falls through to `dlopen` which is today's
+/// is set). The matching soname is copied NUL-terminated into
+/// `soname_out[..soname_cap]` so the thrown error can quote the actual
+/// rejected entry. Returns `0` for every other outcome, including I/O and
+/// parse errors: a false negative falls through to `dlopen` which is today's
 /// behaviour, whereas a false positive would refuse a working addon.
 ///
 /// # Safety
-/// `path_ptr` must be valid for reads of `path_len` bytes.
+/// `path_ptr` must be valid for reads of `path_len` bytes; `soname_out` must
+/// be valid for writes of `soname_cap` bytes.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Bun__addonNeedsGlibcOnMusl(
     path_ptr: *const c_char,
     path_len: usize,
+    soname_out: *mut u8,
+    soname_cap: usize,
 ) -> i32 {
-    let _ = (path_ptr, path_len);
+    let _ = (path_ptr, path_len, soname_out, soname_cap);
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         if !check_enabled() {
@@ -32,7 +37,14 @@ pub(crate) unsafe extern "C" fn Bun__addonNeedsGlibcOnMusl(
         }
         // SAFETY: caller contract.
         let path = unsafe { bun_core::ffi::slice(path_ptr.cast::<u8>(), path_len) };
-        if elf_needs_glibc(path).unwrap_or(false) {
+        if let Some(name) = elf_glibc_needed(path) {
+            if !soname_out.is_null() && soname_cap > 0 {
+                // SAFETY: caller contract.
+                let out = unsafe { core::slice::from_raw_parts_mut(soname_out, soname_cap) };
+                let n = name.len().min(soname_cap - 1);
+                out[..n].copy_from_slice(&name[..n]);
+                out[n] = 0;
+            }
             return 1;
         }
     }
@@ -46,7 +58,7 @@ fn check_enabled() -> bool {
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-fn elf_needs_glibc(path: &[u8]) -> Option<bool> {
+fn elf_glibc_needed(path: &[u8]) -> Option<Vec<u8>> {
     use bun_sys::{Fd, File, O};
 
     const PHDR_SIZE: usize = 56; // Elf64_Phdr
@@ -123,7 +135,7 @@ fn elf_needs_glibc(path: &[u8]) -> Option<bool> {
         }
     }
     if needed_count == 0 {
-        return Some(false);
+        return None;
     }
     let strtab_vaddr = strtab_vaddr?;
     let strtab_off = vaddr_to_offset(&loads[..load_count], strtab_vaddr)?;
@@ -141,10 +153,10 @@ fn elf_needs_glibc(path: &[u8]) -> Option<bool> {
         }
         let name = bun_core::slice_to_nul(&strtab[off..]);
         if is_glibc_soname(name) {
-            return Some(true);
+            return Some(name.to_vec());
         }
     }
-    Some(false)
+    None
 }
 
 /// glibc ships its libc split across several sonames (merged into `libc.so.6`

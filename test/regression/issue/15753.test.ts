@@ -8,9 +8,10 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
 
 // Build a minimal ELF64-LE shared object whose PT_DYNAMIC carries the given
-// DT_NEEDED soname. e_machine is EM_NONE so the real loader rejects it with a
-// clean error instead of attempting relocation on an incomplete image; Bun's
-// pre-dlopen DT_NEEDED walk does not consult e_machine.
+// DT_NEEDED soname. e_machine is EM_NONE so glibc's loader rejects it before
+// touching the (absent) hash/sym tables; musl ignores e_machine but fails at
+// DT_NEEDED resolution when the soname does not exist. Bun's pre-dlopen walk
+// does not consult e_machine.
 function minimalElfSharedObject(needed: string): Buffer {
   const strtabBody = "\0" + needed + "\0";
   const strtab = Buffer.from(strtabBody, "latin1");
@@ -105,32 +106,43 @@ async function tryDlopen(addon: Buffer, force: boolean) {
 }
 
 describe.skipIf(!isLinux)("issue #15753: glibc addon on musl throws instead of segfaulting", () => {
-  test("glibc-linked addon is rejected with ERR_DLOPEN_FAILED", async () => {
-    // On a real musl host the check runs unconditionally; on glibc CI the
-    // env var opts in so the ELF walk is still exercised.
-    const { stdout, stderr, exitCode } = await tryDlopen(minimalElfSharedObject("libc.so.6"), !isMusl);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("CODE:ERR_DLOPEN_FAILED");
-    expect(stdout).toContain("glibc");
-    expect(stdout).toContain("musl");
-    expect(stdout).not.toContain("LOADED");
-    expect(exitCode).toBe(0);
-  });
+  test.each(["libc.so.6", "libpthread.so.0", "ld-linux-aarch64.so.1"])(
+    "glibc-linked addon (%s) is rejected with ERR_DLOPEN_FAILED",
+    async soname => {
+      // On a real musl host the check runs unconditionally; on glibc CI the
+      // env var opts in so the ELF walk is still exercised.
+      const { stdout, stderr, exitCode } = await tryDlopen(minimalElfSharedObject(soname), !isMusl);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("CODE:ERR_DLOPEN_FAILED");
+      expect(stdout).toContain("linked against glibc");
+      expect(stdout).toContain(`DT_NEEDED ${soname}`);
+      expect(stdout).toContain("musl");
+      expect(stdout).not.toContain("LOADED");
+      expect(exitCode).toBe(0);
+    },
+  );
 
-  test("musl-linked addon is not rejected by the check", async () => {
-    const { stdout, stderr, exitCode } = await tryDlopen(minimalElfSharedObject("libc.musl-x86_64.so.1"), true);
+  test("non-glibc DT_NEEDED is not rejected by the check", async () => {
+    // The soname must not match musl's reserved-name shortcut (lib + one of
+    // c./pthread./rt./m./dl./util./xnet.) or the musl loader would satisfy it
+    // from the already-loaded libc and then segfault in sysv_lookup on the
+    // stub's absent hash table.
+    const { stdout, stderr, exitCode } = await tryDlopen(
+      minimalElfSharedObject("libbun-issue-15753-nonexistent.so.0"),
+      true,
+    );
     // The libc check must pass it through to dlopen, which then fails on the
     // stub ELF with the loader's own message (not the glibc/musl hint).
     expect(stderr).toBe("");
     expect(stdout).toContain("CODE:ERR_DLOPEN_FAILED");
-    expect(stdout).not.toContain("glibc");
+    expect(stdout).not.toContain("linked against glibc");
     expect(exitCode).toBe(0);
   });
 
   test("non-ELF file falls through to dlopen", async () => {
     const { stdout, exitCode } = await tryDlopen(Buffer.from("not an ELF"), true);
     expect(stdout).toContain("CODE:ERR_DLOPEN_FAILED");
-    expect(stdout).not.toContain("glibc");
+    expect(stdout).not.toContain("linked against glibc");
     expect(exitCode).toBe(0);
   });
 

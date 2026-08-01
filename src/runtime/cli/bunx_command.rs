@@ -615,11 +615,9 @@ impl BunxCommand {
     }
 
     /// A `bunfig.toml` found by walking up into world-writable ancestors
-    /// (e.g. `/tmp`) could be planted by another local user to redirect
-    /// `[install] registry`; refuse it unless the file (or its single-hop
-    /// symlink target) is a regular file owned by the current uid or root
-    /// (root-owned is the default after Docker `COPY` + `USER node`, and an
-    /// unprivileged attacker cannot create a root-owned file).
+    /// could be planted by another local user to redirect `[install] registry`;
+    /// accept only a regular file (or one symlink hop to one) owned by the
+    /// current uid or root (an unprivileged attacker cannot create uid-0 files).
     #[cfg(unix)]
     fn is_trusted_local_bunfig(path: &ZStr, uid: libc::uid_t) -> bool {
         let owner_ok = |st_uid: libc::uid_t| st_uid == uid || st_uid == 0;

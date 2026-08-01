@@ -285,13 +285,14 @@ describe("SuppressedError", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("util.inspect shows .error and .suppressed", () => {
+  test("util.inspect matches Node: .error/.suppressed only with showHidden", () => {
     const se = new SuppressedError(new Error(disposeMsg), new Error(originalMsg), "wrapper message");
-    const out = require("util").inspect(se);
-    expect(out).toContain("error]:");
-    expect(out).toContain(disposeMsg);
-    expect(out).toContain("suppressed]:");
-    expect(out).toContain(originalMsg);
+    const plain = require("util").inspect(se);
+    expect(plain).not.toContain(disposeMsg);
+    expect(plain).not.toContain(originalMsg);
+    const hidden = require("util").inspect(se, { showHidden: true });
+    expect(hidden).toContain(disposeMsg);
+    expect(hidden).toContain(originalMsg);
   });
 
   test("Bun.inspect handles circular SuppressedError chains", () => {

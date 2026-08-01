@@ -189,6 +189,8 @@ describe.skipIf(isWindows)("shell completions: `bun <path>` and runtime flags (#
         "bun run --watch src/",
         "bun --hot src/",
         "bun --watch src/",
+        "bun --cwd " + String(dir) + " src/",
+        "bun --preload ./x.js src/",
       ]) {
         const reply = await complete(line);
         expect(reply, `line: ${JSON.stringify(line)}`).toContain("src/index.ts");

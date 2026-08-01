@@ -80,6 +80,7 @@ _bun_completions() {
     declare -A PM_OPTIONS;
 
     local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update outdated link unlink build";
+    local RUN_EXTS="!(*.@(js|mjs|cjs|ts|mts|cts|jsx|tsx|wasm|html)?($|))";
 
     GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js --hot --watch --no-clear-screen --smol --bun --silent --preload --require --import --inspect --inspect-brk --inspect-wait";
     GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p -b -r";
@@ -117,7 +118,7 @@ _bun_completions() {
         --bunfile)        _file_arguments "!*.bun" && return;;
         --server-bunfile) _file_arguments "!*.server.bun" && return;;
         --backend)
-            case "${COMP_WORDS[1]}" in
+            case "${first_word}" in
                 a|add|remove|rm|install|i)
                     COMPREPLY=( $(compgen -W "clonefile copyfile hardlink clonefile_each_dir symlink" -- "${cur_word}") );
                     ;;
@@ -162,7 +163,7 @@ _bun_completions() {
             COMPREPLY=( $(compgen -W "--help -h --eval -e --print -p --preload -r --smol --config -c --cwd --env-file --no-env-file" -- "${cur_word}") );
             return;;
         run)
-            _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs)?($|))";
+            _file_arguments "${RUN_EXTS}";
             COMPREPLY+=( $(compgen -W "--version --cwd --help --silent -v -h" -- "${cur_word}" ) );
             _read_scripts_in_package_json;
             return;;
@@ -178,7 +179,7 @@ _bun_completions() {
             [[ "${cur_word}" != -* ]] && {
                 COMPREPLY+=( $(compgen -W "${SUBCOMMANDS}" -- "${cur_word}") );
                 _read_scripts_in_package_json;
-                _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs|mts|cts|html)?($|))";
+                _file_arguments "${RUN_EXTS}";
             }
             return;;
         *)

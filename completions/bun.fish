@@ -38,11 +38,29 @@ set -l bun_install_boolean_flags_descriptions "Write a yarn.lock file (yarn v1)"
 set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add update init pm x repl
 set -l bun_builtin_cmds_accepting_flags create help bun upgrade discord run init link unlink pm x update
 
+function __bun_use_subcommand -d "Like __fish_use_subcommand but skips values of known arg-taking runtime flags"
+    set -l skip 0
+    for tok in (commandline -poc)[2..]
+        if test $skip -eq 1
+            set skip 0
+            continue
+        end
+        switch $tok
+            case --cwd --preload --require --import --env-file --config --define --loader --port --origin --use --filter --eval --print --title --shell --install --conditions --unhandled-rejections --dns-result-order --console-depth --elide-lines --fetch-preconnect --max-http-header-size --tsconfig-override -r -e -p -d -l -u -c -F
+                set skip 1
+            case '-*'
+            case '*'
+                return 1
+        end
+    end
+    return 0
+end
+
 function __bun_complete_bins_scripts --inherit-variable bun_builtin_cmds_without_run -d "Emit bun completions for bins and scripts"
     # Do nothing if we already have a builtin subcommand,
     # or any subcommand other than "run".
     if __fish_seen_subcommand_from $bun_builtin_cmds_without_run
-    or not __fish_use_subcommand && not __fish_seen_subcommand_from run
+    or not __bun_use_subcommand && not __fish_seen_subcommand_from run
         return
     end
     # Do we already have a bin or script subcommand?
@@ -73,7 +91,7 @@ function __bun_entrypoint --inherit-variable bun_builtin_cmds_without_run -d "Tr
     if __fish_seen_subcommand_from $bun_builtin_cmds_without_run
         return 1
     end
-    __fish_use_subcommand; or __fish_seen_subcommand_from run
+    __bun_use_subcommand; or __fish_seen_subcommand_from run
 end
 
 

@@ -1004,7 +1004,7 @@ _bun_run_param_script_completion() {
 
     _alternative "scripts:scripts:compadd -a scripts_list"
     _alternative "bin:bin:compadd -a bins"
-    _alternative "files:file:_files -g '*.(js|ts|jsx|tsx|wasm)'"
+    _alternative "files:file:_files -g '*.(js|mjs|cjs|ts|mts|cts|jsx|tsx|wasm|html)'"
 }
 
 _bun_link_param_package_completion() {

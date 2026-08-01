@@ -5505,16 +5505,10 @@ impl<'a> Resolver<'a> {
                             // both the "module" file and the "main" file in the bundle at the
                             // same time.
                             //
-                            // Additionally, if this is for the runtime, use the "main" field.
-                            // If it doesn't exist, the "module" field will be used.
-                            //
-                            // Exception for the runtime: if the "module" field resolves to a
-                            // .mjs/.mts file, it is real Node-loadable ESM rather than a
-                            // browser-targeted bundler ESM build. Prefer it for `import` so
-                            // the package's own `import "dep"` statements resolve through the
-                            // same "exports" conditions as the user's `import "dep"`, avoiding
-                            // the dual-package hazard. A ".js" "module" target keeps falling
-                            // back to "main" (see #3434 / Vue SSR).
+                            // Additionally, if this is for the runtime, use the "main" field
+                            // unless "module" resolved to .mjs/.mts: a .mjs target is real
+                            // Node-loadable ESM (#8238), whereas a .js target is typically a
+                            // browser bundler build the runtime must avoid (#3434).
                             let module_is_explicit_esm = matches!(
                                 module_type_from_ext(bun_paths::extension(
                                     out.path_pair.primary.text(),

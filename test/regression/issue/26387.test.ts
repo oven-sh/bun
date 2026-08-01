@@ -2,8 +2,7 @@ import { expect, test } from "bun:test";
 
 // https://github.com/oven-sh/bun/issues/26387
 // Request.text() failed with "TypeError: undefined is not a function" after
-// ~4500 requests on macOS 1.3.6 because Request.toJS did not record the JS
-// wrapper in `js_ref` (fixed in #26390).
+// ~4500 requests on macOS 1.3.6 (fixed in #26390).
 //
 // The original repro needed thousands of requests so that natural GC would
 // fire. Here GC is forced explicitly every few iterations, so a weak-ref /

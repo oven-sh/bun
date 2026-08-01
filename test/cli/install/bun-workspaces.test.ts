@@ -70,6 +70,7 @@ async function setupTest(): Promise<TestCtx> {
     const env: Record<string, string> = {
       ...baseEnv,
       BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+      BUN_INSTALL_GLOBAL_DIR: join(packageDir, ".bun-global"),
       BUN_TMPDIR: join(packageDir, ".bun-tmp"),
       TMPDIR: join(packageDir, ".bun-tmp"),
       TEMP: join(packageDir, ".bun-tmp"),

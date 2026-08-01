@@ -391,7 +391,7 @@ fn blocked_lifecycle_script_note(referrer: &[u8]) -> Option<bun_ast::Data> {
     let mut text = Vec::new();
     write!(
         &mut text,
-        "\"{name}\" has a \"{script}\" script which may have been blocked. If you trust this \
+        "The \"{script}\" script for \"{name}\" may have been blocked. If you trust this \
          package, run `bun pm trust {name}` and try again.",
         name = bstr::BStr::new(&pkg_name),
     )
@@ -426,8 +426,8 @@ fn enclosing_node_modules_package(referrer: &[u8]) -> Option<(Vec<u8>, &[u8])> {
     Some((name, &referrer[..name_start + name_len]))
 }
 
-/// Byte-scan `<pkg_dir>/package.json` for a `preinstall`/`install`/`postinstall`
-/// key in `"scripts"`, or a sibling `binding.gyp`. Used only for the UX hint
+/// Byte-scan `<pkg_dir>/package.json` for any `bun_install` lifecycle hook key
+/// inside `"scripts"`, or a sibling `binding.gyp`. Used only for the UX hint
 /// above, so a full JSON parse is avoided.
 #[cold]
 fn first_lifecycle_script(pkg_dir: &[u8]) -> Option<&'static str> {
@@ -438,19 +438,13 @@ fn first_lifecycle_script(pkg_dir: &[u8]) -> Option<&'static str> {
         &[pkg_dir, b"package.json"],
     );
     if let Ok(bytes) = bun_sys::File::read_from(bun_sys::Fd::cwd(), manifest)
-        && let Some(scripts_at) = strings::index_of(&bytes, b"\"scripts\"")
+        && let Some(after) = find_json_key(&bytes, b"\"scripts\"")
     {
         // Bound to the `"scripts"` object so a sibling key like
         // `"dependencies": { "install": "..." }` cannot match.
-        let after = &bytes[scripts_at + b"\"scripts\"".len()..];
-        let end = end_of_flat_json_object(after);
-        let scripts = &after[..end];
-        for (hook, key) in [
-            ("preinstall", b"\"preinstall\"" as &[u8]),
-            ("install", b"\"install\""),
-            ("postinstall", b"\"postinstall\""),
-        ] {
-            if strings::contains(scripts, key) {
+        let scripts = &after[..end_of_flat_json_object(after)];
+        for hook in bun_install::lockfile::Scripts::NAMES {
+            if find_json_key(scripts, format!("\"{hook}\"").as_bytes()).is_some() {
                 return Some(hook);
             }
         }
@@ -465,6 +459,27 @@ fn first_lifecycle_script(pkg_dir: &[u8]) -> Option<&'static str> {
     }
 
     None
+}
+
+/// Find `key` (including its surrounding quotes) used as a JSON object key in
+/// `bytes`: i.e. followed by optional JSON whitespace and then `:`. Returns the
+/// slice starting after the `:`. Skips occurrences that are string values
+/// (`"files":["scripts"]`) rather than keys.
+#[cold]
+fn find_json_key<'a>(bytes: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
+    let mut rest = bytes;
+    loop {
+        let at = strings::index_of(rest, key)?;
+        let after = &rest[at + key.len()..];
+        let trimmed = after
+            .iter()
+            .position(|&b| !matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+            .unwrap_or(after.len());
+        if after.get(trimmed) == Some(&b':') {
+            return Some(&after[trimmed + 1..]);
+        }
+        rest = &rest[at + key.len()..];
+    }
 }
 
 /// Offset of the first `}` that is not inside a JSON string. No brace nesting

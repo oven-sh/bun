@@ -249,10 +249,6 @@ impl TrustCommand {
         );
         Output::flush();
 
-        if args.len() == 2 {
-            Self::error_expected_args();
-        }
-
         // Reshaped for borrowck — see `UntrustedCommand::exec`.
         // `load_lockfile` lives until `save_to_disk` near the end, so every
         // `pm`/`pm.lockfile` access in between goes through `pm_raw`.

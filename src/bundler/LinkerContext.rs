@@ -2892,28 +2892,17 @@ use bun_ast::{DependencyList, ImportItemStatus, PartSymbolUseMap};
 // below resolve unchanged.
 pub(crate) use crate::bundle_v2::{ImportTrackerIterator, ImportTrackerStatus};
 
-/// Collapse per-file synthetic JSX-runtime imports into one per chunk.
+/// Collapse per-file synthetic JSX-runtime imports into one per chunk (#3029).
 ///
-/// The parser injects `import { jsx, jsxs, Fragment, ... } from "<source>/jsx-runtime"`
-/// (or the `jsx-dev-runtime` / classic-runtime equivalent) into every file that
-/// lowers JSX. When that module is bundled, `scan_imports_and_exports` already
-/// binds every file's `jsx` ref to the one export; when it is external and the
-/// output keeps ES import syntax, `match_import_with_export` leaves each file's
-/// ref alone and `should_remove_import_export_stmt` passes each file's
-/// `S::Import` through, so a 1000-component bundle carries 1000 copies of the
-/// same import (issue #3029).
+/// Runs serially after chunks are computed and before `follow_all` / the
+/// renamer fan-out: per chunk, groups `WAS_INJECTED_FOR_JSX_RUNTIME` external
+/// import records by path, `symbols.merge`s duplicate `(path, alias)` refs so
+/// the renamer assigns one name, and records a [`JsxImportRewrite`] per
+/// `(source, record)` for `convert_stmts_for_chunk` to apply. The first live
+/// record per path survives with its items rewritten to the union of aliases
+/// the chunk needs; the rest are dropped.
 ///
-/// This runs serially after chunks are computed and before `follow_all`/the
-/// renamer fan-out. For each JS chunk it walks `files_in_chunk_order`, groups
-/// JSX-flagged external import records by path, union-find-merges duplicate
-/// `(path, alias)` refs so the renamer assigns one name, and records a
-/// per-chunk [`JsxImportRewrite`](crate::chunk::JsxImportRewrite): the first
-/// record seen for a path survives (its items rewritten to the union of aliases
-/// any file in the chunk needs) and the rest are dropped.
-/// `convert_stmts_for_chunk` applies the map. Because `symbols.merge` sets a
-/// global union-find link while the per-chunk survivor is chosen locally, a
-/// file in two chunks (multi-entry, no splitting) still produces correct
-/// output: each chunk's survivor binds the root name in that chunk's renamer.
+/// [`JsxImportRewrite`]: crate::chunk::JsxImportRewrite
 pub(crate) fn hoist_external_jsx_imports(c: &mut LinkerContext<'_>, chunks: &mut [Chunk]) {
     if !c.options.output_format.keep_es6_import_export_syntax() {
         return;
@@ -2934,8 +2923,6 @@ pub(crate) fn hoist_external_jsx_imports(c: &mut LinkerContext<'_>, chunks: &mut
             continue;
         };
 
-        // The parser dupes `jsx.import_source()` into each file's own arena, so
-        // key by the path bytes, not pointer identity.
         let mut by_path: Vec<(&[u8], PerPath)> = Vec::new();
 
         for &source_index in js.files_in_chunk_order.iter() {

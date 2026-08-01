@@ -9453,10 +9453,8 @@ struct SysQuietWriterAdapter {
     buf: *mut u8,
     cap: usize,
     pos: usize,
-    /// Raw errno of the first write error since the last `take_err()`
-    /// (`0` = none). Sticky so `ConsoleObject` can check once after all of a
-    /// `console.*` call's formatting writes and surface it on
-    /// `process.stdout`/`stderr`.
+    /// First write errno since the last `take_err()` (`0` = none); sticky so
+    /// `ConsoleObject` can check once after a `console.*` call's writes.
     err: i32,
 }
 const _: () = {

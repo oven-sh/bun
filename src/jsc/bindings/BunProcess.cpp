@@ -4449,18 +4449,11 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
     }
 }
 
-// Called from ConsoleObject.rs when a console.log/console.error write to fd 1/2 fails
-// (EPIPE on a dead pipe, EIO on a hung-up tty, etc.). Node's console.log writes through
-// process.stdout.write(), so the failure reaches the stream's 'error' machinery; Bun's
-// native console writer bypasses the stream. Forward here by calling stream.destroy(err):
-// process.stdout/stderr's overridden _destroy immediately _undestroy()s, so the stream
-// stays writable and 'error' fires on nextTick.
-//
-// When nobody is listening for 'error' the failure is dropped rather than turned into an
-// uncaught exception: Node's createWriteErrorHandler swallows the first such failure
-// (test-process-external-stdio-close), and console.* is a debugging utility that shouldn't
-// terminate a program whose output consumer went away. A direct process.stdout.write()
-// still surfaces an uncaught EPIPE via the writeFast path.
+// Surface a failed native console.* write on process.stdout/stderr via
+// stream.destroy(err); its _destroy override _undestroy()s so the stream stays
+// writable and 'error' fires on nextTick. Dropped when no 'error' listener is
+// attached, matching Node's createWriteErrorHandler (test-process-external-stdio-close);
+// a direct process.stdout.write() still surfaces an uncaught EPIPE via writeFast.
 extern "C" void Bun__ConsoleObject__onStdioWriteError(Zig::GlobalObject* global, int32_t fd, EncodedJSValue encodedError)
 {
     auto& vm = JSC::getVM(global);

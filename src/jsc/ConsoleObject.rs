@@ -352,14 +352,11 @@ unsafe extern "C" {
     fn Bun__ConsoleObject__onStdioWriteError(global: &JSGlobalObject, fd: i32, err: JSValue);
 }
 
-/// If the writer backing recorded an I/O errno during this `console.*` call,
-/// surface it on `process.stdout`/`stderr` as an `'error'` event so user
-/// listeners fire. Node routes `console.log` through `process.stdout.write()`,
-/// so a broken-pipe `EPIPE` reaches the stream's error machinery; Bun's native
-/// writer bypasses the stream entirely, hence this after-the-fact forward.
-/// When no `'error'` listener is attached the C++ side drops the error rather
-/// than letting it become an uncaught exception (matching
-/// `test-process-external-stdio-close`).
+/// Surface any write errno the console adapter recorded on
+/// `process.stdout`/`stderr` as an `'error'` event. Bun's native `console.*`
+/// writes to the fd directly, bypassing the stream; Node routes through
+/// `process.stdout.write()`. The C++ side drops it when no `'error'` listener
+/// is attached (matching `test-process-external-stdio-close`).
 fn forward_write_error(global: &JSGlobalObject, is_stderr: bool) {
     let errno = {
         // SAFETY: single-JS-thread top-level host call; `&mut` is scoped to
@@ -376,9 +373,7 @@ fn forward_write_error(global: &JSGlobalObject, is_stderr: bool) {
             Some(e) => e,
         }
     };
-    // A pending JS exception (thrown by the caller's formatting path) takes
-    // precedence; don't call into JS under it. The sticky errno was cleared
-    // above and the next `console.*` call hits the dead pipe again.
+    // Don't call into JS under a pending exception; errno was cleared above.
     if global.has_exception() {
         return;
     }

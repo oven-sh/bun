@@ -1357,9 +1357,8 @@ impl AsyncModule {
                 }
             }
 
-            // The ref-counted path wraps bytes as a Latin-1 external string.
-            // Printer output is normally pure ASCII; when it isn't (raw
-            // template/regex with non-ASCII), fall through to `clone_utf8`.
+            // `ref_counted_resolved_source` wraps bytes as Latin-1; non-ASCII
+            // printer output falls through to `clone_utf8` below.
             let written = printer.ctx.get_written();
             if bun_core::strings::is_all_ascii(written) {
                 // SAFETY: per-thread VM.

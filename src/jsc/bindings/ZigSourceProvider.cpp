@@ -198,9 +198,8 @@ static JSC::VM& getVMForBytecodeCache()
 
 extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
 {
-    // Decode via the same path the runtime loader uses (Bun::toString ==
-    // BunString__fromBytes == clone_utf8) so the SourceCodeKey baked into the
-    // cached bytecode matches the one computed at load time.
+    // Bun::toString matches the runtime loader's clone_utf8, so the cached
+    // SourceCodeKey agrees with the one computed at load time.
     JSC::SourceCode sourceCode = JSC::makeSource(Bun::toString(reinterpret_cast<const char*>(inputSourceCode), inputSourceCodeSize).transferToWTFString(), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
 
     JSC::VM& vm = getVMForBytecodeCache();
@@ -235,8 +234,7 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProv
 
 extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
 {
-    // See generateCachedModuleByteCodeFromSourceCode: decode via Bun::toString
-    // so the SourceCodeKey matches the runtime loader.
+    // See generateCachedModuleByteCodeFromSourceCode above.
     JSC::SourceCode sourceCode = JSC::makeSource(Bun::toString(reinterpret_cast<const char*>(inputSourceCode), inputSourceCodeSize).transferToWTFString(), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
     JSC::VM& vm = getVMForBytecodeCache();
 

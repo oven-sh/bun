@@ -2731,8 +2731,7 @@ pub(crate) mod __gated_printer {
         }
 
         fn print_raw_template_literal(&mut self, bytes: &[u8]) {
-            // Raw template contents are observable via `.raw` (e.g. String.raw),
-            // so they must be emitted byte-for-byte even under ASCII_ONLY.
+            // Observable via `.raw`; must round-trip byte-for-byte.
             self.print(bytes);
         }
 
@@ -4142,8 +4141,7 @@ pub(crate) mod __gated_printer {
                 self.print(b" ");
             }
 
-            // The pattern text is observable via `RegExp.prototype.source`, so
-            // it must be emitted byte-for-byte even under ASCII_ONLY.
+            // Observable via `RegExp#source`; must round-trip byte-for-byte.
             self.print(&e.value[..]);
 
             // Need a space before the next identifier to avoid it turning into flags

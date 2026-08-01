@@ -1057,8 +1057,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             debug_assert!(this.entry.is_none());
 
             // Borrowed view; `output_code_bytes` outlives the synchronous
-            // `to_file` call. Non-ASCII (raw templates / regex literals) is
-            // tagged UTF8 so the load path decodes it correctly.
+            // `to_file` call. Non-ASCII output is tagged UTF8 on disk.
             let output_code = if bun_core::strings::is_all_ascii(output_code_bytes) {
                 BunString::ascii(output_code_bytes)
             } else {

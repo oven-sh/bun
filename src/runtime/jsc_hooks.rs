@@ -3087,8 +3087,8 @@ fn transpile_source_code_inner(
                     // (Stacked Borrows — see the matching note below).
                     let printer: &mut bun_js_printer::BufferPrinter =
                         unsafe { &mut *(*extra).source_code_printer };
-                    // The ref-counted path wraps bytes as Latin-1; non-ASCII
-                    // output (raw template/regex) falls through to `clone_utf8`.
+                    // `ref_counted_resolved_source` wraps bytes as Latin-1;
+                    // non-ASCII output falls through to `clone_utf8` below.
                     let written = printer.ctx.get_written();
                     if bun_core::strings::is_all_ascii(written) {
                         // SAFETY: per fn contract — `jsc_vm` is the live

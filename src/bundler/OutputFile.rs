@@ -149,10 +149,8 @@ impl Value {
                 if bytes.is_empty() {
                     return BunString::EMPTY;
                 }
-                // Bundler output is normally pure ASCII; when it isn't (raw
-                // template/regex with non-ASCII), the Latin-1 external path
-                // would mis-decode it. Borrowing variant: caller keeps `bytes`.
                 if !bun_core::strings::is_all_ascii(bytes) {
+                    // Non-ASCII printer output is UTF-8, not Latin-1.
                     return BunString::clone_utf8(bytes);
                 }
                 extern "C" fn noop(_: *mut c_void, _: *mut c_void, _: usize) {}

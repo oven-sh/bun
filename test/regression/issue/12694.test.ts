@@ -8,13 +8,15 @@ import { bunEnv, bunExe, isWindows } from "harness";
 
 // Bun.Terminal provides a PTY so process.stdin.isTTY is true and readline
 // enables raw mode; on Windows raw-mode ^C is delivered differently.
-test.skipIf(isWindows)("Ctrl+C at a raw-mode readline prompt exits instead of spinning on an unsettled TLA", async () => {
-  // @inquirer/prompts@5 reduced to the part this issue exercises:
-  //   readline.createInterface({ terminal: true }) + a top-level await.
-  // In raw mode Ctrl+C arrives as byte 0x03; readline's kTtyWrite maps it to
-  // close() → input.pause() + setRawMode(false). With nothing left alive,
-  // the process must exit (Node: exit 13, unsettled TLA) rather than spin.
-  const source = `
+test.skipIf(isWindows)(
+  "Ctrl+C at a raw-mode readline prompt exits instead of spinning on an unsettled TLA",
+  async () => {
+    // @inquirer/prompts@5 reduced to the part this issue exercises:
+    //   readline.createInterface({ terminal: true }) + a top-level await.
+    // In raw mode Ctrl+C arrives as byte 0x03; readline's kTtyWrite maps it to
+    // close() → input.pause() + setRawMode(false). With nothing left alive,
+    // the process must exit (Node: exit 13, unsettled TLA) rather than spin.
+    const source = `
     import * as readline from "node:readline";
     const rl = readline.createInterface({
       terminal: true,
@@ -27,36 +29,37 @@ test.skipIf(isWindows)("Ctrl+C at a raw-mode readline prompt exits instead of sp
     console.log("unreachable");
   `;
 
-  let output = "";
-  const prompt = Promise.withResolvers<void>();
-  const closed = Promise.withResolvers<void>();
+    let output = "";
+    const prompt = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", source],
-    env: bunEnv,
-    terminal: {
-      data(_t, chunk) {
-        output += new TextDecoder().decode(chunk);
-        if (output.includes("? prompt:")) prompt.resolve();
-        if (output.includes("rl-closed")) closed.resolve();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      terminal: {
+        data(_t, chunk) {
+          output += new TextDecoder().decode(chunk);
+          if (output.includes("? prompt:")) prompt.resolve();
+          if (output.includes("rl-closed")) closed.resolve();
+        },
       },
-    },
-  });
-  const terminal = proc.terminal!;
+    });
+    const terminal = proc.terminal!;
 
-  await prompt.promise;
-  // Ctrl+C as a raw byte on the PTY.
-  terminal.write("\x03");
-  // readline must observe ^C and close (fails fast if the keypress path broke).
-  await closed.promise;
+    await prompt.promise;
+    // Ctrl+C as a raw byte on the PTY.
+    terminal.write("\x03");
+    // readline must observe ^C and close (fails fast if the keypress path broke).
+    await closed.promise;
 
-  const exitCode = await proc.exited;
+    const exitCode = await proc.exited;
 
-  expect(output).not.toContain("unreachable");
-  expect(output).toContain("unsettled top-level await");
-  // 13 = Node's "unsettled top-level await" exit code.
-  expect(exitCode).toBe(13);
-});
+    expect(output).not.toContain("unreachable");
+    expect(output).toContain("unsettled top-level await");
+    // 13 = Node's "unsettled top-level await" exit code.
+    expect(exitCode).toBe(13);
+  },
+);
 
 test.skipIf(isWindows)(
   "Ctrl+C at a raw-mode prompt with a signal-exit style process.emit override rejects the prompt (inquirer flow)",

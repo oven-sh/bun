@@ -27,6 +27,8 @@ test("template literal", () => {
 // https://github.com/oven-sh/bun/issues/15492
 // https://github.com/oven-sh/bun/issues/16763
 // https://github.com/oven-sh/bun/issues/8207
+// https://github.com/oven-sh/bun/issues/13853
+// https://github.com/oven-sh/bun/issues/33930
 async function run(code: string) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", code],
@@ -76,6 +78,49 @@ describe.concurrent("RegExp literal .source preserves non-ASCII", () => {
     );
     expect({ stdout, stderr }).toEqual({
       stdout: JSON.stringify([true, true, "::(?<name>[-\\w\\P{ASCII}]+)(?:\\((?<argument>¶*)\\))?"]),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/33930
+  // Raw control bytes (0x00-0x1F) in a regex literal must come through as one
+  // code point in .source, not the six-character \uNNNN escape text. Uses a
+  // file because argv is NUL-terminated.
+  test("raw NUL and control bytes (#33930)", async () => {
+    using dir = tempDir("regex-source-control", {
+      "entry.js":
+        `const nul = /` +
+        "\x00" +
+        `HFMASK(\\d+)` +
+        "\x00" +
+        `/g;\n` +
+        `const ctrl = /a` +
+        "\x01\x1f" +
+        `b/;\n` +
+        `process.stdout.write(JSON.stringify({\n` +
+        `  nul: [...nul.source].map(c => c.codePointAt(0)),\n` +
+        `  nulLen: nul.source.length,\n` +
+        `  match: nul.test("\\x00HFMASK42\\x00"),\n` +
+        `  ctrl: [...ctrl.source].map(c => c.codePointAt(0)),\n` +
+        `  ctrlLen: ctrl.source.length,\n` +
+        `}));\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "entry.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout: JSON.stringify({
+        nul: [0, 72, 70, 77, 65, 83, 75, 40, 92, 100, 43, 41, 0],
+        nulLen: 13,
+        match: true,
+        ctrl: [97, 1, 31, 98],
+        ctrlLen: 4,
+      }),
       stderr: "",
     });
     expect(exitCode).toBe(0);

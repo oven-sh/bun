@@ -2888,8 +2888,7 @@ impl<'a> Resolver<'a> {
                                                 ) {
                                                     Some(p) => p,
                                                     None => {
-                                                        self.extension_order =
-                                                            prev_extension_order;
+                                                        self.extension_order = prev_extension_order;
                                                         break 'node_modules;
                                                     }
                                                 };

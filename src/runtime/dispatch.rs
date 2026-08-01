@@ -736,9 +736,6 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
                 debug_assert!(false, "dns_sd SharedConnection poll on non-mac");
             }
         }
-        poll_tag::REQUEST => {
-            debug_assert!(false, "poll_tag::REQUEST is no longer used");
-        }
         poll_tag::TERMINAL_POLL => poll_arm!(TerminalPoll),
         // `OutputReader = BufferedReader` in install crate — separate tag for ownership.
         poll_tag::LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER => {

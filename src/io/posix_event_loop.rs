@@ -208,7 +208,6 @@ pub enum PollTag {
     BufferedReader,
     DnsResolver,
     GetAddrInfoRequest,
-    Request,
     Process,
     ShellBufferedWriter,
     TerminalPoll,
@@ -231,7 +230,6 @@ pub mod poll_tag {
     pub const BUFFERED_READER: PollTag = PollTag::BufferedReader;
     pub const DNS_RESOLVER: PollTag = PollTag::DnsResolver;
     pub const GET_ADDR_INFO_REQUEST: PollTag = PollTag::GetAddrInfoRequest;
-    pub const REQUEST: PollTag = PollTag::Request;
     pub const PROCESS: PollTag = PollTag::Process;
     pub const SHELL_BUFFERED_WRITER: PollTag = PollTag::ShellBufferedWriter;
     pub const TERMINAL_POLL: PollTag = PollTag::TerminalPoll;

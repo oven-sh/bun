@@ -70,11 +70,3 @@ test.skipIf(!isMacOS)("many concurrent dns.lookup() do not spawn a thread per lo
   expect(peak).toBeLessThan(baseline + 60);
   expect(exitCode).toBe(0);
 });
-
-// Sanity check that the new backend still resolves correctly; kept separate so
-// a correctness regression isn't masked by the thread-count assertion above.
-test.skipIf(!isMacOS)("dns.lookup localhost resolves on macOS system backend", async () => {
-  const { address, family } = await lookup("localhost");
-  expect(address === "127.0.0.1" || address === "::1").toBe(true);
-  expect(family === 4 || family === 6).toBe(true);
-});

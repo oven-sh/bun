@@ -4089,6 +4089,9 @@ function initSocketHandle(self) {
   const handle = self._handle;
   if (handle) {
     handle[owner_symbol] = self;
+    // A fresh handle (e.g. the autoSelectFamily retry's) must inherit an
+    // unref() the user already applied.
+    if (self[kUserUnrefed]) handle.unref?.();
   }
 }
 

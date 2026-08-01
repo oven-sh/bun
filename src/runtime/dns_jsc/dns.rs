@@ -140,9 +140,11 @@ pub(crate) mod dns_sd {
     type DNSServiceErrorType = i32;
     pub(crate) type DNSServiceProtocol = u32;
 
+    pub(crate) const FLAGS_MORE_COMING: DNSServiceFlags = 0x1;
     pub(crate) const FLAGS_ADD: DNSServiceFlags = 0x2;
     const FLAGS_RETURN_INTERMEDIATES: DNSServiceFlags = 0x1000;
     const FLAGS_SHARE_CONNECTION: DNSServiceFlags = 0x4000;
+    const FLAGS_SUPPRESS_UNUSABLE: DNSServiceFlags = 0x8000;
     const FLAGS_TIMEOUT: DNSServiceFlags = 0x10000;
 
     pub(crate) const PROTOCOL_IPV4: DNSServiceProtocol = 0x01;
@@ -223,6 +225,44 @@ pub(crate) mod dns_sd {
         }
     }
 
+    /// Names getaddrinfo treats as literals rather than DNS queries: IP
+    /// addresses (including `inet_aton` numbers-and-dots shorthand such as
+    /// `127.1`) and scoped IPv6 (`fe80::1%en0`). The daemon would query these
+    /// as hostnames, so they stay on the getaddrinfo path.
+    pub(crate) fn getaddrinfo_only_name(name: &[u8]) -> bool {
+        strings::is_ip_address(name)
+            || strings::contains_char(name, b'%')
+            // inet_aton forms getaddrinfo accepts: `127.1`, `2130706433`,
+            // `0x7f000001`, `0177.0.0.1`.
+            || (name.first().is_some_and(|b| b.is_ascii_digit())
+                && name
+                    .iter()
+                    .all(|b| b.is_ascii_hexdigit() || matches!(*b, b'.' | b'x' | b'X')))
+    }
+
+    /// `hints` bits dns_sd has no equivalent for (AI_V4MAPPED/AI_ALL/…);
+    /// `AI_ADDRCONFIG` maps to `kDNSServiceFlagsSuppressUnusable` and is
+    /// handled here.
+    pub(crate) fn getaddrinfo_only_flags(flags: c_int) -> bool {
+        flags & !netc::AI_ADDRCONFIG != 0
+    }
+
+    /// `kDNSServiceFlagsSuppressUnusable` is the daemon-side `AI_ADDRCONFIG`:
+    /// when both families are requested, a family this host has no routable
+    /// address for is answered locally with `NoSuchRecord` instead of a
+    /// wire query, and `/etc/hosts` names (localhost) are exempt. libinfo's
+    /// getaddrinfo sets it whenever `AI_ADDRCONFIG` is (mdns_module.c).
+    fn addrconfig_flags(protocol: DNSServiceProtocol) -> DNSServiceFlags {
+        if protocol != (PROTOCOL_IPV4 | PROTOCOL_IPV6)
+            || env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG
+                .get()
+                .unwrap_or(false)
+        {
+            return 0;
+        }
+        FLAGS_SUPPRESS_UNUSABLE
+    }
+
     #[derive(Clone, Copy)]
     pub(crate) enum Inflight {
         Jsc(*mut GetAddrInfoRequest),
@@ -236,6 +276,12 @@ pub(crate) mod dns_sd {
         file_poll: NonNull<FilePoll>,
         ctx: Async::EventLoopCtx,
         inflight: Vec<Inflight>,
+        /// `context` of the previous reply on the wire. mDNSResponder queues
+        /// all answers from one DNS response contiguously and stamps
+        /// `MoreComing` on a reply whenever another is queued behind it on
+        /// this connection, so a request's contiguous run has ended once a
+        /// reply for a different request follows it.
+        last_ctx: *mut c_void,
     }
 
     thread_local! {
@@ -265,6 +311,7 @@ pub(crate) mod dns_sd {
                 file_poll: NonNull::dangling(),
                 ctx,
                 inflight: Vec::new(),
+                last_ctx: ptr::null_mut(),
             }));
             let poll_ptr = FilePoll::init(
                 ctx,
@@ -321,7 +368,10 @@ pub(crate) mod dns_sd {
             let err = unsafe {
                 DNSServiceGetAddrInfo(
                     &raw mut sub,
-                    FLAGS_SHARE_CONNECTION | FLAGS_TIMEOUT | FLAGS_RETURN_INTERMEDIATES,
+                    FLAGS_SHARE_CONNECTION
+                        | FLAGS_TIMEOUT
+                        | FLAGS_RETURN_INTERMEDIATES
+                        | addrconfig_flags(protocol),
                     0,
                     protocol,
                     hostname,
@@ -343,56 +393,128 @@ pub(crate) mod dns_sd {
             Some(sub)
         }
 
+        /// Called first thing from each request's reply callback (which only
+        /// fires inside `on_readable`'s `DNSServiceProcessResult`). When the
+        /// wire moves on to a different request, the previous request's
+        /// contiguous run of replies has ended, so its `awaiting_more` (from
+        /// a `MoreComing` that referred to *this* reply) is cleared.
+        pub(crate) fn note_reply(context: *mut c_void) {
+            let this = SHARED.get();
+            if this.is_null() {
+                return;
+            }
+            // SAFETY: `this` is the live connection whose `on_readable` is on
+            // the stack; the callback runs on the same (event-loop) thread and
+            // `on_readable` holds no borrow of `*this` across ProcessResult.
+            unsafe {
+                let prev = (*this).last_ctx;
+                if !prev.is_null() && prev != context {
+                    for inf in (*this).inflight.iter() {
+                        match *inf {
+                            Inflight::Jsc(r) if r.cast::<c_void>() == prev => {
+                                (*r).backend.as_dns_sd_mut().awaiting_more = false;
+                            }
+                            Inflight::Internal(r) if r.cast::<c_void>() == prev => {
+                                (*r).libinfo.awaiting_more = false;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                (*this).last_ctx = context;
+            }
+        }
+
         /// kqueue `EVFILT_READ` fired on the shared socket. Drains all pending
         /// daemon replies (dnssd's `DNSServiceProcessResult` loops until the
         /// socket would block, firing each sub-ref's callback inline), then
-        /// completes every query whose requested families have all reported in.
+        /// completes every query whose answer set is complete.
         pub(crate) fn on_readable(this: *mut Self) {
+            // `finish()` resolves promises; keep one enter/exit scope open so
+            // the microtask drain (and any JS it runs, which may re-enter
+            // `start()` or tear this connection down) happens after this
+            // function has stopped touching `*this`.
+            // SAFETY: `get_or_null` returns the current thread's VM or null
+            // (the internal connect path also runs on the HTTP thread's loop,
+            // where there is no VM and completion never touches JS).
+            let _exit =
+                VirtualMachine::get_or_null().map(|vm| unsafe { (*vm).enter_event_loop_scope() });
+
             // SAFETY: `this` is the live heap-allocated connection the FilePoll
             // was registered with; exclusive on the event-loop thread. The
             // callbacks fired inside `DNSServiceProcessResult` reach the
-            // per-request state via `context`, not via `*this`, so holding
-            // `&mut *this` across the call does not alias.
-            let shared = unsafe { &mut *this };
-            // SAFETY: FFI; `main_ref` is the live primary connection.
-            let rc = unsafe { DNSServiceProcessResult(shared.main_ref) };
-            if rc != ERR_NO_ERROR {
+            // per-request state via `context`, not via `*this`. Each borrow of
+            // `*this` below ends before any `finish()` runs.
+            let rc = unsafe { DNSServiceProcessResult((*this).main_ref) };
+            let ready: Vec<Inflight> = if rc != ERR_NO_ERROR {
                 bun_output::scoped_log!(dns, "DNSServiceProcessResult: {}", rc);
-                while let Some(inf) = shared.inflight.pop() {
-                    Self::finish(inf, Some(rc));
-                }
+                // SAFETY: as above; `take` leaves an empty Vec in place.
+                unsafe { core::mem::take(&mut (*this).inflight) }
             } else {
+                let mut ready = Vec::new();
+                // SAFETY: as above; each `*mut` in `inflight` is a live heap
+                // request pinned there until finished.
+                let inflight = unsafe { &mut (*this).inflight };
                 let mut i = 0;
-                while i < shared.inflight.len() {
-                    // SAFETY: each `*mut` is a live heap request pinned in `inflight`.
-                    let ready = unsafe {
-                        match shared.inflight[i] {
+                while i < inflight.len() {
+                    let is_ready = unsafe {
+                        match inflight[i] {
                             Inflight::Jsc(r) => (*r).backend.as_dns_sd().is_ready(),
                             Inflight::Internal(r) => (*r).libinfo.is_ready(),
                         }
                     };
-                    if ready {
-                        let inf = shared.inflight.swap_remove(i);
-                        Self::finish(inf, None);
+                    if is_ready {
+                        ready.push(inflight.swap_remove(i));
                     } else {
                         i += 1;
                     }
                 }
-            }
+                if inflight.is_empty() {
+                    // SAFETY: `file_poll` is the hive slot set in `get()`.
+                    unsafe {
+                        (*(*this).file_poll.as_ptr()).disable_keeping_process_alive((*this).ctx)
+                    };
+                }
+                ready
+            };
             if rc != ERR_NO_ERROR {
                 // The primary is defunct (daemon died or socket went bad).
-                // Tear it down so the next lookup reconnects cleanly; keep the
-                // process-alive bump balanced by routing through the normal
-                // teardown rather than leaving a stale poll registered.
-                Self::close_for_terminate();
-                return;
-            }
-            if shared.inflight.is_empty() {
-                // SAFETY: `file_poll` is the hive slot set in `get()`.
-                unsafe { (*shared.file_poll.as_ptr()).disable_keeping_process_alive(shared.ctx) };
+                // Detach it first so a lookup started from a rejection handler
+                // reconnects, fail the subordinates while the primary is still
+                // alive (deallocating the parent frees them implicitly, and a
+                // later deallocate would double-free), then destroy it.
+                let detached = SHARED.replace(ptr::null_mut());
+                debug_assert!(core::ptr::eq(detached, this));
+                for inf in ready {
+                    Self::finish(inf, Some(rc));
+                }
+                // SAFETY: `this` is detached and its `inflight` was drained
+                // above; nothing else references it.
+                unsafe { Self::destroy(this) };
+            } else {
+                for inf in ready {
+                    Self::finish(inf, None);
+                }
             }
         }
 
+        /// Free a detached connection with no in-flight sub-refs.
+        /// SAFETY: `this` must be the live heap connection, already removed
+        /// from `SHARED`, with `inflight` empty.
+        unsafe fn destroy(this: *mut Self) {
+            // SAFETY: caller contract; `deinit` returns the hive slot.
+            unsafe {
+                debug_assert!((*this).inflight.is_empty());
+                (*(*this).file_poll.as_ptr()).deinit();
+                DNSServiceRefDeallocate((*this).main_ref);
+                drop(bun_core::heap::take(this));
+            }
+        }
+
+        /// `force_err` (defunct connection / VM teardown) discards any
+        /// partial results so completion always takes the error path —
+        /// resolving inside teardown would drain microtasks and can
+        /// re-enter DNS after the resolver is gone.
         fn finish(inf: Inflight, force_err: Option<DNSServiceErrorType>) {
             // SAFETY: each `*mut` is a live heap request just removed from
             // `inflight`; its `sd_ref` is the live subordinate to be released.
@@ -402,6 +524,7 @@ pub(crate) mod dns_sd {
                         let be = (*r).backend.as_dns_sd_mut();
                         DNSServiceRefDeallocate(be.sd_ref);
                         if let Some(e) = force_err {
+                            be.results.clear();
                             be.sd_error = e;
                         }
                         GetAddrInfoRequest::complete_dns_sd(r);
@@ -409,6 +532,7 @@ pub(crate) mod dns_sd {
                     Inflight::Internal(r) => {
                         DNSServiceRefDeallocate((*r).libinfo.sd_ref);
                         if let Some(e) = force_err {
+                            (*r).libinfo.addrs.clear();
                             (*r).libinfo.sd_error = e;
                         }
                         internal::dns_sd_complete(r);
@@ -419,19 +543,22 @@ pub(crate) mod dns_sd {
 
         /// Tear down the shared connection if one exists on this thread.
         /// Called from VM teardown so the fd and FilePoll are released while
-        /// the event loop is still live. Any in-flight sub-refs are torn down
-        /// with the primary by `DNSServiceRefDeallocate`.
+        /// the event loop is still live. In-flight requests are failed
+        /// (mirroring c-ares' `EDESTRUCTION` on channel destroy) so their
+        /// heap allocations are reclaimed before the VM goes.
         pub(crate) fn close_for_terminate() {
             let this = SHARED.replace(ptr::null_mut());
             if this.is_null() {
                 return;
             }
-            // SAFETY: `this` is the live heap-allocated connection; exclusive
-            // on this (event-loop) thread. `deinit` returns the hive slot.
+            // SAFETY: `this` is the live heap-allocated connection just
+            // detached from `SHARED`; exclusive on this (event-loop) thread.
+            // Subordinates are failed (deallocating them) before the parent.
             unsafe {
-                (*(*this).file_poll.as_ptr()).deinit();
-                DNSServiceRefDeallocate((*this).main_ref);
-                drop(bun_core::heap::take(this));
+                while let Some(inf) = (*this).inflight.pop() {
+                    Self::finish(inf, Some(ERR_DEFUNCT_CONNECTION));
+                }
+                Self::destroy(this);
             }
         }
     }
@@ -442,6 +569,11 @@ pub(crate) mod dns_sd {
         global_this: &JSGlobalObject,
     ) -> JSValue {
         bun_core::Environment::only_mac();
+
+        if getaddrinfo_only_flags(query.options.flags) || getaddrinfo_only_name(query.name.as_ref())
+        {
+            return lib_c::lookup(this, query, global_this);
+        }
 
         let key = get_addr_info_request::PendingCacheKey::init(query);
         let cache =
@@ -1366,6 +1498,18 @@ pub mod get_addr_info_request {
         /// `pending_proto`).
         #[cfg(target_os = "macos")]
         pub(crate) sd_error: i32,
+        /// A family reported `kDNSServiceErr_Timeout`; with no results this
+        /// is a transient EAI_AGAIN, not a definitive EAI_NONAME.
+        #[cfg(target_os = "macos")]
+        pub(crate) saw_timeout: bool,
+        /// The last reply for this request carried `kDNSServiceFlagsMoreComing`
+        /// and no other request's reply has followed it yet: the daemon has
+        /// more of this answer set queued (possibly not yet written). If that
+        /// continuation is never delivered (a stale reply for a deallocated
+        /// subordinate is dropped by the client stub), `kDNSServiceFlagsTimeout`
+        /// still guarantees a final callback that completes the request.
+        #[cfg(target_os = "macos")]
+        pub(crate) awaiting_more: bool,
         /// `kDNSServiceProtocol_*` bits still awaiting any reply. A family's
         /// bit is cleared by any callback carrying its `sa_family` (Add,
         /// NoSuchRecord, or Timeout; the client stub always passes a
@@ -1381,6 +1525,8 @@ pub mod get_addr_info_request {
                 sd_ref: ptr::null_mut(),
                 results: GetAddrInfoResultList::new(),
                 sd_error: 0,
+                saw_timeout: false,
+                awaiting_more: false,
                 pending_proto: protocol,
             }
         }
@@ -1391,7 +1537,7 @@ pub mod get_addr_info_request {
         }
         #[cfg(target_os = "macos")]
         pub(crate) fn is_ready(&self) -> bool {
-            self.pending_proto == 0 || self.sd_error != 0
+            (self.pending_proto == 0 && !self.awaiting_more) || self.sd_error != 0
         }
     }
 
@@ -1616,19 +1762,19 @@ impl GetAddrInfoRequest {
         ttl: u32,
         context: *mut c_void,
     ) {
+        dns_sd::SharedConnection::note_reply(context);
         // SAFETY: context is the *mut GetAddrInfoRequest passed to start().
         let this: *mut Self = context.cast();
         // SAFETY: `this` is the heap-allocated request; exclusive on the JS thread.
         let be = unsafe { (*this).backend.as_dns_sd_mut() };
+        be.awaiting_more = flags & dns_sd::FLAGS_MORE_COMING != 0;
         // dnssd_clientstub always passes a family-tagged sockaddr for A/AAAA
         // replies (including NoSuchRecord/Timeout); only PolicyDenied is null.
         if !address.is_null() {
             // SAFETY: `address` is a valid sockaddr per dns_sd.h for this call.
             let fam = unsafe { (*address).sa_family } as i32;
-            // Any reply for a family retires its pending bit: the daemon emits
-            // a family's Adds back-to-back (one internal A or AAAA question),
-            // so once the socket is drained there are no more for that family
-            // until the next event.
+            // Any reply for a family retires its pending bit; whether the
+            // whole answer set has arrived is tracked by `awaiting_more`.
             be.pending_proto &= !if fam == netc::AF_INET6 {
                 dns_sd::PROTOCOL_IPV6
             } else {
@@ -1641,9 +1787,10 @@ impl GetAddrInfoRequest {
                     address: unsafe { bun_dns::Address::init_posix(address.cast()) },
                     ttl: ttl as i32,
                 });
+            } else if error_code == dns_sd::ERR_TIMEOUT {
+                be.saw_timeout = true;
             } else if error_code != dns_sd::ERR_NO_ERROR
                 && error_code != dns_sd::ERR_NO_SUCH_RECORD
-                && error_code != dns_sd::ERR_TIMEOUT
                 && be.sd_error == 0
             {
                 be.sd_error = error_code;
@@ -1664,11 +1811,16 @@ impl GetAddrInfoRequest {
         // SAFETY: caller contract — `this` is live and exclusively owned here.
         unsafe {
             let be = (*this).backend.as_dns_sd_mut();
-            let results = core::mem::take(&mut be.results);
+            let mut results = core::mem::take(&mut be.results);
+            // See `internal::dns_sd_complete` — family order must not depend
+            // on which reply arrived first.
+            results.sort_by_key(|r| r.address.family() != netc::AF_INET6);
             let status = if !results.is_empty() {
                 0
             } else if be.sd_error != 0 {
                 dns_sd::to_eai(be.sd_error)
+            } else if be.saw_timeout {
+                libc::EAI_AGAIN
             } else {
                 libc::EAI_NONAME
             };
@@ -2508,13 +2660,18 @@ pub mod internal {
         pub(crate) sd_ref: dns_sd::DNSServiceRef,
         pub(crate) addrs: Vec<SockaddrStorage>,
         pub(crate) sd_error: i32,
+        /// A family reported `kDNSServiceErr_Timeout`; with no results this
+        /// is a transient EAI_AGAIN, not a definitive EAI_NONAME.
+        pub(crate) saw_timeout: bool,
+        /// See `BackendDnsSd::awaiting_more`.
+        pub(crate) awaiting_more: bool,
         pub(crate) pending_proto: u32,
     }
 
     #[cfg(target_os = "macos")]
     impl MacAsyncDNS {
         pub(crate) fn is_ready(&self) -> bool {
-            self.pending_proto == 0 || self.sd_error != 0
+            (self.pending_proto == 0 && !self.awaiting_more) || self.sd_error != 0
         }
     }
 
@@ -3045,6 +3202,9 @@ pub mod internal {
             // getaddrinfo(NULL, service, ...) on the work pool.
             return false;
         };
+        if dns_sd::getaddrinfo_only_name(host.as_bytes()) {
+            return false;
+        }
 
         let Some(shared) = dns_sd::SharedConnection::get(
             crate::api::bun::process::event_loop_handle_to_ctx(loop_),
@@ -3070,6 +3230,8 @@ pub mod internal {
                 sd_ref: sub,
                 addrs: Vec::new(),
                 sd_error: 0,
+                saw_timeout: false,
+                awaiting_more: false,
                 pending_proto: protocol,
             };
         }
@@ -3088,10 +3250,12 @@ pub mod internal {
         _ttl: u32,
         context: *mut c_void,
     ) {
+        dns_sd::SharedConnection::note_reply(context);
         let req: *mut Request = context.cast();
         // SAFETY: `context` is the `req` pointer registered via
         // `SharedConnection::start`; exclusive on the event-loop thread.
         let li = unsafe { &mut (*req).libinfo };
+        li.awaiting_more = flags & dns_sd::FLAGS_MORE_COMING != 0;
         if address.is_null() {
             if li.sd_error == 0 {
                 li.sd_error = error_code;
@@ -3125,9 +3289,10 @@ pub mod internal {
                 );
             }
             li.addrs.push(storage);
+        } else if error_code == dns_sd::ERR_TIMEOUT {
+            li.saw_timeout = true;
         } else if error_code != dns_sd::ERR_NO_ERROR
             && error_code != dns_sd::ERR_NO_SUCH_RECORD
-            && error_code != dns_sd::ERR_TIMEOUT
             && li.sd_error == 0
         {
             li.sd_error = error_code;
@@ -3148,6 +3313,8 @@ pub mod internal {
         if addrs.is_empty() {
             let err = if li.sd_error != 0 {
                 dns_sd::to_eai(li.sd_error)
+            } else if li.saw_timeout {
+                libc::EAI_AGAIN
             } else {
                 libc::EAI_NONAME
             };
@@ -3156,6 +3323,10 @@ pub mod internal {
         }
 
         let mut addrs = addrs.into_boxed_slice();
+        // Arrival order across families races (each family is a separate
+        // A/AAAA question upstream); getaddrinfo sorted with the RFC 6724
+        // default policy, which puts IPv6 first when both are configured.
+        addrs.sort_by_key(|a| a.ss_family as i32 != netc::AF_INET6);
         let count = addrs.len();
         let mut nodes: Box<[AddrInfo]> = (0..count)
             .map(|_| bun_core::ffi::zeroed::<AddrInfo>())

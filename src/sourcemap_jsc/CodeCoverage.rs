@@ -558,8 +558,9 @@ impl ByteRangeMapping {
                     executable_lines.set(line as usize);
                     if has_executed {
                         lines_which_have_executed.set(line as usize);
-                        let hits =
-                            u32::try_from(block.execution_count).unwrap_or(u32::MAX).max(1);
+                        let hits = u32::try_from(block.execution_count)
+                            .unwrap_or(u32::MAX)
+                            .max(1);
                         if line_hits_slice[line as usize] < hits {
                             line_hits_slice[line as usize] = hits;
                         }
@@ -699,8 +700,9 @@ impl ByteRangeMapping {
                         executable_lines.set(line as usize);
                         if has_executed {
                             lines_which_have_executed.set(line as usize);
-                            let hits =
-                                u32::try_from(block.execution_count).unwrap_or(u32::MAX).max(1);
+                            let hits = u32::try_from(block.execution_count)
+                                .unwrap_or(u32::MAX)
+                                .max(1);
                             if line_hits_slice[line as usize] < hits {
                                 line_hits_slice[line as usize] = hits;
                             }

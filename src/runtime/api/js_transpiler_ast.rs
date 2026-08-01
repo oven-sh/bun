@@ -138,7 +138,7 @@ impl<'a> Writer<'a> {
     }
 
     /// Emit a JSON string literal. Output is pure ASCII (every code point
-    /// outside 0x20..=0x7E escaped as `\uXXXX`), so the resulting buffer can be
+    /// outside 0x20..=0x7E escaped as `\uNNNN`), so the resulting buffer can be
     /// handed to `ZigString.to_json_object` untagged and `Zig::toString` wraps
     /// it with `StringImpl::createWithoutCopying` instead of re-allocating.
     ///

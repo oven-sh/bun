@@ -1472,7 +1472,7 @@ impl JSTranspiler {
         // One `JSON.parse` over the serialized buffer; see module doc in
         // `js_transpiler_ast.rs` for why this is faster than per-node
         // `putDirect` calls. The buffer is ASCII-only (non-ASCII escaped as
-        // `\uXXXX`), so `ZigString` stays untagged and `Zig::toString` wraps it
+        // `\uNNNN`), so `ZigString` stays untagged and `Zig::toString` wraps it
         // with `StringImpl::createWithoutCopying` rather than re-allocating.
         let out = JscZigString::init(&json);
         let result = out.to_json_object(global);

@@ -944,6 +944,43 @@ test.each([
   expect(exitCode).toBe(0);
 });
 
+// https://github.com/oven-sh/bun/issues/13019
+test.each([
+  ["pm", "ls", "-g"],
+  ["pm", "-g", "ls"],
+])("bun %s %s %s prints an empty listing when no global package has been installed", async (...args) => {
+  using dir = tempDir("pm-ls-global-fresh", {
+    "cwd/.keep": "",
+  });
+  const dirStr = String(dir);
+  const bunInstallDir = join(dirStr, "bun-install");
+
+  const spawnEnv: NodeJS.Dict<string> = {
+    ...env,
+    BUN_INSTALL: bunInstallDir,
+    XDG_CACHE_HOME: join(dirStr, "xdg-cache"),
+    HOME: dirStr,
+  };
+  delete spawnEnv.BUN_INSTALL_GLOBAL_DIR;
+  delete spawnEnv.BUN_INSTALL_BIN;
+
+  expect(await exists(join(bunInstallDir, "install", "global", "package.json"))).toBeFalse();
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd: join(dirStr, "cwd"),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: spawnEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("No package.json");
+  expect(stderr).not.toContain("Lockfile not found");
+  expect(stdout.trim()).toBe(`${join(bunInstallDir, "install", "global")} node_modules (0)`);
+  expect(exitCode).toBe(0);
+});
+
 test("bun pm bin without -g still requires a package.json", async () => {
   using dir = tempDir("pm-bin-local-no-pkgjson", {
     "cwd/.keep": "",

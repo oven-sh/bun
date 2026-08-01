@@ -492,7 +492,22 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"ls") {
             let log_level = pm.options.log_level;
+            let is_global = pm.options.global;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
+
+            if is_global && matches!(load_lockfile, LoadResult::NotFound) {
+                Output::flush();
+                Output::disable_buffering();
+                let mut cwd_buf = PathBuffer::uninit();
+                if let Ok(len) = bun_sys::getcwd(&mut cwd_buf[..]) {
+                    Output::println(format_args!(
+                        "{} node_modules (0)",
+                        bstr::BStr::new(&cwd_buf[..len]),
+                    ));
+                }
+                Global::exit(0);
+            }
+
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
 
             Output::flush();

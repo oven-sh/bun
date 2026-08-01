@@ -1598,6 +1598,7 @@ fn is_excluded<'a>(
     ignores: &'a [IgnorePatterns],
 ) -> Option<(&'a [u8], IgnorePatternsKind)> {
     let entry_name = entry.name.slice_u8();
+    let is_dir = entry.kind == bun_sys::FileKind::Directory;
 
     if dir_depth == 1 {
         // first, check files that can never be ignored. project root
@@ -1664,6 +1665,11 @@ fn is_excluded<'a>(
             if result.is_negated() {
                 if !result.matches() {
                     ignored = false;
+                } else if is_dir && ignored && negated_pattern_matches_under_dir(pattern, rel) {
+                    // The negation didn't match the directory itself, but it can
+                    // match paths beneath it. Keep the directory so those paths
+                    // are visited; files inside are still filtered individually.
+                    ignored = false;
                 }
             } else if result.matches() {
                 ignored = true;
@@ -1677,6 +1683,63 @@ fn is_excluded<'a>(
         None
     } else {
         Some((ignore_pattern, ignore_kind))
+    }
+}
+
+/// For a negated pattern that did not match a directory, returns true if it could
+/// still match a path inside that directory. `dir_rel` is the directory path
+/// relative to the ignore file that owns `pattern`.
+///
+/// npm's ignore-walk does the equivalent check via minimatch's `partial` option
+/// when deciding whether to descend into an otherwise-excluded directory.
+fn negated_pattern_matches_under_dir(pattern: &Pattern, dir_rel: &[u8]) -> bool {
+    debug_assert!(pattern.flags.contains(PatternFlags::NEGATED));
+
+    if pattern.flags.contains(PatternFlags::LEADING_DOUBLESTAR_SLASH) {
+        // `!**/foo...` can match at any depth.
+        return true;
+    }
+    if !pattern.flags.contains(PatternFlags::REL_PATH) {
+        // Single-segment negations match basenames; the directory itself was
+        // already tested above and didn't match.
+        return false;
+    }
+
+    let glob = pattern.glob.slice();
+    debug_assert!(!glob.is_empty() && glob[0] == b'!');
+    partial_path_match(&glob[1..], dir_rel)
+}
+
+/// Segment-wise prefix match: returns true if some path beginning with
+/// `dir_path/` could match `glob`.
+fn partial_path_match(glob: &[u8], dir_path: &[u8]) -> bool {
+    let mut glob_rest = glob;
+    let mut path_rest = dir_path;
+    loop {
+        let (glob_seg, glob_tail) = match strings::index_of_char(glob_rest, b'/') {
+            Some(i) => (&glob_rest[..i as usize], &glob_rest[(i as usize) + 1..]),
+            None => (glob_rest, &b""[..]),
+        };
+        if glob_seg == b"**" {
+            return true;
+        }
+        if path_rest.is_empty() {
+            // Directory segments are exhausted but the pattern still has at
+            // least `glob_seg` left to match deeper paths.
+            return true;
+        }
+        let (path_seg, path_tail) = match strings::index_of_char(path_rest, b'/') {
+            Some(i) => (&path_rest[..i as usize], &path_rest[(i as usize) + 1..]),
+            None => (path_rest, &b""[..]),
+        };
+        if !glob::r#match(glob_seg, path_seg).matches() {
+            return false;
+        }
+        if glob_tail.is_empty() {
+            return false;
+        }
+        glob_rest = glob_tail;
+        path_rest = path_tail;
     }
 }
 

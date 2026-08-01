@@ -280,6 +280,7 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
 
     let mut sorted: Vec<u32> = Vec::new();
 
+    // Pass 1 of 2 (#14588, #30269): register every top-level symbol in `r.root` before any nested scope is renamed.
     for &source_index in files_in_order {
         let wrap = all_flags[source_index as usize].wrap;
         // Need `&mut [Part]` for `add_top_level_declared_symbols`.
@@ -358,16 +359,6 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
                         }
                     }
                 }
-                // Reshaped for borrowck — `&mut r.root` while `r` is the
-                // `&mut self` receiver. Take a raw pointer; `assign_names_*` does
-                // not touch `self.root` through `self`.
-                let root: *mut renamer::NumberScope = core::ptr::addr_of_mut!(r.root);
-                r.assign_names_recursive_with_number_scope(
-                    root,
-                    &all_module_scopes[source_index as usize],
-                    source_index,
-                    &mut sorted,
-                );
                 continue;
             }
 
@@ -399,19 +390,43 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
             }
 
             r.add_top_level_declared_symbols(&mut part.declared_symbols);
-            // `Part.scopes: StoreSlice<*mut Scope>` — safe `Deref` to `&[*mut Scope]`.
-            for scope in part.scopes.iter() {
+        }
+    }
+
+    // Pass 2: walk nested scopes now that `r.root` knows every top-level name.
+    for &source_index in files_in_order {
+        match all_flags[source_index as usize].wrap {
+            WrapKind::Cjs => {
                 let root: *mut renamer::NumberScope = core::ptr::addr_of_mut!(r.root);
-                // SAFETY: each `*mut Scope` is a valid arena-allocated scope.
                 r.assign_names_recursive_with_number_scope(
                     root,
-                    unsafe { &**scope },
+                    &all_module_scopes[source_index as usize],
                     source_index,
                     &mut sorted,
                 );
             }
-            r.number_scope_pool.hive.used = bun_collections::hive_array::HiveBitSet::init_empty();
+            WrapKind::Esm | WrapKind::None => {
+                let parts: &[Part] = all_parts[source_index as usize].as_slice();
+                let parts_live = &c.graph.parts_live[source_index as usize];
+                for (part_index, part) in parts.iter().enumerate() {
+                    if !parts_live.is_set(part_index) {
+                        continue;
+                    }
+                    // `Part.scopes: StoreSlice<*mut Scope>` — safe `Deref` to `&[*mut Scope]`.
+                    for scope in part.scopes.iter() {
+                        let root: *mut renamer::NumberScope = core::ptr::addr_of_mut!(r.root);
+                        // SAFETY: each `*mut Scope` is a valid arena-allocated scope.
+                        r.assign_names_recursive_with_number_scope(
+                            root,
+                            unsafe { &**scope },
+                            source_index,
+                            &mut sorted,
+                        );
+                    }
+                }
+            }
         }
+        r.number_scope_pool.hive.used = bun_collections::hive_array::HiveBitSet::init_empty();
     }
 
     Ok(ChunkRenamer::Number(r))

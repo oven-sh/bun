@@ -665,8 +665,17 @@ impl ProxyTunnel {
         }
     }
 
-    pub(crate) fn shutdown(&mut self) {
-        if let Some(wrapper) = &self.wrapper {
+    /// Callback-safe fast shutdown. Takes `NonNull<Self>` (like
+    /// [`Self::set_socket`] / [`Self::write_buffer_of`]) so the synchronous
+    /// `on_close` that `wrapper.shutdown()` fires — which reaches
+    /// `write_buffer_of`/`set_socket` through the tunnel's raw pointer — never
+    /// writes under a live whole-struct `&mut ProxyTunnel`. Only the disjoint
+    /// `wrapper` field is (shared-)borrowed for the call; `SslWrapper` methods
+    /// are `&self`.
+    pub(crate) fn shutdown(this: NonNull<Self>) {
+        // SAFETY: module INVARIANT — `this` is a live intrusive-refcounted
+        // tunnel and the caller's `&mut` borrows are NLL-dead before this call.
+        if let Some(wrapper) = unsafe { &*addr_of!((*this.as_ptr()).wrapper) } {
             // fast shutdown the connection
             let _ = wrapper.shutdown(true);
         }

@@ -1594,10 +1594,12 @@ impl<'a> HTTPClient<'a> {
             // `detach_socket` (formerly the first half of `detach_and_deref`)
             // must run before the strong ref is released so a refcount>1
             // tunnel keeps no dangling socket.
-            let tunnel = proxy_tunnel::raw_as_mut(t.as_ptr());
             if shutdown {
-                tunnel.shutdown();
+                proxy_tunnel::ProxyTunnel::shutdown(
+                    core::ptr::NonNull::new(t.as_ptr()).expect("live strong ref is non-null"),
+                );
             }
+            let tunnel = proxy_tunnel::raw_as_mut(t.as_ptr());
             tunnel.detach_socket();
             // Release the strong ref this client held (formerly the `deref`
             // half of `detach_and_deref`).

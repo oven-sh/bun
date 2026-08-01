@@ -940,36 +940,36 @@ impl MultiPartUpload {
             }
             // if is one big chunk we can pass ownership and avoid dupe
             if self.buffered.get().cursor == 0 && self.buffered.get().size() == len {
+                // Move the buffer out *before* dispatching: `enqueue_part` can
+                // synchronously fail into the JS callback, and re-entrant JS may
+                // write to `self.buffered`. With the allocation owned locally
+                // there is no window where a part aliases live buffer storage.
+                let owned = self.buffered.replace(StreamBuffer::default());
                 // we need to know the allocated size to free the memory later
-                let allocated_size = self.buffered.get().memory_cost();
-                // Raw slice ptr into the buffer's heap storage: the part takes ownership of
-                // it below (needs_clone=false) and no cell borrow may span `enqueue_part`.
-                let slice_ptr = std::ptr::from_ref::<[u8]>(self.buffered.get().slice());
-                // raw slice pointer carries its length in metadata; no deref needed
-                let slice_len = slice_ptr.len();
+                let allocated_size = owned.memory_cost();
+                let slice_len = owned.slice().len();
 
                 // we dont care about the result because we are sending everything
-                // SAFETY: slice_ptr points at self.buffered's storage; enqueue_part with needs_clone=false
-                // takes ownership of that storage and self.buffered is reset below before any further use.
-                if self.enqueue_part(unsafe { &*slice_ptr }, allocated_size, false)? {
+                if self.enqueue_part(owned.slice(), allocated_size, false)? {
                     scoped_log!(
                         S3MultiPartUpload,
                         "processMultiPart {} {} full buffer enqueued",
                         BStr::new(&self.path),
                         slice_len
                     );
-
-                    // queue is not full, we can clear the buffer part now owns the data
-                    // if its full we will retry later
-                    // SAFETY: ownership of buffered's allocation transferred to the
-                    // UploadPart created via enqueue_part(..., needs_clone=false) above.
-                    // Dropping the StreamBuffer would free the Vec<u8> backing storage,
-                    // leaving UploadPart.data dangling (UAF on perform(), double-free on
-                    // free_allocated_slice). Replace + forget so the part remains sole owner.
-                    let _ = core::mem::ManuallyDrop::new(
-                        self.buffered.replace(StreamBuffer::default()),
-                    );
+                    // The part (needs_clone=false) now owns the storage: forget the
+                    // local so its Vec<u8> is not freed here (that would leave
+                    // UploadPart.data dangling → UAF on perform()).
+                    let _ = core::mem::ManuallyDrop::new(owned);
                     return Ok(());
+                }
+                // Queue full: nothing took ownership. Put the buffer back for the
+                // later retry, appending anything re-entrant JS wrote meanwhile.
+                let appended = self.buffered.replace(owned);
+                if appended.is_not_empty() {
+                    self.buffered
+                        .with_mut(|b| b.write(appended.slice()).map(|_| ()))
+                        .unwrap_or(());
                 }
                 scoped_log!(
                     S3MultiPartUpload,

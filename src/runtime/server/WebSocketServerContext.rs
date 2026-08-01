@@ -78,7 +78,6 @@ impl Handler {
     pub(crate) fn run_error_callback(
         &self,
         on_error: JSValue,
-        vm: &VirtualMachine,
         global_object: &JSGlobalObject,
         error_value: JSValue,
     ) {
@@ -94,7 +93,6 @@ impl Handler {
             return;
         }
 
-        let _ = vm;
         // `self.vm` is a Shared backref; the mutable call goes through the
         // per-thread singleton accessor rather than promoting its provenance.
         let _ =

@@ -138,6 +138,11 @@ pub struct RequestContext<
     // fall back to `response_weakref` (see its doc below), so a `Strong`
     // here would root the Response unconditionally and change GC behavior.
     pub(crate) response_jsvalue: Cell<JSValue>,
+    /// The pool-slot / allocation root (write provenance), recorded at
+    /// [`Self::create`]. `as_ctx_ptr()` returns this — never a pointer
+    /// re-derived from `&self` — because the pool release (`deinit` →
+    /// `release_request_context` → `put`) drops and may deallocate through it.
+    root: Cell<*mut Self>,
     pub(crate) ref_count: Cell<u8>,
     /// References currently held by [`RequestContextRef::pin`] frame guards.
     /// The refcount predicates subtract this so a frame's own pin does not
@@ -204,7 +209,9 @@ where
     /// [`deinit`] identifies the slot by address.
     #[inline]
     pub(crate) fn as_ctx_ptr(&self) -> *mut Self {
-        std::ptr::from_ref(self).cast_mut()
+        let p = self.root.get();
+        debug_assert!(!p.is_null(), "RequestContext root not recorded");
+        p
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -1387,9 +1394,11 @@ where
         let resolved_method = method
             .or_else(|| Method::which(Self::req_method(req)))
             .unwrap_or(Method::GET);
+        let slot: *mut Self = this.as_mut_ptr();
         // SAFETY: writing to MaybeUninit slot
         unsafe {
-            this.as_mut_ptr().write(Self {
+            slot.write(Self {
+                root: Cell::new(slot),
                 resp: Cell::new(Some(resp)),
                 req: Cell::new(Some(req)),
                 method: resolved_method,

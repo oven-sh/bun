@@ -4027,6 +4027,100 @@ describe("hoisting", async () => {
     expect(await exists(join(packageDir, "node_modules", "peer-deps-fixed", "node_modules"))).toBeFalse();
   });
 
+  // https://github.com/oven-sh/bun/issues/7869
+  test("dependency listed in both dependencies and peerDependencies dedupes to the root copy", async () => {
+    // `fallback-peer-deps` declares `no-deps` in both places:
+    //   dependencies:     { "no-deps": "2.0.0" }
+    //   peerDependencies: { "no-deps": "*" }
+    // The root installs `no-deps@1.0.0`, which satisfies the peer range. yarn and pnpm
+    // both honour the peer declaration and dedupe to the root copy; bun used to drop the
+    // peer entry and keep the `dependencies` entry, producing a nested `no-deps@2.0.0`.
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "fallback-peer-deps": "1.0.0",
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    const out = await stdout.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("incorrect peer dependency");
+
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      expect.stringContaining("bun install v1."),
+      "",
+      "+ fallback-peer-deps@1.0.0",
+      expect.stringContaining("+ no-deps@1.0.0"),
+      "",
+      "2 packages installed",
+    ]);
+
+    expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "1.0.0",
+    } as any);
+    expect(await file(join(packageDir, "node_modules", "fallback-peer-deps", "package.json")).json()).toMatchObject({
+      name: "fallback-peer-deps",
+      version: "1.0.0",
+    });
+    expect(await exists(join(packageDir, "node_modules", "fallback-peer-deps", "node_modules"))).toBeFalse();
+  });
+
+  // https://github.com/oven-sh/bun/issues/7869
+  test("dependency listed in both dependencies and peerDependencies installs when root does not provide it", async () => {
+    // Without a root copy the package still needs `no-deps` (it is listed in `dependencies`).
+    // After treating the entry as a peer the resolver still installs it, using the peer range.
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "fallback-peer-deps": "1.0.0",
+        },
+      }),
+    );
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+
+    expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      name: "no-deps",
+      version: "2.0.0",
+    });
+    expect(await exists(join(packageDir, "node_modules", "fallback-peer-deps", "node_modules"))).toBeFalse();
+  });
+
   describe("devDependencies", () => {
     test("from normal dependency", async () => {
       // Root package should choose no-deps@1.0.1.

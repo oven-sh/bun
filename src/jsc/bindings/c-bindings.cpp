@@ -971,7 +971,13 @@ extern "C" void Bun__registerSignalsForForwarding()
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESETHAND;
+    // No SA_RESETHAND: a nested `bun run` receives the terminal's pgroup SIGINT
+    // *and* the SIGINT its parent `bun run` forwards. With SA_RESETHAND the
+    // second delivery hits SIG_DFL and kills the middle runner while the
+    // innermost script is still cleaning up (#14799). npm's equivalent handler
+    // is persistent; the disposition is restored by
+    // Bun__unregisterSignalsForForwarding once the child has exited.
+    sa.sa_flags = 0;
     sa.sa_handler = [](int sig) {
         if (Bun__currentSyncPID == 0) {
             Bun__pendingSignalToSend = sig;

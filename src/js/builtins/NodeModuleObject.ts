@@ -1,13 +1,9 @@
-// Implementation for `require('node:module')._initPaths`. Re-reads
-// `process.env.NODE_PATH`, pushes it to the native resolver's env map, and
-// refreshes `Module.globalPaths`.
+// `require('node:module')._initPaths`: re-reads NODE_PATH and refreshes `Module.globalPaths`.
 export function _initPaths() {
   const homeDir = process.platform === "win32" ? process.env.USERPROFILE : Bun.env.HOME;
   const nodePath = process.env.NODE_PATH;
 
-  // The native resolver reads NODE_PATH from its own env snapshot, so sync the
-  // current process.env value into it. This is what makes runtime-set NODE_PATH
-  // take effect for subsequent require() calls.
+  // Sync the current NODE_PATH into the native resolver's env snapshot.
   $newCppFunction("NodeModuleModule.cpp", "jsFunctionSetNodePathForRequire", 1)(nodePath);
 
   // process.execPath is $PREFIX/bin/node except on Windows where it is

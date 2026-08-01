@@ -618,10 +618,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
         JSC::PropertyName propertyName))
 {
     auto& vm = globalObject->vm();
-    // Per-instance `m.require = fn` (e.g. on `new Module(id)`): shadow the
-    // prototype with an own property instead of overwriting the process-global
-    // overridable require. Evaluated CJS modules already have an own `require`
-    // and never reach this setter.
+    // Per-instance write: shadow on the receiver instead of the process-global hook.
     if (auto* thisModule = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue))) {
         thisModule->putDirect(vm, propertyName, JSValue::decode(value), 0);
         return true;

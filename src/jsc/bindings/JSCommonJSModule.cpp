@@ -689,7 +689,6 @@ JSC_DEFINE_CUSTOM_GETTER(getterUnderscoreCompile, (JSC::JSGlobalObject * globalO
     if (thisObject && thisObject->m_overriddenCompile) {
         return JSValue::encode(thisObject->m_overriddenCompile.get());
     }
-    // `Module.prototype._compile` is read with the prototype as receiver; still return the function.
     return JSValue::encode(defaultGlobalObject(globalObject)->modulePrototypeUnderscoreCompileFunction());
 }
 
@@ -702,9 +701,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
         thisObject->m_overriddenCompile.set(globalObject->vm(), thisObject, decodedValue);
         return true;
     }
-    // `Module.prototype._compile = fn` (APM instrumentation): the receiver is the
-    // prototype, not a module instance. Replace the accessor with a data property
-    // so subsequent reads observe the override.
+    // `Module.prototype._compile = fn`: replace the accessor with a data property.
     if (auto* receiver = JSValue::decode(thisValue).getObject()) {
         receiver->putDirect(globalObject->vm(), propertyName, decodedValue, static_cast<unsigned>(PropertyAttribute::DontEnum));
         return true;
@@ -712,8 +709,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
     return false;
 }
 
-// Defined in NodeModuleModule.cpp: the `Module.prototype.require` accessor that
-// Next.js and others override to hook CommonJS resolution.
+// `Module.prototype.require` accessor; defined in NodeModuleModule.cpp.
 JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
 JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
 

@@ -29,11 +29,8 @@ extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSVa
     node_module_paths_js_value(in_str, global, false)
 }
 
-/// Called from `Module._initPaths()` to sync the current `process.env.NODE_PATH`
-/// into the dotenv loader's map, which is what the native resolver reads
-/// (`load_node_modules` in `resolver.rs`). Writes to `process.env` from JS do
-/// not otherwise reach that map, so without this a runtime-set `NODE_PATH`
-/// never takes effect.
+/// `Module._initPaths()`: sync `process.env.NODE_PATH` into the resolver's env
+/// map (JS `process.env` writes don't reach it otherwise).
 #[unsafe(no_mangle)]
 extern "C" fn Resolver__setNodePath(global: &JSGlobalObject, value: &BunString) {
     crate::mark_binding!();

@@ -19,7 +19,11 @@ async function runUpload(
   writes: number[],
 ): Promise<Seen[]> {
   const { promise: handlerP, resolve: handlerDone, reject: handlerFail } = Promise.withResolvers<Seen[]>();
-  const { promise: pullParkedP, resolve: pullParked } = Promise.withResolvers<void>();
+  const { promise: pullParkedP, resolve: pullParked, reject: pullParkedFail } = Promise.withResolvers<void>();
+  const fail = (e: unknown) => {
+    handlerFail(e);
+    pullParkedFail(e);
+  };
 
   await using server = Bun.serve({
     port: 0,
@@ -28,30 +32,31 @@ async function runUpload(
         const seen = await handler(req, () => queueMicrotask(() => queueMicrotask(pullParked)));
         handlerDone(seen);
       } catch (e) {
-        handlerFail(e);
+        fail(e);
       }
       return new Response("ok");
     },
   });
 
   const sock = connect({ port: server.port, host: "127.0.0.1" });
-  sock.on("error", handlerFail);
+  sock.on("error", fail);
   await new Promise<void>((res, rej) => {
     sock.once("connect", () => res());
     sock.once("error", rej);
   });
 
-  sock.write(`POST / HTTP/1.1\r\nHost: x\r\nContent-Length: ${bodyBytes}\r\nConnection: close\r\n\r\n`);
-  await pullParkedP;
-  for (const n of writes) {
-    sock.write(Buffer.alloc(n, 0x61));
-    await Bun.sleep(20);
+  try {
+    sock.write(`POST / HTTP/1.1\r\nHost: x\r\nContent-Length: ${bodyBytes}\r\nConnection: close\r\n\r\n`);
+    await pullParkedP;
+    for (const n of writes) {
+      sock.write(Buffer.alloc(n, 0x61));
+      await Bun.sleep(20);
+    }
+    sock.end();
+    return await handlerP;
+  } finally {
+    sock.destroy();
   }
-  sock.end();
-
-  const seen = await handlerP;
-  sock.destroy();
-  return seen;
 }
 
 function checkRightSized(seen: Seen[], expectedTotal: number) {

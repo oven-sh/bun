@@ -1,7 +1,6 @@
 use core::cell::Cell;
 
 use bun_collections::VecExt;
-use bun_jsc::strong::Optional as StrongOptional;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell};
 use bun_sys::Error as SysError;
 
@@ -24,8 +23,6 @@ pub struct ByteStream {
     pub(crate) has_received_last_chunk: Cell<bool>,
     pub(crate) pending: JsCell<streams::Pending>,
     pub(crate) done: Cell<bool>,
-    /// Rooted only so `on_cancel` can observe that a pull was outstanding.
-    pub(crate) pending_value: JsCell<StrongOptional>, // jsc.Strong.Optional
     /// Native sink this stream is piped into; `on_data` dispatches and honors `Writable`.
     pub(crate) sink: JsCell<SinkHandle>,
     /// Set on `Writable::Backpressure` (buffer instead of write); cleared by [`Self::resume`].
@@ -44,7 +41,6 @@ impl Default for ByteStream {
                 ..Default::default()
             }),
             done: Cell::new(false),
-            pending_value: JsCell::new(StrongOptional::empty()),
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
             size_hint: Cell::new(0),
@@ -119,16 +115,6 @@ impl ByteStream {
         }
 
         streams::Start::ReadyOwned
-    }
-
-    fn value(&self) -> JSValue {
-        self.pending_value.with_mut(|pv| {
-            let Some(result) = pv.get() else {
-                return JSValue::ZERO;
-            };
-            pv.clear_without_deallocation();
-            result
-        })
     }
 
     pub(crate) fn unpipe_without_deref(&self) {
@@ -351,8 +337,6 @@ impl ByteStream {
 
         if self.pending.get().state == streams::PendingState::Pending {
             debug_assert!(self.buffer.get().is_empty());
-            self.pending_value
-                .with_mut(|pv| pv.clear_without_deallocation());
 
             let is_done = self.has_received_last_chunk.get();
             let result = match stream {
@@ -459,18 +443,12 @@ impl ByteStream {
         }
     }
 
-    fn set_value(&self, view: JSValue) {
-        bun_jsc::mark_binding!();
-        let global = self.parent_const().global_this();
-        self.pending_value.with_mut(|pv| pv.set(global, view));
-    }
-
-    fn on_pull(&self, _buffer: &mut [u8], view: JSValue) -> streams::Result {
+    fn on_pull(&self, _buffer: &mut [u8], _view: JSValue) -> streams::Result {
         bun_jsc::mark_binding!();
         debug_assert!(self.buffer_action.get().is_none());
 
         if !self.buffer.get().is_empty() {
-            debug_assert!(self.value().is_empty()); // == .zero
+            debug_assert!(self.pending.get().state != streams::PendingState::Pending);
             let owned = self.buffer.replace(Vec::new());
 
             self.signal_drained();
@@ -494,9 +472,6 @@ impl ByteStream {
             return streams::Result::Done;
         }
 
-        // Rooted only so `on_cancel` can observe an outstanding pull.
-        self.set_value(view);
-
         // R-2: `JsCell::as_ptr` yields the stable `*mut Pending` that the
         // returned `streams::Result::Pending` raw-backref needs.
         streams::Result::Pending(self.pending.as_ptr())
@@ -504,7 +479,6 @@ impl ByteStream {
 
     fn on_cancel(&self) {
         bun_jsc::mark_binding!();
-        let view = self.value();
         if self.buffer.get().capacity() > 0 {
             self.buffer.with_mut(|b| {
                 b.clear();
@@ -512,9 +486,8 @@ impl ByteStream {
             });
         }
         self.done.set(true);
-        self.pending_value.with_mut(|pv| pv.deinit());
 
-        if !view.is_empty() {
+        if self.pending.get().state == streams::PendingState::Pending {
             self.pending.with_mut(|p| {
                 p.result.release();
                 p.result = streams::Result::Done;
@@ -555,7 +528,6 @@ impl ByteStream {
             });
         }
 
-        self.pending_value.with_mut(|pv| pv.deinit());
         if !self.done.get() {
             self.done.set(true);
 

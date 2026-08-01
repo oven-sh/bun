@@ -1227,18 +1227,34 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
 
             if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
-                let resolved = Repository::find_commit(
-                    this.env_mut(),
-                    this.log_mut(),
-                    repo_fd,
-                    alias,
-                    this.lockfile.str(&dep.committish),
-                    clone_id,
-                )?;
-                let checkout_id = Task::Id::for_git_checkout(url, &resolved);
-
                 let needs_ctx =
                     this.lockfile.buffers.resolutions[id as usize] == invalid_package_id;
+
+                // An already-resolved dependency (install-phase re-enqueue
+                // after the shared clone finished) is pinned: its install
+                // context is keyed on the stored SHA, and a branch
+                // committish's current tip may differ.
+                let pinned: Option<Vec<u8>> = if needs_ctx {
+                    None
+                } else {
+                    let pkg_id = this.lockfile.buffers.resolutions[id as usize];
+                    let pkg_res = this.lockfile.packages.items_resolution()[pkg_id as usize];
+                    // SAFETY: tag checked — `value.git` is the active union arm.
+                    (pkg_res.tag == ResolutionTag::Git)
+                        .then(|| this.lockfile.str(&pkg_res.git().resolved).to_vec())
+                };
+                let resolved = match pinned {
+                    Some(resolved) => resolved,
+                    None => Repository::find_commit(
+                        this.env_mut(),
+                        this.log_mut(),
+                        repo_fd,
+                        alias,
+                        this.lockfile.str(&dep.committish),
+                        clone_id,
+                    )?,
+                };
+                let checkout_id = Task::Id::for_git_checkout(url, &resolved);
 
                 if needs_ctx {
                     if let Some(pkg_id) = resolve_from_appended_task(this, checkout_id, id) {

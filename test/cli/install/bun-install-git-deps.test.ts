@@ -330,6 +330,70 @@ test.concurrent(
   30_000,
 );
 
+// With the isolated linker, a cold-cache frozen install re-enqueues each
+// dependency after the shared clone completes; the checkout id was derived
+// from the branch committish's current tip instead of the lockfile's pinned
+// SHA, so a branch that moved after the lockfile was written installed the
+// wrong commit and stranded the store's install context.
+test.concurrent(
+  "isolated linker installs the locked commit from a cold cache after the branch moves",
+  async () => {
+    using dir = tempDir("git-dep-iso-moved", {});
+    const root = String(dir);
+
+    await using server = serveStatic(root);
+    const repoUrl = `git+http://localhost:${server.port}/shared-repo.git`;
+    const bare = await makeSharedRepo(root, [
+      { name: "@scope/pkg-m", branch: "pkg-m" },
+      { name: "@scope/pkg-n", branch: "pkg-n" },
+    ]);
+
+    const project = join(root, "project");
+    mkdirSync(project);
+    writeFileSync(
+      join(project, "package.json"),
+      JSON.stringify({
+        name: "project",
+        version: "1.0.0",
+        dependencies: {
+          "@scope/pkg-m": `${repoUrl}#pkg-m`,
+          "@scope/pkg-n": `${repoUrl}#pkg-n`,
+        },
+      }),
+    );
+
+    // fresh install to produce a complete lockfile
+    {
+      const { stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), {}, "--linker=isolated");
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
+    // move pkg-m past the locked commit
+    const work = join(root, "work");
+    await git(work, "checkout", "-q", "pkg-m");
+    writeFileSync(join(work, "index.js"), `module.exports = "pkg-m-v2";\n`);
+    await git(work, "commit", "-aqm", "v2", "--no-gpg-sign");
+    await git(work, "push", "-q", bare, "pkg-m");
+    await git(bare, "update-server-info");
+
+    // cold cache from the lockfile: must install the locked commit, not the tip
+    await Bun.$`rm -rf ${join(project, "node_modules")}`;
+    const { stderr, exitCode } = await runInstall(
+      project,
+      join(root, "cache-cold"),
+      {},
+      "--frozen-lockfile",
+      "--linker=isolated",
+    );
+    expect(stderr).not.toContain("error:");
+    expect(await installedVersionOf(project, "@scope/pkg-m")).toBe("pkg-m");
+    expect(await installedVersionOf(project, "@scope/pkg-n")).toBe("pkg-n");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
 // issue #35420 bug 3: `git+file://` dependencies never cloned at all — the
 // clone task recognized neither an https nor an ssh URL and finished without
 // running git, leaving a poisoned repo handle behind.

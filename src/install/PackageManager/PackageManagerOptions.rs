@@ -342,8 +342,10 @@ pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Res
     if let Some(opts) = opts_ {
         if let Some(home_dir) = &opts.global_bin_dir {
             if !home_dir.is_empty() {
+                let expanded = expand_home_tilde(home_dir);
+                let bin_dir = expanded.as_deref().unwrap_or(home_dir);
                 return Dir::cwd()
-                    .make_open_path(home_dir, OpenDirOptions::default())
+                    .make_open_path(bin_dir, OpenDirOptions::default())
                     .map(|d| d.into_raw())
                     .map_err(Into::into);
             }
@@ -384,6 +386,32 @@ fn leak_static(s: &[u8]) -> &'static [u8] {
     bun_core::heap::release(s.to_vec().into_boxed_slice())
 }
 
+/// Replace a leading `~` (bare or followed by a path separator) with
+/// `$HOME`/`%USERPROFILE%`. bunfig.toml path values arrive verbatim, so without
+/// this a `dir = "~/x"` entry resolves to `<cwd>/~/x`.
+/// `~user` is left untouched.
+fn expand_home_tilde(path: &[u8]) -> Option<Vec<u8>> {
+    if path.first() != Some(&b'~') {
+        return None;
+    }
+    if path.len() > 1 && !bun_core::path_sep::is_sep_any(path[1]) {
+        return None;
+    }
+    let home = env_var::HOME.get()?;
+    let mut out = Vec::with_capacity(home.len() + path.len() - 1);
+    out.extend_from_slice(home);
+    out.extend_from_slice(&path[1..]);
+    Some(out)
+}
+
+#[inline]
+fn leak_static_expand_home(path: &[u8]) -> &'static [u8] {
+    match expand_home_tilde(path) {
+        Some(expanded) => bun_core::heap::release(expanded.into_boxed_slice()),
+        None => leak_static(path),
+    }
+}
+
 impl Options {
     pub(crate) fn load(
         &mut self,
@@ -418,7 +446,7 @@ impl Options {
 
         if let Some(config) = bun_install_ref {
             if let Some(cache_directory) = config.cache_directory.as_deref() {
-                self.cache_directory = leak_static(cache_directory);
+                self.cache_directory = leak_static_expand_home(cache_directory);
             }
 
             if let Some(scoped) = &config.scoped {
@@ -555,7 +583,7 @@ impl Options {
             // the isolated linker, so it has nothing to transfer.
 
             if let Some(global_dir) = config.global_dir.as_deref() {
-                self.explicit_global_directory = leak_static(global_dir);
+                self.explicit_global_directory = leak_static_expand_home(global_dir);
             }
         }
 

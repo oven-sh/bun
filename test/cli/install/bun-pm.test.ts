@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, test } from "bun:test";
 import { exists, mkdir, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, readdirSorted, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunEnv as env, isWindows, readdirSorted, tempDir, tmpdirSync } from "harness";
 import { cpSync } from "node:fs";
 import { join } from "path";
 import {
@@ -906,3 +906,79 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/10152
+test.concurrent.each(["~/bunfig-cache-tilde", "~"])(
+  "bun pm cache expands leading tilde in bunfig [install.cache].dir (%s)",
+  async cacheDirConfig => {
+    using dir = tempDir("pm-cache-tilde", {
+      "package.json": JSON.stringify({ name: "pm-cache-tilde", version: "1.0.0" }),
+      "bunfig.toml": `[install.cache]\ndir = ${JSON.stringify(cacheDirConfig)}\n`,
+      "home/.keep": "",
+    });
+    const dirStr = String(dir);
+    const homeDir = join(dirStr, "home");
+
+    const spawnEnv: NodeJS.Dict<string> = {
+      ...env,
+      HOME: homeDir,
+      USERPROFILE: homeDir,
+    };
+    delete spawnEnv.BUN_INSTALL_CACHE_DIR;
+    delete spawnEnv.BUN_INSTALL;
+    delete spawnEnv.XDG_CACHE_HOME;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "cache"],
+      cwd: dirStr,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: spawnEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const expected = cacheDirConfig === "~" ? homeDir : join(homeDir, "bunfig-cache-tilde");
+    expect(stderr).not.toContain("error");
+    expect(stdout.trim().replaceAll("\\", "/")).toBe(expected.replaceAll("\\", "/"));
+    // The unexpanded path would have created a literal "~" directory under cwd.
+    expect(await exists(join(dirStr, "~"))).toBeFalse();
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent(
+  "bun pm cache leaves a path starting with '~' that is not '~' or '~/' alone (e.g. '~user')",
+  async () => {
+    using dir = tempDir("pm-cache-tilde-user", {
+      "package.json": JSON.stringify({ name: "pm-cache-tilde-user", version: "1.0.0" }),
+      "bunfig.toml": `[install.cache]\ndir = "~user/cache"\n`,
+      "home/.keep": "",
+    });
+    const dirStr = String(dir);
+    const homeDir = join(dirStr, "home");
+
+    const spawnEnv: NodeJS.Dict<string> = {
+      ...env,
+      HOME: homeDir,
+      USERPROFILE: homeDir,
+    };
+    delete spawnEnv.BUN_INSTALL_CACHE_DIR;
+    delete spawnEnv.BUN_INSTALL;
+    delete spawnEnv.XDG_CACHE_HOME;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "cache"],
+      cwd: dirStr,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: spawnEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error");
+    // `~user` is not the current user's home; it must not be rewritten to $HOME.
+    expect(stdout.trim().replaceAll("\\", "/")).not.toStartWith(homeDir.replaceAll("\\", "/"));
+    expect(stdout).toContain(isWindows ? "~user\\cache" : "~user/cache");
+    expect(exitCode).toBe(0);
+  },
+);

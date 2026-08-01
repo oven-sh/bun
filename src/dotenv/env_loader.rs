@@ -627,6 +627,14 @@ impl Loader {
         // Create a reusable buffer for parsing multiple files.
         let mut value_buffer: Vec<u8> = Vec::new();
 
+        // Files are loaded in priority order (highest first, without
+        // overwriting), so a higher-priority file may reference a variable that
+        // a lower-priority file defines later. Each file is therefore parsed
+        // with expansion disabled, and `$VAR` references are resolved here in a
+        // single pass against the merged map once every file is in.
+        // https://github.com/oven-sh/bun/issues/15099
+        let expand_start = self.map.map.count();
+
         if !env_files.is_empty() {
             self.load_explicit_files(env_files, &mut value_buffer)?;
         } else {
@@ -641,6 +649,8 @@ impl Loader {
                 self.load_default_files(suffix, dir, &mut value_buffer)?;
             }
         }
+
+        Parser::expand_range(&mut self.map, expand_start, &mut value_buffer)?;
 
         if !self.quiet {
             self.print_loaded(start);
@@ -870,7 +880,9 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
+                // Expansion is deferred to `Loader::load` so cross-file
+                // references resolve against the merged map.
+                Parser::parse_bytes::<OVERRIDE, false, false>(&buf, &mut self.map, value_buffer)?;
             }
         }
 
@@ -917,7 +929,9 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
+                // Expansion is deferred to `Loader::load` so cross-file
+                // references resolve against the merged map.
+                Parser::parse_bytes::<OVERRIDE, false, false>(&buf, &mut self.map, value_buffer)?;
             }
         }
 
@@ -1133,15 +1147,33 @@ impl<'a> Parser<'a> {
         Ok(strings::trim(&self.src[start..end], WHITESPACE_CHARS))
     }
 
-    fn expand_value(&mut self, map: &Map, value: &[u8]) -> Result<Option<&[u8]>, AllocError> {
-        if value.len() < 2 {
-            return Ok(None);
+    /// Expand `$NAME` / `${NAME}` / `${NAME:-default}` references in every
+    /// entry at index `start..map.count()`. Lookups resolve against the full
+    /// map (process env + all loaded files). Called once from `Loader::load`
+    /// after every .env file has been parsed, and from `parse` for the
+    /// single-source `load_from_string` path.
+    fn expand_range(
+        map: &mut Map,
+        start: usize,
+        value_buffer: &mut Vec<u8>,
+    ) -> Result<(), AllocError> {
+        let total = map.map.count();
+        let mut idx = start;
+        while idx < total {
+            // borrowck — clone the value bytes so `expand_into` can take
+            // `&Map` while we later write back via `values_mut()`.
+            let current: Box<[u8]> = Box::from(&*map.map.values()[idx].value);
+            if current.len() >= 2 {
+                value_buffer.clear();
+                if Self::expand_into(map, &current, value_buffer, 0) {
+                    map.map.values_mut()[idx] = HashTableValue {
+                        value: Box::from(value_buffer.as_slice()),
+                    };
+                }
+            }
+            idx += 1;
         }
-        self.value_buffer.clear();
-        if !Self::expand_into(map, value, self.value_buffer, 0) {
-            return Ok(None);
-        }
-        Ok(Some(self.value_buffer.as_slice()))
+        Ok(())
     }
 
     /// Left-to-right expansion of `$NAME` / `${NAME}` / `${NAME:-default}`.
@@ -1250,7 +1282,7 @@ impl<'a> Parser<'a> {
         &mut self,
         map: &mut Map,
     ) -> Result<(), AllocError> {
-        let mut count = map.map.count();
+        let count = map.map.count();
         while self.pos < self.src.len() {
             let Some(key) = self.parse_key::<true>() else {
                 self.skip_line();
@@ -1273,24 +1305,8 @@ impl<'a> Parser<'a> {
             *entry.value_ptr = HashTableValue { value: value_owned };
         }
         if !IS_PROCESS && EXPAND {
-            // borrowck — index-based iteration: clone the value bytes, run
-            // expansion against an immutable `&Map`, then write back via
-            // `values_mut()`. Values are dupe'd by `parse` above, so length
-            // is bounded by file size.
-            let total = map.map.count();
-            let mut idx = count;
-            while idx < total {
-                let current: Box<[u8]> = Box::from(&*map.map.values()[idx].value);
-                if let Some(expanded) = self.expand_value(map, &current)? {
-                    map.map.values_mut()[idx] = HashTableValue {
-                        value: Box::from(expanded),
-                    };
-                }
-                idx += 1;
-            }
-            count = 0;
+            Self::expand_range(map, count, self.value_buffer)?;
         }
-        let _ = count;
         Ok(())
     }
 

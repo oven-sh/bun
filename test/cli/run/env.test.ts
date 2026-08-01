@@ -252,6 +252,62 @@ test.concurrent(".env value expansion", async () => {
   expect(stdout).toBe("foo|foo bar|foo foo bar moo");
 });
 
+test.concurrent(".env value expansion across files (issue #15099)", async () => {
+  // https://github.com/oven-sh/bun/issues/15099
+  // .env.local is loaded before .env (higher priority), so at parse time $A
+  // is not yet defined. Expansion must run against the merged map after all
+  // files are loaded.
+  using dir = tempDir("dotenv-expand-cross-file", {
+    ".env": "A=A\nB=B$A\n",
+    ".env.local": "C=C$A\nD=${A}D\nE=${UNSET:-$A}\n",
+    ".env.development": "F=$A-$G\nG=g\n",
+    "index.ts":
+      "console.log(JSON.stringify({" +
+      "A: process.env.A, B: process.env.B, C: process.env.C, " +
+      "D: process.env.D, E: process.env.E, F: process.env.F, G: process.env.G" +
+      "}));",
+  });
+  const { stdout } = await bunRun(`${dir}/index.ts`);
+  expect(JSON.parse(stdout)).toEqual({
+    A: "A",
+    B: "BA",
+    C: "CA",
+    D: "AD",
+    E: "A",
+    F: "A-g",
+    G: "g",
+  });
+});
+
+test.concurrent(".env value expansion resolves against process.env", async () => {
+  using dir = tempDir("dotenv-expand-process", {
+    ".env": "FROM_FILE=file\n",
+    ".env.local": "COMBINED=${FROM_PROCESS}-${FROM_FILE}\n",
+    "index.ts": "console.log(process.env.COMBINED);",
+  });
+  const { stdout } = await bunRun(`${dir}/index.ts`, { FROM_PROCESS: "proc" });
+  expect(stdout).toBe("proc-file");
+});
+
+test.concurrent(".env value expansion across --env-file arguments", async () => {
+  using dir = tempDir("dotenv-expand-cross-envfile", {
+    "base.env": "BASE=base\n",
+    "extra.env": "EXTRA=x-$BASE\n",
+    "index.ts": "console.log(JSON.stringify({BASE: process.env.BASE, EXTRA: process.env.EXTRA}));",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--env-file=base.env", "--env-file=extra.env", "index.ts"],
+    env: { ...bunEnv, NODE_ENV: undefined },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ BASE: "base", EXTRA: "x-base" });
+  expect(exitCode).toBe(0);
+});
+
 test(".env ${VAR:-default} with nested references (issue #32411)", async () => {
   // https://github.com/oven-sh/bun/issues/32411
   // `${` pairs with its matching `}` by depth and the `:-` default is expanded

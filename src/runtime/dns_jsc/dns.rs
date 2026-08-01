@@ -1670,7 +1670,13 @@ impl GetAddrInfoRequest {
                 status,
                 results.len()
             );
-            let any = GetAddrInfoResultAny::List(results);
+            // `drain_pending_host_native` routes on `result_any_to_js` returning
+            // `None` for the error path, which only `Addrinfo(null)` produces.
+            let any = if status == 0 {
+                GetAddrInfoResultAny::List(results)
+            } else {
+                GetAddrInfoResultAny::Addrinfo(ptr::null_mut())
+            };
 
             if let Some(resolver) = (*this).resolver_for_caching {
                 if (*this).cache.pending_cache() {

@@ -307,7 +307,11 @@ public:
                 return true;
             }
 
-            // `at /path/file.js:1:2`: parse as sourceURL:line:col with no function name.
+            // `at /path/file.js:1:2` or `at async /path/file.js:1:2`
+            if (line.startsWith("async "_s)) {
+                frame.isAsync = true;
+                line = line.substring(6);
+            }
         }
 
         auto lineInner = hasParens ? StringView_slice(line, openingParentheses + 1, closingParentheses) : line;

@@ -6066,22 +6066,26 @@ impl VirtualMachine {
             if error_instance.is_aggregate_error(global_ref) {
                 let errors = error_instance.get_errors_property(global_ref);
                 if errors.is_cell() && errors.js_type().is_array() && errors != error_instance {
-                    if let Ok(len) = errors.get_length(global_ref) {
-                        let n = len.min(u64::from(u32::MAX));
-                        let mut i: u32 = 0;
-                        while u64::from(i) < n {
-                            let Ok(member) = errors.get_index(global_ref, i) else {
-                                if allow_side_effects {
-                                    global_ref.clear_exception();
+                    match errors.get_length(global_ref) {
+                        Ok(len) => {
+                            let n = len.min(u64::from(u32::MAX));
+                            let mut i: u32 = 0;
+                            while u64::from(i) < n {
+                                match errors.get_index(global_ref, i) {
+                                    Ok(member) => {
+                                        member.protect();
+                                        errors_to_append
+                                            .push((member, bun_core::String::static_(b"errors")));
+                                    }
+                                    Err(_) => {
+                                        global_ref.clear_exception();
+                                        break;
+                                    }
                                 }
-                                break;
-                            };
-                            i += 1;
-                            member.protect();
-                            errors_to_append.push((member, bun_core::String::static_(b"errors")));
+                                i += 1;
+                            }
                         }
-                    } else if allow_side_effects {
-                        global_ref.clear_exception();
+                        Err(_) => global_ref.clear_exception(),
                     }
                 }
             }

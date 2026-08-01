@@ -1340,7 +1340,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let Some(waiters) = manager.task_queue.remove(&task.id) else {
                         continue;
                     };
-                    use crate::repository_real::RepositoryExt as _;
                     for waiter in waiters.iter() {
                         let dep_id = match waiter {
                             bun_install::TaskCallbackContext::Dependency(id) => *id,
@@ -1372,19 +1371,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             )
                         };
                         let dep_name = dep_name_handle.slice(string_buf);
-                        let committish = git.committish.slice(string_buf);
                         let repo = git.repo.slice(string_buf);
+                        // Use the lockfile's stored SHA: `enqueue_git_for_checkout`
+                        // keyed the install-context entry on it, and a branch
+                        // committish's current tip may differ.
+                        let resolved = git.resolved.slice(string_buf);
 
-                        let resolved = crate::repository_real::Repository::find_commit(
-                            manager.env_mut(),
-                            manager.log_mut(),
-                            repo_fd,
-                            dep_name,
-                            committish,
-                            task.id,
-                        )?;
-
-                        let checkout_id = Task::Id::for_git_checkout(repo, &resolved);
+                        let checkout_id = Task::Id::for_git_checkout(repo, resolved);
 
                         if manager.has_created_network_task(checkout_id, is_required) {
                             continue;
@@ -1398,7 +1391,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             dep_id,
                             dep_name,
                             &res,
-                            &resolved,
+                            resolved,
                             None,
                         );
                         manager.task_batch.push(ThreadPoolBatch::from(queued));

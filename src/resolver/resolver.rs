@@ -5318,8 +5318,7 @@ impl<'a> Resolver<'a> {
                         // re-derives it via `resolve_without_remapping`.
                         if !is_package_path(remap) {
                             let new_paths = [browser_scope.abs_path, remap];
-                            let remapped_abs =
-                                self.fs_ref().abs_buf(&new_paths, bufs!(remap_path));
+                            let remapped_abs = self.fs_ref().abs_buf(&new_paths, bufs!(remap_path));
 
                             // Is this a file
                             if let Some(file_result) =

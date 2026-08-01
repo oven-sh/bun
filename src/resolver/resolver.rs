@@ -1554,11 +1554,6 @@ impl<'a> Resolver<'a> {
 
         let mut iter = result.path_pair.iter();
         let mut module_type = result.module_type;
-        // `primary_side_effects_data` describes `path_pair.primary` (the path the
-        // bundler actually parses); the secondary is only carried for the
-        // dual-package-hazard rewrite and gets its own resolve result when it is
-        // reached via `require()`. Evaluating the sideEffects map against the
-        // secondary path here would overwrite the primary's classification.
         let mut is_primary = true;
         while let Some(path) = iter.next() {
             let compute_side_effects = is_primary;

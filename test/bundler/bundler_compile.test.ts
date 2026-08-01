@@ -350,8 +350,42 @@ describe("bundler", () => {
     },
     bundleErrors: {
       "/node_modules/mypkg/index.js": [
-        `Could not locate native addon "does_not_exist.node" for the "bindings" package. Run "bun install" to build it, or mark the import external.`,
+        `Could not locate native addon "does_not_exist.node" for the "bindings" package. Run "bun install" to build it, or pass --external for the package that loads it.`,
       ],
+    },
+  });
+  itBundled("compile/NativeBindingsBuiltinNameDoesNotAlias", {
+    target: "bun",
+    outdir: "/out",
+    outfile: "",
+    files: {
+      "/entry.ts": /* js */ `require('mypkg');`,
+      ...fakeBindingsPkg,
+      "/node_modules/mypkg/package.json": JSON.stringify({ name: "mypkg", main: "./index.js" }),
+      "/node_modules/mypkg/index.js": /* js */ `
+        module.exports = require('bindings')('zlib');
+      `,
+      "/node_modules/mypkg/build/Release/zlib.node": "<not a real addon>",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("out/entry.js");
+      expect(out).toMatch(/__require\("\.\/zlib-[a-z0-9]+\.node"\)/);
+      expect(out).not.toMatch(/require\("(node:)?zlib"\)/);
+    },
+  });
+  itBundled("compile/NativeBindingsExternalSkipsError", {
+    target: "bun",
+    external: ["bindings"],
+    files: {
+      "/entry.ts": /* js */ `require('mypkg');`,
+      ...fakeBindingsPkg,
+      "/node_modules/mypkg/package.json": JSON.stringify({ name: "mypkg", main: "./index.js" }),
+      "/node_modules/mypkg/index.js": /* js */ `
+        module.exports = require('bindings')('does_not_exist.node');
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("out.js")).not.toContain("Could not find module root");
     },
   });
   itBundled("compile/NativeBindingsTryCatchFallsThrough", {

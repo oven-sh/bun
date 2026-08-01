@@ -5920,7 +5920,9 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                if ctx.target.is_bun() {
+                if ctx.target.is_bun()
+                    && import_record.tag != bun_ast::ImportRecordTag::NativeBindings
+                {
                     if let Some(replacement) = bun_resolve_builtins::HardcodedModule::Alias::get(
                         import_record.path.text,
                         Target::Bun,
@@ -5974,13 +5976,15 @@ pub mod bv2_impl {
                         .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
                 }
 
-                if self.enqueue_on_resolve_plugin_if_needed(
-                    source.index.0,
-                    import_record,
-                    source.path.text,
-                    i as u32,
-                    ctx.target,
-                ) {
+                if import_record.tag != bun_ast::ImportRecordTag::NativeBindings
+                    && self.enqueue_on_resolve_plugin_if_needed(
+                        source.index.0,
+                        import_record,
+                        source.path.text,
+                        i as u32,
+                        ctx.target,
+                    )
+                {
                     continue;
                 }
 
@@ -6053,9 +6057,19 @@ pub mod bv2_impl {
                         }
                         None => {
                             import_record.path.is_disabled = true;
-                            if !import_record
-                                .flags
-                                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                            let bindings_is_external = transpiler
+                                .resolver
+                                .is_external_pattern(b"bindings")
+                                || transpiler
+                                    .resolver
+                                    .opts
+                                    .external
+                                    .node_modules
+                                    .contains(b"bindings");
+                            if !bindings_is_external
+                                && !import_record
+                                    .flags
+                                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
                                 && !self.transpiler.options.ignore_module_resolution_errors
                             {
                                 // SAFETY: log lives in DevServer/transpiler, disjoint from `self.graph`.
@@ -6073,7 +6087,7 @@ pub mod bv2_impl {
                                     Some(source),
                                     import_record.range,
                                     format_args!(
-                                        "Could not locate native addon \"{}\" for the \"bindings\" package. Run \"bun install\" to build it, or mark the import external.",
+                                        "Could not locate native addon \"{}\" for the \"bindings\" package. Run \"bun install\" to build it, or pass --external for the package that loads it.",
                                         bstr::BStr::new(&import_record.path.text),
                                     ),
                                     import_record.path.text,

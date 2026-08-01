@@ -1872,10 +1872,6 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
 });
 
 // https://github.com/oven-sh/bun/issues/15560
-// When a host such as "localhost" resolves to more than one loopback family,
-// bsd_create_listen_socket walks every getaddrinfo result. It must not swallow
-// EADDRINUSE on one family and silently bind the other: a second server asking
-// for the same (port, "localhost") has to see EADDRINUSE, like Node.
 it('listen(port, "localhost") reports EADDRINUSE when the port is already held on localhost', async () => {
   const a = createServer();
   const b = createServer();

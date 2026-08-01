@@ -1154,10 +1154,8 @@ pub mod pattern {
     impl Pattern {
         /// Match a filesystem route pattern to a URL path.
         ///
-        /// `params` is scratch shared across every candidate route in
-        /// `match_dynamic`, so a failed match restores it to the length it had on
-        /// entry: parameters pushed while probing a losing route must never
-        /// reach the route that wins (issues #12206 / #15554).
+        /// `params` is shared across every candidate in `match_dynamic`, so a failed
+        /// match truncates it back to its entry length.
         pub(crate) fn match_<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
             // `path` must be lowercased and have no leading slash
             path: &'a [u8],
@@ -1506,10 +1504,7 @@ pub mod pattern {
                         }
 
                         return Ok(Pattern {
-                            // `i` sits right after `]` (or `]]`). The next call's leading-`/`
-                            // skip handles the separator; clamping to `end` here made
-                            // `is_end()` true one byte early for routes whose last segment is
-                            // a single character (e.g. `[test]/a`).
+                            // `i` is one past `]`; the next call's leading-`/` skip consumes the separator.
                             len: i,
                             value: match tag {
                                 Tag::Dynamic => Value::Dynamic(param),
@@ -1709,8 +1704,7 @@ mod tests {
             (b"404", b"404", &[]),
             (b"404/[[...slug]]", b"404", &[]),
             (b"404a/[[...slug]]", b"404a", &[]),
-            // https://github.com/oven-sh/bun/issues/12206 — single-character
-            // trailing static segment after a dynamic segment.
+            // single-character static segment after a dynamic segment (#12206)
             (
                 b"[test]/a",
                 b"value/a",
@@ -1809,22 +1803,18 @@ mod tests {
         assert!(run(optional_catch_all) == 0);
     }
 
-    // https://github.com/oven-sh/bun/issues/12206
     #[test]
     fn pattern_no_match_clears_params() {
+        // https://github.com/oven-sh/bun/issues/12206
         let no_match: &[(&[u8], &[u8])] = &[
-            // Trailing static segment matches but the URL has more segments.
             (
                 b"admin/[businessId]/providers",
                 b"admin/xxx/providers/create",
             ),
             (b"[test]/aa", b"value/aa/yyy"),
-            // Trailing single-character static segment: the URL has either too
-            // few or too many segments.
             (b"[test]/a", b"value"),
             (b"[test]/a", b"value/a/extra"),
             (b"[test]/a/[test2]/lala", b"value/a"),
-            // Required catch-all with nothing left to capture.
             (b"[test]/[...rest]", b"value"),
         ];
         for (route, url) in no_match {

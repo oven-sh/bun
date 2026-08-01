@@ -954,6 +954,12 @@ static void rsisAbrupt(JSC::VM&, JSGlobalObject*, JSReadStreamIntoSinkOperation*
 
 static JSValue rsisSinkWrite(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue chunk)
 {
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(chunk)) {
+        if (auto* ctrl = dynamicDowncast<WebCore::JSReadableSinkControllerBase>(op->m_sink.get())) {
+            if (void* sinkPtr = ctrl->wrapped())
+                return JSValue::decode(WebCore::JSSink__writeBytes(ctrl->sinkId(), sinkPtr, globalObject, static_cast<const uint8_t*>(view->vector()), view->byteLength()));
+        }
+    }
     MarkedArgumentBuffer args;
     args.append(chunk);
     ASSERT(!args.hasOverflowed());

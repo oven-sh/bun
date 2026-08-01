@@ -642,6 +642,36 @@ impl<T: JsSinkType> JSSink<T> {
         }
     }
 
+    /// `${abi_name}__writeBytes` body — called from `JSSink__writeBytes` in
+    /// JSSink.cpp with a raw `m_sinkPtr` and a borrowed byte slice from a live
+    /// `JSArrayBufferView`, so `readStreamIntoSink` can skip the JS `.write()`
+    /// prototype lookup per chunk.
+    pub(crate) fn js_write_bytes(
+        this: &mut T,
+        global: &crate::webcore::jsc::JSGlobalObject,
+        ptr: *const u8,
+        len: usize,
+    ) -> crate::webcore::jsc::JSValue {
+        use crate::webcore::jsc::JSValue;
+        bun_core::mark_binding!();
+
+        if let Some(err) = this.get_pending_error() {
+            let _ = global.vm().throw_error(global, err);
+            return JSValue::ZERO;
+        }
+
+        if ptr.is_null() || len == 0 {
+            return JSValue::js_number(0.0);
+        }
+
+        // SAFETY: caller passes a live JSArrayBufferView's bytes for the
+        // duration of this call.
+        let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+        let data = bun_ptr::RawSlice::new(slice);
+        this.write_bytes(&streams::Result::Temporary(data))
+            .to_js(global)
+    }
+
     /// `${abi_name}__getInternalFd` body.
     #[inline]
     pub(crate) fn js_get_internal_fd(this: &mut T) -> crate::webcore::jsc::JSValue {

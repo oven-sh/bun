@@ -607,12 +607,16 @@ using namespace JSC;
 using WebCore::JSCompressionStream;
 using WebCore::JSDecompressionStream;
 
-// BufferSource → (ptr, len). The spec requires a TypeError for a non-BufferSource
-// chunk; the C++ side owns that check so the Rust coder sees only raw bytes.
-static std::optional<std::span<const uint8_t>> bufferSourceBytes(JSGlobalObject* globalObject, JSValue chunk)
+// BufferSource → (ptr, len). `scratch` owns the bytes when `chunk` is a string
+// (Node-compat: node:zlib-backed CompressionStream accepts string chunks).
+static std::optional<std::span<const uint8_t>> bufferSourceBytes(JSGlobalObject* globalObject, JSValue chunk, WTF::CString& scratch)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (chunk.isNull()) {
+        Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_STREAM_NULL_VALUES, "May not write null values to stream"_s);
+        return std::nullopt;
+    }
     if (auto* view = dynamicDowncast<JSArrayBufferView>(chunk)) {
         if (view->isDetached()) [[unlikely]] {
             throwTypeError(globalObject, scope, "Cannot transform a detached buffer"_s);
@@ -635,6 +639,12 @@ static std::optional<std::span<const uint8_t>> bufferSourceBytes(JSGlobalObject*
             return std::nullopt;
         }
         return std::span<const uint8_t>(static_cast<const uint8_t*>(impl->data()), impl->byteLength());
+    }
+    if (chunk.isString()) {
+        WTF::String s = asString(chunk)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        scratch = s.utf8();
+        return std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(scratch.data()), scratch.length());
     }
     Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "chunk"_s, "BufferSource"_s, chunk);
     return std::nullopt;
@@ -672,10 +682,11 @@ static JSPromise* compressionStreamTransformImpl(JSGlobalObject* globalObject, J
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thrown;
+    WTF::CString scratch;
     std::optional<std::span<const uint8_t>> bytes;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        bytes = bufferSourceBytes(globalObject, chunk);
+        bytes = bufferSourceBytes(globalObject, chunk, scratch);
         if (catchScope.exception()) [[unlikely]]
             thrown = takeAbruptCompletion(globalObject, catchScope);
     }

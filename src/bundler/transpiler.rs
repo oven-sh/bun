@@ -88,12 +88,11 @@ impl PluginRunner {
     pub fn could_be_plugin(specifier: &[u8]) -> bool {
         if let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') {
             let ext = &specifier[last_dot + 1..];
-            // '.' followed by either a letter or a non-ascii character
-            // maybe there are non-ascii file extensions?
-            // we mostly want to cheaply rule out "../" and ".." and "./"
-            if !ext.is_empty()
-                && (ext[0].is_ascii_lowercase() || ext[0].is_ascii_uppercase() || ext[0] > 127)
-            {
+            // We mostly want to cheaply rule out "../", "..", "./" (and their
+            // Windows "\\" forms). Anything else after the final '.' is a real
+            // extension that a plugin filter may want to match, including
+            // numeric ones like ".1" or ".h2".
+            if !ext.is_empty() && !matches!(ext[0], b'/' | b'\\') {
                 return true;
             }
         }

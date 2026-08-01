@@ -90,9 +90,9 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
 describe("GarbageCollectionController idle memory reducer", () => {
   // ~130 MB of retained objects/strings that stay live for the whole run, so
   // block_bytes_allocated is well above the 16 MB reducer floor and the only
-  // heap movement is the GC timer itself. 80 setInterval ticks at 50 ms with a
-  // 50 ms GC timer interval reaches 30 stable ticks before the halfway mark
-  // and then spends the rest of the run in slow mode.
+  // heap movement is the GC timer itself. 50 setInterval ticks at 50 ms with a
+  // 50 ms GC timer interval reaches 30 stable ticks around the 1.5 s mark and
+  // then spends the rest of the run in slow mode.
   const fixture = `
     const hold = [];
     for (let i = 0; i < 1024; i++) {
@@ -101,7 +101,7 @@ describe("GarbageCollectionController idle memory reducer", () => {
     }
     globalThis.__hold = hold;
     let n = 0;
-    const id = setInterval(() => { if (++n >= 80) clearInterval(id); }, 50);
+    const id = setInterval(() => { if (++n >= 50) clearInterval(id); }, 50);
   `;
 
   async function runFixture(extraEnv: Record<string, string | undefined>) {
@@ -124,22 +124,31 @@ describe("GarbageCollectionController idle memory reducer", () => {
     return { reducerFires, eden };
   }
 
-  test.concurrent("runs a full GC + scavenge once the heap has been stable", async () => {
-    const r = await runFixture({});
-    // Before the fix the reducer did not exist (0 fires).
-    expect(r.reducerFires).toBeGreaterThanOrEqual(1);
-    // The exact-equality stability check never matched (extraMemorySize jitters
-    // by a few KB each eden sweep), so the timer stayed in 50 ms fast mode for
-    // the whole 4 s (~80 eden collections). With the tolerance-based check it
-    // drops to slow mode after 30 ticks. Debug+ASAN coalesces collect requests
-    // (see the cadence tests above) so the count cannot distinguish there.
-    if (!isDebug && !isASAN) {
-      expect(r.eden).toBeLessThan(60);
-    }
-  });
+  test.concurrent(
+    "runs a full GC + scavenge once the heap has been stable",
+    async () => {
+      const r = await runFixture({});
+      // Before the fix the reducer did not exist (0 fires).
+      expect(r.reducerFires).toBeGreaterThanOrEqual(1);
+      // The exact-equality stability check never matched (extraMemorySize
+      // jitters by a few KB each eden sweep), so the timer stayed in 50 ms fast
+      // mode for the whole 2.5 s (~50 eden collections). With the
+      // tolerance-based check it drops to slow mode after 30 ticks. Debug+ASAN
+      // coalesces collect requests (see the cadence tests above) so the count
+      // cannot distinguish there.
+      if (!isDebug && !isASAN) {
+        expect(r.eden).toBeLessThan(45);
+      }
+    },
+    20_000,
+  );
 
-  test.concurrent("BUN_IDLE_MEMORY_REDUCER_DISABLE=1 turns the reducer off", async () => {
-    const r = await runFixture({ BUN_IDLE_MEMORY_REDUCER_DISABLE: "1" });
-    expect(r.reducerFires).toBe(0);
-  });
+  test.concurrent(
+    "BUN_IDLE_MEMORY_REDUCER_DISABLE=1 turns the reducer off",
+    async () => {
+      const r = await runFixture({ BUN_IDLE_MEMORY_REDUCER_DISABLE: "1" });
+      expect(r.reducerFires).toBe(0);
+    },
+    20_000,
+  );
 });

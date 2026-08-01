@@ -2511,23 +2511,25 @@ fn get_or_put_resolved_package(
                 && this.lockfile.overrides.get(name_hash).is_none()
             {
                 let lockfile_buf = this.lockfile.buffers.string_bytes.as_slice();
-                let deps = this.lockfile.buffers.dependencies.as_slice();
-                let all_peers_ok = |v: Semver::Version| -> bool {
-                    deps.iter().all(|dep| {
-                        if dep.name_hash != name_hash
-                            || !dep.behavior.is_peer()
-                            || dep.behavior.is_optional_peer()
-                        {
-                            return true;
-                        }
-                        let Some(npm) = dep.version.try_npm() else {
-                            return true;
-                        };
-                        if npm.is_alias {
-                            return true;
-                        }
-                        npm.version.satisfies(v, lockfile_buf, &manifest.string_buf)
+                let sibling_peer_ranges: Vec<&Semver::query::Group> = this
+                    .lockfile
+                    .buffers
+                    .dependencies
+                    .as_slice()
+                    .iter()
+                    .filter(|dep| {
+                        dep.name_hash == name_hash
+                            && dep.behavior.is_peer()
+                            && !dep.behavior.is_optional_peer()
                     })
+                    .filter_map(|dep| dep.version.try_npm())
+                    .filter(|npm| !npm.is_alias)
+                    .map(|npm| &npm.version)
+                    .collect();
+                let all_peers_ok = |v: Semver::Version| -> bool {
+                    sibling_peer_ranges
+                        .iter()
+                        .all(|g| g.satisfies(v, lockfile_buf, &manifest.string_buf))
                 };
                 if !all_peers_ok(find_result.version) {
                     if let Some(refined) = manifest.find_best_version_extra(

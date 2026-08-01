@@ -1904,6 +1904,7 @@ impl PackageManifest {
     ) -> Option<FindResult<'_>> {
         let min_age_ms =
             minimum_release_age_ms.filter(|_| !self.should_exclude_from_age_filter(exclusions));
+        debug_assert!(min_age_ms.is_none() || self.pkg.has_extended_manifest);
         let age_ok = |pkg: &PackageVersion| match min_age_ms {
             Some(min) => !Self::is_package_version_too_recent(pkg, min),
             None => true,

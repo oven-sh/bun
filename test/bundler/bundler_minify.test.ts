@@ -82,19 +82,7 @@ describe("bundler", () => {
     },
     minifySyntax: true,
     minifyWhitespace: true,
-    capture: [
-      "3",
-      "1",
-      "1",
-      "4",
-      "()=>1",
-      "1",
-      "void 0",
-      "void 0",
-      "{a:1,c:3}.missing",
-      "{}.missing",
-      "sideEffect()",
-    ],
+    capture: ["3", "1", "1", "4", "()=>1", "1", "void 0", "void 0", "{a:1,c:3}.missing", "{}.missing", "sideEffect()"],
   });
   itBundled("minify/InlineObjectLiteralPropertyAccessUnsafe", {
     files: {
@@ -151,7 +139,7 @@ describe("bundler", () => {
       `,
     },
     minifySyntax: true,
-    run: { stdout: '[3,1,4,1,null,null,3,1]\nhits=1' },
+    run: { stdout: "[3,1,4,1,null,null,3,1]\nhits=1" },
   });
   itBundled("minify/StringAdditionFolding", {
     files: {

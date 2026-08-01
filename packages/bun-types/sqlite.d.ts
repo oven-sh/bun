@@ -269,7 +269,7 @@ declare module "bun:sqlite" {
      * this method multiple times. If the database is already closed, this is
      * a no-op. Running queries or using statements after the database has
      * been closed throws an error, except statement `toString()`, which
-     * returns an empty string.
+     * returns an empty string, and `finalize()`, which stays safe to call.
      *
      * @example
      * ```ts

@@ -1188,13 +1188,9 @@ function applyServerCustomOptions(server: Server) {
   );
 }
 
-// Native SNI dispatch (node:https SNICallback). Called from inside the TLS
-// handshake's select-certificate callback with the ClientHello's servername;
-// returns the native SecureContext to install on this handshake, undefined to
-// fall through to the default context, or an Error to drop the connection.
-// Same contract as the net.ts ServerHandlers.serverName handler (see that for
-// the full state machine); without a resume handle an SNICallback that defers
-// its completion callback falls through to the default context.
+// node:https SNICallback dispatch: same return contract as the net.ts
+// ServerHandlers.serverName handler (native SecureContext / undefined / Error
+// / `true` to suspend). Without a socketHandle a deferred cb() falls through.
 function onServerSNI(this: Server, servername, socketHandle) {
   const cb = this._SNICallback;
   if (typeof cb !== "function" || !servername) return undefined;

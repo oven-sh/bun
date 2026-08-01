@@ -3915,12 +3915,8 @@ fn server_set_on_server_name(
                     global,
                     <$T>::js_gc_on_server_name_set,
                 );
-                // openssl.c dispatches `ls->on_server_name(ls, hostname,
-                // &abort_handshake, socket)` from inside the TLS handshake's
-                // select-certificate callback. `data` is the owning server so
-                // the dispatch can recover its JS handler; the Bun.listen path
-                // uses `ls.group().owner()` for the same purpose, but that
-                // slot belongs to the uWS HttpContext here.
+                // `ls.group().owner()` is the uWS HttpContext here, so the
+                // owning server goes in the listen socket's SNI data slot.
                 extern "C" fn dispatch(
                     ls: *mut uws_sys::ListenSocket,
                     hostname: *const core::ffi::c_char,
@@ -3950,11 +3946,8 @@ fn server_set_on_server_name(
                     // SAFETY: `hostname` is NUL-terminated per the C contract.
                     let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
                     let js_name = ZigString::init(name.to_bytes()).to_js(global);
-                    // No resume handle for the accepted uWS socket yet, so an
-                    // SNICallback that defers its completion callback falls
-                    // through to the default context (the net.ts handler's
-                    // `!socketHandle` guard). Synchronous resolutions are
-                    // carried by the return value.
+                    // socket_handle = undefined: no resume handle for the uWS
+                    // socket yet, so a deferred cb() falls through to default.
                     let result = match callback.call(
                         global,
                         JSValue::UNDEFINED,
@@ -3966,8 +3959,7 @@ fn server_set_on_server_name(
                     crate::socket::listener::decode_sni_result(result, abort_handshake)
                 }
                 if let Some(listener) = this.listener {
-                    // S008: app::ListenSocket<SSL> is layout-identical to
-                    // uws_sys::ListenSocket (both ZST opaques).
+                    // S008: app::ListenSocket<SSL> ≡ uws_sys::ListenSocket (ZST opaque).
                     bun_opaque::opaque_deref_mut(listener.cast::<uws_sys::ListenSocket>())
                         .on_server_name(dispatch, core::ptr::from_mut::<$T>(this).cast::<c_void>());
                 }
@@ -3975,8 +3967,7 @@ fn server_set_on_server_name(
             }
         };
     }
-    // A plain-HTTP listener has no SSL_CTX for the select-certificate hook,
-    // so the dispatch would never fire; skip the non-SSL variants entirely.
+    // Non-SSL listeners have no SSL_CTX for the select-certificate hook.
     handle!(HTTPSServer);
     handle!(DebugHTTPSServer);
     Ok(JSValue::UNDEFINED)

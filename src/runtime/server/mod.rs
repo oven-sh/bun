@@ -314,8 +314,6 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
 
     /// Raw shadow of the wrapper's `m_onServerName` WriteBarrier slot.
     /// `JSValue::ZERO` when unset; written by `server_set_on_server_name`.
-    /// The dynamic SNI resolver for node:https `SNICallback`; dispatched from
-    /// inside the TLS handshake's select-certificate callback.
     pub(crate) on_server_name: JSValue,
 
     pub(crate) inspector_server_id: jsc::DebuggerId,

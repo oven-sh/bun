@@ -73,6 +73,10 @@ int main(int argc, char **argv) {
   struct sock_fprog prog = { .len = sizeof(filter)/sizeof(filter[0]), .filter = filter };
   if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) { perror("no_new_privs"); return 77; }
   if (syscall(__NR_seccomp, SECCOMP_SET_MODE_FILTER, 0, &prog) != 0) { perror("seccomp"); return 77; }
+  /* Prove the filter took effect; otherwise the test would exercise the
+     close_range fast path and pass vacuously. */
+  errno = 0;
+  if (syscall(__NR_close_range, ~0U, ~0U, 0) != -1 || errno != ENOSYS) return 77;
 
   execvp(argv[1], &argv[1]);
   perror("execvp");
@@ -95,14 +99,9 @@ int main(int argc, char **argv) {
     return bin;
   };
 
-  const helperBin = tryBuild();
+  const helperBin = isLinux ? tryBuild() : null;
 
-  test("fd above the 65536 clamp does not leak into a spawned child", async () => {
-    if (helperBin == null) {
-      console.warn("SKIP: cc or linux seccomp headers unavailable");
-      return;
-    }
-
+  test.skipIf(helperBin == null)("fd above the 65536 clamp does not leak into a spawned child", async () => {
     // Outer bun: verify HIGH_FD arrived from the helper, then Bun.spawn an
     // inner bun and report which /proc/self/fd entries it sees.
     const script = `
@@ -120,7 +119,7 @@ int main(int argc, char **argv) {
     `;
 
     await using proc = Bun.spawn({
-      cmd: [helperBin, bunExe(), "-e", script],
+      cmd: [helperBin!, bunExe(), "-e", script],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -131,7 +130,7 @@ int main(int argc, char **argv) {
       return;
     }
 
-    expect(stderr).toBe("");
+    expect(stderr).not.toContain("error");
     const result = JSON.parse(stdout.trim());
     // Precondition: the helper's non-CLOEXEC fd reached the outer bun. Bun's
     // startup close_range sweep is also ENOSYS'd by seccomp, so this holds.

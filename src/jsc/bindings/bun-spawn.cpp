@@ -32,11 +32,7 @@ extern char** environ;
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags);
 #endif
 
-// Scan /proc/self/fd (Linux) or /dev/fd (Darwin/BSD) for the highest open fd.
-// Called in the parent before fork so the child's fallback fd sweep is bounded
-// by actual open fds instead of RLIMIT_NOFILE (which Bun raises to the hard
-// limit, typically 6 figures). Returns -1 if the scan fails; callers fall
-// back to the rlimit-derived bound.
+// Highest open fd via /proc/self/fd or /dev/fd; -1 if the scan is unusable.
 extern "C" int bun_highest_open_fd()
 {
 #if OS(LINUX)
@@ -45,6 +41,7 @@ extern "C" int bun_highest_open_fd()
     DIR* d = opendir("/dev/fd");
 #endif
     if (!d) return -1;
+    int self = dirfd(d);
     int highest = -1;
     while (struct dirent* ent = readdir(d)) {
         const char* p = ent->d_name;
@@ -56,15 +53,15 @@ extern "C" int bun_highest_open_fd()
         if (fd > highest) highest = fd;
     }
     closedir(d);
+    // A real fdescfs/procfs mount lists the scan's own dirfd. FreeBSD's
+    // default devfs /dev/fd has only static 0/1/2 nodes; reject that.
+    if (highest < self) return -1;
     return highest;
 }
 
 #if OS(LINUX)
-// Cached close_range(2) capability so the vfork child never issues a known-
-// failing syscall on every spawn. Probed once from the parent with a no-op
-// (~0U, ~0U) range that touches no fds: 5.11+ accepts CLOSE_RANGE_CLOEXEC,
-// 5.9/5.10 reject the unknown flag with EINVAL but accept flags=0, and <5.9 /
-// seccomp-blocked kernels return ENOSYS/EPERM.
+// Cached close_range(2) capability. The (~0U, ~0U) probe is a no-op range
+// above any fd table: 5.11+ -> 0, 5.9/5.10 -> EINVAL (flag), <5.9 -> ENOSYS.
 enum : int { kCloseRangeUnknown = 0,
     kCloseRangeCloexec = 1,
     kCloseRangePlain = 2,
@@ -88,30 +85,21 @@ static int closeRangeCapability()
 }
 #endif
 
-// Helper: get max fd from system, clamped to sane limits and optionally to 'end' parameter
-static inline int getMaxFd(int start, int end)
-{
-#if OS(LINUX)
-    int maxfd = static_cast<int>(sysconf(_SC_OPEN_MAX));
-#elif OS(DARWIN) || OS(FREEBSD)
-    int maxfd = getdtablesize();
-#else
-    int maxfd = 1024;
-#endif
-    if (maxfd < 0 || maxfd > 65536) maxfd = 65536;
-    // Respect the end parameter if it's a valid bound (not INT_MAX sentinel)
-    if (end >= start && end < INT_MAX) {
-        maxfd = std::min(maxfd, end + 1); // +1 because end is inclusive
-    }
-    return maxfd;
-}
-
-// Loop-based fallback for closing/cloexec fds. open_fd_hint is the parent's
-// highest open fd at call time (or -1 if unknown); the sweep never needs to
-// go past it because fds above it cannot exist in the just-forked child.
+// Loop-based fallback. open_fd_hint (-1 = unknown) bounds this best-effort
+// sweep at the parent's highest open fd; Bun-owned fds are O_CLOEXEC already.
 static inline void closeRangeLoop(int start, int end, bool cloexec_only, int open_fd_hint)
 {
-    int maxfd = (open_fd_hint >= 0) ? open_fd_hint + 1 : getMaxFd(start, end);
+    int maxfd;
+    if (open_fd_hint >= 0) {
+        maxfd = open_fd_hint + 1;
+    } else {
+#if OS(LINUX)
+        maxfd = static_cast<int>(sysconf(_SC_OPEN_MAX));
+#else
+        maxfd = getdtablesize();
+#endif
+        if (maxfd < 0 || maxfd > 65536) maxfd = 65536;
+    }
     if (end >= start && end < INT_MAX)
         maxfd = std::min(maxfd, end + 1);
     for (int fd = start; fd < maxfd; fd++) {
@@ -126,10 +114,8 @@ static inline void closeRangeLoop(int start, int end, bool cloexec_only, int ope
     }
 }
 
-// Platform-specific close range implementation. On Linux, cap carries the
-// probed close_range capability so a failing syscall isn't re-issued per
-// spawn; kCloseRangePlain means "close outright" is available (the vfork
-// child is about to exec, so closing is equivalent to CLOEXEC here).
+// kCloseRangePlain closes outright even when cloexec_only: the vfork child
+// is about to exec, so the effect is the same and Linux uses no errpipe.
 static inline void closeRangeOrLoop(int start, int end, bool cloexec_only, int cap, int open_fd_hint)
 {
 #if OS(LINUX)
@@ -201,9 +187,8 @@ extern "C" ssize_t posix_spawn_bun(
     sigset_t blockall, oldmask;
     int res = 0, cs = 0;
 
-    // Decide the child's fd-sweep strategy in the parent so the vfork/fork
-    // child never calls opendir/readdir (not async-signal-safe) and never
-    // re-probes a failing close_range on every spawn.
+    // Resolve the fd-sweep strategy in the parent: opendir/readdir are not
+    // async-signal-safe, so the forked child must not call them.
 #if OS(LINUX)
     const int close_range_cap = closeRangeCapability();
     const int open_fd_hint = (close_range_cap == kCloseRangeNone) ? bun_highest_open_fd() : -1;

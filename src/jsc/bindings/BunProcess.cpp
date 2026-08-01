@@ -4463,12 +4463,10 @@ extern "C" void Bun__ConsoleObject__onStdioWriteError(Zig::GlobalObject* global,
     if (!process)
         return;
 
-    JSValue stream = process->get(global, fd == 2 ? Identifier::fromString(vm, "stderr"_s) : Identifier::fromString(vm, "stdout"_s));
-    if (scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        return;
-    }
-    if (!stream.isObject())
+    // getDirect so we don't reify the lazy stdout/stderr PropertyCallback: if the
+    // user never touched the stream, no 'error' listener can be attached.
+    JSValue stream = process->getDirect(vm, fd == 2 ? Identifier::fromString(vm, "stderr"_s) : Identifier::fromString(vm, "stdout"_s));
+    if (!stream || !stream.isObject())
         return;
     JSObject* streamObj = stream.getObject();
 

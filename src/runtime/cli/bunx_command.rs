@@ -623,8 +623,9 @@ impl BunxCommand {
     #[cfg(unix)]
     fn is_trusted_local_bunfig(path: &ZStr, uid: libc::uid_t) -> bool {
         let owner_ok = |st_uid: libc::uid_t| st_uid == uid || st_uid == 0;
-        let reg_ok =
-            |st: &bun_sys::Stat| owner_ok(st.st_uid) && (st.st_mode & libc::S_IFMT) == libc::S_IFREG;
+        let reg_ok = |st: &bun_sys::Stat| {
+            owner_ok(st.st_uid) && (st.st_mode & libc::S_IFMT) == libc::S_IFREG
+        };
         match bun_sys::lstat(path) {
             Ok(st) if owner_ok(st.st_uid) => {
                 let kind = st.st_mode & libc::S_IFMT;

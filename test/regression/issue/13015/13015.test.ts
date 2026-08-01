@@ -98,4 +98,19 @@ describe("issue #13015: toEqual diff for Set/Map is order-insensitive", () => {
     expect(body.some(l => l.startsWith("- ") && l.includes('"z"'))).toBe(true);
     expect(footer).toBe("- Expected  - 1\n+ Received  + 0");
   });
+
+  test("Set: shared Promise is order-independent even after a long sibling", () => {
+    // Guards the per-entry reset_line() in SortedEntryCollector: without it,
+    // formatting a Promise after a >80-char string inserts a leading newline on
+    // one side only, and the shared Promise shows as both "-" and "+".
+    const { body, footer } = diffBlock(stderr, "Set diff with Promise after long sibling");
+    for (const line of body) {
+      if (line.startsWith("+ ") || line.startsWith("- ")) {
+        expect(line).not.toContain("Promise");
+        expect(line).not.toContain("aaaa");
+      }
+    }
+    expect(body.some(l => l.startsWith("- ") && l.includes('"extra"'))).toBe(true);
+    expect(footer).toBe("- Expected  - 1\n+ Received  + 0");
+  });
 });

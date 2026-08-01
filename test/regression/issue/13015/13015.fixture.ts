@@ -26,3 +26,9 @@ test("Map diff shows only entry differences", () => {
 test("Set nested in object", () => {
   expect({ s: new Set(["y", "x"]) }).toEqual({ s: new Set(["x", "y", "z"]) });
 });
+
+test("Set diff with Promise after long sibling", () => {
+  const p = Promise.resolve();
+  const long = Buffer.alloc(100, "a").toString();
+  expect(new Set([p, long])).toEqual(new Set([long, p, "extra"]));
+});

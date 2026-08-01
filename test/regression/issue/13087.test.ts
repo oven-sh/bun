@@ -2,7 +2,7 @@
 // supertest starts an ephemeral http.Server via `app.listen(0)` and closes it
 // only when `server._handle` is truthy. Bun's http.Server never populated
 // `_handle`, so supertest never called `server.close()` and the process hung.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 const fixture = /* js */ `

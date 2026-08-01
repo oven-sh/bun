@@ -5507,7 +5507,7 @@ impl VirtualMachine {
 
         if frames.len() > 1 {
             for i in 0..frames.len() {
-                if i == top || frames[i].position.is_invalid() {
+                if i == top || frames[i].position.is_invalid() || frames[i].remapped {
                     continue;
                 }
                 let source_url = frames[i].source_url.to_utf8();

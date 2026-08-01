@@ -296,6 +296,9 @@ public:
         if (openingParentheses > closingParentheses)
             openingParentheses = WTF::notFound;
 
+        StringView lineInner;
+        StringView functionName;
+
         if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
             // Special case: "unknown" frames don't have parentheses but are valid
             // These appear in stack traces from certain error paths
@@ -305,12 +308,19 @@ public:
                 return true;
             }
 
-            // For any other frame without parentheses, terminate parsing as before
-            offset = stack.length();
-            return false;
+            // V8/Node format for frames without a function name:
+            //     at /path/to/file.js:1:2
+            //     at async /path/to/file.js:1:2
+            lineInner = line;
+            if (lineInner.startsWith("async "_s)) {
+                frame.isAsync = true;
+                lineInner = lineInner.substring(6);
+            }
+            functionName = StringView();
+        } else {
+            lineInner = StringView_slice(line, openingParentheses + 1, closingParentheses);
+            functionName = line.substring(0, openingParentheses - 1);
         }
-
-        auto lineInner = StringView_slice(line, openingParentheses + 1, closingParentheses);
 
         {
             auto marker1 = 0;
@@ -382,8 +392,6 @@ public:
             }
         }
     done_block:
-
-        StringView functionName = line.substring(0, openingParentheses - 1);
 
         if (functionName == "global code"_s) {
             functionName = StringView();

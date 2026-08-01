@@ -308,6 +308,10 @@ describe.skipIf(isWindows)("shell completions: `bun <path>` and runtime flags (#
       // after `bun add` is left for `_bun_add_completion` (where it means
       // `--dev`) instead of being claimed here as `--define`.
       expect(topArguments).toMatch(/_arguments\b[^\\\n]* -A ['"]-\*['"]/);
+      // `*:: :->args` shifts `words`/`CURRENT` to the positionals before the
+      // sub-completer runs, so its own `_arguments` never re-parses (and
+      // disagrees about) the runtime flags that preceded the subcommand.
+      expect(topArguments).toMatch(/'\*:: :->args'/);
       // `--inspect`/`--config` accept an optional argument. The `=-` name
       // suffix restricts it to the `--flag=value` form so `bun --inspect run`
       // doesn't have `run` consumed as the optional argument.

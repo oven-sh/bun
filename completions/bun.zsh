@@ -736,7 +736,7 @@ _bun() {
     # `_bun_add_completion` instead of being claimed here as `--define`.
     _arguments -s -A '-*' \
         '1: :->cmd' \
-        '*: :->args' \
+        '*:: :->args' \
         '--hot[Enable auto reload in Bun'"'"'s JavaScript runtime]' \
         '--watch[Automatically restart the process on file change]' \
         '--no-clear-screen[Disable clearing the terminal screen on reload when --hot or --watch is enabled]' \
@@ -816,6 +816,13 @@ _bun() {
 
         ;;
     args)
+        # `*:: :->args` above rewrote `words`/`CURRENT` to contain only the
+        # positional arguments (subcommand onward). Prepend the program name so
+        # each sub-completer's `_arguments '1: :->cmd' …` sees the layout it was
+        # written for, independent of whatever runtime flags preceded the
+        # subcommand.
+        words=($program "${words[@]}")
+        (( CURRENT++ ))
         case $line[1] in
         add|a)
             _bun_add_completion

@@ -2865,6 +2865,13 @@ pub(crate) fn parse_into_binary_lockfile(
                     let dep = &mut dependencies[dep_id as usize];
                     let dep_name = dep.name.slice(string_buf);
 
+                    if dep.behavior.is_optional_peer() {
+                        // fresh resolve leaves optional peers unresolved until
+                        // process_subtree; binding them here via the path walk
+                        // shifts BFS enqueue order and breaks --frozen-lockfile.
+                        continue;
+                    }
+
                     let workspace_node_modules = {
                         let buf_slice = &mut path_buf[..];
                         let needed = workspace_name.len() + 1 + dep_name.len();
@@ -2955,6 +2962,9 @@ pub(crate) fn parse_into_binary_lockfile(
                 let dep_id: DependencyID = _dep_id;
                 let dep = &mut dependencies[dep_id as usize];
 
+                if dep.behavior.is_optional_peer() {
+                    continue 'deps;
+                }
                 let peer_res_id = if is_deferred_peer(dep) {
                     resolve_peer_dep_version_based(
                         dep,

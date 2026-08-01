@@ -3942,6 +3942,7 @@ describe("hoisting", async () => {
           dependencies: {
             "no-deps": "2.0.0",
             "strict-peer-dep": "1.0.0",
+            "optional-peer-deps": "1.0.0",
           },
         }),
       ),
@@ -3970,6 +3971,7 @@ describe("hoisting", async () => {
       });
       expect(await exists(join(packageDir, "apps", "app", "node_modules"))).toBeFalse();
       expect(await exists(join(packageDir, "node_modules", "strict-peer-dep", "node_modules"))).toBeFalse();
+      expect(await exists(join(packageDir, "node_modules", "optional-peer-deps", "node_modules"))).toBeFalse();
     }
 
     async function install(cwd: string, ...args: string[]) {

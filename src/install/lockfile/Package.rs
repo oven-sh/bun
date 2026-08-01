@@ -751,9 +751,8 @@ impl Package<u64> {
                 'list: for (i, (key, version_string_)) in
                     keys.iter().zip(version_strings.iter()).enumerate()
                 {
-                    // A name that appears in more than one group keeps a single entry.
-                    // dev: keep the earlier entry. optional, peer: override the earlier
-                    // entry (peer-over-prod matches yarn/pnpm; see #7869).
+                    // A name in multiple groups keeps one entry. dev: keep the earlier one.
+                    // optional, peer: override the earlier one (peer-over-prod matches yarn/pnpm).
                     let mut duplicate_at: Option<usize> = None;
                     if group.behavior.is_peer()
                         || group.behavior.is_dev()

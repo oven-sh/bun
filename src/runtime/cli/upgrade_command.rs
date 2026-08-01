@@ -635,10 +635,17 @@ impl UpgradeCommand {
                     .filter(|v| &*v.tag == b"canary" && !v.zip_url.is_empty());
             let mut v = from_api.unwrap_or_else(|| Version {
                 tag: b"canary"[..].into(),
-                zip_url: const_format::concatcp!(
-                    "https://github.com/oven-sh/bun/releases/download/canary/",
-                    Version::ZIP_FILENAME
-                )
+                zip_url: if use_profile {
+                    const_format::concatcp!(
+                        "https://github.com/oven-sh/bun/releases/download/canary/",
+                        Version::PROFILE_ZIP_FILENAME
+                    )
+                } else {
+                    const_format::concatcp!(
+                        "https://github.com/oven-sh/bun/releases/download/canary/",
+                        Version::ZIP_FILENAME
+                    )
+                }
                 .as_bytes()
                 .into(),
                 size: 0,

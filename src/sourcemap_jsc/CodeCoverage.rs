@@ -468,39 +468,25 @@ fn walk_block_segments(
     parsed_mapping: &ParsedSourceMap,
     mut each: impl FnMut(i32, u32),
 ) {
-    if min >= max || line_starts.len() < 2 {
-        return;
-    }
-    let last = line_starts.len() - 1;
-    let mut line = line_starts.partition_point(|&s| (s as usize) <= min) - 1;
-    while line < last {
-        let s_l = line_starts[line] as usize;
-        if s_l >= max {
-            break;
-        }
-        let s_next = line_starts[line + 1] as usize;
-        let lo = min.max(s_l + 1);
-        let hi = max.min(s_next);
-        if lo < hi {
-            let gen_line = i32::try_from(line).expect("int cast");
-            let col_lo = i32::try_from(lo - s_l).expect("int cast");
-            let col_hi = i32::try_from(hi - s_l).expect("int cast");
-            if let Some(c) = cur_.as_mut() {
-                c.for_each_segment_on_line(gen_line, col_lo, col_hi, &mut each);
-            } else {
-                // no internal cursor (materialized `mapping::List`)
-                for col in col_lo..col_hi {
-                    if let Some(p) = parsed_mapping.find_mapping(
-                        Ordinal::from_zero_based(gen_line),
-                        Ordinal::from_zero_based(col),
-                    ) {
-                        each(p.original.lines.zero_based(), 1);
-                    }
+    walk_block_lines(line_starts, min, max, |line, lo, hi| {
+        let s_l = line_starts[line as usize] as usize;
+        let gen_line = line as i32;
+        let col_lo = i32::try_from(lo - s_l).expect("int cast");
+        let col_hi = i32::try_from(hi - s_l).expect("int cast");
+        if let Some(c) = cur_.as_mut() {
+            c.for_each_segment_on_line(gen_line, col_lo, col_hi, &mut each);
+        } else {
+            // no internal cursor (materialized `mapping::List`)
+            for col in col_lo..col_hi {
+                if let Some(p) = parsed_mapping.find_mapping(
+                    Ordinal::from_zero_based(gen_line),
+                    Ordinal::from_zero_based(col),
+                ) {
+                    each(p.original.lines.zero_based(), 1);
                 }
             }
         }
-        line += 1;
-    }
+    });
 }
 
 pub struct ByteRangeMapping {

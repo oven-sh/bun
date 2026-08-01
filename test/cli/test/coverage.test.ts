@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
 
@@ -585,41 +585,37 @@ test("coverage report generation scales with ranges, not bytes", () => {
   // whole file. Before the per-segment rewrite of generate_report_from_blocks
   // the sourcemap path visited every byte of every block, so report generation
   // was O(sum of block byte-lengths); now it visits one entry per covered line
-  // / mapping segment. Compare two sizes so the assertion is a scaling ratio
-  // rather than an absolute time.
-  const mk = (n: number) => {
-    const lines = ["export function outer() {"];
-    for (let i = 0; i < n; i++) {
-      lines.push(`  if (globalThis.never) { console.log("pad pad pad pad pad pad pad pad ${i}"); }`);
-    }
-    lines.push("}", "outer();", "");
-    return lines.join("\n");
-  };
+  // / mapping segment. Debug+ASAN is ~30x slower, so use a smaller module there
+  // so the test stays inside the default timeout.
+  const n = isDebug ? 1400 : 4800;
+  const lines = ["export function outer() {"];
+  for (let i = 0; i < n; i++) {
+    lines.push(`  if (globalThis.never) { console.log("pad pad pad pad pad pad pad pad ${i}"); }`);
+  }
+  lines.push("}", "outer();", "");
   using dir = tempDir("cov", {
-    "small.ts": mk(400),
-    "big.ts": mk(1500),
-    "tsmall.test.ts": `import { outer } from "./small"; import { test } from "bun:test"; test("t", () => { outer(); });\n`,
-    "tbig.test.ts": `import { outer } from "./big"; import { test } from "bun:test"; test("t", () => { outer(); });\n`,
+    "big.ts": lines.join("\n"),
+    "t.test.ts": `import { outer } from "./big"; import { test } from "bun:test"; test("t", () => { outer(); });\n`,
   });
 
-  const run = (file: string) => {
+  const run = (coverage: boolean) => {
     const t0 = Bun.nanoseconds();
-    const r = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "lcov", file], {
-      cwd: dir,
-      env: bunEnv,
-      stdio: ["ignore", "ignore", "ignore"],
-    });
+    const r = Bun.spawnSync(
+      [bunExe(), "test", ...(coverage ? ["--coverage", "--coverage-reporter", "lcov"] : []), "./t.test.ts"],
+      { cwd: dir, env: bunEnv, stdio: ["ignore", "ignore", "ignore"] },
+    );
     const ms = (Bun.nanoseconds() - t0) / 1e6;
     expect(r.exitCode).toBe(0);
     return ms;
   };
 
-  run("./tsmall.test.ts"); // warm
-  const small = run("./tsmall.test.ts");
-  const big = run("./tbig.test.ts");
-  // 3.75x the line count: linear growth keeps big/small comfortably under 3;
-  // the per-byte report path put it above 5x.
-  expect(big, `small=${small.toFixed(0)}ms big=${big.toFixed(0)}ms`).toBeLessThan(small * 3);
+  run(false); // warm
+  const plain = run(false);
+  const covered = run(true);
+  // The per-byte path adds ~2s of report generation on release at n=4800; with
+  // the per-range path the remaining overhead is JSC's ControlFlowProfiler plus
+  // the lcov write. Floor guards against noise on fast release lanes.
+  expect(covered, `plain=${plain.toFixed(0)}ms covered=${covered.toFixed(0)}ms`).toBeLessThan(Math.max(plain, 100) * 3);
 });
 
 test("coveragePathIgnorePatterns - ignore all files", () => {

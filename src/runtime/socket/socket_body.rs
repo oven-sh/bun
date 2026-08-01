@@ -1521,6 +1521,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             this.mark_inactive();
         }
         if !SSL
+            && !global.has_exception()
             && !this.socket.get().is_detached()
             && this.buffered_data_for_node_net.get().len() > 0
         {

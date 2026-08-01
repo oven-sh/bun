@@ -118,7 +118,6 @@ typedef UV_PLATFORM_SEM_T uv_sem_t;
 typedef pthread_cond_t uv_cond_t;
 typedef pthread_key_t uv_key_t;
 
-/* Note: guard clauses should match uv_barrier_init's in src/unix/thread.c. */
 #if defined(__OpenBSD__) || !defined(PTHREAD_BARRIER_SERIAL_THREAD)
 /* TODO(bnoordhuis) Merge into uv_barrier_t in v2. */
 struct _uv_barrier {

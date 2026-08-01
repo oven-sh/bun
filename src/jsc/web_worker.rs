@@ -513,17 +513,9 @@ impl WebWorker {
         let preload_modules: &[BunString] =
             unsafe { bun_core::ffi::slice(preload_modules_ptr, preload_modules_len) };
 
-        // Inherit the parent VM's configured preloads (bunfig `preload` /
-        // `--preload` / `--require` / `--import`). `initial_preload` is set
-        // once at startup on the parent thread and never mutated, so reading
-        // it here (on that same thread) is race-free. Relative entries were
-        // absolutised at seed time so a later `process.chdir()` does not break
-        // resolution in `load_preloads`.
-        //
-        // Skipped when the user passed an explicit `execArgv` (including
-        // `execArgv: []`): Node.js puts `--require` in `execArgv` and a worker
-        // that overrides it does not re-run the parent's `--require`, so
-        // `execArgv: []` is the opt-out for inherited preloads.
+        // Inherit the parent VM's configured preloads (bunfig/CLI), skipped
+        // when the user passed an explicit `execArgv`: Node.js puts
+        // `--require` in `execArgv`, so overriding it is the opt-out.
         let inherited_preloads: Vec<Box<[u8]>> = if inherit_exec_argv {
             parent_ref.initial_preload.clone()
         } else {
@@ -532,13 +524,9 @@ impl WebWorker {
         let mut preloads: Vec<Box<[u8]>> =
             Vec::with_capacity(inherited_preloads.len() + preload_modules_len);
 
-        // For a node:worker_threads Worker the JS wrapper injects
-        // "node:worker_threads" as the first option preload so its bootstrap
-        // (stdio rebinding, process.chdir/abort stubs) runs before user code.
-        // Keep that sentinel first and splice inherited preloads in after it,
-        // so an inherited preload's console.log reaches a captured
-        // `{stdout: true}` stream and process.chdir throws
-        // ERR_WORKER_UNSUPPORTED_OPERATION as Node.js does for --require.
+        // The node:worker_threads JS wrapper injects "node:worker_threads" as
+        // the first option preload so its bootstrap runs before user code;
+        // keep that sentinel first and splice inherited preloads in after it.
         let mut option_preloads = preload_modules;
         if let Some(first) = option_preloads.first() {
             let first_slice = first.to_utf8();

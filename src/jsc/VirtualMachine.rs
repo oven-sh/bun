@@ -183,12 +183,9 @@ pub struct VirtualMachine {
     /// threads.
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
-    /// The preload list as originally configured (bunfig `preload` + CLI
-    /// `--preload`/`--require`/`--import`). Unlike `preload`, this is never
-    /// cleared after execution, so `WebWorker::create` can copy it into each
-    /// child worker. Set once on the owning thread before any worker is
-    /// spawned and never mutated afterwards, so cross-thread reads from
-    /// `WebWorker::create` (which runs on the parent's thread) need no lock.
+    /// Immutable snapshot of the configured preloads (bunfig + CLI), for
+    /// `WebWorker::create` to copy into child workers. Set once on the
+    /// owning thread before any worker spawns, never mutated afterwards.
     pub initial_preload: Vec<Box<[u8]>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     // Note: layering — the concrete `bun_standalone_graph::Graph` lives
@@ -2252,11 +2249,8 @@ impl VirtualMachine {
     }
 
     /// Snapshot `self.preload` into `self.initial_preload` for worker
-    /// inheritance, absolutising `./` / `../` entries against the startup
-    /// `top_level_dir` so a later `process.chdir()` on the main thread does
-    /// not break resolution when the worker's `load_preloads` runs. Absolute
-    /// paths, `node:`/`bun:`/`file://` specifiers and bare package names are
-    /// kept verbatim.
+    /// inheritance. `./` / `../` entries are joined against the startup
+    /// `top_level_dir` so a later `process.chdir()` does not break resolution.
     pub fn seed_initial_preload(&mut self) {
         use bun_paths::{
             is_absolute, is_package_path_not_absolute, path_buffer_pool, resolve_path,
@@ -2266,9 +2260,6 @@ impl VirtualMachine {
             .preload
             .iter()
             .map(|p| {
-                // `is_absolute || is_package_path_not_absolute` is exactly
-                // "not a `./` / `../` relative path", which covers `node:`,
-                // `bun:`, `file://` and bare package names.
                 if is_absolute(p) || is_package_path_not_absolute(p) {
                     return p.clone();
                 }

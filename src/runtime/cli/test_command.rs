@@ -2290,13 +2290,9 @@ impl TestCommand {
         vm.argv = core::mem::take(&mut ctx.passthrough);
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
         vm.preload = ctx.preloads.clone();
-        // Intentionally NOT seeding `vm.initial_preload` for `bun test`.
-        // `ctx.preloads` here is `[test] preload` from bunfig plus any CLI
-        // `--preload`/`--require`/`--import`; re-running those inside every
-        // in-process Worker a test spawns is surprising (and clobbers
-        // `process.env` for tests that assert a Worker's `env:` option is
-        // exactly what they passed). Spawned-subprocess tests read bunfig
-        // themselves, so they are unaffected.
+        // `initial_preload` stays empty for `bun test`: re-running
+        // `[test] preload` inside every in-process Worker a test spawns would
+        // clobber `process.env` for worker-env tests.
         vm.transpiler.options.rewrite_jest_for_tests = true;
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
             ctx.runtime_options.experimental_http2_fetch,

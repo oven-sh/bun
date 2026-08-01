@@ -1646,6 +1646,11 @@ impl Run {
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
         vm.global().handle_rejected_promises();
         vm.on_exit();
+        // Node drains Promise microtasks once after a natural-shutdown 'exit'
+        // so a rejection queued from an 'exit' listener reaches its handler.
+        // Placed here (not in Process__dispatchOnExit) so the fatal-exception
+        // and worker-crash on_exit() paths keep Node's "drop them" behaviour.
+        vm.drain_microtasks();
 
         if ANY_UNHANDLED.load(Ordering::Relaxed) {
             print_unhandled_version_note(vm);

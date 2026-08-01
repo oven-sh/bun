@@ -2514,6 +2514,11 @@ impl VirtualMachine {
                     break;
                 }
                 if !self.is_event_loop_alive() {
+                    // JSC only roots the load-module promise while Pending; the
+                    // caller will tick (possibly GC) before reading its status
+                    // in `report_unsettled_entry_promise`, so keep it alive.
+                    JSValue::from_cell(promise).protect();
+                    self.pending_internal_promise_is_protected = true;
                     break;
                 }
                 self.auto_tick();

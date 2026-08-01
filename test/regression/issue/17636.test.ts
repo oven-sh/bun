@@ -214,3 +214,106 @@ test.concurrent(
   },
   timeout,
 );
+
+test.concurrent(
+  "explicit process.exit() does not drain microtasks queued from an 'exit' listener",
+  async () => {
+    // Mirror of the natural-shutdown microtask test: on explicit process.exit()
+    // Node drops them (and nextTick too); the drain is natural-shutdown only.
+    const source = `
+    process.on("exit", c => {
+      console.log("exit-listener:" + c);
+      Promise.resolve().then(() => console.log("LEAK-microtask"));
+      process.nextTick(() => console.log("LEAK-nexttick"));
+    });
+    process.exit(3);
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["exit-listener:3"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(3);
+  },
+  timeout,
+);
+
+test.concurrent(
+  "fatal uncaught exception does not drain microtasks queued from an 'exit' listener",
+  async () => {
+    // Node drops them on this path too; only natural shutdown drains.
+    const source = `
+    process.on("exit", c => {
+      console.log("exit-listener:" + c);
+      Promise.resolve().then(() => console.log("LEAK-microtask"));
+    });
+    throw new Error("boom");
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["exit-listener:1"]);
+    expect(stderr).toContain("boom");
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);
+
+test.concurrent(
+  "beforeExit listener that rejects the TLA surfaces via uncaughtException (exit 1)",
+  async () => {
+    const source = `
+    let reject;
+    process.on("beforeExit", () => reject(new Error("boom")));
+    await new Promise((_, r) => { reject = r; });
+    console.log("unreachable");
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("boom");
+    expect(stderr).not.toContain("unsettled top-level await");
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);
+
+test.concurrent(
+  "beforeExit listener that rejects the TLA is swallowed by a user uncaughtException handler",
+  async () => {
+    const source = `
+    let reject;
+    process.on("uncaughtException", e => console.log("caught:" + e.message));
+    process.on("beforeExit", () => reject(new Error("boom")));
+    await new Promise((_, r) => { reject = r; });
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("caught:boom");
+    expect(stderr).not.toContain("unsettled top-level await");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

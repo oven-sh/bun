@@ -892,23 +892,7 @@ extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t
     auto* process = globalObject->processObject();
     if (exitCode > 0)
         process->m_isExitCodeObservable = true;
-    bool alreadyExiting = process->m_isExiting;
     dispatchExitInternal(globalObject, process, exitCode);
-
-    // Natural-shutdown path only: drain Promise microtasks once after
-    // 'exit' so shutdown-time rejections reach their handlers. An explicit
-    // process.exit() drops them (Node parity). Never drain nextTick here.
-    auto& vm = JSC::getVM(globalObject);
-    if (!alreadyExiting && !vm.hasTerminationRequest()) {
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        vm.drainMicrotasks();
-        if (auto* exception = scope.exception()) {
-            (void)scope.tryClearException();
-            if (!vm.hasPendingTerminationException()) {
-                Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-            }
-        }
-    }
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionUptime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -931,11 +915,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
     RETURN_IF_EXCEPTION(throwScope, {});
 
     auto exitCode = Bun__getExitCode(bunVM(zigGlobal));
-    if (exitCode > 0)
-        process->m_isExitCodeObservable = true;
-    // Explicit process.exit(): Node does not drain microtasks here, so
-    // call dispatchExitInternal directly (Process__dispatchOnExit drains).
-    dispatchExitInternal(zigGlobal, process, exitCode);
+    Process__dispatchOnExit(zigGlobal, exitCode);
 
     // process.reallyExit(exitCode);
     auto reallyExitVal = process->get(globalObject, Identifier::fromString(vm, "reallyExit"_s));

@@ -1895,11 +1895,14 @@ test("cache entry missing package.json is re-downloaded instead of reused", asyn
   expect(exitCode).toBe(0);
 
   // The cache entry itself should have been repopulated.
+  let repopulated = 0;
   for (const entry of await readdirSorted(cacheDir)) {
     if (entry.startsWith("no-deps@") || entry.startsWith("uses-what-bin@")) {
       expect(await exists(join(cacheDir, entry, "package.json"))).toBeTrue();
+      repopulated++;
     }
   }
+  expect(repopulated).toBeGreaterThanOrEqual(2);
 });
 
 test("dependency from root satisfies range from dependency", async () => {

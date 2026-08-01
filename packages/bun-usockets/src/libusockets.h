@@ -415,7 +415,9 @@ int us_ssl_parse_pkcs12(const char *data, size_t len, const char *pass,
     char **out_key, size_t *out_key_len, char **out_cert, size_t *out_cert_len,
     char **out_ca, size_t *out_ca_len, const char **err_reason);
 void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
-    struct ssl_ctx_st *(*cb)(struct us_listen_socket_t *, const char *hostname, int *abort_handshake, struct us_socket_t *socket)) nonnull_fn_decl;
+    struct ssl_ctx_st *(*cb)(struct us_listen_socket_t *, const char *hostname, int *abort_handshake, struct us_socket_t *socket),
+    void *data);
+void *us_listen_socket_server_name_data(struct us_listen_socket_t *ls) nonnull_fn_decl;
 /* Resume a handshake suspended by an async SNICallback (the dynamic resolver
  * set abort_handshake = 2). `ctx` may be NULL (use the default context); the
  * call consumes the reference. `error` != 0 aborts the handshake. Safe to call

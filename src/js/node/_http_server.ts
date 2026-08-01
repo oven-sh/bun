@@ -368,6 +368,12 @@ function Server(options, callback): void {
       throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
     }
 
+    const sniCallback = options.SNICallback;
+    if (sniCallback != null) {
+      validateFunction(sniCallback, "options.SNICallback");
+      this._SNICallback = sniCallback;
+    }
+
     if (this[isTlsSymbol]) {
       // Translate minVersion/maxVersion/secureProtocol into the integer
       // protocol range the native layer applies (secureProtocol wins, like
@@ -1178,7 +1184,47 @@ function applyServerCustomOptions(server: Server) {
     onServerClientError.bind(server),
     onServerConnection.bind(server),
     !!server.httpAllowHalfOpen,
+    server[tlsSymbol] && typeof server._SNICallback === "function" ? onServerSNI.bind(server) : undefined,
   );
+}
+
+// Native SNI dispatch (node:https SNICallback). Called from inside the TLS
+// handshake's select-certificate callback with the ClientHello's servername;
+// returns the native SecureContext to install on this handshake, undefined to
+// fall through to the default context, or an Error to drop the connection.
+// Same contract as the net.ts ServerHandlers.serverName handler (see that for
+// the full state machine); without a resume handle an SNICallback that defers
+// its completion callback falls through to the default context.
+function onServerSNI(this: Server, servername, socketHandle) {
+  const cb = this._SNICallback;
+  if (typeof cb !== "function" || !servername) return undefined;
+  let settled = false;
+  let selected;
+  let failed;
+  const done = (err, context) => {
+    if (settled) return;
+    settled = true;
+    if (err) {
+      failed = err instanceof Error ? err : new Error("SNI callback error");
+      return;
+    }
+    if (context == null) return;
+    const inner = typeof context === "object" ? context.context : undefined;
+    if (inner) selected = inner;
+    else failed = new Error("Invalid SNI context");
+  };
+  try {
+    cb.$call(this, servername, done);
+  } catch (err) {
+    settled = true;
+    failed = err instanceof Error ? err : new Error("SNI callback error");
+  }
+  if (!settled) {
+    if (!socketHandle) return undefined;
+    return true;
+  }
+  if (failed !== undefined) return failed;
+  return selected;
 }
 
 function httpAllowHalfOpenGet(this: Server) {

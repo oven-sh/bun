@@ -312,6 +312,12 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// `JSValue::ZERO` when unset; written by `server_set_on_connection`.
     pub(crate) on_connection: JSValue,
 
+    /// Raw shadow of the wrapper's `m_onServerName` WriteBarrier slot.
+    /// `JSValue::ZERO` when unset; written by `server_set_on_server_name`.
+    /// The dynamic SNI resolver for node:https `SNICallback`; dispatched from
+    /// inside the TLS handshake's select-certificate callback.
+    pub(crate) on_server_name: JSValue,
+
     pub(crate) inspector_server_id: jsc::DebuggerId,
 }
 
@@ -2036,6 +2042,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             user_routes: Vec::new(),
             on_clienterror: JSValue::ZERO,
             on_connection: JSValue::ZERO,
+            on_server_name: JSValue::ZERO,
             inspector_server_id: jsc::DebuggerId::init(0),
         }));
 
@@ -3037,7 +3044,7 @@ mod cached_values {
         ($ty:literal) => {
             bun_jsc::codegen_cached_accessors!(
                 $ty; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, onConnection,
-                wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong
+                onServerName, wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong
             );
         };
     }
@@ -3090,6 +3097,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     );
     slot_setter!(js_gc_on_client_error_set, on_client_error_set_cached);
     slot_setter!(js_gc_on_connection_set, on_connection_set_cached);
+    slot_setter!(js_gc_on_server_name_set, on_server_name_set_cached);
     slot_setter!(js_gc_ws_on_open_set, ws_on_open_set_cached);
     slot_setter!(js_gc_ws_on_message_set, ws_on_message_set_cached);
     slot_setter!(js_gc_ws_on_close_set, ws_on_close_set_cached);

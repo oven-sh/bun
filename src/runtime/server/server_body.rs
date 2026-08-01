@@ -3886,6 +3886,98 @@ fn server_set_on_connection(
     Ok(JSValue::UNDEFINED)
 }
 
+fn server_set_on_server_name(
+    global: &JSGlobalObject,
+    server: JSValue,
+    callback: JSValue,
+) -> JsResult<JSValue> {
+    if !server.is_object() {
+        return Err(global.throw(format_args!(
+            "Failed to set onServerName: The 'this' value is not a Server."
+        )));
+    }
+
+    if !callback.is_function() {
+        return Err(global.throw(format_args!(
+            "Failed to set onServerName: The provided value is not a function."
+        )));
+    }
+
+    macro_rules! handle {
+        ($T:ty) => {
+            if let Some(this) = server.as_::<$T>() {
+                // SAFETY: as_ returned a non-null *mut to a live server.
+                let this = unsafe { &mut *this };
+                this.on_server_name = callback;
+                super::wrap_handler_slot(
+                    &mut this.on_server_name,
+                    server,
+                    global,
+                    <$T>::js_gc_on_server_name_set,
+                );
+                // openssl.c dispatches `ls->on_server_name(ls, hostname,
+                // &abort_handshake, socket)` from inside the TLS handshake's
+                // select-certificate callback. `data` is the owning server so
+                // the dispatch can recover its JS handler; the Bun.listen path
+                // uses `ls.group().owner()` for the same purpose, but that
+                // slot belongs to the uWS HttpContext here.
+                extern "C" fn dispatch(
+                    ls: *mut uws_sys::ListenSocket,
+                    hostname: *const core::ffi::c_char,
+                    abort_handshake: *mut core::ffi::c_int,
+                    _socket: *mut c_void,
+                ) -> *mut c_void {
+                    jsc::mark_binding!();
+                    if ls.is_null() || hostname.is_null() {
+                        return core::ptr::null_mut();
+                    }
+                    // S008: `ListenSocket` is an `opaque_ffi!` ZST - safe deref.
+                    let data = bun_opaque::opaque_deref_mut(ls).server_name_data();
+                    if data.is_null() {
+                        return core::ptr::null_mut();
+                    }
+                    // SAFETY: `data` is the `*mut Self` registered below; the
+                    // listen socket cannot outlive the server that owns it.
+                    let this = unsafe { &*data.cast::<$T>() };
+                    if this.vm.is_shutting_down() {
+                        return core::ptr::null_mut();
+                    }
+                    let callback = this.on_server_name;
+                    if callback.is_empty_or_undefined_or_null() {
+                        return core::ptr::null_mut();
+                    }
+                    let global = this.global_this();
+                    // SAFETY: `hostname` is NUL-terminated per the C contract.
+                    let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
+                    let js_name = ZigString::init(name.to_bytes()).to_js(global);
+                    // No resume handle for the accepted uWS socket yet, so an
+                    // SNICallback that defers its completion callback falls
+                    // through to the default context (the net.ts handler's
+                    // `!socketHandle` guard). Synchronous resolutions are
+                    // carried by the return value.
+                    let result = match callback.call(global, JSValue::UNDEFINED, &[js_name, JSValue::UNDEFINED]) {
+                        Ok(v) => v,
+                        Err(err) => global.take_exception(err),
+                    };
+                    crate::socket::listener::decode_sni_result(result, abort_handshake)
+                }
+                if let Some(listener) = this.listener {
+                    // S008: app::ListenSocket<SSL> is layout-identical to
+                    // uws_sys::ListenSocket (both ZST opaques).
+                    bun_opaque::opaque_deref_mut(listener.cast::<uws_sys::ListenSocket>())
+                        .on_server_name(dispatch, core::ptr::from_mut::<$T>(this).cast::<c_void>());
+                }
+                return Ok(JSValue::UNDEFINED);
+            }
+        };
+    }
+    // A plain-HTTP listener has no SSL_CTX for the select-certificate hook,
+    // so the dispatch would never fire; skip the non-SSL variants entirely.
+    handle!(HTTPSServer);
+    handle!(DebugHTTPSServer);
+    Ok(JSValue::UNDEFINED)
+}
+
 fn server_set_app_flags(
     global: &JSGlobalObject,
     server: JSValue,
@@ -4019,6 +4111,15 @@ extern "C" fn server_set_on_connection_shim(
     callback: JSValue,
 ) -> JSValue {
     host_fn::to_js_host_fn_result(global, server_set_on_connection(global, server, callback))
+}
+
+#[unsafe(export_name = "Server__setOnServerName")]
+extern "C" fn server_set_on_server_name_shim(
+    global: &JSGlobalObject,
+    server: JSValue,
+    callback: JSValue,
+) -> JSValue {
+    host_fn::to_js_host_fn_result(global, server_set_on_server_name(global, server, callback))
 }
 
 #[unsafe(export_name = "Server__setMaxHTTPHeaderSize")]

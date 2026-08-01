@@ -2883,8 +2883,10 @@ struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket
 }
 
 void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
-                                     struct ssl_ctx_st *(*cb)(struct us_listen_socket_t *, const char *, int *, struct us_socket_t *)) {
+                                     struct ssl_ctx_st *(*cb)(struct us_listen_socket_t *, const char *, int *, struct us_socket_t *),
+                                     void *data) {
   ls->on_server_name = cb;
+  ls->on_server_name_data = data;
   /* The dynamic resolver may need to suspend the handshake (async
    * SNICallback); only the early select-certificate callback supports retry,
    * so register it on the listener's default context. The servername-stage
@@ -2893,6 +2895,10 @@ void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
   if (ls->ssl_ctx) {
     SSL_CTX_set_select_certificate_cb(ls->ssl_ctx, us_select_cert_cb);
   }
+}
+
+void *us_listen_socket_server_name_data(struct us_listen_socket_t *ls) {
+  return ls->on_server_name_data;
 }
 
 /* Register a socket-level SNI resolver on an already-attached server-side SSL.

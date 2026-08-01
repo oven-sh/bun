@@ -441,6 +441,10 @@ struct us_listen_socket_t {
    * in-flight handshake only (the caller does not cache it), or NULL to fall
    * through to the default context. */
   struct ssl_ctx_st *(*on_server_name)(struct us_listen_socket_t *, const char *hostname, int *abort_handshake, struct us_socket_t *socket);
+  /* Opaque pointer stashed alongside on_server_name so a resolver can recover
+   * its owner when group->ext belongs to something else (the uWS HttpContext
+   * on the Bun.serve path). */
+  void *on_server_name_data;
   unsigned int socket_ext_size;
   /* kind to stamp on accepted sockets. */
   unsigned char accept_kind;

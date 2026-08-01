@@ -556,7 +556,8 @@ impl Listener {
             // resolution suspends the handshake until resumeSNI.
             if !this_ref.handlers.on_server_name().is_empty() {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST - safe deref.
-                bun_opaque::opaque_deref_mut(listen_socket).on_server_name(us_dispatch_server_name);
+                bun_opaque::opaque_deref_mut(listen_socket)
+                    .on_server_name(us_dispatch_server_name, core::ptr::null_mut());
             }
         }
 
@@ -1924,7 +1925,7 @@ pub(crate) extern "C" fn us_dispatch_socket_server_name(
 
 /// Shared decoding of what the JS SNI handler returned. See
 /// `us_dispatch_server_name` for the contract.
-fn decode_sni_result(result: JSValue, abort_handshake: *mut core::ffi::c_int) -> *mut c_void {
+pub(crate) fn decode_sni_result(result: JSValue, abort_handshake: *mut core::ffi::c_int) -> *mut c_void {
     if result.is_boolean() && result.to_boolean() {
         if !abort_handshake.is_null() {
             // SAFETY: live out-parameter for the duration of this dispatch.

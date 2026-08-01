@@ -97,6 +97,7 @@ function generate(name) {
       "onNodeHTTPRequest",
       "onClientError",
       "onConnection",
+      "onServerName",
       "wsOnOpen",
       "wsOnMessage",
       "wsOnClose",

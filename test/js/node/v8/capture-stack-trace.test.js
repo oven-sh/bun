@@ -1,6 +1,6 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
-import { afterEach, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
@@ -1125,17 +1125,19 @@ test("lazy error-info materialization does not store an empty stack value when t
 // https://github.com/oven-sh/bun/issues/10483
 // Errors created inside an async function that is awaited at a module's top
 // level should include that top-level await as an async frame, matching Node.
-test("async stack trace includes the top-level-await caller frame", async () => {
-  using dir = tempDir("tla-async-stack", {
-    // One level: the async function is awaited directly at the module top level.
-    "direct.mjs": `async function inner() {
+describe("async stack trace includes the top-level-await caller frame", () => {
+  let dir;
+  beforeAll(() => {
+    dir = tempDir("tla-async-stack", {
+      // One level: the async function is awaited directly at the module top level.
+      "direct.mjs": `async function inner() {
   await 0;
   console.log(new Error("boom").stack);
 }
 await inner();
 `,
-    // Three nested async functions under the module's top-level await.
-    "chain.mjs": `async function inner() {
+      // Three nested async functions under the module's top-level await.
+      "chain.mjs": `async function inner() {
   await 0;
   console.log(new Error("boom").stack);
 }
@@ -1143,9 +1145,9 @@ async function mid() { await inner(); }
 async function outer() { await mid(); }
 await outer();
 `,
-    // The issue's original reproduction: an anonymous async arrow awaited at
-    // top level, thrown so Bun's own error printer renders the stack.
-    "anon.mjs": `export function throwSome(b) {
+      // The issue's original reproduction: an anonymous async arrow awaited at
+      // top level, thrown so Bun's own error printer renders the stack.
+      "anon.mjs": `export function throwSome(b) {
   return async () => {
     await b();
     throw new Error("asd");
@@ -1154,9 +1156,9 @@ await outer();
 export const some = throwSome(async () => {});
 await some();
 `,
-    // The module frame is exposed as a CallSite with isAsync() true and no
-    // function name, matching Node.
-    "callsites.mjs": `async function inner() {
+      // The module frame is exposed as a CallSite with isAsync() true and no
+      // function name, matching Node.
+      "callsites.mjs": `async function inner() {
   await 0;
   Error.prepareStackTrace = (e, sites) => JSON.stringify(sites.map(s => ({
     fn: s.getFunctionName() || null,
@@ -1167,19 +1169,20 @@ await some();
 }
 await inner();
 `,
-    // The async chain can terminate at a combinator result promise with no
-    // awaiter. asyncStackTraceContext() returns the empty JSValue there, which
-    // isCell() misclassifies on JSVALUE64, so it must be checked explicitly.
-    "race.mjs": `async function inner() {
+      // The async chain can terminate at a combinator result promise with no
+      // awaiter. asyncStackTraceContext() returns the empty JSValue there,
+      // which isCell() misclassifies on JSVALUE64, so it must be checked
+      // explicitly.
+      "race.mjs": `async function inner() {
   await 0;
   console.log(new Error("boom").stack);
 }
 Promise.race([inner()]);
 await Promise.resolve();
 `,
-    // With AsyncLocalStorage active the reaction context is wrapped in an
-    // InternalFieldTuple; the walk has to unwrap field 0 to see the module.
-    "als.mjs": `import { AsyncLocalStorage } from "node:async_hooks";
+      // With AsyncLocalStorage active the reaction context is wrapped in an
+      // InternalFieldTuple; the walk has to unwrap field 0 to see the module.
+      "als.mjs": `import { AsyncLocalStorage } from "node:async_hooks";
 new AsyncLocalStorage().enterWith({});
 async function inner() {
   await 0;
@@ -1187,26 +1190,28 @@ async function inner() {
 }
 await inner();
 `,
-    // Errors created in native code with no JS frames (e.g. fs.promises) take
-    // a separate reaction-chain walk (Bun__attachAsyncStackFromPromise).
-    "native.mjs": `import { readFile } from "node:fs/promises";
+      // Errors created in native code with no JS frames (e.g. fs.promises) take
+      // a separate reaction-chain walk (Bun__attachAsyncStackFromPromise).
+      "native.mjs": `import { readFile } from "node:fs/promises";
 try {
   await readFile("/nonexistent-tla-probe/x");
 } catch (e) {
   console.log(e.stack);
 }
 `,
-    // A module's await frame reaches across an import boundary.
-    "entry.mjs": `import { run } from "./lib.mjs";
+      // A module's await frame reaches across an import boundary.
+      "entry.mjs": `import { run } from "./lib.mjs";
 await run();
 `,
-    "lib.mjs": `async function inner() {
+      "lib.mjs": `async function inner() {
   await 0;
   console.log(new Error("boom").stack);
 }
 export async function run() { await inner(); }
 `,
+    });
   });
+  afterAll(() => dir[Symbol.dispose]());
 
   const run = async name => {
     await using proc = Bun.spawn({
@@ -1220,54 +1225,67 @@ export async function run() { await inner(); }
     return { stdout: stdout.trim().split("\n"), stderr, exitCode };
   };
 
-  const [direct, chain, entry, anon, race, als, native, callsites] = await Promise.all([
-    run("direct.mjs"),
-    run("chain.mjs"),
-    run("entry.mjs"),
-    run("anon.mjs"),
-    run("race.mjs"),
-    run("als.mjs"),
-    run("native.mjs"),
-    run("callsites.mjs"),
-  ]);
+  test("direct await", async () => {
+    const { stdout, exitCode } = await run("direct.mjs");
+    expect(stdout[0]).toBe("Error: boom");
+    expect(stdout[1]).toMatch(/^ {4}at inner \(.*direct\.mjs:3:\d+\)$/);
+    expect(stdout[2]).toMatch(/^ {4}at async .*direct\.mjs:5:\d+$/);
+    expect(stdout).toHaveLength(3);
+    expect(exitCode).toBe(0);
+  });
 
-  expect(direct.stdout[0]).toBe("Error: boom");
-  expect(direct.stdout[1]).toMatch(/^ {4}at inner \(.*direct\.mjs:3:\d+\)$/);
-  expect(direct.stdout[2]).toMatch(/^ {4}at async .*direct\.mjs:5:\d+$/);
-  expect(direct.stdout).toHaveLength(3);
-  expect(direct.exitCode).toBe(0);
+  test("nested async chain", async () => {
+    const { stdout, exitCode } = await run("chain.mjs");
+    expect(stdout[1]).toMatch(/^ {4}at inner \(.*chain\.mjs:3:\d+\)$/);
+    expect(stdout[2]).toMatch(/^ {4}at async mid \(.*chain\.mjs:5:\d+\)$/);
+    expect(stdout[3]).toMatch(/^ {4}at async outer \(.*chain\.mjs:6:\d+\)$/);
+    expect(stdout[4]).toMatch(/^ {4}at async .*chain\.mjs:7:\d+$/);
+    expect(stdout).toHaveLength(5);
+    expect(exitCode).toBe(0);
+  });
 
-  expect(chain.stdout[1]).toMatch(/^ {4}at inner \(.*chain\.mjs:3:\d+\)$/);
-  expect(chain.stdout[2]).toMatch(/^ {4}at async mid \(.*chain\.mjs:5:\d+\)$/);
-  expect(chain.stdout[3]).toMatch(/^ {4}at async outer \(.*chain\.mjs:6:\d+\)$/);
-  expect(chain.stdout[4]).toMatch(/^ {4}at async .*chain\.mjs:7:\d+$/);
-  expect(chain.stdout).toHaveLength(5);
-  expect(chain.exitCode).toBe(0);
+  test("across an import boundary", async () => {
+    const { stdout, exitCode } = await run("entry.mjs");
+    expect(stdout[1]).toMatch(/^ {4}at inner \(.*lib\.mjs:3:\d+\)$/);
+    expect(stdout[2]).toMatch(/^ {4}at async run \(.*lib\.mjs:5:\d+\)$/);
+    expect(stdout[3]).toMatch(/^ {4}at async .*entry\.mjs:2:\d+$/);
+    expect(stdout).toHaveLength(4);
+    expect(exitCode).toBe(0);
+  });
 
-  expect(entry.stdout[1]).toMatch(/^ {4}at inner \(.*lib\.mjs:3:\d+\)$/);
-  expect(entry.stdout[2]).toMatch(/^ {4}at async run \(.*lib\.mjs:5:\d+\)$/);
-  expect(entry.stdout[3]).toMatch(/^ {4}at async .*entry\.mjs:2:\d+$/);
-  expect(entry.stdout).toHaveLength(4);
-  expect(entry.exitCode).toBe(0);
+  test("anonymous async arrow (issue #10483 repro) via Bun's error printer", async () => {
+    const { stderr, exitCode } = await run("anon.mjs");
+    expect(stderr).toMatch(/anon\.mjs:4:\d+/);
+    expect(stderr).toMatch(/async \(.*anon\.mjs:8:\d+\)/);
+    expect(exitCode).toBe(1);
+  });
 
-  expect(anon.stderr).toMatch(/anon\.mjs:4:\d+/);
-  expect(anon.stderr).toMatch(/async \(.*anon\.mjs:8:\d+\)/);
-  expect(anon.exitCode).toBe(1);
+  test("Promise.race terminal context (empty JSValue)", async () => {
+    const { stdout, exitCode } = await run("race.mjs");
+    expect(stdout[1]).toMatch(/^ {4}at inner \(.*race\.mjs:3:\d+\)$/);
+    expect(stdout).toHaveLength(2);
+    expect(exitCode).toBe(0);
+  });
 
-  expect(race.stdout[1]).toMatch(/^ {4}at inner \(.*race\.mjs:3:\d+\)$/);
-  expect(race.stdout).toHaveLength(2);
-  expect(race.exitCode).toBe(0);
+  test("under AsyncLocalStorage (InternalFieldTuple context)", async () => {
+    const { stdout, exitCode } = await run("als.mjs");
+    expect(stdout[1]).toMatch(/^ {4}at inner \(.*als\.mjs:5:\d+\)$/);
+    expect(stdout.at(-1)).toMatch(/^ {4}at async .*als\.mjs:7:\d+$/);
+    expect(exitCode).toBe(0);
+  });
 
-  expect(als.stdout[1]).toMatch(/^ {4}at inner \(.*als\.mjs:5:\d+\)$/);
-  expect(als.stdout.at(-1)).toMatch(/^ {4}at async .*als\.mjs:7:\d+$/);
-  expect(als.exitCode).toBe(0);
+  test("native-created error (fs.promises) via reaction-chain walk", async () => {
+    const { stdout, exitCode } = await run("native.mjs");
+    expect(stdout.at(-1)).toMatch(/^ {4}at async .*native\.mjs:3:\d+$/);
+    expect(exitCode).toBe(0);
+  });
 
-  expect(native.stdout.at(-1)).toMatch(/^ {4}at async .*native\.mjs:3:\d+$/);
-  expect(native.exitCode).toBe(0);
-
-  expect(JSON.parse(callsites.stdout[0])).toEqual([
-    { fn: "inner", async: false, line: 8 },
-    { fn: null, async: true, line: 10 },
-  ]);
-  expect(callsites.exitCode).toBe(0);
+  test("CallSite shape matches Node (getFunctionName null, isAsync true)", async () => {
+    const { stdout, exitCode } = await run("callsites.mjs");
+    expect(JSON.parse(stdout[0])).toEqual([
+      { fn: "inner", async: false, line: 8 },
+      { fn: null, async: true, line: 10 },
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });

@@ -74,9 +74,17 @@ return transitionCountEstimate() > s_maxTransitionLengthForRemove /* 4096 */
 
 For a pinned cacheable dictionary `transitionCountHasOverflowed()` is always false (`pin()` clears `previousID()`), so the only escape is `transitionCountEstimate() > 4096`. That leaves the whole [~130, 4096] band in the clone-on-every-delete path.
 
-The cloned Structure is never added to any transition table (`if (!structure->hasBeenDictionary())` is false at the end of `removeNewPropertyTransition`), so there is no transition caching being preserved by staying in cacheable-dictionary mode across a delete.
+### Relationship to bug 206430
 
-Bug 283094 / 286601@main added the 4096 threshold as a partial fix for this; this is the remaining gap below the threshold.
+Bug 206430 made `delete` keep objects on the structure chain by caching `PropertyDeletion` transitions, so instances continue to share a Structure and get/put can still inline-cache. Its "when to give up and go uncacheable" heuristic was `transitionCountHasOverflowed()`: once the `previousID()` chain grows past 128, stop creating new structures.
+
+Cacheable dictionaries fall through a gap in that heuristic:
+
+- `pin()` clears `previousID()`, so `transitionCountHasOverflowed()` never fires for them.
+- `removePropertyTransitionFromExistingStructure` bails on `hasBeenDictionary()`, so the `PropertyDeletion` transition lookup is skipped.
+- The new Structure is never inserted into `m_transitionTable` (`if (!structure->hasBeenDictionary())` guards the insert).
+
+So a cacheable dictionary pays the full O(N) clone per delete but receives none of the transition caching that bug 206430 introduced. Bug 283094 / 286601@main partially closed this with the `transitionCountEstimate() > 4096` check; the [~130, 4096] band is still uncovered.
 
 ### Proposed fix
 
@@ -91,6 +99,8 @@ Promote a cacheable dictionary to uncacheable on the first delete, inside `remov
 
 With this change the first delete still pays one O(N) `copyPropertyTableForPinning` inside `toDictionaryTransition`, but every subsequent delete/add is O(1) in-place. The microbenchmark above goes flat at ~1 ms for all N.
 
-This only affects objects that are already dictionaries (more than ~`s_maxTransitionLength` properties); normal structure-chain objects keep the cacheable PropertyDeletion transition from bug 206430. A local release `jsc` build with this change is neutral-to-faster on `JSTests/microbenchmarks/delete-property-*` and passes the relevant `JSTests/stress` tests unchanged.
+Structure-chain objects (the `Point`/constructor pattern that motivated bug 206430) have `isDictionary() == false` and are unaffected: they keep the cached `PropertyDeletion` transition and delete inline caching. The one behavioural change is that a cacheable dictionary (an object that has already grown past ~`s_maxTransitionLength` properties) becomes uncacheable after its first delete, so subsequent get/put on that specific object no longer IC. In the repeated-delete workloads that hit this path the post-delete Structure was being replaced on every iteration anyway, so no IC was surviving.
+
+A local release `jsc` build with this change is neutral-to-faster on `JSTests/microbenchmarks/delete-property-*` (including `delete-property-keeps-cacheable-structure.js` from bug 206430) and passes the relevant `JSTests/stress` tests unchanged.
 
 `attributeChangeTransition` has the same O(N) clone for cacheable dictionaries but is left unchanged here since it is covered by `JSTests/stress/change-attribute-structure-transition.js`; happy to extend the fix if preferred.

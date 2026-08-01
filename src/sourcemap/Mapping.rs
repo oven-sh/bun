@@ -341,7 +341,7 @@ impl Lookup {
 
         let name: &[u8] = &source_map.external_source_names[source_idx];
 
-        if source_map.is_standalone_module_graph {
+        if source_map.is_standalone_module_graph || has_url_scheme(name) {
             return Some(bun_core::String::clone_utf8(name));
         }
 
@@ -420,6 +420,9 @@ impl Lookup {
             }
 
             let name: &[u8] = &source_map.external_source_names[index];
+            if has_url_scheme(name) {
+                return None;
+            }
 
             let mut buf = bun_paths::PathBuffer::uninit();
             let mut anchor_buf = bun_paths::path_buffer_pool::get();
@@ -458,6 +461,20 @@ fn sources_anchor_dir<'a>(
         return base_dir;
     }
     resolve_path::join_abs_string_buf::<platform::Loose>(base_dir, buf, &[url_dir])
+}
+
+/// Whether a `sources[]` entry carries an absolute URL scheme (webpack://,
+/// ng://) and should be displayed verbatim rather than path-joined.
+fn has_url_scheme(name: &[u8]) -> bool {
+    let Some(colon) = bun_core::strings::index_of_char(name, b':') else {
+        return false;
+    };
+    let colon = colon as usize;
+    colon > 0
+        && name.get(colon + 1..colon + 3) == Some(b"//")
+        && name[..colon]
+            .iter()
+            .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'.' | b'-'))
 }
 
 impl Mapping {

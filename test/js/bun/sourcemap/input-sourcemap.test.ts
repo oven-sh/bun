@@ -242,6 +242,22 @@ try { require("./index.js"); } catch (e) { console.log(e.stack); }
     expect(exitCode).toBe(1);
   });
 
+  test("absolute-scheme sources (webpack://) are displayed verbatim", async () => {
+    using dir = tempDir("input-sourcemap-webpack", {
+      "index.js": generated + "//# sourceMappingURL=index.js.map\n",
+      "index.js.map": JSON.stringify({
+        ...mapJson,
+        sources: ["webpack://app/./src/index.ts"],
+        sourcesContent: [original],
+      }),
+    });
+
+    const { stderr, exitCode } = await run(String(dir), "index.js");
+    expect(stderr).toContain("at boom (webpack://app/./src/index.ts:6:");
+    expect(stderr).toContain(`function boom(): never {`);
+    expect(exitCode).toBe(1);
+  });
+
   test("sources resolve relative to the map file, not the executed file", async () => {
     // tsc `mapRoot`: map lives under maps/, sources are relative to the map.
     using dir = tempDir("input-sourcemap-mapdir", {

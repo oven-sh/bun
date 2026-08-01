@@ -918,7 +918,11 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
     }
 
     let Some(mappings_str) = json.get(b"mappings") else {
-        return Err(crate::Error::UnsupportedVersion);
+        return Err(if json.get(b"sections").is_some() {
+            crate::Error::UnsupportedFormat
+        } else {
+            crate::Error::UnsupportedVersion
+        });
     };
 
     let Some(mappings_vlq) = mappings_str.as_utf8_string_literal() else {

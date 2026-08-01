@@ -902,7 +902,9 @@ extern "C" int64_t Bun__currentSyncPID = 0;
 static int Bun__pendingSignalToSend = 0;
 static struct sigaction previous_actions[NSIG];
 
-// This list of signals is copied from npm.
+// This list of signals is copied from npm, minus aliases (SIGIOT == SIGABRT,
+// SIGPOLL == SIGIO) which would double-write previous_actions[N] and lose the
+// original disposition.
 // https://github.com/npm/cli/blob/fefd509992a05c2dfddbe7bc46931c42f1da69d7/workspaces/arborist/lib/signals.js#L26-L57
 #define FOR_EACH_POSIX_SIGNAL(M) \
     M(SIGABRT);                  \
@@ -917,16 +919,12 @@ static struct sigaction previous_actions[NSIG];
     M(SIGTRAP);                  \
     M(SIGSYS);                   \
     M(SIGQUIT);                  \
-    M(SIGIOT);                   \
     M(SIGIO);
 
 #if OS(LINUX)
 // SIGPWR is intentionally excluded: JSC uses it for GC thread suspend/resume
-// (see wtf/posix/ThreadingPOSIX.cpp). Overriding it here breaks GC and the
-// SA_RESETHAND disposition leaves it at SIG_DFL after one delivery, which
-// kills the process on the next collection.
+// (see wtf/posix/ThreadingPOSIX.cpp); overriding it here breaks GC.
 #define FOR_EACH_LINUX_ONLY_SIGNAL(M) \
-    M(SIGPOLL);                       \
     M(SIGSTKFLT);
 
 #endif

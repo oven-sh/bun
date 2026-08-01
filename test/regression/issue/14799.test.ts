@@ -44,62 +44,65 @@ test.skipIf(!isPosix)("nested bun run waits for the child on SIGINT", async () =
     detached: true,
   });
 
-  const stderrPromise = outer.stderr.text();
-  const reader = outer.stdout.getReader();
-  const decoder = new TextDecoder();
-  let stdout = "";
-  let innerPid = 0;
-  while (!innerPid) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    stdout += decoder.decode(value, { stream: true });
-    const m = stdout.match(/ready (\d+)/);
-    if (m) innerPid = Number(m[1]);
-  }
-  expect(innerPid).toBeGreaterThan(0);
-
-  // SIGINT to the whole process group (detached => outer.pid is the pgid).
-  process.kill(-outer.pid, "SIGINT");
-
-  const exitCode = await outer.exited;
-
-  // With the bug, the middle runner is killed by the second SIGINT and the
-  // outer runner returns immediately, while the innermost script is still in
-  // its 500ms cleanup timer. With the fix, the outer runner only returns once
-  // its child (and transitively the innermost script) has exited.
-  let innerAlive: boolean;
   try {
-    process.kill(innerPid, 0);
-    innerAlive = true;
-  } catch {
-    innerAlive = false;
+    const stderrPromise = outer.stderr.text();
+    const reader = outer.stdout.getReader();
+    const decoder = new TextDecoder();
+    let stdout = "";
+    let innerPid = 0;
+    while (!innerPid) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stdout += decoder.decode(value, { stream: true });
+      const m = stdout.match(/ready (\d+)/);
+      if (m) innerPid = Number(m[1]);
+    }
+    expect(innerPid).toBeGreaterThan(0);
+
+    // SIGINT to the whole process group (detached => outer.pid is the pgid).
+    process.kill(-outer.pid, "SIGINT");
+
+    const exitCode = await outer.exited;
+
+    // With the bug, the middle runner is killed by the second SIGINT and the
+    // outer runner returns immediately, while the innermost script is still in
+    // its 500ms cleanup timer. With the fix, the outer runner only returns
+    // once its child (and transitively the innermost script) has exited.
+    let innerAlive: boolean;
+    try {
+      process.kill(innerPid, 0);
+      innerAlive = true;
+    } catch {
+      innerAlive = false;
+    }
+
+    // The innermost script still holds the write end of the pipe, so stdout
+    // does not EOF until its cleanup has run regardless of whether the outer
+    // runner waited.
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stdout += decoder.decode(value, { stream: true });
+    }
+    const stderr = await stderrPromise;
+
+    expect(stderr).not.toContain("error");
+    expect({
+      stdout,
+      innerAliveAfterOuterExit: innerAlive,
+      exitCode,
+      signalCode: outer.signalCode,
+    }).toMatchObject({
+      stdout: expect.stringContaining("cleanup done"),
+      innerAliveAfterOuterExit: false,
+      exitCode: 0,
+      signalCode: null,
+    });
+  } finally {
+    // `await using outer` only disposes the one process handle; reap the whole
+    // detached group so nothing is left running on a persistent CI runner.
+    try {
+      process.kill(-outer.pid, "SIGKILL");
+    } catch {}
   }
-
-  // The innermost script still holds the write end of the pipe, so stdout does
-  // not EOF until its cleanup has run regardless of whether the outer runner
-  // waited.
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    stdout += decoder.decode(value, { stream: true });
-  }
-  const stderr = await stderrPromise;
-
-  // Best-effort: don't leak the inner process if it outlived the outer runner.
-  try {
-    process.kill(-outer.pid, "SIGKILL");
-  } catch {}
-
-  expect(stderr).not.toContain("error");
-  expect({
-    stdout,
-    innerAliveAfterOuterExit: innerAlive,
-    exitCode,
-    signalCode: outer.signalCode,
-  }).toMatchObject({
-    stdout: expect.stringContaining("cleanup done"),
-    innerAliveAfterOuterExit: false,
-    exitCode: 0,
-    signalCode: null,
-  });
 });

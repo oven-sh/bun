@@ -1814,7 +1814,10 @@ mod tests {
     fn pattern_no_match_clears_params() {
         let no_match: &[(&[u8], &[u8])] = &[
             // Trailing static segment matches but the URL has more segments.
-            (b"admin/[businessId]/providers", b"admin/xxx/providers/create"),
+            (
+                b"admin/[businessId]/providers",
+                b"admin/xxx/providers/create",
+            ),
             (b"[test]/aa", b"value/aa/yyy"),
             // Trailing single-character static segment: the URL has either too
             // few or too many segments.

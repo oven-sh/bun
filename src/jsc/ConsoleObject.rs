@@ -348,6 +348,12 @@ impl Drop for FlushOnDrop<'_> {
     }
 }
 
+#[inline]
+fn level_uses_stderr(message_type: MessageType, level: MessageLevel) -> bool {
+    matches!(level, MessageLevel::Warning | MessageLevel::Error)
+        || message_type == MessageType::Assert
+}
+
 unsafe extern "C" {
     fn Bun__ConsoleObject__onStdioWriteError(global: &JSGlobalObject, fd: i32, err: JSValue);
 }
@@ -401,8 +407,7 @@ pub extern "C" fn message_with_type_and_level(
     vals: *const JSValue,
     len: usize,
 ) {
-    let is_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error)
-        || message_type == MessageType::Assert;
+    let is_stderr = level_uses_stderr(message_type, level);
     if let Err(err) = message_with_type_and_level_(ctype, message_type, level, global, vals, len) {
         // The exception is already set on the VM (`JsError::Thrown`); for OOM
         // make sure something is pending. Mirrors `host_fn::void_from_js_error`.
@@ -454,8 +459,7 @@ fn message_with_type_and_level_(
 
     // Lock/unlock a mutex incase two JS threads are console.log'ing at the same
     // time. We do this the slightly annoying way to avoid assigning a pointer.
-    let use_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error)
-        || message_type == MessageType::Assert;
+    let use_stderr = level_uses_stderr(message_type, level);
     let _stream_lock = ConsoleStreamLock::acquire(use_stderr);
 
     if message_type == MessageType::Clear {

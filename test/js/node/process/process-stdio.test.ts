@@ -205,10 +205,14 @@ describe.skipIf(isWindows)("process.stdout/stderr EPIPE after reader closes", ()
     child.stdin.end();
     const exitCode = await new Promise<number>(r => child.on("close", code => r(code ?? -1)));
     const lines = stderr.trim().split("\n");
-    const result = JSON.parse(lines.find(l => l.startsWith("{"))!);
-    expect(lines).toContain("[done]");
+    const reportLine = lines.find(l => l.startsWith("{"));
+    if (!reportLine || !lines.includes("[done]")) {
+      // Surface the child's actual stderr/exit instead of a JSON.parse error.
+      expect({ stderr, exitCode }).toEqual({ stderr: expect.stringContaining("[done]"), exitCode: 0 });
+    }
+    const result = JSON.parse(reportLine!) as { seen: string[]; exit: number };
     expect(exitCode).toBe(result.exit);
-    return result as { seen: string[]; exit: number };
+    return result;
   }
 
   test.each(["log", "write"] as const)("%s with 'error' listener: fires EPIPE per write, exit 0", async fn => {

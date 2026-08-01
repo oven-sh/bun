@@ -30,11 +30,7 @@ test("tsconfig paths alias resolves files created at runtime", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("Cannot find module");
   expect(stdout.replaceAll("\r\n", "\n")).toBe(
@@ -67,15 +63,9 @@ test("tsconfig paths alias resolves files created at runtime (require)", async (
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("Cannot find module");
-  expect(stdout.replaceAll("\r\n", "\n")).toBe(
-    "from mod-1.ts\nfrom mod-2.ts\nfrom mod-3.ts\n",
-  );
+  expect(stdout.replaceAll("\r\n", "\n")).toBe("from mod-1.ts\nfrom mod-2.ts\nfrom mod-3.ts\n");
   expect(exitCode).toBe(0);
 });

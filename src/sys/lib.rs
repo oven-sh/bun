@@ -9483,8 +9483,11 @@ impl SysQuietWriterAdapter {
                 }
                 Ok(n) => bytes = &bytes[n..],
                 Err(e) => {
-                    if self.err == 0 {
-                        self.err = e.get_errno() as i32;
+                    let errno = e.get_errno();
+                    // Transients are never forwarded; recording one would mask
+                    // a real error from a later drain in the same console.* call.
+                    if self.err == 0 && errno != E::EAGAIN && errno != E::EINTR {
+                        self.err = errno as i32;
                     }
                     return;
                 }

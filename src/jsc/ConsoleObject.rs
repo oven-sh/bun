@@ -383,10 +383,9 @@ fn forward_write_error(global: &JSGlobalObject, is_stderr: bool) {
     if global.has_exception() {
         return;
     }
-    // Transient: Node/libuv retry these internally and never emit `'error'`.
-    if errno == bun_sys::E::EAGAIN as i32 || errno == bun_sys::E::EINTR as i32 {
-        return;
-    }
+    // EAGAIN/EINTR are filtered at record time (drain_to_fd), so any errno
+    // reaching here is non-transient.
+    debug_assert!(errno != bun_sys::E::EAGAIN as i32 && errno != bun_sys::E::EINTR as i32);
     let sys_err = bun_sys::Error::new(errno, bun_sys::Tag::write);
     let js_err = crate::SysErrorJsc::to_js(&sys_err, global);
     if global.has_exception() {

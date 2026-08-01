@@ -6062,11 +6062,7 @@ impl VirtualMachine {
                 }
             }
 
-            // AggregateError's `.errors` is `DontEnum` so the own-property loop
-            // above skips it; iterate and append each member here so the
-            // aggregate prints its own header first (just above) and then each
-            // member, labeled `[errors]:`, reached uniformly whether the
-            // aggregate is top-level or reached via a cause chain.
+            // `.errors` is DontEnum, so it was not seen by the loop above.
             if error_instance.is_aggregate_error(global_ref) {
                 let errors = error_instance.get_errors_property(global_ref);
                 if errors.is_cell() && errors.js_type().is_array() && errors != error_instance {
@@ -6142,9 +6138,6 @@ impl VirtualMachine {
             if !label.is_empty() {
                 pretty_write!(writer, "<r><d>[{}]:<r>\n", label)?;
             }
-            // Route through the top-level printer so BuildMessage /
-            // ResolveMessage members of an AggregateError keep their own
-            // formatter rather than the generic ErrorInstance body.
             self.print_errorlike_object(
                 err,
                 None,

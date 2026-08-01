@@ -307,10 +307,7 @@ public:
                 return true;
             }
 
-            // `at /path/file.js:1:2` (no function name). V8 and Bun both emit
-            // this shape for top-level / anonymous frames, so parse the whole
-            // line as the source location with an empty function name rather
-            // than terminating iteration.
+            // `at /path/file.js:1:2`: parse as sourceURL:line:col with no function name.
         }
 
         auto lineInner = hasParens ? StringView_slice(line, openingParentheses + 1, closingParentheses) : line;

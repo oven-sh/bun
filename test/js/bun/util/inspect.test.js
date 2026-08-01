@@ -748,9 +748,9 @@ describe("built-in prototypes print as {} and are not enumerated via the prototy
     expect(Bun.inspect(String.prototype, { sorted: true })).not.toContain("charAt");
   });
 
-  it("user-added enumerable properties on a built-in prototype are still shown", () => {
+  it("user-added enumerable properties on a built-in prototype are still shown", async () => {
     // run in a subprocess so the prototype mutation doesn't leak into other tests
-    const out = Bun.spawnSync({
+    await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
@@ -763,9 +763,12 @@ describe("built-in prototypes print as {} and are not enumerated via the prototy
         `,
       ],
       env: bunEnv,
+      stderr: "pipe",
     });
-    expect(out.stdout.toString()).toBe("{\n  foo: 1,\n}|{\n  foo: 1,\n}|{\n  bar: 2,\n}|");
-    expect(out.exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("{\n  foo: 1,\n}|{\n  foo: 1,\n}|{\n  bar: 2,\n}|");
+    expect(exitCode).toBe(0);
   });
 
   it("nested String.prototype is not colored as a string", () => {

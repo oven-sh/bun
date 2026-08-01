@@ -48,9 +48,7 @@ bun_core::declare_scope!(cache, visible);
 /// bindings from the compiled bytecode after the module-loader rewrite, so the
 /// record no longer carries them; blobs written in the old numbering must not
 /// be read back.
-/// Version 25: `p.delete_target` is now set before visiting the `delete`
-/// operand, so `delete E.Member` / `delete {f:x}.f` / `delete [x][0]` /
-/// `delete "s"[n]` no longer fold to a value under `minify_syntax`.
+/// Version 25: `delete`/assign/call targets no longer fold under minify_syntax.
 const EXPECTED_VERSION: u32 = 25;
 
 /// Source files smaller than this are not written to / read from the on-disk

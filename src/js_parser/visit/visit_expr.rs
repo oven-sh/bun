@@ -1057,12 +1057,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let target = e_.target.unwrap_inlined();
         let index = e_.index.unwrap_inlined();
 
-        // `a[n]` is a property reference; replacing it with a value changes
-        // the result of `delete` (reference → value makes it return `true`),
-        // the effect of assignment (writes to the wrong place), and the
-        // receiver of a call (`[o.m][0]()` has `this = [o.m]`, not `o`).
-        // Neither `"foo"[2]` → `"o"` nor `[x][0]` → `x` is safe in those
-        // positions.
+        // Folding a property reference to a value is unsafe where the
+        // reference itself is observed (delete result, assign target, call receiver).
         if p.options.features.minify_syntax
             && !is_delete_target
             && !is_call_target

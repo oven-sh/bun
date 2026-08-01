@@ -82,3 +82,38 @@ by default `fetch(url)` reuses the pooled h1 socket and never upgrades.
   sessions exist (`has_headroom()` opens a second at the server's
   MAX_CONCURRENT_STREAMS). Linear scan over 3 entries is noise. Would need
   many distinct origins to matter.
+
+## Compat sweep (step 4)
+
+Ran `test/js/web/fetch/` twice each with the flag off and on (release @ HEAD);
+diffed the stable-in-both-runs failure sets.
+
+**Regressions with flag on: 1** (expected):
+- `fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT) > flag off: ALPN does not offer h2`
+  — asserts the flag's current default; needs inverting when the default flips.
+
+**Tests that pass only with flag on: ~12**
+- All `it.concurrent` in `fetch.test.ts` hitting a shared `httpsServer`.
+  With h1 each concurrent fetch opens its own TLS connection and the pack
+  exhausts something (fds/accept backlog) and times out; with h2 they
+  multiplex on one session. These are pre-existing h1 flakes that h2 avoids.
+
+**`node:https.request()` unaffected.** It routes through `tls.connect()` +
+llhttp (`src/js/node/_http_client.ts`), never touches `src/http/lib.rs`.
+The flag changes `fetch()` only.
+
+### User-visible response deltas (`deltas.ts`)
+
+| field | h1 | h2 |
+| --- | --- | --- |
+| `res.headers.get("connection")` | `"keep-alive"` | `null` |
+| `res.headers.get("keep-alive")` | `"timeout=5"` | `null` |
+| header name casing | lowercase | lowercase |
+| `res.status`, `res.type`, `res.redirected` | same | same |
+| abort error | `AbortError` code 20 | `AbortError` code 20 |
+
+The absent `Connection`/`Keep-Alive` headers are RFC 9113 §8.2.2-correct
+(connection-specific headers are not sent over h2). User code that reads them
+would observe `null` instead of a value. undici (`allowH2:false` by default)
+keeps these present, so this is the one Node-compat delta to call out in
+release notes.

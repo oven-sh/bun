@@ -1396,12 +1396,14 @@ for (const { dep, name } of [
 
 // The re-parse must still prefer the unaliased interpretation for scp-style
 // inputs like `git@host:path/repo.git`, where the leading `git` is the SSH
-// user rather than an npm alias.
+// user rather than an npm alias. The host must not start with a digit
+// (Tag::infer would short-circuit to Tag::Npm and skip the re-parse).
 it("should parse scp-style git dependency without treating the user as an alias", async () => {
   await Bun.write(join(package_dir, "package.json"), JSON.stringify({ name: "foo" }));
 
+  const dep = "git@localhost:some/repo.git";
   const { stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "git@127.0.0.1:some/repo.git"],
+    cmd: [bunExe(), "add", dep],
     cwd: package_dir,
     stdout: "ignore",
     stderr: "pipe",
@@ -1410,7 +1412,9 @@ it("should parse scp-style git dependency without treating the user as an alias"
 
   const err = await stderr.text();
   expect(err).not.toContain("unrecognised dependency format");
-  expect(err).not.toContain(`"git"`);
+  // The full positional is the package name (alias discarded); if the alias
+  // were kept this would be `for "git"` instead.
+  expect(err).toContain(`for "${dep}"`);
   expect(await exited).toBe(1);
 });
 

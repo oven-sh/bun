@@ -13,9 +13,7 @@ use bun_core::strings;
 use enumset::{EnumSet, EnumSetType};
 use std::borrow::Cow;
 
-/// Tracks which [`Pragma`] fields were explicitly set by the user (bunfig.toml,
-/// CLI `--jsx-*` flags, `Bun.build({ jsx })`) so a later `tsconfig.json` merge
-/// does not clobber them. Precedence: CLI / bunfig / `Bun.build` > tsconfig.
+/// [`Pragma`] fields a user can set explicitly; see [`Pragma::set_fields`].
 #[derive(EnumSetType, Debug)]
 pub enum JsxField {
     Factory,
@@ -197,8 +195,7 @@ pub struct Pragma {
     pub parse: bool,
     pub side_effects: bool,
 
-    /// Which fields the user set explicitly (bunfig.toml / `--jsx-*` /
-    /// `Bun.build({ jsx })`). A tsconfig.json merge will not overwrite these.
+    /// Fields set explicitly by bunfig / `--jsx-*` / `Bun.build({jsx})`; tsconfig won't overwrite these.
     pub set_fields: JsxFieldSet,
 }
 

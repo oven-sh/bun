@@ -6321,10 +6321,8 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(tsconfigpath) = tsconfig_path {
-                // `fd` is the cached fd for `path` (the directory being populated).
-                // A `--tsconfig-override` file generally lives elsewhere, so
-                // `openat(fd, basename(override))` would miss; fall back to the
-                // absolute-path open in that case.
+                // `fd` is `path`'s fd; a --tsconfig-override file may live elsewhere,
+                // so open it by absolute path instead of `openat(fd, basename)`.
                 let tsconfig_dirname_fd = if self.opts.tsconfig_override.is_some() {
                     FD::INVALID
                 } else if FeatureFlags::STORE_FILE_DESCRIPTORS {

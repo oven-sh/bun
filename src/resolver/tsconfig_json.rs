@@ -211,13 +211,8 @@ impl TSConfigJSON {
         !self.base_url.is_empty()
     }
 
-    /// Apply this tsconfig's JSX settings on top of `current`.
-    ///
-    /// Fields already present in `current.set_fields` (explicitly set by
-    /// bunfig.toml, `--jsx-*`, or `Bun.build({ jsx })`) are left alone so that
-    /// user configuration wins over tsconfig.json. Within a tsconfig `extends`
-    /// chain the caller passes the base config as `current` with
-    /// `set_fields == empty`, so child-overrides-parent is preserved.
+    /// Apply this tsconfig's JSX settings on top of `current`, skipping any
+    /// field already in `current.set_fields` (user-set config wins over tsconfig).
     pub fn merge_jsx(&self, current: options::jsx::Pragma) -> options::jsx::Pragma {
         let mut out = current;
         let apply = self.jsx_flags.difference(out.set_fields);

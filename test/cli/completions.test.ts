@@ -49,7 +49,11 @@ const fixtureFiles = {
 
 describe.skipIf(isWindows)("shell completions: `bun <path>` and runtime flags (#7805)", () => {
   async function bashComplete(dir: string, line: string): Promise<string[]> {
+    // bash-completion (loaded in interactive shells) turns extglob on, so the
+    // probe does too; `_read_scripts_in_package_json` only parses package.json
+    // scripts when extglob is enabled.
     const probe =
+      "shopt -s extglob\n" +
       "source ./bun.bash\n" +
       "words=(" +
       line
@@ -114,6 +118,21 @@ describe.skipIf(isWindows)("shell completions: `bun <path>` and runtime flags (#
 
     const reply = await bashComplete(String(dir), "bun --cwd " + String(dir) + " run src/");
     expect(reply).toContain("src/index.ts");
+  });
+
+  test.concurrent.skipIf(bashMajor < 4)("bash: subcommands whose name equals a package.json script are still offered", async () => {
+    // _read_scripts_in_package_json has a filter that strips script names from
+    // COMPREPLY. It must run before subcommands are appended so that a project
+    // with a `test`/`build` script doesn't lose `bun t<TAB>` -> `test`.
+    const script = await embeddedCompletions("bash");
+    using dir = tempDir("bun-bash-completion-7805d", {
+      "bun.bash": script,
+      "package.json": JSON.stringify({ name: "fixture", scripts: { test: "echo t", build: "echo b" } }),
+    });
+    expect(await bashComplete(String(dir), "bun t")).toContain("test");
+    const bu = await bashComplete(String(dir), "bun b");
+    expect(bu).toContain("build");
+    expect(bu).toContain("bun");
   });
 
   test.concurrent.skipIf(bashMajor < 4)("bash: `--flag=value` token triples are skipped", async () => {

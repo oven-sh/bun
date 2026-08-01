@@ -177,8 +177,8 @@ _bun_completions() {
                 "${GLOBAL_OPTIONS[*]}" \
                 "${GLOBAL_OPTIONS[SHORT_OPTIONS]}"
             [[ "${cur_word}" != -* ]] && {
-                COMPREPLY+=( $(compgen -W "${SUBCOMMANDS}" -- "${cur_word}") );
                 _read_scripts_in_package_json;
+                COMPREPLY+=( $(compgen -W "${SUBCOMMANDS}" -- "${cur_word}") );
                 _file_arguments "${RUN_EXTS}";
             }
             return;;

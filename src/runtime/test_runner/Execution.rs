@@ -89,6 +89,11 @@ pub struct Execution {
     /// the entries themselves are owned by BunTest, which owns Execution.
     pub(crate) sequences: Box<[ExecutionSequence]>,
     pub(crate) group_index: usize,
+    /// Group index at which `step_group` flushes the snapshot file to disk so
+    /// file-level afterAll can read it (#12114). Set by `BunTest::advance` to
+    /// the root describe's afterAll start; reset to `usize::MAX` once flushed
+    /// so it fires at most once per file.
+    pub(crate) snapshot_flush_group: usize,
     /// The entry whose callback is synchronously on the stack right now. Set
     /// around `run_test_callback` so code re-entered from a test body (e.g.
     /// spawnSync's wait loop) can read the calling entry's own deadline.
@@ -280,6 +285,7 @@ impl Execution {
             groups: Box::default(),
             sequences: Box::default(),
             group_index: 0,
+            snapshot_flush_group: usize::MAX,
             on_stack_entry: core::cell::Cell::new(None),
             on_stack_entry_data: core::cell::Cell::new(None),
         }
@@ -866,6 +872,13 @@ fn step_group(
         } else {
             group_log::log(format_args!("stepGroup: not all sequences failed, advancing to next group"));
             this.group_index += 1;
+        }
+
+        if this.group_index >= this.snapshot_flush_group {
+            this.snapshot_flush_group = usize::MAX;
+            if let Some(runner) = super::jest::Jest::runner() {
+                let _ = runner.snapshots.flush_current_file();
+            }
         }
     }
 }

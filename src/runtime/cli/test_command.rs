@@ -2202,6 +2202,7 @@ impl TestCommand {
                     added: 0,
                     passed: 0,
                     failed: 0,
+                    needs_write: false,
                     // SAFETY: lifetime-erase to `'static`; the backing locals are
                     // declared in this never-returning frame (`exec()` only exits
                     // via process exit).

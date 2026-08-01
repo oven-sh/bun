@@ -186,7 +186,10 @@ describe("mock.module with an async factory when the module is already loaded", 
           killSignal: "SIGKILL",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stderr, signal: proc.signalCode }).toEqual({ stderr: expect.stringContaining("1 pass"), signal: null });
+        expect({ stderr, signal: proc.signalCode }).toEqual({
+          stderr: expect.stringContaining("1 pass"),
+          signal: null,
+        });
         expect(exitCode).toBe(0);
       },
       15000,

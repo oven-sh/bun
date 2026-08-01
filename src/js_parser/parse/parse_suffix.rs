@@ -125,9 +125,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         left: &mut Expr,
     ) -> CResult {
         p.lexer.next()?;
-        // "Remove unnecessary optional chains" is deferred to the visit pass so
-        // the assignment-target check sees the original "?." and rejects
-        // `{}?.y = 0` as a syntax error.
         let optional_start: Option<OptionalChain> = Some(OptionalChain::Start);
 
         match p.lexer.token {

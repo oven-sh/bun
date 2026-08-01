@@ -5313,11 +5313,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Remove an unnecessary optional chain start when the already-visited
-    /// `target` is provably not null/undefined. Called from `e_dot` / `e_index`
-    /// / `e_call` after the assignment-target check and after the target has
-    /// been visited, so `{}?.y = 0` is still rejected as a syntax error before
-    /// any simplification happens.
+    /// Drop an unnecessary `?.` when the visited `target` is provably not null/undefined.
     pub(crate) fn maybe_simplify_optional_chain(
         &self,
         optional_chain: Option<js_ast::OptionalChain>,
@@ -5335,9 +5331,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             Some(js_ast::OptionalChain::Continuation) => {
-                // Propagate a stripped start through the rest of the chain so
-                // later `.is_none()` checks behave as they did when this was
-                // done at parse time.
                 let target_chain = match target {
                     js_ast::ExprData::EDot(e) => Some(e.optional_chain),
                     js_ast::ExprData::EIndex(e) => Some(e.optional_chain),

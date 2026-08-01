@@ -155,10 +155,15 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_('x = "foo"[2] = 5', 'x = "foo"[2] = 5');
       ts.expectPrintedMin_("x = [y.z][0]()", "x = [y.z][0]()");
       ts.expectPrintedMin_("x = [y][0]()", "x = [y][0]()");
-      // A conditional operand is not a reference; when a fold hoists the
-      // live branch up to the delete, the printer wraps it.
+      // Comma / `?:` / `??` / `||` / `&&` produce a value, not a reference;
+      // when a fold hoists the live arm up to the delete, the printer
+      // re-wraps it using WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS.
       ts.expectPrinted_("x = delete (true ? a.b : 0)", "x = delete (0, a.b)");
       ts.expectPrinted_("x = delete (true ? a : 0)", "x = delete (0, a)");
+      ts.expectPrintedMin_("x = delete (0, a.b)", "x = delete (0, a.b)");
+      ts.expectPrintedMin_("x = delete (null ?? a.b)", "x = delete (0, a.b)");
+      ts.expectPrintedMin_("x = delete (0 || a.b)", "x = delete (0, a.b)");
+      ts.expectPrintedMin_("x = delete (1 && a.b)", "x = delete (0, a.b)");
       // Still inlined outside those positions.
       ts.expectPrintedMin_("x = [y][0]", "x = y");
       ts.expectPrintedMin_('x = "foo"[2]', 'x = "o"');
@@ -192,6 +197,8 @@ describe("Bun.Transpiler", () => {
       ts.expectPrinted_("x = delete import.meta.main", "x = delete import.meta.main");
       ts.expectPrinted_("import.meta.hot = 5", "import.meta.hot = 5");
       ts.expectPrinted_("import.meta.main = 5", "import.meta.main = 5");
+      ts.expectPrinted_("x = delete import.meta.hot.accept", "x = delete undefined.accept");
+      ts.expectPrinted_("import.meta.hot.accept = fn", "undefined.accept = fn");
       // Reads are still inlined.
       ts.expectPrinted_("x = import.meta.hot", "x = undefined");
     });
@@ -205,12 +212,14 @@ describe("Bun.Transpiler", () => {
         var r2 = delete { f: k.f }.f;
         var o = { m() { return this === o } };
         var r3 = [o.m][0]();
-        console.log(JSON.stringify([obj.p, r1, y, k.f, r2, r3]));
+        var q = { p: 1 };
+        delete (0, q.p);
+        console.log(JSON.stringify([obj.p, r1, y, k.f, r2, r3, q.p]));
       `;
       await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(stdout).toBe("[1,true,1,7,true,false]\n");
+      expect(stdout).toBe("[1,true,1,7,true,false,1]\n");
       expect(exitCode).toBe(0);
     });
     it("bails out on optional-chain index into enum", () => {

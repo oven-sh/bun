@@ -671,6 +671,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                     E::Special::HotEnabled | E::Special::HotDisabled => {
+                        if identifier_opts.is_delete_target()
+                            || identifier_opts.assign_target() != js_ast::AssignTarget::None
+                        {
+                            return None;
+                        }
                         let enabled = p.options.features.hot_module_reloading;
                         if name == b"data" {
                             return Some(if enabled {

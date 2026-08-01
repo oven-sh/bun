@@ -4028,13 +4028,8 @@ describe("hoisting", async () => {
   });
 
   // https://github.com/oven-sh/bun/issues/7869
+  // `fallback-peer-deps` has dependencies.no-deps = "2.0.0" and peerDependencies.no-deps = "*".
   test("dependency listed in both dependencies and peerDependencies dedupes to the root copy", async () => {
-    // `fallback-peer-deps` declares `no-deps` in both places:
-    //   dependencies:     { "no-deps": "2.0.0" }
-    //   peerDependencies: { "no-deps": "*" }
-    // The root installs `no-deps@1.0.0`, which satisfies the peer range. yarn and pnpm
-    // both honour the peer declaration and dedupe to the root copy; bun used to drop the
-    // peer entry and keep the `dependencies` entry, producing a nested `no-deps@2.0.0`.
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -4086,8 +4081,6 @@ describe("hoisting", async () => {
 
   // https://github.com/oven-sh/bun/issues/7869
   test("dependency listed in both dependencies and peerDependencies installs when root does not provide it", async () => {
-    // Without a root copy the package still needs `no-deps` (it is listed in `dependencies`).
-    // After treating the entry as a peer the resolver still installs it, using the peer range.
     await writeFile(
       packageJson,
       JSON.stringify({

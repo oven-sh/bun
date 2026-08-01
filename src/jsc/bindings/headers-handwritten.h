@@ -456,6 +456,19 @@ bool Bun__deepMatch(
 
 extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);
 
+// JSC's addErrorInfo() records the parse-error line but no column; a lookup at
+// column 0 lands on the previous source line's trailing mapping, so remap via
+// the last mapping on the generated line and report column 1.
+ALWAYS_INLINE void Bun__remapParseErrorFrame(void* bunVM, ZigStackFrame* frame, unsigned line, unsigned column)
+{
+    frame->position.line_zero_based = static_cast<int32_t>(line) - 1;
+    bool columnKnown = column > 0;
+    frame->position.column_zero_based = columnKnown ? static_cast<int32_t>(column) - 1 : INT32_MAX;
+    Bun__remapStackFramePositions(bunVM, frame, 1);
+    if (!columnKnown)
+        frame->position.column_zero_based = 0;
+}
+
 namespace Inspector {
 class ScriptArguments;
 }

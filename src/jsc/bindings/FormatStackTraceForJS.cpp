@@ -188,30 +188,16 @@ WTF::String formatStackTrace(
                 memset(&remappedFrame, 0, sizeof(ZigStackFrame));
 
                 remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
-                // JSC's addErrorInfo() discards the parser-error column. Querying
-                // the source map at column 0 resolves to bun's start-of-line
-                // mapping for the previous source line when the statement is
-                // indented; query past end-of-line so the lookup lands on the
-                // last mapping of the generated line instead.
-                remappedFrame.position.column_zero_based = err->column() > 0
-                    ? WTF::OrdinalNumber::fromOneBasedInt(err->column()).zeroBasedInt()
-                    : std::numeric_limits<int32_t>::max();
 
                 String sourceURLForFrame = err->sourceURL();
 
                 // If it's not a Zig::GlobalObject, don't bother source-mapping it.
                 if (globalObject && !sourceURLForFrame.isEmpty()) {
                     // https://github.com/oven-sh/bun/issues/3595
-                    if (!sourceURLForFrame.isEmpty()) {
-                        remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
-                        // This ensures the lifetime of the sourceURL is accounted for correctly
-                        Bun__remapStackFramePositions(getBunVM(), &remappedFrame, 1);
-
-                        sourceURLForFrame = remappedFrame.source_url.toWTFString();
-                    }
+                    remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
+                    Bun__remapParseErrorFrame(getBunVM(), &remappedFrame, err->line(), err->column());
+                    sourceURLForFrame = remappedFrame.source_url.toWTFString();
                 }
-                if (err->column() == 0)
-                    remappedFrame.position.column_zero_based = 0;
 
                 // there is always a newline before each stack frame line, ensuring that the name + message
                 // exist on the first line, even if both are empty

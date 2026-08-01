@@ -4960,6 +4960,7 @@ impl<'a> Resolver<'a> {
                         crate::package_json::Status::Exact
                             | crate::package_json::Status::ExactEndsWithStar
                             | crate::package_json::Status::Inexact
+                            | crate::package_json::Status::PackageResolve
                     );
             }
 
@@ -4995,14 +4996,20 @@ impl<'a> Resolver<'a> {
                     }
                 }
 
-                return self.load_node_modules(
-                    &esm_resolution.path,
-                    kind,
-                    dir_info,
-                    global_cache,
-                    true,
-                    out,
-                );
+                if self
+                    .load_node_modules(
+                        &esm_resolution.path,
+                        kind,
+                        dir_info,
+                        global_cache,
+                        true,
+                        out,
+                    )
+                    .is_success()
+                {
+                    return MatchStatus::Success;
+                }
+                continue;
             }
 
             if self

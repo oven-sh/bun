@@ -276,6 +276,37 @@ describe("'bun' export condition falls through when its target file is missing",
     expect(exitCode).toBe(0);
   });
 
+  it.concurrent("falls through when the 'bun' '#imports' target is a missing bare package", async () => {
+    using cwd = tempDir("bun-cond-fallback-imports-bare-first", {
+      "node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        type: "module",
+        exports: { ".": "./index.mjs" },
+        imports: {
+          "#helper": {
+            bun: "bun-only-helper",
+            node: "./src/helper-node.mjs",
+          },
+        },
+      }),
+      "node_modules/pkg/index.mjs": `import { tag } from "#helper"; console.log(tag);`,
+      "node_modules/pkg/src/helper-node.mjs": `export const tag = "node-variant";`,
+      "index.mjs": `import "pkg";`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(cwd),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("node-variant\n");
+    expect(exitCode).toBe(0);
+  });
+
   it.concurrent("falls through for '#imports' targeting a bare package specifier", async () => {
     using cwd = tempDir("bun-cond-fallback-imports-bare", {
       "node_modules/pkg/package.json": JSON.stringify({

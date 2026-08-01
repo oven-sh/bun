@@ -31,6 +31,10 @@ pub struct ParsedSourceMap {
     /// so stack traces for runtime-transpiled pre-generated `.js` resolve to
     /// the original source.
     pub input_map: Option<std::sync::Arc<ParsedSourceMap>>,
+    /// The `sourceMappingURL` `input_map` was loaded from, kept so the
+    /// code-frame preview can re-parse with `SourceOnly(index)` and recover
+    /// `sourcesContent` when the original is not on disk.
+    pub input_map_url: Option<Box<[u8]>>,
     /// In order to load source contents from a source-map after the fact,
     /// a handle to the underlying source provider is stored, along with a
     /// load hint recording whether the map is known to be inline or external.
@@ -72,6 +76,7 @@ impl Default for ParsedSourceMap {
             internal: None,
             external_source_names: Vec::new(),
             input_map: None,
+            input_map_url: None,
             underlying_provider: SourceContentPtr::NONE,
             is_standalone_module_graph: false,
         }
@@ -237,6 +242,7 @@ impl ParsedSourceMap {
             internal: Some(internal),
             external_source_names: Vec::new(),
             input_map: None,
+            input_map_url: None,
             underlying_provider: SourceContentPtr::NONE,
             is_standalone_module_graph: false,
         }
@@ -246,9 +252,11 @@ impl ParsedSourceMap {
     pub fn from_internal_with_input_map(
         internal: InternalSourceMap,
         input_map: std::sync::Arc<ParsedSourceMap>,
+        input_map_url: Box<[u8]>,
     ) -> Self {
         let mut this = Self::from_internal(internal);
         this.input_map = Some(input_map);
+        this.input_map_url = Some(input_map_url);
         this
     }
 

@@ -380,6 +380,7 @@ impl SavedSourceMap {
                 Some(im) => Arc::new(ParsedSourceMap::from_internal_with_input_map(
                     chained.blob,
                     im,
+                    chained.url,
                 )),
                 None => Arc::new(ParsedSourceMap::from_internal(chained.blob)),
             };

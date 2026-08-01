@@ -368,54 +368,49 @@ impl Lookup {
             }
 
             let mut source_map = self.source_map.as_deref()?;
+            let input_map_url = source_map.input_map_url.as_deref();
             if let Some(input_map) = source_map.input_map.as_deref() {
                 source_map = input_map;
             }
             debug_assert!(source_map.is_external());
 
             let index = usize::try_from(self.mapping.source_index).ok()?;
+            let source_only =
+                crate::ParseUrlResultHint::SourceOnly(u32::try_from(index).expect("int cast"));
 
-            let Some(provider) = source_map.underlying_provider.provider() else {
-                // No provider (chained input map): read the original by name.
-                if index >= source_map.external_source_names.len() {
-                    return None;
-                }
-                let name: &[u8] = &source_map.external_source_names[index];
-                let mut buf = bun_paths::PathBuffer::uninit();
-                let dir =
-                    bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
-                let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<
-                    bun_paths::platform::Loose,
-                >(dir, &mut buf, &[name]);
-                match bun_sys::File::read_from(bun_sys::Fd::cwd(), normalized) {
-                    Ok(r) => break 'bytes r,
-                    Err(_) => return None,
-                }
-            };
+            if let Some(provider) = source_map.underlying_provider.provider() {
+                // Standalone module graph source maps are stored (in memory)
+                // compressed. They are decompressed on demand.
+                if source_map.is_standalone_module_graph {
+                    let serialized = source_map.standalone_module_graph_data();
+                    if index >= source_map.external_source_names.len() {
+                        return None;
+                    }
 
-            // Standalone module graph source maps are stored (in memory) compressed.
-            // They are decompressed on demand.
-            if source_map.is_standalone_module_graph {
-                let serialized = source_map.standalone_module_graph_data();
-                if index >= source_map.external_source_names.len() {
-                    return None;
+                    // SAFETY: `standalone_module_graph_data` returns a pointer
+                    // owned by the standalone module graph trailer; lifetime
+                    // is process-static (mmapped). `source_file_contents`
+                    // fills the per-index decompression cache through a
+                    // `OnceLock`.
+                    let code = unsafe { (*serialized).source_file_contents(index) };
+
+                    return Some(ZigStringSlice::from_utf8_never_free(code?));
                 }
 
-                // SAFETY: `standalone_module_graph_data` returns a pointer
-                // owned by the standalone module graph trailer; lifetime is
-                // process-static (mmapped). `source_file_contents` fills the
-                // per-index decompression cache through a `OnceLock`.
-                let code = unsafe { (*serialized).source_file_contents(index) };
-
-                return Some(ZigStringSlice::from_utf8_never_free(code?));
-            }
-
-            if let Some(parsed) = provider.get_source_map(
-                base_filename,
-                source_map.underlying_provider.load_hint(),
-                crate::ParseUrlResultHint::SourceOnly(u32::try_from(index).expect("int cast")),
-            ) {
-                if let Some(contents) = parsed.source_contents {
+                if let Some(parsed) = provider.get_source_map(
+                    base_filename,
+                    source_map.underlying_provider.load_hint(),
+                    source_only,
+                ) {
+                    if let Some(contents) = parsed.source_contents {
+                        break 'bytes contents.into_vec();
+                    }
+                }
+            } else if let Some(url) = input_map_url {
+                if let Some(contents) =
+                    crate::load_input_source_map(base_filename, url, source_only)
+                        .and_then(|p| p.source_contents)
+                {
                     break 'bytes contents.into_vec();
                 }
             }

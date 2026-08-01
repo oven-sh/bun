@@ -108,9 +108,8 @@ try { require("./index.js"); } catch (e) { console.log(e.stack); }
     expect(exitCode).toBe(0);
   });
 
-  test("uncaught error reports original source", async () => {
+  test("uncaught error code frame from sourcesContent (original not on disk)", async () => {
     using dir = tempDir("input-sourcemap-uncaught", {
-      "index.ts": original,
       "index.js": generated + "//# sourceMappingURL=index.js.map\n",
       "index.js.map": JSON.stringify({ ...mapJson, sourcesContent: [original] }),
     });
@@ -119,9 +118,23 @@ try { require("./index.js"); } catch (e) { console.log(e.stack); }
     // Frame positions
     expect(stderr).toContain(`at boom (${join(String(dir), "index.ts")}:6:`);
     expect(stderr).toContain(`at main (${join(String(dir), "index.ts")}:9:3)`);
-    // Code frame shows the original source, not the generated one
+    // Code frame shows the original source from sourcesContent
     expect(stderr).toContain(`function boom(): never {`);
     expect(stderr).toContain(`throw new Error("kaboom")`);
+    expect(stderr).not.toContain(`"use strict"`);
+    expect(exitCode).toBe(1);
+  });
+
+  test("uncaught error code frame from original on disk (no sourcesContent)", async () => {
+    using dir = tempDir("input-sourcemap-uncaught-disk", {
+      "index.ts": original,
+      "index.js": generated + "//# sourceMappingURL=index.js.map\n",
+      "index.js.map": JSON.stringify(mapJson),
+    });
+
+    const { stderr, exitCode } = await run(String(dir), "index.js");
+    expect(stderr).toContain(`at boom (${join(String(dir), "index.ts")}:6:`);
+    expect(stderr).toContain(`function boom(): never {`);
     expect(stderr).not.toContain(`"use strict"`);
     expect(exitCode).toBe(1);
   });
@@ -164,6 +177,22 @@ try { require("./index.js"); } catch (e) { console.log(e.stack); }
     expect(stdout).toContain(`at boom (${join(String(dir), "index.js")}:5:`);
     expect(stdout).not.toContain("index.ts");
     expect(stderr).not.toContain("ENOENT");
+    expect(exitCode).toBe(0);
+  });
+
+  test("map file invalid JSON: warns and falls back to generated positions", async () => {
+    using dir = tempDir("input-sourcemap-invalid", {
+      "index.js": generated + "//# sourceMappingURL=index.js.map\n",
+      "index.js.map": "{ this is not json",
+      "run.js": `\
+try { require("./index.js"); } catch (e) { console.log(e.stack); }
+`,
+    });
+
+    const { stdout, stderr, exitCode } = await run(String(dir), "run.js");
+    expect(stdout).toContain(`at boom (${join(String(dir), "index.js")}:5:`);
+    expect(stdout).not.toContain("index.ts");
+    expect(stderr).toContain("Could not decode sourcemap");
     expect(exitCode).toBe(0);
   });
 });

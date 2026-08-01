@@ -315,10 +315,7 @@ impl<'a> CopyFile<'a> {
         let mut total_written: u64 = 0;
         let src_fd = self.source_fd;
         let dest_fd = self.destination_fd;
-        // Only truncate destinations Bun itself opened with O_TRUNC; a
-        // user-provided fd (Bun.stdout, Bun.file(fd)) may carry O_APPEND or
-        // pre-existing bytes that ftruncate would destroy.
-        let may_ftruncate = matches!(
+        let bun_opened_dest = matches!(
             self.destination_file_store.pathlike,
             PathOrFileDescriptor::Path(_)
         );
@@ -350,7 +347,7 @@ impl<'a> CopyFile<'a> {
                     return Err(bun_errno::from_errno(err.errno as i32).into());
                 }
                 bun_sys::Result::Ok(()) => {
-                    if may_ftruncate {
+                    if bun_opened_dest {
                         // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
                         let _ = unsafe {
                             libc::ftruncate(
@@ -427,7 +424,7 @@ impl<'a> CopyFile<'a> {
                             return Err(bun_errno::from_errno(err.errno as i32).into());
                         }
                         bun_sys::Result::Ok(()) => {
-                            if may_ftruncate {
+                            if bun_opened_dest {
                                 // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
                                 let _ = unsafe {
                                     libc::ftruncate(
@@ -486,7 +483,7 @@ impl<'a> CopyFile<'a> {
                                 return Err(bun_errno::from_errno(err.errno as i32).into());
                             }
                             bun_sys::Result::Ok(()) => {
-                                if may_ftruncate {
+                                if bun_opened_dest {
                                     // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
                                     let _ = unsafe {
                                         libc::ftruncate(
@@ -899,8 +896,6 @@ impl<'a> CopyFile<'a> {
                             )
                         };
                     }
-                    // fcopyfile reports no byte count; the read/write fallback
-                    // already set read_len when it ran.
                     if self.read_len == 0 {
                         self.read_len = stat_size.min(self.max_length);
                     }

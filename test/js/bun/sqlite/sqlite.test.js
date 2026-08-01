@@ -1739,7 +1739,11 @@ it("#13082", async () => {
     runs[i] = run();
   }
 
-  await Promise.allSettled(runs);
+  const results = await Promise.allSettled(runs);
+  for (const result of results) {
+    expect(result.status).toBe("rejected");
+    expect(result.reason.message).toBe("Database has closed");
+  }
 });
 
 // The internal SQL.run / SQL.prepare / SQL.isInTransaction helpers used to
@@ -1943,6 +1947,57 @@ it("all() reports an error when a result-row push finalizes the statement", asyn
       rows: [{ a: 3 }, { a: 2 }, { a: 1 }],
     }),
   );
+  expect(exitCode).toBe(0);
+});
+
+// A result-row push can also close the whole database (which finalizes every
+// statement) and then throw; the raw() loop must not touch the freed stmt.
+// Run in a subprocess because the unsafe variant resets freed memory and the
+// Array.prototype accessor affects every array in the process.
+it("raw() does not touch the statement when a result-row push closes the database and throws", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const out = {};
+
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE t (a INTEGER)");
+    db.run("INSERT INTO t VALUES (1), (2), (3)");
+
+    const stmt = db.query("SELECT a FROM t ORDER BY a ASC");
+    Object.defineProperty(Array.prototype, 0, {
+      configurable: true,
+      get() {
+        return undefined;
+      },
+      set(_row) {
+        db.close();
+        throw new Error("boom");
+      },
+    });
+
+    let message = "did not throw";
+    try {
+      stmt.raw();
+    } catch (e) {
+      message = e.message;
+    }
+    delete Array.prototype[0];
+    out.closeDuringRaw = message;
+
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(JSON.stringify({ closeDuringRaw: "boom" }));
   expect(exitCode).toBe(0);
 });
 

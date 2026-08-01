@@ -2544,11 +2544,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
                         RELEASE_AND_RETURN(scope, {});
                     }
                     resultArray->push(lexicalGlobalObject, row);
-
-                    if (scope.exception()) [[unlikely]] {
-                        sqlite3_reset(stmt);
-                        RELEASE_AND_RETURN(scope, {});
-                    }
+                    // No sqlite3_reset here: push() can run user code that
+                    // finalizes `stmt` (statement.finalize() or db.close()).
+                    RETURN_IF_EXCEPTION(scope, {});
 
                     if (castedThis->stmt != stmt) [[unlikely]] {
                         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s));

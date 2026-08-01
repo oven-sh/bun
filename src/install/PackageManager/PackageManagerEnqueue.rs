@@ -1172,11 +1172,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             let dep: Repository = *version.git();
             let res = Resolution::init(ResolutionTagged::Git(dep));
 
-            // `Repository::eql` matches by committish while `resolved` is empty,
-            // so an update target would bind to the stale lockfile entry here.
+            // While `resolved` is empty `Repository::eql` matches the stale lockfile entry by committish.
             let should_update = this.to_update
                 && dep.resolved.is_empty()
-                && this.is_direct_update_target(id, &dependency.name);
+                && this.is_direct_update_target(id, dependency);
 
             // First: see if we already loaded the git package in-memory
             if !should_update {
@@ -2752,16 +2751,16 @@ fn resolution_satisfies_dependency(
 // ──────────────────────────────────────────────────────────────────────────
 
 impl PackageManager {
-    /// True for a direct dependency of the current workspace that `bun update`
-    /// should re-resolve (all of them for bare `bun update`, or the named ones
-    /// for `bun update <name>`).
-    fn is_direct_update_target(&mut self, id: DependencyID, name: &SemverString) -> bool {
+    /// A direct dependency of the current workspace that `bun update` / `bun update <name>` re-resolves.
+    fn is_direct_update_target(&mut self, id: DependencyID, dep: &Dependency) -> bool {
         let root_id = self
             .root_package_id
             .get(&self.lockfile, self.workspace_name_hash);
-        self.lockfile.packages.items_dependencies()[root_id as usize].contains(id)
+        // Catalogs are root-scoped; the consuming dep id lives in a member package.
+        (dep.version.tag == dependency::version::Tag::Catalog
+            || self.lockfile.packages.items_dependencies()[root_id as usize].contains(id))
             && (self.update_requests.is_empty()
-                || self.updating_packages.contains(self.lockfile.str(name)))
+                || self.updating_packages.contains(self.lockfile.str(&dep.name)))
     }
 
     #[inline]

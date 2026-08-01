@@ -4013,6 +4013,27 @@ impl<'a> Resolver<'a> {
         self.dir_info_cached_maybe_log(false, path).ok().flatten()
     }
 
+    /// True when `specifier` names a package that the importing file's
+    /// enclosing `package.json` lists under `peerDependenciesMeta` with
+    /// `"optional": true` (or under `optionalDependencies`). Used by the
+    /// bundler to downgrade a `ModuleNotFound` for such a package from a
+    /// build error to a runtime throw.
+    pub fn is_optional_peer_dependency(&mut self, source_dir: &[u8], specifier: &[u8]) -> bool {
+        if !is_package_path(specifier) {
+            return false;
+        }
+        let Some(name) = crate::package_json::Package::parse_name(specifier) else {
+            return false;
+        };
+        let Some(dir) = self.read_dir_info_ignore_error(source_dir) else {
+            return false;
+        };
+        let Some(pkg) = dir.enclosing_package_json else {
+            return false;
+        };
+        pkg.has_optional_peer_dependency(name)
+    }
+
     // NOTE: `follow_symlinks` is `true` at every call
     // site, so it's dropped here; `enable_logging` is a plain runtime parameter
     // (it gates one cold error-formatting branch) so this large dir-walk function

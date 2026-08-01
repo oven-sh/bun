@@ -2259,6 +2259,27 @@ pub mod bv2_impl {
                                     [import_record.importer_source_index as usize]
                                     .as_mut_slice()
                                     [import_record.import_record_index as usize];
+
+                            if err == _resolver::Error::ModuleNotFound
+                                && matches!(
+                                    import_record.kind,
+                                    ImportKind::Require
+                                        | ImportKind::RequireResolve
+                                        | ImportKind::Dynamic
+                                )
+                                && !record
+                                    .flags
+                                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                                // SAFETY: see `transpiler` note above.
+                                && unsafe { &mut *transpiler }
+                                    .resolver
+                                    .is_optional_peer_dependency(source_dir, &import_record.specifier)
+                            {
+                                record
+                                    .flags
+                                    .insert(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+                            }
+
                             handles_import_errors = record
                                 .flags
                                 .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
@@ -6121,6 +6142,30 @@ pub mod bv2_impl {
 
                             if err == _resolver::Error::ModuleNotFound {
                                 let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
+
+                                // A `require()`/`require.resolve()`/`import()` of a package
+                                // the importing package.json declares optional (via
+                                // `peerDependenciesMeta`/`optionalDependencies`) becomes a
+                                // runtime throw instead of a bundle-time error. The author
+                                // has declared the package may be absent; their runtime
+                                // guard (try/catch around the loader) handles it.
+                                if matches!(
+                                    import_record.kind,
+                                    ImportKind::Require
+                                        | ImportKind::RequireResolve
+                                        | ImportKind::Dynamic
+                                ) && !import_record
+                                    .flags
+                                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                                    && transpiler.resolver.is_optional_peer_dependency(
+                                        source_dir,
+                                        import_record.path.text,
+                                    )
+                                {
+                                    import_record
+                                        .flags
+                                        .insert(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+                                }
 
                                 if !import_record
                                     .flags

@@ -2876,4 +2876,193 @@ for (const backend of ["api", "cli"] as const) {
       },
     });
   });
+
+  // https://github.com/oven-sh/bun/issues/11836
+  // NestJS wraps optional peer deps as `loadPackage('x', ctx, () => require('x'))`.
+  // The require() is in an arrow body, so the parser's try/catch detection does
+  // not apply. The package.json `peerDependenciesMeta` entry is the signal that
+  // the author expects the package to be absent.
+  itBundled("edgecase/OptionalPeerDepRequire#11836", {
+    files: {
+      "/entry.js": /* js */ `
+        const { load } = require("framework");
+        console.log(JSON.stringify(load()));
+      `,
+      "/node_modules/framework/package.json": /* json */ `
+        {
+          "name": "framework",
+          "main": "./index.js",
+          "peerDependencies": { "missing-peer": "*" },
+          "peerDependenciesMeta": { "missing-peer": { "optional": true } }
+        }
+      `,
+      "/node_modules/framework/index.js": /* js */ `
+        function loadPackage(name, loader) {
+          try {
+            return loader();
+          } catch (e) {
+            return { error: String(e) };
+          }
+        }
+        exports.load = () => loadPackage("missing-peer", () => require("missing-peer"));
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `{"error":"Error: Cannot require module missing-peer"}`,
+    },
+  });
+  itBundled("edgecase/OptionalPeerDepSubpath#11836", {
+    files: {
+      "/entry.js": /* js */ `
+        function optionalRequire(loader) {
+          try { return loader(); } catch { return {}; }
+        }
+        const { Socket } = optionalRequire(() => require("framework/sub"));
+        console.log(typeof Socket);
+      `,
+      "/node_modules/framework/package.json": /* json */ `
+        {
+          "name": "framework",
+          "main": "./index.js",
+          "peerDependenciesMeta": { "missing-peer": { "optional": true } }
+        }
+      `,
+      "/node_modules/framework/index.js": /* js */ `
+        module.exports = {};
+      `,
+      "/node_modules/framework/sub.js": /* js */ `
+        exports.Socket = require("missing-peer/socket-module").Socket;
+      `,
+      "/package.json": /* json */ `
+        { "name": "app" }
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `undefined`,
+    },
+  });
+  itBundled("edgecase/OptionalDependencyRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        const { probe } = require("framework");
+        console.log(probe());
+      `,
+      "/node_modules/framework/package.json": /* json */ `
+        {
+          "name": "framework",
+          "main": "./index.js",
+          "optionalDependencies": { "native-addon": "1.0.0" }
+        }
+      `,
+      "/node_modules/framework/index.js": /* js */ `
+        const loader = () => require.resolve("native-addon");
+        exports.probe = () => {
+          try { loader(); return "present"; }
+          catch { return "absent"; }
+        };
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `absent`,
+    },
+  });
+  itBundled("edgecase/OptionalPeerDepDynamicImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { load } from "framework";
+        load().then(
+          () => console.log("ok"),
+          () => console.log("rejected"),
+        );
+      `,
+      "/node_modules/framework/package.json": /* json */ `
+        {
+          "name": "framework",
+          "main": "./index.mjs",
+          "peerDependenciesMeta": { "missing-peer": { "optional": true } }
+        }
+      `,
+      "/node_modules/framework/index.mjs": /* js */ `
+        export const load = () => import("missing-peer");
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `rejected`,
+    },
+  });
+  itBundled("edgecase/OptionalPeerDepStaticImportStillErrors", {
+    files: {
+      "/entry.js": /* js */ `
+        import "framework";
+      `,
+      "/node_modules/framework/package.json": /* json */ `
+        {
+          "name": "framework",
+          "main": "./index.js",
+          "peerDependenciesMeta": { "missing-peer": { "optional": true } }
+        }
+      `,
+      "/node_modules/framework/index.js": /* js */ `
+        import x from "missing-peer";
+        console.log(x);
+      `,
+    },
+    target: "bun",
+    bundleErrors: {
+      "/node_modules/framework/index.js": [`Could not resolve: "missing-peer". Maybe you need to "bun install"?`],
+    },
+  });
+  itBundled("edgecase/NonOptionalPeerDepRequireStillErrors", {
+    files: {
+      "/entry.js": /* js */ `
+        require("framework");
+      `,
+      "/node_modules/framework/package.json": /* json */ `
+        {
+          "name": "framework",
+          "main": "./index.js",
+          "peerDependencies": { "required-peer": "*" },
+          "peerDependenciesMeta": { "other-peer": { "optional": true } }
+        }
+      `,
+      "/node_modules/framework/index.js": /* js */ `
+        module.exports = require("required-peer");
+      `,
+    },
+    target: "bun",
+    bundleErrors: {
+      "/node_modules/framework/index.js": [`Could not resolve: "required-peer". Maybe you need to "bun install"?`],
+    },
+  });
+  itBundled("edgecase/OptionalPeerDepResolvesWhenInstalled", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("framework").value);
+      `,
+      "/node_modules/framework/package.json": /* json */ `
+        {
+          "name": "framework",
+          "main": "./index.js",
+          "peerDependenciesMeta": { "present-peer": { "optional": true } }
+        }
+      `,
+      "/node_modules/framework/index.js": /* js */ `
+        exports.value = require("present-peer");
+      `,
+      "/node_modules/present-peer/package.json": /* json */ `
+        { "name": "present-peer", "main": "./index.js" }
+      `,
+      "/node_modules/present-peer/index.js": /* js */ `
+        module.exports = "installed";
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `installed`,
+    },
+  });
 }

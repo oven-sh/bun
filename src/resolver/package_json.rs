@@ -95,6 +95,12 @@ pub struct PackageJSON {
 
     pub(crate) side_effects: SideEffects,
 
+    /// Package names listed in `peerDependenciesMeta` with `"optional": true`,
+    /// or in `optionalDependencies`. An unresolvable `require()` of one of
+    /// these is not a bundle-time error: the author has declared that the
+    /// package may be absent and has code to handle that at runtime.
+    pub(crate) optional_peer_dependencies: Vec<Box<[u8]>>,
+
     // Populated if the "browser" field is present. This field is intended to be
     // used by bundlers and lets you redirect the paths of certain 3rd-party
     // modules that don't work in the browser to other modules that shim that
@@ -148,6 +154,7 @@ impl Default for PackageJSON {
             package_manager_package_id: INVALID_PACKAGE_ID,
             dependencies: DependencyMap::default(),
             side_effects: SideEffects::default(),
+            optional_peer_dependencies: Vec::new(),
             browser_map: BrowserMap::default(),
             exports: None,
             imports: None,
@@ -201,6 +208,12 @@ impl ::bun_install_types::resolver_hooks::PackageJsonView for PackageJSON {
 }
 
 impl PackageJSON {
+    pub fn has_optional_peer_dependency(&self, package_name: &[u8]) -> bool {
+        self.optional_peer_dependencies
+            .iter()
+            .any(|d| d.as_ref() == package_name)
+    }
+
     /// Normalize path separators to forward slashes for glob matching
     /// This is needed because glob patterns use forward slashes but Windows uses backslashes
     fn normalize_path_for_glob(path: &[u8]) -> Result<Vec<u8>, bun_alloc::AllocError> {
@@ -525,6 +538,7 @@ impl PackageJSON {
             package_manager_package_id: INVALID_PACKAGE_ID,
             dependencies: DependencyMap::default(),
             side_effects: SideEffects::Unspecified,
+            optional_peer_dependencies: Vec::new(),
             exports: None,
             imports: None,
         };
@@ -792,6 +806,31 @@ impl PackageJSON {
                         }
                     }
                     package_json.side_effects = SideEffects::Map(map);
+                }
+            }
+        }
+
+        if let Some(peer_meta) = json.get(b"peerDependenciesMeta") {
+            if let js_ast::ExprData::EObjectJSON(obj) = &peer_meta.data {
+                for prop in obj.get().properties() {
+                    let js_ast::E::JsonValue::Object(meta) = &prop.value else {
+                        continue;
+                    };
+                    if let Some(js_ast::E::JsonValue::Boolean(true)) = meta.get().get(b"optional") {
+                        package_json
+                            .optional_peer_dependencies
+                            .push(Box::from(prop.key.slice()));
+                    }
+                }
+            }
+        }
+
+        if let Some(optional_deps) = json.get(b"optionalDependencies") {
+            if let js_ast::ExprData::EObjectJSON(obj) = &optional_deps.data {
+                for prop in obj.get().properties() {
+                    package_json
+                        .optional_peer_dependencies
+                        .push(Box::from(prop.key.slice()));
                 }
             }
         }

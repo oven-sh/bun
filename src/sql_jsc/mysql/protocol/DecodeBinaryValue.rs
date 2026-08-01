@@ -12,7 +12,7 @@ bun_core::declare_scope!(MySQLDecodeBinaryValue, visible);
 /// with binary collations (e.g., utf8mb4_bin) which have different character_set values.
 pub(crate) const BINARY_CHARSET: u16 = 63;
 
-pub fn decode_binary_value<Context: ReaderContext>(
+pub(crate) fn decode_binary_value<Context: ReaderContext>(
     global_object: &JSGlobalObject,
     field_type: types::FieldType,
     column_length: u32,
@@ -132,7 +132,10 @@ pub fn decode_binary_value<Context: ReaderContext>(
                     let data = reader.read(l as usize)?;
                     let time = Time::from_data(&data)?;
 
-                    let total_hours: u32 = time.hours as u32 + time.days * 24;
+                    let total_hours: u32 = time
+                        .days
+                        .saturating_mul(24)
+                        .saturating_add(time.hours as u32);
                     // -838:59:59 to 838:59:59 is valid (it only store seconds)
                     // it should be represented as HH:MM:SS or HHH:MM:SS if total_hours > 99
                     let mut buffer = [0u8; 32];
@@ -244,7 +247,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             if column_length == 1 {
                 let data = reader.encode_len_string()?;
                 let slice = data.slice();
-                Ok(SQLDataCell::bool_(!slice.is_empty() && slice[0] == 1))
+                Ok(SQLDataCell::bool(!slice.is_empty() && slice[0] == 1))
             } else {
                 let data = reader.encode_len_string()?;
                 Ok(SQLDataCell::raw(Some(&data)))

@@ -41,13 +41,10 @@ use bun_sys::Dir;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
 
-use crate::api::js_bundler::BuildArtifact;
 use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::node::fs::{self as node_fs, NodeFS, args as fs_args};
-use crate::node::types::{
-    Encoding, FileSystemFlags, PathLike, PathOrFileDescriptor, StringOrBuffer,
-};
+use crate::node::types::{FileSystemFlags, PathLike, PathOrFileDescriptor, StringOrBuffer};
 use crate::server::html_bundle;
 
 /// See module doc for the layering rationale.
@@ -57,29 +54,29 @@ pub struct JSBundleCompletionTask {
     // NOTE: this should arguably be a thread-safe refcount, but it is the plain
     // (non-atomic) `RefCount<Self>` — a pre-existing discrepancy. See the
     // `unsafe impl Send` below for the thread-affinity constraint this imposes.
-    pub ref_count: RefCount<Self>,
-    pub config: JSBundlerConfig,
+    pub(crate) ref_count: RefCount<Self>,
+    pub(crate) config: JSBundlerConfig,
     // BACKREF — the JS-thread `EventLoop` outlives every completion task; safe
     // `Deref` so call sites read `self.jsc_event_loop.enqueue_task_concurrent(..)`.
-    pub jsc_event_loop: BackRef<EventLoop>,
+    pub(crate) jsc_event_loop: BackRef<EventLoop>,
     pub task: AnyTask,
     pub global_this: BackRef<JSGlobalObject>,
-    pub promise: jsc::JSPromiseStrong,
+    pub(crate) promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
-    pub env: *mut bun_dotenv::Loader<'static>,
-    pub log: bun_ast::Log,
-    pub cancelled: bool,
+    pub(crate) env: *mut bun_dotenv::Loader,
+    pub(crate) log: bun_ast::Log,
+    pub(crate) cancelled: bool,
 
-    pub html_build_task: Option<*mut html_bundle::Route>,
+    pub(crate) html_build_task: Option<*mut html_bundle::Route>,
 
-    pub result: BundleV2Result,
+    pub(crate) result: BundleV2Result,
 
     /// intrusive queue link (UnboundedQueue)
-    pub next: bun_threading::Link<JSBundleCompletionTask>,
+    pub(crate) next: bun_threading::Link<JSBundleCompletionTask>,
     /// arena-owned by BundleThread heap
-    pub transpiler: *mut BundleV2<'static>,
-    pub plugins: Option<NonNull<Plugin>>,
-    pub started_at_ns: u64,
+    pub(crate) transpiler: *mut BundleV2<'static>,
+    pub(crate) plugins: Option<NonNull<Plugin>>,
+    pub(crate) started_at_ns: u64,
 }
 
 impl JSBundleCompletionTask {
@@ -163,22 +160,6 @@ pub(crate) fn create_and_schedule_completion_task(
     };
 
     Ok(completion)
-}
-
-/// `BundleV2.generateFromJavaScript` — schedule a build and return its Promise.
-pub fn generate_from_javascript(
-    config: JSBundlerConfig,
-    plugins: Option<NonNull<Plugin>>,
-    global_this: &JSGlobalObject,
-    event_loop: *mut EventLoop,
-) -> crate::Result<JSValue> {
-    let completion = create_and_schedule_completion_task(config, plugins, global_this, event_loop)?;
-    // SAFETY: `completion` is the freshly-boxed allocation; sole owner on the JS
-    // thread until the enqueued task runs.
-    unsafe {
-        (*completion).promise = jsc::JSPromiseStrong::init(global_this);
-        Ok((*completion).promise.value())
-    }
 }
 
 /// `if (s.slice().len > 0) s.slice() else null` for the windows-options block.
@@ -338,6 +319,20 @@ impl JSBundleCompletionTask {
         let dirname: &[u8] = paths::dirname(&full_outfile_path).unwrap_or(b".");
         let basename: &[u8] = paths::basename(&full_outfile_path);
 
+        // Key the entry point at /$bunfs/root/<basename> like the CLI (which renames before appending .exe).
+        let entry_key = basename.strip_suffix(b".exe").unwrap_or(basename);
+        output_files[entry_point_index].dest_path = Box::from(entry_key);
+
+        if !compile_options.assets.is_empty() {
+            if let Err(msg) = crate::cli::build_command::collect_compile_assets(
+                &compile_options.assets,
+                entry_key,
+                output_files,
+            ) {
+                return CompileResult::fail_fmt(format_args!("{}", msg));
+            }
+        }
+
         #[cfg(not(windows))]
         let mut root_dir = Dir::cwd();
         #[cfg(windows)]
@@ -398,7 +393,7 @@ impl JSBundleCompletionTask {
 
         // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at
         // construction; valid for the lifetime of the VirtualMachine.
-        let env = unsafe { &mut *self.env.cast::<bun_dotenv::Loader>() };
+        let env = unsafe { &mut *self.env };
 
         let result = match to_executable(
             &compile_options.compile_target,
@@ -491,7 +486,6 @@ impl JSBundleCompletionTask {
                         _ => unsafe { core::hint::unreachable_unchecked() },
                     };
                     let write_args = fs_args::WriteFile {
-                        encoding: Encoding::Buffer,
                         flag: FileSystemFlags::W,
                         mode: node_fs::DEFAULT_PERMISSION,
                         file: PathOrFileDescriptor::Path(PathLike::String(
@@ -668,12 +662,6 @@ impl JSBundleCompletionTask {
                             global_this,
                             result,
                         );
-                        if let Some(artifact) = to_assign_on_sourcemap.as_::<BuildArtifact>() {
-                            // SAFETY: `as_` returned a live `*mut BuildArtifact`
-                            // owned by the JS wrapper; the borrow lasts only for
-                            // this `set` call (no other Rust alias exists).
-                            unsafe { (*artifact).sourcemap.set(global_this, result) };
-                        }
                         to_assign_on_sourcemap = JSValue::ZERO;
                     }
 
@@ -994,8 +982,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         }
         // `transpiler.env` is the dotenv loader installed by
         // `Transpiler::init`; non-null and valid for `'a`.
-        transpiler.resolver.env_loader =
-            NonNull::new(transpiler.env.cast::<bun_dotenv::Loader<'_>>());
+        transpiler.resolver.env_loader = NonNull::new(transpiler.env);
         // `Resolver.opts` is the resolver-crate subset
         // — re-project from the now-mutated `transpiler.options`.
         transpiler.sync_resolver_opts();
@@ -1073,11 +1060,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         };
 
         let log: *mut bun_ast::Log = &raw mut self.log;
-        // SAFETY: `self.env` is the per-VM dotenv loader stashed at
-        // construction; cast erases `'_` (bun_dotenv::Loader is invariant on
-        // its arena lifetime, but `Transpiler::init` only stores the pointer).
-        let env = self.env.cast::<bun_dotenv::Loader<'static>>();
-        let t = Transpiler::init(bump, log, opts, Some(env))?;
+        let t = Transpiler::init(bump, log, opts, Some(self.env))?;
         let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);
 
         // Post-init field wiring.
@@ -1104,7 +1087,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         // it outlives the BACKREF in `linker.loop`.
         let mut any_loop = bun_event_loop::AnyEventLoop::default();
         let event_loop: bun_bundler::linker_context_mod::EventLoop =
-            Some(NonNull::from(&mut any_loop).cast::<bun_event_loop::AnyEventLoop<'static>>());
+            Some(NonNull::from(&mut any_loop).cast::<bun_event_loop::AnyEventLoop>());
 
         // `thread_pool` is the `WorkPool` singleton (`OnceLock`-backed,
         // process-lifetime, concurrently read by worker threads). Do NOT

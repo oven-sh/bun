@@ -3,6 +3,7 @@ use bun_core::ZigString;
 
 use super::Expect;
 use super::get_signature;
+use super::throw;
 
 pub(crate) fn to_match_snapshot(
     this: &Expect,
@@ -15,29 +16,28 @@ pub(crate) fn to_match_snapshot(
     let this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
-    let _arguments = frame.arguments_old::<2>();
-    let arguments: &[JSValue] = &_arguments.ptr[0.._arguments.len];
+    let arguments: &[JSValue] = frame.arguments();
 
     this.increment_expect_call_counter();
 
     let not = this.flags.get().not();
     if not {
         let signature = get_signature("toMatchSnapshot", "", true);
-        return this.throw_fmt(
+        return throw!(
+            this,
             global,
             signature,
-            "",
-            format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n"),
+            "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n",
         );
     }
 
     let Some(buntest_strong) = this.bun_test() else {
         let signature = get_signature("toMatchSnapshot", "", true);
-        return this.throw_fmt(
+        return throw!(
+            this,
             global,
             signature,
-            "",
-            format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n"),
+            "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n",
         );
     };
     let _ = buntest_strong; // released by Drop at scope exit.
@@ -52,11 +52,11 @@ pub(crate) fn to_match_snapshot(
             } else if arguments[0].is_object() {
                 property_matchers = Some(arguments[0]);
             } else {
-                return this.throw_fmt(
+                return throw!(
+                    this,
                     global,
                     "",
-                    "",
-                    format_args!("\n\nMatcher error: Expected first argument to be a string or object\n"),
+                    "\n\nMatcher error: Expected first argument to be a string or object\n",
                 );
             }
         }
@@ -64,11 +64,11 @@ pub(crate) fn to_match_snapshot(
             if !arguments[0].is_object() {
                 let signature =
                     get_signature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", false);
-                return this.throw_fmt(
+                return throw!(
+                    this,
                     global,
                     signature,
-                    "",
-                    format_args!("\n\nMatcher error: Expected <green>properties<r> must be an object\n"),
+                    "\n\nMatcher error: Expected <green>properties<r> must be an object\n",
                 );
             }
 
@@ -77,11 +77,11 @@ pub(crate) fn to_match_snapshot(
             if arguments[1].is_string() {
                 arguments[1].to_zig_string(&mut hint_string, global)?;
             } else {
-                return this.throw_fmt(
+                return throw!(
+                    this,
                     global,
                     "",
-                    "",
-                    format_args!("\n\nMatcher error: Expected second argument to be a string\n"),
+                    "\n\nMatcher error: Expected second argument to be a string\n",
                 );
             }
         }

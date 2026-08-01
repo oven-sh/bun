@@ -148,7 +148,7 @@ impl Default for PathWatcherManager {
 }
 
 impl PathWatcherManager {
-    pub(crate) fn get() -> sys::Result<&'static PathWatcherManager> {
+    fn get() -> sys::Result<&'static PathWatcherManager> {
         // No unlocked fast path: `default_manager` is a plain global and an unsynchronized
         // read here would be textbook broken DCLP (a concurrent Worker's first `fs.watch()`
         // on ARM64 could observe the non-null pointer before `m.* = .{}` is visible and
@@ -223,7 +223,7 @@ pub(crate) struct ChangeEvent {
     #[cfg(not(windows))]
     hash: u64,
     #[cfg(not(windows))]
-    event_type_: WatchEventKind,
+    event_type: WatchEventKind,
     #[cfg(not(windows))]
     timestamp: i64,
 }
@@ -234,11 +234,11 @@ impl ChangeEvent {
         let time_diff = timestamp - self.timestamp;
         if self.timestamp == 0
             || time_diff > 1
-            || self.event_type_ != event_type
+            || self.event_type != event_type
             || self.hash != hash
         {
             self.timestamp = timestamp;
-            self.event_type_ = event_type;
+            self.event_type = event_type;
             self.hash = hash;
             return true;
         }
@@ -246,12 +246,12 @@ impl ChangeEvent {
     }
 }
 
-pub type Callback = fn(ctx: Option<*mut c_void>, event: Event, is_file: bool);
+pub(crate) type Callback = fn(ctx: Option<*mut c_void>, event: Event, is_file: bool);
 pub(crate) type UpdateEndCallback = fn(ctx: Option<*mut c_void>);
 
 impl PathWatcher {
     /// Heap-allocate and return a raw pointer.
-    pub(crate) fn new(init: PathWatcher) -> *mut PathWatcher {
+    fn new(init: PathWatcher) -> *mut PathWatcher {
         bun_core::heap::into_raw(Box::new(init))
     }
 
@@ -298,10 +298,17 @@ impl PathWatcher {
         }
     }
 
-    #[cfg(not(any(windows, target_os = "freebsd")))]
-    fn emit_error(&mut self, err: &sys::Error) {
+    #[cfg(not(windows))]
+    fn emit_error(&mut self, err: &sys::Error, close: bool) {
         for &ctx in self.handlers.keys() {
-            (FSWatcher::ON_PATH_UPDATE)(Some(ctx), Event::Error(err.clone()), false);
+            (FSWatcher::ON_PATH_UPDATE)(
+                Some(ctx),
+                Event::Error {
+                    err: err.clone(),
+                    close,
+                },
+                false,
+            );
         }
     }
 
@@ -323,9 +330,9 @@ impl PathWatcher {
     ///
     /// On macOS the FSEvents unregister happens *after* releasing `manager.mutex`:
     /// `FSEventsWatcher.deinit()` takes the FSEvents loop mutex, and the CF thread's
-    /// `_events_cb` holds that mutex while calling into `onFSEvent` (which takes
+    /// `events_cb` holds that mutex while calling into `onFSEvent` (which takes
     /// `manager.mutex`). Holding both here would be AB/BA with the CF thread. Once
-    /// `fse.deinit()` returns, `_events_cb` has released the loop mutex and nulled our
+    /// `fse.deinit()` returns, `events_cb` has released the loop mutex and nulled our
     /// slot, so no further callbacks will fire and `destroy()` is safe.
     ///
     /// # Safety
@@ -406,7 +413,7 @@ impl PathWatcher {
 // watch()
 // ────────────────────────────────────────────────────────────────────────────────
 
-pub fn watch(
+pub(crate) fn watch(
     vm: &VirtualMachine,
     path: &ZStr,
     recursive: bool,
@@ -542,7 +549,7 @@ pub fn watch(
             let w = unsafe { &mut *watcher };
             w.handlers.swap_remove(&ctx);
             if w.handlers.len() > 0 {
-                w.emit_error(&err);
+                w.emit_error(&err, true);
                 w.flush();
                 manager.mutex.unlock();
                 return Err(err.without_path());
@@ -736,7 +743,11 @@ impl Linux {
         let root = watcher.path.clone();
         Linux::add_one(manager, watcher, &root, b"")?;
         if watcher.recursive && !watcher.is_file {
-            Linux::walk_and_add(manager, watcher, &root, b"");
+            if let Some(err) = Linux::walk_and_add(manager, watcher, &root, b"") {
+                // Partial coverage: emit 'error' but keep the watcher, like node.
+                watcher.emit_error(&err, false);
+                watcher.flush();
+            }
         }
         Ok(())
     }
@@ -758,12 +769,12 @@ impl Linux {
         // SAFETY: thin wrapper over libc::inotify_add_watch; abs_path is NUL-terminated.
         let rc = unsafe { sys::linux::inotify_add_watch(fd.native(), abs_path.as_ptr(), mask) };
         if rc < 0 {
-            // ENOTDIR/ENOENT during a recursive walk just means we raced; skip.
-            if !subpath.is_empty() {
+            let err = sys::Error::from_code_int(sys::last_errno(), Tag::watch);
+            // ENOENT/ENOTDIR during a recursive walk just means we raced; skip.
+            if !subpath.is_empty() && matches!(err.get_errno(), E::ENOENT | E::ENOTDIR) {
                 return Ok(());
             }
-            return Err(sys::Error::from_code_int(sys::last_errno(), Tag::watch)
-                .with_path(abs_path.as_bytes()));
+            return Err(err.with_path(abs_path.as_bytes()));
         }
         let wd: i32 = rc;
         // SAFETY: caller holds manager.mutex; exclusive access to `wd_map`.
@@ -800,15 +811,22 @@ impl Linux {
 
     /// Best-effort recursive directory walk. inotify watches are per-directory (events
     /// for files arrive on their parent's wd), so only descend into subdirectories.
+    /// Returns the first `inotify_add_watch` failure without stopping the walk.
     fn walk_and_add(
         manager: &'static PathWatcherManager,
         watcher: &mut PathWatcher,
         abs_dir: &ZStr,
         rel_dir: &[u8],
-    ) {
+    ) -> Option<sys::Error> {
+        let mut first_err: Option<sys::Error> = None;
         walk_subtree::<true>(abs_dir, rel_dir, &mut |abs, rel, _is_file| {
-            let _ = Linux::add_one(manager, watcher, abs, rel);
+            if let Err(e) = Linux::add_one(manager, watcher, abs, rel) {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
         });
+        first_err
     }
 
     /// Caller holds `manager.mutex`. Drops this watcher's ownership of each of its
@@ -879,7 +897,7 @@ impl Linux {
                     for &w in watchers.values() {
                         // SAFETY: holding manager.mutex; w is live.
                         unsafe {
-                            (*w).emit_error(&err);
+                            (*w).emit_error(&err, true);
                             (*w).flush();
                         }
                     }
@@ -1093,7 +1111,8 @@ impl Linux {
                         // which `walk_subtree` also borrows. Own it for the call.
                         let rel_owned: Box<[u8]> = Box::from(rel);
                         // These may rehash `wd_map`; `owners` is re-fetched next iteration.
-                        let _ = Linux::add_one(manager, watcher, child_abs, &rel_owned);
+                        let mut add_err =
+                            Linux::add_one(manager, watcher, child_abs, &rel_owned).err();
                         // Entries created inside the new directory before our watch
                         // attached never get their own IN_CREATE on this fd. Walk the
                         // subtree: watch nested directories and synthesize a "rename"
@@ -1107,11 +1126,19 @@ impl Linux {
                             &rel_owned,
                             &mut |abs, entry_rel, entry_is_file| {
                                 if !entry_is_file {
-                                    let _ = Linux::add_one(manager, watcher, abs, entry_rel);
+                                    if let Err(e) = Linux::add_one(manager, watcher, abs, entry_rel)
+                                    {
+                                        if add_err.is_none() {
+                                            add_err = Some(e);
+                                        }
+                                    }
                                 }
                                 watcher.emit(WatchEventKind::Rename, entry_rel, entry_is_file);
                             },
                         );
+                        if let Some(err) = add_err {
+                            watcher.emit_error(&err, false);
+                        }
                     }
 
                     oi += 1;
@@ -1207,7 +1234,7 @@ impl Darwin {
 
     /// Caller does NOT hold `manager.mutex` (same lock-order reasoning as `addWatch`).
     /// `FSEventsWatcher.deinit()` → `unregisterWatcher()` blocks on the FSEvents loop
-    /// mutex, which `_events_cb` holds for the whole dispatch; once this returns no
+    /// mutex, which `events_cb` holds for the whole dispatch; once this returns no
     /// further `onFSEvent` calls will arrive for `watcher`.
     ///
     /// Takes a raw `*mut PathWatcher`: while we block on the FSEvents loop mutex
@@ -1226,14 +1253,14 @@ impl Darwin {
         }
     }
 
-    /// Called from the CFRunLoop thread (`fs_events.rs`'s `_events_cb`) with the
+    /// Called from the CFRunLoop thread (`fs_events.rs`'s `events_cb`) with the
     /// FSEvents loop mutex held. Take `manager.mutex` so iterating `handlers` can't
     /// race with `watch()`/`detach()` mutating it. The JS thread never holds
     /// `manager.mutex` across a call into FSEvents, so this is deadlock-free.
     ///
     /// `watcher` itself is kept alive by the FSEvents loop mutex: `detach()` →
     /// `removeWatch()` → `fse.deinit()` → `unregisterWatcher()` blocks until
-    /// `_events_cb` releases it, so `destroy()` cannot run under us. The
+    /// `events_cb` releases it, so `destroy()` cannot run under us. The
     /// `watcher.manager == null` check catches the window where detach has already
     /// unlinked us but hasn't yet called `fse.deinit()`.
     fn on_fs_event(ctx: *mut c_void, event: Event, is_file: bool) {
@@ -1258,7 +1285,7 @@ impl Darwin {
         match event {
             Event::Rename(path) => watcher.emit(WatchEventKind::Rename, &path, is_file),
             Event::Change(path) => watcher.emit(WatchEventKind::Change, &path, is_file),
-            Event::Error(err) => watcher.emit_error(&err),
+            Event::Error { err, close } => watcher.emit_error(&err, close),
             _ => {}
         }
     }
@@ -1362,9 +1389,19 @@ impl Kqueue {
         Kqueue::add_one(manager, watcher, &root, b"", is_file)?;
         if watcher.recursive && !watcher.is_file {
             // kqueue needs an open fd per *file* as well as per directory.
+            let mut first_err: Option<sys::Error> = None;
             walk_subtree::<false>(&root, b"", &mut |abs, rel, is_file| {
-                let _ = Kqueue::add_one(manager, watcher, abs, rel, is_file);
+                if let Err(e) = Kqueue::add_one(manager, watcher, abs, rel, is_file) {
+                    if first_err.is_none() {
+                        first_err = Some(e);
+                    }
+                }
             });
+            if let Some(err) = first_err {
+                // Partial coverage: emit 'error' but keep the watcher, like node.
+                watcher.emit_error(&err, false);
+                watcher.flush();
+            }
         }
         Ok(())
     }
@@ -1386,10 +1423,10 @@ impl Kqueue {
             0,
         ) {
             Err(e) => {
-                if !subpath.is_empty() {
-                    return Ok(()); // best-effort on children
+                if !subpath.is_empty() && matches!(e.get_errno(), E::ENOENT | E::ENOTDIR) {
+                    return Ok(());
                 }
-                return Err(e.without_path());
+                return Err(e.with_path_and_syscall(abs_path.as_bytes(), Tag::watch));
             }
             Ok(f) => f,
         };
@@ -1432,14 +1469,12 @@ impl Kqueue {
             // dead entry in the map that will never deliver events.
             let errno = sys::get_errno(krc);
             fd.close();
-            if !subpath.is_empty() {
-                return Ok(()); // best-effort on children
-            }
             return Err(sys::Error {
                 errno: errno as u16,
-                syscall: Tag::kevent,
+                syscall: Tag::watch,
                 ..Default::default()
-            });
+            }
+            .with_path(abs_path.as_bytes()));
         }
 
         // SAFETY: caller holds manager.mutex; exclusive access to `entries`.

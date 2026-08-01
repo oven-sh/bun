@@ -1,7 +1,6 @@
 #pragma once
 
 #include "root.h"
-#include "ActiveDOMObject.h"
 #include "SharedEnvStore.h"
 #include <wtf/CrossThreadTask.h>
 #include <wtf/Function.h>
@@ -130,7 +129,10 @@ public:
 
     // Set once when the context is permanently shutting down (WebWorker__teardownJSCVM).
     // Unlike VM::hasTerminationRequest(), never set transiently (node:vm {timeout}).
-    void markTerminating() { m_isTerminating.store(true, std::memory_order_release); }
+    // Takes allScriptExecutionContextsMapLock so it serializes with postTaskTo's
+    // check-then-enqueue; a caller that drains the concurrent queue after this
+    // returns will observe every task enqueued before the flag flipped.
+    void markTerminating();
     bool isTerminating() const { return m_isTerminating.load(std::memory_order_acquire); }
 
     // Non-null once this thread joins a `worker_threads` SHARE_ENV tree; every

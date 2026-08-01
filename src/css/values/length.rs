@@ -51,7 +51,7 @@ pub enum LengthPercentageOrAuto {
 impl LengthPercentageOrAuto {
     // parse + to_css — provided by #[derive(css::Parse, css::ToCss)]. is_compatible KEPT.
 
-    pub fn is_compatible(&self, browsers: &Browsers) -> bool {
+    pub(crate) fn is_compatible(&self, browsers: &Browsers) -> bool {
         match self {
             Self::Length(l) => l.is_compatible(browsers),
             _ => true,
@@ -318,11 +318,11 @@ impl LengthValue {
         }
     }
 
-    pub(crate) fn try_sign(self) -> Option<f32> {
+    fn try_sign(self) -> Option<f32> {
         Some(self.sign())
     }
 
-    pub(crate) fn sign(self) -> f32 {
+    fn sign(self) -> f32 {
         css::signfns::sign_f32(self.value())
     }
 
@@ -342,15 +342,15 @@ impl LengthValue {
         (self.value(), self.unit())
     }
 
-    pub(crate) fn map(self, map_fn: impl FnOnce(f32) -> f32) -> LengthValue {
+    fn map(self, map_fn: impl FnOnce(f32) -> f32) -> LengthValue {
         self.map_value(map_fn)
     }
 
-    pub(crate) fn mul_f32(self, other: f32) -> LengthValue {
+    fn mul_f32(self, other: f32) -> LengthValue {
         self.map_value(|v| v * other)
     }
 
-    pub(crate) fn partial_cmp(self, other: LengthValue) -> Option<Ordering> {
+    fn partial_cmp(self, other: LengthValue) -> Option<Ordering> {
         if core::mem::discriminant(&self) == core::mem::discriminant(&other) {
             let a = self.value();
             let b = other.value();
@@ -365,7 +365,7 @@ impl LengthValue {
         None
     }
 
-    pub(crate) fn try_add(self, rhs: LengthValue) -> Option<LengthValue> {
+    fn try_add(self, rhs: LengthValue) -> Option<LengthValue> {
         if let Some(v) = self.try_same_unit_op(&rhs, |a, b| a + b) {
             return Some(v);
         }
@@ -591,14 +591,14 @@ impl Length {
         }
     }
 
-    pub(crate) fn is_sign_negative(&self) -> bool {
+    fn is_sign_negative(&self) -> bool {
         let Some(s) = self.try_sign() else {
             return false;
         };
         s.is_sign_negative()
     }
 
-    pub(crate) fn is_sign_positive(&self) -> bool {
+    fn is_sign_positive(&self) -> bool {
         let Some(s) = self.try_sign() else {
             return false;
         };
@@ -619,7 +619,7 @@ impl Length {
         }
     }
 
-    pub(crate) fn is_zero(&self) -> bool {
+    fn is_zero(&self) -> bool {
         match self {
             Self::Value(v) => v.is_zero(),
             _ => false,

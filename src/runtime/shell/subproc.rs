@@ -13,14 +13,14 @@ use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::states::cmd::Cmd as ShellCmd;
 use crate::shell::{self as sh, Yield};
-use crate::webcore::{self, FileSink, ReadableStream, blob};
+use crate::webcore::{self, FileSink};
 use bun_alloc::Arena;
 use bun_collections::VecExt;
 use bun_io::Loop as AsyncLoop;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{BufferedReader, ReadState};
-use bun_jsc::{self as jsc, EventLoopHandle, JSGlobalObject, JSValue, MarkedArrayBuffer};
+use bun_jsc::{self as jsc, EventLoopHandle};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd, FdExt, SystemError};
 use enumset::EnumSet;
@@ -115,7 +115,6 @@ fn read_state_str(s: ReadState) -> &'static str {
     }
 }
 
-pub use crate::api::bun_spawn::stdio::Stdio as StdioReexport;
 pub use JscSubprocess::StdioKind;
 
 use crate::shell::ShellErr;
@@ -143,22 +142,6 @@ impl FileSinkPtr {
     unsafe fn adopt(ptr: *mut FileSink) -> Self {
         // SAFETY: caller contract — `ptr` is non-null.
         Self(unsafe { core::ptr::NonNull::new_unchecked(ptr) })
-    }
-
-    #[inline]
-    pub fn as_ptr(&self) -> *mut FileSink {
-        self.0.as_ptr()
-    }
-
-    /// Mutably borrow the payload. Shell is single-threaded.
-    ///
-    /// # Safety
-    /// Caller must ensure no overlapping `&`/`&mut` to the `FileSink` is live.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub unsafe fn as_mut(&self) -> &mut FileSink {
-        // SAFETY: caller contract.
-        unsafe { &mut *self.0.as_ptr() }
     }
 }
 
@@ -196,8 +179,8 @@ bun_output::define_scoped_log!(log, SHELL_SUBPROC, visible);
 /// Used for captured writer
 #[derive(Default)]
 pub struct ShellIO {
-    pub stdout: Option<Arc<IOWriter>>,
-    pub stderr: Option<Arc<IOWriter>>,
+    pub(crate) stdout: Option<Arc<IOWriter>>,
+    pub(crate) stderr: Option<Arc<IOWriter>>,
 }
 
 // Note: with `Arc<IOWriter>` the only correct way to
@@ -209,9 +192,9 @@ pub struct ShellIO {
 // ShellSubprocess
 // ───────────────────────────────────────────────────────────────────────────
 
-pub type Subprocess = ShellSubprocess;
+pub(crate) type Subprocess = ShellSubprocess;
 
-pub const DEFAULT_MAX_BUFFER_SIZE: u32 = 1024 * 1024 * 4;
+pub(crate) const DEFAULT_MAX_BUFFER_SIZE: u32 = 1024 * 1024 * 4;
 
 /// Backref from a heap-allocated [`ShellSubprocess`] to its owning `Cmd`.
 ///
@@ -224,8 +207,8 @@ pub const DEFAULT_MAX_BUFFER_SIZE: u32 = 1024 * 1024 * 4;
 /// each use site.
 #[derive(Clone, Copy)]
 pub struct CmdHandle {
-    pub interp: bun_ptr::ParentRef<Interpreter>,
-    pub id: NodeId,
+    pub(crate) interp: bun_ptr::ParentRef<Interpreter>,
+    pub(crate) id: NodeId,
 }
 
 impl CmdHandle {
@@ -238,7 +221,7 @@ impl CmdHandle {
     /// site: the subprocess / PipeReader callbacks fire strictly before
     /// `Cmd::deinit` recycles the slot.
     #[inline]
-    pub unsafe fn cmd_mut(self) -> &'static mut ShellCmd {
+    pub(crate) unsafe fn cmd_mut(self) -> &'static mut ShellCmd {
         // SAFETY: per fn contract — `interp` constructed via `from_raw_mut`
         // (write provenance), single-threaded, no overlapping `&mut`.
         // `&'static mut T` forge — `bun_ptr::Interned` is read-only by
@@ -252,36 +235,22 @@ impl CmdHandle {
 }
 
 pub struct ShellSubprocess {
-    pub cmd_parent: CmdHandle,
+    pub(crate) cmd_parent: CmdHandle,
 
     /// Intrusively ref-counted process (`bun_ptr::ThreadSafeRefCount`).
     /// Stored raw because `Process` methods take `&mut self` and `RefPtr`
     /// only implements `Deref`; the shell is single-threaded so raw mutable
     /// access is sound.
-    pub process: *mut Process,
+    pub(crate) process: *mut Process,
 
-    pub stdin: Writable,
-    pub stdout: Readable,
-    pub stderr: Readable,
-
-    pub event_loop: EventLoopHandle,
+    pub(crate) stdin: Writable,
+    pub(crate) stdout: Readable,
+    pub(crate) stderr: Readable,
 
     pub closed: EnumSet<StdioKind>,
-    pub flags: Flags,
 }
 
-bitflags::bitflags! {
-    #[repr(transparent)]
-    #[derive(Default, Clone, Copy)]
-    pub struct Flags: u8 {
-        const IS_SYNC                = 1 << 0;
-        const KILLED                 = 1 << 1;
-        const WAITING_FOR_ONEXIT     = 1 << 2;
-        // remaining 5 bits unused
-    }
-}
-
-pub type SignalCode = bun_core::SignalCode;
+pub(crate) type SignalCode = bun_core::SignalCode;
 
 impl Drop for ShellSubprocess {
     fn drop(&mut self) {
@@ -313,8 +282,6 @@ impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubproc
     }
 }
 
-pub type WatchFd = Fd;
-
 bun_spawn::link_impl_ProcessExit! {
     Shell for ShellSubprocess => |this| {
         on_process_exit(process, status, rusage) =>
@@ -323,19 +290,17 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl ShellSubprocess {
-    pub const DEFAULT_MAX_BUFFER_SIZE: u32 = DEFAULT_MAX_BUFFER_SIZE;
-
     /// Borrow the intrusively ref-counted Process mutably.
     /// SAFETY-internal: shell is single-threaded; `self.process` is non-null
     /// for the lifetime of `ShellSubprocess` (set in `spawn_maybe_sync_impl`).
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn proc(&self) -> &mut Process {
+    pub(crate) fn proc(&self) -> &mut Process {
         // SAFETY: see doc comment.
         unsafe { &mut *self.process }
     }
 
-    pub fn on_static_pipe_writer_done(&mut self) {
+    pub(crate) fn on_static_pipe_writer_done(&mut self) {
         log!(
             "Subproc(0x{:x}) onStaticPipeWriterDone(cmd={})",
             std::ptr::from_mut(self) as usize,
@@ -346,18 +311,11 @@ impl ShellSubprocess {
         unsafe { self.cmd_parent.cmd_mut() }.buffered_input_close();
     }
 
-    pub fn get_io(&mut self, out_kind: OutKind) -> &mut Readable {
-        match out_kind {
-            OutKind::Stdout => &mut self.stdout,
-            OutKind::Stderr => &mut self.stderr,
-        }
-    }
-
-    pub fn has_exited(&self) -> bool {
+    pub(crate) fn has_exited(&self) -> bool {
         self.proc().has_exited()
     }
 
-    pub fn r#ref(&mut self) {
+    pub(crate) fn r#ref(&mut self) {
         self.proc().enable_keeping_event_loop_alive();
 
         // self.stdin.ref();
@@ -373,7 +331,7 @@ impl ShellSubprocess {
     }
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
-    pub fn unref<const _DEREF: bool>(&mut self) {
+    pub(crate) fn unref<const _DEREF: bool>(&mut self) {
         self.proc().disable_keeping_event_loop_alive();
 
         self.stdout.unref();
@@ -381,11 +339,7 @@ impl ShellSubprocess {
         self.stderr.unref();
     }
 
-    pub fn has_killed(&self) -> bool {
-        self.proc().has_killed()
-    }
-
-    pub fn try_kill(&mut self, sig: i32) -> bun_sys::Result<()> {
+    pub(crate) fn try_kill(&mut self, sig: i32) -> bun_sys::Result<()> {
         if self.has_exited() {
             return Ok(());
         }
@@ -409,14 +363,7 @@ impl ShellSubprocess {
         }
     }
 
-    pub fn disconnect(&mut self) {
-        let _ = self;
-        // if (self.ipc_mode == .none) return;
-        // self.ipc.socket.close(0, null);
-        // self.ipc_mode = .none;
-    }
-
-    pub fn close_io(&mut self, io: StdioKind) {
+    pub(crate) fn close_io(&mut self, io: StdioKind) {
         if self.closed.contains(io) {
             return;
         }
@@ -438,7 +385,7 @@ impl ShellSubprocess {
     }
 
     // This must only be run once per Subprocess
-    pub fn finalize_sync(&mut self) {
+    pub(crate) fn finalize_sync(&mut self) {
         self.close_process();
 
         self.close_io(StdioKind::Stdin);
@@ -446,13 +393,13 @@ impl ShellSubprocess {
         self.close_io(StdioKind::Stderr);
     }
 
-    pub fn on_close_io(&mut self, kind: StdioKind) {
+    pub(crate) fn on_close_io(&mut self, kind: StdioKind) {
         match kind {
             StdioKind::Stdin => match &mut self.stdin {
                 Writable::Pipe(pipe) => {
                     // DerefMut on the owning `&mut FileSinkPtr` encapsulates
                     // the access.
-                    pipe.signal.with_mut(|s| s.clear());
+                    pipe.source.with_mut(|s| s.clear());
                     // FileSinkPtr::drop derefs.
                     self.stdin = Writable::Ignore;
                 }
@@ -548,7 +495,7 @@ impl ShellSubprocess {
     // `shell_body.rs`; boxing it here would change `pub fn` signatures across
     // every `?`-propagating shell caller.
     #[allow(clippy::result_large_err)]
-    pub fn spawn_async(
+    pub(crate) fn spawn_async(
         event_loop: EventLoopHandle,
         shellio: &mut ShellIO,
         spawn_args_: SpawnArgs<'_>,
@@ -590,8 +537,6 @@ impl ShellSubprocess {
         out_subproc: *mut *mut Self,
         notify_caller_process_already_exited: &mut bool,
     ) -> sh::Result<()> {
-        const IS_SYNC: bool = false;
-
         // Owns the `K=V\0` storage when inheriting the parent env. The struct
         // keeps the buffers alive until after `spawn_process` returns (the raw
         // pointers pushed into `env_array` borrow `inherited_env_storage.storage`).
@@ -793,16 +738,10 @@ impl ShellSubprocess {
         // dropping garbage.
         unsafe {
             subprocess.write(Subprocess {
-                event_loop,
-                process: spawn_result.to_process(event_loop, IS_SYNC),
+                process: spawn_result.to_process(event_loop),
                 stdin,
                 stdout,
                 stderr,
-                flags: if IS_SYNC {
-                    Flags::IS_SYNC
-                } else {
-                    Flags::empty()
-                },
                 cmd_parent,
                 closed: EnumSet::empty(),
             });
@@ -831,7 +770,7 @@ impl ShellSubprocess {
         {
             // Derive `stdin_ptr` from the raw heap pointer (`subprocess`), not
             // the local `subproc: &mut` reborrow — the pointer is stored
-            // long-term in `FileSink::signal` and dereferenced from
+            // long-term in `FileSink::source` and dereferenced from
             // `Writable::on_close` after this frame returns. Under Stacked
             // Borrows a child of `subproc`'s tag would be invalidated when
             // that borrow ends; rooting in the allocation's provenance keeps
@@ -839,17 +778,18 @@ impl ShellSubprocess {
             // SAFETY: `subprocess` is the live, fully-initialised heap alloc.
             let stdin_ptr: *mut Writable = unsafe { &raw mut (*subprocess).stdin };
             // SAFETY: reborrow as a child of `stdin_ptr` so it does not
-            // invalidate the sibling we store in `signal`.
+            // invalidate the sibling we store in `source`.
             if let Writable::Pipe(pipe) = unsafe { &mut *stdin_ptr } {
                 // SAFETY: shell is single-threaded; the FileSink allocation is
                 // disjoint from `*stdin_ptr`. `stdin_ptr` outlives the sink —
                 // the Subprocess owns both and `Writable::on_close` is the only
-                // path that drops the FileSinkPtr. `init_with_type` is
-                // `unsafe fn` (caller asserts the handler outlives the
-                // `Signal`).
-                pipe.signal.set(unsafe {
-                    webcore::streams::Signal::init_with_type::<Writable>(stdin_ptr)
-                });
+                // path that drops the FileSinkPtr.
+                pipe.source
+                    .set(webcore::streams::SourceHandle::ShellWritable(
+                        bun_ptr::BackRef::from(
+                            core::ptr::NonNull::new(stdin_ptr).expect("&raw mut"),
+                        ),
+                    ));
             }
         }
 
@@ -896,11 +836,7 @@ impl ShellSubprocess {
         Ok(())
     }
 
-    pub fn wait(&mut self, sync: bool) {
-        self.proc().wait(sync)
-    }
-
-    pub fn on_process_exit(&mut self, _: &Process, status: &Status, _: &Rusage) {
+    pub(crate) fn on_process_exit(&mut self, _: &Process, status: &Status, _: &Rusage) {
         log!("onProcessExit({:x})", std::ptr::from_mut(self) as usize);
         let exit_code: Option<u8> = 'brk: {
             if let Status::Exited(exited) = &status {
@@ -953,36 +889,6 @@ pub enum Writable {
 }
 
 impl Writable {
-    pub fn has_pending_activity(&self) -> bool {
-        match self {
-            // we mark them as .ignore when they are closed, so this must be true
-            Writable::Pipe(_) => true,
-            Writable::Buffer(_) => true,
-            _ => false,
-        }
-    }
-
-    pub fn r#ref(&mut self) {
-        self.update_ref(true);
-    }
-
-    pub fn unref(&mut self) {
-        self.update_ref(false);
-    }
-
-    fn update_ref(&mut self, add: bool) {
-        match self {
-            Writable::Pipe(pipe) => {
-                pipe.update_ref(add);
-            }
-            Writable::Buffer(buffer) => {
-                // SAFETY: single-threaded; temporary `&mut` for the call only.
-                unsafe { buffer_mut(buffer) }.update_ref(add);
-            }
-            _ => {}
-        }
-    }
-
     // When the stream has closed we need to be notified to prevent a use-after-free
     // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
     pub fn on_close(&mut self, _: Option<bun_sys::Error>) {
@@ -994,24 +900,10 @@ impl Writable {
         }
         *self = Writable::Ignore;
     }
-    pub fn on_ready(&mut self, _: Option<blob::SizeType>, _: Option<blob::SizeType>) {}
-    pub fn on_start(&mut self) {}
-}
-
-impl webcore::streams::SignalHandler for Writable {
-    fn on_close(&mut self, err: Option<bun_sys::Error>) {
-        Writable::on_close(self, err)
-    }
-    fn on_ready(&mut self, amount: Option<blob::SizeType>, offset: Option<blob::SizeType>) {
-        Writable::on_ready(self, amount, offset)
-    }
-    fn on_start(&mut self) {
-        Writable::on_start(self)
-    }
 }
 
 impl Writable {
-    pub fn init(
+    pub(crate) fn init(
         stdio: Stdio,
         event_loop: EventLoopHandle,
         subprocess: *mut Subprocess,
@@ -1197,24 +1089,6 @@ impl Writable {
             Writable::Fd(_) | Writable::Inherit => {}
         }
     }
-
-    pub fn close(&mut self) {
-        match self {
-            Writable::Pipe(pipe) => {
-                let _ = pipe.end(None);
-            }
-            Writable::Memfd(fd) | Writable::Fd(fd) => {
-                fd.close();
-                *self = Writable::Ignore;
-            }
-            Writable::Buffer(buffer) => {
-                // SAFETY: single-threaded; temporary `&mut` for the call only.
-                unsafe { buffer_mut(buffer) }.close();
-            }
-            Writable::Ignore => {}
-            Writable::Inherit => {}
-        }
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1262,7 +1136,7 @@ impl Readable {
         Ok(())
     }
 
-    pub fn r#ref(&mut self) {
+    pub(crate) fn r#ref(&mut self) {
         if let Readable::Pipe(pipe) = self {
             // SAFETY: see `arc_as_mut_ptr` — single-threaded shell; Windows
             // `BufferedReader::update_ref` needs `&mut` to touch the libuv
@@ -1271,7 +1145,7 @@ impl Readable {
         }
     }
 
-    pub fn unref(&mut self) {
+    pub(crate) fn unref(&mut self) {
         if let Readable::Pipe(pipe) = self {
             // SAFETY: see `arc_as_mut_ptr` — single-threaded shell;
             // `update_ref` does not re-enter shell code.
@@ -1283,7 +1157,7 @@ impl Readable {
     // output is read via `PipeReader::buffered_output`.
 
     #[allow(clippy::too_many_arguments)]
-    pub fn init(
+    pub(crate) fn init(
         out_type: OutKind,
         stdio: Stdio,
         shellio: Option<Arc<IOWriter>>,
@@ -1382,29 +1256,6 @@ impl Readable {
         }
     }
 
-    pub fn close(&mut self) {
-        match self {
-            Readable::Memfd(fd) => {
-                let fd = *fd;
-                *self = Readable::Closed;
-                fd.close();
-            }
-            // .fd is borrowed from the shell's IOWriter (see IO.OutKind.to_subproc_stdio) or
-            // a CowFd redirect; the owner closes it.
-            Readable::Fd(_) => {
-                *self = Readable::Closed;
-            }
-            Readable::Pipe(pipe) => {
-                // SAFETY: see `arc_as_mut_ptr` — single-threaded shell;
-                // `PipeReader::close` only touches `self.reader` and does
-                // not re-enter `Cmd`/interpreter code that would deref the
-                // sibling `Arc` clone.
-                unsafe { &mut *arc_as_mut_ptr(pipe) }.close();
-            }
-            _ => {}
-        }
-    }
-
     pub fn finalize(&mut self) {
         match core::mem::replace(self, Readable::Closed) {
             Readable::Memfd(fd) => {
@@ -1435,98 +1286,30 @@ pub struct SpawnArgs<'a> {
     /// Shared borrow: arena alloc methods take `&self`, and a `&'a Arena`
     /// (being `Copy`) lets `fill_env` hand back `&'a [u8]` slices without
     /// the unsafe pointer round-trip the `&'a mut Arena` reborrow forced.
-    pub arena: &'a Arena,
+    pub(crate) arena: &'a Arena,
     /// `[*:null]?[*:0]const u8` argv view for `spawn_process`. Built by the
     /// caller from `Cmd.args` (each `Vec<u8>` NUL-terminated) so this struct
     /// never needs to borrow the `Cmd` arena slot — passing the whole `Cmd`
     /// would alias the `out_subproc` write into `cmd.exec.subproc.child`.
     /// Must include the trailing null sentinel.
-    pub argv: Vec<*const c_char>,
+    pub(crate) argv: Vec<*const c_char>,
     /// Backref so [`PipeReader`] async-I/O callbacks can drive
     /// [`Yield::run`]. The spawning `Cmd` passes it explicitly here and it is
     /// plumbed through `Readable::init` → `PipeReader::create`.
-    pub interp: *mut crate::shell::interpreter::Interpreter,
+    pub(crate) interp: *mut crate::shell::interpreter::Interpreter,
 
-    pub override_env: bool,
-    pub env_array: Vec<*const c_char>,
-    pub cwd: &'a [u8],
-    pub stdio: [Stdio; 3],
-    pub lazy: bool,
+    pub(crate) override_env: bool,
+    pub(crate) env_array: Vec<*const c_char>,
+    pub(crate) cwd: &'a [u8],
+    pub(crate) stdio: [Stdio; 3],
+    pub(crate) lazy: bool,
     pub path: &'a [u8],
-    pub detached: bool,
     // ipc_mode: IPCMode,
     // ipc_callback: JSValue,
 }
 
-pub struct EnvMapIter<'a> {
-    pub map: &'a bun_dotenv::Map,
-    pub iter: core::iter::Zip<
-        core::slice::Iter<'a, Box<[u8]>>,
-        core::slice::Iter<'a, bun_dotenv::HashTableValue>,
-    >,
-    // alloc param dropped — global allocator
-}
-
-pub struct EnvMapIterEntry<'a> {
-    pub key: EnvMapIterKey<'a>,
-    pub value: EnvMapIterValue,
-}
-
-pub struct EnvMapIterKey<'a> {
-    pub val: &'a [u8],
-}
-
-impl core::fmt::Display for EnvMapIterKey<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", bstr::BStr::new(self.val))
-    }
-}
-
-impl EnvMapIterKey<'_> {
-    pub fn eql_comptime(&self, str: &'static [u8]) -> bool {
-        self.val == str
-    }
-}
-
-pub struct EnvMapIterValue {
-    /// Owns the NUL-terminated copy directly via `ZBox`.
-    // PERF: could come from the spawn arena instead — profile if hot.
-    pub val: bun_core::ZBox,
-}
-
-impl core::fmt::Display for EnvMapIterValue {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", bstr::BStr::new(self.val.as_bytes()))
-    }
-}
-
-impl<'a> EnvMapIter<'a> {
-    pub fn init(map: &'a bun_dotenv::Map) -> EnvMapIter<'a> {
-        EnvMapIter {
-            map,
-            iter: map.iter(),
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.map.count()
-    }
-
-    pub fn next(&mut self) -> Result<Option<EnvMapIterEntry<'a>>, bun_alloc::AllocError> {
-        let Some((key, value)) = self.iter.next() else {
-            return Ok(None);
-        };
-        Ok(Some(EnvMapIterEntry {
-            key: EnvMapIterKey { val: &key[..] },
-            value: EnvMapIterValue {
-                val: bun_core::ZBox::from_bytes(&value.value),
-            },
-        }))
-    }
-}
-
 impl<'a> SpawnArgs<'a> {
-    pub fn default<const IS_SYNC: bool>(
+    pub(crate) fn default<const IS_SYNC: bool>(
         arena: &'a Arena,
         interp: *mut crate::shell::interpreter::Interpreter,
         event_loop: EventLoopHandle,
@@ -1557,7 +1340,6 @@ impl<'a> SpawnArgs<'a> {
                     b""
                 }
             },
-            detached: false,
             // .ipc_mode = IPCMode.none,
             // .ipc_callback = .zero,
         };
@@ -1571,7 +1353,7 @@ impl<'a> SpawnArgs<'a> {
 
     /// `object_iter` should be a some type with the following fields:
     /// - `next() bool`
-    pub fn fill_env<const DISABLE_PATH_LOOKUP_FOR_ARV0: bool>(
+    pub(crate) fn fill_env<const DISABLE_PATH_LOOKUP_FOR_ARV0: bool>(
         &mut self,
         env_iter: &mut crate::shell::env_map::Iterator<'_>,
     ) {
@@ -1618,7 +1400,6 @@ impl<'a> SpawnArgs<'a> {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub type IOReader = BufferedReader;
-pub type Poll = IOReader;
 
 pub enum PipeReaderState {
     Pending,
@@ -1627,18 +1408,18 @@ pub enum PipeReaderState {
 }
 
 pub struct PipeReader {
-    pub reader: IOReader,
-    pub process: Option<*mut ShellSubprocess>,
-    pub event_loop: EventLoopHandle,
-    pub state: PipeReaderState,
-    pub stdio_result: StdioResult,
-    pub out_type: OutKind,
-    pub captured_writer: CapturedWriter,
-    pub buffered_output: BufferedOutput,
+    pub(crate) reader: IOReader,
+    pub(crate) process: Option<*mut ShellSubprocess>,
+    pub(crate) event_loop: EventLoopHandle,
+    pub(crate) state: PipeReaderState,
+    pub(crate) stdio_result: StdioResult,
+    pub(crate) out_type: OutKind,
+    pub(crate) captured_writer: CapturedWriter,
+    pub(crate) buffered_output: BufferedOutput,
     /// Backref so async read/write callbacks can drive `Yield::run`. See
     /// `IOWriter::interp` / `IOReader::interp` for the same pattern. Wired
     /// from `Cmd::interp` at `PipeReader::create` time.
-    pub interp: *mut crate::shell::interpreter::Interpreter,
+    pub(crate) interp: *mut crate::shell::interpreter::Interpreter,
     // ref_count: handled by Arc<PipeReader>; mutation through shared handles
     // goes via the `arc_as_mut_ptr` interior-mutability helper below.
 }
@@ -1659,21 +1440,21 @@ impl Default for BufferedOutput {
 
 impl BufferedOutput {
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             BufferedOutput::Bytelist(b) => b.len() as usize,
             BufferedOutput::ArrayBuffer { i, .. } => *i as usize,
         }
     }
 
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         match self {
             BufferedOutput::Bytelist(b) => b.slice(),
             BufferedOutput::ArrayBuffer { buf, .. } => buf.slice(),
         }
     }
 
-    pub fn append(&mut self, bytes: &[u8]) {
+    pub(crate) fn append(&mut self, bytes: &[u8]) {
         match self {
             BufferedOutput::Bytelist(b) => {
                 let _ = b.append_slice(bytes); // OOM/capacity: fire-and-forget
@@ -1709,11 +1490,11 @@ impl Drop for BufferedOutput {
 }
 
 pub struct CapturedWriter {
-    pub dead: bool,
+    pub(crate) dead: bool,
     /// `None` iff `dead == true`.
-    pub writer: Option<Arc<IOWriter>>,
-    pub written: usize,
-    pub err: Option<SystemError>,
+    pub(crate) writer: Option<Arc<IOWriter>>,
+    pub(crate) written: usize,
+    pub(crate) err: Option<SystemError>,
 }
 
 impl Default for CapturedWriter {
@@ -1730,7 +1511,7 @@ impl Default for CapturedWriter {
 bun_core::impl_field_parent! { CapturedWriter => PipeReader.captured_writer; pub fn parent; fn parent_mut; }
 
 impl CapturedWriter {
-    pub fn do_write(&mut self, chunk: &[u8]) {
+    pub(crate) fn do_write(&mut self, chunk: &[u8]) {
         if self.dead || self.err.is_some() {
             return;
         }
@@ -1758,30 +1539,7 @@ impl CapturedWriter {
         self.parent().run_yield(y);
     }
 
-    pub fn get_buffer(&self) -> &[u8] {
-        let p = self.parent();
-        if self.written >= p.reader._buffer.len() {
-            return b"";
-        }
-        &p.reader._buffer[self.written..]
-    }
-
-    pub fn r#loop(&self) -> *mut AsyncLoop {
-        #[cfg(windows)]
-        {
-            self.parent().event_loop.uv_loop()
-        }
-        #[cfg(not(windows))]
-        {
-            self.parent().event_loop.r#loop()
-        }
-    }
-
-    pub fn event_loop(&self) -> EventLoopHandle {
-        self.parent().event_loop()
-    }
-
-    pub fn is_done(&self, just_written: usize) -> bool {
+    pub(crate) fn is_done(&self, just_written: usize) -> bool {
         log!(
             "CapturedWriter(0x{:x}, {}) isDone(has_err={}, parent_state={}, written={}, parent_amount={})",
             std::ptr::from_ref(self) as usize,
@@ -1801,7 +1559,7 @@ impl CapturedWriter {
         self.written + just_written >= self.parent().buffered_output.len()
     }
 
-    pub fn on_iowriter_chunk(&mut self, amount: usize, err: Option<SystemError>) -> Yield {
+    pub(crate) fn on_iowriter_chunk(&mut self, amount: usize, err: Option<SystemError>) -> Yield {
         log!(
             "CapturedWriter({:x}, {}) onWrite({}, has_err={}) total_written={} total_to_write={}",
             std::ptr::from_mut(self) as usize,
@@ -1814,7 +1572,7 @@ impl CapturedWriter {
         self.written += amount;
         if let Some(e) = err {
             log!(
-                "CapturedWriter(0x{:x}, {}) onWrite errno={} errmsg={} errfd={} syscall={}",
+                "CapturedWriter(0x{:x}, {}) onWrite errno={} errmsg={} errfd={:?} syscall={}",
                 std::ptr::from_mut(self) as usize,
                 out_kind_str(self.parent().out_type),
                 e.errno,
@@ -1835,33 +1593,10 @@ impl CapturedWriter {
         }
         Yield::Suspended
     }
-
-    pub fn on_error(&mut self, err: &bun_sys::Error) {
-        self.err = Some(err.to_system_error());
-    }
-
-    pub fn on_close(&mut self) {
-        log!(
-            "CapturedWriter({:x}, {}) onClose()",
-            std::ptr::from_mut(self) as usize,
-            out_kind_str(self.parent().out_type)
-        );
-        // SAFETY: `parent_mut` returns the raw embedding `*mut PipeReader`;
-        // dereference for the duration of the call (no `&mut self` aliases live).
-        unsafe { &mut *self.parent_mut() }.on_captured_writer_done();
-    }
-}
-
-impl Drop for CapturedWriter {
-    fn drop(&mut self) {
-        // `bun_sys::SystemError` strings drop themselves.
-        let _ = self.err.take();
-        // self.writer Arc drops automatically.
-    }
 }
 
 impl PipeReader {
-    pub fn detach(self: Arc<Self>) {
+    pub(crate) fn detach(self: Arc<Self>) {
         log!(
             "PipeReader(0x{:x}, {}) detach()",
             Arc::as_ptr(&self) as usize,
@@ -1876,7 +1611,7 @@ impl PipeReader {
         // Dropping `self` releases the strong ref.
     }
 
-    pub fn is_done(&self) -> bool {
+    pub(crate) fn is_done(&self) -> bool {
         log!(
             "PipeReader(0x{:x}, {}) isDone() state={} captured_writer_done={}",
             std::ptr::from_ref(self) as usize,
@@ -1890,27 +1625,18 @@ impl PipeReader {
         self.captured_writer.is_done(0)
     }
 
-    pub fn on_captured_writer_done(&mut self) {
-        let interp = self.interp;
-        // SAFETY: `self` is the unique embedded `PipeReader` reached via
-        // `CapturedWriter::parent_mut`; raw-ptr form avoids holding a
-        // `&mut PipeReader` protector across the re-entrant Cmd call inside.
-        let y = unsafe { Self::try_signal_done_to_cmd(core::ptr::from_mut(self)) };
-        Self::run_yield_with(interp, y);
-    }
-
     /// Drive a `Yield` from inside an async I/O callback. Mirrors
     /// `IOWriter::run_yield` / `IOReader::run_yield`. `interp` is wired at
     /// `create` time from the spawning `Cmd`; the null guard is a defensive
     /// debug-assert for tests that construct a PipeReader without a Cmd.
-    pub(crate) fn run_yield(&self, y: Yield) {
+    fn run_yield(&self, y: Yield) {
         Self::run_yield_with(self.interp, y);
     }
 
     /// Free-function form of [`run_yield`] for callers that must not hold any
     /// `&PipeReader` borrow across the interpreter trampoline (which can
     /// re-derive `&PipeReader` via the `Readable::Pipe` `Arc`).
-    pub(crate) fn run_yield_with(interp: *mut crate::shell::interpreter::Interpreter, y: Yield) {
+    fn run_yield_with(interp: *mut crate::shell::interpreter::Interpreter, y: Yield) {
         if interp.is_null() {
             debug_assert!(
                 matches!(y, Yield::Done | Yield::Suspended | Yield::Failed),
@@ -1923,7 +1649,7 @@ impl PipeReader {
         y.run(unsafe { &*interp });
     }
 
-    pub fn create(
+    pub(crate) fn create(
         event_loop: EventLoopHandle,
         process: *mut ShellSubprocess,
         result: StdioResult,
@@ -1989,13 +1715,13 @@ impl PipeReader {
         arc
     }
 
-    pub fn read_all(&mut self) {
+    pub(crate) fn read_all(&mut self) {
         if matches!(self.state, PipeReaderState::Pending) {
             self.reader.read();
         }
     }
 
-    pub fn start(
+    pub(crate) fn start(
         &mut self,
         process: *mut ShellSubprocess,
         event_loop: EventLoopHandle,
@@ -2035,12 +1761,9 @@ impl PipeReader {
         }
     }
 
-    pub const TO_JS: fn(Arc<Self>, &JSGlobalObject) -> jsc::JsResult<JSValue> =
-        Self::to_readable_stream;
-
     /// `BufferedReaderParent::on_read_chunk` adapter — invoked with the
     /// `PipeReader` registered via `reader.set_parent(self)`.
-    pub fn on_read_chunk(&mut self, chunk: &[u8], has_more: ReadState) -> bool {
+    pub(crate) fn on_read_chunk(&mut self, chunk: &[u8], has_more: ReadState) -> bool {
         self.buffered_output.append(chunk);
         log!(
             "PipeReader(0x{:x}, {}) onReadChunk(chunk_len={}, has_more={})",
@@ -2124,7 +1847,7 @@ impl PipeReader {
     /// `&mut self` because `on_close_io` below drops the `Readable::Pipe`
     /// `Arc` — holding a `&mut self` across that drop would dangle, and the
     /// `Arc::deref` inside `on_close_io` would alias it.
-    pub unsafe fn on_reader_done(this: *mut Self) {
+    pub(crate) unsafe fn on_reader_done(this: *mut Self) {
         // SAFETY: caller contract.
         let guard = unsafe { Self::guard_from_raw(this) };
         log!(
@@ -2160,7 +1883,7 @@ impl PipeReader {
     /// `this` must point to a live `PipeReader` inside its `Arc` allocation
     /// (single JS-thread; see [`arc_as_mut_ptr`]). No `&`/`&mut PipeReader`
     /// to the same object may be live across this call.
-    pub unsafe fn try_signal_done_to_cmd(this: *mut Self) -> Yield {
+    pub(crate) unsafe fn try_signal_done_to_cmd(this: *mut Self) -> Yield {
         let (done, out_type, process) = {
             // SAFETY: caller contract — short-lived shared borrow for the
             // read-only `is_done()` / log; no Cmd re-entry yet.
@@ -2223,7 +1946,7 @@ impl PipeReader {
         Yield::Suspended
     }
 
-    pub fn kind(&self, process: &ShellSubprocess) -> StdioKind {
+    pub(crate) fn kind(&self, process: &ShellSubprocess) -> StdioKind {
         if let Readable::Pipe(p) = &process.stdout {
             if Arc::as_ptr(p).cast() == std::ptr::from_ref(self) {
                 return StdioKind::Stdout;
@@ -2239,15 +1962,15 @@ impl PipeReader {
         panic!("We should be either stdout or stderr");
     }
 
-    pub fn take_buffer(&mut self) -> Vec<u8> {
+    pub(crate) fn take_buffer(&mut self) -> Vec<u8> {
         self.reader.take_buffer()
     }
 
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         self.buffered_output.slice()
     }
 
-    pub fn to_owned_slice(&mut self) -> Box<[u8]> {
+    pub(crate) fn to_owned_slice(&mut self) -> Box<[u8]> {
         if let PipeReaderState::Done(buf) = &mut self.state {
             return core::mem::take(buf);
         }
@@ -2262,79 +1985,13 @@ impl PipeReader {
         // PERF: into_boxed_slice may realloc to shrink. Profile if hot.
     }
 
-    pub fn update_ref(&mut self, add: bool) {
+    pub(crate) fn update_ref(&mut self, add: bool) {
         self.reader.update_ref(add);
-    }
-
-    pub fn watch(&mut self) {
-        if !self.reader.is_done() {
-            self.reader.watch();
-        }
-    }
-
-    pub fn to_readable_stream(
-        this: Arc<Self>,
-        global_object: &JSGlobalObject,
-    ) -> jsc::JsResult<JSValue> {
-        // `this: Arc<Self>` dropping at scope end (all paths, including `?`)
-        // releases the ref. Consumes the caller's +1 strong ref.
-        let me = arc_as_mut_ptr(&this);
-        let _consume_on_return = this;
-
-        match core::mem::replace(
-            // SAFETY: see `arc_as_mut_ptr`; short-lived `&mut` for the `state`
-            // swap. No `Arc::deref(&this)` overlaps.
-            unsafe { &mut (*me).state },
-            PipeReaderState::Done(Box::default()),
-        ) {
-            PipeReaderState::Pending => {
-                // SAFETY: see `arc_as_mut_ptr`; `from_pipe` reads `reader`
-                // with no overlapping `&Self` via another Arc clone. `me`
-                // carries allocation-level provenance (not borrowed from a
-                // `&mut`), so the pointer escaped into the stream stays
-                // valid past `this`'s drop — `from_pipe` takes its own ref.
-                let stream =
-                    ReadableStream::from_pipe(global_object, me, unsafe { &mut (*me).reader })?;
-                // SAFETY: as above; field write only.
-                unsafe { (*me).state = PipeReaderState::Done(Box::default()) };
-                Ok(stream)
-            }
-            PipeReaderState::Done(bytes) => {
-                // SAFETY: as above; field write only.
-                unsafe { (*me).state = PipeReaderState::Done(Box::default()) };
-                ReadableStream::from_owned_slice(global_object, bytes.into_vec(), 0)
-            }
-            PipeReaderState::Err(_err) => {
-                let empty = ReadableStream::empty(global_object)?;
-                ReadableStream::cancel(
-                    &ReadableStream::from_js(empty, global_object)
-                        .unwrap()
-                        .unwrap(),
-                    global_object,
-                );
-                Ok(empty)
-            }
-        }
-    }
-
-    pub fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        match &mut self.state {
-            PipeReaderState::Done(bytes) => {
-                // `MarkedArrayBuffer::from_bytes` adopts the allocation (freed
-                // by the JSC ArrayBuffer destructor). `heap::release` names that
-                // FFI hand-off — it is `Box::leak` under the hood; the JSC
-                // ArrayBuffer destructor is the reclaim, not this scope.
-                let slice: &'static mut [u8] = bun_core::heap::release(core::mem::take(bytes));
-                MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
-                    .to_node_buffer(global_this)
-            }
-            _ => JSValue::UNDEFINED,
-        }
     }
 
     /// # Safety
     /// See [`Self::on_reader_done`].
-    pub unsafe fn on_reader_error(this: *mut Self, err: &bun_sys::Error) {
+    pub(crate) unsafe fn on_reader_error(this: *mut Self, err: &bun_sys::Error) {
         log!("PipeReader(0x{:x}) onReaderError {:?}", this as usize, err);
         // SAFETY: caller contract.
         let guard = unsafe { Self::guard_from_raw(this) };
@@ -2353,21 +2010,7 @@ impl PipeReader {
         // Dropping `guard` is the matching `deref()`; may free `this`.
     }
 
-    pub fn close(&mut self) {
-        match self.state {
-            PipeReaderState::Pending => {
-                self.reader.close();
-            }
-            PipeReaderState::Done(_) => {}
-            PipeReaderState::Err(_) => {}
-        }
-    }
-
-    pub fn event_loop(&self) -> EventLoopHandle {
-        self.event_loop
-    }
-
-    pub fn r#loop(&self) -> *mut AsyncLoop {
+    pub(crate) fn r#loop(&self) -> *mut AsyncLoop {
         #[cfg(windows)]
         {
             self.event_loop.uv_loop()

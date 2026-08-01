@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, joinP, tempDirWithFiles } from "harness";
 
-test("cloneable and transferable equals", () => {
+test.concurrent("cloneable and transferable equals", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "index.ts": `
 import cluster from "cluster";
@@ -31,10 +31,10 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  bunRun(joinP(dir, "index.ts"), bunEnv, true);
+  expect(await bunRun(joinP(dir, "index.ts"), bunEnv)).toSpawn();
 });
 
-test("cloneable and non-transferable not-equals (BunFile)", () => {
+test.concurrent("cloneable and non-transferable not-equals (BunFile)", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "index.ts": `
 import cluster from "cluster";
@@ -76,10 +76,10 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  bunRun(joinP(dir, "index.ts"), bunEnv, true);
+  expect(await bunRun(joinP(dir, "index.ts"), bunEnv)).toSpawn();
 });
 
-test("cloneable and non-transferable not-equals (net.BlockList)", () => {
+test.concurrent("cloneable and non-transferable not-equals (net.BlockList)", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "index.ts": `
 import cluster from "cluster";
@@ -119,10 +119,10 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  bunRun(joinP(dir, "index.ts"), bunEnv, true);
+  expect(await bunRun(joinP(dir, "index.ts"), bunEnv)).toSpawn();
 });
 
-test("non-cluster parent ignores cluster-internal IPC messages from a forked child", () => {
+test.concurrent("non-cluster parent ignores cluster-internal IPC messages from a forked child", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "parent.ts": `
 const { fork } = require("node:child_process");
@@ -157,8 +157,9 @@ require("node:cluster");
 process.send("regular message");
 `,
   });
-  const { stdout } = bunRun(joinP(dir, "parent.ts"), bunEnv);
+  const { stdout, exitCode } = await bunRun(joinP(dir, "parent.ts"), bunEnv);
   expect(stdout).toContain("P received regular message");
+  expect(exitCode).toBe(0);
 });
 
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {

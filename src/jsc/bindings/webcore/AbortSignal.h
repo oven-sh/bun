@@ -76,7 +76,7 @@ public:
     WEBCORE_EXPORT ~AbortSignal();
     using NativeCallbackTuple = std::tuple<void*, void (*)(void*, JSC::EncodedJSValue)>;
 
-    static Ref<AbortSignal> abort(JSDOMGlobalObject&, ScriptExecutionContext&, JSC::JSValue reason);
+    static Ref<AbortSignal> abort(ScriptExecutionContext&, JSC::JSValue reason);
     static Ref<AbortSignal> timeout(ScriptExecutionContext&, uint64_t milliseconds);
     static Ref<AbortSignal> any(ScriptExecutionContext&, const Vector<RefPtr<AbortSignal>>&);
 
@@ -128,9 +128,25 @@ public:
     // single-threaded impls (and the nodes holding them) may only be released on the owning thread.
     bool hasAliveSourceSignals() const { return m_sourceSignals.begin() != m_sourceSignals.end(); }
 
+    // Read-only interested-party probe for GC marker threads: true if anything
+    // would observe this timeout signal aborting. A single atomic so the
+    // marker touches no mutable container.
+    bool hasTimeoutObserver() const
+    {
+        return m_timeoutObserverCount.load(std::memory_order_relaxed) > 0;
+    }
+
     // https://github.com/oven-sh/bun/issues/4517
-    void incrementPendingActivityCount() { ++pendingActivityCount; }
-    void decrementPendingActivityCount() { --pendingActivityCount; }
+    void incrementPendingActivityCount()
+    {
+        ++pendingActivityCount;
+        m_timeoutObserverCount.fetch_add(1, std::memory_order_relaxed);
+    }
+    void decrementPendingActivityCount()
+    {
+        --pendingActivityCount;
+        m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
+    }
     bool hasPendingActivity() const { return pendingActivityCount > 0; }
     bool isDependent() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::Dependent); }
 
@@ -148,6 +164,7 @@ private:
     void markAsDependent() { setIsDependent(true); }
     void addSourceSignal(AbortSignal&);
     void addDependentSignal(AbortSignal&);
+    void releaseSourceObserverCounts();
     void cancelTimer();
 
     void applyFlags(uint8_t flags) { m_flags |= flags; }
@@ -206,6 +223,10 @@ private:
     Vector<NativeCallbackTuple, 2> m_native_callbacks;
     Vector<NativeCallbackTuple, 2>* m_nativeCallbacksBeingDispatched { nullptr };
     std::atomic<uint32_t> pendingActivityCount { 0 };
+    // Everything hasTimeoutObserver() cares about in one counter: abort event
+    // listeners (1 while any exist), pending activity, m_algorithms,
+    // m_abortAlgorithms, dependent signals.
+    std::atomic<uint32_t> m_timeoutObserverCount { 0 };
     uint32_t m_algorithmIdentifier { 0 };
     AbortSignalTimeout m_timeout { nullptr };
     uint8_t m_flags { 0 };

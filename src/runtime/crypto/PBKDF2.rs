@@ -2,8 +2,8 @@ use core::ffi::c_uint;
 
 use bun_boringssl_sys as boringssl;
 use bun_jsc::{
-    AnyTaskJob, AnyTaskJobCtx, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsResult,
-    ZigStringSlice,
+    AnyTaskJob, AnyTaskJobCtx, ArrayBuffer, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue,
+    JsResult,
 };
 
 use crate::node::StringOrBuffer;
@@ -240,6 +240,12 @@ impl PBKDF2 {
             return Err(global_this.throw_invalid_arguments(format_args!("password is too long")));
         }
 
+        if !is_async {
+            if let StringOrBuffer::Buffer(buffer) = &mut guard.salt {
+                buffer.buffer = ArrayBuffer::from_typed_array(global_this, buffer.buffer.value);
+            }
+        }
+
         if is_async {
             if !arg5.is_function() {
                 return Err(global_this.throw_invalid_argument_type_value(
@@ -333,27 +339,4 @@ pub(crate) fn create_job(global_this: &JSGlobalObject, data: PBKDF2) -> *mut Job
     // SAFETY: `job` is a freshly-created live pointer.
     unsafe { AnyTaskJob::schedule(job) };
     job
-}
-
-/// For usage in Rust
-pub fn pbkdf2<'a>(
-    output: &'a mut [u8],
-    password: &[u8],
-    salt: &[u8],
-    iteration_count: u32,
-    algorithm: Algorithm,
-) -> Option<&'a [u8]> {
-    let mut pbk = PBKDF2 {
-        algorithm,
-        password: StringOrBuffer::EncodedSlice(ZigStringSlice::from_utf8_never_free(password)),
-        salt: StringOrBuffer::EncodedSlice(ZigStringSlice::from_utf8_never_free(salt)),
-        iteration_count,
-        length: i32::try_from(output.len()).expect("int cast"),
-    };
-
-    if !pbk.run(output) {
-        return None;
-    }
-
-    Some(output)
 }

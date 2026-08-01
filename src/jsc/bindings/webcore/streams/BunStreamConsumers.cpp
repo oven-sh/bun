@@ -445,6 +445,21 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
     return JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTF::move(buffer));
 }
 
+static bool binaryChunkSpan(JSValue chunk, std::span<const uint8_t>& out)
+{
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
+        if (!view->isDetached())
+            out = view->span();
+        return true;
+    }
+    if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
+        if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached())
+            out = impl->span();
+        return true;
+    }
+    return false;
+}
+
 // The toArrayBuffer chunk-array converter (RS:157-206).
 static JSValue convertChunksToArrayBuffer(JSGlobalObject* globalObject, JSValue chunksValue)
 {
@@ -467,16 +482,9 @@ static JSValue convertChunksToArrayBuffer(JSGlobalObject* globalObject, JSValue 
     if (length == 1) {
         JSValue chunk = chunks->getIndex(globalObject, 0);
         RETURN_IF_EXCEPTION(scope, {});
-        if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk))
-            return jsBuffer;
-        if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
-            RefPtr<JSC::ArrayBuffer> impl = view->possiblySharedBuffer();
-            if (impl && !view->byteOffset() && view->byteLength() == impl->byteLength()) {
-                auto* jsBuffer = view->possiblySharedJSBuffer(globalObject);
-                RETURN_IF_EXCEPTION(scope, {});
-                return jsBuffer;
-            }
-            auto copied = JSC::ArrayBuffer::tryCreate(view->span());
+        std::span<const uint8_t> span;
+        if (binaryChunkSpan(chunk, span)) {
+            auto copied = JSC::ArrayBuffer::tryCreate(span);
             if (!copied) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
@@ -506,18 +514,14 @@ static JSValue convertChunksToBytes(JSGlobalObject* globalObject, JSValue chunks
     if (length == 1) {
         JSValue chunk = chunks->getIndex(globalObject, 0);
         RETURN_IF_EXCEPTION(scope, {});
-        if (auto* uint8 = dynamicDowncast<JSC::JSUint8Array>(chunk))
-            return uint8;
-        if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
-            size_t byteOffset = view->byteOffset();
-            size_t byteLength = view->byteLength();
-            RefPtr<JSC::ArrayBuffer> impl = view->possiblySharedBuffer();
-            RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(impl), byteOffset, byteLength));
-        }
-        if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
-            RefPtr<JSC::ArrayBuffer> impl = jsBuffer->impl();
-            size_t byteLength = impl ? impl->byteLength() : 0;
-            RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(impl), 0, byteLength));
+        std::span<const uint8_t> span;
+        if (binaryChunkSpan(chunk, span)) {
+            auto copied = JSC::ArrayBuffer::tryCreate(span);
+            if (!copied) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(copied), 0, span.size()));
         }
         if (chunk.isString())
             RELEASE_AND_RETURN(scope, encodeStringToUint8Array(vm, globalObject, chunk));
@@ -554,17 +558,8 @@ static JSValue convertChunksToText(JSGlobalObject* globalObject, JSValue chunksV
                 return chunk;
             RELEASE_AND_RETURN(scope, jsString(vm, stripped));
         }
-        bool isBinary = false;
         std::span<const uint8_t> span;
-        if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
-            isBinary = true;
-            span = view->isDetached() ? std::span<const uint8_t> {} : view->span();
-        } else if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
-            isBinary = true;
-            if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached())
-                span = impl->span();
-        }
-        if (isBinary) {
+        if (binaryChunkSpan(chunk, span)) {
             if (exceedsStringLimit(span.size())) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);
                 return {};

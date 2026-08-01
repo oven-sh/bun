@@ -1,8 +1,7 @@
 use super::any_mysql_error::Error as AnyMySQLError;
 use super::encode_int::encode_length_int;
 use super::packet_header::PacketHeader;
-use crate::mysql::mysql_types::{MySQLInt32, MySQLInt64};
-use bun_core::String as BunString;
+use crate::mysql::mysql_types::MySQLInt32;
 
 bun_core::declare_scope!(NewWriter, hidden);
 
@@ -23,9 +22,9 @@ pub struct NewWriterWrap<C: WriterContext> {
 }
 
 pub struct Packet<C: WriterContext> {
-    pub header: PacketHeader,
-    pub offset: usize,
-    pub ctx: NewWriterWrap<C>,
+    pub(crate) header: PacketHeader,
+    pub(crate) offset: usize,
+    pub(crate) ctx: NewWriterWrap<C>,
 }
 
 impl<C: WriterContext> Packet<C> {
@@ -48,20 +47,18 @@ impl<C: WriterContext> Packet<C> {
 }
 
 impl<C: WriterContext> NewWriterWrap<C> {
-    pub const IS_WRAPPED: bool = true;
-
     #[inline]
-    pub fn write_length_encoded_int(self, data: u64) -> Result<(), AnyMySQLError> {
+    pub(crate) fn write_length_encoded_int(self, data: u64) -> Result<(), AnyMySQLError> {
         self.wrapped.write(encode_length_int(data).slice())
     }
 
     #[inline]
-    pub fn write_length_encoded_string(self, data: &[u8]) -> Result<(), AnyMySQLError> {
+    pub(crate) fn write_length_encoded_string(self, data: &[u8]) -> Result<(), AnyMySQLError> {
         self.write_length_encoded_int(data.len() as u64)?;
         self.wrapped.write(data)
     }
 
-    pub fn write(self, data: &[u8]) -> Result<(), AnyMySQLError> {
+    pub(crate) fn write(self, data: &[u8]) -> Result<(), AnyMySQLError> {
         self.wrapped.write(data)
     }
 
@@ -79,59 +76,21 @@ impl<C: WriterContext> NewWriterWrap<C> {
         })
     }
 
-    pub fn offset(self) -> usize {
-        self.wrapped.offset()
-    }
-
-    pub fn pwrite(self, data: &[u8], i: usize) -> Result<(), AnyMySQLError> {
+    pub(crate) fn pwrite(self, data: &[u8], i: usize) -> Result<(), AnyMySQLError> {
         self.wrapped.pwrite(data, i)
     }
 
-    pub fn int4(self, value: MySQLInt32) -> Result<(), AnyMySQLError> {
+    pub(crate) fn int4(self, value: MySQLInt32) -> Result<(), AnyMySQLError> {
         self.write(&value.to_ne_bytes())
     }
 
-    pub fn int8(self, value: MySQLInt64) -> Result<(), AnyMySQLError> {
-        self.write(&value.to_ne_bytes())
-    }
-
-    pub fn int1(self, value: u8) -> Result<(), AnyMySQLError> {
+    pub(crate) fn int1(self, value: u8) -> Result<(), AnyMySQLError> {
         self.write(&[value])
-    }
-
-    /// Write the NULL bitmap for `params`, keyed on `Data::Empty`. This branch
-    /// is never taken for COM_QUERY in practice.
-    pub fn write_null_bitmap(self, params: &[crate::shared::Data]) -> Result<(), AnyMySQLError> {
-        let bitmap_bytes = params.len().div_ceil(8);
-        // A small Vec keeps stack usage bounded for the never-taken path.
-        let mut null_bitmap = vec![0u8; bitmap_bytes];
-        for (i, param) in params.iter().enumerate() {
-            if matches!(param, crate::shared::Data::Empty) {
-                null_bitmap[i >> 3] |= 1u8 << ((i & 7) as u8);
-            }
-        }
-        self.write(&null_bitmap)
     }
 
     pub fn write_z(self, value: &[u8]) -> Result<(), AnyMySQLError> {
         self.write(value)?;
         if value.is_empty() || value[value.len() - 1] != 0 {
-            self.write(&[0u8])?;
-        }
-        Ok(())
-    }
-
-    pub fn string(self, value: &BunString) -> Result<(), AnyMySQLError> {
-        if value.is_empty() {
-            self.write(&[0u8])?;
-            return Ok(());
-        }
-
-        let sliced = value.to_utf8();
-        let slice = sliced.slice();
-
-        self.write(slice)?;
-        if slice.is_empty() || slice[slice.len() - 1] != 0 {
             self.write(&[0u8])?;
         }
         Ok(())
@@ -143,18 +102,3 @@ impl<C: WriterContext> NewWriterWrap<C> {
 // TODO(refactor): ensure no caller double-wraps; if needed, model via a
 // `MySQLWriter` trait with a blanket impl for `NewWriterWrap<C>`.
 pub type NewWriter<C> = NewWriterWrap<C>;
-
-/// Wraps a raw context into `NewWriterWrap` before forwarding to the
-/// per-packet `write` impl.
-#[inline]
-pub fn write_wrap<Container, C, F>(
-    this: &mut Container,
-    context: C,
-    write_fn: F,
-) -> Result<(), AnyMySQLError>
-where
-    C: WriterContext,
-    F: FnOnce(&mut Container, NewWriterWrap<C>) -> Result<(), AnyMySQLError>,
-{
-    write_fn(this, NewWriterWrap { wrapped: context })
-}

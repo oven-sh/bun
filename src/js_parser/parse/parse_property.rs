@@ -90,9 +90,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let func = p.parse_fn(
             None,
             FnOrArrowDataParse {
-                async_range: opts.async_range,
                 needs_async_loc: key.loc,
-                has_async_range: !opts.async_range.is_empty(),
                 allow_await: if opts.is_async {
                     AwaitOrYield::AllowExpr
                 } else {
@@ -240,7 +238,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }))
     }
 
-    pub fn parse_property(
+    pub(crate) fn parse_property(
         &mut self,
         kind_: PropertyKind,
         opts: &mut PropertyOpts,
@@ -287,7 +285,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     let ident = p.lexer.identifier;
-                    let ref_ = p.store_name_in_ref(ident).expect("unreachable");
+                    let ref_ = p.store_name_in_ref(ident);
                     key = p.new_expr(E::PrivateIdentifier { ref_ }, p.lexer.loc());
                     p.lexer.next()?;
                 }
@@ -353,9 +351,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 T::TOpenBracket
                                     | T::TNumericLiteral
                                     | T::TStringLiteral
-                                    | T::TAsterisk
                                     | T::TPrivateIdentifier
-                            );
+                            )
+                            || (p.lexer.token == T::TAsterisk
+                                && (opts.is_async || (raw != b"get" && raw != b"set")));
 
                         // If so, check for a modifier keyword
                         if could_be_modifier_keyword {
@@ -417,6 +416,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         // https://github.com/oven-sh/bun/issues/1907
                                         if opts.is_class
                                             && Self::IS_TYPESCRIPT_ENABLED
+                                            && !p.lexer.has_newline_before
                                             && raw == b"declare"
                                         {
                                             let scope_index = p.scopes_in_order.len();
@@ -440,6 +440,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     PropertyModifierKeyword::PAbstract => {
                                         if opts.is_class
                                             && Self::IS_TYPESCRIPT_ENABLED
+                                            && !p.lexer.has_newline_before
                                             && !opts.is_ts_abstract
                                             && raw == b"abstract"
                                         {
@@ -464,6 +465,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     PropertyModifierKeyword::PAccessor => {
                                         // "accessor" keyword for auto-accessor fields (TC39 standard decorators)
                                         if opts.is_class
+                                            && !p.lexer.has_newline_before
                                             && p.options.features.standard_decorators
                                             && PropertyModifierKeyword::find(raw)
                                                 == Some(PropertyModifierKeyword::PAccessor)
@@ -573,7 +575,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
 
-                        let ref_ = p.store_name_in_ref(name).expect("unreachable");
+                        let ref_ = p.store_name_in_ref(name);
                         let value = p.new_expr(E::Identifier::init(ref_), key.loc);
 
                         // Destructuring patterns have an optional default value

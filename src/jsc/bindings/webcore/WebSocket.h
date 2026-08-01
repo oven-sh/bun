@@ -117,7 +117,6 @@ public:
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const String& protocol);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
-    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized);
     // With proxy support
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate);
@@ -153,9 +152,6 @@ public:
         ProxyTLS // ws:// or wss:// through HTTPS proxy (TLS socket to proxy)
     };
 
-    ExceptionOr<void> connect(const String& url);
-    ExceptionOr<void> connect(const String& url, const String& protocol);
-    ExceptionOr<void> connect(const String& url, const Vector<String>& protocols);
     ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
     // Internal connect with proxy config (used by create() with proxy support)
     ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, std::optional<struct ProxyConfig>&&);
@@ -205,8 +201,14 @@ public:
     void didFailWithErrorCode(Bun::WebSocketErrorCode code);
 
     void didReceiveMessage(String&& message);
-    void didReceiveData(const char* data, size_t length);
     void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
+    struct HandshakeRawHeader {
+        const uint8_t* name_ptr;
+        size_t name_len;
+        const uint8_t* value_ptr;
+        size_t value_len;
+    };
+    void didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, std::span<const uint8_t> body);
 
     void updateHasPendingActivity();
     bool hasPendingActivity() const
@@ -226,11 +228,6 @@ public:
     void setOfferPerMessageDeflate(bool offer)
     {
         m_offerPerMessageDeflate = offer;
-    }
-
-    bool offerPerMessageDeflate() const
-    {
-        return m_offerPerMessageDeflate;
     }
 
     // C++-only callback mode. When set, didConnect/didReceiveMessage/
@@ -302,7 +299,6 @@ private:
     std::atomic<bool> m_hasPendingActivity { true };
 
     explicit WebSocket(ScriptExecutionContext&);
-    explicit WebSocket(ScriptExecutionContext&, const String& url);
 
     EventTargetInterface eventTargetInterface() const final;
 
@@ -310,7 +306,6 @@ private:
     void derefEventTarget() final { deref(); }
 
     void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError = false);
-    void didUpdateBufferedAmount(unsigned bufferedAmount);
     void failConnectingWebSocket();
 
     void sendWebSocketString(const String& message, const Opcode opcode);
@@ -348,10 +343,7 @@ private:
     // upgrade client in connect(); freed by ~WebSocketSSLConfigPtr otherwise).
     WebSocketSSLConfigPtr m_sslConfig;
 
-    bool m_dispatchedErrorEvent { false };
-
     NativeCallbacks m_native;
-    // RefPtr<PendingActivity<WebSocket>> m_pendingActivity;
 };
 
 } // namespace WebCore

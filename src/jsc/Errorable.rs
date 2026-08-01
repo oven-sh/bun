@@ -15,20 +15,13 @@ pub union Result<T: Copy> {
 }
 
 impl<T: Copy> Errorable<T> {
-    pub fn unwrap(self) -> core::result::Result<T, ErrorCode> {
+    pub(crate) fn unwrap(self) -> core::result::Result<T, ErrorCode> {
         if self.success {
             // SAFETY: success == true implies the `value` arm is active.
             unsafe { Ok(self.result.value) }
         } else {
             // SAFETY: success == false implies the `err` arm is active.
             unsafe { Err(self.result.err.code) }
-        }
-    }
-
-    pub fn value(val: T) -> Self {
-        Self {
-            result: Result { value: val },
-            success: true,
         }
     }
 

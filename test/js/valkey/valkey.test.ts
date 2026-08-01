@@ -42,11 +42,12 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
     describe("Basic Operations", () => {
       test("should keep process alive when connecting", async () => {
-        const result = bunRun(join(import.meta.dir, "valkey.connecting.fixture.ts"), {
+        const result = await bunRun(join(import.meta.dir, "valkey.connecting.fixture.ts"), {
           "BUN_VALKEY_URL": connectionType === ConnectionType.TLS ? TLS_REDIS_URL : DEFAULT_REDIS_URL,
           "BUN_VALKEY_TLS": connectionType === ConnectionType.TLS ? JSON.stringify(TLS_REDIS_OPTIONS.tlsPaths) : "",
         });
         expect(result.stdout).toContain(`connected`);
+        expect(result.exitCode).toBe(0);
       });
 
       test("should set and get strings", async () => {
@@ -6395,6 +6396,80 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         }
 
         await subscriber.unsubscribe(channels);
+      });
+
+      test("commands issued alongside a multi-channel subscribe resolve with their own values", async () => {
+        const keyA = testKey();
+        const keyB = testKey();
+        const valueA = testValue();
+        const valueB = testValue();
+        expect(await ctx.redis.set(keyA, valueA)).toBe("OK");
+        expect(await ctx.redis.set(keyB, valueB)).toBe("OK");
+
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        const channels = [testChannel(), testChannel()];
+
+        const subscribed = subscriber.subscribe(channels, () => {});
+        const gotA = subscriber.get(keyA);
+        const gotB = subscriber.get(keyB);
+
+        const [count, resultA, resultB] = await Promise.all([subscribed, gotA, gotB]);
+
+        expect(count).toBe(2);
+        expect(resultA).toBe(valueA);
+        expect(resultB).toBe(valueB);
+
+        await subscriber.unsubscribe(channels);
+      });
+
+      test("commands issued alongside a multi-pattern psubscribe resolve with their own values", async () => {
+        const keyA = testKey();
+        const keyB = testKey();
+        const valueA = testValue();
+        const valueB = testValue();
+        expect(await ctx.redis.set(keyA, valueA)).toBe("OK");
+        expect(await ctx.redis.set(keyB, valueB)).toBe("OK");
+
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        const patterns = [`${testChannel()}*`, `${testChannel()}*`];
+
+        const subscribed = subscriber.psubscribe(...patterns);
+        const gotA = subscriber.get(keyA);
+        const gotB = subscriber.get(keyB);
+
+        const [, resultA, resultB] = await Promise.all([subscribed, gotA, gotB]);
+
+        expect(resultA).toBe(valueA);
+        expect(resultB).toBe(valueB);
+
+        const channel = patterns[0].slice(0, -1) + "x";
+        expect(await ctx.redis.publish(channel, "hello")).toBeGreaterThanOrEqual(1);
+        expect(await subscriber.send("PING", [])).toBe("PONG");
+        expect(subscriber.connected).toBe(true);
+
+        await subscriber.punsubscribe(...patterns);
+      });
+
+      test("a raw SUBSCRIBE issued through send() resolves and keeps the client usable", async () => {
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        const channel = testChannel();
+        const acked = await subscriber.send("SUBSCRIBE", [channel]);
+        expect(acked).toBeDefined();
+        expect(await subscriber.send("PING", [])).toBe("PONG");
+        await subscriber.send("UNSUBSCRIBE", [channel]);
+        expect(subscriber.connected).toBe(true);
+
+        // A raw subscription command the server rejects (wrong arity) must
+        // reject only that promise, not fail the whole connection.
+        const plain = createClient(connectionType);
+        await plain.connect();
+        try {
+          await expect(plain.send("SUBSCRIBE", [])).rejects.toThrow();
+          expect(await plain.send("PING", [])).toBe("PONG");
+          expect(plain.connected).toBe(true);
+        } finally {
+          plain.close();
+        }
       });
 
       test("unsubscribing from specific channels while remaining subscribed to others", async () => {

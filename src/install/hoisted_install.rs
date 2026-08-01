@@ -493,7 +493,7 @@ pub(crate) fn install_hoisted_packages(
             }
 
             impl<'a, 'b> Closure<'a, 'b> {
-                pub(crate) fn is_done(closure: &mut Self) -> bool {
+                fn is_done(closure: &mut Self) -> bool {
                     // SAFETY: `closure.manager` is the raw provenance root set
                     // below; `sleep_until`/`tick_raw` hold no `&mut` across
                     // this callback, so this is the unique live borrow.
@@ -560,9 +560,7 @@ pub(crate) fn install_hoisted_packages(
         // Index instead of `.iter()` so the immutable borrow of
         // `installer.trees` doesn't overlap `&mut self`.
         for tree_idx in 0..installer.trees.len() {
-            if cfg!(debug_assertions) {
-                debug_assert!(installer.trees[tree_idx].pending_installs.len() == 0);
-            }
+            debug_assert!(installer.trees[tree_idx].pending_installs.len() == 0);
             // force = true
             installer.install_available_packages::<true>(log_level);
         }

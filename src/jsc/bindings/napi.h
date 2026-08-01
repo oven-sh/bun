@@ -126,7 +126,7 @@ private:
 
 using HookSet = std::unordered_set<EitherCleanupHook, EitherCleanupHook::Hash>;
 
-void defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, bool isInstance, JSC::ThrowScope& scope);
+napi_status defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ThrowScope& scope);
 }
 
 struct napi_async_cleanup_hook_handle__ {
@@ -228,6 +228,10 @@ public:
         while (!m_cleanupHooks.empty()) {
             drain();
         }
+        // erase() above leaves the bucket array allocated; release it here
+        // since ~NapiEnv may not run before process exit (late finalizers can
+        // hold the last Ref past GlobalObject teardown).
+        m_cleanupHooks = Napi::HookSet();
         clearExceptionsBetweenFinalizers();
 
         // Defer GC during entire finalizer cleanup to prevent iterator invalidation.
@@ -513,6 +517,12 @@ public:
     void* instanceData = nullptr;
     Bun::NapiFinalizer instanceDataFinalizer;
     char* filename = nullptr;
+    // Running total reported via napi_adjust_external_memory. JSC's
+    // deprecatedReportExtraMemory has no decrement path, so we keep a signed
+    // accumulator and only forward positive growth to the JSC heap. Tracked
+    // per env (per loaded module), not per isolate as in V8; the documented
+    // +N/-N addon pattern only observes its own deltas.
+    int64_t m_externalMemory = 0;
 
     struct BoundFinalizer {
         napi_finalize callback = nullptr;
@@ -905,7 +915,8 @@ public:
         napi_callback constructor,
         void* data,
         size_t property_count,
-        const napi_property_descriptor* properties);
+        const napi_property_descriptor* properties,
+        napi_status* propertyStatus = nullptr);
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
@@ -926,7 +937,7 @@ private:
     {
     }
 
-    void finishCreation(VM&, const String& name, napi_callback constructor,
+    napi_status finishCreation(VM&, const String& name, napi_callback constructor,
         void* data,
         size_t property_count,
         const napi_property_descriptor* properties);
@@ -1010,7 +1021,10 @@ public:
         // TODO change to global? or find another way to avoid JSGlobalProxy
         JSC::JSObject* jscThis = globalObject->globalThis();
         if (!m_callFrame->thisValue().isUndefinedOrNull()) {
-            auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+            // TopExceptionScope: this runs before the addon's callback and its
+            // first NAPI_PREAMBLE; a ThrowScope would simulate a throw on
+            // destruction that the next preamble would see as unchecked.
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
             jscThis = m_callFrame->thisValue().toObject(globalObject);
             // https://tc39.es/ecma262/#sec-toobject
             // toObject only throws for undefined and null, which we checked for

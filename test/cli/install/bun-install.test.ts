@@ -11,7 +11,6 @@ import {
   readdirSorted,
   runBunInstall,
   tempDir,
-  tempDirWithFiles,
   textLockfile,
   toBeValidBin,
   toBeWorkspaceLink,
@@ -457,7 +456,7 @@ describe.concurrent("bun-install", () => {
   });
 
   it("should work when moving workspace packages", async () => {
-    const package_dir = tempDirWithFiles("lol", {
+    await using package_dir = tempDir("lol", {
       "package.json": JSON.stringify({
         "name": "my-workspace",
         private: "true",
@@ -529,7 +528,7 @@ describe.concurrent("bun-install", () => {
   });
 
   it("should work when renaming a single workspace package", async () => {
-    const package_dir = tempDirWithFiles("lol", {
+    await using package_dir = tempDir("lol", {
       "package.json": JSON.stringify({
         "name": "my-workspace",
         private: "true",
@@ -798,6 +797,31 @@ describe.concurrent("bun-install", () => {
     });
     expect(stdout).toContain("2 packages installed");
     expect(exitCode).toBe(0);
+  });
+
+  it("fails cleanly for a git dependency specifier longer than the path buffer", async () => {
+    const longPath = Buffer.alloc(isWindows ? 100_000 : 8192, "a").toString();
+    using dir = tempDir("long-git-dep", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "long-git-dep": `git@127.0.0.1:${longPath}` },
+      }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, GIT_ASKPASS: "echo", GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "false" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("cloning repository for");
+    expect(stderr).toContain("long-git-dep");
+    expect(stdout).toContain("bun install v1.");
+    expect(exitCode).toBe(1);
   });
 
   it("should handle empty string in dependencies", async () => {
@@ -7402,7 +7426,7 @@ describe.concurrent("bun-install", () => {
   });
 
   it("should handle installing workspaces with more complicated globs", async () => {
-    const package_dir = tempDirWithFiles("complicated-glob", {
+    await using package_dir = tempDir("complicated-glob", {
       "package.json": JSON.stringify({
         name: "package3",
         version: "0.0.1",
@@ -7459,7 +7483,7 @@ describe.concurrent("bun-install", () => {
   });
 
   it("should handle installing workspaces with multiple glob patterns", async () => {
-    const package_dir = tempDirWithFiles("multi-glob", {
+    await using package_dir = tempDir("multi-glob", {
       "package.json": JSON.stringify({
         name: "main",
         version: "0.0.1",
@@ -7522,7 +7546,7 @@ describe.concurrent("bun-install", () => {
   });
 
   it.todo("should handle installing workspaces with absolute glob patterns", async () => {
-    const package_dir = tempDirWithFiles("absolute-glob", {
+    await using package_dir = tempDir("absolute-glob", {
       "package.json": base =>
         JSON.stringify({
           name: "package3",

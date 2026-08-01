@@ -2,6 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::JSValueTestExt;
 
 use super::Expect;
+use super::throw;
 
 pub(crate) fn to_match(
     this: &Expect,
@@ -60,33 +61,31 @@ pub(crate) fn to_match(
 
     if not {
         let signature = Expect::get_signature("toMatch", "<green>expected<r>", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                concat!(
-                    "\n\n",
-                    "Expected substring or pattern: not <green>{}<r>\n",
-                    "Received: <red>{}<r>\n",
-                ),
-                expected_fmt,
-                value_fmt,
-            ),
-        );
-    }
-
-    let signature = Expect::get_signature("toMatch", "<green>expected<r>", false);
-    this.throw(
-        global,
-        signature,
-        format_args!(
             concat!(
                 "\n\n",
-                "Expected substring or pattern: <green>{}<r>\n",
+                "Expected substring or pattern: not <green>{}<r>\n",
                 "Received: <red>{}<r>\n",
             ),
             expected_fmt,
             value_fmt,
+        );
+    }
+
+    let signature = Expect::get_signature("toMatch", "<green>expected<r>", false);
+    throw!(
+        this,
+        global,
+        signature,
+        concat!(
+            "\n\n",
+            "Expected substring or pattern: <green>{}<r>\n",
+            "Received: <red>{}<r>\n",
         ),
+        expected_fmt,
+        value_fmt,
     )
 }

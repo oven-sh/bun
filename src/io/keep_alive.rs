@@ -35,46 +35,6 @@ impl KeepAlive {
         self.status = Status::Done;
     }
 
-    /// Only intended to be used from EventLoop.Pollable
-    #[cfg(not(windows))]
-    pub fn deactivate(&mut self, loop_: &mut crate::Loop) {
-        if self.status != Status::Active {
-            return;
-        }
-        self.status = Status::Inactive;
-        loop_.sub_active(1);
-    }
-    /// Only intended to be used from EventLoop.Pollable
-    #[cfg(windows)]
-    pub fn deactivate(&mut self, loop_: &mut crate::Loop) {
-        if self.status != Status::Active {
-            return;
-        }
-        self.status = Status::Inactive;
-        loop_.dec();
-    }
-
-    /// Only intended to be used from EventLoop.Pollable
-    #[cfg(not(windows))]
-    pub fn activate(&mut self, loop_: &mut crate::Loop) {
-        if self.status != Status::Inactive {
-            return;
-        }
-        self.status = Status::Active;
-        loop_.add_active(1);
-    }
-    /// Only intended to be used from EventLoop.Pollable
-    #[cfg(windows)]
-    pub fn activate(&mut self, loop_: &mut crate::Loop) {
-        // The Windows arm guards on `!= Active` (vs posix `!= Inactive`);
-        // preserved verbatim.
-        if self.status != Status::Active {
-            return;
-        }
-        self.status = Status::Active;
-        loop_.inc();
-    }
-
     pub fn init() -> KeepAlive {
         KeepAlive::default()
     }
@@ -111,22 +71,6 @@ impl KeepAlive {
         event_loop_ctx.increment_pending_unref_counter();
         #[cfg(windows)]
         event_loop_ctx.loop_dec();
-    }
-
-    /// From another thread, prevent a poll from keeping the process alive on the next tick.
-    pub fn unref_on_next_tick_concurrently(&mut self, vm: EventLoopCtx) {
-        if self.status != Status::Active {
-            return;
-        }
-        self.status = Status::Inactive;
-        // Cross-thread increment: the counter is an `AtomicI32` RMW'd with
-        // `Ordering::Relaxed` (see
-        // `jsc::VirtualMachine::pending_unref_counter`).
-        #[cfg(not(windows))]
-        vm.increment_pending_unref_counter();
-        // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
-        #[cfg(windows)]
-        vm.loop_dec();
     }
 
     /// Allow a poll to keep the process alive.

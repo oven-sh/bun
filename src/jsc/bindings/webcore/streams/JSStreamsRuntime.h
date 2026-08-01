@@ -1,9 +1,11 @@
-// JSStreamsRuntime — the ONE per-global cell holding every piece of per-global Web Streams
-// state: the two CLOSED handler-function lists, the per-realm queuing-strategy `size`
-// functions, and the cached Structures of every internal (prototype-less) cell class. It is
-// reached through ONE LazyProperty on Zig::GlobalObject (`globalObject->streamsRuntime()`);
-// do NOT add per-function fields to ZigGlobalObject. Every handler / size function /
-// Structure is a LazyProperty materialized on first use via `m_NAME.get(this)`.
+// JSStreamsRuntime — the ONE per-global container holding every piece of per-global Web
+// Streams state: the two CLOSED handler-function lists, the per-realm queuing-strategy
+// `size` functions, and the cached Structures of every internal (prototype-less) cell class.
+// Not a GC cell: a plain struct held BY VALUE on Zig::GlobalObject (visited via
+// `JSStreamsRuntime::visit` from the global's visitChildren) and reached through
+// `globalObject->streamsRuntime()`; do NOT add per-function fields to ZigGlobalObject. Every
+// handler / size function / Structure is a LazyProperty<JSGlobalObject, T> materialized on
+// first use.
 //
 // THE TWO CALLABLE MECHANISMS — the ONLY two. Anything else (a per-stream JSFunction, ANY
 // capturing JSNativeStdFunction) is FORBIDDEN in this subsystem.
@@ -21,8 +23,7 @@
 //   NEVER called directly; it is wrapped per use-site in
 //   `JSC::JSBoundFunction::create(vm, global, target, jsUndefined(), {contextCell}, ...)`
 //   and STORED ON an object we do not control (the native source handle, the JSSink
-//   controller, the ResumableSink). `boundFunctionCall` PREPENDS the bound args, so the
-//   target receives
+//   controller). `boundFunctionCall` PREPENDS the bound args, so the target receives
 //        handler(contextCell, ...callArgs)              // context at argument(0)
 //   — the OPPOSITE position. A function may belong to EXACTLY ONE of the two lists.
 //
@@ -34,13 +35,10 @@
 #include "StreamsForward.h"
 
 #include <JavaScriptCore/JSFunction.h>
-#include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/Structure.h>
 
 namespace WebCore {
-
-class JSDirectStreamController;
 
 // [reaction-convention] handlers, grouped by the .cpp that OWNS the body.
 // Signature of every entry:  name(JSC::JSValue resolutionValue, contextCell at argument(1)).
@@ -159,7 +157,6 @@ class JSDirectStreamController;
 //   onNativeSourceCallCloseMicrotask: the native source's `queueMicrotask(callClose)` job;
 //     context = the adapter.
 //   onReadStreamIntoSink*: context = the JSReadStreamIntoSinkOperation.
-//   onResumableSink*: context = the JSResumableSinkPumpOperation.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_BUN_SOURCE(V) \
     V(onNativePullFulfilled)                                \
     V(onNativePullRejected)                                 \
@@ -167,17 +164,16 @@ class JSDirectStreamController;
     V(onReadStreamIntoSinkReadManyFulfilled)                \
     V(onReadStreamIntoSinkChunk)                            \
     V(onReadStreamIntoSinkClose)                            \
-    V(onReadStreamIntoSinkFlushFulfilled)                   \
-    V(onReadStreamIntoSinkRejected)                         \
-    V(onResumableSinkChunk)                                 \
-    V(onResumableSinkClose)                                 \
-    V(onResumableSinkReadRejected)                          \
-    V(onResumableSinkEndMicrotask)
+    V(onReadStreamIntoSinkRejected)
 
 // owner: JSDirectStreamController.cpp. context = the JSDirectStreamController.
+//   onDirectEndOfTickFlush: the end-of-tick auto-flush job, scheduled via
+//     process.nextTick(handler, undefined, controller) — it still uses the
+//     reaction-convention context position (argument 1).
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_DIRECT_CONTROLLER(V) \
     V(onDirectPullFulfilled)                                       \
-    V(onDirectPullRejected)
+    V(onDirectPullRejected)                                        \
+    V(onDirectEndOfTickFlush)
 
 // owner: JSReadableStreamDefaultReader.cpp (readMany). context = the reader.
 //   onReadManyPullFulfilled: controller.$pull()'s fulfillment.
@@ -246,15 +242,13 @@ class JSDirectStreamController;
 //   boundReadDirectStreamOnClose(state, streamOrUndefined, reason): readDirectStream's
 //     JSSink onClose.
 //   boundReadStreamIntoSinkOnClose(op, stream, reason): readStreamIntoSink's JSSink onClose.
-//   boundResumableSinkDrain(op) / boundResumableSinkCancel(op, unused, reason): stored on
-//     the native ResumableSink via setHandlers.
+//   boundReadStreamIntoSinkOnReady(op, controller, amt, offset): JSSink m_onPull resume after backpressure.
 #define FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_BUN_SOURCE(V) \
     V(boundOnNativeSourceClose)                                 \
     V(boundOnNativeSourceDrain)                                 \
     V(boundReadDirectStreamOnClose)                             \
     V(boundReadStreamIntoSinkOnClose)                           \
-    V(boundResumableSinkDrain)                                  \
-    V(boundResumableSinkCancel)
+    V(boundReadStreamIntoSinkOnReady)
 
 // owner: JSDirectStreamController.cpp — the FIVE detachable own methods of the direct
 // controller: `end` and `close` are two bound cells over the ONE boundDirectClose target.
@@ -324,54 +318,32 @@ JSC_DECLARE_HOST_FUNCTION(jsWebStreamsCountQueuingStrategySize);
     V(directSinkCloseStateStructure, JSDirectSinkCloseState)                 \
     V(asyncIteratorSourceOperationStructure, JSAsyncIteratorSourceOperation) \
     V(readStreamIntoSinkOperationStructure, JSReadStreamIntoSinkOperation)   \
-    V(resumableSinkPumpOperationStructure, JSResumableSinkPumpOperation)     \
     V(standaloneTextSinkStructure, JSBunStandaloneTextSink)                  \
     V(oneShotDirectSinkStructure, JSOneShotDirectSink)                       \
     V(intoArrayOperationStructure, JSReadableStreamIntoArrayOperation)
 
-// Non-destructible: LazyProperty members only (plus the end-of-tick flush list, a
-// WriteBarrier container mutated and visited under this cell's lock).
-class JSStreamsRuntime final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
+class JSStreamsRuntime final {
+    WTF_MAKE_NONCOPYABLE(JSStreamsRuntime);
 
-    // Zig::GlobalObject holds ONE LazyProperty whose initializer calls this.
-    static JSStreamsRuntime* create(JSC::VM&, Zig::GlobalObject*);
-    static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
+public:
+    JSStreamsRuntime() = default;
+    void initialize(Zig::GlobalObject*);
 
     // The one accessor everything uses: `defaultGlobalObject(global)->streamsRuntime()`
     // behind a free function so streams .cpp files do not include ZigGlobalObject.h.
     static JSStreamsRuntime* from(JSC::JSGlobalObject*);
 
-    // End-of-tick flush service for JS-facing direct controllers: the runtime (a
-    // global-lifetime, non-destructible cell) is the only pointer registered with the
-    // event loop's deferred task queue; armed controllers are rooted by m_endOfTickFlushes.
-    void armEndOfTickFlush(JSC::JSGlobalObject*, JSDirectStreamController*);
-    WTF::Vector<JSC::WriteBarrier<JSDirectStreamController>> m_endOfTickFlushes;
-    bool m_endOfTickFlushTaskRegistered { false };
+    // Called from Zig::GlobalObject::visitChildren. MUST visit EVERY m_<handler>
+    // LazyProperty (both macro lists), the two size-function LazyProperties, and every
+    // LazyProperty in FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE. Safe on a
+    // default-constructed instance (LazyProperty::visit is a no-op for m_pointer == 0).
+    template<typename Visitor>
+    void visit(Visitor&);
 
-    DECLARE_INFO;
-    // visitChildrenImpl MUST visit: EVERY m_<handler> LazyProperty (both macro lists), the
-    // two size-function LazyProperties, and every LazyProperty in
-    // FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE.
-    DECLARE_VISIT_CHILDREN;
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-
-    template<typename, JSC::SubspaceAccess mode>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return subspaceForImpl(vm);
-    }
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
-
-    // The shared handler functions. Each LazyProperty gets its initializer in finishCreation
-    // and materializes the JSFunction on the FIRST get(this) — never eagerly.
+    // The shared handler functions. Each LazyProperty materializes the JSFunction on FIRST
+    // use; the global is the owner passed to `init.owner`.
 #define WEB_STREAMS_DECLARE_HANDLER_ACCESSOR(name) \
-    JSC::JSFunction* name() const { return m_##name.get(this); }
+    JSC::JSFunction* name() const { return m_##name.getInitializedOnMainThread(m_globalObject); }
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER(WEB_STREAMS_DECLARE_HANDLER_ACCESSOR)
     FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(WEB_STREAMS_DECLARE_HANDLER_ACCESSOR)
 #undef WEB_STREAMS_DECLARE_HANDLER_ACCESSOR
@@ -392,23 +364,22 @@ public:
     JSC::Structure* readManyResultStructure(const Zig::GlobalObject*);
 
 private:
-    JSStreamsRuntime(JSC::VM&, JSC::Structure*);
-    void finishCreation(JSC::VM&, Zig::GlobalObject*);
+    JSC::JSGlobalObject* m_globalObject { nullptr };
 
 #define WEB_STREAMS_DECLARE_HANDLER_MEMBER(name) \
-    JSC::LazyProperty<JSStreamsRuntime, JSC::JSFunction> m_##name;
+    JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction> m_##name;
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER(WEB_STREAMS_DECLARE_HANDLER_MEMBER)
     FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(WEB_STREAMS_DECLARE_HANDLER_MEMBER)
 #undef WEB_STREAMS_DECLARE_HANDLER_MEMBER
 
-    JSC::LazyProperty<JSStreamsRuntime, JSC::JSFunction> m_byteLengthQueuingStrategySizeFunction;
-    JSC::LazyProperty<JSStreamsRuntime, JSC::JSFunction> m_countQueuingStrategySizeFunction;
+    JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction> m_byteLengthQueuingStrategySizeFunction;
+    JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction> m_countQueuingStrategySizeFunction;
 
 #define WEB_STREAMS_DECLARE_STRUCTURE_MEMBER(memberName, ClassName) \
-    JSC::LazyProperty<JSStreamsRuntime, JSC::Structure> m_##memberName;
+    JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure> m_##memberName;
     FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_DECLARE_STRUCTURE_MEMBER)
 #undef WEB_STREAMS_DECLARE_STRUCTURE_MEMBER
-    JSC::LazyProperty<JSStreamsRuntime, JSC::Structure> m_readManyResultStructure;
+    JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure> m_readManyResultStructure;
 };
 
 } // namespace WebCore

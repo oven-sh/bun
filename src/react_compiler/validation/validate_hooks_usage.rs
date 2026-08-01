@@ -198,7 +198,7 @@ fn record_dynamic_hook_usage_error(
 }
 
 /// Validates hooks usage rules for a function.
-pub fn validate_hooks_usage(
+pub(crate) fn validate_hooks_usage(
     func: &HirFunction,
     env: &mut Environment,
 ) -> Result<(), crate::diagnostics::CompilerDiagnostic> {

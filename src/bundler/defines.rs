@@ -26,31 +26,12 @@ pub use bun_js_parser::defines::{
 };
 
 /// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`.
-pub type DefineDataInit<'a> = Options<'a>;
+pub(crate) type DefineDataInit<'a> = Options<'a>;
 /// Alias for `ExprData` so `options.rs` can write `DefineValue::EUndefined(..)`.
 pub(crate) use bun_ast::ExprData as DefineValue;
 
 // `Expr::Data` stores `Number`/`Undefined` inline (not via pointer), so no
 // pointer indirection is needed for these constants.
-pub struct Globals;
-impl Globals {
-    pub const UNDEFINED: bun_ast::E::Undefined = bun_ast::E::Undefined;
-    pub const NAN: bun_ast::E::Number = bun_ast::E::Number::new(f64::NAN);
-    pub const INFINITY: bun_ast::E::Number = bun_ast::E::Number::new(f64::INFINITY);
-
-    #[inline]
-    pub fn undefined_data() -> ExprData {
-        ExprData::EUndefined(bun_ast::E::Undefined)
-    }
-    #[inline]
-    pub fn nan_data() -> ExprData {
-        ExprData::ENumber(Globals::NAN)
-    }
-    #[inline]
-    pub fn infinity_data() -> ExprData {
-        ExprData::ENumber(Globals::INFINITY)
-    }
-}
 
 use bun_paths::fs::Path as FsPath;
 // `Path::init` is not `const fn`; lazily build the path.
@@ -59,8 +40,6 @@ fn defines_path() -> FsPath<'static> {
     p.namespace = b"internal";
     p
 }
-
-pub type Data = DefineData;
 
 // ══════════════════════════════════════════════════════════════════════════
 // `bun_dotenv::DefineStore` impls. dotenv (T2) calls through the link-interface
@@ -102,8 +81,8 @@ fn env_string_store_put(
 ///
 /// `to_json` is the framework-defaults `RawDefines` map; `to_string` is the
 /// per-env `UserDefinesArray`.
-pub fn copy_env_for_define(
-    env: &bun_dotenv::Loader<'_>,
+pub(crate) fn copy_env_for_define(
+    env: &bun_dotenv::Loader,
     to_json: &mut RawDefines,
     to_string: &mut UserDefinesArray,
     framework_defaults_keys: &[&[u8]],
@@ -166,7 +145,14 @@ pub fn copy_env_for_define(
                     } else {
                         let hash = bun_wyhash::hash(k);
                         debug_assert!(hash != INVALID_HASH);
-                        if let Some(key_i) = string_map_hashes.iter().position(|&h| h == hash) {
+                        if let Some(key_i) =
+                            string_map_hashes.iter().enumerate().position(|(i, &h)| {
+                                h == hash
+                                    && h != INVALID_HASH
+                                    && framework_defaults_keys[i].get(PROCESS_ENV.len()..)
+                                        == Some(&k[..])
+                            })
+                        {
                             env_string_store_put(
                                 to_string,
                                 bump,
@@ -225,22 +211,19 @@ impl DefineExt for Define {
     ) -> Result<(), bun_alloc::AllocError> {
         let key = global[global.len() - 1];
         let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
-        // reshaped for borrowck — getOrPut split into entry-style match.
         if let Some(existing) = self.dots.get_mut(key) {
-            let mut list: Vec<DotDefine> = Vec::with_capacity(existing.len() + 1);
-            list.extend_from_slice(existing);
-            list.push(DotDefine {
+            existing.push(DotDefine {
                 parts,
                 data: value_define.clone(),
             });
-            // The old value is freed by Vec drop on assign.
-            *existing = list;
         } else {
-            let list: Vec<DotDefine> = vec![DotDefine {
-                parts,
-                data: value_define.clone(),
-            }];
-            self.dots.put_assume_capacity(key, list);
+            self.dots.put_assume_capacity(
+                key,
+                vec![DotDefine {
+                    parts,
+                    data: value_define.clone(),
+                }],
+            );
         }
         Ok(())
     }

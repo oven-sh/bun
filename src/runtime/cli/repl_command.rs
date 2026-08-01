@@ -215,7 +215,7 @@ struct ReplRunner<'a, 'r> {
 }
 
 impl<'a, 'r> ReplRunner<'a, 'r> {
-    pub(crate) fn start(this: &mut ReplRunner<'a, 'r>) {
+    fn start(this: &mut ReplRunner<'a, 'r>) {
         let _ = this.vm;
         let vm = VirtualMachine::get().as_mut();
 
@@ -287,8 +287,6 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             }
         }
 
-        // SAFETY: transpiler.env is valid.
-        unsafe { (*vm.transpiler.env).load_tracy() };
         Ok(())
     }
 }

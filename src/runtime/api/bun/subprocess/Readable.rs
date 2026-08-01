@@ -17,8 +17,7 @@ use super::subprocess_pipe_reader::PipeReader;
 use super::{StdioResult, Subprocess};
 
 // `bun.ptr.CowString` — owned/borrowed byte slice (has
-// `init_owned` / `length` / `take_slice`). Distinct from the std `Cow` alias
-// re-exported at `bun_ptr::CowString`.
+// `init_owned` / `length` / `take_slice`).
 pub type CowString = CowSlice<u8>;
 
 pub enum Readable {
@@ -72,7 +71,7 @@ impl Readable {
         pipe.deref();
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Readable::Pipe(pipe) => mem::size_of::<PipeReader>() + pipe.memory_cost(),
             Readable::Buffer(buffer) => buffer.length(),
@@ -80,7 +79,7 @@ impl Readable {
         }
     }
 
-    pub fn has_pending_activity(&self) -> bool {
+    pub(crate) fn has_pending_activity(&self) -> bool {
         match self {
             Readable::Pipe(pipe) => pipe.has_pending_activity(),
             _ => false,
@@ -96,7 +95,7 @@ impl Readable {
         }
     }
 
-    pub fn unref(&mut self) {
+    pub(crate) fn unref(&mut self) {
         match self {
             Readable::Pipe(pipe) => {
                 Self::pipe_reader_mut(pipe).update_ref(false);
@@ -105,7 +104,7 @@ impl Readable {
         }
     }
 
-    pub fn init(
+    pub(crate) fn init(
         stdio: Stdio,
         event_loop: NonNull<EventLoop>,
         process: NonNull<Subprocess<'static>>,
@@ -183,8 +182,6 @@ impl Readable {
     }
 
     pub fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
-
-    pub fn on_start(&mut self) {}
 
     pub fn close(&mut self) {
         match self {
@@ -277,7 +274,7 @@ impl Readable {
         }
     }
 
-    pub fn to_buffered_value(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_buffered_value(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             Readable::Fd(fd) => Ok(fd.to_js(global)),
             Readable::Memfd(fd) => {

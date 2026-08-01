@@ -33,9 +33,9 @@ fn string_hash(s: &[u8]) -> u64 {
 
 #[derive(Default)]
 pub struct PatchCommitResult {
-    pub patch_key: Box<[u8]>,
-    pub patchfile_path: Box<[u8]>,
-    pub not_in_workspace_root: bool,
+    pub(crate) patch_key: Box<[u8]>,
+    pub(crate) patchfile_path: Box<[u8]>,
+    pub(crate) not_in_workspace_root: bool,
 }
 
 /// - Arg is the dir containing the package with changes OR name and version
@@ -101,25 +101,30 @@ pub fn do_patch_commit(
         .get(&lockfile, manager.workspace_name_hash);
     let not_in_workspace_root = workspace_package_id != 0;
     // reshaped for borrowck — owned buffer kept separately so `argument` can borrow it
-    let argument_owned: Option<Box<[u8]>>;
+    let mut argument_owned: Option<Box<[u8]>> = None;
     let argument: &[u8] = if arg_kind == PatchArgKind::Path
         && not_in_workspace_root
-        && (!Platform::Posix.is_absolute(argument)
-            || (cfg!(windows) && !Platform::Windows.is_absolute(argument)))
+        && !Platform::AUTO.is_absolute(argument)
     {
         if let Some(rel_path) = path_argument_relative_to_root_workspace_package(
             &lockfile,
             workspace_package_id,
             argument,
         ) {
-            argument_owned = Some(rel_path);
-            argument_owned.as_deref().unwrap()
+            // prepare_patch detaches symlinks; a symlink here means the prepared copy is at the root
+            if !is_real_dir_not_symlink(&rel_path) && is_real_dir_not_symlink(argument) {
+                argument
+            } else {
+                argument_owned = Some(rel_path);
+                argument_owned.as_deref().unwrap()
+            }
         } else {
             argument
         }
     } else {
         argument
     };
+    let _ = &argument_owned;
 
     // Attempt to open the existing node_modules folder
     let root_node_modules: Dir = match sys::openat_os_path(
@@ -501,7 +506,7 @@ pub fn do_patch_commit(
                 Global::crash();
             }
         };
-        let paths = bun_patch::git_diff_preprocess_paths::<false>(old_folder, new_folder);
+        let paths = bun_patch::git_diff_preprocess_paths(old_folder, new_folder);
         let (opts, _envp_guard) =
             bun_patch::spawn_opts(&paths[0], &paths[1], cwd, git, &mut manager.event_loop);
 
@@ -665,7 +670,7 @@ fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {
     }
 
     impl EscapeVal {
-        pub(crate) fn escaped(self) -> Option<&'static [u8]> {
+        fn escaped(self) -> Option<&'static [u8]> {
             match self {
                 EscapeVal::Slash => Some(b"%2F"),
                 EscapeVal::Backslash => Some(b"%5c"),
@@ -738,8 +743,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     let argument_owned: Option<Box<[u8]>>;
     let argument: &[u8] = if arg_kind == PatchArgKind::Path
         && not_in_workspace_root
-        && (!Platform::Posix.is_absolute(argument)
-            || (cfg!(windows) && !Platform::Windows.is_absolute(argument)))
+        && !Platform::AUTO.is_absolute(argument)
     {
         if let Some(rel_path) = path_argument_relative_to_root_workspace_package(
             &manager.lockfile,
@@ -1029,6 +1033,42 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     }
 
     Ok(())
+}
+
+fn is_real_dir_not_symlink(path: &[u8]) -> bool {
+    #[cfg(windows)]
+    let mut native_buf = PathBuffer::uninit();
+    #[cfg(windows)]
+    let native: &[u8] = {
+        if path.len() > native_buf.len() {
+            return false;
+        }
+        native_buf[0..path.len()].copy_from_slice(path);
+        let slice = &mut native_buf[0..path.len()];
+        resolve_path::posix_to_platform_in_place::<u8>(slice);
+        &*slice
+    };
+    #[cfg(not(windows))]
+    let native: &[u8] = path;
+
+    let Ok(mut p) = bun_paths::Path::<u8>::from(native) else {
+        return false;
+    };
+
+    #[cfg(windows)]
+    {
+        match sys::get_file_attributes(p.slice_z()) {
+            Some(attrs) => attrs.is_directory && !attrs.is_reparse_point,
+            None => false,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        match sys::lstat(p.slice_z()) {
+            Ok(st) => sys::posix::s_isdir(st.st_mode as u32),
+            Err(_) => false,
+        }
+    }
 }
 
 fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
@@ -1440,7 +1480,7 @@ enum PatchArgKind {
 }
 
 impl PatchArgKind {
-    pub(crate) fn from_arg(argument: &[u8]) -> PatchArgKind {
+    fn from_arg(argument: &[u8]) -> PatchArgKind {
         if strings::contains(argument, b"node_modules/") {
             return PatchArgKind::Path;
         }

@@ -700,22 +700,16 @@ interface ReadableStreamDirectController {
   /**
    * Write a chunk directly to the destination.
    *
-   * Returns the number of bytes written, or a **negative number** when the
-   * destination's internal buffer is full (backpressure). When negative, the
-   * chunk *was* accepted; pause writing and `await controller.flush(true)`,
-   * which resolves once the destination has drained:
+   * Returns the number of bytes written, or a **pending `Promise<number>`**
+   * when the destination's internal buffer is full (backpressure). The chunk
+   * *was* accepted either way; `await`ing the result is enough:
    *
    * ```ts
-   * const n = controller.write(chunk);
-   * if (typeof n === "number" && n < 0) {
-   *   await controller.flush(true);
-   * }
+   * await controller.write(chunk);
    * ```
    *
-   * For some destinations (e.g. {@link Bun.FileSink} on Windows pipes) the
-   * write itself is asynchronous and a `Promise<number>` is returned instead;
-   * the `typeof` check above skips the backpressure wait for those — the
-   * promise carries its own flow control.
+   * The promise resolves once the destination has drained.
+   * `await controller.flush(true)` is equivalent.
    */
   write(data: Bun.BufferSource | ArrayBuffer | string): number | Promise<number>;
   end(): number | Promise<number>;
@@ -724,7 +718,7 @@ interface ReadableStreamDirectController {
    *
    * @param wait When `true`, the returned promise resolves only once the
    * destination has drained its own internal buffer (i.e. backpressure has
-   * cleared). Use this after {@link write} returns a negative value.
+   * cleared). Use this after {@link write} returns a `Promise`.
    */
   flush(wait?: boolean): number | Promise<number>;
   start(): void;

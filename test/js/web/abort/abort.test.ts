@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { writeFileSync } from "fs";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -31,6 +31,42 @@ describe("AbortSignal", () => {
     });
 
     expect(await server.exited).toBe(0);
+  });
+
+  // The per-element TypeError is thrown inside forEachInIterable's callback.
+  // Without a RETURN_IF_EXCEPTION after the loop, AbortSignal::any(...) still
+  // runs: a dependent signal is created and wired to any valid sources that
+  // appeared before the bad element, and the wrapper is returned with the
+  // TypeError still pending. Under GC pressure that pending exception was seen
+  // to be consumed so the caller received a live signal instead of a throw.
+  test("AbortSignal.any() rejects a non-AbortSignal element without allocating a dependent signal", async () => {
+    const src = `
+      const { heapStats } = require("bun:jsc");
+      const c = new AbortController();
+      Bun.gc(true);
+      const before = heapStats().objectTypeCounts.AbortSignal ?? 0;
+      let threw = 0;
+      let returned = 0;
+      const N = 256;
+      for (let i = 0; i < N; i++) {
+        try {
+          const r = AbortSignal.any([c.signal, 1]);
+          returned += r instanceof AbortSignal ? 1 : 0;
+        } catch (e) {
+          threw += e?.code === "ERR_INVALID_ARG_TYPE" ? 1 : 0;
+        }
+      }
+      const ghosts = (heapStats().objectTypeCounts.AbortSignal ?? 0) - before;
+      process.stdout.write(JSON.stringify({ threw, returned, ghosts, N }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout);
+    expect({ threw: out.threw, returned: out.returned }).toEqual({ threw: out.N, returned: 0 });
+    // Without the exception check the count here is exactly N.
+    expect(out.ghosts).toBeLessThan(out.N / 4);
+    expect(exitCode).toBe(0);
   });
 
   test("AbortSignal.any() should fire abort event", async () => {
@@ -86,5 +122,61 @@ describe("AbortSignal", () => {
     expect(ac.reason).toBeInstanceOf(DOMException);
     expect(fmt(ac.reason)).toEqual(fmt(new DOMException("The operation timed out.", "TimeoutError")));
     expect(ac.reason.code).toBe(23);
+  });
+
+  // #33334: with nothing else ref'd, uv_run() skipped its body on Windows so
+  // uv__run_timers never ran and the whole file hung. Subprocess so a
+  // regression is an attributable failure, not a file-level timeout.
+  test("awaiting AbortSignal.timeout(n) abort event with nothing else ref'd does not hang (#33334)", async () => {
+    using dir = tempDir("abort-33334", {
+      "timeout.test.ts": `import { expect, test } from "bun:test";
+        test("AbortSignal.timeout fires", async () => {
+          const signal = AbortSignal.timeout(1);
+          const { promise, resolve } = Promise.withResolvers<Event>();
+          signal.addEventListener("abort", resolve, { once: true });
+          await promise;
+          expect(signal.aborted).toBe(true);
+        });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "timeout.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr: stderr.includes("1 pass") ? "1 pass" : stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stderr: "1 pass",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // https://wpt.fyi/results/dom/abort/timeout.any.html "AbortSignal timeouts fire in order"
+  test("AbortSignal.timeout with equal deadlines fire in creation order", async () => {
+    const src = `
+      const order = [];
+      const done = Promise.withResolvers();
+      let remaining = 7;
+      const tick = v => { order.push(v); if (--remaining === 0) done.resolve(); };
+      for (let i = 0; i < 6; i++) {
+        const s = AbortSignal.timeout(5);
+        s.onabort = () => tick(i);
+      }
+      // setTimeout with the same delay is a reference: it already fires in
+      // creation order, and these signals should sort alongside it.
+      setTimeout(() => tick("t"), 5);
+      await done.promise;
+      console.log(JSON.stringify(order));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout.trim())).toEqual([0, 1, 2, 3, 4, 5, "t"]);
+    expect(exitCode).toBe(0);
   });
 });

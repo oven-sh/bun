@@ -30,7 +30,7 @@ pub use bun_event_loop::ConcurrentTask::{
 };
 pub use bun_event_loop::DeferredTaskQueue::{self, DeferredRepeatingTask};
 pub use bun_event_loop::ManagedTask;
-pub use bun_event_loop::MiniEventLoop::{self, AbstractVM, EventLoopKind, MiniVM};
+pub use bun_event_loop::MiniEventLoop;
 pub use bun_event_loop::Task;
 pub use bun_event_loop::any_event_loop::{
     AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
@@ -293,11 +293,6 @@ impl EventLoop {
             self.entered_event_loop_count -= 1;
         }
         result
-    }
-
-    #[inline]
-    pub fn get_vm_impl(&self) -> *mut VirtualMachine {
-        self.vm()
     }
 
     /// SAFETY: returns `&mut` into VM-owned scratch; two calls alias the same
@@ -795,6 +790,11 @@ impl EventLoop {
                 unsafe { __bun_cancel_pending_immediate(task, vm) };
             }
         }
+        // Free the deferred-task map's storage. The tasks must not be run (same rule as the
+        // queued tasks above), and an entry owns nothing but a `Copy` ctx pointer whose owner
+        // released it when the JSC teardown before this finalized it. A worker's VM box is
+        // `dealloc`'d without running `Drop` (WebWorker::shutdown), so nothing else frees it.
+        self.deferred_tasks = DeferredTaskQueue::DeferredTaskQueue::default();
     }
 
     /// Note (§Dispatch): `task` is an erased
@@ -900,10 +900,9 @@ impl EventLoop {
             }
         }
         // Note: `EventLoopHandle` lives in `bun_event_loop` (lower tier),
-        // which cannot name `jsc::EventLoop`, so it stores `*mut ()`. The
-        // typed `set_parent_event_loop` extension trait in `bun_uws` expects
-        // a `ParentEventLoopHandle` impl, but `EventLoopHandle` already
-        // exposes `into_tag_ptr()` — go straight to the sys-level setter.
+        // which cannot name `jsc::EventLoop`, so it stores `*mut ()`.
+        // `EventLoopHandle` already exposes `into_tag_ptr()` — go straight to
+        // the sys-level setter.
         // `self` is the live per-thread `jsc::EventLoop` (mut ref) — non-null.
         let self_ptr = core::ptr::from_mut(self).cast::<()>();
         let (tag, ptr) = EventLoopHandle::init(self_ptr).into_tag_ptr();
@@ -1119,11 +1118,13 @@ impl EventLoop {
         }
 
         self.process_gc_timer();
-        self.process_gc_timer();
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
-        loop_.tick_with_timeout(Some(&bun_core::Timespec { sec: 1, nsec: 0 }));
+        loop_.tick_with_timeout(
+            Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
+            uws::NOW_NS_UNKNOWN,
+        );
 
         self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();
@@ -1159,32 +1160,6 @@ impl EventLoop {
             }
             _ => {}
         }
-    }
-
-    pub fn enqueue_task_concurrent_batch(
-        &self,
-        batch: bun_threading::unbounded_queue::Batch<ConcurrentTaskItem>,
-    ) {
-        if cfg!(debug_assertions) {
-            if self.vm_ref().has_terminated {
-                panic!("EventLoop.enqueueTaskConcurrent: VM has terminated");
-            }
-        }
-        // Panic on an empty batch; `push_batch`'s first line is
-        // `set_next(last, null)`, so a null `last` would be UB, not a clean fail.
-        assert!(
-            !batch.front.is_null() && !batch.last.is_null(),
-            "enqueue_task_concurrent_batch: empty batch",
-        );
-        // SAFETY: asserted non-null above; `batch` was produced by `pop_batch`,
-        // so `last` is reachable from `front` and every node is live.
-        unsafe {
-            self.concurrent_tasks.push_batch(
-                core::ptr::NonNull::new_unchecked(batch.front),
-                core::ptr::NonNull::new_unchecked(batch.last),
-            )
-        };
-        self.wakeup();
     }
 }
 
@@ -1308,13 +1283,13 @@ bun_event_loop::link_impl_JsEventLoop! {
         // code paths. Route through `usockets_loop()`.
         iteration_number() => (&*(*this).usockets_loop()).iteration_number(),
         // Return raw to avoid asserting uniqueness — multiple handles may name the
-        // same VM (see `EventLoopHandle::file_polls` doc).
+        // same VM.
         file_polls() => core::ptr::from_mut(
             (*this)
                 .vm_ref()
                 .as_mut()
                 .rare_data()
-                .file_polls_
+                .file_polls
                 .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
                 .as_mut(),
         ),
@@ -1327,7 +1302,7 @@ bun_event_loop::link_impl_JsEventLoop! {
                     .vm_ref()
                     .as_mut()
                     .rare_data()
-                    .file_polls_
+                    .file_polls
                     .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
                     .as_mut(),
             );
@@ -1445,28 +1420,4 @@ pub(crate) fn __bun_spawn_sync_vm_set_event_loop(vm: *mut (), el: *mut ()) {
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: bool) -> bool {
     vm_from_ptr(vm).suppress_microtask_drain.replace(v)
-}
-
-/// C++ (webcore/streams) entries for the deferred task queue: register/unregister a task that
-/// runs right after the current microtask drain (see DeferredTaskQueue.rs). `ctx` identity is
-/// the key; the callee must unregister before `ctx` is freed.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__EventLoop__postDeferredTask(
-    vm: &VirtualMachine,
-    ctx: *mut core::ffi::c_void,
-    task: DeferredRepeatingTask,
-) -> bool {
-    vm.event_loop_ref()
-        .deferred_tasks
-        .post_task(core::ptr::NonNull::new(ctx), task)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__EventLoop__unregisterDeferredTask(
-    vm: &VirtualMachine,
-    ctx: *mut core::ffi::c_void,
-) -> bool {
-    vm.event_loop_ref()
-        .deferred_tasks
-        .unregister_task(core::ptr::NonNull::new(ctx))
 }

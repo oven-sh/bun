@@ -500,8 +500,6 @@ impl Subcommand {
 pub(crate) fn absolutize_folder_positionals(
     positionals: &'static [&'static [u8]],
 ) -> Option<&'static [&'static [u8]]> {
-    use bun_install::dependency::DependencyExt as _;
-
     let mut cwd_buf = PathBuffer::uninit();
     let mut cwd: Option<&[u8]> = None;
     let mut join_buf = PathBuffer::uninit();
@@ -516,10 +514,7 @@ pub(crate) fn absolutize_folder_positionals(
 
         // `name@<value>` alias form: isolate the value so `name@./pkg` is handled.
         let (alias, mut value): (&[u8], &[u8]) = 'split: {
-            if input.len() > 1
-                && !Dependency::is_tarball(input)
-                && !strings::is_npm_package_name(input)
-            {
+            if input.len() > 1 && !strings::is_npm_package_name(input) {
                 if let Some(at) = strings::index_of_char(&input[1..], b'@') {
                     let at = at as usize + 1;
                     let name = &input[..at];
@@ -532,7 +527,17 @@ pub(crate) fn absolutize_folder_positionals(
         };
 
         let had_file_scheme = if let Some(rest) = value.strip_prefix(b"file:") {
-            value = rest;
+            // npa.js compat: `file://../foo` → `../foo` (dependency.rs strips
+            // up to three leading slashes when the remainder starts with `..`).
+            let mut i = 0;
+            while i < 3 && i < rest.len() && rest[i] == b'/' {
+                i += 1;
+            }
+            value = if i > 0 && rest[i..].starts_with(b"..") {
+                &rest[i..]
+            } else {
+                rest
+            };
             true
         } else {
             false

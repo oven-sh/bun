@@ -2377,10 +2377,9 @@ impl PathTemplate {
         )
     }
 
-    /// The chunk-relative directory this template expands into, with `[hash]`
-    /// (not yet known during post-process) substituted by a dummy value. The
-    /// hash formatter never emits a path separator, so any value yields the
-    /// correct directory depth. Result uses `/` separators.
+    /// `/`-separated directory portion of the expanded template. A missing
+    /// `[hash]` is filled with a dummy: the hash output never contains `/`,
+    /// so the directory is the same regardless of the eventual value.
     pub(crate) fn rel_dir(&self, sanitize_parent_dirs: bool) -> Box<[u8]> {
         let mut rel = Vec::<u8>::new();
         path_template_print(

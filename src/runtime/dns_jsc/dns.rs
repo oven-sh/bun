@@ -263,10 +263,164 @@ pub(crate) mod dns_sd {
         FLAGS_SUPPRESS_UNUSABLE
     }
 
+    /// How long to keep waiting for the other family once one has
+    /// produced answers. libinfo's mdns module bounds the wait for the
+    /// second address family after the first answers rather than sitting out
+    /// the full query timeout, so an A-only name whose AAAA question goes
+    /// unanswered resolves in ~this instead of when the daemon times out.
+    const SECOND_FAMILY_EXTRA_MS: i64 = 2000;
+
+    fn now_ms() -> i64 {
+        let now = bun::timespec::now(bun::TimespecMockMode::AllowMockedTime);
+        now.sec * 1000 + (now.nsec as i64) / 1_000_000
+    }
+
+    /// Per-query state for one `DNSServiceGetAddrInfo` subordinate, shared
+    /// by the JS `dns.lookup` request and the internal connect-path request
+    /// so both apply identical completion rules.
+    #[derive(Default)]
+    pub(crate) struct QueryState {
+        pub(crate) sd_ref: DNSServiceRef,
+        pub(crate) results: bun_dns::ResultList,
+        /// First hard `DNSServiceErrorType` (NoSuchRecord/Timeout are
+        /// per-family negatives, not errors).
+        pub(crate) sd_error: DNSServiceErrorType,
+        /// A family reported `kDNSServiceErr_Timeout`; with no results this
+        /// is a transient EAI_AGAIN, not a definitive EAI_NONAME.
+        saw_timeout: bool,
+        /// The last reply for this request carried `kDNSServiceFlagsMoreComing`
+        /// and no other request's reply has followed it yet: the daemon has
+        /// more of this answer set queued (possibly not yet written). If that
+        /// continuation is never delivered (a stale reply for a deallocated
+        /// subordinate is dropped by the client stub), `kDNSServiceFlagsTimeout`
+        /// still guarantees a final callback that completes the request.
+        awaiting_more: bool,
+        /// `kDNSServiceProtocol_*` bits still awaiting any reply. A family's
+        /// bit is cleared by any callback carrying its `sa_family` (Add,
+        /// NoSuchRecord, or Timeout; the client stub always passes a
+        /// family-tagged sockaddr).
+        pub(crate) pending_proto: DNSServiceProtocol,
+        /// Some family has answered while another is still pending: the
+        /// timestamp starts the `SECOND_FAMILY_EXTRA_MS` early-out.
+        partial_at_ms: Option<i64>,
+        gave_up_on_pending: bool,
+    }
+
+    impl QueryState {
+        pub(crate) fn new(protocol: DNSServiceProtocol) -> Self {
+            Self {
+                pending_proto: protocol,
+                ..Default::default()
+            }
+        }
+
+        /// Absorb one callback from `DNSServiceGetAddrInfo`.
+        /// SAFETY: `address`, if non-null, points at a valid sockaddr of the
+        /// family it declares (guaranteed by dnssd_clientstub for the callback).
+        pub(crate) unsafe fn record_reply(
+            &mut self,
+            flags: DNSServiceFlags,
+            error_code: DNSServiceErrorType,
+            address: *const Sockaddr,
+            ttl: u32,
+        ) {
+            self.awaiting_more = flags & FLAGS_MORE_COMING != 0;
+            // dnssd_clientstub always passes a family-tagged sockaddr for A/AAAA
+            // replies (including NoSuchRecord/Timeout); only PolicyDenied is null.
+            if address.is_null() {
+                if self.sd_error == 0 {
+                    self.sd_error = error_code;
+                }
+                return;
+            }
+            // SAFETY: caller contract.
+            let fam = unsafe { (*address).sa_family } as i32;
+            // Any reply for a family retires its pending bit; whether the
+            // whole answer set has arrived is tracked by `awaiting_more`.
+            self.pending_proto &= !if fam == netc::AF_INET6 {
+                PROTOCOL_IPV6
+            } else {
+                PROTOCOL_IPV4
+            };
+            if error_code == ERR_NO_ERROR && flags & FLAGS_ADD != 0 {
+                self.results.push(GetAddrInfoResult {
+                    // SAFETY: caller contract.
+                    address: unsafe { bun_dns::Address::init_posix(address.cast()) },
+                    ttl: ttl as i32,
+                });
+            } else if error_code == ERR_TIMEOUT {
+                self.saw_timeout = true;
+            } else if error_code != ERR_NO_ERROR
+                && error_code != ERR_NO_SUCH_RECORD
+                && self.sd_error == 0
+            {
+                self.sd_error = error_code;
+            }
+            if !self.results.is_empty() && self.pending_proto != 0 && self.partial_at_ms.is_none() {
+                self.partial_at_ms = Some(now_ms());
+            }
+        }
+
+        pub(crate) fn is_ready(&self) -> bool {
+            self.sd_error != 0
+                || self.gave_up_on_pending
+                || (self.pending_proto == 0 && !self.awaiting_more)
+        }
+
+        /// Deadline for giving up on the still-pending family, if one family
+        /// has already answered.
+        pub(crate) fn early_out_deadline_ms(&self) -> Option<i64> {
+            if self.pending_proto == 0 || self.gave_up_on_pending {
+                return None;
+            }
+            self.partial_at_ms.map(|t| t + SECOND_FAMILY_EXTRA_MS)
+        }
+
+        /// EAI_* status for a completed query with no results.
+        pub(crate) fn empty_status(&self) -> c_int {
+            if self.sd_error != 0 {
+                to_eai(self.sd_error)
+            } else if self.saw_timeout {
+                libc::EAI_AGAIN
+            } else {
+                libc::EAI_NONAME
+            }
+        }
+
+        pub(crate) fn take_results(&mut self) -> bun_dns::ResultList {
+            let mut results = core::mem::take(&mut self.results);
+            // Arrival order across families races (each family is a separate
+            // A/AAAA question upstream); getaddrinfo sorted with the RFC 6724
+            // default policy, which puts IPv6 first when both are configured.
+            results.sort_by_key(|r| r.address.family() != netc::AF_INET6);
+            results
+        }
+    }
+
     #[derive(Clone, Copy)]
     pub(crate) enum Inflight {
         Jsc(*mut GetAddrInfoRequest),
         Internal(*mut internal::Request),
+    }
+
+    impl Inflight {
+        fn context(&self) -> *mut c_void {
+            match *self {
+                Inflight::Jsc(r) => r.cast(),
+                Inflight::Internal(r) => r.cast(),
+            }
+        }
+
+        /// SAFETY: the request behind `self` is live (pinned in `inflight`).
+        unsafe fn query(&self) -> &mut QueryState {
+            // SAFETY: caller contract; event-loop thread only.
+            unsafe {
+                match *self {
+                    Inflight::Jsc(r) => &mut (*r).backend.as_dns_sd_mut().query,
+                    Inflight::Internal(r) => &mut (*r).libinfo.query,
+                }
+            }
+        }
     }
 
     /// One per event loop. Owns the primary `DNSServiceRef` and its `FilePoll`;
@@ -282,7 +436,15 @@ pub(crate) mod dns_sd {
         /// this connection, so a request's contiguous run has ended once a
         /// reply for a different request follows it.
         last_ctx: *mut c_void,
+        /// Runtime-heap timer for `SECOND_FAMILY_EXTRA_MS` early-outs (armed
+        /// only on JS threads; the daemon's own timeout is the backstop on the
+        /// HTTP-thread loop).
+        pub(crate) early_out_timer: JsCell<EventLoopTimer>,
+        /// Deadline the timer is currently armed for (0 = disarmed).
+        early_out_armed_for: Cell<i64>,
     }
+
+    bun_event_loop::impl_timer_owner!(SharedConnection; from_early_out_timer_ptr => early_out_timer);
 
     thread_local! {
         static SHARED: Cell<*mut SharedConnection> = const { Cell::new(ptr::null_mut()) };
@@ -312,6 +474,10 @@ pub(crate) mod dns_sd {
                 ctx,
                 inflight: Vec::new(),
                 last_ctx: ptr::null_mut(),
+                early_out_timer: JsCell::new(EventLoopTimer::init_paused(
+                    EventLoopTimerTag::DnsSdConnection,
+                )),
+                early_out_armed_for: Cell::new(0),
             }));
             let poll_ptr = FilePoll::init(
                 ctx,
@@ -410,14 +576,8 @@ pub(crate) mod dns_sd {
                 let prev = (*this).last_ctx;
                 if !prev.is_null() && prev != context {
                     for inf in (*this).inflight.iter() {
-                        match *inf {
-                            Inflight::Jsc(r) if r.cast::<c_void>() == prev => {
-                                (*r).backend.as_dns_sd_mut().awaiting_more = false;
-                            }
-                            Inflight::Internal(r) if r.cast::<c_void>() == prev => {
-                                (*r).libinfo.awaiting_more = false;
-                            }
-                            _ => {}
+                        if inf.context() == prev {
+                            inf.query().awaiting_more = false;
                         }
                     }
                 }
@@ -457,12 +617,8 @@ pub(crate) mod dns_sd {
                 let inflight = unsafe { &mut (*this).inflight };
                 let mut i = 0;
                 while i < inflight.len() {
-                    let is_ready = unsafe {
-                        match inflight[i] {
-                            Inflight::Jsc(r) => (*r).backend.as_dns_sd().is_ready(),
-                            Inflight::Internal(r) => (*r).libinfo.is_ready(),
-                        }
-                    };
+                    // SAFETY: each entry is a live heap request pinned in `inflight`.
+                    let is_ready = unsafe { inflight[i].query().is_ready() };
                     if is_ready {
                         ready.push(inflight.swap_remove(i));
                     } else {
@@ -492,6 +648,87 @@ pub(crate) mod dns_sd {
                 // above; nothing else references it.
                 unsafe { Self::destroy(this) };
             } else {
+                Self::arm_early_out(this);
+                for inf in ready {
+                    Self::finish(inf, None);
+                }
+            }
+        }
+
+        /// Arm the runtime timer for the nearest second-family early-out
+        /// deadline among in-flight queries, if any. No-op off the JS thread
+        /// (no timer heap there); the daemon timeout still bounds the wait.
+        fn arm_early_out(this: *mut Self) {
+            if VirtualMachine::get_or_null().is_none() {
+                return;
+            }
+            // SAFETY: `this` is the live connection; event-loop thread only.
+            unsafe {
+                let mut min_deadline: Option<i64> = None;
+                for inf in (*this).inflight.iter() {
+                    if let Some(d) = inf.query().early_out_deadline_ms() {
+                        min_deadline = Some(min_deadline.map_or(d, |m| m.min(d)));
+                    }
+                }
+                let Some(deadline) = min_deadline else {
+                    return;
+                };
+                let armed = (*this).early_out_armed_for.get();
+                if armed != 0 && armed <= deadline {
+                    return;
+                }
+                let now = bun::timespec::now(bun::TimespecMockMode::AllowMockedTime);
+                let delay_ms = (deadline - now_ms()).max(1);
+                let next = now.add_ms(delay_ms);
+                let timer = &(*this).early_out_timer;
+                let state = crate::jsc_hooks::runtime_state();
+                if timer.get().state == EventLoopTimerState::ACTIVE {
+                    (*state).timer.remove(timer.as_ptr());
+                }
+                timer.with_mut(|t| {
+                    t.next = ElTimespec {
+                        sec: next.sec,
+                        nsec: next.nsec,
+                    }
+                });
+                (*state).timer.insert(timer.as_ptr());
+                (*this).early_out_armed_for.set(deadline);
+            }
+        }
+
+        /// Runtime-timer fire (via `dispatch.rs`): complete queries that have
+        /// had one family's answers for `SECOND_FAMILY_EXTRA_MS` while the
+        /// other family stayed silent.
+        ///
+        /// # Safety
+        /// `this` must be the live connection whose `early_out_timer` fired.
+        pub(crate) unsafe fn on_early_out(this: *mut Self) {
+            // See `on_readable`: keep one scope open across `finish()`.
+            let _exit =
+                VirtualMachine::get_or_null().map(|vm| unsafe { (*vm).enter_event_loop_scope() });
+            // SAFETY: caller contract; borrows of `*this` end before any
+            // `finish()`.
+            unsafe {
+                (*this).early_out_armed_for.set(0);
+                let now = now_ms();
+                let mut ready = Vec::new();
+                let inflight = &mut (*this).inflight;
+                let mut i = 0;
+                while i < inflight.len() {
+                    let q = inflight[i].query();
+                    if q.early_out_deadline_ms()
+                        .is_some_and(|d| d <= now && !q.results.is_empty())
+                    {
+                        q.gave_up_on_pending = true;
+                        ready.push(inflight.swap_remove(i));
+                    } else {
+                        i += 1;
+                    }
+                }
+                if inflight.is_empty() {
+                    (*(*this).file_poll.as_ptr()).disable_keeping_process_alive((*this).ctx);
+                }
+                Self::arm_early_out(this);
                 for inf in ready {
                     Self::finish(inf, None);
                 }
@@ -505,6 +742,13 @@ pub(crate) mod dns_sd {
             // SAFETY: caller contract; `deinit` returns the hive slot.
             unsafe {
                 debug_assert!((*this).inflight.is_empty());
+                if (*this).early_out_timer.get().state == EventLoopTimerState::ACTIVE {
+                    if VirtualMachine::get_or_null().is_some() {
+                        (*crate::jsc_hooks::runtime_state())
+                            .timer
+                            .remove((*this).early_out_timer.as_ptr());
+                    }
+                }
                 (*(*this).file_poll.as_ptr()).deinit();
                 DNSServiceRefDeallocate((*this).main_ref);
                 drop(bun_core::heap::take(this));
@@ -521,19 +765,20 @@ pub(crate) mod dns_sd {
             unsafe {
                 match inf {
                     Inflight::Jsc(r) => {
-                        let be = (*r).backend.as_dns_sd_mut();
-                        DNSServiceRefDeallocate(be.sd_ref);
+                        let q = &mut (*r).backend.as_dns_sd_mut().query;
+                        DNSServiceRefDeallocate(q.sd_ref);
                         if let Some(e) = force_err {
-                            be.results.clear();
-                            be.sd_error = e;
+                            q.results.clear();
+                            q.sd_error = e;
                         }
                         GetAddrInfoRequest::complete_dns_sd(r);
                     }
                     Inflight::Internal(r) => {
-                        DNSServiceRefDeallocate((*r).libinfo.sd_ref);
+                        let q = &mut (*r).libinfo.query;
+                        DNSServiceRefDeallocate(q.sd_ref);
                         if let Some(e) = force_err {
-                            (*r).libinfo.addrs.clear();
-                            (*r).libinfo.sd_error = e;
+                            q.results.clear();
+                            q.sd_error = e;
                         }
                         internal::dns_sd_complete(r);
                     }
@@ -639,7 +884,7 @@ pub(crate) mod dns_sd {
         };
 
         // SAFETY: request is live (heap-allocated) and exclusively accessed here.
-        unsafe { (*request).backend.as_dns_sd_mut().sd_ref = sub };
+        unsafe { (*request).backend.as_dns_sd_mut().query.sd_ref = sub };
         this.request_sent(this.vm());
 
         promise_value
@@ -1490,54 +1735,20 @@ pub mod get_addr_info_request {
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub struct BackendDnsSd {
         #[cfg(target_os = "macos")]
-        pub(crate) sd_ref: dns_sd::DNSServiceRef,
-        #[cfg(target_os = "macos")]
-        pub(crate) results: GetAddrInfoResultList,
-        /// First hard DNSServiceErrorType seen (anything other than
-        /// NoSuchRecord/Timeout, which are per-family negatives absorbed into
-        /// `pending_proto`).
-        #[cfg(target_os = "macos")]
-        pub(crate) sd_error: i32,
-        /// A family reported `kDNSServiceErr_Timeout`; with no results this
-        /// is a transient EAI_AGAIN, not a definitive EAI_NONAME.
-        #[cfg(target_os = "macos")]
-        pub(crate) saw_timeout: bool,
-        /// The last reply for this request carried `kDNSServiceFlagsMoreComing`
-        /// and no other request's reply has followed it yet: the daemon has
-        /// more of this answer set queued (possibly not yet written). If that
-        /// continuation is never delivered (a stale reply for a deallocated
-        /// subordinate is dropped by the client stub), `kDNSServiceFlagsTimeout`
-        /// still guarantees a final callback that completes the request.
-        #[cfg(target_os = "macos")]
-        pub(crate) awaiting_more: bool,
-        /// `kDNSServiceProtocol_*` bits still awaiting any reply. A family's
-        /// bit is cleared by any callback carrying its `sa_family` (Add,
-        /// NoSuchRecord, or Timeout; the client stub always passes a
-        /// family-tagged sockaddr). The query is ready once this reaches 0.
-        #[cfg(target_os = "macos")]
-        pub(crate) pending_proto: u32,
+        pub(crate) query: dns_sd::QueryState,
     }
 
     impl BackendDnsSd {
         #[cfg(target_os = "macos")]
         pub(crate) fn new(protocol: dns_sd::DNSServiceProtocol) -> Self {
             Self {
-                sd_ref: ptr::null_mut(),
-                results: GetAddrInfoResultList::new(),
-                sd_error: 0,
-                saw_timeout: false,
-                awaiting_more: false,
-                pending_proto: protocol,
+                query: dns_sd::QueryState::new(protocol),
             }
         }
         #[cfg(not(target_os = "macos"))]
         #[allow(dead_code)]
         pub(crate) fn new(_protocol: u32) -> Self {
             Self {}
-        }
-        #[cfg(target_os = "macos")]
-        pub(crate) fn is_ready(&self) -> bool {
-            (self.pending_proto == 0 && !self.awaiting_more) || self.sd_error != 0
         }
     }
 
@@ -1765,38 +1976,14 @@ impl GetAddrInfoRequest {
         dns_sd::SharedConnection::note_reply(context);
         // SAFETY: context is the *mut GetAddrInfoRequest passed to start().
         let this: *mut Self = context.cast();
-        // SAFETY: `this` is the heap-allocated request; exclusive on the JS thread.
-        let be = unsafe { (*this).backend.as_dns_sd_mut() };
-        be.awaiting_more = flags & dns_sd::FLAGS_MORE_COMING != 0;
-        // dnssd_clientstub always passes a family-tagged sockaddr for A/AAAA
-        // replies (including NoSuchRecord/Timeout); only PolicyDenied is null.
-        if !address.is_null() {
-            // SAFETY: `address` is a valid sockaddr per dns_sd.h for this call.
-            let fam = unsafe { (*address).sa_family } as i32;
-            // Any reply for a family retires its pending bit; whether the
-            // whole answer set has arrived is tracked by `awaiting_more`.
-            be.pending_proto &= !if fam == netc::AF_INET6 {
-                dns_sd::PROTOCOL_IPV6
-            } else {
-                dns_sd::PROTOCOL_IPV4
-            };
-            if error_code == dns_sd::ERR_NO_ERROR && flags & dns_sd::FLAGS_ADD != 0 {
-                be.results.push(GetAddrInfoResult {
-                    // SAFETY: `address` is non-null and dns_sd guarantees a valid
-                    // sockaddr_in/in6 for the duration of this callback.
-                    address: unsafe { bun_dns::Address::init_posix(address.cast()) },
-                    ttl: ttl as i32,
-                });
-            } else if error_code == dns_sd::ERR_TIMEOUT {
-                be.saw_timeout = true;
-            } else if error_code != dns_sd::ERR_NO_ERROR
-                && error_code != dns_sd::ERR_NO_SUCH_RECORD
-                && be.sd_error == 0
-            {
-                be.sd_error = error_code;
-            }
-        } else if be.sd_error == 0 {
-            be.sd_error = error_code;
+        // SAFETY: `this` is the heap-allocated request; exclusive on the JS
+        // thread. `address` (if non-null) is a valid sockaddr per dns_sd.h.
+        unsafe {
+            (*this)
+                .backend
+                .as_dns_sd_mut()
+                .query
+                .record_reply(flags, error_code, address, ttl);
         }
     }
 
@@ -1810,19 +1997,12 @@ impl GetAddrInfoRequest {
     pub(crate) fn complete_dns_sd(this: *mut Self) {
         // SAFETY: caller contract — `this` is live and exclusively owned here.
         unsafe {
-            let be = (*this).backend.as_dns_sd_mut();
-            let mut results = core::mem::take(&mut be.results);
-            // See `internal::dns_sd_complete` — family order must not depend
-            // on which reply arrived first.
-            results.sort_by_key(|r| r.address.family() != netc::AF_INET6);
+            let query = &mut (*this).backend.as_dns_sd_mut().query;
+            let results = query.take_results();
             let status = if !results.is_empty() {
                 0
-            } else if be.sd_error != 0 {
-                dns_sd::to_eai(be.sd_error)
-            } else if be.saw_timeout {
-                libc::EAI_AGAIN
             } else {
-                libc::EAI_NONAME
+                query.empty_status()
             };
             bun_output::scoped_log!(
                 GetAddrInfoRequest,
@@ -2657,22 +2837,7 @@ pub mod internal {
     #[derive(Default)]
     #[cfg(target_os = "macos")]
     pub struct MacAsyncDNS {
-        pub(crate) sd_ref: dns_sd::DNSServiceRef,
-        pub(crate) addrs: Vec<SockaddrStorage>,
-        pub(crate) sd_error: i32,
-        /// A family reported `kDNSServiceErr_Timeout`; with no results this
-        /// is a transient EAI_AGAIN, not a definitive EAI_NONAME.
-        pub(crate) saw_timeout: bool,
-        /// See `BackendDnsSd::awaiting_more`.
-        pub(crate) awaiting_more: bool,
-        pub(crate) pending_proto: u32,
-    }
-
-    #[cfg(target_os = "macos")]
-    impl MacAsyncDNS {
-        pub(crate) fn is_ready(&self) -> bool {
-            (self.pending_proto == 0 && !self.awaiting_more) || self.sd_error != 0
-        }
+        pub(crate) query: dns_sd::QueryState,
     }
 
     pub struct Request {
@@ -3227,13 +3392,9 @@ pub mod internal {
         // SAFETY: `req` is the live heap-allocated request owned by the caller.
         unsafe {
             (*req).libinfo = MacAsyncDNS {
-                sd_ref: sub,
-                addrs: Vec::new(),
-                sd_error: 0,
-                saw_timeout: false,
-                awaiting_more: false,
-                pending_proto: protocol,
+                query: dns_sd::QueryState::new(protocol),
             };
+            (*req).libinfo.query.sd_ref = sub;
         }
 
         true
@@ -3247,56 +3408,20 @@ pub mod internal {
         error_code: i32,
         _hostname: *const c_char,
         address: *const Sockaddr,
-        _ttl: u32,
+        ttl: u32,
         context: *mut c_void,
     ) {
         dns_sd::SharedConnection::note_reply(context);
         let req: *mut Request = context.cast();
         // SAFETY: `context` is the `req` pointer registered via
         // `SharedConnection::start`; exclusive on the event-loop thread.
-        let li = unsafe { &mut (*req).libinfo };
-        li.awaiting_more = flags & dns_sd::FLAGS_MORE_COMING != 0;
-        if address.is_null() {
-            if li.sd_error == 0 {
-                li.sd_error = error_code;
-            }
-            return;
-        }
-        // SAFETY: `address` is a valid sockaddr per dns_sd.h for this call.
-        let fam = unsafe { (*address).sa_family } as i32;
-        li.pending_proto &= !if fam == netc::AF_INET6 {
-            dns_sd::PROTOCOL_IPV6
-        } else {
-            dns_sd::PROTOCOL_IPV4
+        // `address` (if non-null) is a valid sockaddr per dns_sd.h.
+        unsafe {
+            (*req)
+                .libinfo
+                .query
+                .record_reply(flags, error_code, address, ttl)
         };
-        if error_code == dns_sd::ERR_NO_ERROR && flags & dns_sd::FLAGS_ADD != 0 {
-            let mut storage: SockaddrStorage = bun_core::ffi::zeroed();
-            let len = if fam == netc::AF_INET6 {
-                core::mem::size_of::<netc::sockaddr_in6>()
-            } else if fam == netc::AF_INET {
-                core::mem::size_of::<netc::sockaddr_in>()
-            } else {
-                return;
-            };
-            // SAFETY: `address` spans `len` bytes (dns_sd sets sin_len/sin6_len);
-            // sockaddr_storage is sized and aligned to hold either; ranges
-            // cannot overlap (stack storage vs dns_sd's).
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    address.cast::<u8>(),
-                    (&raw mut storage).cast::<u8>(),
-                    len,
-                );
-            }
-            li.addrs.push(storage);
-        } else if error_code == dns_sd::ERR_TIMEOUT {
-            li.saw_timeout = true;
-        } else if error_code != dns_sd::ERR_NO_ERROR
-            && error_code != dns_sd::ERR_NO_SUCH_RECORD
-            && li.sd_error == 0
-        {
-            li.sd_error = error_code;
-        }
     }
 
     /// Complete a dns_sd-backed internal request: synthesize an `addrinfo`
@@ -3305,28 +3430,40 @@ pub mod internal {
     #[cfg(target_os = "macos")]
     pub(super) fn dns_sd_complete(req: *mut Request) {
         // SAFETY: `req` is live and exclusively owned on the event-loop thread.
-        let li = unsafe { &mut (*req).libinfo };
-        let addrs = core::mem::take(&mut li.addrs);
+        let query = unsafe { &mut (*req).libinfo.query };
+        let results = query.take_results();
         // SAFETY: `req` is live; `key.port` is set at construction and read-only.
         let port = unsafe { (*req).key.port };
 
-        if addrs.is_empty() {
-            let err = if li.sd_error != 0 {
-                dns_sd::to_eai(li.sd_error)
-            } else if li.saw_timeout {
-                libc::EAI_AGAIN
-            } else {
-                libc::EAI_NONAME
-            };
+        if results.is_empty() {
+            let err = query.empty_status();
             after_result_entries(req, None, err);
             return;
         }
 
-        let mut addrs = addrs.into_boxed_slice();
-        // Arrival order across families races (each family is a separate
-        // A/AAAA question upstream); getaddrinfo sorted with the RFC 6724
-        // default policy, which puts IPv6 first when both are configured.
-        addrs.sort_by_key(|a| a.ss_family as i32 != netc::AF_INET6);
+        // Materialize sockaddr storage the addrinfo chain can point into.
+        let mut addrs: Box<[SockaddrStorage]> = results
+            .iter()
+            .map(|r| {
+                let mut storage: SockaddrStorage = bun_core::ffi::zeroed();
+                let len = if r.address.family() == netc::AF_INET6 {
+                    core::mem::size_of::<netc::sockaddr_in6>()
+                } else {
+                    core::mem::size_of::<netc::sockaddr_in>()
+                };
+                // SAFETY: `Address` holds a family-consistent sockaddr in a
+                // sockaddr_storage; both buffers are at least `len` bytes and
+                // cannot overlap.
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        r.address.as_sockaddr().cast::<u8>(),
+                        (&raw mut storage).cast::<u8>(),
+                        len,
+                    );
+                }
+                storage
+            })
+            .collect();
         let count = addrs.len();
         let mut nodes: Box<[AddrInfo]> = (0..count)
             .map(|_| bun_core::ffi::zeroed::<AddrInfo>())

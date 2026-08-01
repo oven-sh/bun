@@ -989,6 +989,22 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
             timer_arm!(UpgradedDuplex, event_loop_timer, |c, _now, _vm| (*c)
                 .on_timeout())
         }
+        EventLoopTimerTag::DnsSdConnection => {
+            #[cfg(target_os = "macos")]
+            {
+                timer_arm!(
+                    crate::dns_jsc::dns_sd::SharedConnection,
+                    early_out_timer,
+                    |c, _now, _vm| crate::dns_jsc::dns_sd::SharedConnection::on_early_out(c)
+                )
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                if cfg!(debug_assertions) {
+                    unreachable!("DnsSdConnection timer on non-macOS");
+                }
+            }
+        }
         // R-2: shared deref — `check_timeouts` re-enters via `ares_process_fd`.
         EventLoopTimerTag::DNSResolver => {
             timer_arm!(DNSResolver, event_loop_timer, |c, now, vm| {

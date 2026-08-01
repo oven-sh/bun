@@ -184,6 +184,7 @@ pub enum Tag {
     StatWatcherScheduler,
     UpgradedDuplex,
     DNSResolver,
+    DnsSdConnection,
     WindowsNamedPipe,
     WTFTimer,
     PostgresSQLConnectionTimeout,

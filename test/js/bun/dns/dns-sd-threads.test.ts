@@ -69,3 +69,37 @@ test.skipIf(!isMacOS)("many concurrent dns.lookup() do not spawn a thread per lo
   expect(peak).toBeLessThan(baseline + 60);
   expect(exitCode).toBe(0);
 });
+
+// All lookups share one mDNSResponder connection, and a request's answer set
+// arrives as separate replies (one per address). Under enough concurrency the
+// daemon interleaves and pauses those writes, so completing on "each family
+// reported once" truncates multi-record answers. localhost is a 2-record
+// answer set (::1 + 127.0.0.1) served from /etc/hosts, so this needs no
+// network; distinct-case spellings defeat same-name coalescing so every one of
+// the N lookups is its own query on the wire.
+test.skipIf(!isMacOS)("concurrent lookups return complete answer sets", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { lookup } = require("dns").promises;
+        const N = 400;
+        const base = "localhost";
+        const names = Array.from({ length: N }, (_, i) =>
+          [...base].map((c, j) => ((i >> j) & 1 ? c.toUpperCase() : c)).join(""),
+        );
+        const results = await Promise.all(names.map(n => lookup(n, { all: true })));
+        const shapes = new Set(results.map(r => r.map(a => a.family + " " + a.address).sort().join(",")));
+        console.log(JSON.stringify([...shapes]));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim().split("\n").pop()!)).toEqual(["4 127.0.0.1,6 ::1"]);
+  expect(exitCode).toBe(0);
+});

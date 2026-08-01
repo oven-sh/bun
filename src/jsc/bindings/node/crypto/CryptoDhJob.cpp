@@ -49,6 +49,12 @@ void DhJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
     VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
+    // runTask has already produced m_result; drop the key refs before
+    // re-entering JS so a callback that never returns (process.exit) cannot
+    // strand the EVP_PKEYs past VM teardown. See KeyPairJobCtx::runFromJS.
+    m_privateKey = nullptr;
+    m_publicKey = nullptr;
+
     if (!m_result) {
         // Same message as the synchronous path so callers observe identical errors either way.
         JSObject* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "diffieHellman operation failed"_s);

@@ -63,6 +63,23 @@ describe.concurrent("RegExp literal .source preserves non-ASCII", () => {
     expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify([true, true, true]), stderr: "" });
     expect(exitCode).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/13853
+  // parsel-js widens a regex via re.source.replace("(?<argument>¶*)", ...); when
+  // the transpiler escapes ¶ to \u00B6 the replace never matches and puppeteer's
+  // ::-p-* selector arguments come back empty.
+  test("parsel-js .source.replace on literal ¶ (#13853)", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `const re = /::(?<name>[-\\w\\P{ASCII}]+)(?:\\((?<argument>¶*)\\))?/gu;` +
+        `const widened = re.source.replace("(?<argument>¶*)", "(?<argument>.*)");` +
+        `process.stdout.write(JSON.stringify([re.source.includes("(?<argument>\\xB6*)"), widened.includes(".*"), re.source]));`,
+    );
+    expect({ stdout, stderr }).toEqual({
+      stdout: JSON.stringify([true, true, "::(?<name>[-\\w\\P{ASCII}]+)(?:\\((?<argument>¶*)\\))?"]),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe.concurrent("tagged template .raw preserves non-ASCII", () => {

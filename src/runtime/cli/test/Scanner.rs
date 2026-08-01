@@ -216,7 +216,7 @@ impl<'a> Scanner<'a> {
         let raw = handle.map(bun_sys::Dir::into_raw);
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
         unsafe { &mut (*fs_ptr).fs }
-            .read_directory_with_iterator(name, raw, 0, true, ())
+            .read_directory(name, raw, 0, true)
             .map_err(Into::into)
     }
 

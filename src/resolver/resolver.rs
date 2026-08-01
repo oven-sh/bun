@@ -3402,7 +3402,6 @@ impl<'a> Resolver<'a> {
                         in_place.map(|existing| unsafe { &mut (*existing).data }),
                         &_value,
                         &mut filename_store,
-                        (),
                     )
                     .expect("unreachable");
             }
@@ -4510,7 +4509,6 @@ impl<'a> Resolver<'a> {
                                 in_place.map(|existing| unsafe { &mut (*existing).data }),
                                 &_value,
                                 &mut filename_store,
-                                (),
                             )
                             .expect("unreachable");
                     }

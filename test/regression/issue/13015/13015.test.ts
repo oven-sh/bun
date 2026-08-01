@@ -4,7 +4,7 @@
 // a different position showed up as both "-" and "+". The fix sorts entries by
 // their serialized form before diffing so only true membership differences are
 // reported.
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 function stripAnsi(s: string) {

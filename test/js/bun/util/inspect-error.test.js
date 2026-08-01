@@ -301,4 +301,11 @@ describe("SuppressedError", () => {
     expect(out).toContain(disposeMsg);
     expect(out).toContain("[Circular]");
   });
+
+  test("enumerable non-Error .error property is not printed twice", () => {
+    const e = new Error("boom");
+    e.error = ["payload", "string"].join(" ");
+    const out = Bun.inspect(e);
+    expect([...out.matchAll(/payload string/g)].length).toBe(1);
+  });
 });

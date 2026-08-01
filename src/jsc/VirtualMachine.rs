@@ -6024,16 +6024,16 @@ impl VirtualMachine {
                 if field.eql_comptime(b"code") && code.is_some() {
                     continue;
                 }
+                if field.eql_comptime(b"cause") {
+                    saw_cause = true;
+                } else if field.eql_comptime(b"error") {
+                    saw_error = true;
+                } else if field.eql_comptime(b"suppressed") {
+                    saw_suppressed = true;
+                }
 
                 let kind = value.js_type();
                 if kind == JSType::ErrorInstance && !prev_had_errors {
-                    if field.eql_comptime(b"cause") {
-                        saw_cause = true;
-                    } else if field.eql_comptime(b"error") {
-                        saw_error = true;
-                    } else if field.eql_comptime(b"suppressed") {
-                        saw_suppressed = true;
-                    }
                     value.protect();
                     errors_to_append.push(value);
                 } else if kind.is_object()

@@ -449,6 +449,7 @@ fn evaluate_instruction(
             operator,
             value,
             loc,
+            ..
         } => match operator {
             UnaryOperator::Not => {
                 let operand = read(constants, value);

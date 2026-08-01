@@ -984,7 +984,19 @@ fn lower_unary(
     let loc = convert_loc(bun_loc);
     match unary.op {
         UnDelete => match &unary.value.data {
-            Data::EDot(d) if d.optional_chain.is_none() => {
+            // The parser sets WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS
+            // only when the source operand is syntactically an identifier or member
+            // expression. The visitor can fold `delete (true ? a.b : c.d)` to an EDot
+            // operand with the flag unset; that form has no-op semantics (operand is a
+            // value, not a Reference) and must not become a PropertyDelete. Gating on
+            // the flag matches upstream, which sees the unfolded ConditionalExpression
+            // and takes the "Only object properties can be deleted" bailout.
+            Data::EDot(d)
+                if d.optional_chain.is_none()
+                    && unary.flags.contains(
+                        E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
+                    ) =>
+            {
                 let object = lower_expression_to_temporary(builder, &d.target)?;
                 Ok(InstructionValue::PropertyDelete {
                     object,
@@ -992,7 +1004,12 @@ fn lower_unary(
                     loc,
                 })
             }
-            Data::EIndex(i) if i.optional_chain.is_none() => {
+            Data::EIndex(i)
+                if i.optional_chain.is_none()
+                    && unary.flags.contains(
+                        E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
+                    ) =>
+            {
                 let object = lower_expression_to_temporary(builder, &i.target)?;
                 let property = lower_expression_to_temporary(builder, &i.index)?;
                 Ok(InstructionValue::ComputedDelete {
@@ -1021,6 +1038,7 @@ fn lower_unary(
             Ok(InstructionValue::UnaryExpression {
                 operator,
                 value,
+                bun_flags: unary.flags,
                 loc,
             })
         }

@@ -260,8 +260,6 @@ void readableStreamClearSourceBarriers(JSReadableStream* stream)
 {
     stream->m_asyncContext.clear();
     stream->m_directUnderlyingSource.clear();
-    if (stream->m_nativePtr.get().isCell())
-        stream->m_nativePtr.clear();
 }
 
 // ReadableStreamClose(stream)

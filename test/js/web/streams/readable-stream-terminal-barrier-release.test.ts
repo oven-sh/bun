@@ -1,12 +1,11 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 // A ReadableStream captures the ambient AsyncLocalStorage context at construction
 // time (so pull()/cancel() observe it). Once the stream reaches a terminal state
 // and no further source callbacks can run, that captured context should be
 // released even while the stream object itself is still reachable. The same
-// applies to a type:"direct" stream's retained underlyingSource/pull after close,
-// and to the Bun-native $bunNativePtr handle once the adapter owns it.
+// applies to a type:"direct" stream's retained underlyingSource/pull after close.
 //
 // Each case holds the stream (and for controller.error, the controller) in an
 // array across GC, so the only edge to the probe object is the stream's internal
@@ -14,10 +13,8 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // clearing it is collectable once the terminal transition completes.
 
 test("ReadableStream releases source-only WriteBarriers once terminal", async () => {
-  using dir = tempDir("rs-terminal-barrier-release", { "f.txt": "x" });
   const src = `
     const { AsyncLocalStorage } = require("node:async_hooks");
-    const { heapStats } = require("bun:jsc");
     const als = new AsyncLocalStorage();
     const N = 20;
     const retained = [];
@@ -79,23 +76,14 @@ test("ReadableStream releases source-only WriteBarriers once terminal", async ()
       await rs.cancel();
     }
 
-    // Native $bunNativePtr handle after full consumption.
-    for (let i = 0; i < N; i++) {
-      const rs = Bun.file(process.env.PROBE_FILE).stream();
-      retained.push(rs);
-      for await (const _ of rs) {}
-    }
-
     for (let r = 0; r < 8; r++) { Bun.gc(true); await new Promise(f => setImmediate(f)); }
-    results["native-consumed"] = heapStats().objectTypeCounts.FileInternalReadableStreamSource ?? 0;
-
     process.stdout.write(JSON.stringify({ results, N }));
     if (retained.length === 0) throw new Error("retained was cleared");
   `;
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", src],
-    env: { ...bunEnv, PROBE_FILE: `${dir}/f.txt` },
+    env: bunEnv,
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

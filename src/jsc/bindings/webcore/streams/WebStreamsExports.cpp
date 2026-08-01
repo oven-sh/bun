@@ -6,7 +6,6 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"
-#include "BunStreamSource.h"
 #include "JSReadableStream.h"
 #include "JSReadableStreamDefaultController.h"
 #include "WebCoreJSBuiltins.h"
@@ -60,21 +59,10 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
 
     if (auto* stream = dynamicDowncast<JSReadableStream>(object)) {
         // The RAW handle slot, not nativePtrForJS(): a transferred stream still tags.
-        // materializeNativeSource hands the cell to the adapter and clears the slot, so a
-        // materialized stream routes through controller.algorithmContext.handle instead;
-        // nativeSourceSever clears that on every terminal path, at which point tag 0 is correct.
-        JSCell* handleCell = nullptr;
-        if (JSValue handle = stream->m_nativePtr.get(); handle && handle.isCell())
-            handleCell = handle.asCell();
-        else if (stream->m_controllerKind == ControllerKind::Default) {
-            const auto* controller = uncheckedDowncast<JSReadableStreamDefaultController>(stream->m_controller.get());
-            if (controller->m_algorithms.kind == SourceKind::Native) {
-                const auto* adapter = uncheckedDowncast<JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
-                handleCell = adapter->handle();
-            }
-        }
-        if (!handleCell)
+        JSValue handle = stream->m_nativePtr.get();
+        if (handle.isEmpty() || !handle.isCell())
             return 0;
+        JSCell* handleCell = handle.asCell();
         if (auto* blobSource = dynamicDowncast<JSBlobInternalReadableStreamSource>(handleCell)) {
             *ptr = blobSource->wrapped();
             return 1;

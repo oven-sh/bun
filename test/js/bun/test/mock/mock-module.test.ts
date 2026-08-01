@@ -283,3 +283,41 @@ test("mock.module: spyOn on an accessor-backed mock namespace", async () => {
   ns.bump();
   expect(ns.x).toBe(3);
 });
+
+test("mock.module: partial re-mock of a data-only synthetic module keeps other keys", async () => {
+  mock.module("mock-module-partial-remock", () => ({ a: 1, b: 2 }));
+  const ns = await import("mock-module-partial-remock");
+  expect({ a: ns.a, b: ns.b }).toEqual({ a: 1, b: 2 });
+
+  mock.module("mock-module-partial-remock", () => ({ a: 99 }));
+  expect({ a: ns.a, b: ns.b }).toEqual({ a: 99, b: 2 });
+});
+
+test("mock.module: partial re-mock after an accessor-backed mock keeps un-overridden keys", async () => {
+  mock.module("mock-module-partial-accessor", () => {
+    let v = 1;
+    return {
+      get a() {
+        return v;
+      },
+      b: 2,
+      bump: () => v++,
+    };
+  });
+  const ns = await import("mock-module-partial-accessor");
+  ns.bump();
+  expect({ a: ns.a, b: ns.b }).toEqual({ a: 2, b: 2 });
+
+  mock.module("mock-module-partial-accessor", () => ({ a: 99 }));
+  expect({ a: ns.a, b: ns.b }).toEqual({ a: 99, b: 2 });
+});
+
+test("mock.module: captured require() result does not track a subsequent re-mock", () => {
+  mock.module("mock-module-cjs-capture", () => ({ wow: () => 42 }));
+  const cjs = require("mock-module-cjs-capture");
+  expect(cjs.wow()).toBe(42);
+
+  mock.module("mock-module-cjs-capture", () => ({ wow: () => 43 }));
+  expect(cjs.wow()).toBe(42);
+  expect(require("mock-module-cjs-capture").wow()).toBe(43);
+});

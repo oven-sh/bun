@@ -660,10 +660,21 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                             JSObject::getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
                             RETURN_IF_EXCEPTION(scope, {});
 
+                            bool hasAccessor = false;
                             for (auto& name : names) {
                                 // consistent with regular esm handling code
                                 auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-                                JSValue value = object->get(globalObject, name);
+                                PropertySlot propSlot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+                                bool has = object->methodTable()->getOwnPropertySlot(object, globalObject, name, propSlot);
+                                if (scope.exception()) [[unlikely]] {
+                                    (void)scope.tryClearException();
+                                    moduleNamespaceObject->overrideExportValue(globalObject, name, jsUndefined());
+                                    RETURN_IF_EXCEPTION(scope, {});
+                                    continue;
+                                }
+                                if (has && propSlot.isAccessor())
+                                    hasAccessor = true;
+                                JSValue value = has ? propSlot.getValue(globalObject, name) : object->get(globalObject, name);
                                 if (scope.exception()) [[unlikely]] {
                                     (void)scope.tryClearException();
                                     value = jsUndefined();
@@ -672,8 +683,10 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                                 RETURN_IF_EXCEPTION(scope, {});
                             }
 
-                            if (auto* synthetic = dynamicDowncast<JSC::SyntheticModuleRecord>(mod))
-                                synthetic->setLiveExportsSource(vm, object);
+                            if (auto* synthetic = dynamicDowncast<JSC::SyntheticModuleRecord>(mod)) {
+                                if (hasAccessor || synthetic->liveExportsSource())
+                                    synthetic->setLiveExportsSource(vm, object);
+                            }
 
                         } else {
                             // if it's not an object, I guess we just set the default export?

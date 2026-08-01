@@ -483,6 +483,15 @@ impl Subcommand {
         matches!(self, Self::Audit | Self::Pm | Self::Info)
     }
 
+    /// Subcommands whose callers print "nothing to remove/update/patch" and
+    /// exit 1 when no package.json exists, instead of auto-creating one.
+    pub(crate) fn wants_missing_package_json_error(self) -> bool {
+        matches!(
+            self,
+            Self::Update | Self::Remove | Self::Patch | Self::PatchCommit
+        )
+    }
+
     // TODO: make all subcommands find root and chdir
     pub(crate) fn should_chdir_to_root(self) -> bool {
         !matches!(self, Self::Link)
@@ -1490,21 +1499,10 @@ pub fn init(
                 }
             }
 
-            if cli.global
-                && !matches!(
-                    subcommand,
-                    Subcommand::Update
-                        | Subcommand::Remove
-                        | Subcommand::Patch
-                        | Subcommand::PatchCommit
-                )
-            {
-                // `-g` already fchdir'd into the global dir above; the global
-                // manifest may not exist until the first `bun add -g`. Create it
-                // so read-only queries like `bun pm -g bin` work on a fresh
-                // install instead of failing with MissingPackageJSON.
-                // Update/Remove/Patch keep returning the error so their callers
-                // can print "nothing to remove/update/patch" and exit 1.
+            if cli.global && !subcommand.wants_missing_package_json_error() {
+                // `-g` already fchdir'd into the global dir above; create the
+                // global manifest on demand so `bun pm -g bin` etc. work on a
+                // fresh install.
                 this_cwd = original_cwd;
                 created_package_json = true;
                 break 'child attempt_to_create_package_json_and_open()?;

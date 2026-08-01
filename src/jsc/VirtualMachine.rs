@@ -5391,12 +5391,12 @@ impl VirtualMachine {
             } else {
                 None
             };
-            let is_external = lookup
-                .source_map
-                .as_deref()
-                .is_some_and(|m| m.is_external());
+            // The remap changed the file: the on-disk source for the frame's
+            // URL is no longer the loaded file, so the generated preview path
+            // would pair the wrong lines with the remapped position.
+            let url_was_rewritten = display_url.is_some();
             let external_code =
-                if enable_source_code_preview.get() && !already_remapped && is_external {
+                if enable_source_code_preview.get() && !already_remapped && url_was_rewritten {
                     lookup.get_source_code(top_source_url.slice())
                 } else {
                     drop(lookup);
@@ -5415,9 +5415,7 @@ impl VirtualMachine {
                 if let Some(src) = external_code {
                     break 'code src;
                 }
-                if is_external {
-                    // Original source unavailable; the generated file's lines
-                    // would not match the remapped positions.
+                if url_was_rewritten {
                     break 'code bun_core::ZigStringSlice::EMPTY;
                 }
                 if top_frame_is_builtin {
@@ -5457,7 +5455,7 @@ impl VirtualMachine {
                 code
             };
 
-            if enable_source_code_preview.get() && code.slice().is_empty() && !is_external {
+            if enable_source_code_preview.get() && code.slice().is_empty() && !url_was_rewritten {
                 exception.collect_source_lines(error_instance, global);
             }
 

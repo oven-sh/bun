@@ -182,6 +182,39 @@ try { require("./index.js"); } catch (e) { console.log(e.stack); }
     expect(exitCode).toBe(0);
   });
 
+  test("sourceRoot is prepended to sources", async () => {
+    using dir = tempDir("input-sourcemap-sourceroot", {
+      "src/index.ts": original,
+      "dist/index.js": generated + "//# sourceMappingURL=index.js.map\n",
+      "dist/index.js.map": JSON.stringify({ ...mapJson, sourceRoot: "../src/" }),
+    });
+
+    const { stderr, exitCode } = await run(String(dir), join("dist", "index.js"));
+    expect(stderr).toContain(`at boom (${join(String(dir), "src", "index.ts")}:6:`);
+    expect(stderr).toContain(`function boom(): never {`);
+    expect(exitCode).toBe(1);
+  });
+
+  test("frame on an unmapped input line keeps the .js URL and code frame", async () => {
+    // The "use strict" prologue (generated line 1) has no mapping in the input
+    // map; a frame that lands there should stay at index.js with its on-disk
+    // code frame, not be misattributed to index.ts or left blank.
+    const unmappedGenerated = `\
+"use strict"; throw new Error("on an unmapped line");
+// leading comment
+`;
+    using dir = tempDir("input-sourcemap-unmapped", {
+      "index.js": unmappedGenerated + "//# sourceMappingURL=index.js.map\n",
+      "index.js.map": JSON.stringify({ ...mapJson, sourcesContent: [original] }),
+    });
+
+    const { stderr, exitCode } = await run(String(dir), "index.js");
+    expect(stderr).toContain(`${join(String(dir), "index.js")}:1:`);
+    expect(stderr).not.toContain("index.ts");
+    expect(stderr).toContain("on an unmapped line");
+    expect(exitCode).toBe(1);
+  });
+
   test("sources resolve relative to the map file, not the executed file", async () => {
     // tsc `mapRoot`: map lives under maps/, sources are relative to the map.
     using dir = tempDir("input-sourcemap-mapdir", {

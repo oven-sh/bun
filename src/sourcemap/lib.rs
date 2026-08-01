@@ -944,6 +944,12 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
         return Err(crate::Error::InvalidSourceMap);
     }
 
+    let source_root_expr = json.get(b"sourceRoot");
+    let source_root: &[u8] = source_root_expr
+        .as_ref()
+        .and_then(|e| e.as_utf8_string_literal())
+        .unwrap_or(b"");
+
     let source_only = matches!(hint, ParseUrlResultHint::SourceOnly(_));
 
     // `Vec<Box<[u8]>>` drops automatically on error.
@@ -953,7 +959,11 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
             let Some(s) = item.as_str() else {
                 return Err(crate::Error::InvalidSourceMap);
             };
-            v.push(Box::<[u8]>::from(s));
+            if source_root.is_empty() {
+                v.push(Box::<[u8]>::from(s));
+            } else {
+                v.push([source_root, s].concat().into_boxed_slice());
+            }
         }
         Some(v)
     } else {

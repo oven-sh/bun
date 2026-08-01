@@ -68,9 +68,9 @@ impl SavedSourceMap {
 pub(crate) type Value = TaggedPtrUnion<ValueTypes>;
 
 /// Local type-list marker so `TypeList`/`UnionMember` impls satisfy orphan
-/// rules — `bun_ptr::impl_tagged_ptr_union!` would impl on a tuple of foreign
-/// types (all three members live in `bun_sourcemap`), which the coherence
-/// checker rejects from this crate. Tags are `1024 - i`.
+/// rules — `bun_ptr::impl_tagged_ptr_union!` would impl on a tuple containing
+/// foreign types (the `bun_sourcemap` members), which the coherence checker
+/// rejects from this crate. Tags are `1024 - i`.
 pub(crate) struct ValueTypes;
 
 impl bun_ptr::tagged_pointer::TypeList for ValueTypes {

@@ -312,6 +312,8 @@ impl ParsedSourceMap {
         core::mem::size_of::<ParsedSourceMap>()
             + mappings_cost
             + self.external_source_names.len() * core::mem::size_of::<Box<[u8]>>()
+            + self.input_map().map_or(0, Self::memory_cost)
+            + self.input_map_url.as_deref().map_or(0, <[u8]>::len)
     }
 
     pub(crate) fn write_vlqs<W: bun_io::Write + ?Sized>(

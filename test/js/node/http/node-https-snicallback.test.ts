@@ -74,17 +74,18 @@ it("https.createServer SNICallback errors drop the connection and emit tlsClient
   ];
   for (const [, SNICallback, expectedMessage] of cases) {
     const server = createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert, SNICallback }, (req, res) => res.end());
-    const tlsClientErrors: Error[] = [];
-    server.on("tlsClientError", err => tlsClientErrors.push(err));
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
     try {
       const port = (server.address() as AddressInfo).port;
+      const tlsClientError = once(server, "tlsClientError");
       const client = tlsConnect({ host: "127.0.0.1", port, servername: "a.example.com", rejectUnauthorized: false });
-      const [clientErr] = (await once(client, "error")) as [NodeJS.ErrnoException];
+      const [[serverErr], [clientErr]] = (await Promise.all([tlsClientError, once(client, "error")])) as [
+        [Error],
+        [NodeJS.ErrnoException],
+      ];
       // The server dropped the connection before the handshake completed.
       expect(String(clientErr.message)).toMatch(/disconnected before secure TLS connection was established|ECONNRESET/);
-      expect(tlsClientErrors.length).toBe(1);
-      expect(tlsClientErrors[0].message).toBe(expectedMessage);
+      expect(serverErr.message).toBe(expectedMessage);
     } finally {
       server.close();
     }

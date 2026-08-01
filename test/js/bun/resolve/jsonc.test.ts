@@ -91,7 +91,7 @@ describe("import a .json file containing comments/trailing commas", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("with bunfig [loader] \".json\" = \"jsonc\"", async () => {
+  test.concurrent('with bunfig [loader] ".json" = "jsonc"', async () => {
     using dir = tempDir("jsonc-loader-bunfig", {
       "data.json": jsoncContent,
       "index.ts": indexEsm,

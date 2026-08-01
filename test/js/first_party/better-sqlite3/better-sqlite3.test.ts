@@ -232,19 +232,35 @@ describe("better-sqlite3 shim", () => {
     db.close();
   });
 
-  test("verbose option receives executed SQL", () => {
+  test("verbose option receives the expanded SQL", () => {
     const seen: string[] = [];
     const db = new Database(":memory:", { verbose: (sql: string) => seen.push(sql) });
     db.exec("CREATE TABLE t (x INTEGER)");
     db.prepare("INSERT INTO t VALUES (?)").run(1);
-    db.prepare("SELECT x FROM t").all();
+    db.prepare("SELECT x FROM t WHERE x = ?").all(1);
     db.pragma("journal_mode");
     expect(seen).toEqual([
       "CREATE TABLE t (x INTEGER)",
-      "INSERT INTO t VALUES (?)",
-      "SELECT x FROM t",
+      "INSERT INTO t VALUES (1)",
+      "SELECT x FROM t WHERE x = 1",
       "PRAGMA journal_mode",
     ]);
+    db.close();
+  });
+
+  test("read methods refuse statements that do not return data", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE t (x INTEGER)");
+    db.exec("INSERT INTO t VALUES (1), (2), (3)");
+    const del = db.prepare("DELETE FROM t");
+    expect(() => del.all()).toThrow("This statement does not return data. Use run() instead");
+    expect(() => del.get()).toThrow("This statement does not return data. Use run() instead");
+    expect(() => del.iterate()).toThrow("This statement does not return data. Use run() instead");
+    expect(() => del.pluck()).toThrow("This statement does not return data. Use run() instead");
+    expect(() => del.raw()).toThrow("This statement does not return data. Use run() instead");
+    expect(() => del.expand()).toThrow("This statement does not return data. Use run() instead");
+    expect(() => del.columns()).toThrow("This statement does not return data. Use run() instead");
+    expect(db.prepare("SELECT count(*) FROM t").pluck().get()).toBe(3);
     db.close();
   });
 

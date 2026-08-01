@@ -35,7 +35,13 @@ class Statement {
   }
 
   #trace() {
-    if (this.#verbose != null) this.#verbose.$call(this.#db, this.#source);
+    if (this.#verbose != null) this.#verbose.$call(this.#db, this.#stmt.toString());
+  }
+
+  #requireReader() {
+    if (this.#stmt.native.columnsCount === 0) {
+      throw new TypeError("This statement does not return data. Use run() instead");
+    }
   }
 
   get database() {
@@ -71,46 +77,60 @@ class Statement {
   }
 
   run(...args) {
+    const result = this.#stmt.run.$apply(this.#stmt, this.#params(args));
     this.#trace();
-    return this.#stmt.run.$apply(this.#stmt, this.#params(args));
+    return result;
   }
 
   get(...args) {
-    this.#trace();
+    this.#requireReader();
     const params = this.#params(args);
+    let result;
     if (this.#raw || this.#pluck || this.#expand) {
       const rows = this.#stmt.values.$apply(this.#stmt, params);
-      return rows.length > 0 ? this.#mapRow(rows[0]) : undefined;
+      result = rows.length > 0 ? this.#mapRow(rows[0]) : undefined;
+    } else {
+      const row = this.#stmt.get.$apply(this.#stmt, params);
+      result = row === null ? undefined : row;
     }
-    const row = this.#stmt.get.$apply(this.#stmt, params);
-    return row === null ? undefined : row;
+    this.#trace();
+    return result;
   }
 
   all(...args) {
-    this.#trace();
+    this.#requireReader();
     const params = this.#params(args);
+    let result;
     if (this.#raw || this.#pluck || this.#expand) {
       const rows = this.#stmt.values.$apply(this.#stmt, params);
-      if (this.#raw) return rows;
-      const out = $newArrayWithSize(rows.length);
-      for (let i = 0; i < rows.length; i++) out[i] = this.#mapRow(rows[i]);
-      return out;
+      if (this.#raw) result = rows;
+      else {
+        const out = $newArrayWithSize(rows.length);
+        for (let i = 0; i < rows.length; i++) out[i] = this.#mapRow(rows[i]);
+        result = out;
+      }
+    } else {
+      result = this.#stmt.all.$apply(this.#stmt, params);
     }
-    return this.#stmt.all.$apply(this.#stmt, params);
+    this.#trace();
+    return result;
   }
 
   iterate(...args) {
+    this.#requireReader();
     return this.#iterate(this.#params(args));
   }
 
   *#iterate(params) {
-    this.#trace();
     if (this.#raw || this.#pluck || this.#expand) {
       const rows = this.#stmt.values.$apply(this.#stmt, params);
+      this.#trace();
       for (let i = 0; i < rows.length; i++) yield this.#mapRow(rows[i]);
       return;
     }
-    yield* this.#stmt.iterate.$apply(this.#stmt, params);
+    const iter = this.#stmt.iterate.$apply(this.#stmt, params);
+    this.#trace();
+    yield* iter;
   }
 
   #expandRow(row) {
@@ -130,18 +150,21 @@ class Statement {
   }
 
   pluck(toggle) {
+    this.#requireReader();
     this.#pluck = toggle === undefined ? true : !!toggle;
     if (this.#pluck) this.#raw = this.#expand = false;
     return this;
   }
 
   raw(toggle) {
+    this.#requireReader();
     this.#raw = toggle === undefined ? true : !!toggle;
     if (this.#raw) this.#pluck = this.#expand = false;
     return this;
   }
 
   expand(toggle) {
+    this.#requireReader();
     this.#expand = toggle === undefined ? true : !!toggle;
     if (this.#expand) this.#pluck = this.#raw = false;
     return this;
@@ -153,6 +176,7 @@ class Statement {
   }
 
   columns() {
+    this.#requireReader();
     const names = this.#stmt.columnNames;
     const declared = this.#stmt.declaredTypes;
     const out = $newArrayWithSize(names.length);

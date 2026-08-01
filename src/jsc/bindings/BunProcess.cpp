@@ -892,8 +892,7 @@ extern "C" bool Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t
     auto* process = globalObject->processObject();
     if (exitCode > 0)
         process->m_isExitCodeObservable = true;
-    // Returns true only when this call emitted 'exit'; the Rust caller uses
-    // that to decide the post-emit microtask drain (natural shutdown only).
+    // true = this call emitted; the Rust caller gates the post-emit drain on it.
     if (process->m_isExiting)
         return false;
     dispatchExitInternal(globalObject, process, exitCode);

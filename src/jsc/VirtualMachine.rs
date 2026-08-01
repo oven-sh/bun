@@ -506,8 +506,7 @@ impl ExitHandler {
         let exit_code = vm.exit_handler.exit_code;
         let emitted = Process__dispatchOnExit(vm.global(), exit_code);
         if drain_microtasks_after_emit && emitted {
-            // Promise microtasks only (JSC VM::drainMicrotasks): Node's
-            // InternalCallbackScope checkpoint skips nextTick once _exiting.
+            // Promise-only (not nextTick): Node's post-_exiting checkpoint skips nextTick.
             vm.jsc_vm().drain_microtasks();
         }
         if vm.worker.is_none() {
@@ -1427,11 +1426,9 @@ impl VirtualMachine {
         Some(self.rare_data().hot_map())
     }
 
-    /// True when `load_entry_point` returned with the entry module's
-    /// evaluation promise still `Pending` (an unsettled top-level await).
+    /// True when `load_entry_point` left the entry promise `Pending` (unsettled TLA).
     pub fn entry_promise_is_pending(&self) -> bool {
-        // Only valid when `load_entry_point` protected the pointer on its
-        // idle-with-pending break; a settled promise is GC-eligible.
+        // `is_protected` gate: an already-settled promise is unrooted and GC-eligible.
         self.pending_internal_promise_is_protected
             && matches!(
                 self.pending_internal_promise,
@@ -1439,13 +1436,9 @@ impl VirtualMachine {
             )
     }
 
-    /// Handle the entry promise after the loop fully drained: `Pending` is an
-    /// unsettled top-level await (Node: warn + exit 13); late-`Rejected` is
-    /// surfaced via `uncaughtException` so a user handler can swallow it.
+    /// After the loop drained: `Pending` → Node's warn + exit 13; late-`Rejected` → `uncaughtException`.
     pub fn report_unsettled_entry_promise(&mut self) {
-        // See `entry_promise_is_pending`: a settled-in-`load_entry_point`
-        // promise is unprotected and GC-eligible; early-Rejected is handled
-        // by the caller before the drain loop so nothing to do here.
+        // Unprotected = settled inside `load_entry_point`; pointer is GC-eligible.
         if !self.pending_internal_promise_is_protected {
             return;
         }
@@ -1470,8 +1463,7 @@ impl VirtualMachine {
                     // SAFETY: `self.jsc_vm` set in `init`.
                     let result = promise.result(unsafe { &*self.jsc_vm });
                     let global = self.global;
-                    // `on_before_exit` armed this; clear so a user listener is
-                    // consulted, then restore for the 'exit'-listener-throw path.
+                    // `on_before_exit` armed this; suspend so a user listener is consulted.
                     let was_exit_on_uncaught = self.exit_on_uncaught_exception;
                     self.exit_on_uncaught_exception = false;
                     // SAFETY: `global` valid for VM lifetime.
@@ -1541,9 +1533,7 @@ impl VirtualMachine {
             }
         }
 
-        // Node drains Promise microtasks once after the natural-shutdown
-        // 'exit' emit so rejections from listeners reach their handlers; an
-        // explicit process.exit() / fatal-exception path drops them.
+        // Natural shutdown drains post-'exit' microtasks; exit()/fatal paths drop them.
         let drain_after_exit = self.unhandled_error_counter == 0 && !self.is_shutting_down;
         ExitHandler::dispatch_on_exit(self, drain_after_exit);
 
@@ -2521,17 +2511,14 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
-            // Not `wait_for_promise`: a never-settling TLA would busy-spin.
-            // Tick while work could settle it; on idle-with-pending, return
-            // so the caller fires beforeExit/exit and maps to exit code 13.
+            // Not `wait_for_promise`: a never-settling TLA would busy-spin at 100% CPU.
             while crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Pending {
                 self.event_loop_mut().tick();
                 if crate::JSPromise::status_ptr(promise) != crate::js_promise::Status::Pending {
                     break;
                 }
                 if !self.is_event_loop_alive() {
-                    // JSC only roots the load-module promise while Pending;
-                    // the caller ticks (and may GC) before reading its status.
+                    // JSC unroots this once settled; protect before the caller may GC.
                     JSValue::from_cell(promise).protect();
                     self.pending_internal_promise_is_protected = true;
                     break;

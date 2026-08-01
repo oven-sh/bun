@@ -33,10 +33,16 @@ test("napi / NodeVM / JSBufferList / JSStringDecoder dead methods do not reappea
     ["src/jsc/bindings/NodeVMSourceTextModule.h", /bool hasModuleRecord\(\) const/],
     ["src/jsc/bindings/NodeVMSyntheticModule.h", /bool hasModuleRecord\(\) const/],
     ["src/jsc/bindings/NodeVMScript.h", /RefPtr<JSC::CachedBytecode> cachedBytecode\(\) const/],
-    ["src/jsc/bindings/JSBufferList.h", /void initializeProperties\(JSC::VM& vm, JSC::JSGlobalObject\* globalObject, JSBufferListPrototype\* prototype\);/],
+    [
+      "src/jsc/bindings/JSBufferList.h",
+      /void initializeProperties\(JSC::VM& vm, JSC::JSGlobalObject\* globalObject, JSBufferListPrototype\* prototype\);/,
+    ],
     ["src/jsc/bindings/JSBufferList.cpp", /void JSBufferListConstructor::initializeProperties\(/],
     ["src/jsc/bindings/JSBufferList.h", /static void destroy\(JSCell\*\) \{\}/],
-    ["src/jsc/bindings/JSStringDecoder.h", /void initializeProperties\(JSC::VM& vm, JSC::JSGlobalObject\* globalObject, JSStringDecoderPrototype\* prototype\);/],
+    [
+      "src/jsc/bindings/JSStringDecoder.h",
+      /void initializeProperties\(JSC::VM& vm, JSC::JSGlobalObject\* globalObject, JSStringDecoderPrototype\* prototype\);/,
+    ],
     ["src/jsc/bindings/JSStringDecoder.cpp", /void JSStringDecoderConstructor::initializeProperties\(/],
     ["src/jsc/bindings/JSNextTickQueue.h", /static std::array<JSValue, numberOfInternalFields> initialValues\(\)/],
   ];

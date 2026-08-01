@@ -7727,10 +7727,6 @@ describe("yarn tests", () => {
 
   // https://github.com/oven-sh/bun/issues/8292
   test("auto-installed peer satisfies narrower peer range from a transitive dependency", async () => {
-    // `mismatched-peer-deps-lvl0` has peer `no-deps: <=1.1.0` and pulls in
-    // lvl1 (peer `no-deps: <=1.0.1`) and lvl2 (peer `no-deps: 1.0.0`). The
-    // auto-installed `no-deps` should be the version that satisfies all three
-    // ranges, not the first one processed.
     await writeFile(
       packageJson,
       JSON.stringify({

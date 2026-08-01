@@ -2500,12 +2500,9 @@ fn get_or_put_resolved_package(
                 }
             };
 
-            // Auto-installing a peer dependency that nothing has resolved yet:
-            // prefer a version that also satisfies every other non-optional
-            // npm peer range already recorded for the same name. Without this
-            // the first-seen (often widest) peer range wins and narrower
-            // sibling ranges only produce an "incorrect peer dependency"
-            // warning instead of influencing the chosen version (#8292).
+            // Auto-installing a peer: prefer a version that also satisfies
+            // every other non-optional npm peer range recorded for the same
+            // name, so the first-drained range does not win on its own (#8292).
             if install_peer && behavior.is_peer() && version.tag == dependency::version::Tag::Npm {
                 let lockfile_buf = this.lockfile.buffers.string_bytes.as_slice();
                 let deps = this.lockfile.buffers.dependencies.as_slice();
@@ -2527,6 +2524,8 @@ fn get_or_put_resolved_package(
                     if let Some(refined) = manifest.find_best_version_extra(
                         &version.npm().version,
                         lockfile_buf,
+                        this.options.minimum_release_age_ms,
+                        this.options.minimum_release_age_excludes,
                         all_peers_ok,
                     ) {
                         find_result = refined;

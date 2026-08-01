@@ -1662,6 +1662,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, 
 #if OS(LINUX) || OS(FREEBSD)
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags);
 #endif
+extern "C" int bun_highest_open_fd();
 
 // Clears FD_CLOEXEC on `fd` so the descriptor is inherited across execve(2).
 // On success returns the previous F_GETFD flags (>= 0) so the caller can
@@ -1854,8 +1855,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
     if (bun_close_range(3, ~0U, /* CLOSE_RANGE_CLOEXEC */ (1U << 2)) != 0)
 #endif
     {
-        int maxfd = static_cast<int>(sysconf(_SC_OPEN_MAX));
-        if (maxfd < 0 || maxfd > 65536) maxfd = 65536;
+        int maxfd = bun_highest_open_fd();
+        if (maxfd < 0) {
+            maxfd = static_cast<int>(sysconf(_SC_OPEN_MAX));
+            if (maxfd < 0 || maxfd > 65536) maxfd = 65536;
+        } else {
+            maxfd++;
+        }
         for (int fd = 3; fd < maxfd; fd++) {
             int flags = fcntl(fd, F_GETFD);
             if (flags >= 0) fcntl(fd, F_SETFD, flags | FD_CLOEXEC);

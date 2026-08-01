@@ -13,6 +13,9 @@
 #include <signal.h>
 #include <sys/resource.h>
 #include <grp.h>
+#include <dirent.h>
+#include <atomic>
+#include <errno.h>
 
 #if OS(LINUX)
 #include <sys/syscall.h>
@@ -27,6 +30,62 @@ extern char** environ;
 
 #if OS(LINUX)
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags);
+#endif
+
+// Scan /proc/self/fd (Linux) or /dev/fd (Darwin/BSD) for the highest open fd.
+// Called in the parent before fork so the child's fallback fd sweep is bounded
+// by actual open fds instead of RLIMIT_NOFILE (which Bun raises to the hard
+// limit, typically 6 figures). Returns -1 if the scan fails; callers fall
+// back to the rlimit-derived bound.
+extern "C" int bun_highest_open_fd()
+{
+#if OS(LINUX)
+    DIR* d = opendir("/proc/self/fd");
+#else
+    DIR* d = opendir("/dev/fd");
+#endif
+    if (!d) return -1;
+    int highest = -1;
+    while (struct dirent* ent = readdir(d)) {
+        const char* p = ent->d_name;
+        if (*p < '0' || *p > '9') continue;
+        int fd = 0;
+        while (*p >= '0' && *p <= '9')
+            fd = fd * 10 + (*p++ - '0');
+        if (*p != '\0') continue;
+        if (fd > highest) highest = fd;
+    }
+    closedir(d);
+    return highest;
+}
+
+#if OS(LINUX)
+// Cached close_range(2) capability so the vfork child never issues a known-
+// failing syscall on every spawn. Probed once from the parent with a no-op
+// (~0U, ~0U) range that touches no fds: 5.11+ accepts CLOSE_RANGE_CLOEXEC,
+// 5.9/5.10 reject the unknown flag with EINVAL but accept flags=0, and <5.9 /
+// seccomp-blocked kernels return ENOSYS/EPERM.
+enum : int { kCloseRangeUnknown = 0,
+    kCloseRangeCloexec = 1,
+    kCloseRangePlain = 2,
+    kCloseRangeNone = 3 };
+static std::atomic<int> s_closeRangeCapability { kCloseRangeUnknown };
+
+static int closeRangeCapability()
+{
+    int cap = s_closeRangeCapability.load(std::memory_order_relaxed);
+    if (cap != kCloseRangeUnknown) return cap;
+    if (bun_close_range(~0U, ~0U, CLOSE_RANGE_CLOEXEC) == 0)
+        cap = kCloseRangeCloexec;
+    else if (errno != EINVAL)
+        cap = kCloseRangeNone;
+    else if (bun_close_range(~0U, ~0U, 0) == 0)
+        cap = kCloseRangePlain;
+    else
+        cap = kCloseRangeNone;
+    s_closeRangeCapability.store(cap, std::memory_order_relaxed);
+    return cap;
+}
 #endif
 
 // Helper: get max fd from system, clamped to sane limits and optionally to 'end' parameter
@@ -47,10 +106,14 @@ static inline int getMaxFd(int start, int end)
     return maxfd;
 }
 
-// Loop-based fallback for closing/cloexec fds
-static inline void closeRangeLoop(int start, int end, bool cloexec_only)
+// Loop-based fallback for closing/cloexec fds. open_fd_hint is the parent's
+// highest open fd at call time (or -1 if unknown); the sweep never needs to
+// go past it because fds above it cannot exist in the just-forked child.
+static inline void closeRangeLoop(int start, int end, bool cloexec_only, int open_fd_hint)
 {
-    int maxfd = getMaxFd(start, end);
+    int maxfd = (open_fd_hint >= 0) ? open_fd_hint + 1 : getMaxFd(start, end);
+    if (end >= start && end < INT_MAX)
+        maxfd = std::min(maxfd, end + 1);
     for (int fd = start; fd < maxfd; fd++) {
         if (cloexec_only) {
             int current_flags = fcntl(fd, F_GETFD);
@@ -63,17 +126,24 @@ static inline void closeRangeLoop(int start, int end, bool cloexec_only)
     }
 }
 
-// Platform-specific close range implementation
-static inline void closeRangeOrLoop(int start, int end, bool cloexec_only)
+// Platform-specific close range implementation. On Linux, cap carries the
+// probed close_range capability so a failing syscall isn't re-issued per
+// spawn; kCloseRangePlain means "close outright" is available (the vfork
+// child is about to exec, so closing is equivalent to CLOEXEC here).
+static inline void closeRangeOrLoop(int start, int end, bool cloexec_only, int cap, int open_fd_hint)
 {
 #if OS(LINUX)
-    unsigned int flags = cloexec_only ? CLOSE_RANGE_CLOEXEC : 0;
-    if (bun_close_range(start, end, flags) == 0) {
-        return;
+    if (cap == kCloseRangeCloexec) {
+        if (bun_close_range(start, end, cloexec_only ? CLOSE_RANGE_CLOEXEC : 0) == 0)
+            return;
+    } else if (cap == kCloseRangePlain) {
+        if (bun_close_range(start, end, 0) == 0)
+            return;
     }
-    // Fallback for older kernels or when close_range fails
+#else
+    (void)cap;
 #endif
-    closeRangeLoop(start, end, cloexec_only);
+    closeRangeLoop(start, end, cloexec_only, open_fd_hint);
 }
 
 enum FileActionType : uint8_t {
@@ -131,6 +201,17 @@ extern "C" ssize_t posix_spawn_bun(
     sigset_t blockall, oldmask;
     int res = 0, cs = 0;
 
+    // Decide the child's fd-sweep strategy in the parent so the vfork/fork
+    // child never calls opendir/readdir (not async-signal-safe) and never
+    // re-probes a failing close_range on every spawn.
+#if OS(LINUX)
+    const int close_range_cap = closeRangeCapability();
+    const int open_fd_hint = (close_range_cap == kCloseRangeNone) ? bun_highest_open_fd() : -1;
+#else
+    const int close_range_cap = 0;
+    const int open_fd_hint = bun_highest_open_fd();
+#endif
+
 #if OS(DARWIN) || OS(FREEBSD)
     // On macOS, we use fork() which requires a self-pipe trick to detect exec failures.
     // Create a pipe for child-to-parent error communication.
@@ -176,7 +257,7 @@ extern "C" ssize_t posix_spawn_bun(
         // Write errno to pipe so parent can read it
         (void)write(errpipe[1], &err, sizeof(err));
         close(errpipe[1]);
-        closeRangeOrLoop(0, INT_MAX, false);
+        closeRangeOrLoop(0, INT_MAX, false, close_range_cap, open_fd_hint);
         rawExit(127);
 
         // should never be reached
@@ -342,7 +423,7 @@ extern "C" ssize_t posix_spawn_bun(
             envp = environ;
 
         // Close all fds > current_max_fd, preferring cloexec if available
-        closeRangeOrLoop(current_max_fd + 1, INT_MAX, true);
+        closeRangeOrLoop(current_max_fd + 1, INT_MAX, true, close_range_cap, open_fd_hint);
 
         if (execve(path, argv, envp) == -1) {
             return childFailed();

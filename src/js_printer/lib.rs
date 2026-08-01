@@ -2108,6 +2108,27 @@ pub(crate) mod __gated_printer {
                     self.print_space();
                 }
 
+                if !self.options.minify_whitespace {
+                    for comment in arg.leading_comments.slice() {
+                        let text = comment.text.slice();
+                        if text.starts_with(b"//") {
+                            // A line comment here would swallow the rest of the
+                            // parameter list on one line; re-emit as a block
+                            // comment. Skip if the body contains "*/" since
+                            // that would terminate the block early.
+                            let body = &text[2..];
+                            if !strings::contains(body, b"*/") {
+                                self.print(b"/*");
+                                self.print(body);
+                                self.print(b" */ ");
+                            }
+                        } else {
+                            self.print(text);
+                            self.print(b" ");
+                        }
+                    }
+                }
+
                 if has_rest_arg && i + 1 == args.len() {
                     self.print(b"...");
                 }

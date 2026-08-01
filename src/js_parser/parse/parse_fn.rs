@@ -160,6 +160,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.s(S::Function { func }, loc))
     }
 
+    fn take_arg_leading_comments(
+        &mut self,
+        base: usize,
+    ) -> bun_ast::StoreSlice<G::Comment> {
+        let buf = &mut self.lexer.comments_to_preserve_before;
+        if buf.len() <= base {
+            return bun_ast::StoreSlice::EMPTY;
+        }
+        let slice = self.arena.alloc_slice_fill_iter(buf.drain(base..));
+        bun_ast::StoreSlice::new_mut(slice)
+    }
+
     pub(crate) fn parse_fn(
         &mut self,
         name: Option<js_ast::LocRef>,
@@ -185,6 +197,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             open_parens_loc: p.lexer.loc(),
             ..Default::default()
         };
+
+        // Capture `/* ... */` comments inside the parameter list so they
+        // survive into `Function.prototype.toString()`. Only entries pushed
+        // past `comments_base` are ours; anything already in the buffer (legal
+        // comments from earlier in the statement) is left in place.
+        let old_preserve_comments = p.lexer.preserve_all_comments_before;
+        let comments_base = p.lexer.comments_to_preserve_before.len();
+        p.lexer.preserve_all_comments_before = true;
         p.lexer.expect(T::TOpenParen)?;
 
         // Await and yield are not allowed in function arguments
@@ -243,6 +263,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 rest_arg = true;
                 func.flags.insert(Flags::Function::HasRestArg);
             }
+
+            let leading_comments = p.take_arg_leading_comments(comments_base);
 
             let mut is_typescript_ctor_field = false;
             let is_identifier = p.lexer.token == T::TIdentifier;
@@ -325,6 +347,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // We need to track this because it affects code generation
                 is_typescript_ctor_field,
                 ts_metadata,
+                leading_comments,
             });
 
             if p.lexer.token != T::TComma {
@@ -346,6 +369,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
             rest_arg = false;
         }
+        // Drop any comments captured between the last arg and `)`; they would
+        // otherwise surface as top-level `SComment` statements in the body.
+        p.lexer.comments_to_preserve_before.truncate(comments_base);
+        p.lexer.preserve_all_comments_before = old_preserve_comments;
+
         if !args.is_empty() {
             func.args = bun_ast::StoreSlice::new_mut(args.into_bump_slice_mut());
         }

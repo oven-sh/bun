@@ -702,13 +702,6 @@ pub unsafe fn realloc_raw(
     Ok(new_ptr.cast::<u8>())
 }
 
-/// `mi_usable_size` — actual allocated size for a mimalloc-owned ptr.
-#[inline]
-pub fn usable_size(ptr: *const u8) -> usize {
-    // SAFETY: `mi_usable_size` is null-safe (returns 0).
-    unsafe { mimalloc::mi_usable_size(ptr.cast()) }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Symbols hoisted DOWN into T0 so higher tiers can re-import without cycles.
 // ──────────────────────────────────────────────────────────────────────────

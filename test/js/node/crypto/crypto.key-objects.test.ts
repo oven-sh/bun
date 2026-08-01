@@ -1805,35 +1805,67 @@ function randomProp() {
 // RefPtr<KeyObjectData>; process.exit() inside the callback never unwinds so
 // that ref is never released and the EVP_PKEY survives past VM teardown. With
 // OPENSSL_malloc routed through the default allocator (libc under ASAN) LSan
-// reports it. The fix drops the ctx's ref before invoking the callback so the
-// JS key objects become the only owners and lastChanceToFinalize frees them.
-test.skipIf(!isASAN)(
-  "generateKeyPair: process.exit() in the callback does not strand the EVP_PKEY past VM teardown",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `require("crypto").generateKeyPair("rsa", { modulusLength: 512 }, (err, pub, priv) => {
-           if (err) { console.error(err); process.exit(2); }
-           if (pub.type !== "public" || priv.type !== "private") process.exit(3);
-           process.exit(0);
-         });`,
-      ],
-      env: {
-        ...bunEnv,
-        BUN_DESTRUCT_VM_ON_EXIT: "1",
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-        LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../../leaksan.supp")}`,
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("LeakSanitizer");
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
-  },
+// reports it. The fix drops the ctx's ref before invoking the callback.
+describe.skipIf(!isASAN)("generateKeyPair: process.exit() in the callback does not strand the EVP_PKEY", () => {
+  const lsanEnv = {
+    ...bunEnv,
+    BUN_DESTRUCT_VM_ON_EXIT: "1",
+    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+    LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../../leaksan.supp")}`,
+  };
   // LSan symbolizes the leak stack through llvm-symbolizer before the child
   // can exit, which is several seconds against the debug binary.
-  30_000,
-);
+  const timeout = 30_000;
+
+  test.concurrent(
+    "KeyObject output",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `require("crypto").generateKeyPair("rsa", { modulusLength: 512 }, (err, pub, priv) => {
+             if (err) { console.error(err); process.exit(2); }
+             if (pub.type !== "public" || priv.type !== "private") process.exit(3);
+             process.exit(0);
+           });`,
+        ],
+        env: lsanEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("LeakSanitizer");
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    },
+    timeout,
+  );
+
+  test.concurrent(
+    "encrypted PEM output",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `require("crypto").generateKeyPair("rsa", {
+             modulusLength: 512,
+             publicKeyEncoding: { type: "spki", format: "pem" },
+             privateKeyEncoding: { type: "pkcs8", format: "pem", cipher: "aes-256-cbc", passphrase: "secret" },
+           }, (err, pub, priv) => {
+             if (err) { console.error(err); process.exit(2); }
+             if (typeof pub !== "string" || typeof priv !== "string") process.exit(3);
+             process.exit(0);
+           });`,
+        ],
+        env: lsanEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("LeakSanitizer");
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    },
+    timeout,
+  );
+});

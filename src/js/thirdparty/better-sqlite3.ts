@@ -160,7 +160,7 @@ class Statement {
       throw new TypeError("The bind() method can only be invoked once per statement object");
     }
     for (let i = 0; i < args.length; i++) {
-      if (ArrayBuffer.isView(args[i])) args[i] = Buffer.from(args[i]);
+      if (args[i] instanceof Uint8Array) args[i] = Buffer.from(args[i]);
     }
     this.#bound = args;
     return this;

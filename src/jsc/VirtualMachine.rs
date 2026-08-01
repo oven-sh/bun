@@ -4553,18 +4553,35 @@ impl VirtualMachine {
     }
 
     /// Loads the worker entry point and waits for it, honoring termination requests.
+    ///
+    /// `on_started` runs once after the entry module's synchronous top-level
+    /// has executed (one `tick()` drains JSC's module-loader promise chain up
+    /// to the first `await`) but before the top-level-await wait loop. The
+    /// worker uses it to flip to `State::Running` and drain buffered messages,
+    /// so a `parentPort.on("message")` listener attached at top level receives
+    /// messages while a never-settling TLA keeps the wait loop spinning.
     pub(crate) fn load_entry_point_for_web_worker(
         &mut self,
         entry_path: &[u8],
+        on_started: impl FnOnce(),
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         let promise = self.reload_entry_point(entry_path)?;
         self.event_loop_mut().perform_gc();
+        self.event_loop_mut().tick();
+        if self
+            .worker_ref()
+            .is_some_and(crate::web_worker::WebWorker::has_requested_terminate)
+        {
+            return Err(crate::CrateError::WorkerTerminated);
+        }
+        on_started();
         self.event_loop_mut()
             .wait_for_promise_with_termination(jsc::AnyPromise::Internal(promise));
-        if let Some(worker) = self.worker_ref() {
-            if worker.has_requested_terminate() {
-                return Err(crate::CrateError::WorkerTerminated);
-            }
+        if self
+            .worker_ref()
+            .is_some_and(crate::web_worker::WebWorker::has_requested_terminate)
+        {
+            return Err(crate::CrateError::WorkerTerminated);
         }
         Ok(self.pending_internal_promise.unwrap())
     }

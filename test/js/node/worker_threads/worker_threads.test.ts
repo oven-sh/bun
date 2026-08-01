@@ -626,18 +626,15 @@ describe("getHeapSnapshot", () => {
     });
   });
 
-  // "entry throws" is omitted: under `bun test`, isBunTest makes a worker's
-  // uncaught_exception return handled=true so spin() continues to
-  // fireEarlyMessages (the call resolves with real data). Under `bun -e`
-  // it rejects — see the test-worker-heapdump-failure.js vendored test for
-  // subprocess coverage. The two cases below take the shutdown() path
-  // directly so they exercise the m_pendingTasks abandon drain regardless.
-  test.each([
-    ["entry not found", undefined],
-    ["unsettled top-level await", "await new Promise(() => {})"],
-  ])("rejects ERR_WORKER_NOT_RUNNING when called before a worker that fails to start (%s)", async (_, src) => {
-    const worker =
-      src === undefined ? new Worker("/nonexistent/__bun_worker_path__.js") : new Worker(src, { eval: true });
+  // "entry throws" and "unsettled top-level await" are omitted: both now reach
+  // State::Running (dispatchOnline fires once the entry module's synchronous
+  // top-level has run), so fireEarlyMessages drains m_pendingTasks and the
+  // calls resolve with real data — see the next test. Under `bun -e` an entry
+  // throw rejects via test-worker-heapdump-failure.js. Only a worker whose
+  // entry fails to load takes the shutdown() path without ever going online,
+  // which is what the m_pendingTasks abandon drain is for.
+  test("rejects ERR_WORKER_NOT_RUNNING when called before a worker that fails to start (entry not found)", async () => {
+    const worker = new Worker("/nonexistent/__bun_worker_path__.js");
     worker.on("error", () => {});
     // Called immediately (m_state still Pending) so the task queues into
     // m_pendingTasks; dispatchExit drains it on the parent thread when the

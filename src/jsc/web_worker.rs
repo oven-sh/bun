@@ -1089,7 +1089,21 @@ impl WebWorker {
         // standalone module graph, or `self.unresolved_specifier` — all of
         // which outlive the worker VM. `vm.main` stores it as a raw BACKREF
         // (see `VirtualMachine::set_main`); no lifetime extension needed.
-        let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
+        //
+        // `on_started` runs once the entry module's synchronous top-level has
+        // executed (so a `parentPort.on("message")` listener attached there is
+        // in place) but before the top-level-await wait. Going online here
+        // routes subsequent parent `postMessage()` through the TLA wait loop's
+        // `tick_concurrent()`; without it a worker that sits in a TLA
+        // `setImmediate` loop never transitions out of `State::Pending` and the
+        // parent's messages stay buffered forever (issue #15408).
+        let cpp_worker = self.cpp_worker;
+        let global = vm.global();
+        let promise = match vm.as_mut().load_entry_point_for_web_worker(path, || {
+            WebWorker__dispatchOnline(cpp_worker, global);
+            WebWorker__fireEarlyMessages(cpp_worker, global);
+            self.set_status(Status::Running);
+        }) {
             Ok(p) => p,
             Err(_) => {
                 // process.exit() may have run during load; don't clobber its code.
@@ -1137,16 +1151,6 @@ impl WebWorker {
 
         self.flush_logs(vm);
         log!("[{}] event loop start", self.execution_context_id);
-        // dispatchOnline fires the parent-side 'open' event and flips the C++
-        // state to Running (which routes postMessage directly instead of
-        // queuing). It is placed after the entry point has loaded so the parent
-        // observes 'online' only once the worker's top-level code has completed;
-        // moving it earlier would change that observable ordering.
-        // `cpp_worker` is the opaque C++-owned handle round-tripped via `safe fn`;
-        // `vm.global()` yields the live `&JSGlobalObject` published in start_vm.
-        WebWorker__dispatchOnline(self.cpp_worker, vm.global());
-        WebWorker__fireEarlyMessages(self.cpp_worker, vm.global());
-        self.set_status(Status::Running);
 
         // don't run the GC if we don't actually need to
         if vm.is_event_loop_alive() || vm.event_loop_mut().tick_concurrent_with_count() > 0 {

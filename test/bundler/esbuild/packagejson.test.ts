@@ -564,7 +564,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserNodeModulesNoExt", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {value as a} from 'demo-pkg/no-ext'
@@ -599,7 +598,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserNodeModulesIndexNoExt", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {value as a} from 'demo-pkg/no-ext'
@@ -630,6 +628,53 @@ describe("bundler", () => {
         node
         browser
         browser
+      `,
+    },
+  });
+  itBundled("packagejson/BrowserNodeModulesSubpathDisabled", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        const ns = require('demo-pkg/disabled')
+        console.log(JSON.stringify([ns.value]))
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "browser": {
+            "./disabled": false
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/disabled.js": `module.exports = {value: 'node'}`,
+    },
+    run: {
+      stdout: "[null]",
+    },
+  });
+  itBundled("packagejson/BrowserNodeModulesSubpathToPackage", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import {value as a} from 'demo-pkg/to-pkg'
+        import {value as b} from 'demo-pkg/to-missing'
+        console.log(a)
+        console.log(b)
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "browser": {
+            "./to-pkg": "other-pkg",
+            "./to-missing": "missing-pkg"
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/to-pkg.js": `export let value = 'node'`,
+      "/Users/user/project/node_modules/demo-pkg/to-missing.js": `export let value = 'node'`,
+      "/Users/user/project/node_modules/other-pkg/package.json": `{"main": "./index.js"}`,
+      "/Users/user/project/node_modules/other-pkg/index.js": `export let value = 'other-pkg'`,
+    },
+    run: {
+      stdout: `
+        other-pkg
+        node
       `,
     },
   });

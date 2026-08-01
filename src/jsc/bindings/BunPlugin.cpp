@@ -504,12 +504,8 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
     return object;
 }
 
-// When mock.module() overrides a module that already evaluated, modules which
-// imported it may have captured its values (e.g. `const x = new Imported()` at
-// module scope). Patching the target's live bindings does not help those
-// captures, so evict every cached module whose dependency graph reaches the
-// mocked key. The next import/require of a dependent re-evaluates it against
-// the mock.
+// Dependents may have captured the target's values at module scope; evict them
+// so the next import/require re-evaluates against the mock.
 static void evictDependentModules(Zig::GlobalObject* globalObject, const WTF::String& mockedKey)
 {
     auto& vm = globalObject->vm();
@@ -521,9 +517,6 @@ static void evictDependentModules(Zig::GlobalObject* globalObject, const WTF::St
     WTF::UncheckedKeyHashSet<WTF::String> tainted;
     tainted.add(mockedKey);
 
-    // Fixed-point over both graphs: a module is tainted once any of its loaded
-    // dependencies is tainted. ESM edges come from AbstractModuleRecord's
-    // loadedModules() (resolved child records); CJS edges from m_children.
     bool changed = true;
     while (changed) {
         changed = false;

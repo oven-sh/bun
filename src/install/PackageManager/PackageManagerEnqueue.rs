@@ -844,7 +844,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 }
                                 return Ok(());
                             } else if err == crate::Error::MissingPackageJSON {
-                                if dependency.behavior.is_required() {
+                                if dependency.behavior.is_required()
+                                    && dependency
+                                        .behavior
+                                        .is_enabled(this.options.local_package_features)
+                                {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
                                     } else if version.tag == dependency::version::Tag::Folder {

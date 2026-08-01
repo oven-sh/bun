@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -1530,7 +1530,7 @@ it("issue#7147", () => {
 });
 
 it("should close with WAL enabled", () => {
-  const dir = tempDirWithFiles("sqlite-wal-test", { "empty.txt": "" });
+  using dir = tempDir("sqlite-wal-test", { "empty.txt": "" });
   const file = path.join(dir, "my.db");
   const db = new Database(file);
   db.exec("PRAGMA journal_mode = WAL");
@@ -1990,7 +1990,7 @@ it("run() reports a closed database when a bound parameter's getter closes it", 
 // must be at least 8 bytes. A 1-byte Uint8Array used to be passed through
 // as-is and overflowed.
 it("fileControl rejects result TypedArrays smaller than 8 bytes", () => {
-  const dir = tempDirWithFiles("sqlite-fcntl-bounds", { "empty.txt": "" });
+  using dir = tempDir("sqlite-fcntl-bounds", { "empty.txt": "" });
   const db = new Database(path.join(dir, "my.db"));
 
   expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, new Uint8Array(1))).toThrow(
@@ -2130,7 +2130,7 @@ it("decodes declared types leniently and accepts single-character declared types
 // grows. Run in a subprocess so a crash shows up as a non-zero exit code
 // instead of taking down the test runner.
 it("keeps database handles working when many Workers open databases concurrently", async () => {
-  const dir = tempDirWithFiles("sqlite-worker-registry", {
+  await using dir = tempDir("sqlite-worker-registry", {
     "main.js": `
       import { Database } from "bun:sqlite";
 
@@ -2218,7 +2218,7 @@ it("exit-time WAL checkpoint runs even with a never-finalized prepared statement
   // zombifies the connection and defers the WAL checkpoint to a finalize
   // that never comes; Bun__closeAllSQLiteDatabasesForTermination now
   // checkpoints explicitly first.
-  const dir = tempDirWithFiles("bun-sqlite-exit-zombie", {});
+  await using dir = tempDir("bun-sqlite-exit-zombie", {});
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

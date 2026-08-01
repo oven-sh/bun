@@ -26,8 +26,8 @@ use crate::webcore::{
 ///    is what it did before), causing segfaults.
 pub struct AdditionalOnAbortCallback {
     pub cb: fn(*mut c_void),
-    pub data: NonNull<c_void>,
-    pub deref_fn: fn(*mut c_void),
+    pub(crate) data: NonNull<c_void>,
+    pub(crate) deref_fn: fn(*mut c_void),
 }
 
 impl AdditionalOnAbortCallback {
@@ -65,7 +65,7 @@ fn any_response_as_ptr(r: uws::AnyResponse) -> *mut c_void {
 /// frame unwinds), so reads/writes are safe `Cell` ops — no raw `*mut bool`.
 pub type DeferDeinitFlag = bun_ptr::BackRef<core::cell::Cell<bool>>;
 
-pub type ResponseStream<const SSL_ENABLED: bool, const HTTP3: bool> =
+pub(crate) type ResponseStream<const SSL_ENABLED: bool, const HTTP3: bool> =
     crate::webcore::streams::HTTPServerWritable<SSL_ENABLED, HTTP3>;
 pub type ResponseStreamJSSink<const SSL_ENABLED: bool, const HTTP3: bool> =
     crate::webcore::streams::HTTPServerWritableJSSink<SSL_ENABLED, HTTP3>;
@@ -99,25 +99,25 @@ pub struct RequestContext<
     /// BACKREF to the embedding `Server` — the server owns this request
     /// context (allocated from its `HiveArray` pool) and outlives it, so the
     /// pointee is live for the holder's entire lifetime. `None` once detached.
-    pub server: Option<bun_ptr::BackRef<ThisServer>>,
-    pub resp: Option<uws::AnyResponse>,
-    pub req: Option<*mut Req<SSL_ENABLED, HTTP3>>,
-    pub request_weakref: request::WeakRef,
+    pub(crate) server: Option<bun_ptr::BackRef<ThisServer>>,
+    pub(crate) resp: Option<uws::AnyResponse>,
+    pub(crate) req: Option<*mut Req<SSL_ENABLED, HTTP3>>,
+    pub(crate) request_weakref: request::WeakRef,
     // NOTE: `Arc<AbortSignal>` was wrong —
     // `AbortSignal` is an opaque ZST FFI handle; an `Arc` of a ZST never owns
     // the C++ allocation. Store the raw pointer. The request holds TWO counts:
     // the intrusive C++ `RefPtr` (+1 from `AbortSignal::new()`/`ref_()`) and a
     // pending-activity count for GC visibility. Both are released together via
     // `shim::signal_release` in `on_abort`/`finalize_without_deinit`.
-    pub signal: Option<NonNull<AbortSignal>>,
+    pub(crate) signal: Option<NonNull<AbortSignal>>,
     pub method: Method,
     /// Owned `+1` ref on a C++ `CookieMap` (taken in `set_cookies`, released
     /// when the field is dropped/replaced — `CookieMapRef` handles the unref).
-    pub cookies: Option<CookieMapRef>,
+    pub(crate) cookies: Option<CookieMapRef>,
 
-    pub flags: Flags<DEBUG_MODE>,
+    pub(crate) flags: Flags<DEBUG_MODE>,
 
-    pub upgrade_context: Option<*mut WebSocketUpgradeContext>,
+    pub(crate) upgrade_context: Option<*mut WebSocketUpgradeContext>,
 
     /// We can only safely free once the request body promise is finalized
     /// and the response is rejected
@@ -126,8 +126,8 @@ pub struct RequestContext<
     // bodies intentionally leave the value unprotected on the hot path and
     // fall back to `response_weakref` (see its doc below), so a `Strong`
     // here would root the Response unconditionally and change GC behavior.
-    pub response_jsvalue: JSValue,
-    pub ref_count: u8,
+    pub(crate) response_jsvalue: JSValue,
+    pub(crate) ref_count: u8,
 
     /// Weak: for plain Blob/InternalBlob bodies the Response JSValue is
     /// not protected (hot path), so GC may finalize it while we're parked
@@ -136,34 +136,34 @@ pub struct RequestContext<
     /// cleanup and safely observe null instead of UAF. File/.Locked
     /// bodies still protect() response_jsvalue, so the pointer stays
     /// valid for renderMetadata() on those paths.
-    pub response_weakref: response::WeakRef,
-    pub blob: AnyBlob,
+    pub(crate) response_weakref: response::WeakRef,
+    pub(crate) blob: AnyBlob,
 
-    pub sendfile: SendfileContext,
-    pub range: RangeRequest::Raw,
+    pub(crate) sendfile: SendfileContext,
+    pub(crate) range: RangeRequest::Raw,
 
-    pub request_body_readable_stream_ref: readable_stream::Strong,
+    pub(crate) request_body_readable_stream_ref: readable_stream::Strong,
     /// Owning `+1` handle into the per-VM `Body::Value` hive pool. Shared with
     /// `Request.body` (each holds its own `+1`). `Drop` releases the count.
-    pub request_body: Option<body::BodyHiveHandle>,
-    pub request_body_buf: Vec<u8>,
-    pub request_body_content_len: usize,
+    pub(crate) request_body: Option<body::BodyHiveHandle>,
+    pub(crate) request_body_buf: Vec<u8>,
+    pub(crate) request_body_content_len: usize,
     /// Total bytes forwarded to the request-body `ReadableStream`. The
     /// up-front `maxRequestBodySize` check only sees Content-Length, so
     /// chunked / H3 bodies consumed as a stream are capped against this.
-    pub request_body_streamed_len: usize,
+    pub(crate) request_body_streamed_len: usize,
 
     pub sink: Option<NonNull<ResponseStreamJSSink<SSL_ENABLED, HTTP3>>>,
-    pub byte_stream: Option<NonNull<ByteStream>>,
+    pub(crate) byte_stream: Option<NonNull<ByteStream>>,
     /// This keeps the Response body's ReadableStream alive.
-    pub response_body_readable_stream_ref: readable_stream::Strong,
+    pub(crate) response_body_readable_stream_ref: readable_stream::Strong,
 
     /// Used in errors
-    pub pathname: BunString,
+    pub(crate) pathname: BunString,
 
     /// Used either for temporary blob data or fallback
     /// When the response body is a temporary value
-    pub response_buf_owned: Vec<u8>,
+    pub(crate) response_buf_owned: Vec<u8>,
 
     /// Defer finalization until after the request handler task is completed?
     ///
@@ -171,9 +171,9 @@ pub struct RequestContext<
     /// stack. `BackRef` encodes the outlives-holder invariant (the field is
     /// always cleared before that frame returns) so reads/writes are safe
     /// `Cell::get`/`set` instead of raw `*mut bool` deref.
-    pub defer_deinit_until_callback_completes: Option<DeferDeinitFlag>,
+    pub(crate) defer_deinit_until_callback_completes: Option<DeferDeinitFlag>,
 
-    pub additional_on_abort: Option<AdditionalOnAbortCallback>,
+    pub(crate) additional_on_abort: Option<AdditionalOnAbortCallback>,
     // TODO: support builtin compression
 }
 
@@ -182,9 +182,9 @@ impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: b
 where
     ThisServer: ServerLike + 'static,
 {
-    pub const IS_H3: bool = HTTP3;
+    pub(crate) const IS_H3: bool = HTTP3;
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         // The Sink and ByteStream aren't owned by this.
         core::mem::size_of::<Self>()
             + self.request_body_buf.capacity()
@@ -193,11 +193,11 @@ where
     }
 
     #[inline]
-    pub fn is_async(&self) -> bool {
+    pub(crate) fn is_async(&self) -> bool {
         self.defer_deinit_until_callback_completes.is_none()
     }
 
-    pub fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
+    pub(crate) fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
         // `server` is a `BackRef` (BACKREF — server outlives `self`); safe
         // `Deref` ties the borrow to `&self.server`, which is `&'self`.
         self.server.as_ref()?.dev_server()
@@ -375,7 +375,7 @@ mod shim {
         // `self.byte_stream`; the allocation is kept alive by
         // `response_body_readable_stream_ref` (BackRef invariant: pointee
         // outlives this temporary). R-2: `unpipe_without_deref` takes `&self`
-        // (interior-mutable `JsCell<Pipe>`), so shared deref is sufficient.
+        // (interior-mutable `JsCell<SinkHandle>`), so shared deref is sufficient.
         bun_ptr::BackRef::from(s).unpipe_without_deref()
     }
 }
@@ -530,7 +530,7 @@ where
     /// reborrows of disjoint `RequestContext` fields — exactly the pattern the
     /// raw `*const ThisServer` field was used for.
     #[inline]
-    pub fn server<'r>(&self) -> &'r ThisServer {
+    pub(crate) fn server<'r>(&self) -> &'r ThisServer {
         // SAFETY: BACKREF — `server` is `Some(non-null)` after `init()` and
         // the pointee `NewServer` outlives this context (it owns the pool).
         // `'r` may exceed `&self` because the server is not borrowed from
@@ -579,7 +579,7 @@ where
         self.request_body.take();
     }
 
-    pub fn set_signal_aborted(&mut self, reason: jsc::CommonAbortReason) {
+    pub(crate) fn set_signal_aborted(&mut self, reason: jsc::CommonAbortReason) {
         if let Some(signal) = &self.signal {
             if let Some(server) = self.server {
                 // server is a BACKREF — valid while this RequestContext is alive
@@ -604,7 +604,7 @@ where
         }
     }
 
-    pub fn set_abort_handler(&mut self) {
+    pub(crate) fn set_abort_handler(&mut self) {
         if self.flags.has_abort_handler() {
             return;
         }
@@ -615,7 +615,7 @@ where
         }
     }
 
-    pub fn set_cookies(&mut self, cookie_map: Option<*mut CookieMap>) {
+    pub(crate) fn set_cookies(&mut self, cookie_map: Option<*mut CookieMap>) {
         // S008: `CookieMap` is an `opaque_ffi!` ZST — safe `*const → &` deref.
         // `new_ref` takes a ref for storage. Assigning replaces (and so
         // drops/unrefs) the old one.
@@ -623,7 +623,7 @@ where
             cookie_map.map(|p| CookieMapRef::new_ref(bun_opaque::opaque_deref(p.cast_const())));
     }
 
-    pub fn set_timeout_handler(&mut self) {
+    pub(crate) fn set_timeout_handler(&mut self) {
         if self.flags.has_timeout_handler() {
             return;
         }
@@ -634,7 +634,7 @@ where
         }
     }
 
-    pub fn on_resolve(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn on_resolve(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         ctx_log!("onResolve");
 
         let arguments = callframe.arguments_as_array::<2>();
@@ -738,7 +738,7 @@ where
         unsafe { ctx.render(response) };
     }
 
-    pub fn should_render_missing(&self) -> bool {
+    pub(crate) fn should_render_missing(&self) -> bool {
         // If we did not respond yet, we should render missing
         // To allow this all the conditions above should be true:
         // 1 - still has a response (not detached)
@@ -796,7 +796,7 @@ where
             && !self.flags.has_sendfile_ctx()
     }
 
-    pub fn is_dead_request(&self) -> bool {
+    pub(crate) fn is_dead_request(&self) -> bool {
         // check if has pending promise or extra reference (aka not the only reference)
         if self.ref_count > 1 {
             return false;
@@ -812,7 +812,7 @@ where
     }
 
     /// destroy RequestContext, should be only called by deref or if defer_deinit_until_callback_completes is ref is set to true
-    pub fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self) {
         ctx_log!("deinit");
         self.detach_response();
         self.end_request_streaming_and_drain();
@@ -839,7 +839,7 @@ where
             wrapper.sink.finalize();
             if let Some(sink_global) = wrapper.sink.global_this {
                 ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                    &mut wrapper.sink.signal,
+                    &mut wrapper.sink.source,
                     &sink_global,
                 );
             }
@@ -882,7 +882,7 @@ where
         self.ref_count += 1;
     }
 
-    pub fn on_reject(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn on_reject(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         ctx_log!("onReject");
 
         let arguments = callframe.arguments_as_array::<2>();
@@ -979,7 +979,7 @@ where
         }
     }
 
-    pub fn render_missing(&mut self) {
+    pub(crate) fn render_missing(&mut self) {
         if let Some(resp) = self.resp {
             resp.run_corked_with_type(|ctx| Self::render_missing_corked(ctx), self);
         }
@@ -987,7 +987,7 @@ where
 
     /// # Safety
     /// `ctx` must point to a live `RequestContext` threaded through cork user-data.
-    pub(crate) fn render_missing_corked(ctx: *mut Self) {
+    fn render_missing_corked(ctx: *mut Self) {
         // SAFETY: caller upholds the fn-level contract — `ctx` is the live
         // `RequestContext` threaded through cork user-data.
         let ctx = unsafe { &mut *ctx };
@@ -1034,7 +1034,7 @@ where
         }
     }
 
-    pub fn render_default_error(
+    pub(crate) fn render_default_error(
         &mut self,
         log: &mut bun_ast::Log,
         err: &crate::Error,
@@ -1050,7 +1050,7 @@ where
         }
 
         let mut message: Vec<u8> = Vec::new();
-        let _ = write!(&mut message, "{}", Output::pretty_fmt::<false>(fmt));
+        let _ = write!(&mut message, "{}", fmt);
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
         let fallback_container = Box::new(Api::FallbackMessageContainer {
             message: Some(message.into_boxed_slice()),
@@ -1073,12 +1073,6 @@ where
             }),
         });
 
-        // `fmt::Arguments` has no const len, but an empty format string is
-        // detectable at runtime via `as_str() == Some("")`.
-        if fmt.as_str() != Some("") {
-            #[allow(clippy::disallowed_methods)] // fmt is a caller-provided Arguments parameter
-            Output::pretty_errorln(fmt);
-        }
         Output::flush();
 
         if self.method == Method::HEAD {
@@ -1121,7 +1115,7 @@ where
     }
 
     /// Drain a partial response buffer
-    pub fn drain_response_buffer_and_metadata(&mut self) {
+    pub(crate) fn drain_response_buffer_and_metadata(&mut self) {
         if let Some(resp) = self.resp {
             self.render_metadata();
 
@@ -1131,7 +1125,7 @@ where
         self.response_buf_owned.clear();
     }
 
-    pub fn end(&mut self, data: &[u8], close_connection: bool) {
+    pub(crate) fn end(&mut self, data: &[u8], close_connection: bool) {
         ctx_log!("end");
         if let Some(resp) = self.resp {
             self.detach_response();
@@ -1147,7 +1141,7 @@ where
         }
     }
 
-    pub fn end_stream(&mut self, close_connection: bool) {
+    pub(crate) fn end_stream(&mut self, close_connection: bool) {
         ctx_log!("endStream");
         if let Some(resp) = self.resp {
             self.detach_response();
@@ -1183,9 +1177,11 @@ where
     /// first). H3 therefore needs `end_stream()`'s `detach_response()` to
     /// disarm that callback before the context is released, or lsquic's later
     /// `on_stream_close` invokes it on a freed pool slot.
-    pub fn end_already_responded_stream(&mut self) {
+    pub(crate) fn end_already_responded_stream(&mut self) {
         ctx_log!("endAlreadyRespondedStream");
         debug_assert!(!HTTP3);
+        // `resp` may be freed (see above); the sink resumed it at `ended_response = true`.
+        self.flags.set_request_body_paused(false);
         if self.resp.take().is_some() {
             self.flags.set_is_waiting_for_request_body(false);
             self.flags.set_has_abort_handler(false);
@@ -1198,7 +1194,7 @@ where
         }
     }
 
-    pub fn end_without_body(&mut self, close_connection: bool) {
+    pub(crate) fn end_without_body(&mut self, close_connection: bool) {
         ctx_log!("endWithoutBody");
         if let Some(resp) = self.resp {
             self.detach_response();
@@ -1214,7 +1210,7 @@ where
         }
     }
 
-    pub fn force_close(&mut self) {
+    pub(crate) fn force_close(&mut self) {
         if let Some(resp) = self.resp {
             self.detach_response();
             // SAFETY: FFI handle
@@ -1231,26 +1227,7 @@ where
 
     /// # Safety
     /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
-    pub(crate) fn on_writable_response_buffer(
-        this: *mut Self,
-        _write_offset: u64,
-        _resp: uws::AnyResponse,
-    ) -> bool {
-        ctx_log!("onWritableResponseBuffer");
-        // SAFETY: caller upholds the fn-level contract — `this` is the live
-        // `RequestContext` user-data pointer registered with uWS.
-        let this = unsafe { &mut *this };
-        debug_assert!(this.resp.is_some());
-        if this.is_aborted_or_ended() {
-            return false;
-        }
-        this.end(b"", this.should_close_connection());
-        false
-    }
-
-    /// # Safety
-    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
-    pub(crate) fn on_writable_complete_response_buffer(
+    fn on_writable_complete_response_buffer(
         this: *mut Self,
         write_offset: u64,
         resp: uws::AnyResponse,
@@ -1288,7 +1265,7 @@ where
         }
     }
 
-    pub fn create(
+    pub(crate) fn create(
         this: &mut core::mem::MaybeUninit<Self>,
         server: *const ThisServer,
         req: *mut Req<SSL_ENABLED, HTTP3>,
@@ -1337,7 +1314,7 @@ where
 
     /// # Safety
     /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
-    pub(crate) fn on_timeout(this: *mut Self, _resp: uws::AnyResponse) {
+    fn on_timeout(this: *mut Self, _resp: uws::AnyResponse) {
         // SAFETY: caller upholds the fn-level contract — `this` is the live
         // `RequestContext` user-data pointer registered with uWS.
         let this = unsafe { &mut *this };
@@ -1370,7 +1347,7 @@ where
 
     /// # Safety
     /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
-    pub(crate) fn on_abort(this: *mut Self, resp: uws::AnyResponse) {
+    fn on_abort(this: *mut Self, resp: uws::AnyResponse) {
         ctx_log!("onAbort");
         // SAFETY: caller upholds the fn-level contract — `this` is the live
         // `RequestContext` user-data pointer registered with uWS.
@@ -1480,7 +1457,7 @@ where
 
     // This function may be called multiple times
     // so it's important that we can safely do that
-    pub fn finalize_without_deinit(&mut self) {
+    pub(crate) fn finalize_without_deinit(&mut self) {
         ctx_log!("finalizeWithoutDeinit<d> ({:p})<r>", self);
         self.blob.detach();
         debug_assert!(self.server.is_some());
@@ -1506,6 +1483,7 @@ where
         }
         self.response_weakref.deref();
 
+        self.detach_request_body_producer(global_this);
         self.request_body_readable_stream_ref.deinit();
 
         // Releases the ref taken in `set_cookies` (via `CookieMapRef::drop`).
@@ -1580,7 +1558,7 @@ where
     /// uWS callback registration — it only tracks `has_backpressure`. uWS only
     /// invokes the handler once its own send buffer has fully drained, so an
     /// always-armed registration costs nothing on the no-backpressure path.
-    pub(crate) fn on_writable_response_stream(
+    fn on_writable_response_stream(
         this: *mut Self,
         write_offset: u64,
         _resp: uws::AnyResponse,
@@ -1600,11 +1578,7 @@ where
 
     /// # Safety
     /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
-    pub(crate) fn on_writable_bytes(
-        this: *mut Self,
-        write_offset: u64,
-        resp: uws::AnyResponse,
-    ) -> bool {
+    fn on_writable_bytes(this: *mut Self, write_offset: u64, resp: uws::AnyResponse) -> bool {
         ctx_log!("onWritableBytes");
         // SAFETY: caller upholds the fn-level contract — `this` is the live
         // `RequestContext` user-data pointer registered with uWS.
@@ -1626,7 +1600,7 @@ where
         true
     }
 
-    pub fn send_writable_bytes_for_blob(
+    pub(crate) fn send_writable_bytes_for_blob(
         &mut self,
         bytes_: &[u8],
         write_offset_: u64,
@@ -1653,7 +1627,7 @@ where
         }
     }
 
-    pub fn send_writable_bytes_for_complete_response_buffer(
+    pub(crate) fn send_writable_bytes_for_complete_response_buffer(
         &mut self,
         write_offset_: u64,
         resp: uws::AnyResponse,
@@ -1688,7 +1662,7 @@ where
         true
     }
 
-    pub fn do_sendfile(&mut self, blob: Blob) {
+    pub(crate) fn do_sendfile(&mut self, blob: Blob) {
         if self.is_aborted_or_ended() {
             return;
         }
@@ -1944,7 +1918,7 @@ where
 
     /// # Safety
     /// `this` must be a `*mut RequestContext` previously registered as `lock.task`.
-    pub(crate) fn do_render_with_body_locked(this: *mut c_void, value: &mut Body::Value) {
+    fn do_render_with_body_locked(this: *mut c_void, value: &mut Body::Value) {
         // SAFETY: caller upholds the fn-level contract — `this` is the
         // `*mut RequestContext` previously registered as `lock.task`.
         Self::do_render_with_body(unsafe { bun_ptr::callback_ctx::<Self>(this) }, value, None);
@@ -2041,14 +2015,6 @@ where
         // SAFETY: just allocated; sole live mutable view (this.sink only stores the ptr).
         let response_stream = unsafe { &mut *response_stream_ptr.as_ptr() };
 
-        response_stream.sink.signal = crate::webcore::sink::SinkSignal::<
-            ResponseStream<SSL_ENABLED, HTTP3>,
-        >::init(JSValue::ZERO);
-
-        // explicitly set it to a dead pointer
-        // we use this memory address to disable signals being sent
-        response_stream.sink.signal.clear();
-        debug_assert!(response_stream.sink.signal.is_dead());
         // we need to render metadata before assignToStream because the stream can call res.end
         // and this would auto write an 200 status
         if !this.flags.has_written_status() {
@@ -2056,24 +2022,17 @@ where
         }
 
         // We are already corked!
-        // `Option<NonNull<c_void>>` is layout-compatible with `*mut c_void` (niche).
-        let signal_ptr_slot = (&raw mut response_stream.sink.signal.ptr).cast::<*mut c_void>();
         let assignment_result: JSValue =
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::assign_to_stream(
                 global_this,
                 stream.value,
                 &mut response_stream.sink,
-                signal_ptr_slot,
             );
 
         assignment_result.ensure_still_alive();
 
-        // assignToStream stored the controller's encoded JSValue in
-        // signal.ptr. If the stream already finished synchronously inside the
-        // call, controller.end()/.close() detached the controller and cleared
-        // the signal again (`__controllerDetached`), so the signal may be
-        // legitimately dead here; the has_responded()/promise-status branches
-        // below handle that state.
+        // assignToStream stored the controller in `sink.source`; a sync-finished stream's
+        // `__controllerDetached` may already have cleared it again (handled below).
 
         #[cfg(debug_assertions)]
         if resp.has_responded() {
@@ -2086,7 +2045,7 @@ where
         if let Some(err_value) = assignment_result.to_error() {
             stream_log!("returned an error");
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                &mut response_stream.sink.signal,
+                &mut response_stream.sink.source,
                 global_this,
             );
             this.sink = None;
@@ -2097,7 +2056,7 @@ where
         if resp.has_responded() {
             stream_log!("done");
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                &mut response_stream.sink.signal,
+                &mut response_stream.sink.source,
                 global_this,
             );
             this.sink = None;
@@ -2212,7 +2171,7 @@ where
                 // if is not a promise we treat it as Error
                 stream_log!("returned an error");
                 ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                    &mut response_stream.sink.signal,
+                    &mut response_stream.sink.source,
                     global_this,
                 );
                 this.sink = None;
@@ -2223,7 +2182,7 @@ where
 
         if this.is_aborted_or_ended() {
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                &mut response_stream.sink.signal,
+                &mut response_stream.sink.source,
                 global_this,
             );
             stream.cancel(global_this);
@@ -2254,7 +2213,7 @@ where
                     response_stream.sink.on_first_write = None;
                     response_stream.sink.ctx = None;
                     ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                        &mut response_stream.sink.signal,
+                        &mut response_stream.sink.source,
                         global_this,
                     );
                     response_stream.sink.mark_done();
@@ -2272,7 +2231,7 @@ where
         response_stream.sink.on_first_write = None;
         response_stream.sink.ctx = None;
         ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-            &mut response_stream.sink.signal,
+            &mut response_stream.sink.source,
             global_this,
         );
         stream.cancel(global_this);
@@ -2284,7 +2243,7 @@ where
         this.render_missing();
     }
 
-    pub fn did_upgrade_web_socket(&self) -> bool {
+    pub(crate) fn did_upgrade_web_socket(&self) -> bool {
         self.upgrade_context
             .map(|p| p as usize == usize::MAX)
             .unwrap_or(false)
@@ -2325,7 +2284,11 @@ where
         request_object.request_context.detach_request();
     }
 
-    pub fn to_async(&mut self, req: *mut Req<SSL_ENABLED, HTTP3>, request_object: &mut Request) {
+    pub(crate) fn to_async(
+        &mut self,
+        req: *mut Req<SSL_ENABLED, HTTP3>,
+        request_object: &mut Request,
+    ) {
         ctx_log!("toAsync");
         self.to_async_without_abort_handler(req, request_object);
         if DEBUG_MODE {
@@ -2367,6 +2330,27 @@ where
                 return Ok(true);
             }
         }
+
+        // `req.textStream()` transitions the body to `Value::Used`, so the
+        // Locked check above falls through. Error the ByteStream via our own
+        // strong ref instead so a pending read rejects rather than hanging.
+        if self.request_body_readable_stream_ref.has() {
+            let global_this = self.server().global_this();
+            let strong = core::mem::take(&mut self.request_body_readable_stream_ref);
+            if let Some(readable) = strong.get(global_this) {
+                readable.value.ensure_still_alive();
+                if let Some(bytes) = readable.ptr.bytes() {
+                    let mut err =
+                        Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed);
+                    bytes.on_data(WebCore::streams::Result::Err(
+                        err.to_stream_error(global_this),
+                    ))?;
+                    err.reset();
+                    return Ok(true);
+                }
+            }
+        }
+
         Ok(false)
     }
 
@@ -2374,6 +2358,10 @@ where
         self.request_body_buf = Vec::new();
 
         if let Some(resp) = self.resp.take() {
+            if self.flags.request_body_paused() {
+                self.flags.set_request_body_paused(false);
+                resp.resume();
+            }
             if self.flags.is_waiting_for_request_body() {
                 self.flags.set_is_waiting_for_request_body(false);
                 resp.clear_on_data();
@@ -2389,7 +2377,7 @@ where
         }
     }
 
-    pub fn is_aborted_or_ended(&self) -> bool {
+    pub(crate) fn is_aborted_or_ended(&self) -> bool {
         // resp == null or aborted or server.stop(true)
         self.resp.is_none()
             || self.flags.aborted()
@@ -2400,7 +2388,7 @@ where
 
     /// # Safety
     /// `pair` must point to a live stack-local `HeaderResponseSizePair` threaded through cork user-data.
-    pub(crate) fn do_render_head_response_after_s3_size_resolved(
+    fn do_render_head_response_after_s3_size_resolved(
         pair: *mut HeaderResponseSizePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>,
     ) {
         // SAFETY: caller upholds the fn-level contract — `pair` points to a
@@ -2428,7 +2416,10 @@ where
         Ok(())
     }
 
-    pub fn on_s3_size_resolved(result: S3::simple_request::S3StatResult<'_>, this: &mut Self) {
+    pub(crate) fn on_s3_size_resolved(
+        result: S3::simple_request::S3StatResult<'_>,
+        this: &mut Self,
+    ) {
         if let Some(resp) = this.resp {
             let size = match result {
                 S3::simple_request::S3StatResult::Failure(_)
@@ -2471,7 +2462,7 @@ where
         // not derive framing from that body (or the user headers) either
         // (RFC 9110 §9.3.2): render the exact metadata+framing GET would.
         if HTTPStatusText::is_null_body(response.status_code()) {
-            Self::do_render_blob_corked(std::ptr::from_mut::<Self>(this));
+            Self::do_render_null_body_status_corked(std::ptr::from_mut::<Self>(this));
             return;
         }
 
@@ -2637,7 +2628,7 @@ where
     //
     // - If you return a Promise, we drain the microtask queue once
     // - If you return a streaming Response, we drain the microtask queue (possibly the 2nd time this task!)
-    pub fn on_response(
+    pub(crate) fn on_response(
         &mut self,
         this: &ThisServer,
         request_value: JSValue,
@@ -2801,7 +2792,7 @@ where
         ctx.render_missing_invalid_response(response_value);
     }
 
-    pub fn handle_resolve_stream(req: &mut Self) {
+    pub(crate) fn handle_resolve_stream(req: &mut Self) {
         stream_log!("handleResolveStream");
 
         // endFromJS() can hit transport backpressure (common on QUIC right
@@ -2855,6 +2846,13 @@ where
             req.flags.set_aborted(aborted);
             wrote_anything = wrapper.sink.wrote > 0;
             ended_response = wrapper.sink.ended_response;
+            if ended_response {
+                // `resp` may be freed; the sink already resumed it. Clear these
+                // before `detach()` below re-enters JS so any drain callback /
+                // `on_start_buffering` reached from there early-returns.
+                req.flags.set_request_body_paused(false);
+                req.detach_request_body_producer(req.server().global_this());
+            }
 
             wrapper.sink.finalize();
             let sink_global = wrapper
@@ -2862,7 +2860,7 @@ where
                 .global_this
                 .expect("sink.global_this set in do_render_stream");
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                &mut wrapper.sink.signal,
+                &mut wrapper.sink.source,
                 &sink_global,
             );
             Self::destroy_sink(wrapper_ptr);
@@ -2905,7 +2903,10 @@ where
         req.end_stream(req.should_close_connection());
     }
 
-    pub fn on_resolve_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn on_resolve_stream(
+        _global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         stream_log!("onResolveStream");
         let args = callframe.arguments();
         let Some(req) = NativePromiseContext::take::<Self>(args[args.len() - 1]) else {
@@ -2916,7 +2917,7 @@ where
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn on_reject_stream(
+    pub(crate) fn on_reject_stream(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -2932,13 +2933,18 @@ where
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn handle_reject_stream(req: &mut Self, global_this: &JSGlobalObject, err: JSValue) {
+    pub(crate) fn handle_reject_stream(req: &mut Self, global_this: &JSGlobalObject, err: JSValue) {
         stream_log!("handleRejectStream");
 
         let mut ended_response = false;
         if let Some(wrapper) = req.sink_mut() {
             let wrapper_ptr = req.sink.take().expect("infallible: sink_mut returned Some");
             ended_response = wrapper.sink.ended_response;
+            if ended_response {
+                // `resp` may be freed; the sink already resumed it. Clear before JS below.
+                req.flags.set_request_body_paused(false);
+                req.detach_request_body_producer(global_this);
+            }
             if let Some(prom) = wrapper.sink.pending_flush.take() {
                 // The promise value was protected when pending_flush was
                 // assigned (flushFromJS / endFromJS). Drop that root before
@@ -2956,7 +2962,7 @@ where
                 .global_this
                 .expect("sink.global_this set in do_render_stream");
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                &mut wrapper.sink.signal,
+                &mut wrapper.sink.source,
                 &sink_global,
             );
             Self::destroy_sink(wrapper_ptr);
@@ -3075,7 +3081,7 @@ where
         req.end_stream(req.should_close_connection());
     }
 
-    pub fn do_render_with_body(
+    pub(crate) fn do_render_with_body(
         this: &mut Self,
         value: &mut Body::Value,
         owned_readable: Option<WebCore::ReadableStream>,
@@ -3192,7 +3198,7 @@ where
                             let byte_stream_nn = NonNull::new(byte_stream_ptr)
                                 .expect("Source::Bytes payload is non-null");
                             let byte_stream = bun_ptr::BackRef::from(byte_stream_nn);
-                            debug_assert!(byte_stream.pipe.get().ctx.is_none());
+                            debug_assert!(byte_stream.sink.get().is_none());
                             debug_assert!(this.byte_stream.is_none());
                             if this.resp.is_none() {
                                 // we don't have a response, so we can discard the stream
@@ -3217,7 +3223,11 @@ where
                             // body is in flight, so `handle_reject` must not
                             // fall through to render_missing() and end it.
                             this.flags.set_has_marked_pending(true);
-                            byte_stream.pipe.set(WebCore::Wrap::<Self>::init(this));
+                            byte_stream.sink.set(WebCore::SinkHandle::ServerResponse(
+                                AnyRequestContext::init(std::ptr::from_mut::<Self>(this)),
+                            ));
+                            stream.lock_native(global_this);
+                            byte_stream.signal_consumer_attached();
                             // Deinit the old Strong reference before creating a new one
                             // to avoid leaking the Strong.Impl memory
                             this.response_body_readable_stream_ref.deinit();
@@ -3270,13 +3280,15 @@ where
         this.do_render_blob();
     }
 
-    pub fn on_pipe(this: &mut Self, stream: &WebCore::streams::Result) {
-        let is_done = stream.is_done();
-        // Drop one ref only when the stream signals completion.
-        let _ref = is_done.then(|| RequestContextRef(std::ptr::from_mut::<Self>(this)));
-
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn write_chunk(
+        this: *mut Self,
+        stream: &WebCore::streams::Result,
+    ) -> WebCore::streams::Writable {
+        // SAFETY: caller passes the live `*mut RequestContext` stored as the sink ctx.
+        let this = unsafe { &mut *this };
         if this.is_aborted_or_ended() {
-            return;
+            return WebCore::streams::Writable::Done;
         }
         let resp = this.resp.expect("infallible: resp bound");
 
@@ -3286,24 +3298,64 @@ where
         // uSockets will append and manage the buffer
         // so any write will buffer if the write fails
         // SAFETY: FFI handle
-        if matches!(resp.write(chunk), uws::WriteResult::WantMore(_)) {
-            if is_done {
-                this.end_stream(this.should_close_connection());
-            }
-        } else {
-            // when it's the last one, we just want to know if it's done
-            if is_done {
+        match resp.write(chunk) {
+            uws::WriteResult::WantMore(n) => WebCore::streams::Writable::Owned(n as BlobSizeType),
+            uws::WriteResult::Backpressure(n) => {
                 this.flags.set_has_marked_pending(true);
                 // SAFETY: FFI handle
                 resp.on_writable(
-                    |this, off, resp| Self::on_writable_response_buffer(this, off, resp),
+                    |this, off, resp| Self::on_writable_byte_stream(this, off, resp),
                     this,
                 );
+                WebCore::streams::Writable::Backpressure(n as BlobSizeType)
             }
         }
     }
 
-    pub fn do_render_blob(&mut self) {
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn end_chunk(this: *mut Self, err: Option<&WebCore::streams::StreamError>) {
+        // Drop the ref taken when the ByteStream sink was installed.
+        let _ref = RequestContextRef(this);
+        // SAFETY: caller passes the live `*mut RequestContext` stored as the sink ctx.
+        let this = unsafe { &mut *this };
+
+        if this.is_aborted_or_ended() {
+            return;
+        }
+        if err.is_some()
+            && let Some(resp) = this.resp
+        {
+            let state = resp.state();
+            if state.is_http_write_called() && state.is_response_pending() {
+                this.force_close();
+                return;
+            }
+        }
+        this.end_stream(this.should_close_connection());
+    }
+
+    /// # Safety
+    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
+    pub(crate) fn on_writable_byte_stream(
+        this: *mut Self,
+        _write_offset: u64,
+        _resp: uws::AnyResponse,
+    ) -> bool {
+        ctx_log!("onWritableByteStream");
+        // SAFETY: fn-level contract; resume() re-enters write_chunk, so dispatch off raw ptr.
+        unsafe {
+            debug_assert!((*this).resp.is_some());
+            if (*this).is_aborted_or_ended() {
+                return false;
+            }
+            if let Some(bs) = (*this).byte_stream {
+                bun_ptr::BackRef::from(bs).resume();
+            }
+        }
+        true
+    }
+
+    pub(crate) fn do_render_blob(&mut self) {
         // We are not corked
         // The body is small
         // Faster to do the memcpy than to do the two network calls
@@ -3320,11 +3372,65 @@ where
 
     /// # Safety
     /// `this` must point to a live `RequestContext` threaded through cork user-data.
-    pub(crate) fn do_render_blob_corked(this: *mut Self) {
+    fn do_render_blob_corked(this: *mut Self) {
         // SAFETY: caller upholds the fn-level contract — `this` points to a
         // live `RequestContext` threaded through cork user-data.
         let this = unsafe { &mut *this };
         this.render_metadata();
+        this.render_bytes();
+    }
+
+    pub(crate) fn do_render_null_body_status(&mut self) {
+        if self.flags.has_abort_handler() {
+            if let Some(resp) = self.resp {
+                resp.run_corked_with_type(Self::do_render_null_body_status_corked, self);
+            }
+        } else {
+            Self::do_render_null_body_status_corked(std::ptr::from_mut::<Self>(self));
+        }
+    }
+
+    /// Render a response whose status forbids a body (RFC 9112 §6.3). `try_end`
+    /// would put `Content-Length: 0` on a 304 (uWS only suppresses it for
+    /// 1xx/204); RFC 9110 §8.6 only allows the 200's length, so forward the
+    /// handler's value or emit none.
+    ///
+    /// # Safety
+    /// `this` must point to a live `RequestContext` threaded through cork user-data.
+    fn do_render_null_body_status_corked(this: *mut Self) {
+        // SAFETY: caller upholds the fn-level contract.
+        let this = unsafe { &mut *this };
+
+        let (status, app_content_length) = {
+            let response: &mut Response = this.response_weakref.get().unwrap();
+            let status = response.status_code();
+            // Parsed before render_metadata() fast_remove()s it and derefs the headers.
+            let app_cl = (status == 304)
+                .then(|| {
+                    let s = response
+                        .get_init_headers_mut()?
+                        .fast_get(jsc::HTTPHeaderName::ContentLength)?
+                        .to_slice();
+                    bun_core::parse_int::<u64>(s.slice(), 10).ok()
+                })
+                .flatten();
+            (status, app_cl)
+        };
+
+        this.render_metadata();
+
+        if status == 304 {
+            if let Some(resp) = this.resp {
+                if let Some(len) = app_content_length {
+                    resp.write_header_int(b"content-length", len);
+                }
+                // end_without_body skips writeMark(); keep Date as try_end did.
+                resp.write_mark();
+                this.end_without_body(this.should_close_connection());
+                return;
+            }
+        }
+        // render_bytes releases the base ref on every path (resp gone included).
         this.render_bytes();
     }
 
@@ -3334,7 +3440,7 @@ where
         unsafe { (*this).render_metadata() };
     }
 
-    pub fn do_render(&mut self) {
+    pub(crate) fn do_render(&mut self) {
         ctx_log!("doRender");
 
         if self.is_aborted_or_ended() {
@@ -3357,7 +3463,7 @@ where
         );
     }
 
-    pub fn render_production_error(&mut self, status: u16) {
+    pub(crate) fn render_production_error(&mut self, status: u16) {
         if let Some(resp) = self.resp {
             // `AnyResponse` is a `Copy` handle; methods take `self` by value.
             match status {
@@ -3386,7 +3492,7 @@ where
         }
     }
 
-    pub fn run_error_handler(&mut self, value: JSValue) {
+    pub(crate) fn run_error_handler(&mut self, value: JSValue) {
         self.run_error_handler_with_status_code(value, 500);
     }
 
@@ -3418,7 +3524,7 @@ where
     }
 
     #[inline]
-    pub fn should_close_connection(&self) -> bool {
+    pub(crate) fn should_close_connection(&self) -> bool {
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
             return resp.should_close_connection();
@@ -3448,11 +3554,12 @@ where
             let log = vm.log_mut().unwrap();
             // NOTE: format eagerly so `format_args!` doesn't hold an
             // immutable borrow of `self` across the `&mut self` call.
-            let msg = format!(
+            bun_core::pretty_errorln!(
                 "<r><red>{:?}<r> - <b>{}<r> failed",
                 self.method,
                 self.ensure_pathname()
             );
+            let msg = format!("{:?} - {} failed", self.method, self.ensure_pathname());
             self.render_default_error(
                 log,
                 &crate::Error::ExceptionOcurred,
@@ -3469,7 +3576,7 @@ where
         vm.log_mut().unwrap().reset();
     }
 
-    pub fn run_error_handler_with_status_code_dont_check_responded(
+    pub(crate) fn run_error_handler_with_status_code_dont_check_responded(
         &mut self,
         value: JSValue,
         status: u16,
@@ -3593,7 +3700,7 @@ where
         }
     }
 
-    pub fn run_error_handler_with_status_code(&mut self, value: JSValue, status: u16) {
+    pub(crate) fn run_error_handler_with_status_code(&mut self, value: JSValue, status: u16) {
         jsc::mark_binding!();
         let Some(resp) = self.resp else { return };
         if resp.has_responded() {
@@ -3603,7 +3710,7 @@ where
         self.run_error_handler_with_status_code_dont_check_responded(value, status);
     }
 
-    pub fn render_metadata(&mut self) {
+    pub(crate) fn render_metadata(&mut self) {
         // `AnyResponse` is a `Copy` handle; methods take `self` by value.
         let Some(resp) = self.resp else { return };
 
@@ -3787,7 +3894,7 @@ where
         }
     }
 
-    pub fn render_bytes(&mut self) {
+    pub(crate) fn render_bytes(&mut self) {
         // copy it to stack memory to prevent aliasing issues in release builds
         // NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
         // so the slice borrow doesn't conflict with `&mut self` below.
@@ -3836,7 +3943,7 @@ where
 
     /// # Safety
     /// Same contract as [`Self::set_response`].
-    pub unsafe fn render(&mut self, response: *mut Response) {
+    pub(crate) unsafe fn render(&mut self, response: *mut Response) {
         ctx_log!("render");
 
         // A HEAD response never carries content (RFC 9110 §9.3.2). The normal
@@ -3858,7 +3965,7 @@ where
 
         // SAFETY: caller contract — `response` is live.
         if HTTPStatusText::is_null_body(unsafe { (*response).status_code() }) {
-            self.do_render_blob();
+            self.do_render_null_body_status();
             return;
         }
 
@@ -3901,6 +4008,7 @@ where
             if this.request_body_streamed_len > server.config().max_request_body_size {
                 this.resp.expect("infallible: resp bound").clear_on_data();
                 this.flags.set_is_waiting_for_request_body(false);
+                this.resume_request_body_socket();
 
                 let _exit = vm.enter_event_loop_scope();
 
@@ -3911,6 +4019,8 @@ where
 
                 readable.value.ensure_still_alive();
                 if let Some(bytes) = readable.ptr.bytes() {
+                    let source = bytes.parent_const();
+                    source.producer.set(WebCore::streams::SourceHandle::None);
                     let mut err = Body::ValueError::Message(BunString::static_(
                         "Request body exceeded maxRequestBodySize",
                     ));
@@ -3951,7 +4061,19 @@ where
                 );
                 // TODO: properly propagate exception upwards
                 let _ = bytes.on_data(WebCore::streams::Result::Temporary(borrowed));
+
+                // What `on_data` buffered; `on_stream_drained` resumes once it empties.
+                let buffered = bytes.buffer.get().len().saturating_sub(bytes.offset.get());
+                if bytes.buffer_action.get().is_some()
+                    || (bytes.sink.get().is_some() && !bytes.sink_paused.get())
+                {
+                    // buffer-action / draining sink: no `on_pull`; keep reading.
+                    this.resume_request_body_socket();
+                } else if buffered >= REQUEST_BODY_HIGH_WATER_MARK {
+                    this.pause_request_body_socket();
+                }
             } else {
+                this.resume_request_body_socket();
                 // Moved out so the Strong (and its underlying GC handle) is
                 // released at scope exit via `Drop` on `strong::Optional`.
                 let _strong = core::mem::take(&mut this.request_body_readable_stream_ref);
@@ -3966,6 +4088,8 @@ where
                 let bytes = bun_ptr::BackRef::from(
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
                 );
+                let source = bytes.parent_const();
+                source.producer.set(WebCore::streams::SourceHandle::None);
                 // TODO: properly propagate exception upwards
                 let _ = bytes.on_data(WebCore::streams::Result::TemporaryAndDone(borrowed));
             }
@@ -4055,10 +4179,98 @@ where
                 );
             }
             this.request_body_buf.extend_from_slice(chunk);
+
+            // Pre-stream backpressure; resumed by `on_stream_drained` / `on_start_buffering`.
+            if !this.flags.request_body_buffer_all()
+                && this.request_body_buf.len() >= REQUEST_BODY_HIGH_WATER_MARK
+            {
+                this.pause_request_body_socket();
+            }
         }
     }
 
-    pub fn on_start_streaming_request_body(&mut self) -> WebCore::DrainResult {
+    fn pause_request_body_socket(&mut self) {
+        if self.flags.request_body_paused() {
+            return;
+        }
+        let Some(resp) = self.resp else {
+            return;
+        };
+        ctx_log!("pauseRequestBodySocket");
+        self.flags.set_request_body_paused(true);
+        resp.pause();
+    }
+
+    fn resume_request_body_socket(&mut self) {
+        if !self.flags.request_body_paused() {
+            return;
+        }
+        ctx_log!("resumeRequestBodySocket");
+        self.flags.set_request_body_paused(false);
+        if self.resp_may_be_freed() {
+            return;
+        }
+        if let Some(resp) = self.resp {
+            resp.resume();
+        }
+    }
+
+    /// After a streaming-response sink has set `ended_response`, `markDone()`
+    /// dropped `onAborted` and `resp` may point at a freed `us_socket_t` (see
+    /// `end_already_responded_stream`). The sink already resumed the socket.
+    #[inline]
+    fn resp_may_be_freed(&self) -> bool {
+        if let Some(sink) = self.sink {
+            // SAFETY: `sink` is owned by this context and freed in `handle_resolve_stream`/`deinit`.
+            return unsafe { (*sink.as_ptr()).sink.ended_response };
+        }
+        false
+    }
+
+    /// Detach the body ByteStream's producer back-pointer (the stream can outlive this ctx in JS).
+    fn detach_request_body_producer(&self, global_this: &JSGlobalObject) {
+        let Some(readable) = self.request_body_readable_stream_ref.get(global_this) else {
+            return;
+        };
+        if let Some(bytes) = readable.ptr.bytes() {
+            let source = bytes.parent_const();
+            source.producer.set(WebCore::streams::SourceHandle::None);
+        }
+    }
+
+    /// # Safety
+    /// `this` must be the live `*mut RequestContext` previously registered as the
+    /// body stream's drain producer.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn on_request_body_stream_drained(this: *mut Self) {
+        // SAFETY: `this` is the registered `*mut RequestContext`. `ByteStream::
+        // on_data` can re-enter here while `on_buffered_body_chunk` already
+        // holds `&mut Self` (borrow = ptr), so dispatch via the raw pointer.
+        unsafe {
+            let flags = &raw mut (*this).flags;
+            if !(*flags).request_body_paused() {
+                return;
+            }
+            (*flags).set_request_body_paused(false);
+            if (*this).resp.is_none()
+                || (*flags).aborted()
+                || (*this).server.is_none_or(|s| s.terminated())
+            {
+                return;
+            }
+            // Inline `resp_may_be_freed()` via raw ptr (borrow = ptr; see above).
+            if let Some(sink) = (*this).sink {
+                if (*sink.as_ptr()).sink.ended_response {
+                    return;
+                }
+            }
+            if let Some(resp) = (*this).resp {
+                resp.resume();
+            }
+        }
+    }
+
+    pub(crate) fn on_start_streaming_request_body(&mut self) -> WebCore::DrainResult {
         ctx_log!("onStartStreamingRequestBody");
         if self.is_aborted_or_ended() {
             return WebCore::DrainResult::Aborted;
@@ -4086,9 +4298,12 @@ where
         WebCore::DrainResult::EstimatedSize(self.request_body_content_len)
     }
 
-    pub fn on_start_buffering(&mut self) {
+    pub(crate) fn on_start_buffering(&mut self) {
         if let Some(server) = self.server {
             ctx_log!("onStartBuffering");
+            // `.text()`/`.json()` want the whole body; disable pre-stream backpressure.
+            self.flags.set_request_body_buffer_all(true);
+            self.resume_request_body_socket();
             // TODO: check if is someone calling onStartBuffering other than onStartBufferingCallback
             // if is not, this should be removed and only keep protect + setAbortHandler
             // HTTP/3 (RFC 9114): Content-Length is optional; the body is
@@ -4145,7 +4360,7 @@ where
         unsafe { bun_ptr::callback_ctx::<Self>(this) }.on_start_streaming_request_body()
     }
 
-    pub fn get_remote_socket_info(&self) -> Option<uws::SocketAddress> {
+    pub(crate) fn get_remote_socket_info(&self) -> Option<uws::SocketAddress> {
         let resp = self.resp?;
         // `AnyResponse::get_remote_socket_info` returns the uws_sys
         // variant; convert to the owned `bun_uws::SocketAddress`.
@@ -4158,7 +4373,7 @@ where
         })
     }
 
-    pub fn set_timeout(&mut self, seconds: c_uint) -> bool {
+    pub(crate) fn set_timeout(&mut self, seconds: c_uint) -> bool {
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
             resp.timeout(seconds.min(255) as u8);
@@ -4182,6 +4397,9 @@ where
 }
 
 const MAX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 1024 * 256;
+
+/// Pause socket reads at this many unconsumed request-body bytes (two 512 KB uWS recv buffers).
+const REQUEST_BODY_HIGH_WATER_MARK: usize = 1024 * 1024;
 
 // Trap host fn for the `(false, _, true)` arms of `exported_host_fns`. Those
 // `RequestContext` monomorphs (plain-HTTP/3) are type-reachable via the
@@ -4318,7 +4536,7 @@ pub struct StreamPair<'a, ThisServer, const SSL: bool, const DBG: bool, const H3
 pub struct HeaderResponseSizePair<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool>
 {
     pub this: &'a mut RequestContext<ThisServer, SSL, DBG, H3>,
-    pub size: usize,
+    pub(crate) size: usize,
 }
 
 pub struct HeaderResponsePair<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> {
@@ -4326,7 +4544,7 @@ pub struct HeaderResponsePair<'a, ThisServer, const SSL: bool, const DBG: bool, 
     /// The JS wrapper's cell pointer, not a `&mut Response`: the receiving
     /// frame hands it to `set_response`, which stores it in a `WeakPtr` that
     /// outlives any reborrow. The cell is GC-rooted by the constructing frame.
-    pub response: *mut Response,
+    pub(crate) response: *mut Response,
 }
 
 pub struct PathnameFormatter<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> {
@@ -4366,36 +4584,23 @@ where
     }
 }
 
-// `WebCore::Wrap<Self>::init(this)` requires `Self: PipeHandler`.
-impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: bool>
-    WebCore::PipeHandler for RequestContext<ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>
-where
-    ThisServer: ServerLike + 'static,
-{
-    fn on_pipe(&mut self, stream: WebCore::streams::Result) {
-        // Forward to the inherent associated fn (not method-dispatched to avoid
-        // recursing into this trait impl).
-        RequestContext::on_pipe(self, &stream)
-    }
-}
-
 // Retained only for `renderMetadata` to compute Content-Range / Content-Length
 // for file-blob bodies; the actual fd/socket bookkeeping lives in
 // `FileResponseStream` now.
 #[derive(Default, Clone, Copy)]
 pub struct SendfileContext {
-    pub remain: BlobSizeType,
+    pub(crate) remain: BlobSizeType,
     pub offset: BlobSizeType,
     /// When non-zero, the Content-Range total (`/{total}` instead of `/*`).
-    pub total: BlobSizeType,
+    pub(crate) total: BlobSizeType,
 }
 
-// All flags are bool (with two debug-conditional ones), so `bitflags!` over u16
-// works. We keep all bits in every build and just gate the
-// `is_web_browser_navigation` / `has_finalized` accessors on the const params.
+// All flags are bool (with two debug-conditional ones). We keep all bits in
+// every build and just gate the `is_web_browser_navigation` / `has_finalized`
+// accessors on the const params.
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
-    pub struct FlagsBits: u16 {
+    pub struct FlagsBits: u32 {
         const HAS_MARKED_COMPLETE         = 1 << 0;
         const HAS_MARKED_PENDING          = 1 << 1;
         const HAS_ABORT_HANDLER           = 1 << 2;
@@ -4416,6 +4621,10 @@ bitflags::bitflags! {
         const ABORTED                     = 1 << 13;
         const HAS_FINALIZED               = 1 << 14;
         const IS_ERROR_PROMISE_PENDING    = 1 << 15;
+        /// Socket reads are paused because the request-body buffer is over its high-water mark.
+        const REQUEST_BODY_PAUSED         = 1 << 16;
+        /// `on_start_buffering` fired (`.text()` etc.); skip pre-stream backpressure.
+        const REQUEST_BODY_BUFFER_ALL     = 1 << 17;
     }
 }
 
@@ -4495,24 +4704,35 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         set_is_error_promise_pending,
         IS_ERROR_PROMISE_PENDING
     );
+    flag_accessor!(
+        request_body_paused,
+        set_request_body_paused,
+        REQUEST_BODY_PAUSED
+    );
+    flag_accessor!(
+        request_body_buffer_all,
+        set_request_body_buffer_all,
+        REQUEST_BODY_BUFFER_ALL
+    );
 
     #[inline]
-    pub fn is_web_browser_navigation(self) -> bool {
+    pub(crate) fn is_web_browser_navigation(self) -> bool {
         DEBUG_MODE && self.0.contains(FlagsBits::IS_WEB_BROWSER_NAVIGATION)
     }
     #[inline]
-    pub fn set_is_web_browser_navigation(&mut self, v: bool) {
+    pub(crate) fn set_is_web_browser_navigation(&mut self, v: bool) {
         if DEBUG_MODE {
             self.0.set(FlagsBits::IS_WEB_BROWSER_NAVIGATION, v)
         }
     }
 
     #[inline]
-    pub fn has_finalized(self) -> bool {
+    pub(crate) fn has_finalized(self) -> bool {
         cfg!(debug_assertions) && self.0.contains(FlagsBits::HAS_FINALIZED)
     }
+    #[cfg(debug_assertions)]
     #[inline]
-    pub fn set_has_finalized(&mut self, v: bool) {
+    pub(crate) fn set_has_finalized(&mut self, v: bool) {
         #[cfg(debug_assertions)]
         self.0.set(FlagsBits::HAS_FINALIZED, v);
         #[cfg(not(debug_assertions))]

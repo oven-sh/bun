@@ -16,8 +16,8 @@ use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub struct Ls {
-    pub opts: Opts,
-    pub state: State,
+    pub(crate) opts: Opts,
+    pub(crate) state: State,
 }
 
 #[derive(Default)]
@@ -30,23 +30,15 @@ pub enum State {
 }
 
 pub struct ExecState {
-    pub err: Option<bun_sys::Error>,
-    pub task_count: AtomicUsize,
-    pub tasks_done: usize,
-    pub output_waiting: usize,
-    pub output_done: usize,
+    pub(crate) err: Option<bun_sys::Error>,
+    pub(crate) task_count: AtomicUsize,
+    pub(crate) tasks_done: usize,
+    pub(crate) output_waiting: usize,
+    pub(crate) output_done: usize,
     /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
     /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
     /// directly — see mkdir.rs `Exec::output_queue` for rationale.
-    pub output_queue: std::collections::VecDeque<*mut OutputTask<Ls>>,
-}
-
-/// Custom parse error for invalid options (ls uses its own per-byte parser,
-/// not the shared `FlagParser`).
-pub enum LsParseError {
-    /// Carries an owned 1-byte copy of the offending flag char.
-    IllegalOption(Box<[u8]>),
-    ShowUsage,
+    pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Ls>>,
 }
 
 enum ParseFlag {
@@ -60,7 +52,7 @@ impl Ls {
         Self::next(interp, cmd)
     }
 
-    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         // Match on a tag, drop the borrow, then act.
         enum Tag {
             Idle,
@@ -80,17 +72,14 @@ impl Ls {
                 // which case we run once with ".".
                 let paths_start = match Self::parse_opts(interp, cmd) {
                     Ok(p) => p,
-                    Err(e) => {
-                        let buf: Vec<u8> = match e {
-                            LsParseError::IllegalOption(opt) => Builtin::fmt_error_arena(
-                                interp,
-                                cmd,
-                                Some(Kind::Ls),
-                                format_args!("illegal option -- {}\n", bstr::BStr::new(&opt[..])),
-                            )
-                            .to_vec(),
-                            LsParseError::ShowUsage => Kind::Ls.usage_string().to_vec(),
-                        };
+                    Err(opt) => {
+                        let buf: Vec<u8> = Builtin::fmt_error_arena(
+                            interp,
+                            cmd,
+                            Some(Kind::Ls),
+                            format_args!("illegal option -- {}\n", bstr::BStr::new(&opt[..])),
+                        )
+                        .to_vec();
                         Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
                         return Builtin::write_failing_error(interp, cmd, &buf, 1);
                     }
@@ -209,11 +198,7 @@ impl Ls {
     /// # Safety
     /// `task` must be a live heap allocation produced by
     /// [`ShellLsTask::create`]; ownership is reclaimed here.
-    pub(crate) fn on_shell_ls_task_done(
-        interp: &Interpreter,
-        cmd: NodeId,
-        task: NonNull<ShellLsTask>,
-    ) {
+    fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: NonNull<ShellLsTask>) {
         // SAFETY: precondition.
         let mut task = unsafe { bun_core::heap::take(task.as_ptr()) };
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -234,9 +219,9 @@ impl Ls {
         OutputTask::<Ls>::start(output_task, interp, errstr.as_deref()).run(interp);
     }
 
-    /// Returns the index of the
-    /// first non-flag arg, or `None` if there are no positional args.
-    fn parse_opts(interp: &Interpreter, cmd: NodeId) -> Result<Option<usize>, LsParseError> {
+    /// Returns the index of the first non-flag arg, or `None` if there are no
+    /// positional args. `Err` carries the offending flag byte.
+    fn parse_opts(interp: &Interpreter, cmd: NodeId) -> Result<Option<usize>, Box<[u8]>> {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
             return Ok(None);
@@ -247,7 +232,7 @@ impl Ls {
             match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, flag) {
                 ParseFlag::Done => return Ok(Some(idx)),
                 ParseFlag::ContinueParsing => {}
-                ParseFlag::IllegalOption(s) => return Err(LsParseError::IllegalOption(s)),
+                ParseFlag::IllegalOption(s) => return Err(s),
             }
             idx += 1;
         }
@@ -380,7 +365,7 @@ pub(crate) struct ShellLsTask {
 }
 
 impl ShellLsTask {
-    pub(crate) fn create(
+    fn create(
         cmd: NodeId,
         opts: Opts,
         task_count: *const AtomicUsize,
@@ -455,7 +440,7 @@ impl ShellLsTask {
         ZBox::from_bytes(out)
     }
 
-    pub(crate) fn run_from_thread_pool(this: &mut ShellLsTask) {
+    fn run_from_thread_pool(this: &mut ShellLsTask) {
         // Cache current time once per task for timestamp formatting.
         if this.opts.long_listing {
             this.now_secs = bun_core::time::timestamp().max(0) as u64;
@@ -618,7 +603,7 @@ impl ShellLsTask {
     /// `this` must be a live heap allocation produced by
     /// [`ShellLsTask::create`]; ownership is reclaimed via
     /// [`Ls::on_shell_ls_task_done`].
-    pub(crate) fn run_from_main_thread(this: NonNull<ShellLsTask>, interp: &Interpreter) {
+    fn run_from_main_thread(this: NonNull<ShellLsTask>, interp: &Interpreter) {
         // SAFETY: precondition.
         let cmd = unsafe { this.as_ref() }.cmd;
         Ls::on_shell_ls_task_done(interp, cmd, this);
@@ -781,13 +766,13 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {
 #[derive(Clone, Copy, Default)]
 pub struct Opts {
     /// `-a`, `--all` — do not ignore entries starting with `.`
-    pub show_all: bool,
+    pub(crate) show_all: bool,
     /// `-A`, `--almost-all` — like `-a` but skip `.` and `..`
-    pub show_almost_all: bool,
+    pub(crate) show_almost_all: bool,
     /// `-d`, `--directory` — list directories themselves, not their contents
-    pub list_directories: bool,
+    pub(crate) list_directories: bool,
     /// `-l` — use a long listing format
-    pub long_listing: bool,
+    pub(crate) long_listing: bool,
     /// `-R`, `--recursive` — list subdirectories recursively
-    pub recursive: bool,
+    pub(crate) recursive: bool,
 }

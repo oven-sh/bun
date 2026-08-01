@@ -13,7 +13,7 @@ use crate::{
 pub struct BuildMessage {
     pub msg: bun_ast::Msg,
     // resolve_result: Resolver.Result,
-    pub logged: Cell<bool>,
+    pub(crate) logged: Cell<bool>,
 }
 
 impl Default for BuildMessage {
@@ -46,7 +46,7 @@ impl BuildMessage {
     }
 
     /// Builds the `.stack` string; also used by ResolveMessage.
-    pub fn generate_stack_string(name: &[u8], msg: &bun_ast::Msg) -> Vec<u8> {
+    pub(crate) fn generate_stack_string(name: &[u8], msg: &bun_ast::Msg) -> Vec<u8> {
         let mut text: Vec<u8> = Vec::new();
         write!(
             &mut text,
@@ -78,7 +78,7 @@ impl BuildMessage {
         Ok(ZigString::init_utf8(&text).to_js(global))
     }
 
-    pub fn to_string_fn(&self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_string_fn(&self, global: &JSGlobalObject) -> JSValue {
         // write! into a Vec<u8>; Rust aborts on OOM so no OOM-throw path is needed.
         let mut text: Vec<u8> = Vec::new();
         write!(
@@ -168,7 +168,7 @@ impl BuildMessage {
         Ok(object)
     }
 
-    pub fn generate_position_object(msg: &bun_ast::Msg, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn generate_position_object(msg: &bun_ast::Msg, global: &JSGlobalObject) -> JSValue {
         let Some(location) = &msg.data.location else {
             return JSValue::NULL;
         };

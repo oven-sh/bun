@@ -186,14 +186,6 @@ struct IDLByteString : IDLString<String> {
 struct IDLUSVString : IDLString<String> {
 };
 
-template<typename T> struct IDLLegacyNullToEmptyStringAdaptor : IDLString<String> {
-    using InnerType = T;
-};
-
-template<typename T> struct IDLLegacyNullToEmptyAtomStringAdaptor : IDLString<AtomString> {
-    using InnerType = T;
-};
-
 template<typename T> struct IDLAtomStringAdaptor : IDLString<AtomString> {
     using InnerType = T;
 };
@@ -363,18 +355,6 @@ struct IDLDate : IDLType<WallTime> {
     static WallTime nullValue() { return WallTime::nan(); }
     static bool isNullValue(WallTime value) { return value.isNaN(); }
     static WallTime extractValueFromNullable(WallTime value) { return value; }
-};
-
-struct IDLJSON : IDLType<String> {
-    using ConversionResultType = String;
-    using NullableConversionResultType = String;
-    using ParameterType = const String&;
-    using NullableParameterType = const String&;
-
-    using NullableType = String;
-    static String nullValue() { return String(); }
-    static bool isNullValue(const String& value) { return value.isNull(); }
-    template<typename U> static U&& extractValueFromNullable(U&& value) { return std::forward<U>(value); }
 };
 
 struct IDLScheduledAction : IDLType<std::unique_ptr<ScheduledAction>> {

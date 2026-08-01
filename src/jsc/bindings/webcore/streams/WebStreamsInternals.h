@@ -69,7 +69,6 @@ using WebCore::JSReadableStreamReaderBase;
 using WebCore::JSReadIntoRequest;
 using WebCore::JSReadRequest;
 using WebCore::JSReadStreamIntoSinkOperation;
-using WebCore::JSResumableSinkPumpOperation;
 using WebCore::JSStreamFromIterableContext;
 using WebCore::JSStreamPipeToOperation;
 using WebCore::JSStreamsRuntime;
@@ -132,8 +131,7 @@ bool canTransferArrayBuffer(JSC::ArrayBuffer&); // userJS: no — WebStreamsMisc
 // spec CanTransferArrayBuffer(O) — pure.
 // spec CloneAsUint8Array(O) — allocation-throws only.
 JSC::JSUint8Array* cloneAsUint8Array(JSC::JSGlobalObject*, JSC::JSArrayBufferView*); // userJS: no — WebStreamsMisc.cpp
-// spec StructuredClone(v): use the EXISTING WebCore::structuredCloneForStream
-// (src/jsc/bindings/webcore/StructuredClone.h). No streams-local duplicate is declared.
+// spec StructuredClone(v): no caller — every tee path passes cloneForBranch2 = false.
 // spec CanCopyDataBlockBytes(toBuffer, toIndex, fromBuffer, fromIndex, count) — pure.
 bool canCopyDataBlockBytes(JSC::ArrayBuffer& toBuffer, size_t toIndex, JSC::ArrayBuffer& fromBuffer, size_t fromIndex, size_t count); // userJS: no — WebStreamsMisc.cpp
 
@@ -192,6 +190,13 @@ void webStreamControllerError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSVa
 // clearException() anywhere in the subsystem.
 JSC::JSValue takeAbruptCompletion(JSC::JSGlobalObject*, JSC::TopExceptionScope&); // userJS: no — WebStreamsMisc.cpp
 
+// Joins any pending bytes, strips a single leading BOM per stream (ignoreBOM=false), holds
+// back a trailing incomplete sequence (unless `flush`), and decodes the remaining span via
+// Bun's simdutf-backed UTF-8 path (invalid sequences replaced by U+FFFD). Returns nullptr
+// when no complete code points were produced (callers skip the enqueue), or on a decode
+// throw (check the scope).
+JSC::JSString* streamingUTF8Decode(JSC::JSGlobalObject*, std::span<const uint8_t> chunk, StreamingUTF8DecodeState&, bool flush); // userJS: no — WebStreamsMisc.cpp
+
 // ReadableStreamOperations.cpp — stream-level RS ops, reader set-up, controller set-up,
 // tee, from-iterable.
 
@@ -229,13 +234,16 @@ bool readableStreamHasDefaultReader(JSReadableStream*); // userJS: no — Readab
 bool readableStreamHasBYOBReader(JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
 
 // Tee / from / pipe entry points.
-// Bun: `cloneForBranch2` is Bun's `shouldClone` (Response.clone passes true; the public
-// tee() passes false). ALSO runs materializeIfNeeded first.
-std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSC::JSGlobalObject*, JSReadableStream*, bool cloneForBranch2); // userJS: yes — ReadableStreamOperations.cpp
-std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSC::JSGlobalObject*, JSReadableStream*, bool cloneForBranch2); // userJS: yes — ReadableStreamOperations.cpp
+// Bun: the spec's `cloneForBranch2` is not implemented; both branches share each chunk by
+// reference (see WebStreamsExports.cpp). ALSO runs materializeIfNeeded first.
+std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
+std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
 std::pair<JSReadableStream*, JSReadableStream*> readableByteStreamTee(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
 // spec ReadableStreamFromIterable(asyncIterable) — `ReadableStream.from`.
 JSReadableStream* readableStreamFromIterable(JSC::JSGlobalObject*, JSC::JSValue asyncIterable); // userJS: yes — ReadableStreamOperations.cpp
+// Body.textStream() over an existing byte ReadableStream: locks a default reader on
+// `source` and returns a SourceKind::TextDecode stream that UTF-8-decodes each chunk.
+JSReadableStream* readableStreamTextDecodeFrom(JSC::JSGlobalObject*, JSReadableStream* source); // userJS: yes — ReadableStreamOperations.cpp
 
 // Non-JavaScript SourceKind algorithm ARMS owned by THIS file. The controller's pull/cancel
 // dispatch is a TOTAL `switch (m_algorithms.kind)` in JSReadableStreamDefaultController.cpp /
@@ -250,6 +258,13 @@ JSC::JSPromise* byteTeeCancelAlgorithm(JSC::JSGlobalObject*, JSStreamTeeState*, 
 // FromIterable (the controller's algorithmContext is the JSStreamFromIterableContext):
 JSC::JSPromise* fromIterablePullAlgorithm(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: yes (iterator `next`) — ReadableStreamOperations.cpp
 JSC::JSPromise* fromIterableCancelAlgorithm(JSC::JSGlobalObject*, JSReadableStreamDefaultController*, JSC::JSValue reason); // userJS: yes (iterator `return`) — ReadableStreamOperations.cpp
+// TextDecode (Body.textStream() reading from an existing byte ReadableStream; the
+// controller's algorithmContext is the source reader, decode state inline on
+// m_algorithms.textDecodeState):
+JSC::JSPromise* textDecodePullAlgorithm(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: yes (source pull) — ReadableStreamOperations.cpp
+JSC::JSPromise* textDecodeCancelAlgorithm(JSC::JSGlobalObject*, JSReadableStreamDefaultController*, JSC::JSValue reason); // userJS: yes — ReadableStreamOperations.cpp
+void textDecodeReadRequestChunkSteps(JSC::JSGlobalObject*, JSReadableStreamDefaultController*, JSC::JSValue chunk); // userJS: yes — ReadableStreamOperations.cpp
+void textDecodeReadRequestCloseSteps(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: yes — ReadableStreamOperations.cpp
 // (The Transform arm's cross-file targets are transformStreamDefaultSource{Pull,Cancel}Algorithm
 // below; the Native arm's are nativeSource{Start,Pull,Cancel} in the BunStreamSource.cpp
 // section; the CrossRealm arms are with the rest of CrossRealmTransform.cpp.)
@@ -514,8 +529,6 @@ JSC::JSValue assignToStream(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValu
 JSC::JSValue readDirectStream(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* sinkController, JSC::JSObject* underlyingSource); // userJS: yes — BunStreamSource.cpp
 // The generic pump into a native JSSink controller.
 JSC::JSPromise* readStreamIntoSink(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* sink); // userJS: yes — BunStreamSource.cpp
-// The ResumableSink protocol. Returns undefined (encoded).
-JSC::JSValue assignStreamIntoResumableSink(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* resumableSink); // userJS: yes — BunStreamSource.cpp
 
 // JSDirectStreamController.cpp — direct-stream materialization + the direct controller.
 
@@ -598,14 +611,15 @@ void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::Glo
 JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject*); // userJS: no
 JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject*); // userJS: no
 JSC::EncodedJSValue ReadableStream__errored(Zig::GlobalObject*, JSC::EncodedJSValue reason); // userJS: no
+JSC::EncodedJSValue ReadableStream__fromDecodedText(Zig::GlobalObject*, JSC::EncodedJSValue string); // userJS: no
+JSC::EncodedJSValue ReadableStream__textDecodeFrom(Zig::GlobalObject*, JSC::EncodedJSValue source); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject*, JSC::EncodedJSValue nativePtr); // userJS: no
+JSC::EncodedJSValue ZigGlobalObject__createNativeTextReadableStream(Zig::GlobalObject*, JSC::EncodedJSValue nativePtr); // userJS: no
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject*, JSC::EncodedJSValue stream, JSC::EncodedJSValue contentType); // userJS: yes
-// Caller: ResumableSink.rs; returns encoded undefined.
-JSC::EncodedJSValue Bun__assignStreamIntoResumableSink(JSC::JSGlobalObject*, JSC::EncodedJSValue stream, JSC::EncodedJSValue sink); // userJS: yes
 
 } // extern "C"

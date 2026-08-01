@@ -9,10 +9,7 @@ use bun_paths::resolve_path;
 use bun_paths::{Platform, SEP, SEP_STR};
 
 #[crate::host_fn(export = "Resolver__nodeModulePathsForJS")]
-pub(crate) fn node_module_paths_for_js(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
+fn node_module_paths_for_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     crate::mark_binding!();
     let argument: JSValue = frame.argument(0);
 
@@ -25,7 +22,7 @@ pub(crate) fn node_module_paths_for_js(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSValue {
+extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSValue {
     crate::mark_binding!();
 
     let in_str = BunString::static_(b".");
@@ -36,7 +33,7 @@ pub(crate) extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObje
 // `bun_core::String` is `Copy` with no `Drop` impl, so receiving it by value
 // never releases the caller's ref.
 #[unsafe(export_name = "Resolver__nodeModulePathsJSValue")]
-pub(crate) extern "C" fn node_module_paths_js_value(
+extern "C" fn node_module_paths_js_value(
     in_str: BunString,
     global: &JSGlobalObject,
     use_dirname: bool,

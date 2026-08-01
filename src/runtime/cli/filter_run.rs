@@ -133,7 +133,7 @@ impl<'a> ProcessHandle<'a> {
         let mut spawned = spawned;
         #[cfg(windows)]
         let (stdout_pipe, stderr_pipe) = (spawned.stdout.take(), spawned.stderr.take());
-        let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop), false);
+        let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop));
 
         let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle).cast::<c_void>();
         handle.stdout.set_parent(handle_ptr);
@@ -195,7 +195,7 @@ impl<'a> ProcessHandle<'a> {
         Ok(())
     }
 
-    pub(crate) fn on_read_chunk(&mut self, chunk: &[u8], has_more: ReadState) -> bool {
+    fn on_read_chunk(&mut self, chunk: &[u8], has_more: ReadState) -> bool {
         let _ = has_more;
         let mut state_ref = self.state;
         // SAFETY: state backref valid (see start()).
@@ -204,9 +204,9 @@ impl<'a> ProcessHandle<'a> {
         true
     }
 
-    pub(crate) fn on_reader_done(&mut self) {}
+    fn on_reader_done(&mut self) {}
 
-    pub(crate) fn on_reader_error(&mut self, err: &sys::Error) {
+    fn on_reader_error(&mut self, err: &sys::Error) {
         let _ = err;
     }
 }
@@ -219,7 +219,7 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl<'a> ProcessHandle<'a> {
-    pub(crate) fn on_process_exit(&mut self, proc: &mut Process, status: Status, _: &Rusage) {
+    fn on_process_exit(&mut self, proc: &mut Process, status: Status, _: &Rusage) {
         self.process.as_mut().unwrap().status = status;
         self.end_time = Some(Instant::now());
         // We just leak the process because we're going to exit anyway after all processes are done
@@ -230,7 +230,7 @@ impl<'a> ProcessHandle<'a> {
         let _ = state.process_exit(self);
     }
 
-    pub(crate) fn loop_(&self) -> *mut bun_io::Loop {
+    fn loop_(&self) -> *mut bun_io::Loop {
         // SAFETY: state backref valid; event_loop is the live MiniEventLoop singleton.
         bun_io::uws_to_native(unsafe { (*self.state.event_loop).loop_ })
     }
@@ -284,7 +284,7 @@ struct ElideResult<'b> {
 }
 
 impl<'a> State<'a> {
-    pub(crate) fn is_done(&self) -> bool {
+    fn is_done(&self) -> bool {
         self.remaining_scripts == 0
     }
 
@@ -570,7 +570,7 @@ impl<'a> State<'a> {
         let _ = bun_sys::File::stdout().write_all(&self.draw_buf);
     }
 
-    pub(crate) fn abort(&mut self) {
+    fn abort(&mut self) {
         // we perform an abort by sending SIGINT to all processes
         self.aborted = true;
         for handle in self.handles.iter_mut() {
@@ -583,7 +583,7 @@ impl<'a> State<'a> {
         }
     }
 
-    pub(crate) fn finalize(&mut self) -> u8 {
+    fn finalize(&mut self) -> u8 {
         if self.aborted {
             let _ = self.redraw(true);
         }
@@ -634,7 +634,7 @@ impl AbortHandler {
         bun_sys::windows::FALSE
     }
 
-    pub(crate) fn install() {
+    fn install() {
         #[cfg(unix)]
         {
             // SAFETY: libc::sigaction is #[repr(C)] POD; all-zero is a valid value (fields overwritten below).
@@ -661,12 +661,16 @@ impl AbortHandler {
         }
     }
 
-    pub(crate) fn uninstall() {
+    fn uninstall() {
         // only necessary on Windows, as on posix we pass the SA_RESETHAND flag
         #[cfg(windows)]
         {
-            // restores default Ctrl+C behavior
-            let _ = bun_sys::c::SetConsoleCtrlHandler(None, bun_sys::windows::FALSE);
+            // (None, FALSE) clears the ignore attribute; it does NOT unregister
+            // a handler routine — pass the address.
+            let _ = bun_sys::c::SetConsoleCtrlHandler(
+                Some(Self::windows_ctrl_handler),
+                bun_sys::windows::FALSE,
+            );
         }
     }
 }
@@ -872,6 +876,9 @@ pub(crate) fn run_scripts_with_filter(
         Some(unsafe { &mut *env_ptr }),
         None,
     );
+    // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
+    // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
+    bun_io::ParentDeathWatchdog::ensure_kill_on_close_job();
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --filter). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.

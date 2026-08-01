@@ -6125,10 +6125,14 @@ impl VirtualMachine {
 
             // "error", "suppressed" (SuppressedError), and "cause" are all
             // non-enumerable own properties, so the loop above won't see them.
+            // Unlike `cause`, `.error`/`.suppressed` are filled by the runtime
+            // with whatever was thrown (not necessarily an Error), so print any
+            // non-undefined value; `print_error_instance_body` routes non-Error
+            // values through the generic formatter.
             if !saw_error {
                 let key = bun_core::String::static_(b"error");
                 if let Some(inner) = error_instance.get_own(global_ref, &key)? {
-                    if inner.is_cell() && inner.js_type() == JSType::ErrorInstance {
+                    if !inner.is_undefined() {
                         inner.protect();
                         errors_to_append.push(inner);
                     }
@@ -6137,7 +6141,7 @@ impl VirtualMachine {
             if !saw_suppressed {
                 let key = bun_core::String::static_(b"suppressed");
                 if let Some(inner) = error_instance.get_own(global_ref, &key)? {
-                    if inner.is_cell() && inner.js_type() == JSType::ErrorInstance {
+                    if !inner.is_undefined() {
                         inner.protect();
                         errors_to_append.push(inner);
                     }
@@ -6191,11 +6195,19 @@ impl VirtualMachine {
                 formatter.map_node = Some(node);
             }
 
-            let entry = formatter.map.get_or_put(err).expect("unreachable");
-            if entry.found_existing {
-                writer.write_all(b"\n")?;
-                pretty_write!(writer, "<r><cyan>[Circular]<r>")?;
-                continue;
+            // Only Error instances recurse back into this loop (via their own
+            // .cause/.error/.suppressed), so only they need the circular guard.
+            // Non-Error values are rendered by the generic formatter, which
+            // shares `formatter.map` for its own cycle detection; seeding it
+            // here would make the value print as `[Circular]`.
+            let track = err.is_cell() && err.js_type() == JSType::ErrorInstance;
+            if track {
+                let entry = formatter.map.get_or_put(err).expect("unreachable");
+                if entry.found_existing {
+                    writer.write_all(b"\n")?;
+                    pretty_write!(writer, "<r><cyan>[Circular]<r>")?;
+                    continue;
+                }
             }
 
             writer.write_all(b"\n")?;
@@ -6207,7 +6219,9 @@ impl VirtualMachine {
                 allow_ansi_color,
                 allow_side_effects,
             )?;
-            let _ = formatter.map.remove(&err);
+            if track {
+                let _ = formatter.map.remove(&err);
+            }
         }
 
         Ok(())

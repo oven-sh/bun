@@ -97,20 +97,23 @@ error: original error
 `;
 
 exports[`SuppressedError uncaught SuppressedError shows .error and .suppressed 1`] = `
-"2 | const m1 = ["dispose", "error"].join(" ");
-3 | const m2 = ["original", "error"].join(" ");
+"1 | const m1 = ["dispose", "error"].join(" ");
+2 | const m2 = ["original", "error"].join(" ");
+3 | throw new SuppressedError(new Error(m1), new Error(m2), "An error was suppressed during disposal");
           ^
 SuppressedError: An error was suppressed during disposal
       at <cwd>/[eval]:3:7
 
-2 | const m1 = ["dispose", "error"].join(" ");
-3 | const m2 = ["original", "error"].join(" ");
+1 | const m1 = ["dispose", "error"].join(" ");
+2 | const m2 = ["original", "error"].join(" ");
+3 | throw new SuppressedError(new Error(m1), new Error(m2), "An error was suppressed during disposal");
                                   ^
 error: dispose error
       at <cwd>/[eval]:3:31
 
-2 | const m1 = ["dispose", "error"].join(" ");
-3 | const m2 = ["original", "error"].join(" ");
+1 | const m1 = ["dispose", "error"].join(" ");
+2 | const m2 = ["original", "error"].join(" ");
+3 | throw new SuppressedError(new Error(m1), new Error(m2), "An error was suppressed during disposal");
                                                  ^
 error: original error
       at <cwd>/[eval]:3:46

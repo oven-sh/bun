@@ -221,11 +221,12 @@ describe("SuppressedError", () => {
   });
 
   test("uncaught SuppressedError shows .error and .suppressed", async () => {
-    const code = [
-      `const m1 = ["dispose", "error"].join(" ");`,
-      `const m2 = ["original", "error"].join(" ");`,
-      `throw new SuppressedError(new Error(m1), new Error(m2), "An error was suppressed during disposal");`,
-    ].join("\n");
+    const code =
+      [
+        `const m1 = ["dispose", "error"].join(" ");`,
+        `const m2 = ["original", "error"].join(" ");`,
+        `throw new SuppressedError(new Error(m1), new Error(m2), "An error was suppressed during disposal");`,
+      ].join("\n") + "\n";
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--no-addons", "-e", code],
       env: bunEnv,
@@ -241,14 +242,15 @@ describe("SuppressedError", () => {
   });
 
   test("uncaught SuppressedError from `using` shows both thrown errors", async () => {
-    const code = [
-      `const m1 = ["error", "thrown", "from", "dispose"].join(" ");`,
-      `const m2 = ["error", "thrown", "from", "body"].join(" ");`,
-      `{`,
-      `  using r = { [Symbol.dispose]() { throw new Error(m1); } };`,
-      `  throw new Error(m2);`,
-      `}`,
-    ].join("\n");
+    const code =
+      [
+        `const m1 = ["error", "thrown", "from", "dispose"].join(" ");`,
+        `const m2 = ["error", "thrown", "from", "body"].join(" ");`,
+        `{`,
+        `  using r = { [Symbol.dispose]() { throw new Error(m1); } };`,
+        `  throw new Error(m2);`,
+        `}`,
+      ].join("\n") + "\n";
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--no-addons", "-e", code],
       env: bunEnv,
@@ -259,6 +261,27 @@ describe("SuppressedError", () => {
     expect(stderr).toContain("error thrown from dispose");
     expect(stderr).toContain("error thrown from body");
     expect(normalizeBunSnapshot(stderr)).toMatchSnapshot();
+    expect(exitCode).toBe(1);
+  });
+
+  test("uncaught SuppressedError from `using` shows non-Error thrown values", async () => {
+    const code =
+      [
+        `const m = ["body", "threw", "a", "string"].join(" ");`,
+        `{`,
+        `  using r = { [Symbol.dispose]() { throw { code: "ERR_FROM_DISPOSE" }; } };`,
+        `  throw m;`,
+        `}`,
+      ].join("\n") + "\n";
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-addons", "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("ERR_FROM_DISPOSE");
+    expect(stderr).toContain("body threw a string");
     expect(exitCode).toBe(1);
   });
 

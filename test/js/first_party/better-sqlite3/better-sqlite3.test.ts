@@ -199,6 +199,25 @@ describe("better-sqlite3 shim", () => {
     db.close();
   });
 
+  test("named parameters bind without the @/$/: prefix", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE t (name TEXT)");
+    db.prepare("INSERT INTO t VALUES (@name)").run({ name: "x" });
+    db.prepare("INSERT INTO t VALUES ($name)").run({ name: "y" });
+    db.prepare("INSERT INTO t VALUES (:name)").run({ name: "z" });
+    expect(db.prepare("SELECT name FROM t").pluck().all()).toEqual(["x", "y", "z"]);
+    expect(() => db.prepare("INSERT INTO t VALUES (@name)").run({ wrong: "a" })).toThrow('Missing parameter "name"');
+    db.close();
+  });
+
+  test("transaction().database is the shim Database", () => {
+    const db = new Database(":memory:");
+    const tx = db.transaction(() => {});
+    expect(tx.database).toBe(db);
+    expect(tx.deferred.database).toBe(db);
+    db.close();
+  });
+
   test("verbose option receives executed SQL", () => {
     const seen: string[] = [];
     const db = new Database(":memory:", { verbose: (sql: string) => seen.push(sql) });

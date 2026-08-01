@@ -1,5 +1,5 @@
 // Hardcoded module "better-sqlite3": the real package is a V8-API addon Bun cannot dlopen, so wrap bun:sqlite. API: https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md
-const { Database: BunDatabase, SQLiteError, constants } = require("bun:sqlite");
+const { Database: BunDatabase, SQLiteError } = require("bun:sqlite");
 const { existsSync } = require("node:fs");
 const { dirname, resolve } = require("node:path");
 const { inspect } = require("node:util");
@@ -240,18 +240,17 @@ function Database(filenameGiven, options) {
     throw new TypeError("Cannot open database because the directory does not exist");
   }
 
-  let flags = 0;
-  if (readonly) flags = constants.SQLITE_OPEN_READONLY;
-  else if (anonymous || !fileMustExist) flags = constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE;
-  else flags = constants.SQLITE_OPEN_READWRITE;
+  const openOptions = readonly
+    ? { readonly: true, strict: true }
+    : anonymous || !fileMustExist
+      ? { create: true, strict: true }
+      : { readwrite: true, strict: true };
 
-  const db = buffer ? new BunDatabase(buffer, { readonly }) : new BunDatabase(anonymous ? ":memory:" : filename, flags);
+  const db = buffer
+    ? new BunDatabase(buffer, { readonly, strict: true })
+    : new BunDatabase(anonymous ? ":memory:" : filename, openOptions);
 
-  if (timeout > 0) {
-    try {
-      db.run(`PRAGMA busy_timeout = ${timeout}`);
-    } catch {}
-  }
+  if (timeout > 0) db.run(`PRAGMA busy_timeout = ${timeout}`);
 
   let isOpen = true;
   let defaultSafeIntegers = false;
@@ -303,9 +302,10 @@ function Database(filenameGiven, options) {
     }
   };
 
+  const self = this;
   // bun:sqlite's transaction() already returns a function with .deferred/.immediate/.exclusive.
   this.transaction = function transaction(fn) {
-    return db.transaction(fn);
+    return db.transaction(fn, self);
   };
 
   this.serialize = function serialize(opts) {

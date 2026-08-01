@@ -78,19 +78,22 @@ jobs:
       - name: Checkout Bun source (incremental)
         run: |
           LOCAL=/home/user/sources/bun
+          # gh-proxy — direct github.com is unreliable on this runner.
+          REMOTE="https://gh-proxy.com/https://github.com/springmin/bun.git"
           rm -rf bun
           if [ -d "$LOCAL/.git" ]; then
-            git clone --reference "$LOCAL/.git" \
-              https://github.com/springmin/bun.git bun 2>/dev/null || \
-              git clone --depth 1 --branch ohos-aarch64 \
-                https://github.com/springmin/bun.git bun
+            git clone --reference "$LOCAL/.git" "$REMOTE" bun 2>/dev/null || \
+              git clone --depth 1 --branch ohos-aarch64 "$REMOTE" bun
             cd bun
-            git fetch origin ohos-aarch64 --depth=1
-            git checkout -f FETCH_HEAD
+            git fetch "$REMOTE" ohos-aarch64 --depth=1 2>/dev/null || true
+            if git rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
+              git checkout -f FETCH_HEAD
+            else
+              echo "⚠️  Bun fetch failed — using clone checkout ($(git rev-parse --short HEAD))"
+            fi
             echo "✅ Cloned from local reference"
           else
-            git clone --depth 1 --branch ohos-aarch64 \
-              https://github.com/springmin/bun.git bun
+            git clone --depth 1 --branch ohos-aarch64 "$REMOTE" bun
             echo "⚠️  Full clone (no local reference)"
           fi
 

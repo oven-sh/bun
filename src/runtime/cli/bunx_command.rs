@@ -614,20 +614,19 @@ impl BunxCommand {
         true
     }
 
-    /// Refuse to forward a `bunfig.toml` discovered by walking up from the
-    /// invoking cwd unless it is (or resolves to) a regular file owned by the
-    /// current user. The walk may cross into world-writable ancestors (e.g.
-    /// `/tmp`), where another local user could plant a `bunfig.toml`
-    /// redirecting `[install] registry` to a host they control; bunx would
-    /// then fetch and execute their package. Symlinks are followed once so a
-    /// dotfile-managed config is accepted when both link and target are
-    /// uid-owned, mirroring `is_trusted_cached_binary`.
+    /// A `bunfig.toml` found by walking up into world-writable ancestors
+    /// (e.g. `/tmp`) could be planted by another local user to redirect
+    /// `[install] registry`; refuse it unless the file (or its single-hop
+    /// symlink target) is a regular file owned by the current uid or root
+    /// (root-owned is the default after Docker `COPY` + `USER node`, and an
+    /// unprivileged attacker cannot create a root-owned file).
     #[cfg(unix)]
     fn is_trusted_local_bunfig(path: &ZStr, uid: libc::uid_t) -> bool {
+        let owner_ok = |st_uid: libc::uid_t| st_uid == uid || st_uid == 0;
         let reg_ok =
-            |st: &bun_sys::Stat| st.st_uid == uid && (st.st_mode & libc::S_IFMT) == libc::S_IFREG;
+            |st: &bun_sys::Stat| owner_ok(st.st_uid) && (st.st_mode & libc::S_IFMT) == libc::S_IFREG;
         match bun_sys::lstat(path) {
-            Ok(st) if st.st_uid == uid => {
+            Ok(st) if owner_ok(st.st_uid) => {
                 let kind = st.st_mode & libc::S_IFMT;
                 if kind == libc::S_IFREG {
                     true
@@ -849,19 +848,11 @@ impl BunxCommand {
         let uid = bun_sys::windows::user_unique_id();
 
         // The spawned `bun add` runs with cwd = `bunx_cache_dir`, so it cannot
-        // discover a project-local bunfig.toml on its own. Resolve it here
-        // from the invoking directory and forward it via `--config=<path>` so
-        // `[install]` settings such as `registry` and `scopes` are honored.
-        // `--config`'s value is optional in the install arg parser, so the `=`
-        // form is required for the path to be consumed. Discovery runs before
-        // `package_fmt` so the cache directory can be namespaced per bunfig
-        // (the registry may differ per project; without this a warm cache from
-        // one project would serve another).
-        //
-        // On Unix the candidate is rejected unless it is (or resolves to) a
-        // regular file owned by the current user (see `is_trusted_local_bunfig`),
-        // so a bunfig.toml planted by another local user in a world-writable
-        // ancestor cannot redirect the install.
+        // discover a project-local bunfig.toml on its own. Walk up from the
+        // invoking directory here and forward the first one found as
+        // `--config=<path>` (the `=` form is required; the install arg parser
+        // treats a space-separated value as a positional). See
+        // `is_trusted_local_bunfig` for the ownership check.
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
         let top_level_dir: &[u8] = unsafe { (*this_transpiler.fs).top_level_dir };
         let local_bunfig_arg: Option<Vec<u8>> = 'find_bunfig: {
@@ -954,8 +945,7 @@ impl BunxCommand {
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
             }
             if let Some(arg) = &local_bunfig_arg {
-                // Namespace the cache dir by bunfig path so projects pinning
-                // different registries do not share a cache entry.
+                // Per-bunfig cache namespace: different projects' registries must not share an entry.
                 write!(&mut v, "@{:x}", hash(&arg[b"--config=".len()..]))
                     .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
             }
@@ -1514,10 +1504,8 @@ impl BunxCommand {
             },
         };
 
-        // `Run::run_binary` below execs the installed tool with this same
-        // `env_loader`; the tool (e.g. a scaffolder that runs `bun install`)
-        // must not inherit the internal marker, or that grandchild install
-        // would skip the configured security scanner.
+        // Don't leak the internal marker into the tool we exec: a scaffolder's
+        // own `bun install` must still run the configured security scanner.
         env_loader.map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
 
         match &spawn_result.status {

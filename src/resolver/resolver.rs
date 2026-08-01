@@ -2698,8 +2698,7 @@ impl<'a> Resolver<'a> {
                                         }
                                     }
 
-                                    // #7142: retry once without the "bun" condition so traced
-                                    // node_modules that only shipped the "node" variant resolve.
+                                    // #7142: retry without "bun" so pruned node_modules that only kept the "node" variant resolve.
                                     if retry_without_bun {
                                         let prev_module_type = module_type;
                                         module_type = package_json.module_type;
@@ -4923,6 +4922,14 @@ impl<'a> Resolver<'a> {
         }
         let mut module_type = options::ModuleType::Unknown;
 
+        let has_bun_condition = match kind {
+            ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
+                &self.opts.conditions.require
+            }
+            _ => &self.opts.conditions.import,
+        }
+        .contains_key(b"bun".as_slice());
+
         // NOTE: keeping the `ESModule`'s borrow of `self.debug_logs` alive
         // across the subsequent `&mut self` calls would be aliased-&mut UB, so
         // the `ESModule` is constructed as a temporary whose
@@ -4940,6 +4947,14 @@ impl<'a> Resolver<'a> {
         }
         .resolve_imports(import_path, &imports_map.root);
         let _ = module_type;
+
+        let retry_without_bun = has_bun_condition
+            && matches!(
+                esm_resolution.status,
+                crate::package_json::Status::Exact
+                    | crate::package_json::Status::ExactEndsWithStar
+                    | crate::package_json::Status::Inexact
+            );
 
         if esm_resolution.status == crate::package_json::Status::PackageResolve {
             // https://github.com/oven-sh/bun/issues/4972
@@ -4983,14 +4998,50 @@ impl<'a> Resolver<'a> {
             );
         }
 
-        self.handle_esm_resolution(
-            esm_resolution,
-            package_json.source.path.name().dir,
-            kind,
-            package_json,
-            b"",
-            out,
-        )
+        if self
+            .handle_esm_resolution(
+                esm_resolution,
+                package_json.source.path.name().dir,
+                kind,
+                package_json,
+                b"",
+                out,
+            )
+            .is_success()
+        {
+            return MatchStatus::Success;
+        }
+
+        // #7142: same "bun"-condition fallback as in load_node_modules.
+        if retry_without_bun {
+            let mut module_type = options::ModuleType::Unknown;
+            let esm_resolution = ESModule {
+                conditions: match kind {
+                    ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
+                        &self.opts.conditions.require
+                    }
+                    _ => &self.opts.conditions.import,
+                },
+                debug_logs: self.debug_logs.as_mut(),
+                module_type: &mut module_type,
+                skip_bun_condition: true,
+            }
+            .resolve_imports(import_path, &imports_map.root);
+            let _ = module_type;
+
+            if esm_resolution.status != crate::package_json::Status::PackageResolve {
+                return self.handle_esm_resolution(
+                    esm_resolution,
+                    package_json.source.path.name().dir,
+                    kind,
+                    package_json,
+                    b"",
+                    out,
+                );
+            }
+        }
+
+        MatchStatus::NotFound
     }
 
     pub(crate) fn check_browser_map<const KIND: BrowserMapPathKind>(

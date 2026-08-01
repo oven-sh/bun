@@ -182,6 +182,22 @@ try { require("./index.js"); } catch (e) { console.log(e.stack); }
     expect(exitCode).toBe(0);
   });
 
+  test("sources resolve relative to the map file, not the executed file", async () => {
+    // tsc `mapRoot`: map lives under maps/, sources are relative to the map.
+    using dir = tempDir("input-sourcemap-mapdir", {
+      "src/index.ts": original,
+      "dist/index.js": generated + "//# sourceMappingURL=../maps/index.js.map\n",
+      "maps/index.js.map": JSON.stringify({ ...mapJson, sources: ["../src/index.ts"] }),
+    });
+
+    const { stderr, exitCode } = await run(String(dir), join("dist", "index.js"));
+    expect(stderr).toContain(`at boom (${join(String(dir), "src", "index.ts")}:6:`);
+    expect(stderr).toContain(`at main (${join(String(dir), "src", "index.ts")}:9:3)`);
+    // Code frame read from src/index.ts on disk
+    expect(stderr).toContain(`function boom(): never {`);
+    expect(exitCode).toBe(1);
+  });
+
   test("map file invalid JSON: warns and falls back to generated positions", async () => {
     using dir = tempDir("input-sourcemap-invalid", {
       "index.js": generated + "//# sourceMappingURL=index.js.map\n",

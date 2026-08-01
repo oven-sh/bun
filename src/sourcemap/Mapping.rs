@@ -325,6 +325,7 @@ impl Lookup {
     /// - the runtime transpiler chained through an input-side source map.
     pub fn display_source_url_if_needed(&self, base_filename: &[u8]) -> Option<bun_core::String> {
         let mut source_map = self.source_map.as_deref()?;
+        let input_map_url = source_map.input_map_url.as_deref();
         // `source_index` indexes the chained input map's sources when present.
         if let Some(input_map) = source_map.input_map() {
             source_map = input_map;
@@ -345,9 +346,8 @@ impl Lookup {
         }
 
         if bun_paths::is_absolute(base_filename) {
-            // `platform::Auto` is a cfg-selected
-            // type alias (Posix on unix, Windows on windows).
-            let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
+            let mut anchor_buf = bun_paths::path_buffer_pool::get();
+            let dir = sources_anchor_dir(base_filename, input_map_url, &mut anchor_buf);
             return Some(bun_core::String::clone_utf8(
                 bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name),
             ));
@@ -422,9 +422,8 @@ impl Lookup {
             let name: &[u8] = &source_map.external_source_names[index];
 
             let mut buf = bun_paths::PathBuffer::uninit();
-            // `platform::Auto` is
-            // cfg-selected (Posix on unix, Windows on windows).
-            let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
+            let mut anchor_buf = bun_paths::path_buffer_pool::get();
+            let dir = sources_anchor_dir(base_filename, input_map_url, &mut anchor_buf);
             let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<
                 bun_paths::platform::Loose,
             >(dir, &mut buf, &[name]);
@@ -436,6 +435,29 @@ impl Lookup {
 
         Some(ZigStringSlice::init_owned(bytes))
     }
+}
+
+/// Directory against which a chained input map's `sources` entries resolve:
+/// per the spec, relative to the map file itself. `buf` holds the result
+/// when the URL has a directory component.
+fn sources_anchor_dir<'a>(
+    base_filename: &'a [u8],
+    input_map_url: Option<&[u8]>,
+    buf: &'a mut bun_paths::PathBuffer,
+) -> &'a [u8] {
+    use bun_paths::resolve_path::{self, platform};
+    let base_dir = resolve_path::dirname::<platform::Auto>(base_filename);
+    let Some(url) = input_map_url else {
+        return base_dir;
+    };
+    if bun_core::strings::has_prefix_comptime(url, b"data:") {
+        return base_dir;
+    }
+    let url_dir = resolve_path::dirname::<platform::Loose>(url);
+    if url_dir.is_empty() {
+        return base_dir;
+    }
+    resolve_path::join_abs_string_buf::<platform::Loose>(base_dir, buf, &[url_dir])
 }
 
 impl Mapping {

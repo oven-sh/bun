@@ -752,10 +752,7 @@ pub enum InstructionValue {
     UnaryExpression {
         operator: UnaryOperator,
         value: Place,
-        /// Bun's printer re-wraps `typeof <unbound-identifier>` as `typeof (0, x)`
-        /// unless `WAS_ORIGINALLY_TYPEOF_IDENTIFIER` is set, so codegen must
-        /// restore the parse-time flag. Upstream has no equivalent because
-        /// Babel's generator never inserts the `(0, …)` guard.
+        /// Parse-time `E::UnaryFlags`, threaded back to codegen for the printer.
         flags: bun_ast::e::UnaryFlags,
         loc: Option<SourceLocation>,
     },

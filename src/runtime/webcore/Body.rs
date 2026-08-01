@@ -1799,7 +1799,16 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 return Ok(readable.value);
             }
         }
-        self.get_body_value().to_readable_stream(global_this)
+        // `to_readable_stream` writes a `readable_stream::Strong` into
+        // `locked.readable` for the Blob/InternalBlob and freshly-materialized
+        // Locked paths. The returned stream is cached in the wrapper's `m_body`
+        // WriteBarrier by the prototype getter, so migrate that strong root into
+        // `m_stream` immediately: the stream's captured async context can close
+        // the Response → stream → store → Response cycle, and the root makes it
+        // uncollectable (Next.js patch-fetch, #16339).
+        let stream = self.get_body_value().to_readable_stream(global_this)?;
+        self.check_body_stream_ref(global_this);
+        Ok(stream)
     }
 
     /// <https://fetch.spec.whatwg.org/#dom-body-textstream>

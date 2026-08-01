@@ -1331,11 +1331,7 @@ impl Response {
                 }
                 if let Some(etag) = &etag {
                     if !headers.fast_has(HTTPHeaderName::ETag) {
-                        headers.put(
-                            HTTPHeaderName::ETag,
-                            &BunString::ascii(etag),
-                            global_this,
-                        )?;
+                        headers.put(HTTPHeaderName::ETag, &BunString::ascii(etag), global_this)?;
                     }
                 }
             }

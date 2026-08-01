@@ -75,6 +75,14 @@ describe("better-sqlite3 shim", () => {
     expect(() => bound.iterate(1)).toThrow("already has bound parameters");
     expect(() => bound.bind(1)).toThrow("only be invoked once");
 
+    // .bind() snapshots TypedArray contents (SQLITE_TRANSIENT semantics)
+    db.exec("CREATE TABLE blobs (b BLOB)");
+    const buf = Buffer.from([1, 2, 3]);
+    const ins = db.prepare("INSERT INTO blobs VALUES (?)").bind(buf);
+    buf.fill(0);
+    ins.run();
+    expect([...db.prepare("SELECT b FROM blobs").pluck().get()]).toEqual([1, 2, 3]);
+
     db.close();
   });
 
@@ -241,6 +249,15 @@ describe("better-sqlite3 shim", () => {
     [...db.prepare("SELECT x FROM t WHERE x = ?").iterate(1)];
     db.pragma("journal_mode");
     expect(() => db.prepare("INSERT INTO t VALUES (?)").run(1)).toThrow(SqliteError);
+    // A throwing logger must not mask the primary result.
+    const db2 = new Database(":memory:", {
+      verbose: () => {
+        throw new Error("sink down");
+      },
+    });
+    db2.exec("CREATE TABLE t (x INTEGER)");
+    expect(db2.prepare("INSERT INTO t VALUES (?)").run(5)).toEqual({ changes: 1, lastInsertRowid: 1 });
+    db2.close();
     expect(seen).toEqual([
       "CREATE TABLE t (x INTEGER UNIQUE)",
       "INSERT INTO t VALUES (1)",

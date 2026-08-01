@@ -21,22 +21,22 @@ class Statement {
   #stmt;
   #db;
   #source;
-  #verbose;
+  #log;
   #names;
   #raw = false;
   #pluck = false;
   #expand = false;
   #bound: any[] | null = null;
 
-  constructor(stmt, database, source, verbose) {
+  constructor(stmt, database, source, trace) {
     this.#stmt = stmt;
     this.#db = database;
     this.#source = source;
-    this.#verbose = verbose;
+    this.#log = trace;
   }
 
   #trace() {
-    if (this.#verbose != null) this.#verbose.$call(this.#db, this.#stmt.toString());
+    if (this.#log !== null) this.#log(this.#stmt.toString());
   }
 
   #requireReader() {
@@ -159,6 +159,9 @@ class Statement {
     if (this.#bound !== null) {
       throw new TypeError("The bind() method can only be invoked once per statement object");
     }
+    for (let i = 0; i < args.length; i++) {
+      if (ArrayBuffer.isView(args[i])) args[i] = Buffer.from(args[i]);
+    }
     this.#bound = args;
     return this;
   }
@@ -266,6 +269,17 @@ function Database(filenameGiven, options) {
 
   let isOpen = true;
   let defaultSafeIntegers = false;
+  const self = this;
+  const trace =
+    verbose == null
+      ? null
+      : function trace(sql) {
+          try {
+            verbose.$call(self, sql);
+          } catch {
+            // A throwing logger must not mask the primary result or the underlying error.
+          }
+        };
 
   Object.defineProperties(this, {
     name: { value: filenameGiven, enumerable: true },
@@ -279,12 +293,12 @@ function Database(filenameGiven, options) {
     if (typeof source !== "string") throw new TypeError("Expected first argument to be a string");
     const stmt = db.prepare(source, undefined, 0);
     if (defaultSafeIntegers) stmt.safeIntegers(true);
-    return new Statement(stmt, this, source, verbose);
+    return new Statement(stmt, this, source, trace);
   };
 
   this.exec = function exec(source) {
     if (typeof source !== "string") throw new TypeError("Expected first argument to be a string");
-    if (verbose != null) verbose.$call(this, source);
+    if (trace !== null) trace(source);
     if (source.length > 0) {
       try {
         db.run(source);
@@ -310,7 +324,7 @@ function Database(filenameGiven, options) {
     if (typeof opts !== "object") throw new TypeError("Expected second argument to be an options object");
     const simple = getBooleanOption(opts, "simple");
     const sql = `PRAGMA ${source}`;
-    if (verbose != null) verbose.$call(this, sql);
+    if (trace !== null) trace(sql);
     const stmt = db.prepare(sql, undefined, 0);
     if (defaultSafeIntegers) stmt.safeIntegers(true);
     try {
@@ -324,7 +338,6 @@ function Database(filenameGiven, options) {
     }
   };
 
-  const self = this;
   // bun:sqlite's transaction() already returns a function with .deferred/.immediate/.exclusive.
   this.transaction = function transaction(fn) {
     return db.transaction(fn, self);

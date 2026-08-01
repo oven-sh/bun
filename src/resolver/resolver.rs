@@ -2870,9 +2870,8 @@ impl<'a> Resolver<'a> {
                                             return MatchStatus::Success;
                                         }
 
-                                        // A package-path remap recurses here and overwrites the
-                                        // bufs! storage backing abs_path and esm_.subpath.
                                         if remap_is_package_path {
+                                            // recursion above clobbered these bufs! slots
                                             if !is_self_reference {
                                                 abs_path = match self.fs_ref().abs_buf_checked(
                                                     &[

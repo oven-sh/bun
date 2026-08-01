@@ -596,6 +596,104 @@ test("should be able to await server.stop()", async () => {
   expect(async () => await fetch(server.url)).toThrow();
 });
 
+// https://github.com/oven-sh/bun/issues/6632
+// A graceful stop() must close idle keep-alive connections so a client cannot
+// keep sending requests to the stopped handler (which is what happens when a
+// second server then binds the same port).
+test("server.stop() closes idle keep-alive connections", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const net = require("node:net");
+
+        let hits = 0;
+        const first = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch() { hits++; return new Response("first"); },
+        });
+        const port = first.port;
+
+        // Raw keep-alive client so the client side never closes on its own.
+        const sock = net.connect({ port, host: "127.0.0.1" });
+        await new Promise((r, j) => { sock.once("connect", r); sock.once("error", j); });
+
+        let closed = false;
+        sock.on("close", () => { closed = true; });
+        sock.on("error", () => {});
+
+        let buf = "";
+        let waiter = Promise.withResolvers();
+        sock.on("data", d => { buf += d.toString("latin1"); waiter.resolve(); });
+        const recv = async want => {
+          while (!closed) {
+            const headerEnd = buf.indexOf("\\r\\n\\r\\n");
+            if (headerEnd !== -1) {
+              const head = buf.slice(0, headerEnd);
+              const m = /content-length: (\\d+)/i.exec(head);
+              const len = m ? Number(m[1]) : 0;
+              const total = headerEnd + 4 + len;
+              if (buf.length >= total) {
+                const body = buf.slice(headerEnd + 4, total);
+                buf = buf.slice(total);
+                return body;
+              }
+            }
+            await waiter.promise;
+            waiter = Promise.withResolvers();
+          }
+          return null;
+        };
+
+        sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+        const body1 = await recv();
+        if (body1 !== "first") throw new Error("first request: " + body1);
+
+        // Connection is now idle (between requests). Graceful stop must close it.
+        first.stop();
+
+        // Wait for the FIN without sleeping: writing to a closed peer surfaces
+        // the close; if the bug is present the server responds instead.
+        sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+        sock.on("close", () => waiter.resolve());
+        const body2 = await recv();
+
+        // And a fresh connection to the same port now reaches the new server.
+        const second = Bun.serve({
+          port,
+          hostname: "127.0.0.1",
+          fetch() { return new Response("second"); },
+        });
+        const r = await fetch("http://127.0.0.1:" + port + "/");
+        const body3 = await r.text();
+        second.stop(true);
+
+        console.log(JSON.stringify({ body2, closed, firstHits: hits, body3 }));
+        sock.destroy();
+        process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim() || "{}")).toEqual({
+    // The idle keep-alive socket was closed by stop(): the second write on it
+    // sees a FIN (no response), the old handler never ran again, and a fresh
+    // connection reaches the new server's handler.
+    body2: null,
+    closed: true,
+    firstHits: 1,
+    body3: "second",
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("should be able to await server.stop(true) with keep alive", async () => {
   const { promise, resolve } = Promise.withResolvers();
   const ready = Promise.withResolvers();

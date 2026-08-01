@@ -1172,17 +1172,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             let dep: Repository = *version.git();
             let res = Resolution::init(ResolutionTagged::Git(dep));
 
-            // While `resolved` is empty `Repository::eql` matches the stale lockfile entry by committish.
-            let should_update = this.to_update
-                && dep.resolved.is_empty()
-                && this.is_direct_update_target(id, dependency);
-
             // First: see if we already loaded the git package in-memory
-            if !should_update {
-                if let Some(pkg_id) = this.lockfile.get_package_id(name_hash, None, &res) {
-                    success_fn(this, id, pkg_id);
-                    return Ok(());
-                }
+            if let Some(pkg_id) = this.lockfile.get_package_id(name_hash, None, &res) {
+                success_fn(this, id, pkg_id);
+                return Ok(());
             }
 
             // reshaped for borrowck — `alias`/`url` borrow
@@ -2751,20 +2744,6 @@ fn resolution_satisfies_dependency(
 // ──────────────────────────────────────────────────────────────────────────
 
 impl PackageManager {
-    /// A direct dependency of the current workspace that `bun update` / `bun update <name>` re-resolves.
-    fn is_direct_update_target(&mut self, id: DependencyID, dep: &Dependency) -> bool {
-        let root_id = self
-            .root_package_id
-            .get(&self.lockfile, self.workspace_name_hash);
-        // Catalogs are root-scoped; the consuming dep id lives in a member package.
-        (dep.version.tag == dependency::version::Tag::Catalog
-            || self.lockfile.packages.items_dependencies()[root_id as usize].contains(id))
-            && (self.update_requests.is_empty()
-                || self
-                    .updating_packages
-                    .contains(self.lockfile.str(&dep.name)))
-    }
-
     #[inline]
     pub fn enqueue_dependency_list(&mut self, dependencies_list: Lockfile::DependencySlice) {
         enqueue_dependency_list(self, dependencies_list)

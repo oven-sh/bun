@@ -1036,6 +1036,20 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         if (propertyArrayLength1 != propertyArrayLength2) {
             return false;
         }
+        if (c1->type() == ProxyObjectType || c2->type() == ProxyObjectType) {
+            // A Proxy `has` trap can make the getIfPropertyExists probe below vacuous; compare the own-key sets directly.
+            for (size_t j = 0; j < propertyArrayLength1; j++) {
+                UniquedStringImpl* name1 = a1[j].impl();
+                bool found = false;
+                for (size_t k = 0; k < propertyArrayLength2; k++) {
+                    if (a2[k].impl() == name1) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) return false;
+            }
+        }
     }
 
     // take a property name from one, try to get it from both

@@ -754,6 +754,16 @@ describe("expect()", () => {
         const p = new Proxy({ a: 1 }, { get: () => 99 });
         expect(p).not.toStrictEqual({ a: 1 });
         expect(p).toStrictEqual(new Proxy({ a: 0 }, { get: () => 99 }));
+
+        // a get trap alone cannot mask different own-key sets (existence is probed via `has`)
+        expect({ b: 1 }).not.toStrictEqual(new Proxy({ a: 1 }, { get: () => 1 }));
+        expect(new Proxy({ a: 1 }, { get: () => 1 })).not.toStrictEqual({ b: 1 });
+
+        // even a lying `has` trap cannot mask different own-key sets
+        const lie = { get: () => 1, has: () => true };
+        expect({ b: 1 }).not.toStrictEqual(new Proxy({ a: 1 }, lie));
+        expect(new Proxy({ a: 1 }, lie)).not.toStrictEqual({ b: 1 });
+        expect(new Proxy({ b: 1 }, lie)).not.toStrictEqual(new Proxy({ a: 1 }, lie));
       }
       {
         // revoked proxy comparison should throw, not crash

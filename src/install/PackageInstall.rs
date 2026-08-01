@@ -1653,6 +1653,15 @@ impl<'a> PackageInstall<'a> {
                                     sys::E::EXDEV => {
                                         return Err(crate::Error::NotSameFileSystem);
                                     }
+                                    sys::E::EPERM | sys::E::EACCES if cfg!(target_env = "ohos") => {
+                                        // OHOS SELinux blocks hard links; fall back to copy
+                                        crate::copy_file_fallback(
+                                            entry.dir,
+                                            entry.basename,
+                                            destination_dir.fd(),
+                                            entry.path,
+                                        )?;
+                                    }
                                     sys::E::ENXIO => {
                                         return Err(crate::Error::Sys(
                                             bun_errno::SystemErrno::ENXIO,

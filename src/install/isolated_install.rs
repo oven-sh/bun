@@ -32,7 +32,9 @@ use bun_collections::{
     ArrayHashMap, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, HashMap, LinearFifo,
     StringArrayHashMap,
 };
-use bun_core::{Environment, Global, Output, fast_random, fmt as bun_fmt, strings};
+use bun_core::{Environment, Global, Output, fast_random, fmt as bun_fmt};
+#[cfg(target_env = "ohos")]
+use bun_core::strings;
 use bun_paths::path_options::AssumeOk as _;
 use bun_paths::{self as paths, AutoAbsPath as AbsPath, AutoRelPath, PathBuffer};
 use bun_semver as semver;
@@ -41,6 +43,7 @@ use bun_wyhash::{Wyhash, Wyhash11};
 
 use crate::analytics;
 use crate::bun_bunfig::Arguments as Command;
+#[cfg(target_env = "ohos")]
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;

@@ -279,8 +279,9 @@ impl TrustCommand {
                 packages_to_trust.push(arg);
             }
         }
-        let trust_all =
-            strings::left_has_any_in_right(args, &[b"-a".as_slice(), b"--all".as_slice()]);
+        let trust_all = bun_core::argv()
+            .iter()
+            .any(|a| matches!(a, b"-a" | b"--all"));
 
         if !trust_all && packages_to_trust.is_empty() {
             Self::error_expected_args();

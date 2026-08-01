@@ -1356,16 +1356,19 @@ for (const { desc, dep } of gitNameTests) {
 }
 
 // https://github.com/oven-sh/bun/issues/13891
-// `name@<git-url>` was rejected as "unrecognised dependency format" for every
-// git URL that did not resolve to github.com, because the re-parse that exists
-// to catch scp-style `git@host:path` inputs clobbered the already-parsed
-// alias + git version with a DistTag.
-for (const dep of [
-  "mypkg@git://bun-13891.invalid:some/repo.git",
-  "mypkg@git+ssh://bun-13891.invalid:some/repo.git",
-  "mypkg@git+ssh://git@bun-13891.invalid:some/repo.git#ref",
-  "mypkg@git+file:///bun-13891/repo.git",
-  "mypkg@git+https://bun-13891.invalid:some/repo.git",
+// `name@<git-url>` was being mis-handled for every git URL that did not
+// resolve to github.com: the re-parse that exists to catch scp-style
+// `git@host:path` inputs clobbered the already-parsed alias + git version.
+// Unscoped aliases were rejected as "unrecognised dependency format"; scoped
+// aliases went through with the full positional used as the repo URL.
+for (const { dep, name } of [
+  { dep: "mypkg@git://bun-13891.invalid:some/repo.git", name: "mypkg" },
+  { dep: "mypkg@git+ssh://bun-13891.invalid:some/repo.git", name: "mypkg" },
+  { dep: "mypkg@git+ssh://git@bun-13891.invalid:some/repo.git#ref", name: "mypkg" },
+  { dep: "mypkg@git+file:///bun-13891/repo.git", name: "mypkg" },
+  { dep: "mypkg@git+https://bun-13891.invalid:some/repo.git", name: "mypkg" },
+  { dep: "@myorg/tool@git+ssh://bun-13891.invalid:some/repo.git", name: "@myorg/tool" },
+  { dep: "@myorg/tool@git+https://bun-13891.invalid:some/repo.git", name: "@myorg/tool" },
 ]) {
   it(`should parse aliased git dependency: ${dep}`, async () => {
     await Bun.write(join(package_dir, "package.json"), JSON.stringify({ name: "foo" }));
@@ -1383,7 +1386,10 @@ for (const dep of [
 
     const err = await stderr.text();
     expect(err).not.toContain("unrecognised dependency format");
-    expect(err).toContain("mypkg");
+    // The clone error must name the package by its alias alone; when the alias
+    // was wrongly discarded the full positional appears as the package name
+    // ("git clone" for "<full literal>" / cloning repository for <full literal>).
+    expect(err).toMatch(new RegExp(`for ("${name}"|${name}\\n)`));
     expect(await exited).toBe(1);
   });
 }
@@ -1395,7 +1401,7 @@ it("should parse scp-style git dependency without treating the user as an alias"
   await Bun.write(join(package_dir, "package.json"), JSON.stringify({ name: "foo" }));
 
   const { stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "git@bun-13891.invalid:some/repo.git"],
+    cmd: [bunExe(), "add", "git@127.0.0.1:some/repo.git"],
     cwd: package_dir,
     stdout: "ignore",
     stderr: "pipe",

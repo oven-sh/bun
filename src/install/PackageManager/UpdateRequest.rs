@@ -231,7 +231,18 @@ impl UpdateRequest {
 
                 return Err(crate::Error::UnrecognizedDependencyFormat);
             };
-            if alias.is_some() && version.tag == dependency::version::Tag::Git {
+            // This re-parse exists so an scp-style `user@host:path/repo` (where
+            // `user` would otherwise be split off as an npm alias) is kept as a
+            // single git URL. Only discard the alias when that interpretation
+            // actually holds:
+            //  * a scoped `@scope/name` alias contains `/`, which is never a
+            //    valid SSH user, so the full input cannot be scp-style;
+            //  * for `name@git://...` / `name@git+ssh://...` the full input
+            //    infers as DistTag, which must not clobber the already-parsed
+            //    alias + git version (issue #13891).
+            if alias.is_some_and(|a| !a.contains(&b'/'))
+                && version.tag == dependency::version::Tag::Git
+            {
                 if let Some(ver) = Dependency::parse_with_optional_tag(
                     placeholder,
                     None,
@@ -241,11 +252,6 @@ impl UpdateRequest {
                     Some(&mut *log),
                     pm.as_deref_mut(),
                 ) {
-                    // Only discard the alias when the full input is itself a git
-                    // reference (e.g. the scp-style `git@host:path/repo`). For
-                    // `name@git://...` / `name@git+ssh://...` the full input
-                    // infers as DistTag, which must not clobber the already-parsed
-                    // alias + git version (issue #13891).
                     if matches!(
                         ver.tag,
                         dependency::version::Tag::Git | dependency::version::Tag::Github

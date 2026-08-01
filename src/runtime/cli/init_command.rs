@@ -816,11 +816,11 @@ impl InitCommand {
                     )?;
                 }
                 if needs_react_dependency {
-                    peer_dependencies.data.e_object_mut().unwrap().put_string(
-                        &bump,
-                        b"react",
-                        b"^19",
-                    )?;
+                    peer_dependencies
+                        .data
+                        .e_object_mut()
+                        .unwrap()
+                        .put_string(&bump, b"react", b"^19")?;
                 }
                 object.put(&bump, b"peerDependencies", peer_dependencies)?;
             }

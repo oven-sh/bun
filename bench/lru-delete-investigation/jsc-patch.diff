@@ -1,0 +1,19 @@
+diff --git a/Source/JavaScriptCore/runtime/Structure.cpp b/Source/JavaScriptCore/runtime/Structure.cpp
+index bd9e01f437..7be1bc656c 100644
+--- a/Source/JavaScriptCore/runtime/Structure.cpp
++++ b/Source/JavaScriptCore/runtime/Structure.cpp
+@@ -680,7 +680,13 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure,
+     ASSERT(!Structure::removePropertyTransitionFromExistingStructure(structure, propertyName, offset));
+     ASSERT(structure->getConcurrently(propertyName.uid()) != invalidOffset);
+ 
+-    if (structure->shouldDoCacheableDictionaryTransitionForRemoveAndAttributeChange()) {
++    // A cacheable dictionary always has a pinned property table, so the
++    // takePropertyTableOrCloneIfPinned below would copy the full N-entry table
++    // into a fresh Structure that is never added to any transition table
++    // (hasBeenDictionary() suppresses m_transitionTable.add). That makes every
++    // delete on such an object O(N) with no caching benefit. Promote to an
++    // uncacheable dictionary instead so subsequent deletes are in-place.
++    if (structure->isDictionary() || structure->shouldDoCacheableDictionaryTransitionForRemoveAndAttributeChange()) {
+         ASSERT(!isCopyOnWrite(structure->indexingMode()));
+         Structure* transition = toUncacheableDictionaryTransition(vm, structure, deferred);
+         ASSERT(structure != transition);

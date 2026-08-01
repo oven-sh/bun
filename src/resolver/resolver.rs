@@ -5507,7 +5507,23 @@ impl<'a> Resolver<'a> {
                             //
                             // Additionally, if this is for the runtime, use the "main" field.
                             // If it doesn't exist, the "module" field will be used.
-                            if self.prefer_module_field && kind != ast::ImportKind::Require {
+                            //
+                            // Exception for the runtime: if the "module" field resolves to a
+                            // .mjs/.mts file, it is real Node-loadable ESM rather than a
+                            // browser-targeted bundler ESM build. Prefer it for `import` so
+                            // the package's own `import "dep"` statements resolve through the
+                            // same "exports" conditions as the user's `import "dep"`, avoiding
+                            // the dual-package hazard. A ".js" "module" target keeps falling
+                            // back to "main" (see #3434 / Vue SSR).
+                            let module_is_explicit_esm = matches!(
+                                module_type_from_ext(bun_paths::extension(
+                                    out.path_pair.primary.text(),
+                                )),
+                                Some(options::ModuleType::Esm)
+                            );
+                            if (self.prefer_module_field || module_is_explicit_esm)
+                                && kind != ast::ImportKind::Require
+                            {
                                 if let Some(debug) = self.debug_logs.as_mut() {
                                     debug.add_note_fmt(format_args!(
                                         "Resolved to \"{}\" using the \"module\" field in \"{}\"",

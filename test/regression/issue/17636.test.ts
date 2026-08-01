@@ -298,6 +298,31 @@ test.concurrent(
 );
 
 test.concurrent(
+  "throw from a post-beforeExit task callback does not drain microtasks queued from an 'exit' listener",
+  async () => {
+    const source = `
+    process.on("beforeExit", () => setImmediate(() => { throw new Error("boom"); }));
+    process.on("exit", c => {
+      console.log("exit-listener:" + c);
+      Promise.resolve().then(() => console.log("LEAK-microtask"));
+    });
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["exit-listener:1"]);
+    expect(stderr).toContain("boom");
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);
+
+test.concurrent(
   "beforeExit listener that rejects the TLA surfaces via uncaughtException (exit 1)",
   async () => {
     const source = `

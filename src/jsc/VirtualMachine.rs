@@ -1376,6 +1376,7 @@ impl VirtualMachine {
                 return false;
             }
             self.run_error_handler(err, None);
+            self.unhandled_error_counter += 1;
             // SAFETY: `global_object` is the live VM global; `process_exit` is
             // `bun_runtime::node::process::exit` (main-thread `noreturn`).
             unsafe { (hooks.process_exit)(global_object.as_ptr(), 7) };
@@ -1399,6 +1400,7 @@ impl VirtualMachine {
                 // throws. No handler is running, so drop the recursion guard or
                 // that re-entry exits 7 ("handler threw") instead of 1.
                 self.is_handling_uncaught_exception = false;
+                self.unhandled_error_counter += 1;
                 // SAFETY: see above.
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
                 panic!("made it past process.exit()");

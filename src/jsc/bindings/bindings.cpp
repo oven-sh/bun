@@ -1745,16 +1745,24 @@ bool Bun__deepMatch(
     // - two "simple" arrays
     // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
 
+    // When replacePropsWithAsymmetricMatchers is set, the caller wants the
+    // diff formatter to see every property where an asymmetric matcher passed,
+    // so keep iterating after the first mismatch instead of short-circuiting.
+    bool matched = true;
+
     // arrays should match exactly
     if (isArray(globalObject, objValue) && isArray(globalObject, subsetValue)) {
         if (obj->getArrayLength() != subsetObj->getArrayLength()) {
-            return false;
-        }
-        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
-        obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(throwScope, false);
-        if (objProps.size() != subsetProps.size()) {
-            return false;
+            if (!replacePropsWithAsymmetricMatchers) return false;
+            matched = false;
+        } else {
+            PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+            obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (objProps.size() != subsetProps.size()) {
+                if (!replacePropsWithAsymmetricMatchers) return false;
+                matched = false;
+            }
         }
     }
 
@@ -1762,7 +1770,9 @@ bool Bun__deepMatch(
         JSValue prop = obj->getIfPropertyExists(globalObject, property);
         RETURN_IF_EXCEPTION(throwScope, false);
         if (prop.isEmpty()) {
-            return false;
+            if (!replacePropsWithAsymmetricMatchers) return false;
+            matched = false;
+            continue;
         }
 
         JSValue subsetProp = subsetObj->get(globalObject, property);
@@ -1775,6 +1785,10 @@ bool Bun__deepMatch(
             if (subsetPropCell && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
                 switch (matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope)) {
                 case AsymmetricMatcherResult::FAIL:
+                    if (replacePropsWithAsymmetricMatchers) {
+                        matched = false;
+                        continue;
+                    }
                     return false;
                 case AsymmetricMatcherResult::PASS:
                     if (replacePropsWithAsymmetricMatchers) {
@@ -1789,6 +1803,10 @@ bool Bun__deepMatch(
             } else if (propCell && propCell->type() == JSC::JSType(JSDOMWrapperType)) {
                 switch (matchAsymmetricMatcher(globalObject, prop, subsetProp, throwScope)) {
                 case AsymmetricMatcherResult::FAIL:
+                    if (replacePropsWithAsymmetricMatchers) {
+                        matched = false;
+                        continue;
+                    }
                     return false;
                 case AsymmetricMatcherResult::PASS:
                     if (replacePropsWithAsymmetricMatchers) {
@@ -1824,17 +1842,21 @@ bool Bun__deepMatch(
                 // property cycle detected
                 if (!didInsertProp.second || !didInsertSubset.second) continue;
                 if (!Bun__deepMatch<enableAsymmetricMatchers>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, replacePropsWithAsymmetricMatchers, isMatchingObjectContaining)) {
-                    return false;
+                    if (!replacePropsWithAsymmetricMatchers) return false;
+                    matched = false;
                 }
             }
         } else {
             auto same = JSC::sameValue(globalObject, prop, subsetProp);
             RETURN_IF_EXCEPTION(throwScope, false);
-            if (!same) return false;
+            if (!same) {
+                if (!replacePropsWithAsymmetricMatchers) return false;
+                matched = false;
+            }
         }
     }
 
-    return true;
+    return matched;
 }
 
 // anonymous namespace to avoid name collision

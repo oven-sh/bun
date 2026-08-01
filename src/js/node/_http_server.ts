@@ -1205,9 +1205,9 @@ function onServerSNI(this: Server, servername, socketHandle) {
       return;
     }
     if (context == null) return;
-    const inner = typeof context === "object" ? context.context : undefined;
-    if (inner) selected = inner;
-    else failed = new Error("Invalid SNI context");
+    // Node's `sni_context = context.context || context`: accept both the
+    // wrapper and the raw native handle. decode_sni_result rejects the rest.
+    selected = (typeof context === "object" && context.context) || context;
   };
   try {
     cb.$call(this, servername, done);

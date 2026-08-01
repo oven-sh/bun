@@ -1336,6 +1336,7 @@ describe("node https server", async () => {
       key: nodefs.readFileSync(path.join(import.meta.dir, "..", "tls", "fixtures", "agent1-key.pem")),
       cert: nodefs.readFileSync(path.join(import.meta.dir, "..", "tls", "fixtures", "agent1-cert.pem")),
     };
+    const altContext = createSecureContext(altCert);
     const calls: string[] = [];
     const server = createHttpsServer(
       {
@@ -1343,7 +1344,10 @@ describe("node https server", async () => {
         cert: tlsCert.cert,
         SNICallback(servername, cb) {
           calls.push(servername);
-          cb(null, servername === "agent1" ? createSecureContext(altCert) : undefined);
+          if (servername === "agent1") cb(null, altContext);
+          // Node accepts the unwrapped native handle too (`context.context || context`).
+          else if (servername === "raw") cb(null, (altContext as any).context);
+          else cb(null, undefined);
         },
       },
       (req, res) => res.end("ok"),
@@ -1362,9 +1366,11 @@ describe("node https server", async () => {
         });
       // SNICallback selects the agent1 context; the client must receive its CN.
       expect(await connectCN("agent1")).toBe("agent1");
+      // The unwrapped native handle is accepted the same as the wrapper.
+      expect(await connectCN("raw")).toBe("agent1");
       // cb(null, undefined) falls through to the default context.
       expect(await connectCN("other.local")).toBe("server-bun");
-      expect(calls).toEqual(["agent1", "other.local"]);
+      expect(calls).toEqual(["agent1", "raw", "other.local"]);
     } finally {
       server.close();
     }

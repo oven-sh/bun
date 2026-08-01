@@ -876,8 +876,7 @@ impl<'a, 'f, const IS_MAP: bool, const ENABLE_ANSI_COLORS: bool>
         if ctx.formatter.failed {
             return;
         }
-        // Each entry starts on its own line; reset so `good_time_for_a_new_line`
-        // does not depend on which entries were visited earlier in insertion order.
+        // each entry buffers from a fresh line so its bytes are order-independent
         ctx.formatter.reset_line();
         let mut buf: Vec<u8> = Vec::new();
         if ctx.formatter.write_indent(&mut buf).is_err() {

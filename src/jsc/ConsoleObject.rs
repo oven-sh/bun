@@ -594,7 +594,13 @@ fn message_with_type_and_level_(
         // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
         // the only later uses are in the mutually-exclusive `Trace` block, and
         // `message_type == Log` here.
-        let w = unsafe { (*console).writer() };
+        let w = unsafe {
+            if use_stderr {
+                (*console).error_writer()
+            } else {
+                (*console).writer()
+            }
+        };
         let _ = w.write_all(b"\n");
         let _ = w.flush();
     } else if message_type != MessageType::Trace {
@@ -5984,7 +5990,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     // SAFETY: caller passes a valid (args, args_len) pair.
     for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {
         let Ok(tag) = formatter::Tag::get(arg, global) else {
-            return;
+            break;
         };
         let _ = bun_io::Write::write_all(&mut writer, b" ");
         if Output::enable_ansi_colors_stderr() {

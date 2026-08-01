@@ -4459,12 +4459,11 @@ extern "C" void Bun__ConsoleObject__onStdioWriteError(Zig::GlobalObject* global,
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    auto* process = global->processObject();
-    if (!process)
+    // If process (or the target stream) was never touched, no 'error' listener
+    // can be attached; getDirect avoids reifying the lazy PropertyCallback.
+    if (!global->hasProcessObject())
         return;
-
-    // getDirect so we don't reify the lazy stdout/stderr PropertyCallback: if the
-    // user never touched the stream, no 'error' listener can be attached.
+    auto* process = global->processObject();
     JSValue stream = process->getDirect(vm, fd == 2 ? Identifier::fromString(vm, "stderr"_s) : Identifier::fromString(vm, "stdout"_s));
     if (!stream || !stream.isObject())
         return;

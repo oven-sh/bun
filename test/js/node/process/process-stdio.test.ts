@@ -172,51 +172,61 @@ describe.concurrent("process-stdio", () => {
 // saturates the debug+ASAN process budget; adding five more concurrent children
 // pushes the timer-paced stdin tests over their 5s timeout.
 describe.skipIf(isWindows)("process.stdout/stderr EPIPE after reader closes", () => {
-  // Spawn a child with piped stdout and immediately destroy the read end; the
-  // child waits for that by reading stdin to EOF (we close it), then writes.
-  // Pure event-driven: no timers.
-  const childBody = (fn: "log" | "write", withListener: boolean) => `
+  // Spawn a child with the target stream piped and immediately destroy the read
+  // end; the child waits for that by reading stdin to EOF (we close it), then
+  // writes. Pure event-driven: no timers.
+  const childBody = (which: "stdout" | "stderr", fn: "console" | "write", withListener: boolean) => {
+    const other = which === "stdout" ? "stderr" : "stdout";
+    const consoleFn = which === "stdout" ? "log" : "error";
+    return `
     const seen = [];
     ${
       withListener
-        ? `process.stdout.on("error", e => seen.push(e.code + ":" + e.syscall + ":" + e.errno));`
+        ? `process.${which}.on("error", e => seen.push(e.code + ":" + e.syscall + ":" + e.errno));`
         : `process.on("uncaughtException", e => seen.push("uncaught:" + e.code));`
     }
-    process.on("exit", c => process.stderr.write(JSON.stringify({ seen, exit: c }) + "\\n"));
+    process.on("exit", c => process.${other}.write(JSON.stringify({ seen, exit: c }) + "\\n"));
     process.stdin.resume();
     process.stdin.on("end", async () => {
       for (let i = 0; i < 4; i++) {
-        ${fn === "write" ? `process.stdout.write("x" + i + "\\n");` : `console.log("x" + i);`}
+        ${fn === "write" ? `process.${which}.write("x" + i + "\\n");` : `console.${consoleFn}("x" + i);`}
         await new Promise(r => process.nextTick(r));
         await new Promise(r => process.nextTick(r));
       }
-      process.stderr.write("[done]\\n");
+      process.${other}.write("[done]\\n");
       process.exit();
     });`;
+  };
 
-  async function run(fn: "log" | "write", withListener: boolean) {
-    const child = cp.spawn(bunExe(), ["-e", childBody(fn, withListener)], {
+  async function run(which: "stdout" | "stderr", fn: "console" | "write", withListener: boolean) {
+    const other = which === "stdout" ? "stderr" : "stdout";
+    const child = cp.spawn(bunExe(), ["-e", childBody(which, fn, withListener)], {
       stdio: ["pipe", "pipe", "pipe"],
       env: bunEnv,
     });
-    let stderr = "";
-    child.stderr.on("data", d => (stderr += d.toString()));
-    child.stdout.destroy();
+    let report = "";
+    child[other].on("data", d => (report += d.toString()));
+    child[which].destroy();
     child.stdin.end();
     const exitCode = await new Promise<number>(r => child.on("close", code => r(code ?? -1)));
-    const lines = stderr.trim().split("\n");
+    const lines = report.trim().split("\n");
     const reportLine = lines.find(l => l.startsWith("{"));
     if (!reportLine || !lines.includes("[done]")) {
-      // Surface the child's actual stderr/exit instead of a JSON.parse error.
-      expect({ stderr, exitCode }).toEqual({ stderr: expect.stringContaining("[done]"), exitCode: 0 });
+      // Surface the child's actual output/exit instead of a JSON.parse error.
+      expect({ report, exitCode }).toEqual({ report: expect.stringContaining("[done]"), exitCode: 0 });
     }
     const result = JSON.parse(reportLine!) as { seen: string[]; exit: number };
     expect(exitCode).toBe(result.exit);
     return result;
   }
 
-  test.each(["log", "write"] as const)("%s with 'error' listener: fires EPIPE per write, exit 0", async fn => {
-    const { seen, exit } = await run(fn, true);
+  test.each([
+    ["stdout", "console"],
+    ["stdout", "write"],
+    ["stderr", "console"],
+    ["stderr", "write"],
+  ] as const)("%s %s with 'error' listener: fires EPIPE per write, exit 0", async (which, fn) => {
+    const { seen, exit } = await run(which, fn, true);
     // One 'error' event per write that hit the dead pipe. The first one or two
     // may land before the kernel notices the reader is gone, so require at
     // least 2 (out of 4) rather than exactly 4.
@@ -228,13 +238,13 @@ describe.skipIf(isWindows)("process.stdout/stderr EPIPE after reader closes", ()
   test("console.log without 'error' listener: failure is swallowed", async () => {
     // Node's createWriteErrorHandler adds a noop 'error' listener so a
     // console.log to a dead pipe doesn't crash (test-process-external-stdio-close).
-    const { seen, exit } = await run("log", false);
+    const { seen, exit } = await run("stdout", "console", false);
     expect(seen).toEqual([]);
     expect(exit).toBe(0);
   });
 
   test("process.stdout.write without 'error' listener: one uncaughtException EPIPE", async () => {
-    const { seen, exit } = await run("write", false);
+    const { seen, exit } = await run("stdout", "write", false);
     // emitErrorNT's one-shot guard stays latched once nobody is listening, so
     // exactly one uncaughtException is delivered for the whole sequence (not
     // one per write). The test's uncaughtException handler swallows it, hence

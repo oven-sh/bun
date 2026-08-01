@@ -22,6 +22,7 @@ test.skipIf(!isPosix)("nested bun run waits for the child on SIGINT", async () =
       let done = 0;
       process.on("SIGINT", () => {
         if (done++) return;
+        console.log("sigint received");
         setTimeout(() => {
           console.log("cleanup done");
           process.exit(0);
@@ -49,17 +50,27 @@ test.skipIf(!isPosix)("nested bun run waits for the child on SIGINT", async () =
     const reader = outer.stdout.getReader();
     const decoder = new TextDecoder();
     let stdout = "";
-    let innerPid = 0;
-    while (!innerPid) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      stdout += decoder.decode(value, { stream: true });
-      const m = stdout.match(/ready (\d+)/);
-      if (m) innerPid = Number(m[1]);
-    }
+    const readUntil = async (needle: string) => {
+      while (!stdout.includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        stdout += decoder.decode(value, { stream: true });
+      }
+    };
+
+    await readUntil("ready ");
+    const innerPid = Number(stdout.match(/ready (\d+)/)?.[1]);
     expect(innerPid).toBeGreaterThan(0);
 
     // SIGINT to the whole process group (detached => outer.pid is the pgid).
+    // A second SIGINT goes out once the innermost script has entered its
+    // handler: standard signals coalesce, so on a single-core scheduler the
+    // forwarded SIGINT from the first delivery could merge with the still
+    // pending pgroup SIGINT on the middle runner and leave it with only one
+    // delivery to handle. The explicit second round guarantees a repeat
+    // delivery after every runner's first handler has returned.
+    process.kill(-outer.pid, "SIGINT");
+    await readUntil("sigint received");
     process.kill(-outer.pid, "SIGINT");
 
     const exitCode = await outer.exited;

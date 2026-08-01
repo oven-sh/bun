@@ -43,10 +43,7 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
             exportValues.append(value);
         }
 
-        // When the factory object exposes accessor exports, pass the object as a
-        // trailing value (no matching name) so SyntheticModuleRecord can back the
-        // namespace with it and keep reads live. The environment slots still hold
-        // the snapshots above for static `import { x }` consumers.
+        // Trailing value with no matching name: SyntheticModuleRecord::m_liveExportsSource.
         if (hasAccessor)
             exportValues.append(object);
     };

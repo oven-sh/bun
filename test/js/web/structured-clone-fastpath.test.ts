@@ -10,19 +10,25 @@ describe("Structured Clone Fast Path", () => {
       ["int32", 42],
       ["int32 negative", -17],
       ["int32 zero", 0],
+      ["int32 max", 2147483647],
+      ["int32 min", -2147483648],
       ["double", 3.14159],
       ["double -0", -0],
       ["double NaN", NaN],
       ["double Infinity", Infinity],
       ["double -Infinity", -Infinity],
       ["double max safe int", Number.MAX_SAFE_INTEGER],
+      ["double int32 max + 1", 2147483648],
       ["true", true],
       ["false", false],
       ["null", null],
       ["undefined", undefined],
-      ["small BigInt", 1n],
-      ["large BigInt", 2n ** 80n],
-      ["negative BigInt", -(2n ** 80n)],
+      ["BigInt 0n", 0n],
+      ["BigInt 1n", 1n],
+      ["BigInt int32 max", 2147483647n],
+      ["BigInt int32 min", -2147483648n],
+      ["BigInt heap", 2n ** 80n],
+      ["BigInt heap negative", -(2n ** 80n)],
     ];
 
     test.each(cases)("structuredClone(%s) round-trips", (_, value) => {
@@ -38,19 +44,23 @@ describe("Structured Clone Fast Path", () => {
 
     test.each(cases)("postMessage(%s) round-trips via MessageChannel", async (_, value) => {
       const { port1, port2 } = new MessageChannel();
-      const { promise, resolve } = Promise.withResolvers();
-      port2.onmessage = (e: MessageEvent) => resolve(e.data);
-      port1.postMessage(value);
-      const result = await promise;
-      if (typeof value === "number" && Number.isNaN(value)) {
-        expect(result).toBeNaN();
-      } else if (Object.is(value, -0)) {
-        expect(Object.is(result, -0)).toBe(true);
-      } else {
-        expect(result).toBe(value);
+      try {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        port2.onmessage = (e: MessageEvent) => resolve(e.data);
+        port2.onmessageerror = reject;
+        port1.postMessage(value);
+        const result = await promise;
+        if (typeof value === "number" && Number.isNaN(value)) {
+          expect(result).toBeNaN();
+        } else if (Object.is(value, -0)) {
+          expect(Object.is(result, -0)).toBe(true);
+        } else {
+          expect(result).toBe(value);
+        }
+      } finally {
+        port1.close();
+        port2.close();
       }
-      port1.close();
-      port2.close();
     });
 
     test("bun:jsc serialize() still produces real bytes for primitives", () => {
@@ -78,6 +88,7 @@ describe("Structured Clone Fast Path", () => {
         for (const [, value] of cases) {
           const { promise, resolve, reject } = Promise.withResolvers();
           worker.onmessage = (e: MessageEvent) => resolve(e.data);
+          worker.onmessageerror = reject;
           worker.onerror = reject;
           worker.postMessage(value);
           const result = await promise;
@@ -103,11 +114,9 @@ describe("Structured Clone Fast Path", () => {
     });
 
     test("structuredClone of bare primitive skips the CloneSerializer", () => {
-      // Reference: an empty Map has no structured-clone fast path and always goes
-      // through the full CloneSerializer. Before the primitive fast path existed,
-      // structuredClone(42) took the same serializer path and ran at roughly half
-      // the cost of the Map (observed ratio 0.5-0.8). On the fast path it returns
-      // the value immediately and is an order of magnitude cheaper.
+      // An empty Map has no fast path and always pays the full CloneSerializer cost.
+      // A fast-pathed primitive must cost an order of magnitude less than that; off
+      // the fast path it runs at roughly half the Map cost.
       const N = 2_000;
       for (let i = 0; i < 500; i++) {
         structuredClone(42);

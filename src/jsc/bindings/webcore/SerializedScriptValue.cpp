@@ -4456,12 +4456,8 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         && messagePorts.isEmpty();
 
     if (canUseFastPath) {
-        // A bare non-cell JSValue (int32/double/bool/null/undefined, plus BigInt32 when
-        // USE(BIGINT32)) has no heap identity and is safe to carry across threads as-is.
-        // Ordering is load-bearing: on JSVALUE64 the empty JSValue satisfies isCell()==true,
-        // so it continues to the cell branch below; this check must not be rewritten as
-        // isPrimitive() or hoisted above canUseFastPath (SerializationForStorage callers
-        // like bun:jsc serialize() depend on getting real wire bytes).
+        // Not isPrimitive(): on JSVALUE64 the empty JSValue has isCell()==true and must keep
+        // falling through to the full serializer below.
         if (!value.isCell())
             return SerializedScriptValue::createPrimitiveFastPath(value);
 

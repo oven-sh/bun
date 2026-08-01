@@ -6205,9 +6205,12 @@ impl<'a> Resolver<'a> {
                             info.enclosing_package_json = Some(pkg);
                         }
 
+                        // id 0 is the synthetic root (user's own project), not a
+                        // cache-installed package.
                         let enclosing_is_installed_root =
                             info.package_json_for_dependencies().is_some_and(|p| {
                                 p.package_manager_package_id != Install::INVALID_PACKAGE_ID
+                                    && p.package_manager_package_id != 0
                             });
                         if pkg.package_manager_package_id != Install::INVALID_PACKAGE_ID
                             || (pkg.dependencies.map.count() > 0 && !enclosing_is_installed_root)

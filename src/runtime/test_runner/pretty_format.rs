@@ -757,6 +757,18 @@ impl<'a> Formatter<'a> {
         self.estimated_line_length += 1;
         Ok(())
     }
+
+    fn write_sorted_entries<W: bun_io::Write>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        mut entries: Vec<Vec<u8>>,
+    ) {
+        entries.sort();
+        for entry in &entries {
+            writer.write_all(entry);
+        }
+        self.reset_line();
+    }
 }
 
 // split lifetimes — `&'a mut Formatter<'a>` is invariant and forces
@@ -1836,12 +1848,8 @@ impl<'a> Formatter<'a> {
                                 (&raw mut iter).cast::<c_void>(),
                                 SortedEntryCollector::<true, ENABLE_ANSI_COLORS>::for_each,
                             );
-                            let mut entries = iter.entries;
-                            entries.sort();
-                            for entry in &entries {
-                                writer.write_all(entry);
-                            }
-                            self.reset_line();
+                            let entries = iter.entries;
+                            self.write_sorted_entries(&mut writer, entries);
                             result
                         } else {
                             let mut iter = MapIterator::<W, ENABLE_ANSI_COLORS> {
@@ -1900,12 +1908,8 @@ impl<'a> Formatter<'a> {
                                 (&raw mut iter).cast::<c_void>(),
                                 SortedEntryCollector::<false, ENABLE_ANSI_COLORS>::for_each,
                             );
-                            let mut entries = iter.entries;
-                            entries.sort();
-                            for entry in &entries {
-                                writer.write_all(entry);
-                            }
-                            self.reset_line();
+                            let entries = iter.entries;
+                            self.write_sorted_entries(&mut writer, entries);
                             result
                         } else {
                             let mut iter = SetIterator::<W, ENABLE_ANSI_COLORS> {

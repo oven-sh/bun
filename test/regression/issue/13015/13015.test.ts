@@ -115,10 +115,10 @@ describe("issue #13015: toEqual diff for Set/Map is order-insensitive", () => {
   });
 
   test("sibling after a Set does not depend on Set insertion order", () => {
-    // Guards the post-loop reset_line() in the Tag::Set/Tag::Map sorted path:
-    // without it, estimated_line_length on exit depends on the last-inserted
-    // entry's length, so a Promise sibling right after the Set shows as both
-    // "-" and "+".
+    // Guards the reset_line() in Formatter::write_sorted_entries (shared by
+    // Tag::Set and Tag::Map): without it, estimated_line_length on exit depends
+    // on the last-inserted entry's length, so a Promise sibling right after the
+    // collection shows as both "-" and "+".
     const { body, footer } = diffBlock(stderr, "sibling after a Set is order-independent");
     for (const line of body) {
       if (line.startsWith("+ ") || line.startsWith("- ")) {

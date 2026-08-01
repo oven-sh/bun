@@ -1084,7 +1084,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             needs_deref,
         };
 
-        if vm.is_shutting_down() {
+        if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
             drop(cleanup);
             return Ok(());
         }
@@ -1196,6 +1196,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             Ok(v) => v,
             Err(e) => global.take_exception(e),
         };
+        if global.has_exception() {
+            return Ok(());
+        }
 
         if let Some(err_val) = result.to_error() {
             // TODO: properly propagate exception upwards
@@ -1750,7 +1753,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut callback = handlers.on_handshake();
         let mut is_open = false;
 
-        if handlers.vm.is_shutting_down() {
+        if handlers.vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
             // `on_close` skips its JS dispatch during shutdown, so the native
             // close is still safe here.
             if reject_unauthorized {

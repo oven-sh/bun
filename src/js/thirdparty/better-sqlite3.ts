@@ -99,9 +99,12 @@ class Statement {
     return this.#stmt.all.$apply(this.#stmt, params);
   }
 
-  *iterate(...args) {
+  iterate(...args) {
+    return this.#iterate(this.#params(args));
+  }
+
+  *#iterate(params) {
     this.#trace();
-    const params = this.#params(args);
     if (this.#raw || this.#pluck || this.#expand) {
       const rows = this.#stmt.values.$apply(this.#stmt, params);
       for (let i = 0; i < rows.length; i++) yield this.#mapRow(rows[i]);

@@ -72,6 +72,7 @@ describe("better-sqlite3 shim", () => {
     expect(bound.all()).toEqual([{ a: 2, b: "y" }]);
     expect(bound.get()).toEqual({ a: 2, b: "y" });
     expect(() => bound.all(1)).toThrow("already has bound parameters");
+    expect(() => bound.iterate(1)).toThrow("already has bound parameters");
     expect(() => bound.bind(1)).toThrow("only be invoked once");
 
     db.close();

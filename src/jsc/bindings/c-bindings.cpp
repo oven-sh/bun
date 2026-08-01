@@ -902,9 +902,7 @@ extern "C" int64_t Bun__currentSyncPID = 0;
 static int Bun__pendingSignalToSend = 0;
 static struct sigaction previous_actions[NSIG];
 
-// This list of signals is copied from npm, minus aliases (SIGIOT == SIGABRT,
-// SIGPOLL == SIGIO) which would double-write previous_actions[N] and lose the
-// original disposition.
+// npm's signal list minus SIGIOT/SIGPOLL (aliases of SIGABRT/SIGIO; listing both would overwrite previous_actions[N]).
 // https://github.com/npm/cli/blob/fefd509992a05c2dfddbe7bc46931c42f1da69d7/workspaces/arborist/lib/signals.js#L26-L57
 #define FOR_EACH_POSIX_SIGNAL(M) \
     M(SIGABRT);                  \

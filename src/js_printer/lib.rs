@@ -2112,10 +2112,8 @@ pub(crate) mod __gated_printer {
                     for comment in arg.leading_comments.slice() {
                         let text = comment.text.slice();
                         if text.starts_with(b"//") {
-                            // A line comment here would swallow the rest of the
-                            // parameter list on one line; re-emit as a block
-                            // comment. Skip if the body contains "*/" since
-                            // that would terminate the block early.
+                            // Re-emit as a block comment so it doesn't swallow
+                            // the rest of the line; drop if unrepresentable.
                             let body = &text[2..];
                             if !strings::contains(body, b"*/") {
                                 self.print(b"/*");

@@ -195,10 +195,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ..Default::default()
         };
 
-        // Capture `/* ... */` comments inside the parameter list so they
-        // survive into `Function.prototype.toString()`. Only entries pushed
-        // past `comments_base` are ours; anything already in the buffer (legal
-        // comments from earlier in the statement) is left in place.
+        // Keep comments inside `(...)` for Function.prototype.toString().
+        // Only entries past `comments_base` belong to this parameter list.
         let old_preserve_comments = p.lexer.preserve_all_comments_before;
         let comments_base = p.lexer.comments_to_preserve_before.len();
         p.lexer.preserve_all_comments_before = true;
@@ -366,8 +364,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
             rest_arg = false;
         }
-        // Drop any comments captured between the last arg and `)`; they would
-        // otherwise surface as top-level `SComment` statements in the body.
+        // Drop any trailing captured comments so they don't leak into the body.
         p.lexer.comments_to_preserve_before.truncate(comments_base);
         p.lexer.preserve_all_comments_before = old_preserve_comments;
 

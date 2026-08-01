@@ -338,10 +338,8 @@ pub struct Arg {
 
     pub ts_metadata: TypeScript::Metadata,
 
-    // Comments that appeared immediately before this argument's binding in the
-    // source, e.g. `function(/* config.proxies */ proxies) {}`. Preserved so
-    // that `Function.prototype.toString()` round-trips the DI annotation style
-    // used by AngularJS / karma's `di` package.
+    // `function(/* token */ arg)` — kept so Function.prototype.toString()
+    // preserves DI-style annotations (AngularJS / karma `di`).
     pub leading_comments: StoreSlice<Comment>,
 }
 

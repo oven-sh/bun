@@ -954,30 +954,32 @@ describe("minimum-release-age", () => {
       expect(lockfile).not.toContain("regular-package@3.0.0");
     });
 
-    test("avoids deprecated versions when resolving a range", async () => {
-      using dir = tempDir("deprecated-avoid", {
-        "package.json": JSON.stringify({
-          dependencies: { "deprecated-package": "*" },
-        }),
-        ".npmrc": `registry=${mockRegistryUrl}`,
-      });
+    for (const spec of ["*", "latest"]) {
+      test(`avoids deprecated versions when resolving "${spec}"`, async () => {
+        using dir = tempDir("deprecated-avoid", {
+          "package.json": JSON.stringify({
+            dependencies: { "deprecated-package": spec },
+          }),
+          ".npmrc": `registry=${mockRegistryUrl}`,
+        });
 
-      const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+        const proc = Bun.spawn({
+          cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("error:");
-      expect(normalizeBunSnapshot(stdout, dir)).toContain("deprecated-package@1.0.0");
-      expect(exitCode).toBe(0);
-      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
-      expect(lockfile).toContain("deprecated-package@1.0.0");
-      expect(lockfile).not.toContain("deprecated-package@2.0.0");
-    });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(normalizeBunSnapshot(stdout, dir)).toContain("deprecated-package@1.0.0");
+        expect(exitCode).toBe(0);
+        const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+        expect(lockfile).toContain("deprecated-package@1.0.0");
+        expect(lockfile).not.toContain("deprecated-package@2.0.0");
+      });
+    }
 
     test("handles exact version requests", async () => {
       using dir = tempDir("exact-version", {

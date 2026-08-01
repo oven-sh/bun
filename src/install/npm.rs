@@ -1593,9 +1593,11 @@ impl PackageManifest {
             if group.satisfies(version, group_buf, &self.string_buf) {
                 let package = &packages[i];
                 if package.deprecated {
-                    if deprecated_fallback.is_none()
-                        && !Self::is_package_version_too_recent(package, minimum_release_age_ms)
-                    {
+                    if Self::is_package_version_too_recent(package, minimum_release_age_ms) {
+                        if newest_filtered.is_none() {
+                            *newest_filtered = Some(version);
+                        }
+                    } else if deprecated_fallback.is_none() {
                         *deprecated_fallback = Some(FindResult { version, package });
                     }
                     continue;
@@ -1741,6 +1743,7 @@ impl PackageManifest {
         let packages = list.values.get(&self.package_versions);
 
         let mut best_version: Option<FindResult<'_>> = None;
+        let mut deprecated_fallback: Option<FindResult<'_>> = None;
         let mut prev_package_blocked_from_age: Option<&PackageVersion> = Some(dist_result.package);
 
         let mut i: usize = versions.len();
@@ -1766,6 +1769,15 @@ impl PackageManifest {
                 if actual_tag != expected_tag {
                     continue;
                 }
+            }
+
+            if package.deprecated {
+                if deprecated_fallback.is_none()
+                    && !Self::is_package_version_too_recent(package, min_age_ms)
+                {
+                    deprecated_fallback = Some(FindResult { version, package });
+                }
+                continue;
             }
 
             if Self::is_package_version_too_recent(package, min_age_ms) {
@@ -1805,7 +1817,7 @@ impl PackageManifest {
             break;
         }
 
-        if let Some(result) = best_version {
+        if let Some(result) = best_version.or(deprecated_fallback) {
             return FindVersionResult::FoundWithFilter {
                 result,
                 newest_filtered: Some(dist_result.version),
@@ -1901,7 +1913,14 @@ impl PackageManifest {
         }
 
         if let Some(result) = deprecated_fallback {
-            return FindVersionResult::Found(result);
+            return if newest_filtered.is_some() {
+                FindVersionResult::FoundWithFilter {
+                    result,
+                    newest_filtered,
+                }
+            } else {
+                FindVersionResult::Found(result)
+            };
         }
 
         if newest_filtered.is_some() {

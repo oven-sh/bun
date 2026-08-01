@@ -748,34 +748,34 @@ _bun() {
         '--inspect=-[Activate Bun'"'"'s debugger]::addr' \
         '--inspect-wait=-[Activate Bun'"'"'s debugger, wait for a connection before executing]::addr' \
         '--inspect-brk=-[Activate Bun'"'"'s debugger, set breakpoint on first line of code and wait]::addr' \
-        '--preload[Import a module before other modules are loaded]:preload:_files' \
-        '-r[Import a module before other modules are loaded]:preload:_files' \
-        '--require[Import a module before other modules are loaded]:preload:_files' \
-        '--import[Import a module before other modules are loaded]:preload:_files' \
+        '*--preload[Import a module before other modules are loaded]:preload:_files' \
+        '*-r[Import a module before other modules are loaded]:preload:_files' \
+        '*--require[Import a module before other modules are loaded]:preload:_files' \
+        '*--import[Import a module before other modules are loaded]:preload:_files' \
         '--cwd[Absolute path to resolve files & entry points from]:cwd:_files -/' \
         '--config=-[Specify path to Bun config file]::config:_files' \
-        '--env-file[Load environment variables from the specified file(s)]:env-file:_files' \
+        '*--env-file[Load environment variables from the specified file(s)]:env-file:_files' \
         '--port[Set the default port for Bun.serve]:port' \
         '-p[Evaluate argument as a script and print the result]:script' \
         '--print[Evaluate argument as a script and print the result]:script' \
         '-e[Evaluate argument as a script]:script' \
         '--eval[Evaluate argument as a script]:script' \
-        '--filter[Run a script in all workspace packages matching the pattern]:filter' \
-        '-F[Run a script in all workspace packages matching the pattern]:filter' \
+        '*--filter[Run a script in all workspace packages matching the pattern]:filter' \
+        '*-F[Run a script in all workspace packages matching the pattern]:filter' \
         '--title[Set the process title]:title' \
         '--shell[Control the shell used for package.json scripts]:shell:(bun system)' \
         '--install[Configure auto-install behavior]:install:(auto fallback force)' \
-        '--conditions[Pass custom conditions to resolve]:conditions' \
+        '*--conditions[Pass custom conditions to resolve]:conditions' \
         '--unhandled-rejections[Set unhandled rejection behavior]:mode:(strict throw warn none warn-with-error-code)' \
         '--dns-result-order[Set the default order of DNS lookup results]:order:(verbatim ipv4first ipv6first)' \
         '--console-depth[Set the default depth for console.log object inspection]:depth' \
         '--elide-lines[Number of lines of script output shown when using --filter]:lines' \
-        '--fetch-preconnect[Preconnect to a URL while code is loading]:url' \
+        '*--fetch-preconnect[Preconnect to a URL while code is loading]:url' \
         '--max-http-header-size[Set the maximum size of HTTP headers in bytes]:bytes' \
-        '--define[Substitute K:V while parsing]:define' \
-        '-d[Substitute K:V while parsing]:define' \
-        '--loader[Parse files with .ext:loader]:loader' \
-        '-l[Parse files with .ext:loader]:loader' \
+        '*--define[Substitute K:V while parsing]:define' \
+        '*-d[Substitute K:V while parsing]:define' \
+        '*--loader[Parse files with .ext:loader]:loader' \
+        '*-l[Parse files with .ext:loader]:loader' \
         '--tsconfig-override[Load tsconfig from path instead of cwd/tsconfig.json]:tsconfig:_files' \
         '--version[Print version and exit]' \
         '-v[Print version and exit]' \

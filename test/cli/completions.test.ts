@@ -296,8 +296,13 @@ describe.skipIf(isWindows)("shell completions: `bun <path>` and runtime flags (#
       const script = await embeddedCompletions("zsh");
       const bun = script.slice(script.indexOf("\n_bun() {"));
       const topArguments = bun.slice(0, bun.indexOf("ret=0"));
-      for (const flag of ["--hot", "--watch", "--smol", "--bun", "--preload", "--cwd"]) {
+      for (const flag of ["--hot", "--watch", "--smol", "--bun", "--cwd"]) {
         expect(topArguments).toContain(`'${flag}[`);
+      }
+      // Repeatable value-taking flags must be declared with the `*` prefix so
+      // `_arguments` consumes every occurrence's value, not just the first.
+      for (const flag of ["--preload", "--env-file", "--define", "--conditions"]) {
+        expect(topArguments).toContain(`'*${flag}[`);
       }
       // `-A '-*'` stops option matching at the first positional, so e.g. `-d`
       // after `bun add` is left for `_bun_add_completion` (where it means

@@ -386,10 +386,7 @@ fn leak_static(s: &[u8]) -> &'static [u8] {
     bun_core::heap::release(s.to_vec().into_boxed_slice())
 }
 
-/// Replace a leading `~` (bare or followed by a path separator) with
-/// `$HOME`/`%USERPROFILE%`. bunfig.toml path values arrive verbatim, so without
-/// this a `dir = "~/x"` entry resolves to `<cwd>/~/x`.
-/// `~user` is left untouched.
+/// `~` or `~/<rest>` → `$HOME/<rest>`. `~user` is left untouched.
 fn expand_home_tilde(path: &[u8]) -> Option<Vec<u8>> {
     if path.first() != Some(&b'~') {
         return None;

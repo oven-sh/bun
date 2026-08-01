@@ -140,12 +140,15 @@ describe("bundler", () => {
           {a: 1, get c() { return 9; }}.a,
           {__proto__: null, __proto__}.__proto__,
           {a: f, b: 2, marker: "OBJ"}.a\`x\`,
+          {__proto__: null, "\\u00e9": 1}.é,
+          {__proto__: null, "caf\\u00e9": 1}.café,
+          {__proto__: null, "\\u00c3\\u00a9": 1}.é,
         ]));
         console.log("hits=" + hits);
       `,
     },
     minifySyntax: true,
-    run: { stdout: '[3,1,4,1,null,null,3,1,42,"OBJ"]\nhits=1' },
+    run: { stdout: '[3,1,4,1,null,null,3,1,42,"OBJ",1,1,null]\nhits=1' },
   });
   itBundled("minify/StringAdditionFolding", {
     files: {

@@ -370,6 +370,24 @@ describe("bunshell", () => {
       expect(stdout.toString("utf8")).toEqual(`\\弟\\気\n`);
     });
 
+    // https://github.com/oven-sh/bun/issues/15929
+    test("literal non-ascii in template raw text", async () => {
+      const { stdout } = await $`echo 日本語 español "rêver" 🐰`;
+      expect(stdout.toString("utf8")).toEqual("日本語 español rêver 🐰\n");
+    });
+
+    test("literal non-ascii path after interpolation", async () => {
+      using dir = tempDir("shell-nonascii", {
+        "日本語/a.txt": "jp\n",
+        "español/a.txt": "es\n",
+      });
+      const base = String(dir);
+      expect((await $`cat ${base}/日本語/a.txt`).text()).toEqual("jp\n");
+      expect((await $`cat ${base}/español/a.txt`).text()).toEqual("es\n");
+      expect((await $`cat ${base}/${"日本語"}/a.txt`).text()).toEqual("jp\n");
+      expect((await $`cat ${base}/${"español"}/a.txt`).text()).toEqual("es\n");
+    });
+
     /**
      * Only A-Z, a-z, 0-9, and _ are allowed in variable names
      *

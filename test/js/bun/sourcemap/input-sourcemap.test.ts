@@ -182,6 +182,34 @@ try { require("./index.js"); } catch (e) { console.log(e.stack); }
     expect(exitCode).toBe(0);
   });
 
+  test("inline data: URI with charset parameter (webpack/babel form)", async () => {
+    const b64 = Buffer.from(JSON.stringify(mapJson)).toString("base64");
+    using dir = tempDir("input-sourcemap-charset", {
+      "index.js":
+        generated + `//# sourceMappingURL=data:application/json;charset=utf-8;base64,${b64}\n`,
+      "run.js": `\
+try { require("./index.js"); } catch (e) { console.log(e.stack); }
+`,
+    });
+
+    const { stdout, stderr, exitCode } = await run(String(dir), "run.js");
+    expect(stdout).toContain(`at boom (${join(String(dir), "index.ts")}:6:`);
+    expect(stderr).not.toContain("Could not decode sourcemap");
+    expect(exitCode).toBe(0);
+  });
+
+  test("sourcesContent: null is treated as absent", async () => {
+    using dir = tempDir("input-sourcemap-null-content", {
+      "index.js": generated + "//# sourceMappingURL=index.js.map\n",
+      "index.js.map": JSON.stringify({ ...mapJson, sourcesContent: null }),
+    });
+
+    const { stderr, exitCode } = await run(String(dir), "index.js");
+    expect(stderr).toContain("index.ts:6");
+    expect(stderr).not.toContain("Could not decode sourcemap");
+    expect(exitCode).toBe(1);
+  });
+
   test("sourceRoot is prepended to sources", async () => {
     using dir = tempDir("input-sourcemap-sourceroot", {
       "src/index.ts": original,

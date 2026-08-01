@@ -858,7 +858,10 @@ pub(crate) fn parse_url(
                         let Some(comma) = after.iter().position(|&b| b == b',') else {
                             break 'try_data_url;
                         };
-                        if &after[..comma] != b"base64" {
+                        // RFC 2397 allows media-type parameters before `;base64`
+                        // (webpack/babel emit `;charset=utf-8;base64,`).
+                        let params = &after[..comma];
+                        if params != b"base64" && !params.ends_with(b";base64") {
                             break 'try_data_url;
                         }
                         let base64_data = &after[comma + 1..];
@@ -935,7 +938,7 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
     // `sourcesContent` is optional in the spec (tsc omits it by default).
     let sources_content = match json.get(b"sourcesContent").map(|e| e.data) {
         Some(bun_ast::ExprData::EArrayJSON(arr)) => Some(arr),
-        None => None,
+        Some(bun_ast::ExprData::ENull(_)) | None => None,
         _ => return Err(crate::Error::InvalidSourceMap),
     };
     let sources_content = sources_content.as_ref().map(|a| a.get());

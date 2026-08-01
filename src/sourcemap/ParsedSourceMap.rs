@@ -276,7 +276,17 @@ impl ParsedSourceMap {
             self.mappings.find(line, column)
         };
         let Some(input_map) = self.input_map() else {
-            return own;
+            // A chain is intended but not yet loaded: clear `source_index` so
+            // a later read of `input_map()` cannot pair this position with the
+            // input map's sources.
+            return if self.input_map_url.is_some() {
+                own.map(|m| Mapping {
+                    source_index: -1,
+                    ..m
+                })
+            } else {
+                own
+            };
         };
         // Our `original` positions are the input map's `generated` positions.
         // On a miss, report the intermediate position with `source_index`

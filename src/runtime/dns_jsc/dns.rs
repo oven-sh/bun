@@ -2067,10 +2067,18 @@ pub mod internal {
     // a borrowed C-ABI view (`info` points at `result_buf[0]`). Do NOT free via
     // this field.
 
-    #[derive(Default)]
     #[cfg(target_os = "macos")]
     pub struct MacAsyncDNS {
         pub(crate) query: dns_sd::QueryState,
+    }
+
+    #[cfg(target_os = "macos")]
+    impl Default for MacAsyncDNS {
+        fn default() -> Self {
+            Self {
+                query: dns_sd::QueryState::new(0),
+            }
+        }
     }
 
     pub struct Request {

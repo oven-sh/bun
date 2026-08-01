@@ -131,15 +131,18 @@ fn addrconfig_flags(protocol: DNSServiceProtocol) -> DNSServiceFlags {
 /// has answered, instead of sitting out the daemon's full query timeout.
 const SECOND_FAMILY_EXTRA_MS: i64 = 2000;
 
+/// The suppressed query always asked for both families.
+fn protocol_for_pending(_q: &QueryState) -> DNSServiceProtocol {
+    PROTOCOL_IPV4 | PROTOCOL_IPV6
+}
+
 fn now_ms() -> i64 {
-    let now = bun::timespec::now(bun::TimespecMockMode::AllowMockedTime);
-    now.sec * 1000 + (now.nsec as i64) / 1_000_000
+    bun::timespec::now(bun::TimespecMockMode::AllowMockedTime).ms()
 }
 
 /// Per-query state for one `DNSServiceGetAddrInfo` subordinate, shared
 /// by the JS `dns.lookup` request and the internal connect-path request
 /// so both apply identical completion rules.
-#[derive(Default)]
 pub(crate) struct QueryState {
     pub(crate) sd_ref: DNSServiceRef,
     pub(crate) results: bun_dns::ResultList,
@@ -160,14 +163,42 @@ pub(crate) struct QueryState {
     /// timestamp starts the `SECOND_FAMILY_EXTRA_MS` early-out.
     partial_at_ms: Option<i64>,
     gave_up_on_pending: bool,
+    /// Set when the query was issued with `SuppressUnusable`; an all-empty
+    /// answer under it is retried once without the flag before reporting
+    /// EAI_NONAME, in case the daemon's usability check false-negatived.
+    used_suppress: bool,
+    retried: bool,
+    /// Kept so `finish()` can reissue the query for the retry.
+    hostname: bun::ZBox,
+    callback: Option<GetAddrInfoReply>,
 }
 
 impl QueryState {
     pub(crate) fn new(protocol: DNSServiceProtocol) -> Self {
         Self {
+            sd_ref: ptr::null_mut(),
+            results: Default::default(),
+            sd_error: 0,
+            saw_timeout: false,
+            awaiting_more: false,
             pending_proto: protocol,
-            ..Default::default()
+            partial_at_ms: None,
+            gave_up_on_pending: false,
+            used_suppress: false,
+            retried: false,
+            hostname: bun::ZBox::from_bytes(b""),
+            callback: None,
         }
+    }
+
+    /// A suppressed dual-family query that came back with nothing at all
+    /// gets one more try without the suppression.
+    fn should_retry_unsuppressed(&self) -> bool {
+        self.used_suppress
+            && !self.retried
+            && self.results.is_empty()
+            && self.sd_error == 0
+            && !self.saw_timeout
     }
 
     /// Absorb one callback from `DNSServiceGetAddrInfo`.
@@ -386,6 +417,31 @@ impl SharedConnection {
         callback: GetAddrInfoReply,
         context: *mut c_void,
     ) -> Option<DNSServiceRef> {
+        let suppress = addrconfig_flags(protocol);
+        let sub = self.issue(protocol, suppress, hostname, callback, context)?;
+        if self.inflight.is_empty() {
+            let ctx = self.ctx;
+            self.file_poll().enable_keeping_process_alive(ctx);
+        }
+        // SAFETY: `owner` is the caller's live request; the connection now
+        // tracks it until `finish()`.
+        let q = unsafe { owner.query() };
+        q.sd_ref = sub;
+        q.used_suppress = suppress != 0;
+        q.hostname = bun::ZBox::from_bytes(hostname.as_bytes());
+        q.callback = Some(callback);
+        self.inflight.push(owner);
+        Some(sub)
+    }
+
+    fn issue(
+        &mut self,
+        protocol: DNSServiceProtocol,
+        suppress: DNSServiceFlags,
+        hostname: &ZStr,
+        callback: GetAddrInfoReply,
+        context: *mut c_void,
+    ) -> Option<DNSServiceRef> {
         // `sub` starts as a copy of the primary ref, as ShareConnection
         // requires.
         let mut sub: DNSServiceRef = self.main_ref;
@@ -395,10 +451,7 @@ impl SharedConnection {
         let err = unsafe {
             DNSServiceGetAddrInfo(
                 &raw mut sub,
-                FLAGS_SHARE_CONNECTION
-                    | FLAGS_TIMEOUT
-                    | FLAGS_RETURN_INTERMEDIATES
-                    | addrconfig_flags(protocol),
+                FLAGS_SHARE_CONNECTION | FLAGS_TIMEOUT | FLAGS_RETURN_INTERMEDIATES | suppress,
                 0,
                 protocol,
                 hostname.as_ptr().cast::<c_char>(),
@@ -410,11 +463,6 @@ impl SharedConnection {
             bun_output::scoped_log!(dns, "DNSServiceGetAddrInfo failed: {}", err);
             return None;
         }
-        if self.inflight.is_empty() {
-            let ctx = self.ctx;
-            self.file_poll().enable_keeping_process_alive(ctx);
-        }
-        self.inflight.push(owner);
         Some(sub)
     }
 
@@ -519,21 +567,19 @@ impl SharedConnection {
             return;
         }
         let now = bun::timespec::now(bun::TimespecMockMode::AllowMockedTime);
-        let next = now.add_ms((deadline - now_ms()).max(1));
+        let next = now.add_ms((deadline - now.ms()).max(1));
         let state = crate::jsc_hooks::runtime_state();
-        if self.early_out_timer.get().state == EventLoopTimerState::ACTIVE {
-            // SAFETY: `state` is this thread's live RuntimeState.
-            unsafe { (*state).timer.remove(self.early_out_timer.as_ptr()) };
-        }
-        self.early_out_timer.with_mut(|t| {
-            t.next = ElTimespec {
-                sec: next.sec,
-                nsec: next.nsec,
-            }
-        });
         // SAFETY: `state` is this thread's live RuntimeState; the timer slot
         // stays valid until `destroy` unlinks it.
-        unsafe { (*state).timer.insert(self.early_out_timer.as_ptr()) };
+        unsafe {
+            (*state).timer.update(
+                self.early_out_timer.as_ptr(),
+                &ElTimespec {
+                    sec: next.sec,
+                    nsec: next.nsec,
+                },
+            )
+        };
         self.early_out_armed_for.set(deadline);
     }
 
@@ -596,11 +642,47 @@ impl SharedConnection {
         if let Some(e) = force_err {
             q.results.clear();
             q.sd_error = e;
+        } else if q.should_retry_unsuppressed() && Self::retry_unsuppressed(inf) {
+            return;
         }
         match inf {
             Inflight::Jsc(r) => GetAddrInfoRequest::complete_dns_sd(r),
             Inflight::Internal(r) => internal::dns_sd_complete(r),
         }
+    }
+
+    /// Reissue `inf`'s query without `SuppressUnusable` and put it back
+    /// in-flight. `false` if it could not be reissued.
+    fn retry_unsuppressed(inf: Inflight) -> bool {
+        let Some(this) = Self::current() else {
+            return false;
+        };
+        // SAFETY: `inf` is a live heap request (removed from `inflight` by
+        // the caller); its state is not otherwise borrowed.
+        let q = unsafe { inf.query() };
+        let (protocol, hostname) = (protocol_for_pending(q), q.hostname.clone());
+        let Some(callback) = q.callback else {
+            return false;
+        };
+        q.retried = true;
+        q.awaiting_more = false;
+        q.partial_at_ms = None;
+        q.pending_proto = protocol;
+        let Some(sub) = this.issue(protocol, 0, &hostname, callback, inf.context()) else {
+            return false;
+        };
+        bun_output::scoped_log!(
+            dns,
+            "retrying {} without SuppressUnusable",
+            bstr::BStr::new(hostname.as_bytes())
+        );
+        q.sd_ref = sub;
+        if this.inflight.is_empty() {
+            let ctx = this.ctx;
+            this.file_poll().enable_keeping_process_alive(ctx);
+        }
+        this.inflight.push(inf);
+        true
     }
 
     /// VM-teardown hook: fail in-flight requests (like c-ares'

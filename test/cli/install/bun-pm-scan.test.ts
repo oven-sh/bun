@@ -31,7 +31,7 @@ beforeAll(async () => {
     if (result.exitCode !== 0) {
       throw new Error(`fixture install failed:\n${result.stderr.toString()}`);
     }
-    return Bun.file(join(String(dir), "bun.lock")).text();
+    return await Bun.file(join(String(dir), "bun.lock")).text();
   }
 
   [leftPadLock, isEvenLock, mixedLock] = await Promise.all([

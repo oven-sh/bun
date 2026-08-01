@@ -12,6 +12,7 @@ const EventEmitter = require("node:events");
 const http = require("node:http");
 const onceObject = { once: true };
 const kBunInternals = Symbol.for("::bunternal::");
+const kEnsureWebSocketMaxPayload = Symbol.for("::bunEnsureWebSocketMaxPayload::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
 
 const encoder = new TextEncoder();
@@ -965,18 +966,20 @@ class BunWebSocketMocked extends EventEmitter {
   #extensions;
   #bufferedAmount = 0;
   #binaryType = "arraybuffer";
+  #maxPayload = 0;
 
   #onclose;
   #onerror;
   #onmessage;
   #onopen;
 
-  constructor(url, protocol, extensions, binaryType) {
+  constructor(url, protocol, extensions, binaryType, maxPayload) {
     super();
     this.#ws = null;
     this.#state = ReadyState_CONNECTING;
     this.#url = url;
     this.#bufferedAmount = 0;
+    this.#maxPayload = typeof maxPayload === "number" && maxPayload > 0 ? maxPayload : 0;
     binaryType = binaryType || "arraybuffer";
     if (binaryType !== "nodebuffer" && binaryType !== "blob" && binaryType !== "arraybuffer") {
       throw new TypeError("binaryType must be either 'blob', 'arraybuffer' or 'nodebuffer'");
@@ -1015,6 +1018,23 @@ class BunWebSocketMocked extends EventEmitter {
   #message(ws, message) {
     this.#ws = ws;
 
+    const maxPayload = this.#maxPayload;
+    if (maxPayload > 0) {
+      const byteLength = typeof message === "string" ? Buffer.byteLength(message) : message.byteLength;
+      if (byteLength > maxPayload) {
+        const error = new RangeError("Max payload size exceeded");
+        error.code = "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH";
+        error[Symbol.for("ws-status-code")] = 1009;
+        this.#state = ReadyState_CLOSING;
+        try {
+          this.emit("error", error);
+        } finally {
+          this.#ws?.close(1009, "");
+        }
+        return;
+      }
+    }
+
     let isBinary = false;
     if (typeof message === "string") {
       if (this.#binaryType === "arraybuffer") {
@@ -1051,6 +1071,24 @@ class BunWebSocketMocked extends EventEmitter {
   #close(ws, code, reason) {
     this.#state = ReadyState_CLOSED;
     this.#ws = null;
+
+    // Bun.serve's native maxPayloadLength check force-closes the transport with
+    // this reason before the frame body is read (no close frame is sent). Map
+    // it to the same server-side surface npm `ws` produces for an oversized
+    // frame so server code written against `ws` observes the error event.
+    if (
+      this.#maxPayload > 0 &&
+      code === 1006 &&
+      typeof reason === "string" &&
+      reason.startsWith("Received too big message")
+    ) {
+      const error = new RangeError("Max payload size exceeded");
+      error.code = "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH";
+      error[Symbol.for("ws-status-code")] = 1009;
+      this.emit("error", error);
+      this.emit("close", 1009, "");
+      return;
+    }
 
     this.emit("close", code, reason);
   }
@@ -1357,8 +1395,10 @@ class WebSocketServer extends EventEmitter {
         res.end(body);
       });
 
+      this._server[kEnsureWebSocketMaxPayload]?.(options.maxPayload);
       this._server.listen(port, host, backlog, callback);
     } else if (server) {
+      server[kEnsureWebSocketMaxPayload]?.(options.maxPayload);
       this._server = server;
     }
 
@@ -1511,10 +1551,14 @@ class WebSocketServer extends EventEmitter {
    */
   completeUpgrade(extensions, key, protocols, request, socket, head, cb) {
     const response = socket._httpMessage;
-    const server = socket.server[kBunInternals];
+    const httpServer = socket.server;
+    const server = httpServer[kBunInternals];
     const req = socket[kBunInternals];
 
     if (this._state > RUNNING) return abortHandshake(response, 503);
+
+    // noServer mode: first time we can reach the underlying node:http server.
+    if (!this._server) httpServer[kEnsureWebSocketMaxPayload]?.(this.options.maxPayload);
 
     let protocol = "";
     if (protocols.size) {
@@ -1525,7 +1569,7 @@ class WebSocketServer extends EventEmitter {
         ? this.options.handleProtocols(protocols, request)
         : protocols.values().next().value;
     }
-    const ws = new BunWebSocketMocked(request.url, protocol, extensions, "nodebuffer");
+    const ws = new BunWebSocketMocked(request.url, protocol, extensions, "nodebuffer", this.options.maxPayload);
 
     const headers = ["HTTP/1.1 101 Switching Protocols", "Upgrade: websocket", "Connection: Upgrade"];
     this.emit("headers", headers, request);

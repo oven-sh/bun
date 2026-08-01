@@ -87,6 +87,10 @@ const { kIncomingMessage } = require("node:_http_common");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
+const kWebSocketReload = Symbol("http.server.websocketReload");
+// Shared with src/js/thirdparty/ws.js so the `ws` shim can raise Bun.serve's
+// per-server websocket maxPayloadLength to match its own maxPayload option.
+const kEnsureWebSocketMaxPayload = Symbol.for("::bunEnsureWebSocketMaxPayload::");
 
 // node.http trace events ('http.server.request' b/e). The agent module is
 // only created on the first request, and emission is gated per-request on the
@@ -671,34 +675,39 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
     }
-    this[serverSymbol] = Bun.serve<any>({
+    // Bindings for the WS Server. The handlers only dispatch to the
+    // per-connection callbacks that ws.js attached as `ws.data`; the object is
+    // captured so it can be passed back to `server.reload()` when the ws shim
+    // needs to raise `maxPayloadLength` after listen().
+    const websocket = {
+      open(ws) {
+        ws.data.open(ws);
+      },
+      message(ws, message) {
+        ws.data.message(ws, message);
+      },
+      close(ws, code, reason) {
+        ws.data.close(ws, code, reason);
+      },
+      drain(ws) {
+        ws.data.drain(ws);
+      },
+      ping(ws, data) {
+        ws.data.ping(ws, data);
+      },
+      pong(ws, data) {
+        ws.data.pong(ws, data);
+      },
+      maxPayloadLength: this[kWebSocketReload]?.maxPayloadLength,
+    };
+    const serveOptions = {
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls,
       port,
       hostname: host,
       unix: socketPath,
       reusePort,
-      // Bindings to be used for WS Server
-      websocket: {
-        open(ws) {
-          ws.data.open(ws);
-        },
-        message(ws, message) {
-          ws.data.message(ws, message);
-        },
-        close(ws, code, reason) {
-          ws.data.close(ws, code, reason);
-        },
-        drain(ws) {
-          ws.data.drain(ws);
-        },
-        ping(ws, data) {
-          ws.data.ping(ws, data);
-        },
-        pong(ws, data) {
-          ws.data.pong(ws, data);
-        },
-      },
+      websocket,
       maxRequestBodySize: Number.MAX_SAFE_INTEGER,
 
       onNodeHTTPRequest(
@@ -1146,7 +1155,13 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       //   var { promise, resolve: resolveFunction, reject: rejectFunction } = $newPromiseCapability(GlobalPromise);
       //   return promise;
       // },
-    });
+    };
+    this[serverSymbol] = Bun.serve<any>(serveOptions);
+    this[kWebSocketReload] = {
+      maxPayloadLength: websocket.maxPayloadLength,
+      websocket,
+      onNodeHTTPRequest: serveOptions.onNodeHTTPRequest,
+    };
 
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
     isHTTPS = this[serverSymbol].protocol === "https";
@@ -1235,6 +1250,35 @@ Server.prototype.setTimeout = function (msecs, callback) {
   this.timeout = msecs;
   if (typeof callback === "function") this.on("timeout", callback);
   return this;
+};
+
+// Called by the `ws` shim (src/js/thirdparty/ws.js) to make Bun.serve's
+// per-server websocket `maxPayloadLength` at least as large as the ws
+// `WebSocketServer` `maxPayload` option. The limit is only ever raised: a
+// smaller per-WebSocketServer limit is enforced per connection in the ws shim,
+// and lowering the server-wide limit would break other WebSocketServer
+// instances that share this http server.
+const kBunServeDefaultMaxPayloadLength = 16 * 1024 * 1024;
+Server.prototype[kEnsureWebSocketMaxPayload] = function (maxPayload) {
+  if (typeof maxPayload !== "number" || !(maxPayload > 0)) return;
+  // Bun.serve stores the limit as a u32.
+  if (maxPayload > 0xffffffff) maxPayload = 0xffffffff;
+  maxPayload = MathFloor(maxPayload);
+  let ctx = this[kWebSocketReload];
+  const current = ctx?.maxPayloadLength ?? kBunServeDefaultMaxPayloadLength;
+  if (current >= maxPayload) return;
+  if (ctx === undefined) {
+    // Not listening yet: record the value so kRealListen picks it up.
+    this[kWebSocketReload] = { maxPayloadLength: maxPayload };
+    return;
+  }
+  ctx.maxPayloadLength = maxPayload;
+  const bunServer = this[serverSymbol];
+  const { websocket, onNodeHTTPRequest } = ctx;
+  if (bunServer && websocket) {
+    websocket.maxPayloadLength = maxPayload;
+    bunServer.reload({ websocket, onNodeHTTPRequest });
+  }
 };
 
 function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPResponseAbortEvent) {

@@ -37,21 +37,30 @@ pub(crate) struct Tracked<A: GlobalAlloc>(pub(crate) A);
 
 unsafe impl<A: GlobalAlloc> GlobalAlloc for Tracked<A> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        add(layout.size());
-        unsafe { self.0.alloc(layout) }
+        let p = unsafe { self.0.alloc(layout) };
+        if !p.is_null() {
+            add(layout.size());
+        }
+        p
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         sub(layout.size());
         unsafe { self.0.dealloc(ptr, layout) }
     }
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        add(layout.size());
-        unsafe { self.0.alloc_zeroed(layout) }
+        let p = unsafe { self.0.alloc_zeroed(layout) };
+        if !p.is_null() {
+            add(layout.size());
+        }
+        p
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        sub(layout.size());
-        add(new_size);
-        unsafe { self.0.realloc(ptr, layout, new_size) }
+        let p = unsafe { self.0.realloc(ptr, layout, new_size) };
+        if !p.is_null() {
+            sub(layout.size());
+            add(new_size);
+        }
+        p
     }
 }
 

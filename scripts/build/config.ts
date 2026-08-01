@@ -157,6 +157,12 @@ export interface Config {
    * acquire atomic load per syscall, zero when compiled out.
    */
   socketFaultInjection: boolean;
+  /**
+   * Wrap the Rust global allocator in a per-size-bucket live-byte histogram
+   * (src/bun_bin/track_alloc.rs). Two atomic RMWs per alloc/free; off by
+   * default. Read out via `hotReloadDiagnostics().allocHistogram`.
+   */
+  trackAlloc: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
   unifiedSources: boolean;
   /**
@@ -350,6 +356,7 @@ export interface PartialConfig {
   valgrind?: boolean;
   fuzzilli?: boolean;
   socketFaultInjection?: boolean;
+  trackAlloc?: boolean;
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
@@ -901,6 +908,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // memory errors are detectable, and the disarmed-hot-path cost (one acquire
   // atomic load) is acceptable in asan builds but not in shipped release.
   const socketFaultInjection = partial.socketFaultInjection ?? asan;
+  const trackAlloc = partial.trackAlloc ?? process.env.BUN_TRACK_ALLOC === "1";
 
   // ─── Paths ───
   const cwd = findRepoRoot();
@@ -1204,6 +1212,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     valgrind,
     fuzzilli,
     socketFaultInjection,
+    trackAlloc,
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,

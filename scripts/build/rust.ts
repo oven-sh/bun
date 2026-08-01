@@ -489,10 +489,9 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   }
   // `bun_track_alloc`: wraps the global allocator in a per-size-bucket live
   // histogram (src/bun_bin/track_alloc.rs), readable from JS via
-  // `hotReloadDiagnostics().allocHistogram`. Off by default; opt in via
-  // `BUN_TRACK_ALLOC=1` for native-leak investigation.
+  // `hotReloadDiagnostics().allocHistogram`. See `Config.trackAlloc`.
   rustflags.push("--check-cfg=cfg(bun_track_alloc)");
-  if (process.env.BUN_TRACK_ALLOC === "1") {
+  if (cfg.trackAlloc) {
     rustflags.push("--cfg=bun_track_alloc");
   }
   // Drop `#[track_caller]` source-location capture in release. Every

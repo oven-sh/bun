@@ -5434,9 +5434,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
             return;
         }
 
-        // DOM wrappers (URL, Headers, FormData, Event subclasses, etc.) expose their state
-        // through accessors defined on the prototype and have no own data properties, so the
-        // own-property scan above yields an empty `{}` in jest diffs/snapshots and
+        // DOM wrappers (URL, Event subclasses, etc.) expose their state through accessors
+        // defined on the prototype and have no own data properties, so the own-property scan
+        // above yields an empty `{}` in jest diffs/snapshots and
         // `Bun.inspect(..., { sorted: true })`. Walk the prototype chain for those types the
         // way forEachProperty does so their accessors are enumerated. Other objects keep the
         // own-properties-only behaviour pretty-format expects.

@@ -1594,6 +1594,19 @@ impl<'a> Formatter<'a> {
                             to_json_function.call(self.global_this, value, &[])?,
                             JSType::Object,
                         );
+                    } else if bun_jsc::FetchHeaders::cast_(value, self.global_this.vm()).is_some() {
+                        if let Some(to_json_function) = value.get(self.global_this, "toJSON")? {
+                            self.add_for_new_line(b"Headers ".len());
+                            writer.write_all(
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>Headers ").as_bytes(),
+                            );
+
+                            return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
+                                writer.ctx,
+                                to_json_function.call(self.global_this, value, &[])?,
+                                JSType::Object,
+                            );
+                        }
                     } else if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
                         self.add_for_new_line(
                             b"Timeout(# ) ".len()

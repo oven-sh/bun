@@ -1,10 +1,4 @@
 // https://github.com/oven-sh/bun/issues/7253
-//
-// expect().toStrictEqual() failure on two URL objects printed `Expected: URL {}` /
-// `Received: URL {}`, hiding the actual difference. The jest/snapshot formatter
-// (forEachPropertyOrdered) only collected own property names, but URL exposes all
-// of its state via accessors on the prototype, so nothing was found. The same bug
-// made Bun.inspect(url, { sorted: true }) print `URL {}`.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -54,6 +48,21 @@ test("toEqual failure diff for URL shows the differing fields", async () => {
   expect(exitCode).toBe(1);
 });
 
+test("toStrictEqual failure diff for Headers shows entries, not prototype methods", async () => {
+  const { stderr, exitCode } = await runFailingTest(`
+    import { expect, test } from "bun:test";
+    test("headers", () => {
+      expect(new Headers({ a: "1" })).toStrictEqual(new Headers({ b: "2" }));
+    });
+  `);
+
+  expect(stderr).not.toContain("Headers {}");
+  expect(stderr).not.toContain("[Function: append]");
+  expect(stderr).toContain(`"a": "1"`);
+  expect(stderr).toContain(`"b": "2"`);
+  expect(exitCode).toBe(1);
+});
+
 test("Bun.inspect with sorted: true enumerates URL prototype accessors", () => {
   const out = Bun.inspect(new URL("https://bun.sh/docs"), { sorted: true, colors: false });
   expect(out).not.toBe("URL {}");
@@ -63,6 +72,8 @@ test("Bun.inspect with sorted: true enumerates URL prototype accessors", () => {
 });
 
 test("Bun.inspect with sorted: true does not walk the prototype for non-DOM objects", () => {
-  expect(Bun.inspect(new Number(7), { sorted: true, colors: false })).not.toContain("toFixed");
-  expect(Bun.inspect({ a: 1 }, { sorted: true, colors: false })).not.toContain("toString");
+  class C {
+    method() {}
+  }
+  expect(Bun.inspect(new C(), { sorted: true, colors: false })).not.toContain("method");
 });

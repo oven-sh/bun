@@ -694,10 +694,12 @@ impl<'a> Transpiler<'a> {
             let top_level_dir = self.fs().top_level_dir;
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
                 if let Some(tsconfig) = root_dir.tsconfig_json() {
-                    // If we don't explicitly pass JSX, try to get it from the root tsconfig
-                    if self.options.transform_options.jsx.is_none() {
-                        self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
-                    }
+                    // Fill JSX fields the user did not explicitly set (bunfig.toml /
+                    // --jsx-* / Bun.build({jsx})) from the root tsconfig. `merge_jsx`
+                    // skips fields already in `options.jsx.set_fields`, so explicit
+                    // user config wins. Unlike the previous wholesale copy this also
+                    // preserves non-tracked fields like `side_effects`.
+                    merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
                     self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                     self.options.experimental_decorators = tsconfig.experimental_decorators;
                 }

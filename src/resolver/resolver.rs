@@ -6321,14 +6321,20 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(tsconfigpath) = tsconfig_path {
-                let parsed_tsconfig: Option<*mut TSConfigJSON> = match self.parse_tsconfig(
-                    tsconfigpath,
-                    if FeatureFlags::STORE_FILE_DESCRIPTORS {
-                        fd
-                    } else {
-                        FD::ZERO
-                    },
-                ) {
+                // `fd` is the cached fd for `path` (the directory being populated).
+                // A `--tsconfig-override` file generally lives elsewhere, so
+                // `openat(fd, basename(override))` would miss; fall back to the
+                // absolute-path open in that case.
+                let tsconfig_dirname_fd = if self.opts.tsconfig_override.is_some() {
+                    FD::INVALID
+                } else if FeatureFlags::STORE_FILE_DESCRIPTORS {
+                    fd
+                } else {
+                    FD::ZERO
+                };
+                let parsed_tsconfig: Option<*mut TSConfigJSON> = match self
+                    .parse_tsconfig(tsconfigpath, tsconfig_dirname_fd)
+                {
                     Ok(v) => v.map(bun_core::heap::into_raw),
                     Err(err) => {
                         let pretty = tsconfigpath;

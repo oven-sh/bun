@@ -10,7 +10,22 @@
 
 use crate::schema::api;
 use bun_core::strings;
+use enumset::{EnumSet, EnumSetType};
 use std::borrow::Cow;
+
+/// Tracks which [`Pragma`] fields were explicitly set by the user (bunfig.toml,
+/// CLI `--jsx-*` flags, `Bun.build({ jsx })`) so a later `tsconfig.json` merge
+/// does not clobber them. Precedence: CLI / bunfig / `Bun.build` > tsconfig.
+#[derive(EnumSetType, Debug)]
+pub enum JsxField {
+    Factory,
+    Fragment,
+    ImportSource,
+    Runtime,
+    Development,
+}
+
+pub type JsxFieldSet = EnumSet<JsxField>;
 
 /// 4-state including `_None` so `Pragma.runtime` preserves the zero value
 /// when an `api.Jsx` arrives with `runtime == _none`. `#[default]` is
@@ -181,6 +196,10 @@ pub struct Pragma {
     pub development: bool,
     pub parse: bool,
     pub side_effects: bool,
+
+    /// Which fields the user set explicitly (bunfig.toml / `--jsx-*` /
+    /// `Bun.build({ jsx })`). A tsconfig.json merge will not overwrite these.
+    pub set_fields: JsxFieldSet,
 }
 
 impl Default for Pragma {
@@ -196,6 +215,7 @@ impl Default for Pragma {
             development: true,
             parse: true,
             side_effects: false,
+            set_fields: JsxFieldSet::empty(),
         }
     }
 }
@@ -323,6 +343,7 @@ impl Pragma {
 
         pragma.development = jsx.development;
         pragma.parse = true;
+        pragma.set_fields = jsx.set_fields;
         Ok(pragma)
     }
 }

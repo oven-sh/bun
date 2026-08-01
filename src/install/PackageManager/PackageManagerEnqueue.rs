@@ -1192,27 +1192,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             let dep: Repository = *version.git();
             let res = Resolution::init(ResolutionTagged::Git(dep));
 
-            // `bun update` must re-resolve the committish against the remote.
-            // The query `res` built from the spec has an empty `resolved`,
-            // which `Repository::eql` treats as a committish match against the
-            // lockfile-loaded entry and would short-circuit to the stale SHA.
-            // Once the checkout writes `resolved` back into the dependency (see
-            // `runTasks::GitCheckout`), `eql` compares SHAs and binds to the
-            // freshly appended package.
-            let should_update = this.to_update && dep.resolved.is_empty() && {
-                // reshaped for borrowck — `is_root_dependency` reads
-                // `manager.root_package_id`, disjoint from `manager.lockfile`.
-                let this_ptr: *mut PackageManager = this;
-                // SAFETY: see the matching split in
-                // `get_or_put_resolved_package_with_find_result`.
-                unsafe { &*(*this_ptr).lockfile }.is_root_dependency(unsafe { &mut *this_ptr }, id)
-                    && (this.update_requests.is_empty()
-                        || this.updating_packages.contains(
-                            dependency
-                                .name
-                                .slice(this.lockfile.buffers.string_bytes.as_slice()),
-                        ))
-            };
+            // `Repository::eql` matches by committish while `resolved` is empty,
+            // so an update target would bind to the stale lockfile entry here.
+            let should_update = this.to_update
+                && dep.resolved.is_empty()
+                && this.is_direct_update_target(id, &dependency.name);
 
             // First: see if we already loaded the git package in-memory
             if !should_update {
@@ -2854,6 +2838,18 @@ fn resolution_satisfies_dependency(
 // ──────────────────────────────────────────────────────────────────────────
 
 impl PackageManager {
+    /// True for a direct dependency of the current workspace that `bun update`
+    /// should re-resolve (all of them for bare `bun update`, or the named ones
+    /// for `bun update <name>`).
+    fn is_direct_update_target(&mut self, id: DependencyID, name: &SemverString) -> bool {
+        let root_id = self
+            .root_package_id
+            .get(&self.lockfile, self.workspace_name_hash);
+        self.lockfile.packages.items_dependencies()[root_id as usize].contains(id)
+            && (self.update_requests.is_empty()
+                || self.updating_packages.contains(self.lockfile.str(name)))
+    }
+
     #[inline]
     pub fn enqueue_dependency_list(&mut self, dependencies_list: Lockfile::DependencySlice) {
         enqueue_dependency_list(self, dependencies_list)

@@ -722,10 +722,7 @@ impl RepositoryExt for Repository {
                     &[folder_name.as_bytes()],
                 );
 
-                // `clone --bare` configures `remote.origin.url` but no fetch
-                // refspec, so a bare `git fetch` only updates FETCH_HEAD.
-                // Fetch heads and tags explicitly against `url` so caches
-                // created by older builds are also repaired.
+                // `clone --bare` sets no fetch refspec, so name heads/tags explicitly.
                 if let Err(err) = exec(
                     env,
                     &[

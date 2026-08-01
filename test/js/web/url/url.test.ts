@@ -96,8 +96,6 @@ describe("url", () => {
   hash: "",
   search: "",
   searchParams: ${Bun.inspect(new URLSearchParams())},
-  toJSON: [Function: toJSON],
-  toString: [Function: toString],
 }`);
 
     expect(
@@ -117,8 +115,6 @@ describe("url", () => {
   hash: "",
   search: "?hello%20i%20have%20spaces%20thank%20you%20good%20night",
   searchParams: URLSearchParams {\n    \"hello i have spaces thank you good night\": \"\",\n  },
-  toJSON: [Function: toJSON],
-  toString: [Function: toString],
 }`);
   });
   it("works", () => {

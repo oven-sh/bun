@@ -5224,6 +5224,14 @@ restart:
             if (!propertyValue)
                 return true;
 
+            // Inherited entries are only useful when they surface state
+            // (accessor getters on DOM/native prototypes). The fast path only
+            // runs on structures with no accessors at all, so any prototype
+            // slot seen here is a plain data property: a shared method or a
+            // class-level constant that Node's formatter never lists.
+            if (objectToUse != object)
+                return true;
+
             anyHits = true;
             JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
 
@@ -5299,6 +5307,13 @@ restart:
                         || property == propertyNames->toStringTagSymbol || property == propertyNames->__esModule)
                         continue;
                 }
+
+                // From a prototype, only native custom accessors expose
+                // per-instance state worth printing (URL.href, Event.type).
+                // User-defined accessors and plain value slots are shared
+                // class members that Node's default formatter omits.
+                if (iterating != object && !slot.isCustom())
+                    continue;
 
                 if (visitedProperties.contains(property))
                     continue;

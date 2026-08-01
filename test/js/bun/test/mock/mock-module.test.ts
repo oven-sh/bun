@@ -231,3 +231,55 @@ test("mock.module: data properties and accessor properties coexist", async () =>
   expect({ plain: cjs.plain, live: cjs.live }).toEqual({ plain: 42, live: "c" });
   expect(esm.live).toBe("c");
 });
+
+test("mock.module: re-mock after an accessor-backed mock replaces the live source", async () => {
+  mock.module("mock-module-live-remock", () => {
+    let v = 1;
+    return {
+      get x() {
+        return v;
+      },
+      bump: () => v++,
+    };
+  });
+  const ns = await import("mock-module-live-remock");
+  expect(ns.x).toBe(1);
+  ns.bump();
+  expect(ns.x).toBe(2);
+
+  mock.module("mock-module-live-remock", () => ({ x: 100, bump: () => {} }));
+  expect(ns.x).toBe(100);
+
+  let w = "a";
+  mock.module("mock-module-live-remock", () => ({
+    get x() {
+      return w;
+    },
+    bump: () => {
+      w = "b";
+    },
+  }));
+  expect(ns.x).toBe("a");
+  ns.bump();
+  expect(ns.x).toBe("b");
+});
+
+test("mock.module: spyOn on an accessor-backed mock namespace", async () => {
+  mock.module("mock-module-live-spy", () => {
+    let v = 1;
+    return {
+      get x() {
+        return v;
+      },
+      bump: () => v++,
+    };
+  });
+  const ns = await import("mock-module-live-spy");
+  const spy = spyOn(ns, "bump");
+  ns.bump();
+  expect(spy).toHaveBeenCalledTimes(1);
+  expect(ns.x).toBe(2);
+  mock.restore();
+  ns.bump();
+  expect(ns.x).toBe(3);
+});

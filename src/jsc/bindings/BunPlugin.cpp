@@ -17,6 +17,7 @@
 #include <JavaScriptCore/CyclicModuleRecord.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSModuleRecord.h>
+#include <JavaScriptCore/SyntheticModuleRecord.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSTypeInfo.h>
@@ -670,6 +671,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                                 moduleNamespaceObject->overrideExportValue(globalObject, name, value);
                                 RETURN_IF_EXCEPTION(scope, {});
                             }
+
+                            if (auto* synthetic = dynamicDowncast<JSC::SyntheticModuleRecord>(mod))
+                                synthetic->setLiveExportsSource(vm, object);
 
                         } else {
                             // if it's not an object, I guess we just set the default export?

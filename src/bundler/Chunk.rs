@@ -1265,6 +1265,20 @@ impl EntryPoint {
     }
 }
 
+/// Per-chunk decision for a JSX-runtime import that the parser synthesized
+/// (see [`hoist_external_jsx_imports`](crate::linker_context_mod::hoist_external_jsx_imports)).
+/// Keyed by `(source_index << 32) | import_record_index` in
+/// [`JavaScriptChunk::jsx_import_rewrites`].
+pub(crate) enum JsxImportRewrite {
+    /// All of this record's items are already provided by an earlier file in
+    /// the chunk; drop the whole `import` statement.
+    Drop,
+    /// Keep this record (it's the chunk's survivor for its path) but replace
+    /// its items with the consolidated set of `(alias, ref)` pairs needed by
+    /// any file in the chunk.
+    Items(Box<[bun_ast::ClauseItem]>),
+}
+
 #[derive(Default)]
 pub struct JavaScriptChunk {
     pub(crate) files_in_chunk_order: Box<[IndexInt]>,
@@ -1278,6 +1292,12 @@ pub struct JavaScriptChunk {
     pub(crate) imports_from_other_chunks: ImportsFromOtherChunks,
     pub(crate) cross_chunk_prefix_stmts: Vec<Stmt>,
     pub(crate) cross_chunk_suffix_stmts: Vec<Stmt>,
+
+    /// Populated by [`hoist_external_jsx_imports`](crate::linker_context_mod::hoist_external_jsx_imports)
+    /// (serial, after chunks are computed and before the renamer fan-out).
+    /// Read-only thereafter; looked up by `convert_stmts_for_chunk` from
+    /// worker threads.
+    pub(crate) jsx_import_rewrites: bun_collections::HashMap<u64, JsxImportRewrite>,
 
     /// Indexes to CSS chunks. Currently this will only ever be zero or one
     /// items long, but smarter css chunking will allow multiple js entry points

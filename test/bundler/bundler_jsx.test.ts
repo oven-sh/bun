@@ -525,6 +525,154 @@ describe("bundler", () => {
     },
   });
 
+  // https://github.com/oven-sh/bun/issues/3029 — the bundler injects the automatic JSX
+  // runtime import into every file that lowers JSX; when that module is external, the
+  // per-file imports should collapse into one per chunk.
+  describe("jsxExternalRuntimeImportCollapsed", () => {
+    const fixture = (count: number) => {
+      const files: Record<string, string> = {
+        "/index.jsx": `
+          ${Array.from({ length: count }, (_, i) => `import { C${i} } from "./c${i}.jsx";`).join("\n")}
+          export const App = () => (<>${Array.from({ length: count }, (_, i) => `<C${i} />`).join("")}</>);
+        `,
+      };
+      for (let i = 0; i < count; i++) files[`/c${i}.jsx`] = `export const C${i} = () => <div>c${i}</div>;`;
+      return files;
+    };
+    for (const mode of ["development", "production"] as const) {
+      const dev = mode === "development";
+      const runtimeModule = dev ? "react/jsx-dev-runtime" : "react/jsx-runtime";
+      const jsxFn = dev ? "jsxDEV" : "jsx";
+      itBundled(`jsx/ExternalRuntimeImportCollapsed${dev ? "Dev" : "Prod"}`, {
+        files: fixture(4),
+        external: ["react", "react/*"],
+        env: { NODE_ENV: mode },
+        onAfterBundle(api) {
+          const out = api.readFile("out.js");
+          const imports = out.match(/^import .*$/gm) ?? [];
+          expect(imports).toHaveLength(1);
+          expect(imports[0]).toContain(JSON.stringify(runtimeModule));
+          expect(imports[0]).toContain(jsxFn);
+          expect(imports[0]).toContain("Fragment");
+          // The whole point: no per-file `jsxDEV as jsxDEV2` / `jsx as jsx2` aliases.
+          expect(out).not.toMatch(new RegExp(`\\b${jsxFn}\\d`));
+          expect(out).not.toMatch(/\bFragment\d/);
+        },
+      });
+      itBundled(`jsx/ExternalRuntimeImportCollapsedMinified${dev ? "Dev" : "Prod"}`, {
+        files: fixture(4),
+        external: ["react", "react/*"],
+        env: { NODE_ENV: mode },
+        minifyIdentifiers: true,
+        minifyWhitespace: true,
+        onAfterBundle(api) {
+          const out = api.readFile("out.js");
+          const importRe = new RegExp(`(^|;)import\\b[^;]*?from\\s*"${runtimeModule}"`, "g");
+          expect(out.match(importRe) ?? []).toHaveLength(1);
+        },
+      });
+    }
+    itBundled("jsx/ExternalRuntimeImportCollapsedMultiEntryDev", {
+      files: {
+        "/shared.jsx": `export const S = () => <span>s</span>;`,
+        "/a.jsx": `export const A = () => <i>a</i>;`,
+        "/b.jsx": `export const B = () => <i>b</i>;`,
+        "/e1.jsx": `
+          import { S } from "./shared.jsx";
+          import { A } from "./a.jsx";
+          export const E1 = () => (<><S /><A /></>);
+        `,
+        "/e2.jsx": `
+          import { S } from "./shared.jsx";
+          import { B } from "./b.jsx";
+          export const E2 = () => (<><S /><B /></>);
+        `,
+      },
+      entryPoints: ["/e1.jsx", "/e2.jsx"],
+      external: ["react", "react/*"],
+      env: { NODE_ENV: "development" },
+      onAfterBundle(api) {
+        for (const name of ["out/e1.js", "out/e2.js"]) {
+          const out = api.readFile(name);
+          const imports = out.match(/^import .*$/gm) ?? [];
+          expect({ file: name, imports }).toEqual({
+            file: name,
+            imports: [expect.stringContaining('"react/jsx-dev-runtime"')],
+          });
+          expect(out).not.toMatch(/\bjsxDEV\d/);
+        }
+      },
+    });
+    itBundled("jsx/ExternalRuntimeImportCollapsedSplittingDev", {
+      files: {
+        "/shared.jsx": `export const S = () => <span>s</span>;`,
+        "/a.jsx": `export const A = () => <i>a</i>;`,
+        "/b.jsx": `export const B = () => <i>b</i>;`,
+        "/e1.jsx": `
+          import { S } from "./shared.jsx";
+          import { A } from "./a.jsx";
+          export const E1 = () => (<><S /><A /></>);
+        `,
+        "/e2.jsx": `
+          import { S } from "./shared.jsx";
+          import { B } from "./b.jsx";
+          export const E2 = () => (<><S /><B /></>);
+        `,
+      },
+      entryPoints: ["/e1.jsx", "/e2.jsx"],
+      splitting: true,
+      external: ["react", "react/*"],
+      env: { NODE_ENV: "development" },
+      onAfterBundle(api) {
+        for (const name of ["out/e1.js", "out/e2.js"]) {
+          const out = api.readFile(name);
+          const jsxImports = (out.match(/^import .*$/gm) ?? []).filter(l => l.includes("react/jsx-dev-runtime"));
+          expect({ file: name, jsxImports }).toEqual({
+            file: name,
+            jsxImports: [expect.stringContaining('"react/jsx-dev-runtime"')],
+          });
+          expect(out).not.toMatch(/\bjsxDEV\d/);
+        }
+      },
+    });
+    itBundled("jsx/ExternalRuntimeImportCollapsedRunProd", {
+      files: {
+        "/index.jsx": `
+          import { A } from "./a.jsx";
+          import { B } from "./b.jsx";
+          const App = () => (<><A /><B /></>);
+          console.log(JSON.stringify(App()));
+        `,
+        "/a.jsx": `export const A = () => <div>a</div>;`,
+        "/b.jsx": `export const B = () => <p><em>b</em></p>;`,
+        "/node_modules/react/package.json": `{"name":"react","exports":{"./jsx-runtime":"./jsx-runtime.js"}}`,
+        "/node_modules/react/jsx-runtime.js": `
+          export const jsx = (type, props) => typeof type === "function" ? type(props) : { type, props };
+          export const jsxs = jsx;
+          export const Fragment = "fragment";
+        `,
+      },
+      external: ["react", "react/*"],
+      env: { NODE_ENV: "production" },
+      target: "bun",
+      run: {
+        stdout: JSON.stringify({
+          type: "fragment",
+          props: {
+            children: [
+              { type: "div", props: { children: "a" } },
+              { type: "p", props: { children: { type: "em", props: { children: "b" } } } },
+            ],
+          },
+        }),
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("out.js");
+        expect(out.match(/^import .*$/gm) ?? []).toHaveLength(1);
+      },
+    });
+  });
+
   // Test for jsxSideEffects option - equivalent to esbuild's TestJSXSideEffects
   describe("jsxSideEffects", () => {
     itBundled("jsx/sideEffectsDefault", {

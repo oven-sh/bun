@@ -70,6 +70,12 @@ bitflags::bitflags! {
         /// calling the "__reExport()" helper function
         const CALLS_RUNTIME_RE_EXPORT_FN = 1 << 6;
 
+        /// The parser synthesized this import to bring the automatic JSX runtime
+        /// (`jsx`/`jsxs`/`jsxDEV`/`Fragment`/`createElement`) into scope. When the
+        /// target is external and ESM, the linker collapses these per-file imports
+        /// into one per chunk.
+        const WAS_INJECTED_FOR_JSX_RUNTIME = 1 << 7;
+
         /// If true, this was originally written as a bare "import 'file'" statement
         const WAS_ORIGINALLY_BARE_IMPORT = 1 << 8;
 

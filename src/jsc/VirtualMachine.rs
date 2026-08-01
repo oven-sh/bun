@@ -5457,7 +5457,7 @@ impl VirtualMachine {
                 code
             };
 
-            if enable_source_code_preview.get() && code.slice().is_empty() {
+            if enable_source_code_preview.get() && code.slice().is_empty() && !is_external {
                 exception.collect_source_lines(error_instance, global);
             }
 

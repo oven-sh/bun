@@ -360,38 +360,31 @@ impl SavedSourceMap {
                 ..Default::default()
             };
         } else if tag == Value::case::<InternalWithInputUrl>() {
-            // Take ownership out before dropping the lock for JSON parsing.
-            self.map_mut().remove(&h);
-            // SAFETY: box was stored by `put_mappings`; `remove` just
-            // transferred ownership here.
+            // SAFETY: box was stored by `put_mappings` and is live while in
+            // the table; we are under the lock.
             let chained =
                 unsafe { bun_core::heap::take(tagged.as_unchecked::<InternalWithInputUrl>()) };
+            // Swap the slot to the interim `ParsedSourceMap` under the lock so
+            // concurrent readers get intermediate `.js` positions instead of
+            // an empty table while the input map loads below.
+            let result = Arc::new(ParsedSourceMap::from_internal_with_input_url(
+                chained.blob,
+                chained.url,
+            ));
+            *mapping = Value::init(Arc::into_raw(Arc::clone(&result))).ptr();
             self.unlock();
 
-            let input_map = SourceMap::load_input_source_map(
-                path,
-                &chained.url,
-                SourceMap::ParseUrlResultHint::MappingsOnly,
-            )
-            .and_then(|p| p.map);
-
-            // `result` now owns the blob (freed by `ParsedSourceMap::Drop`).
-            let result = match input_map {
-                Some(im) => Arc::new(ParsedSourceMap::from_internal_with_input_map(
-                    chained.blob,
-                    im,
-                    chained.url,
-                )),
-                None => Arc::new(ParsedSourceMap::from_internal(chained.blob)),
-            };
-
-            // Keep a concurrently re-inserted entry (e.g. --hot) instead.
-            self.lock();
-            if !self.map_mut().contains_key(&h) {
-                self.map_mut()
-                    .insert(h, Value::init(Arc::into_raw(Arc::clone(&result))).ptr());
+            if let Some(url) = result.input_map_url.as_deref() {
+                if let Some(input_map) = SourceMap::load_input_source_map(
+                    path,
+                    url,
+                    SourceMap::ParseUrlResultHint::MappingsOnly,
+                )
+                .and_then(|p| p.map)
+                {
+                    let _ = result.input_map.set(input_map);
+                }
             }
-            self.unlock();
             return SourceMap::ParseUrl {
                 map: Some(result),
                 ..Default::default()

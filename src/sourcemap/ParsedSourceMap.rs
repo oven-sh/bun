@@ -29,8 +29,9 @@ pub struct ParsedSourceMap {
     pub external_source_names: Vec<Box<[u8]>>,
     /// The input file's own source map, chained after this map's own mappings
     /// so stack traces for runtime-transpiled pre-generated `.js` resolve to
-    /// the original source.
-    pub input_map: Option<std::sync::Arc<ParsedSourceMap>>,
+    /// the original source. Filled lazily so the table entry can stay in
+    /// place while the map loads.
+    pub input_map: std::sync::OnceLock<std::sync::Arc<ParsedSourceMap>>,
     /// The `sourceMappingURL` `input_map` was loaded from, kept so the
     /// code-frame preview can re-parse with `SourceOnly(index)` and recover
     /// `sourcesContent` when the original is not on disk.
@@ -75,7 +76,7 @@ impl Default for ParsedSourceMap {
             mappings: mapping::List::default(),
             internal: None,
             external_source_names: Vec::new(),
-            input_map: None,
+            input_map: std::sync::OnceLock::new(),
             input_map_url: None,
             underlying_provider: SourceContentPtr::NONE,
             is_standalone_module_graph: false,
@@ -241,28 +242,32 @@ impl ParsedSourceMap {
             mappings: mapping::List::default(),
             internal: Some(internal),
             external_source_names: Vec::new(),
-            input_map: None,
+            input_map: std::sync::OnceLock::new(),
             input_map_url: None,
             underlying_provider: SourceContentPtr::NONE,
             is_standalone_module_graph: false,
         }
     }
 
-    /// [`Self::from_internal`] with a chained [`Self::input_map`].
-    pub fn from_internal_with_input_map(
+    /// [`Self::from_internal`] with `input_map_url` set so [`Self::input_map`]
+    /// can be filled once the referenced map is loaded.
+    pub fn from_internal_with_input_url(
         internal: InternalSourceMap,
-        input_map: std::sync::Arc<ParsedSourceMap>,
         input_map_url: Box<[u8]>,
     ) -> Self {
         let mut this = Self::from_internal(internal);
-        this.input_map = Some(input_map);
         this.input_map_url = Some(input_map_url);
         this
     }
 
+    #[inline]
+    pub fn input_map(&self) -> Option<&ParsedSourceMap> {
+        self.input_map.get().map(|a| a.as_ref())
+    }
+
     pub fn is_external(&self) -> bool {
         !self.external_source_names.is_empty()
-            || self.input_map.as_deref().is_some_and(Self::is_external)
+            || self.input_map().is_some_and(Self::is_external)
     }
 
     pub fn find_mapping(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
@@ -271,7 +276,7 @@ impl ParsedSourceMap {
         } else {
             self.mappings.find(line, column)
         };
-        let Some(input_map) = self.input_map.as_deref() else {
+        let Some(input_map) = self.input_map() else {
             return own;
         };
         // Our `original` positions are the input map's `generated` positions.

@@ -326,7 +326,7 @@ impl Lookup {
     pub fn display_source_url_if_needed(&self, base_filename: &[u8]) -> Option<bun_core::String> {
         let mut source_map = self.source_map.as_deref()?;
         // `source_index` indexes the chained input map's sources when present.
-        if let Some(input_map) = source_map.input_map.as_deref() {
+        if let Some(input_map) = source_map.input_map() {
             source_map = input_map;
         }
         // See doc comment on `external_source_names`
@@ -369,7 +369,7 @@ impl Lookup {
 
             let mut source_map = self.source_map.as_deref()?;
             let input_map_url = source_map.input_map_url.as_deref();
-            if let Some(input_map) = source_map.input_map.as_deref() {
+            if let Some(input_map) = source_map.input_map() {
                 source_map = input_map;
             }
             debug_assert!(source_map.is_external());

@@ -17,18 +17,16 @@ type T = { x: number };
 function boom(): never {
   throw new Error("kaboom");
 }
-
 function main() {
   boom();
 }
-
 main();
 `;
 
 // Generated JS laid out like tsc output: the throw moves from original
 // index.ts:6:9 to generated index.js:5:11, main()'s boom() call from
-// index.ts:10:3 to index.js:8:5, and the top-level main() call from
-// index.ts:13:1 to index.js:10:1.
+// index.ts:9:3 to index.js:8:5, and the top-level main() call from
+// index.ts:11:1 to index.js:10:1.
 const generated = `\
 "use strict";
 // leading comment
@@ -74,7 +72,7 @@ async function run(dir: string, file: string, extraEnv: Record<string, string> =
   return { stdout, stderr, exitCode };
 }
 
-describe("input //# sourceMappingURL is applied to stack traces", () => {
+describe.concurrent("input //# sourceMappingURL is applied to stack traces", () => {
   test("external .map file", async () => {
     using dir = tempDir("input-sourcemap-external", {
       "index.ts": original,
@@ -148,6 +146,10 @@ try { require("./index.js"); } catch (e) { console.log(e.stack); }
     const { stderr, exitCode } = await run(String(dir), "index.js");
     expect(stderr).toContain("index.ts:6");
     expect(stderr).toContain("index.ts:9");
+    // Original source is unavailable (no sourcesContent, not on disk) so no
+    // code frame is shown; the generated file's lines must not leak through.
+    expect(stderr).not.toContain("function boom()");
+    expect(stderr).not.toContain(`"use strict"`);
     expect(exitCode).toBe(1);
   });
 

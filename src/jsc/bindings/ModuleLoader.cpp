@@ -393,9 +393,7 @@ static JSValue handleVirtualModuleResult(
         }
 
         if (res->result.value.isCommonJSModule) {
-            // skipIsolationCache: runVirtualModule runs before the isolation
-            // cache lookup, and plugin output is not the on-disk file at this
-            // key, so inserting would trip that cache's isNewEntry assert.
+            // skipIsolationCache: plugin output is not the on-disk file at this key.
             if (commonJSModule) {
                 commonJSModule->evaluate(globalObject, specifier->toWTFString(BunString::ZeroCopy), res->result.value, false, true);
                 if (scope.exception()) [[unlikely]] {
@@ -1267,9 +1265,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
 
     bool wasModuleMock = pendingModule->wasModuleMock;
 
-    // require() of an async plugin module already threw "async module unsupported"
-    // and removed its requireMap entry. Don't re-process the orphaned result;
-    // createCommonJSModule would otherwise insert a ghost entry into require.cache.
+    // Orphaned: the originating require() already threw and removed its requireMap entry.
     if (pendingModule->wasRequire) {
         auto* zigGlobal = static_cast<Zig::GlobalObject*>(globalObject);
         bool stillInRequireMap = zigGlobal->requireMap()->has(globalObject, specifierString);

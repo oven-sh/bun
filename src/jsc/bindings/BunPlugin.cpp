@@ -655,16 +655,16 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                         auto* object = exportsValue.getObject();
                         removeFromESM = false;
 
+                        // Clear the live source so overrideExportValue's write-through does not mutate the previous factory object.
+                        auto* synthetic = dynamicDowncast<JSC::SyntheticModuleRecord>(mod);
+                        bool hadLiveSource = synthetic && synthetic->liveExportsSource();
+                        if (hadLiveSource)
+                            synthetic->setLiveExportsSource(vm, nullptr);
+
                         if (object) {
                             JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
                             JSObject::getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
                             RETURN_IF_EXCEPTION(scope, {});
-
-                            // Clear the live source so overrideExportValue's write-through does not mutate the previous factory object.
-                            auto* synthetic = dynamicDowncast<JSC::SyntheticModuleRecord>(mod);
-                            bool hadLiveSource = synthetic && synthetic->liveExportsSource();
-                            if (hadLiveSource)
-                                synthetic->setLiveExportsSource(vm, nullptr);
 
                             bool hasAccessor = false;
                             for (auto& name : names) {

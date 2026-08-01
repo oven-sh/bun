@@ -1790,7 +1790,7 @@ describe("globalThis inside a node:worker_threads worker", () => {
   });
 
   test("user-defined dispatchEvent on globalThis is reachable (web-worker npm package pattern)", async () => {
-    const worker = new Worker(new URL("./worker-shadow-global-fixture.js", import.meta.url).href);
+    const worker = new Worker(new URL("./worker-shadow-global-fixture.js", import.meta.url));
     const [msg] = await once(worker, "message");
     await worker.terminate();
     expect(msg).toEqual({

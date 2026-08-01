@@ -2470,7 +2470,7 @@ pub mod JSZlib {
                 //  +---+---+---+---+---+---+---+---+
                 //  |     CRC32     |     ISIZE     |
                 //  +---+---+---+---+---+---+---+---+
-                let estimated_size: u32 = u32::from_ne_bytes(
+                let estimated_size: u32 = u32::from_le_bytes(
                     compressed[compressed.len() - 4..][..4]
                         .try_into()
                         .expect("infallible: size matches"),

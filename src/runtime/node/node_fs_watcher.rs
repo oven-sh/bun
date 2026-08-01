@@ -765,7 +765,7 @@ impl FSWatcher {
 
     pub(crate) fn emit_if_aborted(&self) {
         let reason = match self.signal.get() {
-            Some(s) if s.aborted() => Some(s.abort_reason()),
+            Some(s) if s.aborted() => Some(s.js_reason(&self.global_this)),
             _ => None,
         };
         if let Some(err) = reason {

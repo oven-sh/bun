@@ -1,6 +1,7 @@
 import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
+import dc from "node:diagnostics_channel";
 import fs from "node:fs";
 import http2 from "node:http2";
 import https from "node:https";
@@ -3072,6 +3073,53 @@ it("http2 pushStream reports header values containing CR, LF, or NUL through the
     expect(pushes.length).toBe(0);
     client.close();
   } finally {
+    server.close();
+  }
+});
+
+it("http2 pushStream failure reports only via callback, never via stream 'error'", async () => {
+  // node creates the ServerHttp2Stream only after pushPromise succeeds, so a validation
+  // failure never reaches a stream 'error' event. bun must create the stream first, but the
+  // teardown must stay silent: the callback is the sole error channel. The diagnostics_channel
+  // publish is the only way user code can observe the pushed stream before the callback, so use
+  // it to attach a listener and prove nothing is emitted.
+  const pushedStreams = [];
+  const onCreated = ({ stream, headers }) => {
+    if (headers[":path"] !== "/pushed") return;
+    stream.on("error", err => pushedStreams.push({ event: "error", code: err?.code }));
+    stream.on("close", () => pushedStreams.push({ event: "close", destroyed: stream.destroyed }));
+  };
+  dc.subscribe("http2.server.stream.created", onCreated);
+
+  const server = http2.createServer();
+  const { promise: callbackResult, resolve: onCallback } = Promise.withResolvers();
+  server.on("stream", stream => {
+    stream.pushStream({ ":path": "/pushed", "x-bad": "a\nb" }, (err, pushed) => {
+      onCallback({ code: err?.code, pushed });
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  try {
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", () => {});
+    const { promise: done, resolve: onEnd, reject: onError } = Promise.withResolvers();
+    const req = client.request({ ":path": "/" });
+    req.on("error", onError);
+    req.resume();
+    req.on("end", onEnd);
+    await done;
+
+    const result = await callbackResult;
+    expect(result).toEqual({ code: "ERR_HTTP2_INVALID_HEADER_VALUE", pushed: undefined });
+    // Let any scheduled 'error'/'close' emissions from destroy() run.
+    await new Promise(resolve => setImmediate(resolve));
+    expect(pushedStreams).toEqual([{ event: "close", destroyed: true }]);
+    client.close();
+  } finally {
+    dc.unsubscribe("http2.server.stream.created", onCreated);
     server.close();
   }
 });

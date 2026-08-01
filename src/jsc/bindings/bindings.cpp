@@ -5659,12 +5659,6 @@ extern "C" bool WebCore__AbortSignal__aborted(WebCore::AbortSignal* arg0)
     return abortSignal->aborted();
 }
 
-extern "C" JSC::EncodedJSValue WebCore__AbortSignal__abortReason(WebCore::AbortSignal* arg0)
-{
-    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
-    return JSC::JSValue::encode(abortSignal->reason().getValue(jsNull()));
-}
-
 // Same value the JS `signal.reason` getter returns: lazily materializes the
 // `DOMException` for a common abort reason and caches it, so repeated reads
 // (native or JS) observe the identical object.
@@ -5701,7 +5695,9 @@ extern "C" void WebCore__AbortSignal__cleanNativeBindings(WebCore::AbortSignal* 
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__addListener(WebCore::AbortSignal* abortSignal, void* ctx, void (*callback)(void* ctx, JSC::EncodedJSValue reason))
 {
     if (abortSignal->aborted()) {
-        callback(ctx, JSC::JSValue::encode(abortSignal->reason().getValue(jsNull())));
+        auto* context = static_cast<WebCore::EventTarget*>(abortSignal)->scriptExecutionContext();
+        auto reason = context ? abortSignal->jsReason(*context->jsGlobalObject()) : abortSignal->reason().getValue(jsNull());
+        callback(ctx, JSC::JSValue::encode(reason));
         return abortSignal;
     }
     abortSignal->addNativeCallback(std::make_tuple(ctx, callback));

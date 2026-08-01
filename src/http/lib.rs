@@ -329,6 +329,13 @@ pub(crate) const MAX_H2_RETRIES: u8 = 5;
 
 const PREALLOCATE_MAX: usize = 1024 * 1024 * 256;
 
+/// Per-chunk scratch buffers (`InternalState::decoded_body` on the HTTP thread
+/// and `FetchTasklet::scheduled_response_buffer` on the JS thread) whose
+/// capacity has grown past this are dropped after the chunk is consumed rather
+/// than `clear()`ed-and-reused, so the per-connection high-water mark stays
+/// bounded for long-lived streaming responses.
+pub const DECODED_BODY_RETAIN_CAP: usize = 512 * 1024;
+
 /// Whether the experimental Alt-Svc-driven HTTP/3 upgrade is enabled at all
 /// (CLI flag or env var). Used on its own to gate `H3.AltSvc.record` — a
 /// response that arrived over a request shape h3 can't serve (proxy, sendfile,
@@ -427,7 +434,15 @@ pub enum BodySize {
 
 #[derive(Default)]
 pub struct HTTPClientResult<'a> {
-    pub body: Option<&'a mut MutableString>,
+    pub body: &'a [u8],
+    /// Populated only on the terminal (`!has_more`) progress callback:
+    /// `send_progress_update_*` moves the whole `decoded_body.list` here so
+    /// one-shot consumers (`send_sync`, `NetworkTask` manifest, S3 simple,
+    /// `RemoteImageDownload`) can `mem::take` it instead of
+    /// `extend_from_slice`ing the borrowed `body`. Streaming consumers read
+    /// `body` on non-terminal callbacks and treat this as just the final
+    /// chunk's bytes.
+    pub body_owned: Vec<u8>,
     pub has_more: bool,
     pub redirected: bool,
     pub can_stream: bool,
@@ -483,23 +498,45 @@ impl<'a> HTTPClientResult<'a> {
         )
     }
 
-    /// Widen the borrow on `body` to `'static` for self-referential storage.
+    /// Returns this callback's body bytes as a slice regardless of which
+    /// field carries them (`body` on non-terminal, `body_owned` on terminal).
+    #[inline]
+    pub fn body_bytes(&self) -> &[u8] {
+        if self.body.is_empty() {
+            self.body_owned.as_slice()
+        } else {
+            self.body
+        }
+    }
+
+    /// Moves this callback's body bytes into `dest`. On a terminal callback
+    /// with `dest` empty this is a `Vec` move; otherwise it appends.
+    #[inline]
+    pub fn body_into(&mut self, dest: &mut Vec<u8>) {
+        if !self.body.is_empty() {
+            dest.extend_from_slice(self.body);
+        } else if !self.body_owned.is_empty() {
+            if dest.is_empty() {
+                core::mem::swap(dest, &mut self.body_owned);
+            } else {
+                dest.extend_from_slice(&self.body_owned);
+            }
+        }
+    }
+
+    /// Widen the borrow to `'static` for self-referential storage.
     ///
-    /// Field-by-field move (no bitwise reinterpret): the only lifetime-carrying
-    /// field is `body: Option<&'a mut MutableString>`, which always points at a
-    /// buffer owned by the same heap object that will store this result
-    /// (`FetchTasklet.response_buffer`, `NetworkTask.response_buffer`, …).
+    /// `body` is the only lifetime-carrying field; it borrows the HTTP
+    /// thread's `decoded_body` scratch buffer, which is cleared immediately
+    /// after the callback returns, so the stored form carries `body: &[]`.
     ///
     /// # Safety
-    /// Caller must guarantee `body`'s pointee outlives the returned value and
-    /// is not aliased exclusively elsewhere for that duration.
+    /// Caller must not read `.body` from the returned value.
     #[inline]
     pub unsafe fn detach_lifetime(self) -> HTTPClientResult<'static> {
         HTTPClientResult {
-            // SAFETY: caller contract — the buffer outlives the stored result.
-            body: self
-                .body
-                .map(|b| unsafe { &mut *core::ptr::from_mut::<MutableString>(b) }),
+            body: &[],
+            body_owned: self.body_owned,
             has_more: self.has_more,
             redirected: self.redirected,
             can_stream: self.can_stream,
@@ -1557,10 +1594,6 @@ impl<'a> HTTPClient<'a> {
         self.state.request_body.slice()
     }
     #[inline]
-    fn body_out_str(&self) -> Option<&MutableString> {
-        body_out::opt_mut(self.state.body_out_str).map(|b| &*b)
-    }
-    #[inline]
     fn proxy_tunnel_mut(&mut self) -> Option<&mut ProxyTunnel> {
         let raw = self.proxy_tunnel.as_ref().map(|p| p.as_ptr())?;
         Some(proxy_tunnel::raw_as_mut(raw))
@@ -1587,8 +1620,7 @@ impl<'a> HTTPClient<'a> {
     /// build the result, reset request state, and dispatch the callback.
     fn dispatch_result_and_reset(&mut self, clear_proxy_tunneling: bool) {
         let callback = self.result_callback;
-        let body = self.state.body_out_str;
-        let mut result = self.to_result();
+        let result = self.to_result();
         self.state.reset();
         // `state.reset()` returns every stage field to Pending, which makes
         // this finished client indistinguishable from a fresh one. Every
@@ -1606,9 +1638,6 @@ impl<'a> HTTPClient<'a> {
         if clear_proxy_tunneling {
             self.flags.proxy_tunneling = false;
         }
-        // `state.reset()` cleared the caller-owned body buffer; attach it now
-        // so the callback sees the (empty) post-reset buffer.
-        result.body = body_out::opt_mut(body);
         callback.run(self.parent_async_http(), result);
     }
     #[inline]
@@ -1629,48 +1658,6 @@ impl<'a> HTTPClient<'a> {
             // `&mut Progress` would alias the node tree (the Progress embeds
             // `root: Node`), so this stays a narrowly-scoped raw deref.
             unsafe { (*progress.context_ptr()).maybe_refresh() };
-        }
-    }
-}
-
-/// Module-private accessors for the caller-owned `body_out_str` buffer.
-///
-/// `state.body_out_str` is a `NonNull<MutableString>` set in `start()` to a
-/// buffer owned by the request initiator (FetchTasklet/NetworkTask/…) that
-/// strictly outlives the HTTPClient. The buffer is a separate heap allocation
-/// from `HTTPClient`/`InternalState`, so a `&mut MutableString` derived here
-/// never overlaps a `&mut self` on the client.
-///
-/// Centralising the SAFETY argument removes a dozen open-coded
-/// `unsafe { p.as_mut() }` derefs at call sites.
-mod body_out {
-    use super::{MutableString, NonNull};
-
-    /// Upgrade the body-out NonNull to `&mut MutableString`.
-    /// INVARIANT (module): `p` was obtained from `state.body_out_str` (or its
-    /// upstream source, `AsyncHTTP.response_buffer`, which `start()` forwards
-    /// into `body_out_str`).
-    #[inline]
-    pub(crate) fn as_mut<'a>(mut p: NonNull<MutableString>) -> &'a mut MutableString {
-        // SAFETY: see module-level invariant.
-        unsafe { p.as_mut() }
-    }
-    /// `Option`-lifted [`as_mut`].
-    #[inline]
-    pub(super) fn opt_mut<'a>(p: Option<NonNull<MutableString>>) -> Option<&'a mut MutableString> {
-        p.map(as_mut)
-    }
-    /// Snapshot the body buffer's contents by value so a following
-    /// `state.reset()` doesn't deliver an empty body.
-    #[inline]
-    pub(super) fn take_list(p: Option<NonNull<MutableString>>) -> Option<Vec<u8>> {
-        p.map(|p| core::mem::take(&mut as_mut(p).list))
-    }
-    /// Restore the body bytes that `state.reset()` cleared.
-    #[inline]
-    pub(super) fn restore_list(p: Option<NonNull<MutableString>>, v: Option<Vec<u8>>) {
-        if let (Some(p), Some(v)) = (p, v) {
-            as_mut(p).list = v;
         }
     }
 }
@@ -2025,12 +2012,6 @@ impl<'a> HTTPClient<'a> {
     pub(crate) fn retry_from_h2(&mut self) {
         debug_assert!(self.h2.is_none());
         self.unregister_abort_tracker();
-        // No owner buffer means the request is already terminal (see
-        // `InternalState::get_body_buffer`); there is nowhere to deliver a
-        // retried response.
-        let Some(body_out) = self.state.body_out_str else {
-            return;
-        };
         self.flags.protocol = Protocol::Http1_1;
         self.h2_retries += 1;
         let body = core::mem::replace(
@@ -2038,7 +2019,7 @@ impl<'a> HTTPClient<'a> {
             HTTPRequestBody::Bytes(b""),
         );
         self.state.reset();
-        self.start(body, body_out::as_mut(body_out));
+        self.start(body);
     }
 
     /// Called by the HTTP/2 session for stream-level termination (RST_STREAM,
@@ -2104,19 +2085,14 @@ impl<'a> HTTPClient<'a> {
             && self.state.response_stage != ResponseStage::Body
             && self.state.response_stage != ResponseStage::BodyChunk
         {
-            // No owner buffer means the request is already terminal (see
-            // `InternalState::get_body_buffer`); there is nowhere to deliver
-            // a retried response.
-            if let Some(body_out) = self.state.body_out_str {
-                self.allow_retry = false;
-                // we need to retry the request, clean up the response message buffer and start again
-                self.state.response_message_buffer = MutableString::default();
-                let body = core::mem::replace(
-                    &mut self.state.original_request_body,
-                    HTTPRequestBody::Bytes(b""),
-                );
-                self.start(body, body_out::as_mut(body_out));
-            }
+            self.allow_retry = false;
+            // we need to retry the request, clean up the response message buffer and start again
+            self.state.response_message_buffer = MutableString::default();
+            let body = core::mem::replace(
+                &mut self.state.original_request_body,
+                HTTPRequestBody::Bytes(b""),
+            );
+            self.start(body);
             return;
         }
 
@@ -2597,14 +2573,6 @@ impl<'a> HTTPClient<'a> {
 
         self.state.response_message_buffer = MutableString::default();
 
-        // Copy the NonNull, do NOT `.take()` — the TooManyRedirects `fail()`
-        // below still needs a populated body pointer. No owner buffer means
-        // the request is already terminal; there is nowhere to deliver a
-        // redirected response.
-        let Some(body_out_str) = self.state.body_out_str else {
-            GenHttpContext::<IS_SSL>::close_socket(socket);
-            return;
-        };
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
         debug_assert!(self.redirect_type == FetchRedirect::Follow);
@@ -2676,10 +2644,7 @@ impl<'a> HTTPClient<'a> {
         self.flags.protocol = Protocol::Http1_1;
         self.reevaluate_proxy_for_redirect();
 
-        self.start(
-            HTTPRequestBody::Bytes(request_body),
-            body_out::as_mut(body_out_str),
-        );
+        self.start(HTTPRequestBody::Bytes(request_body));
     }
 
     /// Re-resolve `http_proxy` against the post-redirect `self.url`. The
@@ -2718,11 +2683,9 @@ impl<'a> HTTPClient<'a> {
         self.url.is_https()
     }
 
-    pub(crate) fn start(&mut self, body: HTTPRequestBody<'a>, body_out_str: &mut MutableString) {
-        body_out_str.reset();
-
+    pub(crate) fn start(&mut self, body: HTTPRequestBody<'a>) {
         debug_assert!(self.state.response_message_buffer.list.capacity() == 0);
-        self.state = InternalState::init(body, body_out_str);
+        self.state = InternalState::init(body);
 
         if self.is_https() {
             self.start_::<true>();
@@ -4113,10 +4076,7 @@ impl<'a> HTTPClient<'a> {
             return;
         }
 
-        let Some(body_out_str) = self.body_out_str() else {
-            return;
-        };
-        if body_out_str.list.is_empty() {
+        if self.state.decoded_body.list.is_empty() {
             // No update! Don't do anything.
             return;
         }
@@ -4133,11 +4093,6 @@ impl<'a> HTTPClient<'a> {
         if self.flags.protocol != Protocol::Http1_1 {
             return self.send_progress_update_multiplexed();
         }
-        let body = self.state.body_out_str;
-        // Snapshot the body buffer's CONTENTS by value so that `state.reset()`
-        // — which calls `body.reset()` and clears the list — doesn't deliver
-        // an empty body when `is_done`. Restored below before the callback.
-        let body_snapshot = body_out::take_list(body);
         let callback = self.result_callback;
 
         let mut result = self.to_result();
@@ -4266,13 +4221,23 @@ impl<'a> HTTPClient<'a> {
             bun_core::scoped_log!(fetch, "done");
         }
 
-        // Restore the body bytes that `state.reset()` cleared.
-        body_out::restore_list(body, body_snapshot);
-        result.body = body_out::opt_mut(body);
-        callback.run(self.parent_async_http(), result);
-
+        // Move the body bytes out of `self.state` before `callback.run`, since
+        // `on_async_http_callback_raw` on the terminal callback drops
+        // `self.state` and deallocates the embedding `ThreadlocalAsyncHTTP`
+        // (making `self` dangle) before dispatching to the user callback.
+        let mut decoded_body = core::mem::take(&mut self.state.decoded_body);
+        let parent = self.parent_async_http();
         if has_more {
+            result.body = decoded_body.list.as_slice();
+            callback.run(parent, result);
+            if decoded_body.list.capacity() <= DECODED_BODY_RETAIN_CAP {
+                decoded_body.list.clear();
+                self.state.decoded_body = decoded_body;
+            }
             self.maybe_pause_receive(socket);
+        } else {
+            result.body_owned = decoded_body.list;
+            callback.run(parent, result);
         }
 
         if PRINT_EVERY != 0 {
@@ -4291,9 +4256,6 @@ impl<'a> HTTPClient<'a> {
     /// transport, so there is no `ctx`/`socket` to hand back to the pool here.
     fn send_progress_update_multiplexed(&mut self) {
         debug_assert!(self.flags.protocol != Protocol::Http1_1);
-        let body = self.state.body_out_str;
-        // Snapshot the body buffer's CONTENTS by value; restored below.
-        let body_snapshot = body_out::take_list(body);
         let callback = self.result_callback;
 
         let mut result = self.to_result();
@@ -4307,10 +4269,21 @@ impl<'a> HTTPClient<'a> {
             self.state.stage = Stage::Done;
             self.flags.proxy_tunneling = false;
         }
-        // Restore the body bytes that `state.reset()` cleared.
-        body_out::restore_list(body, body_snapshot);
-        result.body = body_out::opt_mut(body);
-        callback.run(self.parent_async_http(), result);
+        // See `send_progress_update_without_stage_check`: move the body out of
+        // `self.state` before the terminal callback's `self` teardown.
+        let mut decoded_body = core::mem::take(&mut self.state.decoded_body);
+        let parent = self.parent_async_http();
+        if is_done {
+            result.body_owned = decoded_body.list;
+            callback.run(parent, result);
+            return;
+        }
+        result.body = decoded_body.list.as_slice();
+        callback.run(parent, result);
+        if decoded_body.list.capacity() <= DECODED_BODY_RETAIN_CAP {
+            decoded_body.list.clear();
+            self.state.decoded_body = decoded_body;
+        }
     }
 
     /// `do_redirect` minus the per-request socket release/close. The session
@@ -4346,13 +4319,6 @@ impl<'a> HTTPClient<'a> {
             b""
         };
         self.state.response_message_buffer = MutableString::default();
-        // Copy the NonNull, do NOT `.take()` — the TooManyRedirects `fail()`
-        // below still needs a populated body pointer. No owner buffer means
-        // the request is already terminal; there is nowhere to deliver a
-        // redirected response.
-        let Some(body_out_str) = self.state.body_out_str else {
-            return;
-        };
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
         debug_assert!(self.redirect_type == FetchRedirect::Follow);
@@ -4367,11 +4333,7 @@ impl<'a> HTTPClient<'a> {
         self.flags.proxy_tunneling = false;
         self.flags.protocol = Protocol::Http1_1;
         self.reevaluate_proxy_for_redirect();
-        // SAFETY: body_out_str points at the caller-owned MutableString.
-        self.start(
-            HTTPRequestBody::Bytes(request_body),
-            body_out::as_mut(body_out_str),
-        );
+        self.start(HTTPRequestBody::Bytes(request_body));
     }
 
     pub(crate) fn progress_update_h3(&mut self) {
@@ -4457,11 +4419,10 @@ impl<'a> HTTPClient<'a> {
 
     /// Build the result payload for the progress/completion callback.
     ///
-    /// `body` is left `None`: every caller attaches it from `state.body_out_str`
-    /// *after* the `state.reset()` that follows this call (reset writes through
-    /// the same allocation). With `body` absent the result is fully owned, so
-    /// it can be held across the caller's `&mut self` mutations without a
-    /// lifetime widen.
+    /// `body` is left `&[]`: every caller attaches it from
+    /// `state.decoded_body` *after* the `state.reset()` that follows this
+    /// call. With `body` empty the result has no borrow into `self`, so it
+    /// can be held across the caller's `&mut self` mutations.
     pub(crate) fn to_result(&mut self) -> HTTPClientResult<'static> {
         let body_size: BodySize = if self.state.is_chunked_encoding() {
             BodySize::TotalReceived(self.state.total_body_received)
@@ -4483,7 +4444,8 @@ impl<'a> HTTPClient<'a> {
                 // transfer ownership of the metadata here
                 return HTTPClientResult {
                     metadata: Some(metadata),
-                    body: None,
+                    body: &[],
+                    body_owned: Vec::new(),
                     redirected: self.flags.redirected,
                     fail: self.state.fail,
                     dns_error: self.state.dns_error,
@@ -4499,7 +4461,8 @@ impl<'a> HTTPClient<'a> {
             }
         }
         HTTPClientResult {
-            body: None,
+            body: &[],
+            body_owned: Vec::new(),
             metadata: None,
             redirected: self.flags.redirected,
             fail: self.state.fail,
@@ -4557,10 +4520,7 @@ impl<'a> HTTPClient<'a> {
         // we can ignore the body data in redirects
         if !self.state.flags.is_redirect_pending {
             if self.state.encoding.is_compressed() {
-                if let Some(body_out) = self.state.body_out_str {
-                    self.state
-                        .decompress_bytes(incoming_data, body_out::as_mut(body_out), true)?;
-                }
+                self.state.decompress_bytes(incoming_data, true)?;
             } else {
                 self.state
                     .get_body_buffer()
@@ -4617,7 +4577,7 @@ impl<'a> HTTPClient<'a> {
         if is_done || is_streaming || content_length.is_none() {
             let is_final_chunk = is_done;
             // Move the body buffer's bytes out — process_body_buffer takes `&mut self.state`
-            // and may mutate `compressed_body` (via decompress_bytes' reset) or `body_out_str`,
+            // and may mutate `compressed_body` (via decompress_bytes' reset) or `decoded_body`,
             // so any `&` into `self.state` held across the call would be aliased UB.
             let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
             let processed = self
@@ -4655,7 +4615,7 @@ impl<'a> HTTPClient<'a> {
         incoming_data: &[u8],
     ) -> crate::Result<bool> {
         // reshaped for borrowck — `chunked_decoder` and the body
-        // buffer (`compressed_body` / `body_out_str`) are disjoint fields of
+        // buffer (`compressed_body` / `decoded_body`) are disjoint fields of
         // `self.state`, so borrow them once together via the split accessor and
         // operate on safe references. Deep-cloning the buffer here would
         // diverge (mutations from process_body_buffer would be lost).
@@ -4785,7 +4745,7 @@ impl<'a> HTTPClient<'a> {
 
                     // Move
                     // the bytes out so no `&` into self.state aliases the `&mut self.state`
-                    // taken by process_body_buffer (which mutates compressed_body/body_out_str).
+                    // taken by process_body_buffer (which mutates compressed_body/decoded_body).
                     let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
                     return self.state.process_body_buffer(buffer_snap, false);
                 }
@@ -4796,12 +4756,7 @@ impl<'a> HTTPClient<'a> {
             _ => {
                 self.state.flags.received_last_chunk = true;
                 self.handle_response_body_from_single_packet(buffer)?;
-                debug_assert!(
-                    self.body_out_str()
-                        .map(|b| b.list.as_ptr())
-                        .unwrap_or(core::ptr::null())
-                        != buffer.as_ptr()
-                );
+                debug_assert!(self.state.decoded_body.list.as_ptr() != buffer.as_ptr());
                 self.report_progress(buffer.len());
 
                 Ok(true)

@@ -54,12 +54,14 @@ Ref<AbortSignal> AbortSignal::create(ScriptExecutionContext* context)
 }
 
 // https://dom.spec.whatwg.org/#dom-abortsignal-abort
-Ref<AbortSignal> AbortSignal::abort(JSDOMGlobalObject& globalObject, ScriptExecutionContext& context, JSC::JSValue reason)
+Ref<AbortSignal> AbortSignal::abort(ScriptExecutionContext& context, JSC::JSValue reason)
 {
     ASSERT(reason);
+    // Defer the default to jsReason(); m_reason's JSC::Weak has no owner until toJSNewlyCreated().
+    auto signal = adoptRef(*new AbortSignal(&context, Aborted::Yes, reason));
     if (reason.isUndefined())
-        reason = toJS(&globalObject, &globalObject, DOMException::create(ExceptionCode::AbortError));
-    return adoptRef(*new AbortSignal(&context, Aborted::Yes, reason));
+        signal->m_commonReason = CommonAbortReason::UserAbort;
+    return signal;
 }
 
 // https://dom.spec.whatwg.org/#dom-abortsignal-timeout
@@ -82,7 +84,7 @@ Ref<AbortSignal> AbortSignal::any(ScriptExecutionContext& context, const Vector<
 
     auto abortedSignalIndex = signals.findIf([](auto& signal) { return signal->aborted(); });
     if (abortedSignalIndex != notFound) {
-        resultSignal->signalAbort(signals[abortedSignalIndex]->reason().getValue());
+        resultSignal->signalAbort(signals[abortedSignalIndex]->jsReason(*context.jsGlobalObject()));
         return resultSignal;
     }
 
@@ -370,7 +372,7 @@ void AbortSignal::throwIfAborted(JSC::JSGlobalObject& lexicalGlobalObject)
 
     Ref vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    throwException(&lexicalGlobalObject, scope, m_reason.getValue());
+    throwException(&lexicalGlobalObject, scope, jsReason(lexicalGlobalObject));
 }
 
 WebCoreOpaqueRoot root(AbortSignal* signal)

@@ -31,7 +31,6 @@ bun_opaque::opaque_ffi! {
 // or out-param keep raw pointers and stay `unsafe fn`.
 unsafe extern "C" {
     safe fn WebCore__AbortSignal__aborted(arg0: &AbortSignal) -> bool;
-    safe fn WebCore__AbortSignal__abortReason(arg0: &AbortSignal) -> JSValue;
     // safe: `arg1` is an opaque round-trip pointer C++ stores into the listener
     // entry and forwards to `arg_fn2` on abort (never dereferenced as Rust
     // data) — same contract as `cleanNativeBindings` / `queueMicrotaskCallback`.
@@ -121,9 +120,9 @@ impl AbortSignal {
         WebCore__AbortSignal__aborted(self)
     }
 
-    /// This function is not threadsafe. JSValue cannot safely be passed between threads.
-    pub fn abort_reason(&self) -> JSValue {
-        WebCore__AbortSignal__abortReason(self)
+    /// Same value the JS `signal.reason` getter returns.
+    pub fn js_reason(&self, global: &JSGlobalObject) -> JSValue {
+        WebCore__AbortSignal__jsReason(self, global)
     }
 
     pub fn reason_if_aborted(&self, global: &JSGlobalObject) -> Option<AbortReason> {

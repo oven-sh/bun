@@ -119,7 +119,6 @@ CPP_DECL JSC::JSPromise* JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGloba
 #pragma mark - WebCore::AbortSignal
 
 CPP_DECL bool WebCore__AbortSignal__aborted(WebCore::AbortSignal* arg0);
-CPP_DECL JSC::EncodedJSValue WebCore__AbortSignal__abortReason(WebCore::AbortSignal* arg0);
 CPP_DECL WebCore::AbortSignal* WebCore__AbortSignal__addListener(WebCore::AbortSignal* arg0, void* arg1, void(* ArgFn2)(void* arg0, JSC::EncodedJSValue JSValue1));
 CPP_DECL void WebCore__AbortSignal__cleanNativeBindings(WebCore::AbortSignal* arg0, void* arg1);
 CPP_DECL JSC::EncodedJSValue WebCore__AbortSignal__create(JSC::JSGlobalObject* arg0);

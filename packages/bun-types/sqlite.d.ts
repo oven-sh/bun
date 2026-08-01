@@ -268,7 +268,8 @@ declare module "bun:sqlite" {
      * closing, so the connection is released immediately. It is safe to call
      * this method multiple times. If the database is already closed, this is
      * a no-op. Running queries or using statements after the database has
-     * been closed throws an error.
+     * been closed throws an error, except statement `toString()`, which
+     * returns an empty string.
      *
      * @example
      * ```ts

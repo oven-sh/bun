@@ -120,7 +120,7 @@ const db = new Database();
 db.close();
 ```
 
-Any prepared statements that were not finalized are finalized as part of closing, so the connection (and the database file) is released immediately. Using a statement after its database was closed throws an error. Pass `true` to throw if the connection fails to close:
+Any prepared statements that were not finalized are finalized as part of closing, so the connection (and the database file) is released immediately. Using a statement after its database was closed throws an error, except `toString()`, which returns an empty string. Pass `true` to throw if the connection fails to close:
 
 ```ts db.ts icon="/icons/typescript.svg" highlight={3}
 const db = new Database();

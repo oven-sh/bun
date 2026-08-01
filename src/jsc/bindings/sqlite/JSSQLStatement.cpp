@@ -1877,15 +1877,16 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
 
     int statusCode = sqlite3_close(db);
     if (statusCode != SQLITE_OK) {
-        if (shouldThrowOnError) {
-            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(statusCode))));
-            return {};
-        }
-        // Non-strict close() never throws; defer the close instead.
+        // The statements are already gone, so the connection is unusable
+        // either way: defer the close and retire the handle.
         sqlite3_close_v2(db);
     }
-
     versionDB->db = nullptr;
+
+    if (statusCode != SQLITE_OK && shouldThrowOnError) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(statusCode))));
+        return {};
+    }
     return JSValue::encode(jsUndefined());
 }
 

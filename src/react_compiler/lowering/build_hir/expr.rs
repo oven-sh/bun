@@ -1021,6 +1021,7 @@ fn lower_unary(
             Ok(InstructionValue::UnaryExpression {
                 operator,
                 value,
+                flags: unary.flags,
                 loc,
             })
         }

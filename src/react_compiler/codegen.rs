@@ -1853,14 +1853,17 @@ fn codegen_base_instruction_value(
             ))
         }
         InstructionValue::UnaryExpression {
-            operator, value, ..
+            operator,
+            value,
+            flags,
+            ..
         } => {
             let arg = codegen_place_to_expression(cx, value)?;
             Ok(Expr::init(
                 E::Unary {
                     op: convert_unary_operator(*operator),
                     value: arg,
-                    flags: E::UnaryFlags::empty(),
+                    flags: *flags,
                 },
                 loc,
             ))

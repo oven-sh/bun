@@ -891,4 +891,71 @@ describe("bundler", () => {
       expect(out).toMatch(/__MEMO_CACHE_SENTINEL\)\s*\{[^}]*globalFn\(\)/);
     },
   });
+
+  // Regression: codegen.rs UnaryExpression emitted `E::Unary` with
+  // `UnaryFlags::empty()`. The parser sets `WAS_ORIGINALLY_TYPEOF_IDENTIFIER`
+  // for `typeof <identifier>`; without that flag the printer re-wraps an
+  // unbound operand as `typeof (0, x)`, which evaluates `x` and throws a
+  // ReferenceError instead of returning "undefined".
+  itBundled("react-compiler/TypeofUnboundGlobalReturnsUndefined", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useMemo } from "react";
+        export function useThing(a) {
+          return useMemo(() => [typeof SomeUnboundGlobal, a], [a]);
+        }
+        console.log(JSON.stringify(useThing(1)));
+      `,
+      "/node_modules/react/index.js": `exports.useMemo = (f) => f();`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: '["undefined",1]' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // The hook must be compiled (codegen, not a bailout, is on trial).
+      // With react bundled the `_c` import is renamed, so assert on the
+      // compiler-runtime body being linked in instead.
+      expect(out).toContain("react.memo_cache_sentinel");
+      // `typeof (0, SomeUnboundGlobal)` evaluates the reference and throws.
+      expect(out).not.toMatch(/typeof\s*\(\s*0\s*,\s*SomeUnboundGlobal/);
+      expect(out).toMatch(/typeof\s+SomeUnboundGlobal\b/);
+    },
+  });
+
+  // Control: the parse-time flag is NOT set for `typeof (0, x)`. Lowering
+  // discards the side-effect-free `0`, so codegen sees a bare identifier
+  // again; the printer must still re-wrap because the source did not have
+  // `typeof <identifier>` semantics.
+  itBundled("react-compiler/TypeofSequenceUnboundGlobalStillThrows", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useMemo } from "react";
+        export function useThing(a) {
+          return useMemo(() => [typeof (0, SomeUnboundGlobal), a], [a]);
+        }
+        try {
+          useThing(1);
+          console.log("no throw");
+        } catch (e) {
+          console.log(e instanceof ReferenceError ? "ReferenceError" : "other");
+        }
+      `,
+      "/node_modules/react/index.js": `exports.useMemo = (f) => f();`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "ReferenceError" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("react.memo_cache_sentinel");
+      expect(out).toMatch(/typeof\s*\(\s*0\s*,\s*SomeUnboundGlobal/);
+    },
+  });
 });

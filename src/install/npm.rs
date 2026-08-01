@@ -1725,7 +1725,8 @@ impl PackageManifest {
                     _ => None,
                 };
                 let mut had_too_recent = false;
-                if let Some(highest) = self.find_highest_version(min_age_gate_ms, &mut had_too_recent)
+                if let Some(highest) =
+                    self.find_highest_version(min_age_gate_ms, &mut had_too_recent)
                 {
                     return FindVersionResult::FoundLatestFallback(highest);
                 }

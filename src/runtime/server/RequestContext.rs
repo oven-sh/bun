@@ -1755,7 +1755,8 @@ where
                 let mut sys: jsc::SystemError = err.to_system_error().into();
                 sys.message =
                     BunString::static_("Cannot stream a directory as a response body").into();
-                return self.run_error_handler(sys.to_error_instance(global_this));
+                return self
+                    .run_error_handler_with_status_code(sys.to_error_instance(global_this), 404);
             }
             (bun_io::FileType::File, false)
         };

@@ -1295,6 +1295,7 @@ describe.each([true, false])("Response(Bun.file()) open-error status mapping (de
     dir = tempDirWithFiles("serve-file-open-errno", {
       "ok.txt": "ok",
       "noperm.txt": "secret",
+      "sub/.keep": "",
     });
     if (!isWindows) chmodSync(join(dir, "noperm.txt"), 0o000);
     errorsSeen = [];
@@ -1334,6 +1335,16 @@ describe.each([true, false])("Response(Bun.file()) open-error status mapping (de
   it("ENOTDIR (path component is a file) -> 404", async () => {
     const res = await fetch(new URL("/ok.txt/whatever", server.url));
     expect(res.status).toBe(404);
+  });
+
+  // On POSIX open() on a directory succeeds, so EISDIR is reported from the
+  // post-open fstat branch. Windows fails the open itself (EACCES -> 403).
+  it.skipIf(isWindows)("EISDIR (path is a directory) -> 404", async () => {
+    const before = errorsSeen.length;
+    const res = await fetch(new URL("/sub", server.url));
+    expect(res.status).toBe(404);
+    expect(errorsSeen.length).toBe(before + 1);
+    expect((errorsSeen.at(-1) as any)?.code).toBe("EISDIR");
   });
 
   it.skipIf(isWindows || isRoot)("EACCES -> 403", async () => {

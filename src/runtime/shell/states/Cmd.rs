@@ -526,12 +526,9 @@ impl Cmd {
         resolved.push(0);
         interp.as_cmd_mut(this).args[0] = resolved;
 
-        // When `bun` was not on PATH and we fell back to our own executable,
-        // a `bun build --compile` binary would otherwise re-enter its bundled
-        // entrypoint instead of behaving as the `bun` CLI (#14459). Setting
-        // BUN_BE_BUN=1 makes the child skip the standalone-module-graph boot
-        // path. The entry is appended after `fill_env`, so an explicit
-        // `BUN_BE_BUN` from the user's env (earlier in the array) still wins.
+        // #14459: inside a `bun build --compile` binary, re-spawning ourselves
+        // without BUN_BE_BUN=1 re-enters the bundled entrypoint instead of the
+        // bun CLI.
         if fell_back_to_self_exe && bun_standalone_graph::Graph::get().is_some() {
             spawn_args
                 .env_array

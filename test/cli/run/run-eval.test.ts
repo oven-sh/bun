@@ -137,7 +137,8 @@ describe("error code frame when source has no trailing newline", () => {
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
     expect(stderr).toContain("1 | const a = 1;");
     expect(stderr).toContain("2 | const b = 2;");
     expect(stderr).toContain('3 | throw new Error("x");');

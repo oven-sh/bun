@@ -454,6 +454,48 @@ describe("spawn()", () => {
       expect(stdout).toBe("ok\n");
       expect(status).toBe(0);
     });
+
+    // https://github.com/oven-sh/bun/issues/7845
+    it.each([
+      [0, 0, 0],
+      [1, 1, 1],
+      [2, 0, 0],
+    ] as const)("accepts the same numeric fd at every slot: [%i, %i, %i]", async (...stdio) => {
+      const child = spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio: [...stdio] });
+      expect(child.stdin).toBeNull();
+      expect(child.stdout).toBeNull();
+      expect(child.stderr).toBeNull();
+      const [code] = await once(child, "close");
+      expect(code).toBe(0);
+      // Parent's own stdio must not have been closed by the spawn machinery.
+      expect(fs.fstatSync(0)).toBeDefined();
+      expect(fs.fstatSync(1)).toBeDefined();
+      expect(fs.fstatSync(2)).toBeDefined();
+    });
+
+    it("numeric fd is dup'd into the requested slot (stdio: [1, 1, 1])", async () => {
+      // Outer process's fd 1 is a pipe back to us. It spawns an inner child
+      // with stdio: [1, 1, 1], so the inner child's stdout AND stderr both
+      // land on that same pipe.
+      const script = `
+        const { spawnSync } = require("child_process");
+        const r = spawnSync(process.execPath, ["-e",
+          'require("fs").writeSync(1, "OUT "); require("fs").writeSync(2, "ERR")'
+        ], { stdio: [1, 1, 1] });
+        if (r.error) throw r.error;
+        process.exit(r.status ?? 1);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("OUT ERR");
+      expect(exitCode).toBe(0);
+    });
   });
 
   it.skipIf(isWindows)(

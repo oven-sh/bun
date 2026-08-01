@@ -1008,10 +1008,15 @@ impl<'a> Expand<'a> {
         };
         if idx < self.start {
             out.extend_from_slice(&self.map.map.values()[idx].value);
-        } else if !self.seen.contains(&idx) {
-            self.resolve(idx, depth);
-            out.extend_from_slice(self.memo[idx - self.start].as_deref().unwrap());
+            return true;
         }
+        if self.seen.contains(&idx) {
+            // Re-entrant: treat as unset so `${NAME:-default}` falls through
+            // to the default (`PORT=${PORT:-3000}` resolves to `3000`).
+            return false;
+        }
+        self.resolve(idx, depth);
+        out.extend_from_slice(self.memo[idx - self.start].as_deref().unwrap());
         true
     }
 
@@ -1019,20 +1024,18 @@ impl<'a> Expand<'a> {
     /// `${...}` locates its matching `}` by depth (`${` opens, `}` closes,
     /// `\x` skipped); malformed forms fall through as literal text. `:-`
     /// defaults and looked-up file values recurse.
-    fn expand_into(&mut self, value: &[u8], out: &mut Vec<u8>, depth: u8) -> bool {
+    fn expand_into(&mut self, value: &[u8], out: &mut Vec<u8>, depth: u8) {
         #[inline]
         fn is_ident(b: u8) -> bool {
             matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
         }
 
         let mut pos = 0;
-        let mut changed = false;
         while pos < value.len() {
             let b = value[pos];
             if b == b'\\' && value.get(pos + 1) == Some(&b'$') {
                 out.push(b'$');
                 pos += 2;
-                changed = true;
                 continue;
             }
             if b != b'$' || pos + 1 >= value.len() {
@@ -1072,7 +1075,6 @@ impl<'a> Expand<'a> {
                     pos = value.len();
                     continue;
                 };
-                changed = true;
                 let inner = &value[inner_start..close];
                 let key_end = inner
                     .iter()
@@ -1097,7 +1099,6 @@ impl<'a> Expand<'a> {
                 continue;
             }
             if is_ident(next) {
-                changed = true;
                 let key_start = pos + 1;
                 let mut k = key_start;
                 while k < value.len() && is_ident(value[k]) {
@@ -1110,7 +1111,6 @@ impl<'a> Expand<'a> {
             out.push(b'$');
             pos += 1;
         }
-        changed
     }
 }
 

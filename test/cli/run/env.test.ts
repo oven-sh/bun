@@ -324,18 +324,20 @@ test.concurrent(".env value expansion does not reinterpret process.env or escape
 test.concurrent(".env value expansion reference cycles terminate", async () => {
   // Linear cycle across files, self-reference with fan-out >= 2, and a
   // cross-file cycle with fan-out >= 2 must all terminate promptly. A
-  // re-entrant reference expands to empty (dotenv-expand semantics). For the
-  // mutual P<->Q cycle the exact strings depend on which side is resolved
-  // first; the contract asserted here is "terminates, bounded, no raw $VAR".
+  // re-entrant reference is treated as unset, so a bare `$X` contributes
+  // nothing and `${X:-default}` falls through to the default. For the mutual
+  // P<->Q cycle the exact strings depend on which side is resolved first; the
+  // contract asserted here is "terminates, bounded, no raw $VAR".
   using dir = tempDir("dotenv-expand-cycle", {
     ".env": [
       "BUNTEST_CY_A=$BUNTEST_CY_B",
       "BUNTEST_CY_SELF=$BUNTEST_CY_SELF$BUNTEST_CY_SELF",
       "BUNTEST_CY_P=[$BUNTEST_CY_Q$BUNTEST_CY_Q]",
+      "BUNTEST_CY_DEF=${BUNTEST_CY_DEF:-fallback}",
     ].join("\n"),
     ".env.local": "BUNTEST_CY_B=$BUNTEST_CY_A\nBUNTEST_CY_Q=($BUNTEST_CY_P$BUNTEST_CY_P)\n",
     "index.ts":
-      "const o={};for(const n of ['A','B','SELF','P','Q'])o[n]=process.env['BUNTEST_CY_'+n];" +
+      "const o={};for(const n of ['A','B','SELF','P','Q','DEF'])o[n]=process.env['BUNTEST_CY_'+n];" +
       "console.log(JSON.stringify(o));",
   });
   const { stdout, exitCode } = await bunRun(`${dir}/index.ts`);
@@ -343,6 +345,7 @@ test.concurrent(".env value expansion reference cycles terminate", async () => {
   expect(out.A).toBe("");
   expect(out.B).toBe("");
   expect(out.SELF).toBe("");
+  expect(out.DEF).toBe("fallback");
   for (const v of Object.values(out) as string[]) {
     expect(v).not.toContain("$");
     expect(v.length).toBeLessThan(32);

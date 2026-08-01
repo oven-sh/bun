@@ -910,9 +910,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     }
                 }
 
-                // Foreground scripts are the root package's own, which the user just
-                // watched run live; the summary warning is for background dependency
-                // scripts whose duration was otherwise invisible.
+                // Foreground (root-package) scripts were already echoed live; warn only for background deps.
                 if !self.foreground
                     && let Some(nanos) = maybe_duration
                     && nanos > MIN_MILLISECONDS_TO_LOG * bun_core::time::NS_PER_MS

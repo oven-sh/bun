@@ -48,8 +48,6 @@ impl LifecycleScriptTimeLog {
         self.mutex.unlock();
     }
 
-    /// Print the single slowest entry as a warning and clear the log. Safe to
-    /// call when no entries were recorded.
     pub(crate) fn print_and_clear(&mut self) {
         #[cfg(debug_assertions)]
         {

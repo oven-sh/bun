@@ -1971,7 +1971,9 @@ fn should_update_dependency(
             .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id))
         && (this.update_requests.is_empty()
             || this.updating_packages.contains(
-                dependency.name.slice(this.lockfile.buffers.string_bytes.as_slice()),
+                dependency
+                    .name
+                    .slice(this.lockfile.buffers.string_bytes.as_slice()),
             ))
 }
 

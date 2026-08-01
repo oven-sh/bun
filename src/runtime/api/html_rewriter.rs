@@ -611,11 +611,14 @@ impl BufferOutputSink {
                 status_code: 200,
                 ..Default::default()
             },
-            webcore::Body::new({
-                let mut pv = webcore::body::PendingValue::new(global);
-                pv.task = Some(sink.cast::<core::ffi::c_void>());
-                webcore::body::Value::Locked(pv)
-            }),
+            // Leave the PendingValue's `task`/callbacks unset: this sink does
+            // not feed a ByteStream. A consumer that wants the body
+            // (Bun.serve, ValueBufferer, `.text()`) installs its own
+            // `on_receive_value`/`promise`, which `done()` resolves via
+            // `Value::resolve` once the rewrite completes.
+            webcore::Body::new(webcore::body::Value::Locked(
+                webcore::body::PendingValue::new(global),
+            )),
             BunString::empty(),
             false,
         )));
@@ -825,29 +828,6 @@ impl BufferOutputSink {
             // SAFETY: (*sink).response is the heap Response allocated in init()
             // and kept alive by (*sink).response_value (Strong root).
             let sink_body_value = unsafe { (*(*sink).response).get_body_value() };
-            let sink_ptr_usize = sink as usize;
-            // If a `.body` readable is already attached, stay `Locked` so
-            // `to_error_instance` delivers the error to its ByteStream; clearing
-            // to `Empty` here would strand any pending `reader.read()` forever.
-            let has_readable = match sink_body_value {
-                webcore::body::Value::Locked(l) => l.readable.has(),
-                _ => false,
-            };
-            if !has_readable
-                && matches!(sink_body_value, webcore::body::Value::Locked(l)
-                    if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_none())
-            {
-                // No reader and no pending read: normalize to `Empty` so
-                // `to_error_instance` takes the simple (non-`Locked`) path.
-                *sink_body_value = webcore::body::Value::Empty;
-            } else if matches!(sink_body_value, webcore::body::Value::Locked(l)
-                if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_some())
-            {
-                if let webcore::body::Value::Locked(l) = sink_body_value {
-                    l.on_receive_value = None;
-                    l.task = None;
-                }
-            }
             if is_async {
                 let _ = sink_body_value.to_error_instance(err.dupe(&global), &global);
                 // TODO: properly propagate exception upwards

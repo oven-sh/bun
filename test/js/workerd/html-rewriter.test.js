@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import fs from "fs";
-import { gcTick, tls, tmpdirSync } from "harness";
+import { gcTick, tempDir, tls, tmpdirSync } from "harness";
 import { createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
@@ -371,6 +371,30 @@ describe("HTMLRewriter", () => {
     await Bun.write(filePath, "<div>hello</div>");
     var output = rewriter.transform(new Response(Bun.file(filePath)));
     expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
+  });
+
+  // https://github.com/oven-sh/bun/issues/6068
+  it("Bun.serve can stream a Bun.file Response through HTMLRewriter", async () => {
+    using dir = tempDir("html-rewriter-serve-file", {
+      "page.html": "<p>Hello</p>",
+    });
+
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new HTMLRewriter()
+          .on("p", {
+            element(el) {
+              el.setInnerContent("Rewritten");
+            },
+          })
+          .transform(new Response(Bun.file(join(String(dir), "page.html"))));
+      },
+    });
+
+    const res = await fetch(server.url);
+    expect(await res.text()).toBe("<p>Rewritten</p>");
+    expect(res.status).toBe(200);
   });
 
   it("supports attribute iterator", async () => {

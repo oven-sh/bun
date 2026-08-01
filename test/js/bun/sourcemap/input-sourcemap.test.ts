@@ -249,10 +249,7 @@ try { require("./index.js"); } catch (e) { console.log(e.stack); }
       "dist/placeholder": "",
     });
     const mapPath = join(String(dir), "maps", "index.js.map");
-    await Bun.write(
-      join(String(dir), "dist", "index.js"),
-      generated + `//# sourceMappingURL=file://${mapPath}\n`,
-    );
+    await Bun.write(join(String(dir), "dist", "index.js"), generated + `//# sourceMappingURL=file://${mapPath}\n`);
 
     const { stderr, exitCode } = await run(String(dir), join("dist", "index.js"));
     expect(stderr).toContain(`at boom (${join(String(dir), "src", "index.ts")}:6:`);

@@ -3935,7 +3935,7 @@ fn server_set_on_server_name(
                     // SAFETY: `data` is the `*mut Self` registered below; the
                     // listen socket cannot outlive the server that owns it.
                     let this = unsafe { &*data.cast::<$T>() };
-                    if this.vm.is_shutting_down() {
+                    if this.vm.is_shutting_down() || this.js_value_for_dispatch().is_none() {
                         return core::ptr::null_mut();
                     }
                     let callback = this.on_server_name;

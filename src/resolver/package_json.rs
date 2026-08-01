@@ -1254,22 +1254,9 @@ pub struct MapEntry {
     pub(crate) value: Entry,
 }
 
-/// Packages whose `"bun"` export condition is dropped during resolution.
-///
-/// Normally the `"bun"` condition lets a package ship a Bun-optimized entry
-/// point and Bun honors it. The packages listed here instead point `"bun"` at
-/// their browser build (pure WebCrypto, no `node:*`), which breaks Node.js
-/// consumers that `require()` them expecting `KeyObject`-based APIs. Dropping
-/// the `"bun"` key makes Bun fall through to `"import"` / `"require"` (the
-/// Node build), which Bun fully supports.
-///
-/// `jose` v4.11+ and v5 set `"bun": "./dist/browser/index.js"`; `jwks-rsa` 3.1
-/// (pulled in by `firebase-admin` 13) then fails with "The JWKS endpoint did
-/// not contain any signing keys" because every imported JWK becomes a
-/// non-extractable `CryptoKey` that `jose.exportSPKI` rejects. `jose` v6 and
-/// `jwks-rsa` 3.2+ fixed this upstream, so dropping the condition here only
-/// changes behavior for the affected range while being a no-op otherwise.
-/// See https://github.com/oven-sh/bun/issues/15932 and #10511.
+/// Packages whose `"bun"` export condition is dropped so resolution falls
+/// through to `"import"` / `"require"`. Listed packages point `"bun"` at a
+/// browser-only build that breaks Node-style consumers (#15932, #19629).
 const PACKAGES_SKIP_BUN_CONDITION: &[&[u8]] = &[b"jose"];
 
 fn should_skip_bun_condition(name: &[u8]) -> bool {
@@ -1278,8 +1265,6 @@ fn should_skip_bun_condition(name: &[u8]) -> bool {
         .any(|pkg| strings::eql(name, pkg))
 }
 
-/// Recursively remove `condition` from every conditional-sugar map in the
-/// exports/imports tree (maps whose keys do not start with `.`).
 fn remove_condition(entry: &mut Entry, condition: &[u8]) {
     match &mut entry.data {
         EntryData::Map(map) => {

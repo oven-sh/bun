@@ -82,8 +82,9 @@ public:
 
     // Bun extension state
 
-    // `$bunNativePtr`: empty = not native; a JSCell = the JS{Blob,File,Bytes}Internal-
-    // ReadableStreamSource handle from Rust; jsNumber(-1) = detached.
+    // `$bunNativePtr`: empty = not native, or the adapter/Node Readable now owns the handle;
+    // a JSCell = the JS{Blob,File,Bytes}InternalReadableStreamSource handle from Rust, held
+    // only while the stream is NativePending; jsNumber(-1) = detached by ReadableStream__detach.
     JSC::WriteBarrier<JSC::Unknown> m_nativePtr;
     // `$underlyingSource` on the STREAM. Non-null ⇔ type:"direct" AND not yet consumed.
     JSC::WriteBarrier<JSC::JSObject> m_directUnderlyingSource;

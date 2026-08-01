@@ -581,6 +581,10 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
     controller->m_algorithms.algorithmContext.set(vm, controller, adapter);
     setUpReadableStreamDefaultController(globalObject, stream, controller, jsUndefined(), 1);
     RETURN_IF_EXCEPTION(scope, );
+    // The adapter now owns the handle. ReadableStreamTag__tagged and reader-release
+    // updateRef reach it via adapter->handle(); every JS-side $bunNativePtr fast path is
+    // gated on !m_disturbed.
+    stream->m_nativePtr.clear();
     nativeSourceStart(globalObject, controller);
     RETURN_IF_EXCEPTION(scope, );
 }

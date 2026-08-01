@@ -728,24 +728,16 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
         poll_tag::GET_ADDR_INFO_REQUEST => {
             #[cfg(target_os = "macos")]
             {
-                let loader = owner.ptr.cast::<crate::dns_jsc::GetAddrInfoRequest>();
-                get_addr_info_request::BackendLibInfo::on_machport_change(loader);
+                let shared = owner.ptr.cast::<crate::dns_jsc::dns_sd::SharedConnection>();
+                crate::dns_jsc::dns_sd::SharedConnection::on_readable(shared);
             }
             #[cfg(not(target_os = "macos"))]
             {
-                debug_assert!(false, "GetAddrInfoRequest poll on non-mac");
+                debug_assert!(false, "dns_sd SharedConnection poll on non-mac");
             }
         }
         poll_tag::REQUEST => {
-            #[cfg(target_os = "macos")]
-            {
-                let req = owner.ptr.cast::<crate::dns_jsc::internal::Request>();
-                crate::dns_jsc::internal::MacAsyncDNS::on_machport_change(req);
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                debug_assert!(false, "InternalDNSRequest poll on non-mac");
-            }
+            debug_assert!(false, "poll_tag::REQUEST is no longer used");
         }
         poll_tag::TERMINAL_POLL => poll_arm!(TerminalPoll),
         // `OutputReader = BufferedReader` in install crate — separate tag for ownership.

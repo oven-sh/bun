@@ -1627,6 +1627,8 @@ fn close_dns_for_terminate() {
     if let Some(gd) = unsafe { &(*state).global_dns_data }.get() {
         gd.resolver.close_channel_for_terminate();
     }
+    #[cfg(target_os = "macos")]
+    crate::dns_jsc::dns_sd::SharedConnection::close_for_terminate();
 }
 
 pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {

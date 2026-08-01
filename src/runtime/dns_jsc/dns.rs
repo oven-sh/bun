@@ -9,8 +9,6 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use bun_collections::{ArrayHashMap, HiveArray};
 #[cfg(not(windows))]
 use bun_core::Output;
-#[cfg(target_os = "macos")]
-use bun_core::mach_port;
 use bun_core::{self as bun, env_var, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 #[cfg(not(windows))]
@@ -19,7 +17,9 @@ use bun_dns::{
     self, Backend as GetAddrInfoBackend, GetAddrInfo, GetAddrInfoResult,
     Options as GetAddrInfoOptions, ResultAny as GetAddrInfoResultAny,
 };
-use bun_io::{self as Async, FilePoll, KeepAlive};
+#[cfg(not(windows))]
+use bun_io::FilePoll;
+use bun_io::{self as Async, KeepAlive};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult,
@@ -116,73 +116,316 @@ bun_output::declare_scope!(DNSResolver, visible);
 // C type aliases
 // ──────────────────────────────────────────────────────────────────────────
 
-pub type GetAddrInfoAsyncCallback = unsafe extern "C" fn(i32, *mut AddrInfo, *mut c_void);
-
 const IANA_DNS_PORT: i32 = 53;
 
 // ──────────────────────────────────────────────────────────────────────────
-// LibInfo (macOS libinfo async getaddrinfo)
+// dns_sd (macOS DNSServiceGetAddrInfo via mDNSResponder)
+//
+// libinfo's `getaddrinfo_async_start` is a thin wrapper that dispatches a
+// blocking `si_addrinfo` onto the libdispatch overcommit root queue: one
+// parked worker thread per in-flight lookup (Libinfo si_module.c
+// `si_async_call`). Under the hood that blocking call is itself a kqueue-
+// poll of `DNSServiceQueryRecord` against mDNSResponder. Talking to the
+// daemon directly via `DNSServiceGetAddrInfo` over one shared connection
+// removes the thread wrapper: one Unix-domain socket, one kqueue knote,
+// zero extra threads regardless of in-flight count.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
-mod lib_info {
+pub(crate) mod dns_sd {
     use super::*;
 
-    // static int32_t (*getaddrinfo_async_start)(mach_port_t*, const char*, const char*,
-    //                                           const struct addrinfo*, getaddrinfo_async_callback, void*);
-    // static int32_t (*getaddrinfo_async_handle_reply)(void*);
-    // static void (*getaddrinfo_async_cancel)(mach_port_t);
-    // typedef void getaddrinfo_async_callback(int32_t, struct addrinfo*, void*)
-    pub(crate) type GetaddrinfoAsyncStart = unsafe extern "C" fn(
-        *mut mach_port,
-        node: *const c_char,
-        service: *const c_char,
-        hints: *const AddrInfo,
-        callback: GetAddrInfoAsyncCallback,
+    pub(crate) type DNSServiceRef = *mut c_void;
+    type DNSServiceFlags = u32;
+    type DNSServiceErrorType = i32;
+    pub(crate) type DNSServiceProtocol = u32;
+
+    pub(crate) const FLAGS_ADD: DNSServiceFlags = 0x2;
+    const FLAGS_RETURN_INTERMEDIATES: DNSServiceFlags = 0x1000;
+    const FLAGS_SHARE_CONNECTION: DNSServiceFlags = 0x4000;
+    const FLAGS_TIMEOUT: DNSServiceFlags = 0x10000;
+
+    pub(crate) const PROTOCOL_IPV4: DNSServiceProtocol = 0x01;
+    pub(crate) const PROTOCOL_IPV6: DNSServiceProtocol = 0x02;
+
+    pub(crate) const ERR_NO_ERROR: DNSServiceErrorType = 0;
+    const ERR_NO_SUCH_NAME: DNSServiceErrorType = -65538;
+    const ERR_NO_MEMORY: DNSServiceErrorType = -65539;
+    const ERR_REFUSED: DNSServiceErrorType = -65553;
+    pub(crate) const ERR_NO_SUCH_RECORD: DNSServiceErrorType = -65554;
+    const ERR_SERVICE_NOT_RUNNING: DNSServiceErrorType = -65563;
+    const ERR_NO_ROUTER: DNSServiceErrorType = -65566;
+    pub(crate) const ERR_TIMEOUT: DNSServiceErrorType = -65568;
+    const ERR_DEFUNCT_CONNECTION: DNSServiceErrorType = -65569;
+    const ERR_POLICY_DENIED: DNSServiceErrorType = -65570;
+    const ERR_NOT_PERMITTED: DNSServiceErrorType = -65571;
+
+    type GetAddrInfoReply = unsafe extern "C" fn(
+        sd_ref: DNSServiceRef,
+        flags: DNSServiceFlags,
+        interface_index: u32,
+        error_code: DNSServiceErrorType,
+        hostname: *const c_char,
+        address: *const Sockaddr,
+        ttl: u32,
         context: *mut c_void,
-    ) -> i32;
-    pub(crate) type GetaddrinfoAsyncHandleReply = unsafe extern "C" fn(*mut mach_port) -> i32;
+    );
 
-    // PORTING.md §Global mutable state: lazy dlopen, JS-thread-only.
-    // null = "tried and failed / not yet loaded"; LOADED disambiguates.
-    static HANDLE: core::sync::atomic::AtomicPtr<c_void> =
-        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-    static LOADED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
-    fn get_handle() -> Option<*mut c_void> {
-        use core::sync::atomic::Ordering::Relaxed;
-        if LOADED.load(Relaxed) {
-            let h = HANDLE.load(Relaxed);
-            return if h.is_null() { None } else { Some(h) };
-        }
-        LOADED.store(true, Relaxed);
-        let handle = sys::dlopen(
-            bun_core::zstr!("libinfo.dylib"),
-            sys::RTLD::LAZY | sys::RTLD::LOCAL,
-        );
-        if handle.is_none() {
-            bun_core::debug!("libinfo.dylib not found");
-        }
-        HANDLE.store(handle.unwrap_or(core::ptr::null_mut()), Relaxed);
-        handle
+    // libsystem_dnssd.dylib is part of the libSystem umbrella and always linked.
+    unsafe extern "C" {
+        fn DNSServiceCreateConnection(sd_ref: *mut DNSServiceRef) -> DNSServiceErrorType;
+        fn DNSServiceRefSockFD(sd_ref: DNSServiceRef) -> c_int;
+        fn DNSServiceProcessResult(sd_ref: DNSServiceRef) -> DNSServiceErrorType;
+        fn DNSServiceRefDeallocate(sd_ref: DNSServiceRef);
+        fn DNSServiceGetAddrInfo(
+            sd_ref: *mut DNSServiceRef,
+            flags: DNSServiceFlags,
+            interface_index: u32,
+            protocol: DNSServiceProtocol,
+            hostname: *const c_char,
+            callback: GetAddrInfoReply,
+            context: *mut c_void,
+        ) -> DNSServiceErrorType;
     }
 
-    pub(crate) fn getaddrinfo_async_start() -> Option<GetaddrinfoAsyncStart> {
-        bun_core::Environment::only_mac();
-        sys::dlsym_with_handle!(
-            GetaddrinfoAsyncStart,
-            "getaddrinfo_async_start",
-            get_handle()
-        )
+    /// Map a DNSServiceErrorType to an EAI_* code so existing error paths
+    /// (`c_ares::Error::init_eai`, `after_result`) see what they expect.
+    pub(crate) fn to_eai(err: DNSServiceErrorType) -> c_int {
+        match err {
+            ERR_NO_ERROR => 0,
+            ERR_NO_SUCH_NAME | ERR_NO_SUCH_RECORD => libc::EAI_NONAME,
+            ERR_TIMEOUT | ERR_NO_ROUTER | ERR_DEFUNCT_CONNECTION | ERR_SERVICE_NOT_RUNNING => {
+                libc::EAI_AGAIN
+            }
+            ERR_NO_MEMORY => libc::EAI_MEMORY,
+            ERR_POLICY_DENIED | ERR_NOT_PERMITTED | ERR_REFUSED => libc::EAI_FAIL,
+            _ => libc::EAI_FAIL,
+        }
     }
 
-    pub(crate) fn getaddrinfo_async_handle_reply() -> Option<GetaddrinfoAsyncHandleReply> {
-        bun_core::Environment::only_mac();
-        sys::dlsym_with_handle!(
-            GetaddrinfoAsyncHandleReply,
-            "getaddrinfo_async_handle_reply",
-            get_handle()
-        )
+    pub(crate) fn protocol_for_family(family: bun_dns::Family) -> DNSServiceProtocol {
+        match family {
+            bun_dns::Family::Inet => PROTOCOL_IPV4,
+            bun_dns::Family::Inet6 => PROTOCOL_IPV6,
+            // Both explicitly, not 0: per-family NoSuchRecord/Timeout replies
+            // from `ReturnIntermediates` are the only per-query completion
+            // signal on a shared connection (MoreComing is collective), so the
+            // requested-family set must be known up front.
+            _ => PROTOCOL_IPV4 | PROTOCOL_IPV6,
+        }
+    }
+
+    pub(crate) fn protocol_for_hints(hints: &AddrInfo) -> DNSServiceProtocol {
+        match hints.ai_family {
+            f if f == netc::AF_INET => PROTOCOL_IPV4,
+            f if f == netc::AF_INET6 => PROTOCOL_IPV6,
+            _ => PROTOCOL_IPV4 | PROTOCOL_IPV6,
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    pub(crate) enum Inflight {
+        Jsc(*mut GetAddrInfoRequest),
+        Internal(*mut internal::Request),
+    }
+
+    /// One per event loop. Owns the primary `DNSServiceRef` and its `FilePoll`;
+    /// every lookup is a `kDNSServiceFlagsShareConnection` subordinate on it.
+    pub(crate) struct SharedConnection {
+        main_ref: DNSServiceRef,
+        file_poll: NonNull<FilePoll>,
+        ctx: Async::EventLoopCtx,
+        inflight: Vec<Inflight>,
+    }
+
+    thread_local! {
+        static SHARED: Cell<*mut SharedConnection> = const { Cell::new(ptr::null_mut()) };
+    }
+
+    impl SharedConnection {
+        /// Lazily create the shared connection for this event loop. Returns
+        /// `None` if mDNSResponder is unreachable; the caller falls back to
+        /// blocking `getaddrinfo` on the work pool.
+        pub(crate) fn get(ctx: Async::EventLoopCtx) -> Option<*mut Self> {
+            let existing = SHARED.get();
+            if !existing.is_null() {
+                return Some(existing);
+            }
+            let mut main_ref: DNSServiceRef = ptr::null_mut();
+            // SAFETY: FFI; `main_ref` is stack-local.
+            let err = unsafe { DNSServiceCreateConnection(&raw mut main_ref) };
+            if err != ERR_NO_ERROR || main_ref.is_null() {
+                bun_output::scoped_log!(dns, "DNSServiceCreateConnection failed: {}", err);
+                return None;
+            }
+            // SAFETY: FFI; `main_ref` is a live ref just returned by CreateConnection.
+            let fd = sys::Fd::from_native(unsafe { DNSServiceRefSockFD(main_ref) });
+            let this = bun_core::heap::into_raw(Box::new(Self {
+                main_ref,
+                file_poll: NonNull::dangling(),
+                ctx,
+                inflight: Vec::new(),
+            }));
+            let poll_ptr = FilePoll::init(
+                ctx,
+                fd,
+                Default::default(),
+                Async::Owner::new(
+                    Async::posix_event_loop::poll_tag::GET_ADDR_INFO_REQUEST,
+                    this.cast(),
+                ),
+            );
+            // SAFETY: FilePoll::init returns a live pool slot; exclusive here.
+            let poll = unsafe { &mut *poll_ptr };
+            let rc = poll.register_with_fd(
+                // SAFETY: the event loop is live for the caller's lifetime.
+                unsafe { ctx.platform_event_loop() },
+                Async::PollKind::Readable,
+                Async::posix_event_loop::OneShotFlag::None,
+                fd,
+            );
+            if rc.is_err() {
+                // SAFETY: `poll_ptr` is the fresh hive slot; `main_ref` is the
+                // live connection ref; `this` is the just-allocated box.
+                unsafe {
+                    (*poll_ptr).deinit();
+                    DNSServiceRefDeallocate(main_ref);
+                    drop(bun_core::heap::take(this));
+                }
+                return None;
+            }
+            // SAFETY: `this` is the freshly heap-allocated box; exclusive here.
+            unsafe { (*this).file_poll = NonNull::new(poll_ptr).unwrap() };
+            SHARED.set(this);
+            Some(this)
+        }
+
+        /// Start a subordinate `DNSServiceGetAddrInfo` on the shared
+        /// connection and register it as in-flight. Bumps the FilePoll's
+        /// keep-alive on the 0→1 transition so the process stays up while a
+        /// lookup is pending. Returns the sub-ref on success; `None` if the
+        /// daemon rejected the request.
+        pub(crate) fn start(
+            this: *mut Self,
+            owner: Inflight,
+            protocol: DNSServiceProtocol,
+            hostname: *const c_char,
+            callback: GetAddrInfoReply,
+            context: *mut c_void,
+        ) -> Option<DNSServiceRef> {
+            // SAFETY: `this` is the live heap-allocated connection from `get()`.
+            let mut sub: DNSServiceRef = unsafe { (*this).main_ref };
+            // SAFETY: FFI; `hostname` is NUL-terminated and dns_sd copies it
+            // before returning. `sub` holds a copy of the primary ref as
+            // required for ShareConnection.
+            let err = unsafe {
+                DNSServiceGetAddrInfo(
+                    &raw mut sub,
+                    FLAGS_SHARE_CONNECTION | FLAGS_TIMEOUT | FLAGS_RETURN_INTERMEDIATES,
+                    0,
+                    protocol,
+                    hostname,
+                    callback,
+                    context,
+                )
+            };
+            if err != ERR_NO_ERROR {
+                bun_output::scoped_log!(dns, "DNSServiceGetAddrInfo failed: {}", err);
+                return None;
+            }
+            // SAFETY: `this` is live; event-loop-thread-only so no data race.
+            unsafe {
+                if (*this).inflight.is_empty() {
+                    (*(*this).file_poll.as_ptr()).enable_keeping_process_alive((*this).ctx);
+                }
+                (*this).inflight.push(owner);
+            }
+            Some(sub)
+        }
+
+        /// kqueue `EVFILT_READ` fired on the shared socket. Drains all pending
+        /// daemon replies (dnssd's `DNSServiceProcessResult` loops until the
+        /// socket would block, firing each sub-ref's callback inline), then
+        /// completes every query whose requested families have all reported in.
+        pub(crate) fn on_readable(this: *mut Self) {
+            // SAFETY: `this` is the live heap-allocated connection the FilePoll
+            // was registered with; exclusive on the event-loop thread. The
+            // callbacks fired inside `DNSServiceProcessResult` reach the
+            // per-request state via `context`, not via `*this`, so holding
+            // `&mut *this` across the call does not alias.
+            let shared = unsafe { &mut *this };
+            // SAFETY: FFI; `main_ref` is the live primary connection.
+            let rc = unsafe { DNSServiceProcessResult(shared.main_ref) };
+            if rc != ERR_NO_ERROR {
+                bun_output::scoped_log!(dns, "DNSServiceProcessResult: {}", rc);
+                while let Some(inf) = shared.inflight.pop() {
+                    Self::finish(inf, Some(rc));
+                }
+            } else {
+                let mut i = 0;
+                while i < shared.inflight.len() {
+                    // SAFETY: each `*mut` is a live heap request pinned in `inflight`.
+                    let ready = unsafe {
+                        match shared.inflight[i] {
+                            Inflight::Jsc(r) => (*r).backend.as_dns_sd().is_ready(),
+                            Inflight::Internal(r) => (*r).libinfo.is_ready(),
+                        }
+                    };
+                    if ready {
+                        let inf = shared.inflight.swap_remove(i);
+                        Self::finish(inf, None);
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            if shared.inflight.is_empty() {
+                // SAFETY: `file_poll` is the hive slot set in `get()`.
+                unsafe { (*shared.file_poll.as_ptr()).disable_keeping_process_alive(shared.ctx) };
+            }
+        }
+
+        fn finish(inf: Inflight, force_err: Option<DNSServiceErrorType>) {
+            // SAFETY: each `*mut` is a live heap request just removed from
+            // `inflight`; its `sd_ref` is the live subordinate to be released.
+            unsafe {
+                match inf {
+                    Inflight::Jsc(r) => {
+                        let be = (*r).backend.as_dns_sd_mut();
+                        DNSServiceRefDeallocate(be.sd_ref);
+                        if let Some(e) = force_err {
+                            be.sd_error = e;
+                        }
+                        GetAddrInfoRequest::complete_dns_sd(r);
+                    }
+                    Inflight::Internal(r) => {
+                        DNSServiceRefDeallocate((*r).libinfo.sd_ref);
+                        if let Some(e) = force_err {
+                            (*r).libinfo.sd_error = e;
+                        }
+                        internal::dns_sd_complete(r);
+                    }
+                }
+            }
+        }
+
+        /// Tear down the shared connection if one exists on this thread.
+        /// Called from VM teardown so the fd and FilePoll are released while
+        /// the event loop is still live. Any in-flight sub-refs are torn down
+        /// with the primary by `DNSServiceRefDeallocate`.
+        pub(crate) fn close_for_terminate() {
+            let this = SHARED.replace(ptr::null_mut());
+            if this.is_null() {
+                return;
+            }
+            // SAFETY: `this` is the live heap-allocated connection; exclusive
+            // on this (event-loop) thread. `deinit` returns the hive slot.
+            unsafe {
+                (*(*this).file_poll.as_ptr()).deinit();
+                DNSServiceRefDeallocate((*this).main_ref);
+                drop(bun_core::heap::take(this));
+            }
+        }
     }
 
     pub(crate) fn lookup(
@@ -191,10 +434,6 @@ mod lib_info {
         global_this: &JSGlobalObject,
     ) -> JSValue {
         bun_core::Environment::only_mac();
-
-        let Some(getaddrinfo_async_start_) = getaddrinfo_async_start() else {
-            return lib_c::lookup(this, query, global_this);
-        };
 
         let key = get_addr_info_request::PendingCacheKey::init(query);
         let cache =
@@ -208,14 +447,24 @@ mod lib_info {
             return unsafe { (*dns_lookup).promise.value() };
         }
 
-        // PERF: a stack-fallback buffer could avoid this heap allocation — profile if it shows up on a hot path.
-        let name_z = bun::ZBox::from_bytes(query.name.as_ref());
+        let Some(shared) = SharedConnection::get(js_event_loop_ctx()) else {
+            if let CacheHit::New(new) = cache {
+                this.pending_host_cache_native.with_mut(|c| {
+                    // SAFETY: `new` is the freshly-allocated HiveArray slot
+                    // returned by `get_or_put_into_pending_cache`; no other
+                    // token for it is outstanding.
+                    unsafe { c.put(new) };
+                });
+            }
+            return lib_c::lookup(this, query, global_this);
+        };
 
+        let protocol = protocol_for_family(query.options.family);
         let request = GetAddrInfoRequest::init(
             cache,
-            get_addr_info_request::Backend::Libinfo(
-                get_addr_info_request::BackendLibInfo::default(),
-            ),
+            get_addr_info_request::Backend::DnsSd(get_addr_info_request::BackendDnsSd::new(
+                protocol,
+            )),
             Some(this.as_ctx_ptr()),
             query,
             global_this,
@@ -224,41 +473,18 @@ mod lib_info {
         // SAFETY: request was just heap-allocated in init() and is exclusively owned here.
         let promise_value = unsafe { (*request).head.promise.value() };
 
-        let hints = query.options.to_libc();
-        // SAFETY: FFI call into libinfo; request is heap-allocated and lives until callback.
-        let errno = unsafe {
-            getaddrinfo_async_start_(
-                &raw mut (*request).backend.as_libinfo_mut().machport,
-                name_z.as_ptr().cast::<c_char>(),
-                ptr::null(),
-                hints
-                    .as_ref()
-                    .map(std::ptr::from_ref)
-                    .unwrap_or(ptr::null()),
-                GetAddrInfoRequest::get_addr_info_async_callback,
-                request.cast::<c_void>(),
-            )
-        };
-
-        if errno != 0 {
-            let err_tag: &'static str = sys::get_errno(errno).into();
-            // SAFETY: request is exclusively owned (callback was never registered).
-            let _ = unsafe {
-                (*request).head.promise.reject_task(
-                    global_this,
-                    global_this.create_error_instance(format_args!(
-                        "getaddrinfo_async_start error: {}",
-                        err_tag
-                    )),
-                )
-            }; // TODO: properly propagate exception upwards
-            // SAFETY: request is exclusively owned; freed below via heap::take.
+        let name_z = bun::ZBox::from_bytes(query.name.as_ref());
+        let Some(sub) = SharedConnection::start(
+            shared,
+            Inflight::Jsc(request),
+            protocol,
+            name_z.as_ptr().cast::<c_char>(),
+            GetAddrInfoRequest::dns_sd_reply,
+            request.cast::<c_void>(),
+        ) else {
+            // SAFETY: request is exclusively owned; dns_sd never accepted it.
             unsafe {
                 if (*request).cache.pending_cache() {
-                    // Release the pending-cache slot. `getOrPutIntoPendingCache` already
-                    // set the `used` bit, so failing to unset it here permanently orphans
-                    // the slot and leaves `buffer[pos].lookup` pointing at the request we
-                    // are about to free (UAF on the next `.inflight` hit).
                     let pos = (*request).cache.pos_in_pending();
                     this.pending_host_cache_native.with_mut(|c| {
                         let slot = c.ptr_at(pos as usize);
@@ -266,45 +492,14 @@ mod lib_info {
                         c.put(slot);
                     });
                 }
-                // Drop the KeepAlive + resolver ref that `GetAddrInfoRequest.init` took.
                 DNSLookup::destroy(&raw mut (*request).head);
                 drop(bun_core::heap::take(request));
             }
-            return promise_value;
-        }
+            return lib_c::lookup(this, query, global_this);
+        };
 
-        // SAFETY: request is live until the FilePoll callback fires.
-        debug_assert!(unsafe { (*request).backend.as_libinfo().machport } != 0);
-        let ctx = js_event_loop_ctx();
-        let poll_ptr = FilePoll::init(
-            ctx,
-            // TODO: WHAT?????????
-            sys::Fd::from_native(i32::MAX - 1),
-            Default::default(),
-            Async::Owner::new(
-                Async::posix_event_loop::poll_tag::GET_ADDR_INFO_REQUEST,
-                request.cast(),
-            ),
-        );
-        // SAFETY: FilePoll::init returns a live pool slot; exclusive on this thread.
-        let poll = unsafe { &mut *poll_ptr };
-        // SAFETY: see above.
-        let machport = unsafe { (*request).backend.as_libinfo().machport };
-        let rc = poll.register_with_fd(
-            // SAFETY: JS event loop is live for the resolver's lifetime.
-            unsafe { ctx.platform_event_loop() },
-            Async::PollKind::Machport,
-            Async::posix_event_loop::OneShotFlag::OneShot,
-            // bitcast u32 mach_port → i32 fd
-            sys::Fd::from_native(machport as i32),
-        );
-        debug_assert!(matches!(rc, sys::Result::Ok(_)));
-
-        poll.enable_keeping_process_alive(ctx);
-        // SAFETY: request is live (heap-allocated) and exclusively accessed on this thread.
-        // The slot is hive-allocated by `FilePoll::init` and returned via
-        // `FilePoll::deinit` in `get_addr_info_async_callback`.
-        unsafe { (*request).backend.as_libinfo_mut().file_poll = NonNull::new(poll_ptr) };
+        // SAFETY: request is live (heap-allocated) and exclusively accessed here.
+        unsafe { (*request).backend.as_dns_sd_mut().sd_ref = sub };
         this.request_sent(this.vm());
 
         promise_value
@@ -1152,51 +1347,43 @@ pub mod get_addr_info_request {
         }
     }
 
-    #[derive(Default)]
-    pub struct BackendLibInfo {
-        /// OWNED hive slot from `FilePoll::init` (returned via `FilePoll::deinit`,
-        /// not `Box`/global-alloc).
-        pub(crate) file_poll: Option<NonNull<FilePoll>>,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub struct BackendDnsSd {
         #[cfg(target_os = "macos")]
-        pub(crate) machport: mach_port,
+        pub(crate) sd_ref: dns_sd::DNSServiceRef,
+        #[cfg(target_os = "macos")]
+        pub(crate) results: GetAddrInfoResultList,
+        /// First hard DNSServiceErrorType seen (anything other than
+        /// NoSuchRecord/Timeout, which are per-family negatives absorbed into
+        /// `pending_proto`).
+        #[cfg(target_os = "macos")]
+        pub(crate) sd_error: i32,
+        /// `kDNSServiceProtocol_*` bits still awaiting any reply. A family's
+        /// bit is cleared by any callback carrying its `sa_family` (Add,
+        /// NoSuchRecord, or Timeout; the client stub always passes a
+        /// family-tagged sockaddr). The query is ready once this reaches 0.
+        #[cfg(target_os = "macos")]
+        pub(crate) pending_proto: u32,
     }
 
-    #[cfg(target_os = "macos")]
-    unsafe extern "C" {
-        fn getaddrinfo_send_reply(
-            port: mach_port,
-            reply: lib_info::GetaddrinfoAsyncHandleReply,
-        ) -> bool;
-    }
-
-    impl BackendLibInfo {
+    impl BackendDnsSd {
+        #[cfg(target_os = "macos")]
+        pub(crate) fn new(protocol: dns_sd::DNSServiceProtocol) -> Self {
+            Self {
+                sd_ref: ptr::null_mut(),
+                results: GetAddrInfoResultList::new(),
+                sd_error: 0,
+                pending_proto: protocol,
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
         #[allow(dead_code)]
-        pub(crate) fn on_machport_change(this: *mut GetAddrInfoRequest) {
-            #[cfg(not(target_os = "macos"))]
-            {
-                let _ = this;
-                unreachable!();
-            }
-            // SAFETY: `this` is the live heap-allocated request; the machport
-            // was registered by `getaddrinfo_async_start` and is still open.
-            #[cfg(target_os = "macos")]
-            unsafe {
-                jsc::mark_binding();
-                if !getaddrinfo_send_reply(
-                    (*this).backend.as_libinfo().machport,
-                    lib_info::getaddrinfo_async_handle_reply().unwrap(),
-                ) {
-                    bun_output::scoped_log!(
-                        GetAddrInfoRequest,
-                        "onMachportChange: getaddrinfo_send_reply failed"
-                    );
-                    GetAddrInfoRequest::get_addr_info_async_callback(
-                        -1,
-                        ptr::null_mut(),
-                        this.cast::<c_void>(),
-                    );
-                }
-            }
+        pub(crate) fn new(_protocol: u32) -> Self {
+            Self {}
+        }
+        #[cfg(target_os = "macos")]
+        pub(crate) fn is_ready(&self) -> bool {
+            self.pending_proto == 0 || self.sd_error != 0
         }
     }
 
@@ -1291,22 +1478,22 @@ pub mod get_addr_info_request {
     }
     pub enum Backend {
         CAres,
-        Libinfo(BackendLibInfo),
+        DnsSd(BackendDnsSd),
         Libc(LibcBackend),
     }
 
     impl Backend {
         #[allow(dead_code)]
-        pub(crate) fn as_libinfo(&self) -> &BackendLibInfo {
+        pub(crate) fn as_dns_sd(&self) -> &BackendDnsSd {
             match self {
-                Backend::Libinfo(l) => l,
+                Backend::DnsSd(l) => l,
                 _ => unreachable!(),
             }
         }
         #[allow(dead_code)]
-        pub(crate) fn as_libinfo_mut(&mut self) -> &mut BackendLibInfo {
+        pub(crate) fn as_dns_sd_mut(&mut self) -> &mut BackendDnsSd {
             match self {
-                Backend::Libinfo(l) => l,
+                Backend::DnsSd(l) => l,
                 _ => unreachable!(),
             }
         }
@@ -1401,33 +1588,89 @@ impl GetAddrInfoRequest {
         request
     }
 
+    /// Per-address callback from `DNSServiceGetAddrInfo`. Runs synchronously
+    /// inside `DNSServiceProcessResult` on the JS thread; only accumulates
+    /// state. Completion happens in `SharedConnection::on_readable` after the
+    /// process-result call returns.
+    ///
     /// # Safety
-    /// `arg` must be the `*mut GetAddrInfoRequest` registered with
-    /// `getaddrinfo_async_start`; `addr_info` (if non-null) must be a valid
-    /// libc `addrinfo` list owned by the caller.
-    #[cfg(not(windows))]
-    pub(crate) unsafe extern "C" fn get_addr_info_async_callback(
-        status: i32,
-        addr_info: *mut AddrInfo,
-        arg: *mut c_void,
+    /// `context` must be the `*mut GetAddrInfoRequest` registered via
+    /// `SharedConnection::start`; `address` (if non-null) must point at a
+    /// valid `sockaddr` of the family it declares.
+    #[cfg(target_os = "macos")]
+    pub(crate) unsafe extern "C" fn dns_sd_reply(
+        _sd_ref: dns_sd::DNSServiceRef,
+        flags: u32,
+        _interface_index: u32,
+        error_code: i32,
+        _hostname: *const c_char,
+        address: *const Sockaddr,
+        ttl: u32,
+        context: *mut c_void,
     ) {
-        // SAFETY: arg was a *mut GetAddrInfoRequest passed to getaddrinfo_async_start
-        let this: *mut Self = arg.cast();
-        bun_output::scoped_log!(
-            GetAddrInfoRequest,
-            "getAddrInfoAsyncCallback: status={}",
-            status
-        );
-
-        // SAFETY: `this` is the heap-allocated request passed via `arg`; callback runs once.
-        unsafe {
-            if let get_addr_info_request::Backend::Libinfo(li) = &mut (*this).backend {
-                if let Some(poll) = li.file_poll.take() {
-                    // SAFETY: `poll` is the hive slot returned by `FilePoll::init`;
-                    // exclusive on the JS thread. `deinit` returns it to the pool.
-                    (*poll.as_ptr()).deinit();
-                }
+        // SAFETY: context is the *mut GetAddrInfoRequest passed to start().
+        let this: *mut Self = context.cast();
+        // SAFETY: `this` is the heap-allocated request; exclusive on the JS thread.
+        let be = unsafe { (*this).backend.as_dns_sd_mut() };
+        // dnssd_clientstub always passes a family-tagged sockaddr for A/AAAA
+        // replies (including NoSuchRecord/Timeout); only PolicyDenied is null.
+        if !address.is_null() {
+            // SAFETY: `address` is a valid sockaddr per dns_sd.h for this call.
+            let fam = unsafe { (*address).sa_family } as i32;
+            // Any reply for a family retires its pending bit: the daemon emits
+            // a family's Adds back-to-back (one internal A or AAAA question),
+            // so once the socket is drained there are no more for that family
+            // until the next event.
+            be.pending_proto &= !if fam == netc::AF_INET6 {
+                dns_sd::PROTOCOL_IPV6
+            } else {
+                dns_sd::PROTOCOL_IPV4
+            };
+            if error_code == dns_sd::ERR_NO_ERROR && flags & dns_sd::FLAGS_ADD != 0 {
+                be.results.push(GetAddrInfoResult {
+                    // SAFETY: `address` is non-null and dns_sd guarantees a valid
+                    // sockaddr_in/in6 for the duration of this callback.
+                    address: unsafe { bun_dns::Address::init_posix(address.cast()) },
+                    ttl: ttl as i32,
+                });
+            } else if error_code != dns_sd::ERR_NO_ERROR
+                && error_code != dns_sd::ERR_NO_SUCH_RECORD
+                && error_code != dns_sd::ERR_TIMEOUT
+                && be.sd_error == 0
+            {
+                be.sd_error = error_code;
             }
+        } else if be.sd_error == 0 {
+            be.sd_error = error_code;
+        }
+    }
+
+    /// Complete a dns_sd-backed request after `SharedConnection::on_readable`
+    /// observed readiness.
+    ///
+    /// # Safety
+    /// `this` must be the live heap `GetAddrInfoRequest`; consumed on every path.
+    #[cfg(target_os = "macos")]
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn complete_dns_sd(this: *mut Self) {
+        // SAFETY: caller contract — `this` is live and exclusively owned here.
+        unsafe {
+            let be = (*this).backend.as_dns_sd_mut();
+            let results = core::mem::take(&mut be.results);
+            let status = if !results.is_empty() {
+                0
+            } else if be.sd_error != 0 {
+                dns_sd::to_eai(be.sd_error)
+            } else {
+                libc::EAI_NONAME
+            };
+            bun_output::scoped_log!(
+                GetAddrInfoRequest,
+                "completeDnsSd: status={} results={}",
+                status,
+                results.len()
+            );
+            let any = GetAddrInfoResultAny::List(results);
 
             if let Some(resolver) = (*this).resolver_for_caching {
                 if (*this).cache.pending_cache() {
@@ -1435,17 +1678,19 @@ impl GetAddrInfoRequest {
                         (*this).cache.pos_in_pending(),
                         (*this).head.global_this(),
                         status,
-                        &GetAddrInfoResultAny::Addrinfo(addr_info),
+                        &any,
                     );
                     return;
                 }
             }
 
-            // Consume the request and move `head` out by value; `ptr::read`
-            // + `heap::take` would double-Drop `DNSLookup` (impls Drop).
             let owned = *bun_core::heap::take(this);
             let mut head = owned.head;
-            DNSLookup::process_get_addr_info_native(&raw mut head, status, addr_info);
+            if status != 0 {
+                DNSLookup::process_get_addr_info_native(&raw mut head, status, ptr::null_mut());
+            } else {
+                DNSLookup::on_complete_native(&raw mut head, &any);
+            }
         }
     }
 
@@ -1505,7 +1750,20 @@ impl GetAddrInfoRequest {
                 get_addr_info_request::Backend::Libc(get_addr_info_request::LibcBackend::Err(
                     err,
                 )) => {
-                    Self::get_addr_info_async_callback(err, ptr::null_mut(), this.cast::<c_void>());
+                    if let Some(resolver) = (*this).resolver_for_caching {
+                        if (*this).cache.pending_cache() {
+                            (*resolver).drain_pending_host_native(
+                                (*this).cache.pos_in_pending(),
+                                (*this).head.global_this(),
+                                err,
+                                &GetAddrInfoResultAny::Addrinfo(ptr::null_mut()),
+                            );
+                            return;
+                        }
+                    }
+                    let owned = *bun_core::heap::take(this);
+                    let mut head = owned.head;
+                    DNSLookup::process_get_addr_info_native(&raw mut head, err, ptr::null_mut());
                 }
                 _ => unreachable!(),
             }
@@ -1562,13 +1820,6 @@ impl GetAddrInfoRequest {
             let this: *mut Self = (*uv_info).data.cast();
             #[cfg(windows)]
             debug_assert!(uv_info == core::ptr::from_mut((*this).backend.as_libc_uv_mut()));
-            if let get_addr_info_request::Backend::Libinfo(li) = &mut (*this).backend {
-                if let Some(poll) = li.file_poll.take() {
-                    // SAFETY: `poll` is the hive slot returned by `FilePoll::init`;
-                    // exclusive on the JS thread. `deinit` returns it to the pool.
-                    (*poll.as_ptr()).deinit();
-                }
-            }
 
             // On Windows, libuv's `uv_getaddrinfo` calls `GetAddrInfoW` then
             // re-packs the wide result into a single ANSI block allocated via
@@ -2240,34 +2491,16 @@ pub mod internal {
     #[derive(Default)]
     #[cfg(target_os = "macos")]
     pub struct MacAsyncDNS {
-        pub(crate) file_poll: Option<NonNull<FilePoll>>, // OWNED hive slot (FilePoll::init)
-        pub(crate) machport: mach_port,
-    }
-
-    #[cfg(target_os = "macos")]
-    unsafe extern "C" {
-        fn getaddrinfo_send_reply(
-            port: mach_port,
-            reply: lib_info::GetaddrinfoAsyncHandleReply,
-        ) -> bool;
+        pub(crate) sd_ref: dns_sd::DNSServiceRef,
+        pub(crate) addrs: Vec<SockaddrStorage>,
+        pub(crate) sd_error: i32,
+        pub(crate) pending_proto: u32,
     }
 
     #[cfg(target_os = "macos")]
     impl MacAsyncDNS {
-        pub(crate) fn on_machport_change(this: *mut Request) {
-            // SAFETY: `this` is the heap-allocated Request the FilePoll was registered with.
-            unsafe {
-                if !getaddrinfo_send_reply(
-                    (*this).libinfo.machport,
-                    lib_info::getaddrinfo_async_handle_reply().unwrap(),
-                ) {
-                    libinfo_callback(
-                        sys::E::ENOSYS as i32,
-                        ptr::null_mut(),
-                        this.cast::<c_void>(),
-                    );
-                }
-            }
+        pub(crate) fn is_ready(&self) -> bool {
+            self.pending_proto == 0 || self.sd_error != 0
         }
     }
 
@@ -2704,7 +2937,10 @@ pub mod internal {
         } else {
             None
         };
+        after_result_entries(req, results, err);
+    }
 
+    fn after_result_entries(req: *mut Request, results: Option<Box<[ResultEntry]>>, err: c_int) {
         let guard = global_cache().lock();
 
         // SAFETY: `req` is the heap-allocated cache entry; its mutable fields are
@@ -2788,168 +3024,159 @@ pub mod internal {
     }
 
     #[cfg(target_os = "macos")]
-    fn lookup_libinfo(req: *mut Request, loop_: jsc::EventLoopHandle) -> bool {
-        let Some(getaddrinfo_async_start_) = lib_info::getaddrinfo_async_start() else {
-            return false;
-        };
-
-        let mut machport: mach_port = 0;
-        let mut service_buf = [0u8; 21];
+    fn lookup_dns_sd(req: *mut Request, loop_: jsc::EventLoopHandle) -> bool {
         // SAFETY: `req` is the live heap-allocated request owned by the caller.
-        let port = unsafe { (*req).key.port };
-        let service: *const c_char = if port > 0 {
-            bun_fmt::itoa_z(&mut service_buf, port as u64).as_ptr()
-        } else {
-            ptr::null()
-        };
-
-        let hints = get_hints();
-
-        // SAFETY: FFI call into libinfo; `req` is heap-allocated and lives
-        // until `libinfo_callback` fires.
-        let errno = unsafe {
-            getaddrinfo_async_start_(
-                &raw mut machport,
-                (*req)
-                    .key
-                    .host
-                    .as_ref()
-                    .map(|h| h.as_ptr().cast::<c_char>())
-                    .unwrap_or(ptr::null()),
-                service,
-                &raw const hints,
-                libinfo_callback,
-                req.cast::<c_void>(),
-            )
-        };
-
-        if errno != 0 || machport == 0 {
+        let Some(host) = (unsafe { (*req).key.host.as_ref() }) else {
+            // dns_sd requires a hostname; null-host falls through to blocking
+            // getaddrinfo(NULL, service, ...) on the work pool.
             return false;
-        }
+        };
 
-        let poll = FilePoll::init(
+        let Some(shared) = dns_sd::SharedConnection::get(
             crate::api::bun::process::event_loop_handle_to_ctx(loop_),
-            // bitcast u32 mach_port → i32 fd
-            sys::Fd::from_native(machport as i32),
-            Default::default(),
-            Async::Owner::new(Async::posix_event_loop::poll_tag::REQUEST, req.cast::<()>()),
-        );
-        // SAFETY: `poll` is a freshly-allocated hive slot; `loop_.r#loop()` is the live uws loop.
-        let rc = unsafe { (*poll).register(&mut *loop_.r#loop(), Async::PollKind::Machport, true) };
-
-        if rc.is_err() {
-            // SAFETY: `poll` is the freshly-allocated hive slot returned by
-            // `FilePoll::init` above; nothing else aliases it. Registration
-            // failed, so it was never armed — release the slot back to the hive.
-            unsafe { (*poll).deinit() };
+        ) else {
             return false;
-        }
+        };
+
+        let protocol = dns_sd::protocol_for_hints(&get_hints());
+        let Some(sub) = dns_sd::SharedConnection::start(
+            shared,
+            dns_sd::Inflight::Internal(req),
+            protocol,
+            host.as_ptr().cast::<c_char>(),
+            dns_sd_reply,
+            req.cast::<c_void>(),
+        ) else {
+            return false;
+        };
 
         // SAFETY: `req` is the live heap-allocated request owned by the caller.
-        #[cfg(target_os = "macos")]
         unsafe {
             (*req).libinfo = MacAsyncDNS {
-                file_poll: NonNull::new(poll),
-                machport,
+                sd_ref: sub,
+                addrs: Vec::new(),
+                sd_error: 0,
+                pending_proto: protocol,
             };
         }
-        #[cfg(not(target_os = "macos"))]
-        let _ = poll;
 
         true
     }
 
     #[cfg(target_os = "macos")]
-    extern "C" fn libinfo_callback(status: i32, addr_info: *mut AddrInfo, arg: *mut c_void) {
-        let req: *mut Request = arg.cast();
-        let status_int: c_int = status;
-        'retry: {
-            // SAFETY: `arg` is the `req` pointer registered with
-            // `getaddrinfo_async_start`; it stays alive until this callback
-            // completes the request.
+    unsafe extern "C" fn dns_sd_reply(
+        _sd_ref: dns_sd::DNSServiceRef,
+        flags: u32,
+        _interface_index: u32,
+        error_code: i32,
+        _hostname: *const c_char,
+        address: *const Sockaddr,
+        _ttl: u32,
+        context: *mut c_void,
+    ) {
+        let req: *mut Request = context.cast();
+        // SAFETY: `context` is the `req` pointer registered via
+        // `SharedConnection::start`; exclusive on the event-loop thread.
+        let li = unsafe { &mut (*req).libinfo };
+        if address.is_null() {
+            if li.sd_error == 0 {
+                li.sd_error = error_code;
+            }
+            return;
+        }
+        // SAFETY: `address` is a valid sockaddr per dns_sd.h for this call.
+        let fam = unsafe { (*address).sa_family } as i32;
+        li.pending_proto &= !if fam == netc::AF_INET6 {
+            dns_sd::PROTOCOL_IPV6
+        } else {
+            dns_sd::PROTOCOL_IPV4
+        };
+        if error_code == dns_sd::ERR_NO_ERROR && flags & dns_sd::FLAGS_ADD != 0 {
+            let mut storage: SockaddrStorage = bun_core::ffi::zeroed();
+            let len = if fam == netc::AF_INET6 {
+                core::mem::size_of::<netc::sockaddr_in6>()
+            } else if fam == netc::AF_INET {
+                core::mem::size_of::<netc::sockaddr_in>()
+            } else {
+                return;
+            };
+            // SAFETY: `address` spans `len` bytes (dns_sd sets sin_len/sin6_len);
+            // sockaddr_storage is sized and aligned to hold either; ranges
+            // cannot overlap (stack storage vs dns_sd's).
             unsafe {
-                if status == netc::EAI_NONAME as i32 && (*req).can_retry_for_addrconfig {
-                    (*req).can_retry_for_addrconfig = false;
-                    let mut service_buf = [0u8; 21];
-                    let service: *const c_char = if (*req).key.port > 0 {
-                        bun_fmt::itoa_z(&mut service_buf, (*req).key.port as u64).as_ptr()
-                    } else {
-                        ptr::null()
-                    };
-                    let Some(getaddrinfo_async_start_) = lib_info::getaddrinfo_async_start() else {
-                        break 'retry;
-                    };
-                    let mut machport: mach_port = 0;
-                    let mut hints = get_hints();
-                    hints.ai_flags &= !netc::AI_ADDRCONFIG;
+                core::ptr::copy_nonoverlapping(
+                    address.cast::<u8>(),
+                    (&raw mut storage).cast::<u8>(),
+                    len,
+                );
+            }
+            li.addrs.push(storage);
+        } else if error_code != dns_sd::ERR_NO_ERROR
+            && error_code != dns_sd::ERR_NO_SUCH_RECORD
+            && error_code != dns_sd::ERR_TIMEOUT
+            && li.sd_error == 0
+        {
+            li.sd_error = error_code;
+        }
+    }
 
-                    let errno = getaddrinfo_async_start_(
-                        &raw mut machport,
-                        (*req)
-                            .key
-                            .host
-                            .as_ref()
-                            .map(|h| h.as_ptr().cast::<c_char>())
-                            .unwrap_or(ptr::null()),
-                        service,
-                        &raw const hints,
-                        libinfo_callback,
-                        req.cast::<c_void>(),
-                    );
+    /// Complete a dns_sd-backed internal request: synthesize an `addrinfo`
+    /// chain from the accumulated sockaddrs and feed it through the existing
+    /// `process_results` interleave so happy-eyeballs ordering is preserved.
+    #[cfg(target_os = "macos")]
+    pub(super) fn dns_sd_complete(req: *mut Request) {
+        // SAFETY: `req` is live and exclusively owned on the event-loop thread.
+        let li = unsafe { &mut (*req).libinfo };
+        let addrs = core::mem::take(&mut li.addrs);
+        // SAFETY: `req` is live; `key.port` is set at construction and read-only.
+        let port = unsafe { (*req).key.port };
 
-                    if errno != 0 || machport == 0 {
-                        bun_output::scoped_log!(
-                            dns,
-                            "libinfoCallback: getaddrinfo_async_start retry failed (errno={})",
-                            errno
-                        );
-                        break 'retry;
-                    }
+        if addrs.is_empty() {
+            let err = if li.sd_error != 0 {
+                dns_sd::to_eai(li.sd_error)
+            } else {
+                libc::EAI_NONAME
+            };
+            after_result_entries(req, None, err);
+            return;
+        }
 
-                    // Each getaddrinfo_async_start() call allocates a fresh receive
-                    // port via mach_port_allocate(MACH_PORT_RIGHT_RECEIVE) inside
-                    // libinfo's si_async_workunit_create() (si_module.c) — it is NOT
-                    // the per-thread MIG reply port and is not reused across calls.
-                    // libinfo's "async" API is just a libdispatch worker running sync
-                    // getaddrinfo and signalling completion via a send-once right on
-                    // this port; getaddrinfo_async_handle_reply() then destroys the
-                    // receive right after invoking us. So by the time we are here:
-                    //   - the first request's port is already dead (no leak, no need
-                    //     to mach_port_deallocate it ourselves), and
-                    //   - its kqueue knote is gone (it was EV_ONESHOT, and EVFILT_
-                    //     MACHPORT knotes are dropped when the receive right dies).
-                    // Store the new port and re-register the existing FilePoll on it,
-                    // otherwise we'd never see the retry's reply.
-                    #[cfg(target_os = "macos")]
-                    {
-                        (*req).libinfo.machport = machport;
-                        // SAFETY: file_poll was set in lookup_libinfo before the first callback fires.
-                        let poll = (*req).libinfo.file_poll.unwrap().as_mut();
-                        // `as i32` is the same-width bitcast of the u32 mach port.
-                        poll.fd = sys::Fd::from_native(machport as i32);
-                        match poll.register(&mut *Loop::get(), Async::PollKind::Machport, true) {
-                            sys::Result::Err(_) => {
-                                bun_output::scoped_log!(
-                                    dns,
-                                    "libinfoCallback: failed to register poll"
-                                );
-                                break 'retry;
-                            }
-                            sys::Result::Ok(_) => return,
-                        }
-                    }
-                }
+        let mut addrs = addrs.into_boxed_slice();
+        let count = addrs.len();
+        let mut nodes: Box<[AddrInfo]> = (0..count)
+            .map(|_| bun_core::ffi::zeroed::<AddrInfo>())
+            .collect();
+        for i in 0..count {
+            let family = addrs[i].ss_family as i32;
+            let n = &mut nodes[i];
+            n.ai_family = family;
+            n.ai_socktype = netc::SOCK_STREAM;
+            n.ai_addr = (&raw mut addrs[i]).cast::<Sockaddr>();
+            n.ai_addrlen = if family == netc::AF_INET6 {
+                core::mem::size_of::<netc::sockaddr_in6>() as _
+            } else {
+                core::mem::size_of::<netc::sockaddr_in>() as _
+            };
+            if family == netc::AF_INET {
+                // SAFETY: ss_family == AF_INET ⇒ storage holds a sockaddr_in.
+                unsafe {
+                    (*(&raw mut addrs[i]).cast::<netc::sockaddr_in>()).sin_port = port.to_be()
+                };
+            } else if family == netc::AF_INET6 {
+                // SAFETY: ss_family == AF_INET6 ⇒ storage holds a sockaddr_in6.
+                unsafe {
+                    (*(&raw mut addrs[i]).cast::<netc::sockaddr_in6>()).sin6_port = port.to_be()
+                };
             }
         }
-        // Every path that reaches here has finished with the mach-port poll;
-        // return its hive slot (mirrors `get_addr_info_async_callback`).
-        // SAFETY: `req` is live; we are on the loop thread that owns the poll.
-        if let Some(poll) = unsafe { (*req).libinfo.file_poll.take() } {
-            // SAFETY: `poll` is the hive slot `lookup_libinfo` allocated; nothing
-            // else aliases it. `deinit` handles being called during dispatch.
-            unsafe { (*poll.as_ptr()).deinit() };
+        let base = nodes.as_mut_ptr();
+        for i in 0..count.saturating_sub(1) {
+            // SAFETY: i and i+1 are in-bounds; `nodes` is not reallocated past this point.
+            unsafe { (*base.add(i)).ai_next = base.add(i + 1) };
         }
-        after_result(req, addr_info, status_int);
+
+        let results = process_results(nodes.as_mut_ptr());
+        after_result_entries(req, Some(results), 0);
     }
 
     static DNS_CACHE_HITS_COMPLETED: AtomicUsize = AtomicUsize::new(0);
@@ -3177,16 +3404,16 @@ pub mod internal {
                     let (tag, ptr) = (*loop_).internal_loop_data.get_parent();
                     jsc::EventLoopHandle::from_tag_ptr(tag, ptr)
                 };
-                let res = lookup_libinfo(req, handle);
+                let res = lookup_dns_sd(req, handle);
                 bun_output::scoped_log!(
                     dns,
-                    "getaddrinfo({}) = cache miss (libinfo)",
+                    "getaddrinfo({}) = cache miss (dns_sd)",
                     bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
                 );
                 if res {
                     return Some(req);
                 }
-                // if we were not able to use libinfo, we fall back to the work pool
+                // if dns_sd was unavailable, fall back to the work pool
             }
         }
         #[cfg(not(target_os = "macos"))]
@@ -5356,7 +5583,7 @@ impl Resolver {
             GetAddrInfoBackend::System => {
                 #[cfg(target_os = "macos")]
                 {
-                    lib_info::lookup(self, &query, global_this)
+                    dns_sd::lookup(self, &query, global_this)
                 }
                 #[cfg(windows)]
                 {

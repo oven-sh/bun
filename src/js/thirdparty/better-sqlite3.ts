@@ -21,17 +21,23 @@ class Statement {
   #stmt;
   #db;
   #source;
+  #verbose;
   #raw = false;
   #pluck = false;
   #expand = false;
   #bound: any[] | null = null;
   #safeIntegers;
 
-  constructor(stmt, database, source, safeIntegers) {
+  constructor(stmt, database, source, safeIntegers, verbose) {
     this.#stmt = stmt;
     this.#db = database;
     this.#source = source;
     this.#safeIntegers = safeIntegers;
+    this.#verbose = verbose;
+  }
+
+  #trace() {
+    if (this.#verbose != null) this.#verbose.$call(this.#db, this.#source);
   }
 
   get database() {
@@ -70,10 +76,12 @@ class Statement {
   }
 
   run(...args) {
+    this.#trace();
     return this.#stmt.run.$apply(this.#stmt, this.#params(args));
   }
 
   get(...args) {
+    this.#trace();
     const params = this.#params(args);
     if (this.#raw || this.#pluck || this.#expand) {
       const rows = this.#stmt.values.$apply(this.#stmt, params);
@@ -87,6 +95,7 @@ class Statement {
   }
 
   all(...args) {
+    this.#trace();
     const params = this.#params(args);
     if (this.#raw || this.#pluck || this.#expand) {
       const rows = this.#stmt.values.$apply(this.#stmt, params);
@@ -110,6 +119,7 @@ class Statement {
   }
 
   *iterate(...args) {
+    this.#trace();
     const params = this.#params(args);
     if (this.#raw || this.#pluck || this.#expand) {
       const rows = this.#stmt.values.$apply(this.#stmt, params);
@@ -258,11 +268,12 @@ function Database(filenameGiven, options) {
     if (typeof source !== "string") throw new TypeError("Expected first argument to be a string");
     const stmt = db.prepare(source, undefined, 0);
     if (defaultSafeIntegers) stmt.safeIntegers(true);
-    return new Statement(stmt, this, source, defaultSafeIntegers);
+    return new Statement(stmt, this, source, defaultSafeIntegers, verbose);
   };
 
   this.exec = function exec(source) {
     if (typeof source !== "string") throw new TypeError("Expected first argument to be a string");
+    if (verbose != null) verbose.$call(this, source);
     db.run(source);
     return this;
   };
@@ -312,7 +323,10 @@ function Database(filenameGiven, options) {
     return this;
   };
 
-  this.unsafeMode = function unsafeMode(_toggle) {
+  this.unsafeMode = function unsafeMode(toggle) {
+    if (toggle === undefined ? true : !!toggle) {
+      throwNotImplemented("better-sqlite3 Database#unsafeMode(true)", 4290, notImplementedExtra);
+    }
     return this;
   };
 

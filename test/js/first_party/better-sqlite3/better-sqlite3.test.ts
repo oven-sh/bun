@@ -152,6 +152,63 @@ describe("better-sqlite3 shim", () => {
     db.close();
   });
 
+  test(".expand() groups columns under $", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE t (a INTEGER, b TEXT)");
+    db.prepare("INSERT INTO t VALUES (?, ?)").run(1, "x");
+    expect(db.prepare("SELECT * FROM t").expand().get()).toEqual({ $: { a: 1, b: "x" } });
+    expect(db.prepare("SELECT * FROM t").expand().all()).toEqual([{ $: { a: 1, b: "x" } }]);
+    db.close();
+  });
+
+  test("Symbol.iterator on a Statement", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE t (a INTEGER)");
+    db.exec("INSERT INTO t VALUES (1); INSERT INTO t VALUES (2)");
+    const rows = [...db.prepare("SELECT a FROM t")];
+    expect(rows).toEqual([{ a: 1 }, { a: 2 }]);
+    db.close();
+  });
+
+  test(".serialize() round-trips through new Database(Buffer)", () => {
+    const src = new Database(":memory:");
+    src.exec("CREATE TABLE t (x INTEGER)");
+    src.prepare("INSERT INTO t VALUES (?)").run(7);
+    const buf = src.serialize();
+    src.close();
+    expect(Buffer.isBuffer(buf)).toBe(true);
+
+    const dst = new Database(buf);
+    expect(dst.name).toBe(":memory:");
+    expect(dst.memory).toBe(true);
+    expect(dst.prepare("SELECT x FROM t").pluck().get()).toBe(7);
+    dst.close();
+  });
+
+  test(".safeIntegers() and .defaultSafeIntegers()", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE t (x INTEGER)");
+    db.prepare("INSERT INTO t VALUES (?)").run(42);
+
+    expect(db.prepare("SELECT x FROM t").pluck().get()).toBe(42);
+    expect(db.prepare("SELECT x FROM t").safeIntegers(true).pluck().get()).toBe(42n);
+
+    db.defaultSafeIntegers(true);
+    expect(db.prepare("SELECT x FROM t").pluck().get()).toBe(42n);
+    expect(db.prepare("SELECT x FROM t").safeIntegers(false).pluck().get()).toBe(42);
+    db.close();
+  });
+
+  test("verbose option receives executed SQL", () => {
+    const seen: string[] = [];
+    const db = new Database(":memory:", { verbose: (sql: string) => seen.push(sql) });
+    db.exec("CREATE TABLE t (x INTEGER)");
+    db.prepare("INSERT INTO t VALUES (?)").run(1);
+    db.prepare("SELECT x FROM t").all();
+    expect(seen).toEqual(["CREATE TABLE t (x INTEGER)", "INSERT INTO t VALUES (?)", "SELECT x FROM t"]);
+    db.close();
+  });
+
   test("SqliteError", () => {
     const err = SqliteError("oops", "SQLITE_TEST");
     expect(err.name).toBe("SqliteError");
@@ -197,7 +254,7 @@ describe("better-sqlite3 shim", () => {
 
   test("unimplemented methods throw ERR_NOT_IMPLEMENTED", () => {
     const db = new Database(":memory:");
-    for (const m of ["function", "aggregate", "table", "backup"]) {
+    for (const m of ["function", "aggregate", "table", "backup", "unsafeMode"]) {
       let code: string | undefined;
       try {
         (db as any)[m]();
@@ -206,6 +263,7 @@ describe("better-sqlite3 shim", () => {
       }
       expect(code).toBe("ERR_NOT_IMPLEMENTED");
     }
+    expect(db.unsafeMode(false)).toBe(db);
     db.close();
   });
 });

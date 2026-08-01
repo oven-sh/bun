@@ -144,6 +144,23 @@ it("class instances show only own properties, not prototype methods", () => {
   plain.own = 2;
   expect(Bun.inspect(plain)).toBe("{\n  own: 2,\n}");
 
+  // https://github.com/oven-sh/bun/issues/1713
+  const created = Object.create({ key: 123 });
+  expect(Bun.inspect(created)).toBe("{}");
+  created.key = 456;
+  expect(Bun.inspect(created)).toBe("{\n  key: 456,\n}");
+
+  // https://github.com/oven-sh/bun/issues/12365
+  class Base12365 {}
+  Base12365.prototype.visibleBaseProp = "base value";
+  class Derived12365 extends Base12365 {
+    constructor() {
+      super();
+      this.visibleDerivedProp = "derived value";
+    }
+  }
+  expect(Bun.inspect(new Derived12365())).toBe('Derived12365 {\n  visibleDerivedProp: "derived value",\n}');
+
   // Own function properties are still shown.
   expect(Bun.inspect({ a: 1, fn: () => {} })).toBe("{\n  a: 1,\n  fn: [Function: fn],\n}");
 });

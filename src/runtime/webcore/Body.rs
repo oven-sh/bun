@@ -1335,11 +1335,8 @@ impl Value {
     }
 
     /// [`to_error_instance`] for callers that own the body's JS wrapper.
-    ///
-    /// Once `get_body` has migrated `Locked.readable` into the wrapper's
-    /// traced `m_stream` slot (see [`BodyMixin::check_body_stream_ref`]),
-    /// `locked.readable` is empty; `owned_readable` supplies the stream for
-    /// the disturbed check and error delivery in that state.
+    /// `owned_readable` supplies the stream once [`BodyMixin::get_body`] has
+    /// migrated `Locked.readable` into the wrapper's traced `m_stream` slot.
     pub(crate) fn to_error_instance_with_readable(
         &mut self,
         err: ValueError,
@@ -1816,13 +1813,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         }
         let stream = self.get_body_value().to_readable_stream(global_this)?;
-        // `to_readable_stream` leaves a `Strong<ReadableStream>` in
-        // `Locked.readable` when it materializes a Blob/InternalBlob/string
-        // body or a not-yet-streamed `Locked` body. The wrapper's traced
-        // `m_stream` slot is the owner once a JS wrapper exists; holding the
-        // Strong here roots the stream (and its captured async context)
-        // independently of the wrapper, which becomes an uncollectable cycle
-        // when that async context references this Response/Request.
+        // `to_readable_stream` parked a `Strong` in `Locked.readable`; the
+        // wrapper's traced `m_stream` slot is the owner now.
         self.check_body_stream_ref(global_this);
         Ok(stream)
     }

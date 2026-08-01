@@ -31,6 +31,16 @@ let stop = false;
 let driverOk = 0;
 let probes = 0;
 
+// Hard cap is started immediately as a timer (not awaited sequentially) so it
+// is authoritative regardless of what the loops below are blocked on. It both
+// flips `stop` and aborts any in-flight driver fetch so `await driverDone`
+// cannot hang on a stalled proxy connection.
+const driverAbort = new AbortController();
+setTimeout(() => {
+  stop = true;
+  driverAbort.abort();
+}, HARD_CAP_MS).unref();
+
 // Probe: setImmediate loop firing fetch+abort. Each call to fetch() runs
 // intern() on the JS thread. abort() causes the request to complete quickly,
 // triggering deref() on the HTTP thread. The JS thread immediately queues
@@ -51,20 +61,21 @@ function probe() {
 async function driver() {
   while (!stop) {
     try {
-      const r = await fetch(url, { proxy, keepalive: false, tls });
+      const r = await fetch(url, { proxy, keepalive: false, tls, signal: driverAbort.signal });
       if ((await r.text()) === "ok") driverOk++;
     } catch {}
     await Bun.sleep(1);
   }
 }
 
-// Run both concurrently in the same event loop.
-probe();
+// Let the driver complete one request against an idle proxy before starting
+// the probe flood, so the driverOk>0 sanity check holds even on loaded CI.
+// Bounded by hardCap above — if the warmup itself stalls, stop flips and we
+// fall through to report driverOk=0 (a real failure) instead of hanging.
 const driverDone = driver();
+while (driverOk === 0 && !stop) await Bun.sleep(1);
+probe();
 
-// Hard cap so the fixture always terminates.
-await Bun.sleep(HARD_CAP_MS);
-stop = true;
 await driverDone;
 
 process.stdout.write(JSON.stringify({ driverOk, probes }) + "\n");

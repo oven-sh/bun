@@ -2,7 +2,7 @@
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: basic-dependencies 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -33,7 +33,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: canary-versions 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -58,7 +58,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: monorepo-workspaces 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -112,7 +112,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: patches-overrides 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -137,7 +137,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: file-link-deps 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -159,7 +159,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: custom-registries 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -181,7 +181,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: peer-dependencies 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -210,7 +210,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: duplicate-packages 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -242,7 +242,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: catalogs 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -276,7 +276,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: integrity-hashes 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -298,7 +298,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: version-zero 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -317,7 +317,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: mixed-dependency-types 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -349,7 +349,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: circular-workspaces 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {

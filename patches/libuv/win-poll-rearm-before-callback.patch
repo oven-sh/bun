@@ -1,0 +1,36 @@
+--- a/src/win/poll.c
++++ b/src/win/poll.c
+@@ -186,11 +186,33 @@
+         uv__handle_stop(handle);
+     }
+ 
++    /* Re-arm the AFD poll **before** invoking poll_cb so an AFD ioctl is
++     * pending while user code runs. AFD is level-triggered (ReactOS
++     * AfdSelect: `Events & FCB->PollState` checked on IRP arrival), so a
++     * RST that lands during poll_cb is caught by the freshly-submitted req.
++     * Re-arming *after* poll_cb (the previous order) leaves a gap: an
++     * in-process loopback peer that RSTs from inside the callback —
++     * e.g. a JS handler that drainMicrotasks() into a same-process
++     * fetch().abort() — can land between completion and re-submission,
++     * and although AFD_POLL_ABORT is in PollState, no ioctl is pending
++     * to observe it until after the callback returns. wepoll does the
++     * same re-arm-before-return (port_wait → port__update_events_if_polling
++     * before LeaveCriticalSection). The dual-req + mask_events bookkeeping
++     * already handles poll_cb calling uv_poll_start/stop mid-flight. */
++    if ((handle->events & ~(handle->submitted_events_1 |
++        handle->submitted_events_2)) != 0) {
++      uv__fast_poll_submit_poll_req(loop, handle);
++    }
++
+     if (events != 0) {
+       handle->poll_cb(handle, 0, events);
+     }
+   }
+ 
++  /* poll_cb may have called uv_poll_start (covered above by the dual-req
++   * submitting the other slot) or uv_poll_stop / uv_close. Only the
++   * close-endgame check needs to run post-callback. A re-submit here is
++   * still needed for the `events == 0` path (filtered-out completion). */
+   if ((handle->events & ~(handle->submitted_events_1 |
+       handle->submitted_events_2)) != 0) {
+     uv__fast_poll_submit_poll_req(loop, handle);

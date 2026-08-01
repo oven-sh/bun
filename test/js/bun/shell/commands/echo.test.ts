@@ -70,4 +70,25 @@ describe("echo special cases", async () => {
     .runAsTest("double dash treated as argument");
 
   TestBuilder.command`echo "\n"`.exitCode(0).stdout("\\n\n").stderr("").runAsTest("literal backslash n");
+
+  // A last arg that is a pure run of >=2 '\n' must keep two newlines (regressed
+  // to one: the open-coded trailing-newline collapse floored the kept length
+  // at 1 instead of using the trimSubsequentLeadingChars helper).
+  TestBuilder.command`echo ${"\n\n"}`
+    .exitCode(0)
+    .stdout("\n\n")
+    .stderr("")
+    .runAsTest("pure-newline arg keeps both newlines");
+
+  TestBuilder.command`echo ${"\n\n\n"}`
+    .exitCode(0)
+    .stdout("\n\n")
+    .stderr("")
+    .runAsTest("3+ trailing newlines collapse to two");
+
+  TestBuilder.command`echo ${"a\n\n"}`
+    .exitCode(0)
+    .stdout("a\n")
+    .stderr("")
+    .runAsTest("mixed trailing newlines still collapse to one");
 });

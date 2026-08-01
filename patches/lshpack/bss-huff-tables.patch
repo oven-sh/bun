@@ -1,0 +1,146 @@
+--- a/lshpack.c	2026-05-02 06:41:46.290110113 +0000
++++ b/lshpack.c	2026-05-02 06:42:07.599902350 +0000
+@@ -53,6 +53,103 @@
+ 
+ #include "huff-tables.h"
+ 
++#if LS_HPACK_USE_LARGE_TABLES && LS_HPACK_BSS_LARGE_TABLES
++/* Bun: hencs[65536] (512 KB) and hdecs[65536] (256 KB) are pure functions of
++ * encode_table[257]. Declare them in .bss instead of .rodata and fill once on
++ * first lshpack/lsqpack init — ~250 us, identical hot-path lookup afterwards.
++ * Non-static so lsqpack.c can extern the same arrays instead of carrying its
++ * own copy. */
++struct henc { unsigned lens; uint32_t code; };
++struct hdec { uint8_t lens; uint8_t out[3]; };
++struct henc hencs[65536];
++struct hdec hdecs[65536];
++static int hpack_huff_tables_ready;
++
++#if __BYTE_ORDER == __LITTLE_ENDIAN
++#define HENC_I(i,j) (((j)<<8)|(i))
++#else
++#define HENC_I(i,j) (((i)<<8)|(j))
++#endif
++
++void
++lshpack_huff_tables_init (void)
++{
++    /* Init is idempotent (every thread writes the same values), so a race only
++     * does redundant work — but the release/acquire pair ensures the table
++     * stores are visible before any later encode/decode load on another
++     * thread sees ready==1. */
++    if (__atomic_load_n(&hpack_huff_tables_ready, __ATOMIC_ACQUIRE))
++        return;
++
++    /* hencs: combine two encode_table entries. {64,0} marks pairs whose
++     * combined width overflows 32 bits (handled by the slow loop). */
++    for (unsigned i = 0; i < 256; ++i)
++    {
++        const unsigned bi = encode_table[i].bits;
++        const uint32_t ci = encode_table[i].code;
++        for (unsigned j = 0; j < 256; ++j)
++        {
++            const unsigned bj = encode_table[j].bits;
++            struct henc *h = &hencs[HENC_I(i, j)];
++            if (bi + bj <= 32)
++            {
++                h->lens = bi + bj;
++                h->code = (ci << bj) | encode_table[j].code;
++            }
++            else
++            {
++                h->lens = 64;
++                h->code = 0;
++            }
++        }
++    }
++
++    /* hdecs: for each 16-bit prefix, decode up to 3 symbols using a 15-bit
++     * direct LUT built from encode_table (codes <= 15 bits cover the common
++     * ASCII set; longer codes fall through to the slow path with lens==0). */
++    static struct { uint8_t bits, sym; } lut[1 << 15];
++    for (unsigned sym = 0; sym < 256; ++sym)
++    {
++        const unsigned b = encode_table[sym].bits;
++        if (b > 15)
++            continue;
++        const unsigned base = encode_table[sym].code << (15 - b);
++        for (unsigned k = 0; k < (1u << (15 - b)); ++k)
++        {
++            lut[base + k].bits = (uint8_t) b;
++            lut[base + k].sym = (uint8_t) sym;
++        }
++    }
++    for (unsigned idx = 0; idx < 65536; ++idx)
++    {
++        unsigned bits_left = 16, n = 0;
++        uint8_t out[3] = {0,0,0};
++        while (bits_left >= 5 && n < 3)
++        {
++            const unsigned rem = idx & ((1u << bits_left) - 1);
++            const unsigned key = bits_left >= 15
++                ? (rem >> (bits_left - 15))
++                : (rem << (15 - bits_left));
++            const unsigned b = lut[key].bits;
++            if (!b || b > bits_left)
++                break;
++            out[n++] = lut[key].sym;
++            bits_left -= b;
++        }
++        if (n)
++        {
++            hdecs[idx].lens = (uint8_t)(((16 - bits_left) << 2) | n);
++            hdecs[idx].out[0] = out[0];
++            hdecs[idx].out[1] = out[1];
++            hdecs[idx].out[2] = out[2];
++        }
++        /* else: leave zeroed (.bss) — lens==0 triggers slow path */
++    }
++
++    __atomic_store_n(&hpack_huff_tables_ready, 1, __ATOMIC_RELEASE);
++}
++#endif
++
+ #define HPACK_STATIC_TABLE_SIZE   61
+ #define INITIAL_DYNAMIC_TABLE_SIZE  4096
+ 
+@@ -291,6 +384,9 @@
+ int
+ lshpack_enc_init (struct lshpack_enc *enc)
+ {
++#if LS_HPACK_USE_LARGE_TABLES && LS_HPACK_BSS_LARGE_TABLES
++    lshpack_huff_tables_init();
++#endif
+     struct lshpack_double_enc_head *buckets;
+     unsigned nbits = 2;
+     unsigned i;
+@@ -1270,6 +1366,9 @@
+ void
+ lshpack_dec_init (struct lshpack_dec *dec)
+ {
++#if LS_HPACK_USE_LARGE_TABLES && LS_HPACK_BSS_LARGE_TABLES
++    lshpack_huff_tables_init();
++#endif
+     memset(dec, 0, sizeof(*dec));
+     dec->hpd_max_capacity = INITIAL_DYNAMIC_TABLE_SIZE;
+     dec->hpd_cur_max_capacity = INITIAL_DYNAMIC_TABLE_SIZE;
+--- a/huff-tables.h	2026-05-02 06:41:46.300110018 +0000
++++ b/huff-tables.h	2026-05-02 06:42:07.509903227 +0000
+@@ -266,7 +266,7 @@
+ };
+ 
+ 
+-#if LS_HPACK_USE_LARGE_TABLES
++#if LS_HPACK_USE_LARGE_TABLES && !LS_HPACK_BSS_LARGE_TABLES
+ #if __BYTE_ORDER == __LITTLE_ENDIAN
+ #define I(i,j) ((j<<8)|i)
+ #else
+@@ -70703,7 +70703,7 @@
+ };
+ 
+ 
+-#if LS_HPACK_USE_LARGE_TABLES
++#if LS_HPACK_USE_LARGE_TABLES && !LS_HPACK_BSS_LARGE_TABLES
+ static const struct hdec { uint8_t lens; uint8_t out[3]; } hdecs[] =
+ {
+ /*

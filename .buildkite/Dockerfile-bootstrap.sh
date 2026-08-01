@@ -87,17 +87,32 @@ cd /tmp/fakebun || {
     exit 1
 }
 
-# Build the Buildkite image
+# Build the Buildkite image. BUN_REPO_REF tells the prefetch step which ref's
+# dep versions to bake — passed through from machine.mjs via BUN_BOOTSTRAP_REPO_REF.
 docker buildx build \
     --platform $(uname -m | sed 's/aarch64/linux\/arm64/;s/x86_64/linux\/amd64/') \
     --tag buildkite:latest \
     --target buildkite \
+    --build-arg BUN_REPO_REF="${BUN_BOOTSTRAP_REPO_REF:-main}" \
     -f .buildkite/Dockerfile \
     --load \
     . || {
     echo "error: Docker build failed"
     exit 1
 }
+
+# Pre-pull test docker images (postgres, mysql, redis, minio, …) into the host
+# daemon so tests don't fetch them at runtime. /var/lib/docker is on the root
+# volume and survives into the AMI. Best-effort — a missing script or docker
+# hiccup shouldn't fail the bake.
+if git clone --depth=1 --branch "${BUN_BOOTSTRAP_REPO_REF:-main}" \
+    https://github.com/oven-sh/bun.git /tmp/bun-test-docker; then
+    if [ -f /tmp/bun-test-docker/test/docker/prepare-ci.ts ]; then
+        (cd /tmp/bun-test-docker && bun test/docker/prepare-ci.ts) || \
+            echo "warning: prepare-ci.ts failed; test docker images not pre-pulled"
+    fi
+    rm -rf /tmp/bun-test-docker
+fi
 
 # Create container to ensure image is cached in AMI
 docker container create \

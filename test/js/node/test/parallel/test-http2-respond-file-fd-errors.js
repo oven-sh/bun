@@ -44,6 +44,8 @@ server.on('stream', common.mustCall((stream) => {
       {
         name: 'TypeError',
         code: 'ERR_INVALID_ARG_TYPE',
+        message: 'The "fd" argument must be of type number or an instance of' +
+                 ` FileHandle.${common.invalidArgTypeHelper(types[type])}`
       }
     );
   });
@@ -92,6 +94,7 @@ server.on('stream', common.mustCall((stream) => {
     }),
     {
       code: 'ERR_HTTP2_HEADERS_SENT',
+      name: 'Error',
       message: 'Response has already been initiated.'
     }
   );
@@ -104,6 +107,7 @@ server.on('stream', common.mustCall((stream) => {
     }),
     {
       code: 'ERR_HTTP2_INVALID_STREAM',
+      name: 'Error',
       message: 'The stream has been destroyed'
     }
   );

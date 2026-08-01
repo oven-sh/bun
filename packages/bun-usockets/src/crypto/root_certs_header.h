@@ -12,3 +12,4 @@ STACK_OF(X509) *us_get_root_system_cert_instances();
 #endif
 
 CPPDECL X509_STORE *us_get_default_ca_store();
+CPPDECL X509_STORE *us_get_shared_default_ca_store();

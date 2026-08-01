@@ -1,7 +1,7 @@
 ## CLI Usage
 
 ```bash terminal icon="terminal"
-bun update <package> <version>
+bun update <name>@<version>
 ```
 
 ### Update Strategy
@@ -106,8 +106,8 @@ bun update <package> <version>
   Skip lifecycle scripts in the project's <code>package.json</code> (dependency scripts are never run)
 </ParamField>
 
-<ParamField path="--concurrent-scripts" type="number" default="5">
-  Maximum number of concurrent jobs for lifecycle scripts (default 5)
+<ParamField path="--concurrent-scripts" type="number">
+  Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)
 </ParamField>
 
 ### Installation Controls

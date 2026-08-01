@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, DirectoryTree, gunzipJsonRequest, lazyPromiseLike, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, DirectoryTree, gunzipJsonRequest, lazyPromiseLike, tempDir } from "harness";
 import { join } from "node:path";
 import { resolveBulkAdvisoryFixture } from "./registry/fixtures/audit/audit-fixtures";
 
@@ -18,6 +18,7 @@ let server: Bun.Server;
 
 beforeAll(() => {
   server = Bun.serve({
+    port: 0,
     fetch: async req => {
       const body = await gunzipJsonRequest(req);
 
@@ -34,7 +35,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  server.stop();
+  server?.stop();
 });
 
 function doAuditTest(
@@ -47,7 +48,7 @@ function doAuditTest(
   },
 ) {
   test(label, async () => {
-    const dir = tempDirWithFiles("bun-test-audit-" + label.replace(/[^a-zA-Z0-9]/g, "-"), options.files);
+    await using dir = tempDir("bun-test-audit-" + label.replace(/[^a-zA-Z0-9]/g, "-"), options.files);
 
     const cmd = [bunExe(), "audit", ...(options.args ?? [])];
 
@@ -342,5 +343,59 @@ describe("`bun audit`", () => {
       expect(output).not.toContain("GHSA-gwg9-rgvj-4h5j");
       expect(output).toContain("vulnerabilities");
     },
+  });
+
+  test("sends a well-formed JSON request body when a package name contains a double quote", async () => {
+    const packageName = 'a"b';
+    using dirHandle = tempDir("bun-test-audit-name-with-quote", {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        dependencies: {
+          [packageName]: "1.0.0",
+        },
+      }),
+      "bun.lock": JSON.stringify({
+        "lockfileVersion": 1,
+        "workspaces": {
+          "": {
+            "name": "test",
+            "dependencies": {
+              [packageName]: "1.0.0",
+            },
+          },
+        },
+        "packages": {
+          [packageName]: [`${packageName}@1.0.0`, "", {}, fakeIntegrity],
+        },
+      }),
+    });
+    const dir = String(dirHandle);
+
+    let receivedBody = "";
+    await using auditServer = Bun.serve({
+      port: 0,
+      fetch: async req => {
+        receivedBody = Buffer.from(Bun.gunzipSync(await req.arrayBuffer())).toString("utf-8");
+        return Response.json({});
+      },
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "audit"],
+      stdout: "pipe",
+      stderr: "pipe",
+      cwd: dir,
+      env: {
+        ...bunEnv,
+        NPM_CONFIG_REGISTRY: auditServer.url.href,
+      },
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(JSON.parse(receivedBody)).toEqual({ [packageName]: ["1.0.0"] });
+    expect(stdout).toBe("No vulnerabilities found\n");
+    expect(exitCode).toBe(0);
   });
 });

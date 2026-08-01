@@ -179,7 +179,10 @@ yourself with Bun.serve().
     if (servePath.startsWith(longestCommonPath)) {
       servePath = servePath.slice(longestCommonPath.length);
     } else {
-      const relative = path.relative(longestCommonPath, servePath);
+      let relative = path.relative(longestCommonPath, servePath);
+      if (process.platform === "win32") {
+        relative = relative.replaceAll("\\", "/");
+      }
       if (!relative.startsWith("..")) {
         servePath = relative;
       }
@@ -398,6 +401,10 @@ yourself with Bun.serve().
             Bun.spawn(["open", url]).exited.catch(() => {});
           } else if (process.platform === "win32") {
             Bun.spawn(["start", url]).exited.catch(() => {});
+          } else if (process.platform === "android") {
+            Bun.spawn(["/system/bin/am", "start", "-a", "android.intent.action.VIEW", "-d", url]).exited.catch(
+              () => {},
+            );
           } else {
             Bun.spawn(["xdg-open", url]).exited.catch(() => {});
           }

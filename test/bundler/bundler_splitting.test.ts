@@ -1,5 +1,7 @@
-import { describe } from "bun:test";
-import { bunEnv } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
 const env = {
@@ -113,7 +115,9 @@ describe("bundler", () => {
     run: {
       file: "/out/entry.js",
       env,
-      stdout: "level1.js executed\nlevel1 loaded\nlevel2.js executed\nlevel2 loaded from level1",
+      // The spec-compliant module loader resolves the inner dynamic import's
+      // load before the outer .then callback runs (matches Node).
+      stdout: "level1.js executed\nlevel2.js executed\nlevel1 loaded\nlevel2 loaded from level1",
     },
   });
 
@@ -323,4 +327,79 @@ describe("bundler", () => {
       stdout: "a.js executed\na loaded from entry\nb.js executed\nb.js imports a {}\nb loaded from entry, value: B",
     },
   });
+
+  // N same-named cross-chunk exports must get unique aliases in O(N) total
+  // (ExportRenamer::next_renamed_name). Debug/ASAN builds blow past the 15s
+  // cap with far fewer files than release, hence the scaled N.
+  test("splitting/ManyCrossChunkExportAliasCollisions", async () => {
+    const N = isDebug || isASAN ? 2500 : 20000;
+    const THRESHOLD_MS = 15000;
+
+    const files: Record<string, string> = {};
+    let imports = "";
+    let uses = "";
+    for (let i = 0; i < N; i++) {
+      files[`s${i}.js`] = `export const shared = ${i};\n`;
+      imports += `import { shared as s${i} } from "./s${i}.js";\n`;
+      uses += `t += s${i};\n`;
+    }
+    // Flat statement list keeps every import live without building a deep AST.
+    const entryBody = imports + "let t = 0;\n" + uses + `console.log(t, s0, s${N - 1});\n`;
+    files["e1.js"] = entryBody;
+    files["e2.js"] = entryBody;
+
+    using dir = tempDir("splitting-export-alias-collisions", files);
+    const root = String(dir);
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--splitting", "--format=esm", "--outdir", "out", "./e1.js", "./e2.js"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: THRESHOLD_MS,
+      killSignal: "SIGKILL",
+    });
+    const [buildOut, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    if (build.signalCode !== null) {
+      throw new Error(
+        `bun build did not finish within ${THRESHOLD_MS}ms for ${N} colliding cross-chunk export names ` +
+          `(signal ${build.signalCode})\nstdout:\n${buildOut}\nstderr:\n${buildErr}`,
+      );
+    }
+    if (buildExit !== 0) {
+      throw new Error(`bun build exited ${buildExit}\nstdout:\n${buildOut}\nstderr:\n${buildErr}`);
+    }
+
+    // The shared chunk's export clause must hand out a unique alias for every
+    // `shared` symbol; verify by inspecting the generated chunk and by running
+    // the output.
+    const outDir = join(root, "out");
+    const chunkName = readdirSync(outDir).find(f => f !== "e1.js" && f !== "e2.js" && f.endsWith(".js"));
+    expect(chunkName).toBeDefined();
+    const chunk = readFileSync(join(outDir, chunkName!), "utf8");
+    const clause = chunk.match(/export\s*\{([^}]*)\}/)?.[1] ?? "";
+    const aliases = clause
+      .split(",")
+      .map(part => {
+        const bits = part.trim().split(/\s+as\s+/);
+        return bits[bits.length - 1];
+      })
+      .filter(Boolean);
+    expect(aliases.length).toBe(N);
+    expect(new Set(aliases).size).toBe(N);
+    for (const a of aliases) expect(a).toMatch(/^shared\d*$/);
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), join(outDir, "e1.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    if (runExit !== 0) {
+      throw new Error(`running e1.js exited ${runExit}\nstdout:\n${runOut}\nstderr:\n${runErr}`);
+    }
+    expect(runOut.trim()).toBe(`${(N * (N - 1)) / 2} 0 ${N - 1}`);
+  }, 60_000);
 });

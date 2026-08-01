@@ -60,7 +60,10 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     }
   }
 
-  if (id.endsWith(".node")) {
+  // A resolved id may carry a `?query` suffix (part of the module cache key);
+  // match the native-addon extension against the path portion only.
+  const queryIndex = id.indexOf("?");
+  if (queryIndex === -1 ? id.endsWith(".node") : id.endsWith(".node", queryIndex)) {
     return $internalRequire(id, this);
   }
 
@@ -111,11 +114,9 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       throw exception;
     }
 
-    const esm = Loader.registry.$get(id);
-
     // If we can pull out a ModuleNamespaceObject, let's do it.
-    if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
-      const namespace = Loader.getModuleNamespaceObject(esm!.module);
+    const namespace = $esmNamespaceForCjs(id);
+    if (namespace !== undefined) {
       // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
       // Various libraries expect __esModule to be set when using ESM from require().
       // We don't want to always inject the __esModule export into every module,
@@ -160,16 +161,33 @@ export function requireResolve(
 $visibility = "Private";
 export function internalRequire(id: string, parent: JSCommonJSModule) {
   $assert($requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should not be in the map");
-  $assert(id.endsWith(".node"));
+  // `id` keys the module cache and may carry a `?query` suffix;
+  // `process.dlopen` needs the on-disk path.
+  const queryIndex = id.indexOf("?");
+  const filename = queryIndex === -1 ? id : id.substring(0, queryIndex);
+  $assert(filename.endsWith(".node"));
 
   const module = $createCommonJSModule(id, {}, true, parent);
-  process.dlopen(module, id);
+  process.dlopen(module, filename);
   $requireMap.$set(id, module);
   return module.exports;
 }
 
 $visibility = "Private";
 export function loadEsmIntoCjs(resolvedSpecifier: string) {
+  // The JSC module loader pipeline is now pure C++. $esmLoadSync sets a VM
+  // flag that makes the loader's internal promise reactions run immediately
+  // (instead of queueing microtasks) whenever the upstream promise is already
+  // settled. Because Bun resolves and reads source code synchronously, the
+  // entire fetch → parse → link → evaluate chain completes within this call
+  // for any module graph that does not use top-level await.
+  return $esmLoadSync(resolvedSpecifier);
+}
+
+/* Legacy implementation removed: relied on the old JS-side JSModuleLoader
+ * (Loader.registry JSMap, $setStateToMax, parseModule, etc.) which no longer
+ * exists after the upstream module-loader rewrite.
+function loadEsmIntoCjs__dead(resolvedSpecifier: string) {
   var loader = Loader;
   var queue = $createFIFO();
   let key = resolvedSpecifier;
@@ -198,7 +216,7 @@ export function loadEsmIntoCjs(resolvedSpecifier: string) {
         // - we've never fetched it
         // - a fetch is in progress
         (!$isPromise(fetch) ||
-          ($getPromiseInternalField(fetch, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending))
+          ($peekPromiseStatus(fetch)) === 0))
     ) {
       // force it to be no longer pending
       $fulfillModuleSync(key);
@@ -214,7 +232,7 @@ export function loadEsmIntoCjs(resolvedSpecifier: string) {
 
     if (state < $ModuleLink && $isPromise(fetch)) {
       // This will probably never happen, but just in case
-      if (($getPromiseInternalField(fetch, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending) {
+      if (($peekPromiseStatus(fetch)) === 0) {
         registry.$delete(resolvedSpecifier);
 
         throw new TypeError(`require() async module "${key}" is unsupported. use "await import()" instead.`);
@@ -222,21 +240,20 @@ export function loadEsmIntoCjs(resolvedSpecifier: string) {
 
       // this pulls it out of the promise without delaying by a tick
       // the promise is already fulfilled by $fulfillModuleSync
-      const sourceCodeObject = $getPromiseInternalField(fetch, $promiseFieldReactionsOrResult);
+      const sourceCodeObject = $peekPromiseSettledValue(fetch);
       moduleRecordPromise = loader.parseModule(key, sourceCodeObject);
     }
     let mod = entry?.module;
 
     if (moduleRecordPromise && $isPromise(moduleRecordPromise)) {
-      let reactionsOrResult = $getPromiseInternalField(moduleRecordPromise, $promiseFieldReactionsOrResult);
-      let flags = $getPromiseInternalField(moduleRecordPromise, $promiseFieldFlags);
-      let state = flags & $promiseStateMask;
+      let reactionsOrResult = $peekPromiseSettledValue(moduleRecordPromise);
+      let state = $peekPromiseStatus(moduleRecordPromise);
       // this branch should never happen, but just to be safe
-      if (state === $promiseStatePending || (reactionsOrResult && $isPromise(reactionsOrResult))) {
+      if (state === 0 || (reactionsOrResult && $isPromise(reactionsOrResult))) {
         registry.$delete(resolvedSpecifier);
 
         throw new TypeError(`require() async module "${key}" is unsupported. use "await import()" instead.`);
-      } else if (state === $promiseStateRejected) {
+      } else if (state === 2) {
         if (!reactionsOrResult?.message) {
           throw new TypeError(
             `${
@@ -297,20 +314,17 @@ export function loadEsmIntoCjs(resolvedSpecifier: string) {
 
   return registry.$get(resolvedSpecifier);
 }
+*/
 
 $visibility = "Private";
 export function requireESM(this, resolved: string) {
-  var entry = Loader.registry.$get(resolved);
-
-  if (!entry || !entry.evaluated) {
-    entry = $loadEsmIntoCjs(resolved);
+  var exports = $esmNamespaceForCjs(resolved);
+  if (exports === undefined) {
+    exports = $loadEsmIntoCjs(resolved);
   }
-
-  if (!entry || !entry.evaluated || !entry.module) {
+  if (exports === undefined) {
     throw new TypeError(`require() failed to evaluate module "${resolved}". This is an internal consistentency error.`);
   }
-  var exports = Loader.getModuleNamespaceObject(entry.module);
-
   return exports;
 }
 
@@ -324,11 +338,9 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
     throw exception;
   }
 
-  const esm = Loader.registry.$get(id);
-
   // If we can pull out a ModuleNamespaceObject, let's do it.
-  if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
-    const namespace = Loader.getModuleNamespaceObject(esm!.module);
+  const namespace = $esmNamespaceForCjs(id);
+  if (namespace !== undefined) {
     // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
     // Various libraries expect __esModule to be set when using ESM from require().
     // We don't want to always inject the __esModule export into every module,
@@ -362,9 +374,8 @@ export function createRequireCache() {
       const entry = $requireMap.$get(key);
       if (entry) return entry;
 
-      const esm = Loader.registry.$get(key);
-      if (esm?.evaluated) {
-        const namespace = Loader.getModuleNamespaceObject(esm.module);
+      const namespace = $esmNamespaceForCjs(key);
+      if (namespace !== undefined) {
         const mod = $createCommonJSModule(key, namespace, true, undefined);
         $requireMap.$set(key, mod);
         return mod;
@@ -378,20 +389,21 @@ export function createRequireCache() {
     },
 
     has(_target, key: string) {
-      return $requireMap.$has(key) || Boolean(Loader.registry.$get(key)?.evaluated);
+      return $requireMap.$has(key) || $esmNamespaceForCjs(key) !== undefined;
     },
 
     deleteProperty(_target, key: string) {
       moduleMap.$delete(key);
       $requireMap.$delete(key);
-      Loader.registry.$delete(key);
+      $esmRegistryDelete(key);
+      $evictIsolationSourceProviderCache(key);
       return true;
     },
 
     ownKeys(_target) {
       var array = [...$requireMap.$keys()];
-      for (const key of Loader.registry.$keys()) {
-        if (!array.includes(key) && Loader.registry.$get(key)?.evaluated) {
+      for (const key of $esmRegistryEvaluatedKeys()) {
+        if (!array.includes(key)) {
           $arrayPush(array, key);
         }
       }
@@ -404,7 +416,7 @@ export function createRequireCache() {
     },
 
     getOwnPropertyDescriptor(_target, key: string) {
-      if ($requireMap.$has(key) || Loader.registry.$get(key)?.evaluated) {
+      if ($requireMap.$has(key) || $esmNamespaceForCjs(key) !== undefined) {
         return {
           configurable: true,
           enumerable: true,

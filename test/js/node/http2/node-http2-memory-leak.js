@@ -1,6 +1,9 @@
 import { heapStats } from "bun:jsc";
 
 // This file is meant to be able to run in node and bun
+// ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
+// run far higher under bun-asan; widen the threshold to avoid false positives.
+const isASAN = process.execPath.includes("bun-asan");
 const http2 = require("http2");
 const { TLS_OPTIONS, nodeEchoServer } = require("./http2-helpers.cjs");
 function getHeapStats() {
@@ -17,6 +20,10 @@ function getHeapStats() {
   }
 }
 const gc = globalThis.gc || globalThis.Bun?.gc || (() => {});
+const rss =
+  process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
 const sleep = dur => new Promise(resolve => setTimeout(resolve, dur));
 const ASAN_MULTIPLIER = process.env.ASAN_OPTIONS ? 1 / 10 : 1;
 
@@ -94,7 +101,7 @@ async function main() {
     await sleep(10);
     gc(true);
     // take a baseline
-    const baseline = process.memoryUsage.rss();
+    const baseline = rss();
 
     // run requests
     await runRequests(ITERATIONS);
@@ -102,14 +109,14 @@ async function main() {
     await sleep(10);
 
     // take an end snapshot
-    const end = process.memoryUsage.rss();
+    const end = rss();
 
     const delta = end - baseline;
     const deltaMegaBytes = (delta / 1024 / 1024) | 0;
     console.error("Memory delta", deltaMegaBytes, "MB");
 
     // we executed 100 requests per iteration, memory usage should not go up by 10 MB
-    if (deltaMegaBytes > 20) {
+    if (deltaMegaBytes > (isASAN ? 256 : 20)) {
       console.error("Too many bodies leaked", deltaMegaBytes);
       process.exit(1);
     }

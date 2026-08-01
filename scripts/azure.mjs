@@ -445,7 +445,7 @@ function getBaseImageReference(os, arch) {
 }
 
 function getVmSize(arch) {
-  return arch === "aarch64" ? "Standard_D4ps_v6" : "Standard_D4ds_v6";
+  return arch === "aarch64" ? "Standard_D4pds_v6" : "Standard_D4ds_v6";
 }
 
 // ============================================================================

@@ -3,15 +3,13 @@ title: Building Windows
 description: Building Bun on Windows
 ---
 
-This document describes the build process for Windows. If you run into problems, please join the [#contributing channel on our Discord](http://bun.com/discord) for help.
-
-It is strongly recommended to use [PowerShell 7 (`pwsh.exe`)](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-windows?view=powershell-7.4) instead of the default `powershell.exe`.
+Use [PowerShell 7 (`pwsh.exe`)](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-windows?view=powershell-7.4) instead of the default `powershell.exe`. If you run into problems, ask in the [#contributing channel on our Discord](http://bun.com/discord).
 
 ## Prerequisites
 
 ### Enable Scripts
 
-By default, running unverified scripts are blocked.
+By default, running unverified scripts is blocked.
 
 ```ps1
 Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Unrestricted
@@ -19,15 +17,15 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Unrestricted
 
 ### System Dependencies
 
-Bun v1.1 or later. We use Bun to run it's own code generators.
+Bun v1.1 or later. The build uses Bun to run its own code generators.
 
 ```ps1
 irm bun.sh/install.ps1 | iex
 ```
 
-[Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload. While installing, make sure to install Git as well, if Git for Windows is not already installed.
+[Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload. While installing, also install Git if Git for Windows is not already installed.
 
-Visual Studio can be installed graphically using the wizard or through WinGet:
+Install Visual Studio with the graphical wizard or through WinGet:
 
 ```ps1
 winget install "Visual Studio Community 2022" --override "--add Microsoft.VisualStudio.Workload.NativeDesktop Microsoft.VisualStudio.Component.Git " -s msstore
@@ -37,19 +35,19 @@ After Visual Studio, you need the following:
 
 - LLVM 21.1.8
 - Go
-- Rust
+- Rust (via rustup)
 - NASM
 - Perl
 - Ruby
 - Node.js
 
-<Note>The Zig compiler is automatically downloaded, installed, and updated by the building process.</Note>
+<Note>rustup installs the Rust nightly toolchain pinned in `rust-toolchain.toml` on the first build.</Note>
 
 Use [Scoop](https://scoop.sh) to install these remaining tools.
 
 ```ps1 Scoop (x64)
 irm https://get.scoop.sh | iex
-scoop install nodejs-lts go rust nasm ruby perl ccache
+scoop install nodejs-lts go rustup nasm ruby perl ccache
 # scoop seems to be buggy if you install llvm and the rest at the same time
 scoop install llvm@21.1.8
 ```
@@ -63,34 +61,34 @@ Start-Process -FilePath "$env:TEMP\LLVM-21.1.8-woa64.exe" -ArgumentList "/S" -Wa
 ```
 
 <Note>
-  Please do not use WinGet/other package manager for these, as you will likely install Strawberry Perl instead of a more
-  minimal installation of Perl. Strawberry Perl includes many other utilities that get installed into `$Env:PATH` that
-  will conflict with MSVC and break the build.
+  Do not install these with WinGet or another package manager: you will likely get Strawberry Perl instead of a more
+  minimal installation of Perl. Strawberry Perl adds many other utilities to `$Env:PATH` that conflict with MSVC and
+  break the build.
 </Note>
 
-If you intend on building WebKit locally (optional, x64 only), you should install these packages:
+To build WebKit locally (optional, x64 only), install these packages:
 
 ```ps1 Scoop
 scoop install make cygwin python
 ```
 
-<Note>Cygwin is not required for ARM64 builds as WebKit is provided as a pre-built binary.</Note>
+<Note>ARM64 builds do not need Cygwin because WebKit is provided as a pre-built binary.</Note>
 
-From here on out, it is **expected you use a PowerShell Terminal with `.\scripts\vs-shell.ps1` sourced**. This script is available in the Bun repository and can be loaded by executing it:
+From here on out, **use a PowerShell terminal with `.\scripts\vs-shell.ps1` sourced**. Load the script by running it:
 
 ```ps1
 .\scripts\vs-shell.ps1
 ```
 
-To verify, you can check for an MSVC-only command line such as `mt.exe`
+To verify, check for an MSVC-only command such as `mt.exe`:
 
 ```ps1
 Get-Command mt
 ```
 
 <Note>
-  It is not recommended to install `ninja` / `cmake` into your global path, because you may run into a situation where
-  you try to build bun without .\scripts\vs-shell.ps1 sourced.
+  Avoid installing `ninja` / `cmake` into your global path: you may end up building Bun without `.\scripts\vs-shell.ps1`
+  sourced.
 </Note>
 
 ## Building
@@ -102,27 +100,23 @@ bun run build
 ninja -Cbuild/debug
 ```
 
-If this was successful, you should have a `bun-debug.exe` in the `build/debug` folder.
+A successful build writes `bun-debug.exe` to the `build/debug` folder.
 
 ```ps1
 .\build\debug\bun-debug.exe --revision
 ```
 
-You should add this to `$Env:PATH`. The simplest way to do so is to open the start menu, type "Path", and then navigate the environment variables menu to add `C:\.....\bun\build\debug` to the user environment variable `PATH`. You should then restart your editor (if it does not update still, log out and log back in).
+Add this folder to `$Env:PATH`: open the Start menu, type "Path", and use the environment variables menu to add `C:\.....\bun\build\debug` to the user environment variable `PATH`. Then restart your editor (if it still does not pick up the change, log out and log back in).
 
 ## Extra paths
 
 - WebKit is extracted to `build/debug/cache/webkit/`
-- Zig is extracted to `build/debug/cache/zig/bin/zig.exe`
 
 ## Tests
 
-You can run the test suite either using `bun test <path>` or by using the wrapper script `bun node:test <path>`. The `bun node:test` command runs every test file in a separate instance of bun.exe, to prevent a crash in the test runner from stopping the entire suite.
+Run the test suite with `bun test <path>` or with the wrapper script `bun node:test <path>`. The `bun node:test` command runs every test file in a separate instance of `bun.exe`, so a crash in the test runner does not stop the entire suite.
 
 ```ps1
-# Setup
-bun i --cwd packages\bun-internal-test
-
 # Run the entire test suite with reporter
 # the package.json script "test" uses "build/debug/bun-debug.exe" by default
 bun run test
@@ -136,8 +130,59 @@ bun-debug test "C:\bun\test\js\bun\resolve\import-meta.test.js"
 
 ### .rc file fails to build
 
-`llvm-rc.exe` is odd. don't use it. use `rc.exe`, to do this make sure you are in a visual studio dev terminal, check `rc /?` to ensure it is `Microsoft Resource Compiler`
+`llvm-rc.exe` is odd; don't use it. Use `rc.exe` instead: make sure you are in a Visual Studio dev terminal, and check `rc /?` to confirm it is `Microsoft Resource Compiler`.
 
 ### failed to write output 'bun-debug.exe': permission denied
 
-you cannot overwrite `bun-debug.exe` if it is already open. you likely have a running instance, maybe in the vscode debugger?
+You cannot overwrite `bun-debug.exe` while it is open. You likely have a running instance, maybe in the VS Code debugger.
+
+## Cross-compiling from Linux
+
+You can also build Windows binaries (both x64 and arm64) on a Linux host. The build uses the host LLVM's `clang-cl`, `lld-link`, `llvm-lib` and `llvm-rc` (part of every LLVM distribution), plus an "xwin splat" of the MSVC CRT/STL and Windows SDK for headers and import libraries.
+
+### Prerequisites
+
+1. The same LLVM version a native build uses (see `scripts/bootstrap.sh` `llvm_version_exact`), installed so that `clang-cl`, `lld-link`, `llvm-lib` and `llvm-rc` are available. On Debian/Ubuntu, `apt.llvm.org` packages provide all of them.
+2. `nasm` (only needed for Windows x64; BoringSSL's x64 assembly is NASM syntax).
+3. Rust std for the Windows targets (`rust-toolchain.toml` lists them; `rustup target add x86_64-pc-windows-msvc aarch64-pc-windows-msvc` if missing).
+4. A Windows sysroot: an [xwin](https://github.com/Jake-Shadle/xwin) splat of the MSVC CRT, Windows SDK, and ATL laid out like a Visual Studio install. Downloading these components means accepting Microsoft's license terms for them.
+
+```bash
+cargo install xwin # or download a release binary
+xwin --accept-license --arch x86_64,aarch64 --sdk-version 10.0.26100 --crt-version 14.44.17.14 --include-atl splat \
+  --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs \
+  --output /opt/winsysroot
+# clang-cl/lld-link look up SDK paths as "Include"/"Lib"; the splat writes
+# them lowercase, so alias both spellings (needs the same privileges as the
+# splat — configure creates these itself when the directory is writable).
+ln -s include "/opt/winsysroot/Windows Kits/10/Include"
+ln -s lib "/opt/winsysroot/Windows Kits/10/Lib"
+```
+
+The build looks for the sysroot at `/opt/winsysroot` (or `/opt/xwin`) automatically; elsewhere, set `WINDOWS_SYSROOT=<path>` or pass `--winsysroot=<path>` (a user-writable path also lets configure manage the aliases for you). Configure validates the splat at the start of every cross build. CI agents bake the same splat into their images (`.buildkite/Dockerfile`, `scripts/bootstrap.sh`); when an agent doesn't have one, the build fetches it into its cache dir at configure time.
+
+### Building
+
+```bash
+# Debug builds
+bun run build --profile=windows-x64
+bun run build --profile=windows-arm64
+
+# Release builds
+bun run build --profile=windows-x64-release
+bun run build --profile=windows-arm64-release
+```
+
+Output lands in `build/debug-windows-x64/bun-debug.exe`, `build/release-windows-aarch64/bun-profile.exe` + `bun.exe`, and so on. Equivalent raw flags: `bun run build --os=windows --arch=aarch64`.
+
+Cross-compiled executables are not run on the host (the `--revision` smoke test is skipped), so test them on a Windows machine or under Wine.
+
+### LTO
+
+x64 release cross builds support ThinLTO with cross-language (Rust↔C++) LTO. It's opt-in:
+
+```bash
+bun run build --profile=windows-x64-release --lto=on
+```
+
+`--lto=on` compiles Bun's C/C++ with `-flto=thin`, makes rustc emit LLVM bitcode (`-Clinker-plugin-lto`), pulls the `bun-webkit-windows-amd64-lto` ThinLTO prebuilt, and links everything with rustc's bundled `lld-link` (its LLVM is new enough to read both compilers' bitcode). There is no LTO for arm64 (no `-lto` WebKit prebuilt: LLVM's CodeView emitter can't handle ARM64 NEON tuple registers during LTO codegen) or for `--baseline`.

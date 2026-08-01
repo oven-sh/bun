@@ -3,7 +3,7 @@ title: SQLite
 description: Bun natively implements a high-performance SQLite3 driver.
 ---
 
-Bun natively implements a high-performance [SQLite3](https://www.sqlite.org/) driver. To use it import from the built-in `bun:sqlite` module.
+Bun natively implements a high-performance [SQLite3](https://www.sqlite.org/) driver. To use it, import from the built-in `bun:sqlite` module.
 
 ```ts db.ts icon="/icons/typescript.svg"
 import { Database } from "bun:sqlite";
@@ -28,7 +28,7 @@ Features include:
 - Map query results to classes without an ORM - `query.as(MyClass)`
 - The fastest performance of any SQLite driver for JavaScript
 - `bigint` support
-- Multi-query statements (e.g. `SELECT 1; SELECT 2;`) in a single call to database.run(query)
+- Multi-query statements (for example `SELECT 1; SELECT 2;`) in a single call to `database.run(query)`
 
 The `bun:sqlite` module is roughly 3-6x faster than `better-sqlite3` and 8-9x faster than `deno.land/x/sqlite` for read queries. Each driver was benchmarked against the [Northwind Traders](https://github.com/jpwhite3/northwind-SQLite3/blob/46d5f8a64f396f87cd374d1600dbf521523980e8/Northwind_large.sqlite.zip) dataset. View and run the [benchmark source](https://github.com/oven-sh/bun/tree/main/bench/sqlite).
 
@@ -95,7 +95,7 @@ notStrict.query("SELECT $message;").all({ messag: "Hello world" });
 
 ### Load via ES module import
 
-You can also use an import attribute to load a database.
+You can also load a database with an import attribute.
 
 ```ts db.ts icon="/icons/typescript.svg" highlight={1}
 import db from "./mydb.sqlite" with { type: "sqlite" };
@@ -112,7 +112,7 @@ const db = new Database("./mydb.sqlite");
 
 ### `.close(throwOnError: boolean = false)`
 
-To close a database connection, but allow existing queries to finish, call `.close(false)`:
+To close a database connection but allow existing queries to finish, call `.close(false)`:
 
 ```ts db.ts icon="/icons/typescript.svg" highlight={3}
 const db = new Database();
@@ -135,7 +135,7 @@ db.close(true);
 
 ### `using` statement
 
-You can use the `using` statement to ensure that a database connection is closed when the `using` block is exited.
+The `using` statement closes the database connection when the block exits.
 
 ```ts db.ts icon="/icons/typescript.svg" highlight={4, 5}
 import { Database } from "bun:sqlite";
@@ -165,7 +165,7 @@ Internally, `.serialize()` calls [`sqlite3_serialize`](https://www.sqlite.org/c3
 
 ### `.query()`
 
-Use the `db.query()` method on your `Database` instance to [prepare](https://www.sqlite.org/c3ref/prepare.html) a SQL query. The result is a `Statement` instance that will be cached on the `Database` instance. _The query will not be executed._
+Use the `db.query()` method on your `Database` instance to [prepare](https://www.sqlite.org/c3ref/prepare.html) a SQL query. The result is a `Statement` instance that is cached on the `Database` instance. _The query is not executed._
 
 ```ts db.ts icon="/icons/typescript.svg"
 const query = db.query(`select "Hello world" as message`);
@@ -176,7 +176,7 @@ const query = db.query(`select "Hello world" as message`);
 
 The caching refers to the **compiled prepared statement** (the SQL bytecode), not the query results. When you call `db.query()` with the same SQL string multiple times, Bun returns the same cached `Statement` object instead of recompiling the SQL.
 
-It is completely safe to reuse a cached statement with different parameter values:
+It is safe to reuse a cached statement with different parameter values:
 
 ```ts
 const query = db.query("SELECT * FROM users WHERE id = ?");
@@ -198,7 +198,7 @@ const query = db.prepare("SELECT * FROM foo WHERE bar = ?");
 
 ## WAL mode
 
-SQLite supports [write-ahead log mode](https://www.sqlite.org/wal.html) (WAL) which dramatically improves performance, especially in situations with many concurrent readers and a single writer. It's broadly recommended to enable WAL mode for most typical applications.
+SQLite supports [write-ahead log mode](https://www.sqlite.org/wal.html) (WAL), which dramatically improves performance, especially with many concurrent readers and a single writer. Enabling WAL mode is recommended for most applications.
 
 To enable WAL mode, run this pragma query at the beginning of your application:
 
@@ -208,8 +208,8 @@ db.run("PRAGMA journal_mode = WAL;");
 
 <Accordion title="What is WAL mode?">
   In WAL mode, writes to the database are written directly to a separate file called the "WAL file" (`-wal`). A
-  shared-memory index file (`-shm`) is also created for read coordination. The WAL file will be later integrated into
-  the main database file. Think of it as a buffer for pending writes. Refer to the [SQLite
+  shared-memory index file (`-shm`) is also created for read coordination. The WAL file is later integrated into the
+  main database file. Think of it as a buffer for pending writes. Refer to the [SQLite
   docs](https://www.sqlite.org/wal.html) for a more detailed overview.
 </Accordion>
 
@@ -217,7 +217,7 @@ db.run("PRAGMA journal_mode = WAL;");
 
 When using WAL mode with a file-based database, SQLite creates two sidecar files alongside your database: a write-ahead log (`-wal`) and a shared-memory index (`-shm`). Whether these files are automatically removed after `.close()` depends on your platform:
 
-- **macOS**: Bun uses the system-provided SQLite, which Apple builds with persistent WAL enabled. The `-wal` and `-shm` files **will persist** after close. This is not a bug — it is how Apple configured the system SQLite.
+- **macOS**: Bun uses the system-provided SQLite, which Apple builds with persistent WAL enabled. The `-wal` and `-shm` files **persist** after close. This is not a bug — it is how Apple configured the system SQLite.
 - **Linux** and **Windows**: Bun statically links its own SQLite build, which follows upstream defaults. The sidecar files are **typically removed** after close when no other connections are open.
 
 To ensure sidecar files are cleaned up on all platforms, disable WAL persistence and run a truncating checkpoint before closing:
@@ -242,7 +242,7 @@ db.close();
 
 ## Statements
 
-A `Statement` is a _prepared query_, which means it's been parsed and compiled into an efficient binary form. It can be executed multiple times in a performant way.
+A `Statement` is a _prepared query_, which means it's been parsed and compiled into an efficient binary form. It can be executed multiple times.
 
 Create a statement with the `.query` method on your `Database` instance.
 
@@ -306,7 +306,7 @@ query.all({ $message: "Hello world" });
 ```
 
 ```txt
-[{ message: "Hello world" }]
+[{ $message: "Hello world" }]
 ```
 
 Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and repeatedly calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) until it returns `SQLITE_DONE`.
@@ -324,11 +324,11 @@ query.get({ $message: "Hello world" });
 { $message: "Hello world" }
 ```
 
-Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) followed by [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) until it no longer returns `SQLITE_ROW`. If the query returns no rows, `undefined` is returned.
+Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) followed by [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) until it no longer returns `SQLITE_ROW`. If the query returns no rows, `null` is returned.
 
 ### `.run()`
 
-Use `.run()` to run a query and get back an object with execution metadata. This is useful for schema-modifying queries (e.g. `CREATE TABLE`) or bulk write operations.
+Use `.run()` to run a query and get back an object with execution metadata. This is useful for schema-modifying queries (such as `CREATE TABLE`) or bulk write operations.
 
 ```ts db.ts icon="/icons/typescript.svg" highlight={2}
 const query = db.query(`create table foo;`);
@@ -344,11 +344,11 @@ query.run();
 
 Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) once. Stepping through all the rows is not necessary when you don't care about the results.
 
-The `lastInsertRowid` property returns the ID of the last row inserted into the database. The `changes` property is the number of rows affected by the query.
+The `lastInsertRowid` property is the ID of the last row inserted into the database. The `changes` property is the number of rows affected by the query.
 
 ### `.as(Class)` - Map query results to a class
 
-Use `.as(Class)` to run a query and get back the results as instances of a class. This lets you attach methods & getters/setters to results.
+Use `.as(Class)` to run a query and get back the results as instances of a class. The class's methods, getters, and setters are available on each row.
 
 ```ts db.ts icon="/icons/typescript.svg" highlight={10}
 class Movie {
@@ -373,7 +373,7 @@ true
 true
 ```
 
-As a performance optimization, the class constructor is not called, default initializers are not run, and private fields are not accessible. This is more like using `Object.create` than `new`. The class's prototype is assigned to the object, methods are attached, and getters/setters are set up, but the constructor is not called.
+As a performance optimization, the class constructor is not called, default initializers are not run, and private fields are not accessible. This is more like `Object.create` than `new`: the class's prototype is assigned to the object, so its methods, getters, and setters work.
 
 The database columns are set as properties on the class instance.
 
@@ -420,7 +420,7 @@ Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sq
 
 ### `.finalize()`
 
-Use `.finalize()` to destroy a `Statement` and free any resources associated with it. Once finalized, a `Statement` cannot be executed again. Typically, the garbage collector will do this for you, but explicit finalization may be useful in performance-sensitive applications.
+Use `.finalize()` to destroy a `Statement` and free any resources associated with it. Once finalized, a `Statement` cannot be executed again. Typically, the garbage collector does this for you, but explicit finalization may be useful in performance-sensitive applications.
 
 ```ts db.ts icon="/icons/typescript.svg" highlight={3}
 const query = db.query("SELECT title, year FROM movies");
@@ -461,7 +461,7 @@ const results = query.all({
 ```
 
 ```txt
-[{ "$bar": "bar" }]
+[{ "bar": "bar" }]
 ```
 
 Numbered (positional) parameters work too:
@@ -484,15 +484,13 @@ const results = query.all("hello", "goodbye");
 
 ## Integers
 
-sqlite supports signed 64 bit integers, but JavaScript only supports signed 52 bit integers or arbitrary precision integers with `bigint`.
+SQLite supports signed 64-bit integers, but JavaScript only supports signed 52-bit integers or arbitrary-precision integers with `bigint`.
 
-`bigint` input is supported everywhere, but by default `bun:sqlite` returns integers as `number` types. If you need to handle integers larger than 2^53, set `safeIntegers` option to `true` when creating a `Database` instance. This also validates that `bigint` passed to `bun:sqlite` do not exceed 64 bits.
-
-By default, `bun:sqlite` returns integers as `number` types. If you need to handle integers larger than 2^53, you can use the `bigint` type.
+`bigint` input is supported everywhere, but by default `bun:sqlite` returns integers as `number` types. If you need to handle integers larger than 2^53, set the `safeIntegers` option to `true` when creating a `Database` instance. This also validates that `bigint` values passed to `bun:sqlite` do not exceed 64 bits.
 
 ### `safeIntegers: true`
 
-When `safeIntegers` is `true`, `bun:sqlite` will return integers as `bigint` types:
+When `safeIntegers` is `true`, `bun:sqlite` returns integers as `bigint` types:
 
 ```ts db.ts icon="/icons/typescript.svg" highlight={3}
 import { Database } from "bun:sqlite";
@@ -508,7 +506,7 @@ console.log(result.max_int);
 9007199254741093n
 ```
 
-When `safeIntegers` is `true`, `bun:sqlite` will throw an error if a `bigint` value in a bound parameter exceeds 64 bits:
+When `safeIntegers` is `true`, `bun:sqlite` throws an error if a `bigint` value in a bound parameter exceeds 64 bits:
 
 ```ts db.ts icon="/icons/typescript.svg" highlight={3}
 import { Database } from "bun:sqlite";
@@ -531,7 +529,7 @@ BigInt value '81129638414606663681390495662081' is out of range
 
 ### `safeIntegers: false` (default)
 
-When `safeIntegers` is `false`, `bun:sqlite` will return integers as `number` types and truncate any bits beyond 53:
+When `safeIntegers` is `false`, `bun:sqlite` returns integers as `number` types and truncates any bits beyond 53:
 
 ```ts db.ts icon="/icons/typescript.svg" highlight={3}
 import { Database } from "bun:sqlite";
@@ -550,7 +548,7 @@ console.log(result.max_int);
 
 ## Transactions
 
-Transactions are a mechanism for executing multiple queries in an _atomic_ way; that is, either all of the queries succeed or none of them do. Create a transaction with the `db.transaction()` method:
+A transaction executes multiple queries _atomically_: either all of them succeed or none do. Create a transaction with the `db.transaction()` method:
 
 ```ts db.ts icon="/icons/typescript.svg" highlight={2}
 const insertCat = db.prepare("INSERT INTO cats (name) VALUES ($name)");
@@ -559,9 +557,9 @@ const insertCats = db.transaction(cats => {
 });
 ```
 
-At this stage, we haven't inserted any cats! The call to `db.transaction()` returns a new function (`insertCats`) that _wraps_ the function that executes the queries.
+No cats have been inserted yet. `db.transaction()` returns a new function (`insertCats`) that _wraps_ the function that executes the queries.
 
-To execute the transaction, call this function. All arguments will be passed through to the wrapped function; the return value of the wrapped function will be returned by the transaction function. The wrapped function also has access to the `this` context as defined where the transaction is executed.
+To execute the transaction, call this function. Arguments are passed through to the wrapped function, and the wrapped function's return value is returned by the transaction function. The wrapped function also has access to the `this` context as defined where the transaction is executed.
 
 ```ts db.ts icon="/icons/typescript.svg" highlight={3}
 const insert = db.prepare("INSERT INTO cats (name) VALUES ($name)");
@@ -575,7 +573,7 @@ const count = insertCats([{ $name: "Keanu" }, { $name: "Salem" }, { $name: "Croo
 console.log(`Inserted ${count} cats`);
 ```
 
-The driver will automatically [`begin`](https://www.sqlite.org/lang_transaction.html) a transaction when `insertCats` is called and `commit` it when the wrapped function returns. If an exception is thrown, the transaction will be rolled back. The exception will propagate as usual; it is not caught.
+The driver automatically [begins](https://www.sqlite.org/lang_transaction.html) a transaction when `insertCats` is called and commits it when the wrapped function returns. If an exception is thrown, the transaction is rolled back. The exception propagates as usual; it is not caught.
 
 <Note>
 **Nested transactions** — Transaction functions can be called from inside other transaction functions. When doing so, the inner transaction becomes a [savepoint](https://www.sqlite.org/lang_savepoint.html).
@@ -620,7 +618,7 @@ insertCats.exclusive(cats); // uses "BEGIN EXCLUSIVE"
 
 ### `.loadExtension()`
 
-To load a [SQLite extension](https://www.sqlite.org/loadext.html), call `.loadExtension(name)` on your `Database` instance
+To load a [SQLite extension](https://www.sqlite.org/loadext.html), call `.loadExtension(name)` on your `Database` instance:
 
 ```ts db.ts icon="/icons/typescript.svg" highlight={4}
 import { Database } from "bun:sqlite";
@@ -630,7 +628,7 @@ db.loadExtension("myext");
 ```
 
 <Note>
-**MacOS users** By default, macOS ships with Apple's proprietary build of SQLite, which doesn't support extensions. To use extensions, you'll need to install a vanilla build of SQLite.
+**macOS users** By default, macOS ships with Apple's proprietary build of SQLite, which doesn't support extensions. To use extensions, install a vanilla build of SQLite.
 
 ```bash terminal icon="terminal"
 brew install sqlite

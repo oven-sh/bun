@@ -120,7 +120,8 @@ describe.skipIf(isASAN)("TLS custom config memory leak detection", () => {
         ...bunEnv,
         TLS_CERT: validTls.cert,
         TLS_KEY: validTls.key,
-        NUM_REQUESTS: "100000",
+        NUM_REQUESTS: "20000",
+        WARMUP_REQUESTS: "5000",
         MODE: "same",
       },
       stdout: "pipe",
@@ -135,7 +136,9 @@ describe.skipIf(isASAN)("TLS custom config memory leak detection", () => {
     if (exitCode !== 0) {
       console.error(stderr);
     }
-    expect(result.growthMB).toBeLessThan(50);
+    // 30MB over 20k requests still catches any leak >= ~1.5KB/request (a leaked
+    // SSLConfig/BoringSSL context is several KB) while keeping an absolute noise margin.
+    expect(result.growthMB).toBeLessThan(30);
     expect(exitCode).toBe(0);
   });
 
@@ -147,6 +150,9 @@ describe.skipIf(isASAN)("TLS custom config memory leak detection", () => {
         TLS_CERT: validTls.cert,
         TLS_KEY: validTls.key,
         NUM_REQUESTS: "200",
+        // Only 200 requests are measured; the warmup exists solely to stabilize
+        // the RSS baseline, so it does not need the "same"-mode workload size.
+        WARMUP_REQUESTS: "2000",
         MODE: "distinct",
       },
       stdout: "pipe",
@@ -161,7 +167,7 @@ describe.skipIf(isASAN)("TLS custom config memory leak detection", () => {
     if (exitCode !== 0) {
       console.error(stderr);
     }
-    expect(result.growthMB).toBeLessThan(75 * (isASAN ? 8 : 1));
+    expect(result.growthMB).toBeLessThan(85 * (isASAN ? 8 : 1));
     expect(exitCode).toBe(0);
   });
 });

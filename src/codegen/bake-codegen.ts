@@ -11,21 +11,24 @@ if (!codegenRoot) {
   process.exit(1);
 }
 
-const base_dir = join(import.meta.dirname, "../bake");
+const base_dir = join(import.meta.dirname, "../runtime/bake");
 process.chdir(base_dir); // to make bun build predictable in development
 
-function convertZigEnum(zig: string, names: string[]) {
-  let output = "/** Generated from DevServer.zig */\n";
+function convertRustEnum(rust: string, names: string[]) {
+  let output = "/** Generated from dev_server/mod.rs */\n";
   for (const name of names) {
-    const startTrigger = `\npub const ${name} = enum(u8) {`;
-    const start = zig.indexOf(startTrigger) + startTrigger.length;
-    const endTrigger = /\n    pub (inline )?fn |\n};/g;
-    const end = zig.slice(start).search(endTrigger) + start;
-    const enumText = zig.slice(start, end);
-    const values = enumText.replaceAll("\n    ", "\n  ").replace(/\n\s*(\w+)\s*=\s*'(.+?)',/g, (_, name, value) => {
-      return `\n  ${name} = ${value.charCodeAt(0)},`;
-    });
-    output += `export const enum ${name} {${values}}\n`;
+    const startTrigger = `\npub enum ${name} {`;
+    const start = rust.indexOf(startTrigger);
+    if (start === -1) throw new Error(`bake-codegen: enum ${name} not found in dev_server/mod.rs`);
+    const bodyStart = start + startTrigger.length;
+    const end = rust.indexOf("\n}", bodyStart);
+    let values = "";
+    for (const m of rust.slice(bodyStart, end).matchAll(/^\s*(\w+)\s*=\s*b'(.)'\s*,?/gm)) {
+      const snake = m[1].replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+      values += `\n  ${snake} = ${m[2].charCodeAt(0)},`;
+    }
+    if (!values) throw new Error(`bake-codegen: no variants extracted from enum ${name}`);
+    output += `export const enum ${name} {${values}\n}\n`;
   }
   return output;
 }
@@ -41,8 +44,8 @@ function css(file: string, is_development: boolean): string {
 }
 
 async function run() {
-  const devServerZig = readFileSync(join(base_dir, "DevServer.zig"), "utf-8");
-  writeIfNotChanged(join(base_dir, "generated.ts"), convertZigEnum(devServerZig, ["IncomingMessageId", "MessageId"]));
+  const devServerRust = readFileSync(join(base_dir, "dev_server/mod.rs"), "utf-8");
+  writeIfNotChanged(join(base_dir, "generated.ts"), convertRustEnum(devServerRust, ["IncomingMessageId", "MessageId"]));
 
   const results = await Promise.allSettled(
     ["client", "server", "error"].map(async file => {
@@ -53,7 +56,7 @@ async function run() {
           side: JSON.stringify(side),
           IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
-          OVERLAY_CSS: css("../bake/client/overlay.css", !!debug),
+          OVERLAY_CSS: css("../runtime/bake/client/overlay.css", !!debug),
         },
         minify: {
           syntax: !debug,

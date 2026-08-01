@@ -14,7 +14,11 @@ source "azure-arm" "windows-x64" {
 
   // Build VM — only used during image creation, not for CI runners.
   // CI runner VM sizes are set in ci.mjs (azureVmSizes).
-  vm_size         = "Standard_D4ds_v6"
+  // D4as_v7 (AMD): D4ds_v6 hit repeated AllocationFailed (no capacity for
+  // that size in the region); Azure's allocation-guidance suggested this
+  // size as an in-region alternative. Build-only VM, so the CPU vendor
+  // doesn't affect the produced image.
+  vm_size         = "Standard_D4as_v7"
 
   // Use existing resource group instead of creating a temp one
   build_resource_group_name = var.resource_group
@@ -37,6 +41,10 @@ source "azure-arm" "windows-x64" {
 
   // Output — Managed Image (x64 supports this)
 
+  // SIG replication to 27 regions takes longer than the 60m default; the
+  // CreateOrUpdate poll was hitting "context deadline exceeded" at exactly 1h.
+  shared_image_gallery_timeout = "3h"
+
   // Also publish to Compute Gallery
   shared_image_gallery_destination {
     subscription         = var.subscription_id
@@ -44,7 +52,10 @@ source "azure-arm" "windows-x64" {
     gallery_name         = var.gallery_name
     image_name           = var.image_name != "" ? var.image_name : "windows-x64-2019-build-${var.build_number}"
     image_version        = "1.0.0"
-    storage_account_type = "Standard_LRS"
+    // Premium_LRS: SSD-backed gallery storage — faster provisioning when
+    // robobun launches runners from this image, and faster cross-region
+    // replication during the publish step above.
+    storage_account_type = "Premium_LRS"
     target_region { name = var.location }
     target_region { name = "australiaeast" }
     target_region { name = "brazilsouth" }
@@ -88,7 +99,7 @@ build {
   provisioner "powershell" {
     script           = var.bootstrap_script
     valid_exit_codes = [0, 3010]
-    environment_vars = ["CI=true"]
+    environment_vars = ["CI=true", "BUN_BOOTSTRAP_REPO_REF=${var.repo_ref}"]
   }
 
   // Step 2: Upload agent.mjs

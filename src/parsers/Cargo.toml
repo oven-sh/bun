@@ -1,0 +1,38 @@
+[package]
+name = "bun_parsers"
+version.workspace = true
+edition.workspace = true
+build = "build.rs"
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bytemuck = "1"
+thiserror.workspace = true
+strum.workspace = true
+bstr.workspace = true
+scopeguard.workspace = true
+const_format.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+typed-arena.workspace = true
+bun_alloc.workspace = true
+bun_core.workspace = true
+bun_collections.workspace = true
+bun_highway.workspace = true
+bun_ast.workspace = true
+bun_wyhash.workspace = true
+bun_simdutf_sys.workspace = true
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "json_parse"
+harness = false

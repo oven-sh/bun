@@ -5,30 +5,30 @@ describe("tls.createSecureContext extra arguments test", () => {
   it("should throw an error if the privateKeyEngine is not a string", () => {
     // @ts-expect-error
     expect(() => tls.createSecureContext({ privateKeyIdentifier: "valid", privateKeyEngine: 0 })).toThrow(
-      "string, null, or undefined",
+      "string or one of null or undefined",
     );
     // @ts-expect-error
     expect(() => tls.createSecureContext({ privateKeyIdentifier: "valid", privateKeyEngine: true })).toThrow(
-      "string, null, or undefined",
+      "string or one of null or undefined",
     );
     // @ts-expect-error
     expect(() => tls.createSecureContext({ privateKeyIdentifier: "valid", privateKeyEngine: {} })).toThrow(
-      "string, null, or undefined",
+      "string or one of null or undefined",
     );
   });
 
   it("should throw an error if the privateKeyIdentifier is not a string", () => {
     // @ts-expect-error
     expect(() => tls.createSecureContext({ privateKeyIdentifier: 0, privateKeyEngine: "valid" })).toThrow(
-      "string, null, or undefined",
+      "string or one of null or undefined",
     );
     // @ts-expect-error
     expect(() => tls.createSecureContext({ privateKeyIdentifier: true, privateKeyEngine: "valid" })).toThrow(
-      "string, null, or undefined",
+      "string or one of null or undefined",
     );
     // @ts-expect-error
     expect(() => tls.createSecureContext({ privateKeyIdentifier: {}, privateKeyEngine: "valid" })).toThrow(
-      "string, null, or undefined",
+      "string or one of null or undefined",
     );
   });
 

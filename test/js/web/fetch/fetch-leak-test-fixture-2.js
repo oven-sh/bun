@@ -1,5 +1,10 @@
 import { heapStats } from "bun:jsc";
 
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
+
 const { SERVER } = process.env;
 
 if (typeof SERVER === "undefined" || !SERVER?.length) {
@@ -7,6 +12,9 @@ if (typeof SERVER === "undefined" || !SERVER?.length) {
 }
 
 const COUNT = parseInt(process.env.COUNT || "50", 10);
+// ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
+// run far higher under bun-asan; widen the per-request threshold there.
+const isASAN = process.execPath.includes("bun-asan");
 var oks = 0;
 var textLength = 0;
 Bun.gc(true);
@@ -32,7 +40,7 @@ async function getBaseline() {
 
   Bun.gc(true);
 
-  return process.memoryUsage.rss();
+  return rss();
 }
 
 const baseline = await getBaseline();
@@ -60,14 +68,14 @@ if (oks !== COUNT) {
 
 await Bun.sleep(10);
 Bun.gc(true);
-const delta = process.memoryUsage.rss() - baseline;
+const delta = rss() - baseline;
 if ((heapStats().objectTypeCounts.Response ?? 0) > 5) {
   throw new Error("Too many Response objects: " + heapStats().objectTypeCounts.Response);
 }
 
 const bodiesLeakedPerRequest = delta / textLength;
 
-const threshold = textLength > 1024 * 1024 * 2 ? 20 : 1000;
+const threshold = (textLength > 1024 * 1024 * 2 ? 20 : 1000) * (isASAN ? 4 : 1);
 
 console.log({ delta, count: COUNT, bodySize: textLength, bodiesLeakedPerRequest, threshold });
 

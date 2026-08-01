@@ -8,8 +8,8 @@
  * ## Why this is its own file
  *
  * Every module that emits ninja rules needs to quote args. Before this was
- * extracted, we had four slightly-different implementations (source.ts had
- * posix-only, codegen.ts had windows-aware, webkit.ts/zig.ts had posix-only
+ * extracted, we had several slightly-different implementations (source.ts had
+ * posix-only, codegen.ts had windows-aware, webkit.ts had posix-only
  * copies). One implementation, consistently applied, prevents the "works on
  * my machine but not CI" class of bug where a path with a space breaks only
  * one ninja rule.

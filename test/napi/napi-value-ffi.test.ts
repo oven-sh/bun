@@ -1,13 +1,15 @@
 import { spawnSync } from "bun";
-import { cc, dlopen } from "bun:ffi";
+import { cc } from "bun:ffi";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isArm64, isASAN, isWindows } from "harness";
+import { existsSync } from "fs";
+import { bunEnv, bunExe, canBuildNodeAddons, isASAN, isWindows } from "harness";
 import { join } from "path";
 
 import source from "./napi-app/ffi_addon_1.c" with { type: "file" };
 
-// TinyCC (and all of bun:ffi) is disabled on Windows ARM64
-const isFFIUnavailable = isWindows && isArm64;
+// The napi-app fixture needs a toolchain that can compile the reported
+// Node headers.
+const isFFIUnavailable = !canBuildNodeAddons();
 
 const symbols = {
   set_instance_data: {
@@ -24,25 +26,31 @@ const symbols = {
   },
 };
 
-let addon1, addon2, cc1, cc2;
+let cc1, cc2;
+
+const nodeApiHeadersInclude = join(__dirname, "napi-app/node_modules/node-api-headers/include");
+
+function needsInstall(): boolean {
+  return !existsSync(nodeApiHeadersInclude);
+}
 
 beforeAll(() => {
   if (isFFIUnavailable) return;
 
-  // build gyp
-  const install = spawnSync({
-    cmd: [bunExe(), "install", "--verbose"],
-    cwd: join(__dirname, "napi-app"),
-    stderr: "inherit",
-    env: bunEnv,
-    stdout: "inherit",
-    stdin: "inherit",
-  });
-  if (!install.success) {
-    throw new Error("build failed");
+  if (needsInstall()) {
+    // build gyp
+    const install = spawnSync({
+      cmd: [bunExe(), "install", "--verbose"],
+      cwd: join(__dirname, "napi-app"),
+      stderr: "inherit",
+      env: bunEnv,
+      stdout: "inherit",
+      stdin: "inherit",
+    });
+    if (!install.success) {
+      throw new Error("build failed");
+    }
   }
-  addon1 = dlopen(join(__dirname, `napi-app/build/Debug/ffi_addon_1.node`), symbols).symbols;
-  addon2 = dlopen(join(__dirname, `napi-app/build/Debug/ffi_addon_2.node`), symbols).symbols;
   // TinyCC's setjmp/longjmp error handling conflicts with ASan.
   // Skip cc() calls on ASan, and catch errors on Windows.
   if (!isASAN) {
@@ -50,12 +58,12 @@ beforeAll(() => {
       cc1 = cc({
         source,
         symbols,
-        flags: `-I${join(__dirname, "napi-app/node_modules/node-api-headers/include")}`,
+        flags: `-I${nodeApiHeadersInclude}`,
       }).symbols;
       cc2 = cc({
         source,
         symbols,
-        flags: `-I${join(__dirname, "napi-app/node_modules/node-api-headers/include")}`,
+        flags: `-I${nodeApiHeadersInclude}`,
       }).symbols;
     } catch (e) {
       // ignore compilation failure on Windows
@@ -64,19 +72,14 @@ beforeAll(() => {
   }
 });
 
-describe.skipIf(isFFIUnavailable)("ffi napi integration", () => {
-  it("has a different napi_env for each ffi library", () => {
-    addon1.set_instance_data(undefined, 5);
-    addon2.set_instance_data(undefined, 6);
-    expect(addon1.get_instance_data()).toBe(5);
-    expect(addon2.get_instance_data()).toBe(6);
-  });
-
-  // broken
-  it.todo("passes values correctly", () => {
-    expect(addon1.get_type(undefined, 123).toString()).toBe("number");
-    expect(addon1.get_type(undefined, "hello").toString()).toBe("string");
-    expect(addon1.get_type(undefined, 190n).toString()).toBe("bigint");
+describe.skipIf(isFFIUnavailable)("cc() bundled N-API headers", () => {
+  it.todoIf(isWindows || isASAN)("resolves <node_api.h> without any -I flag", () => {
+    const { symbols } = cc({
+      source: join(__dirname, "napi-app/bundled_napi_headers.c"),
+      symbols: { passthrough: { args: ["napi_env", "napi_value"], returns: "napi_value" } },
+    });
+    const marker = { marker: 42 };
+    expect(symbols.passthrough(undefined, marker)).toBe(marker);
   });
 });
 

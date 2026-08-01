@@ -1,16 +1,23 @@
 // Avoid using String.prototype.repeat in this file because it's very slow in
 // debug builds of JavaScriptCore
-const MAX_ALLOWED_MEMORY_USAGE = 256;
+// ASAN's quarantine retains freed allocations (default 256 MB) and shadow memory
+// raises the absolute RSS floor, so widen the cap to avoid false positives.
+const isASAN = process.execPath.includes("bun-asan");
+const MAX_ALLOWED_MEMORY_USAGE = isASAN ? 768 : 256;
 const dest = process.argv.at(-1);
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
 
 async function run(inputType) {
   for (let i = 0; i < 100; i++) {
     const largeFile = inputType;
     await Bun.write(dest, largeFile);
     Bun.gc(true);
-    const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-    console.log("Memory usage:", rss, "MB");
-    if (rss > MAX_ALLOWED_MEMORY_USAGE) {
+    const rssMB = (rss() / 1024 / 1024) | 0;
+    console.log("Memory usage:", rssMB, "MB");
+    if (rssMB > MAX_ALLOWED_MEMORY_USAGE) {
       throw new Error("Memory usage is too high");
     }
   }

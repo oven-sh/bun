@@ -20,7 +20,7 @@ create  index.html         html
 create  index.client.tsx   bun
 create  package.json       npm
 📦 Auto-installing 3 detected dependencies
-$ bun --only-missing install classnames react-dom@19 react@19
+$ bun --only-missing install -- classnames react-dom@19 react@19
 bun add *.*.*
 installed classnames@*.*.*
 installed react-dom@*.*.*
@@ -58,7 +58,7 @@ create  index.client.tsx   bun
 create  bunfig.toml        bun
 create  package.json       npm
 📦 Auto-installing 4 detected dependencies
-$ bun --only-missing install tailwindcss bun-plugin-tailwind react-dom@19 react@19
+$ bun --only-missing install -- tailwindcss bun-plugin-tailwind react-dom@19 react@19
 bun add *.*.*
 installed tailwindcss@*.*.*
 installed bun-plugin-tailwind@*.*.*
@@ -89,7 +89,7 @@ create  package.json         npm
 create  tsconfig.json        tsc
 create  components.json      shadcn
 📦 Auto-installing 9 detected dependencies
-$ bun --only-missing install lucide-react tailwindcss bun-plugin-tailwind tailwindcss-animate class-variance-authority clsx tailwind-merge react-dom@19 react@19
+$ bun --only-missing install -- lucide-react tailwindcss bun-plugin-tailwind tailwindcss-animate class-variance-authority clsx tailwind-merge react-dom@19 react@19
 bun add *.*.*
 installed lucide-react@*.*.*
 installed tailwindcss@*.*.*
@@ -102,7 +102,7 @@ installed react-dom@*.*.*
 installed react@*.*.*
 12 packages installed [*ms]
 😎 Setting up shadcn/ui components
-$ bun x shadcn@canary add -y button badge card
+$ bun x shadcn@canary add -y -- button badge card
 - components/ui/button.tsx
 - components/ui/badge.tsx
 - components/ui/card.tsx
@@ -149,7 +149,7 @@ create  index.html         html
 create  index.client.tsx   bun
 create  package.json       npm
 📦 Auto-installing 3 detected dependencies
-$ bun --only-missing install classnames react-dom@19 react@19
+$ bun --only-missing install -- classnames react-dom@19 react@19
 bun add *.*.*
 installed classnames@*.*.*
 installed react-dom@*.*.*
@@ -186,7 +186,7 @@ create  index.client.tsx   bun
 create  bunfig.toml        bun
 create  package.json       npm
 📦 Auto-installing 4 detected dependencies
-$ bun --only-missing install tailwindcss bun-plugin-tailwind react-dom@19 react@19
+$ bun --only-missing install -- tailwindcss bun-plugin-tailwind react-dom@19 react@19
 bun add *.*.*
 installed tailwindcss@*.*.*
 installed bun-plugin-tailwind@*.*.*
@@ -217,7 +217,7 @@ create  package.json         npm
 create  tsconfig.json        tsc
 create  components.json      shadcn
 📦 Auto-installing 9 detected dependencies
-$ bun --only-missing install lucide-react tailwindcss bun-plugin-tailwind tailwindcss-animate class-variance-authority clsx tailwind-merge react-dom@19 react@19
+$ bun --only-missing install -- lucide-react tailwindcss bun-plugin-tailwind tailwindcss-animate class-variance-authority clsx tailwind-merge react-dom@19 react@19
 bun add *.*.*
 installed lucide-react@*.*.*
 installed tailwindcss@*.*.*
@@ -230,7 +230,7 @@ installed react-dom@*.*.*
 installed react@*.*.*
 12 packages installed [*ms]
 😎 Setting up shadcn/ui components
-$ bun x shadcn@canary add -y button badge card
+$ bun x shadcn@canary add -y -- button badge card
 - components/ui/button.tsx
 - components/ui/badge.tsx
 - components/ui/card.tsx

@@ -455,15 +455,23 @@ describe("v8 date parser", () => {
     let beforeOct1582GregorianTransition = new Date("1582-01-01T00:00Z");
     let afterOct1582GregorianTransition = new Date("1583-01-01T00:00Z");
 
-    expect(beforeOct1582GregorianTransition.toLocaleDateString("en-US", { timeZone: "UTC", calendar: "gregory" })).toBe(
-      "1/1/1582",
-    );
-    expect(beforeOct1582GregorianTransition.toLocaleDateString("en-US", { timeZone: "UTC", calendar: "iso8601" })).toBe(
-      "1/1/1582",
-    );
-    expect(afterOct1582GregorianTransition.toLocaleDateString("en-US", { timeZone: "UTC", calendar: "iso8601" })).toBe(
-      "1/1/1583",
-    );
+    // The regression: with calendar "iso8601" (which is proleptic Gregorian),
+    // dates before the Oct 1582 Julian→Gregorian transition were getting a
+    // 10-day Julian offset applied. The original V8 test asserted the en-US
+    // formatted string, but on macOS Bun links the system libicucore, whose
+    // CLDR data varies by OS release — older ICU formats the iso8601 calendar
+    // as "1/1/1582", newer (macOS 26+, and current upstream V8) as
+    // "1582-01-01". Assert the year/month/day values instead so the calendar
+    // behaviour is checked without depending on the locale's date pattern.
+    const ymd = (date, calendar) => {
+      const parts = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", calendar }).formatToParts(date);
+      const get = type => +parts.find(p => p.type === type).value;
+      return { year: get("year"), month: get("month"), day: get("day") };
+    };
+
+    expect(ymd(beforeOct1582GregorianTransition, "gregory")).toEqual({ year: 1582, month: 1, day: 1 });
+    expect(ymd(beforeOct1582GregorianTransition, "iso8601")).toEqual({ year: 1582, month: 1, day: 1 });
+    expect(ymd(afterOct1582GregorianTransition, "iso8601")).toEqual({ year: 1583, month: 1, day: 1 });
   });
 
   test("random invalid dates in JSC", () => {

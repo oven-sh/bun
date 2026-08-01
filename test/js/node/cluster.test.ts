@@ -1,6 +1,7 @@
-import { bunEnv, bunRun, joinP, tempDirWithFiles } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, bunRun, joinP, tempDirWithFiles } from "harness";
 
-test("cloneable and transferable equals", () => {
+test.concurrent("cloneable and transferable equals", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "index.ts": `
 import cluster from "cluster";
@@ -30,10 +31,10 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  bunRun(joinP(dir, "index.ts"), bunEnv, true);
+  expect(await bunRun(joinP(dir, "index.ts"), bunEnv)).toSpawn();
 });
 
-test("cloneable and non-transferable not-equals (BunFile)", () => {
+test.concurrent("cloneable and non-transferable not-equals (BunFile)", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "index.ts": `
 import cluster from "cluster";
@@ -75,10 +76,10 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  bunRun(joinP(dir, "index.ts"), bunEnv, true);
+  expect(await bunRun(joinP(dir, "index.ts"), bunEnv)).toSpawn();
 });
 
-test("cloneable and non-transferable not-equals (net.BlockList)", () => {
+test.concurrent("cloneable and non-transferable not-equals (net.BlockList)", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "index.ts": `
 import cluster from "cluster";
@@ -118,5 +119,70 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  bunRun(joinP(dir, "index.ts"), bunEnv, true);
+  expect(await bunRun(joinP(dir, "index.ts"), bunEnv)).toSpawn();
+});
+
+test.concurrent("non-cluster parent ignores cluster-internal IPC messages from a forked child", async () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "parent.ts": `
+const { fork } = require("node:child_process");
+const path = require("node:path");
+
+// Plain child_process.fork — this process never touches node:cluster's
+// primary API, so no cluster message handler is registered for the child.
+const child = fork(path.join(__dirname, "child.ts"), [], {
+  env: { ...process.env, NODE_UNIQUE_ID: "1" },
+});
+
+child.on("message", msg => {
+  if (msg === "regular message") {
+    console.log("P received regular message");
+    child.kill();
+    process.exit(0);
+  }
+});
+
+child.on("exit", (code, signal) => {
+  // The child must stay alive until the parent has seen the regular message.
+  console.error("child exited early", code, signal);
+  process.exit(1);
+});
+`,
+    "child.ts": `
+// With NODE_UNIQUE_ID set, loading node:cluster makes this process behave as a
+// cluster worker: it immediately writes a cluster-internal {act:"online"} IPC
+// frame to its parent, even though the parent never registered node:cluster's
+// primary callback. The parent must drop that frame instead of crashing.
+require("node:cluster");
+process.send("regular message");
+`,
+  });
+  const { stdout, exitCode } = await bunRun(joinP(dir, "parent.ts"), bunEnv);
+  expect(stdout).toContain("P received regular message");
+  expect(exitCode).toBe(0);
+});
+
+test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
+  // `kHandle` is a private symbol that only `cluster.fork()` sets, so a
+  // `cluster.Worker({ process })` built around a plain object (how Node's own
+  // tests mock workers) hands `undefined` to the native `sendHelper` binding.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const cluster = require("node:cluster");
+        const fake = { on() {}, disconnect() {}, kill() {}, send() { return false; } };
+        const worker = new cluster.Worker({ process: fake });
+        const returned = worker.disconnect();
+        console.log("returned self:", returned === worker);
+      `,
+    ],
+    env: bunEnv,
+    // Inherited so that on regression the child's abort output reaches the
+    // runner log instead of filling an unread pipe.
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "returned self: true", exitCode: 0 });
 });

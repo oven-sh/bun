@@ -10,36 +10,34 @@
  * export BUN_DEV_SERVER_TEST_TEMP="/Users/clo/scratch/dev"
  */
 import { Bake, BunFile, Subprocess } from "bun";
-import fs, { readFileSync, realpathSync } from "node:fs";
-import path from "node:path";
-import os from "node:os";
-import assert from "node:assert";
 import { Matchers } from "bun:test";
+import assert from "node:assert";
 import { EventEmitter } from "node:events";
+import fs, { readFileSync, realpathSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 // @ts-ignore
-import { dedent } from "../bundler/expectBundled.ts";
-import { bunEnv, bunExe, isASAN, isCI, isWindows, mergeWindowEnvs, tempDirWithFiles } from "harness";
 import { expect } from "bun:test";
+import { bunEnv, bunExe, isASAN, isCI, isWindows, mergeWindowEnvs, tempDirWithFiles } from "harness";
+import { dedent } from "../bundler/expectBundled.ts";
 import { exitCodeMapStrings } from "./exit-code-map.mjs";
 
-const ASAN_TIMEOUT_MULTIPLIER = isASAN ? 3 : 1;
-
 const isDebugBuild = Bun.version.includes("debug");
+
+/**
+ * Multiplier for internal wait timeouts (waitForLine, expectMessage, etc.)
+ * to account for slow CI machines, ASAN overhead, and debug builds. On a
+ * release Linux CI box the Node client subprocess needs to start, import
+ * happy-dom, fetch the page, parse HTML, run the bundle, and connect a
+ * WebSocket — 1 second is not enough headroom.
+ */
+export const WAIT_MULTIPLIER = (isDebugBuild ? 3 : 1) * (isASAN ? 3 : 1) * (isCI ? 2 : 1);
 
 const verboseSynchronization = process.env.BUN_DEV_SERVER_VERBOSE_SYNC
   ? (arg: string) => {
       console.log("\x1b[36m" + arg + "\x1b[0m");
     }
   : () => {};
-
-/**
- * Can be set in fast development environments to improve iteration time.
- * In CI/Windows it appears that sometimes these tests dont wait enough
- * for things to happen, so the extra delay reduces flakiness.
- *
- * Needs much more investigation.
- */
-const fastBatches = !!process.env.BUN_DEV_SERVER_FAST_BATCHES;
 
 /**
  * Set to `ALL` to run all stress tests for 10 minutes each.
@@ -135,6 +133,10 @@ export interface DevServerTest {
    * Only run this test.
    */
   only?: boolean;
+  /**
+   * Extra environment variables for the spawned dev-server process.
+   */
+  env?: Record<string, string>;
 }
 
 let interactive = false;
@@ -322,10 +324,9 @@ export class Dev extends EventEmitter {
         } else if (wantsHmrEvent) {
           await Promise.race([seenFiles.promise]);
         }
-        if (!fastBatches) {
-          // Wait an extra delay to avoid double-triggering events.
-          await Bun.sleep(300);
-        }
+        // One Bun.write can surface as several watcher events (notably on
+        // Windows); let them coalesce so releasing the batch bundles once.
+        await Bun.sleep(50);
 
         dev.off("watch_synchronization", onSeenFiles);
 
@@ -446,29 +447,55 @@ export class Dev extends EventEmitter {
       let timer: NodeJS.Timer | null = null;
       let clientWaits = 0;
       let seenMainEvent = false;
-      function cleanupAndResolve() {
-        verboseSynchronization("Cleaning up and resolving");
+      function cleanup() {
         timer !== null && clearTimeout(timer);
         dev.off("watch_synchronization", onEvent);
+        dev.output.off("panic", onPanic);
         for (const dispose of disposes) {
           dispose();
         }
-        if (fastBatches) resolve();
-        else setTimeout(resolve, 250);
       }
+      function cleanupAndResolve() {
+        verboseSynchronization("Cleaning up and resolving");
+        cleanup();
+        resolve();
+      }
+      function onPanic() {
+        cleanup();
+        reject(new Error("DevServer crashed while waiting for hot reload"));
+      }
+      if (dev.panicked) {
+        return reject(new Error("DevServer crashed while waiting for hot reload"));
+      }
+      dev.output.on("panic", onPanic);
       const disposes = new Set<() => void>();
+      function maybeResolve() {
+        // `>=` (not `===`): if the caller did unsynchronized writes before
+        // this batch, straggler received-hmr-event IPCs from those bundles
+        // can arrive after this listener is registered and push clientWaits
+        // past connectedClients.size. Strict equality would then never match.
+        if (seenMainEvent && clientWaits >= dev.connectedClients.size) {
+          cleanupAndResolve();
+        }
+      }
       for (const client of dev.connectedClients) {
         const socketEventHandler = () => {
           verboseSynchronization("Client received event");
           clientWaits++;
-          if (seenMainEvent && clientWaits === dev.connectedClients.size) {
-            client.off("received-hmr-event", socketEventHandler);
-            cleanupAndResolve();
-          }
+          maybeResolve();
+        };
+        // A client that crashes applying the update never acks; reject so the
+        // failure surfaces at the dev.write() call instead of timing out.
+        const exitHandler = (code: number | string) => {
+          cleanup();
+          const mapped = exitCodeMapStrings[code];
+          reject(new Error(`Client exited while applying hot update${mapped ? `: ${mapped}` : ` (${code})`}`));
         };
         client.on("received-hmr-event", socketEventHandler);
+        client.on("exit", exitHandler);
         disposes.add(() => {
           client.off("received-hmr-event", socketEventHandler);
+          client.off("exit", exitHandler);
         });
       }
       async function onEvent(kind: WatchSynchronization) {
@@ -479,7 +506,7 @@ export class Dev extends EventEmitter {
         } else if (kind === WatchSynchronization.AnyBuildFinishedWaitForWebSockets) {
           verboseSynchronization("Need to wait for (" + clientWaits + "/" + dev.connectedClients.size + ") clients");
           seenMainEvent = true;
-          if (clientWaits === dev.connectedClients.size) {
+          if (clientWaits >= dev.connectedClients.size) {
             cleanupAndResolve();
           }
         } else if (kind === WatchSynchronization.ResultDidNotBundle) {
@@ -508,22 +535,63 @@ export class Dev extends EventEmitter {
     } = {},
   ) {
     await maybeWaitInteractive("open client " + url);
-    const client = new Client(new URL(url, this.baseUrl).href, {
-      storeHotChunks: options.storeHotChunks,
-      hmr: this.nodeEnv === "development",
-      expectErrors: !!options.errors,
-      allowUnlimitedReloads: options.allowUnlimitedReloads,
-    });
-    const onPanic = () => client.output.emit("panic");
-    this.output.on("panic", onPanic);
+    const href = new URL(url, this.baseUrl).href;
+    const spawnAndWait = async () => {
+      const client = new Client(href, {
+        storeHotChunks: options.storeHotChunks,
+        hmr: this.nodeEnv === "development",
+        expectErrors: !!options.errors,
+        allowUnlimitedReloads: options.allowUnlimitedReloads,
+      });
+      const onPanic = () => client.output.emit("panic");
+      this.output.on("panic", onPanic);
+      if (this.nodeEnv === "development") {
+        try {
+          await client.output.waitForLine(hmrClientInitRegex);
+        } catch (e) {
+          this.output.off("panic", onPanic);
+          try {
+            await client[Symbol.asyncDispose]();
+          } catch {}
+          throw e;
+        }
+      }
+      return { client, onPanic };
+    };
+
+    // On Windows CI in particular, the Node client subprocess occasionally
+    // dies during spawn/happy-dom-import before producing any output. This
+    // is transient (passes on retry), so retry the subprocess up to twice
+    // here instead of bubbling it up as a test failure. A genuine bundle
+    // or runtime error reproduces on retry and fails the test normally.
+    let client: Client;
+    let onPanic: () => void;
+    let lastError: unknown;
+    let attempt = 0;
+    while (true) {
+      try {
+        ({ client, onPanic } = await spawnAndWait());
+        break;
+      } catch (e) {
+        lastError = e;
+        attempt++;
+        if (this.panicked || attempt > 2) throw lastError;
+        console.warn(
+          `\x1b[33m[bake-harness] client subprocess failed to connect (attempt ${attempt}): ${(e as Error)?.message}. Retrying.\x1b[0m`,
+        );
+      }
+    }
+
     if (this.nodeEnv === "development") {
       try {
-        await client.output.waitForLine(hmrClientInitRegex);
+        await client.expectErrorOverlay(options.errors ?? []);
       } catch (e) {
-        client[Symbol.asyncDispose]();
+        this.output.off("panic", onPanic);
+        try {
+          await client[Symbol.asyncDispose]();
+        } catch {}
         throw e;
       }
-      await client.expectErrorOverlay(options.errors ?? []);
     }
     this.connectedClients.add(client);
     client.on("exit", () => {
@@ -897,7 +965,7 @@ export class Client extends EventEmitter {
           resolver.resolve();
           this.expectingReload = false;
         },
-        interactive ? interactive_timeout : 1000,
+        interactive ? interactive_timeout : 2000 * WAIT_MULTIPLIER,
       );
       await cb();
       await resolver.promise;
@@ -948,7 +1016,7 @@ export class Client extends EventEmitter {
             t = null;
             resolver.resolve();
           },
-          interactive ? interactive_timeout : 1000,
+          interactive ? interactive_timeout : 2000 * WAIT_MULTIPLIER,
         );
         await resolver.promise;
         if (t) clearTimeout(t);
@@ -1043,10 +1111,13 @@ export class Client extends EventEmitter {
         }
         this.once("message", onEvent);
         this.once("exit", onEvent);
-        let t: any = setTimeout(() => {
-          t = null;
-          resolver.resolve();
-        }, 1000);
+        let t: any = setTimeout(
+          () => {
+            t = null;
+            resolver.resolve();
+          },
+          interactive ? interactive_timeout : 2000 * WAIT_MULTIPLIER,
+        );
         await resolver.promise;
         if (t) clearTimeout(t);
         this.off("message", onEvent);
@@ -1138,7 +1209,7 @@ export class Client extends EventEmitter {
           t = null;
           resolver.reject(new Error("Timeout waiting for HMR chunk"));
         },
-        interactive ? interactive_timeout : 1000,
+        interactive ? interactive_timeout : 2000 * WAIT_MULTIPLIER,
       );
       await resolver.promise;
       if (t) clearTimeout(t);
@@ -1372,8 +1443,21 @@ if (!fs.existsSync(tempDir)) {
   fs.mkdirSync(tempDir, { recursive: true });
 }
 
-// Create a cache directory for React dependencies
-const reactCacheDir = path.join(tempDir, ".react-cache");
+// react-server-dom-bun's only published build was compiled against this react build. RSC
+// packages only pair with the exact react they were built for, so pin all three instead of
+// tracking the daily-moving `experimental` dist-tag (whose 2026-07-01 build broke the suite).
+const REACT_EXPERIMENTAL_VERSION = "0.0.0-experimental-603e6108-20241029";
+// Bun.$ expands an array into separate escaped arguments, so both install sites share it.
+const REACT_INSTALL_PACKAGES = [
+  `react@${REACT_EXPERIMENTAL_VERSION}`,
+  `react-dom@${REACT_EXPERIMENTAL_VERSION}`,
+  "react-server-dom-bun",
+  `react-refresh@${REACT_EXPERIMENTAL_VERSION}`,
+];
+
+// Cache the installed React packages, keyed on the pinned build so a stale cache under a
+// persistent BUN_DEV_SERVER_TEST_TEMP is repopulated whenever the pin changes.
+const reactCacheDir = path.join(tempDir, `.react-cache-${REACT_EXPERIMENTAL_VERSION}`);
 if (!fs.existsSync(reactCacheDir)) {
   fs.mkdirSync(reactCacheDir, { recursive: true });
 }
@@ -1404,7 +1488,7 @@ async function installReactWithCache(root: string) {
     }
   } else {
     // Install fresh and populate cache
-    await Bun.$`${bunExe()} i --linker=hoisted react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental && ${bunExe()} install --linker=hoisted`
+    await Bun.$`${bunExe()} i --linker=hoisted ${REACT_INSTALL_PACKAGES} && ${bunExe()} install --linker=hoisted`
       .cwd(root)
       .env({ ...bunEnv })
       .throws(true);
@@ -1453,7 +1537,7 @@ export async function ensureReactCache(): Promise<void> {
 
         try {
           // Install React packages
-          await Bun.$`${bunExe()} i --linker=hoisted react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental && ${bunExe()} install --linker=hoisted`
+          await Bun.$`${bunExe()} i --linker=hoisted ${REACT_INSTALL_PACKAGES} && ${bunExe()} install --linker=hoisted`
             .cwd(tempInstallDir)
             .env({ ...bunEnv })
             .throws(true);
@@ -1576,7 +1660,10 @@ class OutputLineStream extends EventEmitter {
               line.includes("collection first used here") ||
               line.includes("allocator mismatch") ||
               line.includes("assertion failure") ||
-              line.includes("race condition")
+              line.includes("race condition") ||
+              line.includes("AddressSanitizer") ||
+              line.includes("ThreadSanitizer") ||
+              line.includes("==ABORTING")
             ) {
               // Tell consumers to wait for the process to exit
               this.panicked = true;
@@ -1600,7 +1687,7 @@ class OutputLineStream extends EventEmitter {
 
   waitForLine(
     regex: RegExp,
-    timeout = interactive ? interactive_timeout : (isWindows ? 5000 : 1000) * (Bun.version.includes("debug") ? 3 : 1),
+    timeout = interactive ? interactive_timeout : (isWindows ? 10_000 : 5_000) * WAIT_MULTIPLIER,
   ): Promise<RegExpMatchArray> {
     if (this.panicked) {
       return new Promise((_, reject) => {
@@ -1622,6 +1709,9 @@ class OutputLineStream extends EventEmitter {
       const onLine = (line: string) => {
         let match;
         if ((match = line.match(regex))) {
+          // Mark everything up to and including this line as consumed so
+          // a subsequent waitForLine scanning the buffer does not re-match it.
+          this.cursor = this.lines.length;
           reset();
           setTimeout(() => {
             resolve(match);
@@ -1630,16 +1720,42 @@ class OutputLineStream extends EventEmitter {
       };
       const onClose = () => {
         reset();
-        if (exitCodeMapStrings[this.exitCode]) {
-          reject(new Error(exitCodeMapStrings[this.exitCode]));
-        } else {
-          reject(new Error("Process exited before line " + JSON.stringify(regex.toString()) + " was found"));
-        }
+        // The stdout/stderr readers often see EOF a tick before
+        // `proc.exited` resolves and writes `this.exitCode`, so defer
+        // the read to get the real code instead of `null`.
+        queueMicrotask(() => {
+          if (exitCodeMapStrings[this.exitCode]) {
+            reject(new Error(exitCodeMapStrings[this.exitCode]));
+          } else {
+            const tail = this.lines.slice(-10).join("\n");
+            reject(
+              new Error(
+                `Process exited (code=${this.exitCode}) before line ${JSON.stringify(regex.toString())} was found.` +
+                  (tail ? ` Last output:\n${tail}` : " No output."),
+              ),
+            );
+          }
+        });
       };
       let panicked = false;
       this.on("line", onLine);
       this.on("close", onClose);
       this.on("panic", () => (panicked = true));
+      // Scan lines that were already buffered before this call. Every
+      // current call site registers synchronously after creating the
+      // stream, but an `await` between creation and `waitForLine` would
+      // otherwise silently drop the match and time out.
+      for (; this.cursor < this.lines.length; this.cursor++) {
+        if (ran) break;
+        const line = this.lines[this.cursor];
+        let match;
+        if ((match = line.match(regex))) {
+          this.cursor++;
+          reset();
+          resolve(match);
+          return;
+        }
+      }
       timer = setTimeout(() => {
         if (!ran) {
           reset();
@@ -1859,6 +1975,7 @@ function testImpl<T extends DevServerTest>(
           // BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
           // BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
           BUN_ASSUME_PERFECT_INCREMENTAL: "0",
+          ...options.env,
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],
@@ -1917,9 +2034,6 @@ function testImpl<T extends DevServerTest>(
       return options;
     }
 
-    // asan makes everything slower
-    const asanTimeoutMultiplier = isASAN ? 3 : 1;
-
     (options.only ? jest.test.only : jest.test)(
       name,
       run,
@@ -1927,10 +2041,7 @@ function testImpl<T extends DevServerTest>(
         ? 11 * 60 * 1000
         : interactive
           ? interactive_timeout
-          : (options.timeoutMultiplier ?? 1) *
-            (isWindows ? 15_000 : 10_000) *
-            (Bun.version.includes("debug") ? 2 : 1) *
-            asanTimeoutMultiplier,
+          : (options.timeoutMultiplier ?? 1) * (isWindows ? 45_000 : 30_000) * WAIT_MULTIPLIER,
     );
     return options;
   } catch {
@@ -1966,7 +2077,7 @@ function logErr(err: any) {
   }
 }
 
-// Loosely modelled after the widget system in @paperclover/console
+// Loosely modelled after the widget system in @clo/lib/log
 // Only works with a single log
 let hasTrailingLog = false;
 class TrailingLog {

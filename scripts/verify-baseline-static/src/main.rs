@@ -25,7 +25,7 @@ use object::{Object, ObjectSection, ObjectSymbol, SectionKind, SymbolKind, Symbo
 ///
 /// Nehalem (Core i7, 2008) is the last Intel microarch before AVX. Bun's
 /// baseline build targets it via `-march=nehalem` (cmake/CompilerFlags.cmake:33)
-/// and `std.Target.x86.cpu.nehalem` (build.zig).
+/// and the Rust crates' `target-cpu=nehalem` equivalent.
 ///
 /// Notably ABSENT: AES-NI and PCLMULQDQ are Westmere (2010), not Nehalem.
 /// This trips people up because they're legacy-encoded (no VEX prefix) and
@@ -152,6 +152,15 @@ fn is_harmless_on_nehalem(insn: &Instruction) -> bool {
         return true;
     }
 
+    // CLDEMOTE encodes in hint/NOP space (0f 1c /0) and is architecturally
+    // treated as a NOP on CPUs that don't enumerate it (SDM vol. 2A). Only
+    // ever observed as a data-in-.text misdecode (the CRT strspn family's
+    // switch-table RVAs, same as RTM below), but the hint-space encoding
+    // makes it harmless regardless of provenance.
+    if insn.mnemonic() == Mnemonic::Cldemote {
+        return true;
+    }
+
     false
 }
 
@@ -164,9 +173,15 @@ fn is_allowed(feat: CpuidFeature) -> bool {
 /// instruction from a defunct or privileged ISA extension.
 ///
 /// 3DNow! was removed from silicon by 2010. SMM's RSM is ring-0. Cyrix/Geode/
-/// Padlock never had a mainstream toolchain. No compiler targeting x86-64 in
-/// any configuration emits these — their presence in a scan means a linear
-/// sweep walked through inline data.
+/// Padlock never had a mainstream toolchain. TSX (RTM XBEGIN/XABORT/XEND,
+/// and XTEST which iced tags HLE_or_RTM) is never compiler-emitted without
+/// `_xbegin()` intrinsics, no Bun dependency uses it, and Intel deprecated it
+/// (SDM vol. 1 2.5: future parts drop it; existing parts disable it via
+/// microcode for TAA). When a scan sees RTM it is the MSVC CRT's inline RVA
+/// jump tables decoding as `C7 F8` XBEGIN / `C6 F8` XABORT — see the
+/// strcspn/strspn/strpbrk note in allowlist-x64-windows.txt. No compiler
+/// targeting x86-64 in any configuration emits these — their presence in a
+/// scan means a linear sweep walked through inline data.
 ///
 /// MSVC inlines jump tables in .text (LLVM puts them in .rodata), so this
 /// matters on PE more than ELF.
@@ -192,6 +207,8 @@ fn is_impossible_feature(feat: CpuidFeature) -> bool {
             | F::PADLOCK_RNG
             | F::PADLOCK_GMI
             | F::PADLOCK_UNDOC
+            | F::RTM
+            | F::HLE_or_RTM
     )
 }
 
@@ -222,6 +239,13 @@ fn is_impossible_feature(feat: CpuidFeature) -> bool {
 ///   LLVM's per-build internalisation ID (e.g. `__xgetbv.llvm.21110093...`).
 ///   Pure noise.
 ///
+/// - trailing `.[0-9]+` suffix → stripped
+///   LLVM's collision-avoidance rename when (regular-)LTO internalisation
+///   pulls two same-named locals into one module (e.g.
+///   `...Finder14with_pair_impl.1859`). The number is per-build noise, just
+///   like `.llvm.NNNN`. Mangled C/C++/Rust names never contain `.`, so this
+///   only ever touches compiler-generated suffixes.
+///
 /// Non-Rust symbols pass through unchanged: the `Cs[alnum]+_` pattern is
 /// specific enough not to collide with C/C++/asm names in practice (it
 /// requires an uppercase C immediately followed by lowercase s and a
@@ -233,6 +257,18 @@ fn canonicalize_symbol(name: &str) -> String {
         Some(i) if name[i + 6..].bytes().all(|b| b.is_ascii_digit()) => &name[..i],
         _ => name,
     };
+
+    // Then strip plain trailing `.NNNN` LTO-rename suffixes (possibly
+    // stacked, e.g. `foo.12.34`).
+    let mut base = base;
+    while let Some(i) = base.rfind('.') {
+        let digits = &base[i + 1..];
+        if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+            base = &base[..i];
+        } else {
+            break;
+        }
+    }
 
     // Scan for Cs<base62>_ and replace. Hand-rolled rather than pulling in
     // the regex crate for one pattern. The disambiguator is base-62

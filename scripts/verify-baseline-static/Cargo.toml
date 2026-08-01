@@ -3,6 +3,10 @@ name = "verify-baseline-static"
 version = "0.1.0"
 edition = "2021"
 
+# Standalone tool — opt out of the repo-root [workspace] so this builds
+# independently in CI with its own Cargo.lock and [profile.release].
+[workspace]
+
 [dependencies]
 iced-x86 = { version = "1.21", default-features = false, features = ["decoder", "std", "instr_info"] }
 object = { version = "0.36", default-features = false, features = ["read", "std", "elf", "pe"] }

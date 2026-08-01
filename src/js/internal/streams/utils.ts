@@ -183,8 +183,9 @@ function isWritableErrored(stream) {
     return null;
   }
 
-  if (stream.writableErrored) {
-    return stream.writableErrored;
+  const writableErrored = stream.writableErrored;
+  if (writableErrored) {
+    return writableErrored;
   }
 
   return stream._writableState?.errored ?? null;
@@ -195,8 +196,9 @@ function isReadableErrored(stream) {
     return null;
   }
 
-  if (stream.readableErrored) {
-    return stream.readableErrored;
+  const readableErrored = stream.readableErrored;
+  if (readableErrored) {
+    return readableErrored;
   }
 
   return stream._readableState?.errored ?? null;
@@ -207,8 +209,9 @@ function isClosed(stream) {
     return null;
   }
 
-  if (typeof stream.closed === "boolean") {
-    return stream.closed;
+  const closed = stream.closed;
+  if (typeof closed === "boolean") {
+    return closed;
   }
 
   const wState = stream._writableState;
@@ -218,8 +221,9 @@ function isClosed(stream) {
     return wState?.closed || rState?.closed;
   }
 
-  if (typeof stream._closed === "boolean" && isOutgoingMessage(stream)) {
-    return stream._closed;
+  const _closed = stream._closed;
+  if (typeof _closed === "boolean" && isOutgoingMessage(stream)) {
+    return _closed;
   }
 
   return null;

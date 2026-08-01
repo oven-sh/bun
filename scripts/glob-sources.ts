@@ -36,13 +36,17 @@ const patterns = {
   bunError: {
     paths: ["packages/bun-error/*.{json,ts,tsx,css}", "packages/bun-error/img/*"],
   },
+  /** `*.string-map.ts` — input to generate-string-map codegen */
+  stringMaps: {
+    paths: ["src/**/*.string-map.ts"],
+  },
   /** `src/node-fallbacks/*.js` */
   nodeFallbacks: {
     paths: ["src/node-fallbacks/*.js"],
   },
   /** `*.classes.ts` — input to generate-classes codegen */
   zigGeneratedClasses: {
-    paths: ["src/bun.js/*.classes.ts", "src/bun.js/{api,node,test,webcore}/*.classes.ts"],
+    paths: ["src/**/*.classes.ts"],
   },
   /** built-in modules bundled at build time */
   js: {
@@ -54,8 +58,10 @@ const patterns = {
   },
   /** server-rendering runtime bundled into binary */
   bakeRuntime: {
-    paths: ["src/bake/*.ts", "src/bake/*/*.{ts,css}"],
-    exclude: ["src/bake/generated.ts"],
+    // dev_server/mod.rs is read by bake-codegen.ts to derive the
+    // MessageId/IncomingMessageId const-enums in generated.ts.
+    paths: ["src/runtime/bake/*.ts", "src/runtime/bake/*/*.{ts,css}", "src/runtime/bake/dev_server/mod.rs"],
+    exclude: ["src/runtime/bake/generated.ts"],
   },
   /** legacy bindgen input */
   bindgen: {
@@ -69,29 +75,35 @@ const patterns = {
   bindgenV2Internal: {
     paths: ["src/codegen/bindgenv2/**/*.ts"],
   },
-  /** NOT filtered; includes codegen-written files (see bun.ts) */
-  zig: {
-    paths: ["src/**/*.zig"],
+  /**
+   * all `*.rs` + workspace manifests — implicit inputs to the cargo step.
+   * `rust-toolchain.toml` is included so a nightly bump invalidates the
+   * staticlib (cargo's own fingerprinting then forces a full rebuild).
+   */
+  rust: {
+    paths: ["src/**/*.rs", "src/**/Cargo.toml", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml"],
   },
   /** all `*.cpp` compiled into bun (bindings, webcore, v8 shim, usockets) */
   cxx: {
     paths: [
       "src/io/*.cpp",
-      "src/bun.js/modules/*.cpp",
-      "src/bun.js/bindings/*.cpp",
-      "src/bun.js/bindings/webcore/*.cpp",
-      "src/bun.js/bindings/sqlite/*.cpp",
-      "src/bun.js/bindings/webcrypto/*.cpp",
-      "src/bun.js/bindings/webcrypto/*/*.cpp",
-      "src/bun.js/bindings/node/*.cpp",
-      "src/bun.js/bindings/node/crypto/*.cpp",
-      "src/bun.js/bindings/node/http/*.cpp",
-      "src/bun.js/bindings/v8/*.cpp",
-      "src/bun.js/bindings/v8/shim/*.cpp",
-      "src/bun.js/webview/*.cpp",
-      "src/bake/*.cpp",
-      "src/deps/*.cpp",
-      "src/vm/*.cpp",
+      "src/jsc/modules/*.cpp",
+      "src/jsc/bindings/*.cpp",
+      "src/jsc/bindings/webcore/*.cpp",
+      "src/jsc/bindings/webcore/streams/*.cpp",
+      "src/jsc/bindings/sqlite/*.cpp",
+      "src/jsc/bindings/webcrypto/*.cpp",
+      "src/jsc/bindings/webcrypto/*/*.cpp",
+      "src/jsc/bindings/node/*.cpp",
+      "src/jsc/bindings/node/crypto/*.cpp",
+      "src/jsc/bindings/node/http/*.cpp",
+      "src/jsc/bindings/v8/*.cpp",
+      "src/jsc/bindings/v8/shim/*.cpp",
+      "src/runtime/webview/*.cpp",
+      "src/runtime/bake/*.cpp",
+      "src/uws_sys/*.cpp",
+      "src/simdutf_sys/*.cpp",
+      "src/jsc/bindings/vm/*.cpp",
       "packages/bun-usockets/src/crypto/*.cpp",
     ],
   },
@@ -102,10 +114,10 @@ const patterns = {
       "packages/bun-usockets/src/eventing/*.c",
       "packages/bun-usockets/src/internal/*.c",
       "packages/bun-usockets/src/crypto/*.c",
-      "src/bun.js/bindings/uv-posix-polyfills.c",
-      "src/bun.js/bindings/uv-posix-stubs.c",
+      "src/jsc/bindings/uv-posix-polyfills.c",
+      "src/jsc/bindings/uv-posix-stubs.c",
       "src/*.c",
-      "src/bun.js/bindings/node/http/llhttp/*.c",
+      "src/jsc/bindings/node/http/llhttp/*.c",
     ],
   },
 } satisfies Record<string, SourcePattern>;
@@ -123,12 +135,19 @@ export function globAllSources(): Sources {
   const result = {} as Sources;
 
   for (const [field, spec] of Object.entries(patterns) as [keyof Sources, SourcePattern][]) {
-    const excludes = new Set((spec.exclude ?? []).map(normalize));
+    const excludeExact = new Set<string>();
+    const excludePrefix: string[] = [];
+    for (const ex of (spec.exclude ?? []).map(normalize)) {
+      if (ex.endsWith("/**"))
+        excludePrefix.push(ex.slice(0, -2)); // keep trailing '/'
+      else excludeExact.add(ex);
+    }
     const files: string[] = [];
     for (const pattern of spec.paths) {
       for (const rel of globSync(pattern, { cwd: root })) {
         const normalized = normalize(rel);
-        if (excludes.has(normalized)) continue;
+        if (excludeExact.has(normalized)) continue;
+        if (excludePrefix.some(p => normalized.startsWith(p))) continue;
         files.push(resolve(root, normalized));
       }
     }

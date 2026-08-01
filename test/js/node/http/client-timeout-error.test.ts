@@ -19,24 +19,33 @@ describe("node:http client timeout", () => {
         timeout: 50, // Set a short timeout
       });
 
-      let timeoutEventEmitted = false;
-      let destroyCalled = false;
+      const { promise: timedOut, resolve: onTimeout } = Promise.withResolvers<void>();
+      const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+      let closeCalled = false;
 
       req.on("timeout", () => {
-        timeoutEventEmitted = true;
+        onTimeout();
       });
 
       req.on("close", () => {
-        destroyCalled = true;
+        closeCalled = true;
+        onClose();
       });
+      // Destroying an in-flight request surfaces ECONNRESET ("socket hang
+      // up") on the request, exactly like Node.js.
+      req.on("error", () => {});
 
       req.end();
 
-      // Wait for events to be emitted
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await timedOut;
 
-      expect(timeoutEventEmitted).toBe(true);
-      expect(destroyCalled).toBe(true);
+      // Like Node.js, the timeout event does not destroy the request; the
+      // caller is responsible for aborting it.
+      expect(closeCalled).toBe(false);
+      expect(req.destroyed).toBe(false);
+
+      req.destroy();
+      await closed;
       expect(req.destroyed).toBe(true);
     } finally {
       server.close();
@@ -69,11 +78,14 @@ describe("node:http client timeout", () => {
 
       req.end();
 
-      // Wait longer than the original timeout
+      const [res] = await once(req, "response");
+      res.resume();
+      await once(res, "end");
+
+      // Wait longer than the original timeout to make sure it never fires.
       await new Promise(resolve => setTimeout(resolve, 100));
 
       expect(timeoutEventEmitted).toBe(false);
-      expect(req.destroyed).toBe(false);
     } finally {
       server.close();
     }

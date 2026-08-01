@@ -51,12 +51,12 @@ function computeVersions(cfg: Config): [string, string][] {
     if (dep.versionMacro === undefined) continue;
     const source = dep.source(cfg);
     const id = sourceIdentifier(source);
-    // WebKit special case: its `prebuilt.identity` includes the suffix
-    // (e.g. "-debug-asan"), but process.versions should show the clean
-    // commit hash. Use cfg.webkitVersion instead — it IS the source of
-    // truth, identity is just version+suffix derived from it.
+    // WebKit special case: prebuilt.identity carries the artifact suffix, but
+    // process.versions wants the version. Strip the autobuild- prefix so tags
+    // report the clean sha and previews report preview-pr-<N>-<sha8>.
     if (dep.name === "WebKit") {
-      versions.push([dep.versionMacro, cfg.webkitVersion]);
+      const v = cfg.webkitVersion;
+      versions.push([dep.versionMacro, v.startsWith("autobuild-") ? v.slice("autobuild-".length) : v]);
     } else if (id !== undefined) {
       versions.push([dep.versionMacro, id]);
     }
@@ -70,10 +70,10 @@ function computeVersions(cfg: Config): [string, string][] {
   // IS their version.
   versions.push(["UWS", cfg.revision]);
   versions.push(["USOCKETS", cfg.revision]);
-  // Zig: could run `zig version` but that's a subprocess per configure.
-  // Using zigCommit from config — less human-readable than "0.15.2" but
-  // more precise (the commit IS what we ship) and stays in sync.
-  versions.push(["ZIG", cfg.zigCommit]);
+  // The runtime was ported from Zig; `process.versions.zig` records the
+  // upstream Zig commit it derives from. The build no longer uses a Zig
+  // toolchain, so this is a fixed historical reference rather than a live pin.
+  versions.push(["ZIG", "04e7f6ac1e009525bc00934f20199c68f04e0a24"]);
 
   // NOTE: cmake's GenerateDependencyVersions.cmake also extracted semantic
   // versions (LIBDEFLATE_VERSION="1.19", ZLIB_VERSION="1.2.8") from vendor

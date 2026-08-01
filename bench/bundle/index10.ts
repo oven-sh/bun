@@ -1,0 +1,10 @@
+export * as Three1 from 'three-1';
+export * as Three2 from 'three-2';
+export * as Three3 from 'three-3';
+export * as Three4 from 'three-4';
+export * as Three5 from 'three-5';
+export * as Three6 from 'three-6';
+export * as Three7 from 'three-7';
+export * as Three8 from 'three-8';
+export * as Three9 from 'three-9';
+export * as Three10 from 'three-10';

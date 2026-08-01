@@ -1,0 +1,20 @@
+FROM postgres:15
+COPY init-scripts/postgres-auth/ /docker-entrypoint-initdb.d/
+COPY config/pg_hba_auth.conf /etc/postgresql/pg_hba.conf
+
+# See Dockerfile.postgres-plain for the rationale. The custom hba_file and
+# connection-limit flags are supplied by the compose `command:` at runtime;
+# build-time init only needs the default local-trust hba to run its scripts.
+ENV POSTGRES_HOST_AUTH_METHOD=trust \
+    POSTGRES_USER=postgres \
+    PGDATA=/var/lib/postgresql/pgdata-init
+
+RUN set -e; \
+    docker-entrypoint.sh postgres & pid=$!; \
+    for i in $(seq 180); do \
+        pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1 && break; \
+        sleep 1; \
+    done; \
+    pg_isready -h 127.0.0.1 -U postgres; \
+    gosu postgres pg_ctl -D "$PGDATA" -m fast -w stop; \
+    wait "$pid"

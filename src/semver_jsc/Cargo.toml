@@ -1,0 +1,16 @@
+[package]
+name = "bun_semver_jsc"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_core.workspace = true
+bstr.workspace = true
+bun_jsc.workspace = true
+bun_semver.workspace = true

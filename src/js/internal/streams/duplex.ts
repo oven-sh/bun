@@ -56,19 +56,20 @@ function Duplex(options): void {
       this._writableState.finished = true;
     }
 
-    if (typeof options.read === "function") this._read = options.read;
+    const { read, write, writev, destroy, final, construct, signal } = options;
+    if (typeof read === "function") this._read = read;
 
-    if (typeof options.write === "function") this._write = options.write;
+    if (typeof write === "function") this._write = write;
 
-    if (typeof options.writev === "function") this._writev = options.writev;
+    if (typeof writev === "function") this._writev = writev;
 
-    if (typeof options.destroy === "function") this._destroy = options.destroy;
+    if (typeof destroy === "function") this._destroy = destroy;
 
-    if (typeof options.final === "function") this._final = options.final;
+    if (typeof final === "function") this._final = final;
 
-    if (typeof options.construct === "function") this._construct = options.construct;
+    if (typeof construct === "function") this._construct = construct;
 
-    if (options.signal) addAbortSignal(options.signal, this);
+    if (signal) addAbortSignal(signal, this);
   } else {
     this.allowHalfOpen = true;
   }
@@ -121,9 +122,11 @@ ObjectDefineProperties(Duplex.prototype, {
     set(value) {
       // Backward compatibility, the user is explicitly
       // managing destroyed.
-      if (this._readableState && this._writableState) {
-        this._readableState.destroyed = value;
-        this._writableState.destroyed = value;
+      const readableState = this._readableState;
+      let writableState;
+      if (readableState && (writableState = this._writableState)) {
+        readableState.destroyed = value;
+        writableState.destroyed = value;
       }
     },
   },
@@ -140,8 +143,8 @@ Duplex.fromWeb = function (pair, options) {
   return lazyWebStreams().newStreamDuplexFromReadableWritablePair(pair, options);
 };
 
-Duplex.toWeb = function (duplex) {
-  return lazyWebStreams().newReadableWritablePairFromDuplex(duplex);
+Duplex.toWeb = function (duplex, options) {
+  return lazyWebStreams().newReadableWritablePairFromDuplex(duplex, options);
 };
 
 let duplexify;

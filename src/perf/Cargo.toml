@@ -1,0 +1,15 @@
+[package]
+name = "bun_perf"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+libc.workspace = true
+bun_core.workspace = true
+bun_sys.workspace = true

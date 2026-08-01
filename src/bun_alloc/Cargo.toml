@@ -1,0 +1,28 @@
+[package]
+name = "bun_alloc"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_opaque.workspace = true
+strum.workspace = true
+bstr.workspace = true
+scopeguard.workspace = true
+const_format.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+
+
+allocator-api2.workspace = true
+
+bun_mimalloc_sys.workspace = true
+bun_wyhash.workspace = true
+typed-arena.workspace = true

@@ -1,7 +1,9 @@
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { isWindows } from "harness";
+import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
+import { once } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as util from "node:util";
@@ -181,6 +183,49 @@ test("dns.resolveCaa (caa.socketify.dev)", () => {
     }
   });
   return promise;
+});
+
+test.skipIf(isWindows)("dns.Resolver#resolveCaa keeps a numeric CAA tag reachable by index", async () => {
+  const socket = dgram.createSocket("udp4");
+  try {
+    socket.on("message", (query, rinfo) => {
+      let off = 12;
+      while (off < query.length && query[off] !== 0) off += query[off] + 1;
+      off += 1 + 2 + 2;
+      const question = query.subarray(12, off);
+      const header = Buffer.alloc(12);
+      header[0] = query[0];
+      header[1] = query[1];
+      header[2] = 0x81;
+      header[3] = 0x80;
+      header[5] = 1;
+      header[7] = 1;
+      const tag = Buffer.from("128");
+      const value = Buffer.from("issue.example");
+      const rdata = Buffer.concat([Buffer.from([0x00, tag.length]), tag, value]);
+      const answer = Buffer.concat([
+        Buffer.from([0xc0, 0x0c, 0x01, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c]),
+        Buffer.from([rdata.length >> 8, rdata.length & 0xff]),
+        rdata,
+      ]);
+      socket.send(Buffer.concat([header, question, answer]), rinfo.port, rinfo.address);
+    });
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    const { port } = socket.address();
+
+    const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
+    resolver.setServers(["127.0.0.1:" + port]);
+    const { promise, resolve, reject } = Promise.withResolvers();
+    resolver.resolveCaa("caa.example.test", (err, records) => (err ? reject(err) : resolve(records)));
+    const records = await promise;
+    expect(records.length).toBe(1);
+    expect(records[0].critical).toBe(0);
+    expect(records[0][128]).toBe("issue.example");
+    expect(Object.keys(records[0])).toEqual(["128", "critical"]);
+  } finally {
+    socket.close();
+  }
 });
 
 test("dns.resolveMx (bun.sh)", () => {
@@ -543,5 +588,121 @@ describe("uses `dns.promises` implementations for `util.promisify` factory", () 
     // This test previously used example.com, but that domain has multiple A records, which can cause this test to fail.
     // As of this writing, google.com has only one A record. If that changes, update this test with a domain that has only one A record.
     expect(await util.promisify(dns.lookup)("google.com")).toEqual(await dns.promises.lookup("google.com"));
+  });
+});
+
+describe("hostnames containing NUL bytes", () => {
+  const hostnameWithNul = "localhost\0.example.invalid";
+
+  it("dns.promises.lookup rejects instead of truncating at the NUL", async () => {
+    await expect(dns_promises.lookup(hostnameWithNul)).rejects.toThrow();
+  });
+
+  it("dns.lookup (callback) passes an error instead of truncating at the NUL", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    dns.lookup(hostnameWithNul, (err, address, family) => {
+      try {
+        expect(err).toBeTruthy();
+        expect(address).toBeUndefined();
+        resolve();
+      } catch (e) {
+        reject(e);
+      }
+    });
+    await promise;
+  });
+
+  it("plain localhost still resolves", async () => {
+    const { address } = await dns_promises.lookup("localhost");
+    expect(["127.0.0.1", "::1"]).toContain(address);
+  });
+});
+
+describe("dns.Resolver options validation", () => {
+  describe.each([
+    ["dns.Resolver", dns.Resolver],
+    ["dns.promises.Resolver", dns_promises.Resolver],
+  ])("%s", (_name, Resolver) => {
+    it.each([0, -1, 2.5, -0.5, 2 ** 31])("{tries: %p} throws ERR_OUT_OF_RANGE", tries => {
+      expect(() => new Resolver({ tries })).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
+    });
+
+    it("{tries: 'x'} throws ERR_INVALID_ARG_TYPE", () => {
+      expect(() => new Resolver({ tries: "x" })).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    });
+
+    it.each([-2, 1.5, 2 ** 31])("{timeout: %p} throws ERR_OUT_OF_RANGE", timeout => {
+      expect(() => new Resolver({ timeout })).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
+    });
+
+    it.each([1, 4, 2 ** 31 - 1])("{tries: %p} is accepted", tries => {
+      expect(() => new Resolver({ tries })).not.toThrow();
+    });
+
+    it.each([-1, 0, 100, 2 ** 31 - 1])("{timeout: %p} is accepted", timeout => {
+      expect(() => new Resolver({ timeout })).not.toThrow();
+    });
+
+    it.each([undefined, null, 42, "hello", true])("non-object options %p uses defaults", options => {
+      expect(() => new Resolver(options)).not.toThrow();
+    });
+  });
+});
+
+describe("dns.Resolver#setServers with IPv6 zone identifiers", () => {
+  describe.each([
+    ["dns.Resolver", dns.Resolver],
+    ["dns.promises.Resolver", dns_promises.Resolver],
+  ])("%s", (_name, Resolver) => {
+    it("accepts and strips the zone id", () => {
+      const r = new Resolver();
+      r.setServers(["fe80::1%lo"]);
+      expect(r.getServers()).toEqual(["fe80::1"]);
+    });
+
+    it("accepts a bracketed zone id with a port", () => {
+      const r = new Resolver();
+      r.setServers(["[fe80::1%lo]:5353"]);
+      expect(r.getServers()).toEqual(["[fe80::1]:5353"]);
+    });
+  });
+});
+
+describe("dns.lookupService with a numeric-string port", () => {
+  // getnameinfo for 127.0.0.1 resolves on Linux/macOS but may ENOTFOUND on
+  // Windows, so assert that "22" yields the same outcome as 22 rather than a
+  // specific result.
+  const settle = p =>
+    p.then(
+      v => ({ ok: v }),
+      e => ({ err: e.code }),
+    );
+
+  it("callback API coerces a numeric-string port", async () => {
+    const run = port => {
+      const { promise, resolve } = Promise.withResolvers();
+      dns.lookupService("127.0.0.1", port, (err, hostname, service) => {
+        resolve(err ? { err: err.code } : { ok: { hostname, service } });
+      });
+      return promise;
+    };
+    const [asString, asNumber] = await Promise.all([run("22"), run(22)]);
+    expect(asString).toEqual(asNumber);
+    expect(asString.err).not.toBe("ERR_SOCKET_BAD_PORT");
+  });
+
+  it("promises API coerces a numeric-string port", async () => {
+    const [asString, asNumber] = await Promise.all([
+      settle(dns_promises.lookupService("127.0.0.1", "22")),
+      settle(dns_promises.lookupService("127.0.0.1", 22)),
+    ]);
+    expect(asString).toEqual(asNumber);
+    expect(asString.err).not.toBe("ERR_SOCKET_BAD_PORT");
+  });
+
+  it("promises API still throws ERR_SOCKET_BAD_PORT synchronously for a truly bad port", () => {
+    expect(() => dns_promises.lookupService("127.0.0.1", "nope")).toThrow(
+      expect.objectContaining({ code: "ERR_SOCKET_BAD_PORT" }),
+    );
   });
 });

@@ -74,6 +74,20 @@ for (const flag of ["-e", "--print"]) {
       expect(stdout.toString("utf8")).toEqual(code + "\n");
     });
 
+    // The eval source is UTF-8; reading it back as Latin-1 turns every
+    // multi-byte character into mojibake. The expected text is compared here
+    // in the parent -- comparing inside the child would pass either way, since
+    // a Latin-1-decoded source corrupts the literal and process._eval alike.
+    test("process._eval round-trips multi-byte UTF-8", async () => {
+      const marker = "/* 한글-🎉-café */";
+      const code = (flag === "--print" ? "process._eval" : "console.log(process._eval)") + ` ${marker}`;
+      const { stdout } = Bun.spawnSync({
+        cmd: [bunExe(), flag, code],
+        env: bunEnv,
+      });
+      expect(stdout.toString("utf8")).toEqual(code + "\n");
+    });
+
     test("does not crash in non-latin1 directory", async () => {
       const dir = join(tmpdirSync(), "eval-test-开始学习");
       await Bun.write(join(dir, "index.js"), "console.log('hello world')");
@@ -108,6 +122,24 @@ describe("--print for cjs/esm", () => {
     expect(stdout.toString("utf8")).toEqual("123\n");
     expect(exitCode).toBe(0);
     rmSync(cwd, { recursive: true, force: true });
+  });
+  // https://github.com/oven-sh/bun/issues/30207
+  describe.each([
+    { expr: "(await 1) + 1", expected: "2" },
+    { expr: 'await Promise.resolve("hello") + " world"', expected: "hello world" },
+    { expr: "(await 1) + (await 2)", expected: "3" },
+    // no top-level await — still returns the expression value.
+    { expr: "1 + 1", expected: "2" },
+  ])("bun -p $expr", ({ expr, expected }) => {
+    test(`→ ${expected}`, async () => {
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), "-p", expr],
+        env: bunEnv,
+      });
+      expect(stderr.toString("utf8")).toBe("");
+      expect(stdout.toString("utf8")).toBe(`${expected}\n`);
+      expect(exitCode).toBe(0);
+    });
   });
   test("forced cjs", async () => {
     let { stdout, stderr, exitCode } = Bun.spawnSync({

@@ -1,12 +1,12 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { cp, exists, mkdir, rm } from "fs/promises";
 import {
   assertManifestsPopulated,
+  bunEnv as baseEnv,
   bunExe,
-  bunEnv as env,
   readdirSorted,
   runBunInstall,
   toMatchNodeModulesAt,
@@ -18,11 +18,9 @@ const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });
 
-// not necessary, but verdaccio will be added to this file in the near future
-
 var verdaccio: VerdaccioRegistry;
-var packageDir: string;
-var packageJson: string;
+
+setDefaultTimeout(1000 * 60 * 5);
 
 beforeAll(async () => {
   verdaccio = new VerdaccioRegistry();
@@ -33,13 +31,72 @@ afterAll(() => {
   verdaccio.stop();
 });
 
-beforeEach(async () => {
-  ({ packageDir, packageJson } = await verdaccio.createTestDir());
-  env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
-  env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
-});
+// Each test spawns 1-5 `bun install` child processes. Running every test at once would
+// oversubscribe CI (especially the ASAN lanes), so gate concurrency with a small
+// semaphore and give each test its own isolated dir + env.
+const MAX_CONCURRENT = 12;
+let activeSlots = 0;
+const slotWaiters: Array<() => void> = [];
 
+function acquireSlot(): Promise<void> {
+  if (activeSlots < MAX_CONCURRENT) {
+    activeSlots++;
+    return Promise.resolve();
+  }
+  return new Promise(resolve => slotWaiters.push(resolve));
+}
+
+function releaseSlot(): void {
+  const next = slotWaiters.shift();
+  if (next) {
+    next();
+  } else {
+    activeSlots--;
+  }
+}
+
+type TestCtx = {
+  packageDir: string;
+  packageJson: string;
+  env: Record<string, string>;
+  [Symbol.dispose](): void;
+};
+
+async function setupTest(): Promise<TestCtx> {
+  await acquireSlot();
+  let released = false;
+  try {
+    const { packageDir, packageJson } = await verdaccio.createTestDir();
+    const env: Record<string, string> = {
+      ...baseEnv,
+      BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+      BUN_TMPDIR: join(packageDir, ".bun-tmp"),
+      TMPDIR: join(packageDir, ".bun-tmp"),
+      TEMP: join(packageDir, ".bun-tmp"),
+    };
+    return {
+      packageDir,
+      packageJson,
+      env,
+      [Symbol.dispose]() {
+        if (!released) {
+          released = true;
+          releaseSlot();
+        }
+      },
+    };
+  } catch (e) {
+    releaseSlot();
+    released = true;
+    throw e;
+  }
+}
+
+// This test and the other `toMatchSnapshot` tests stay serial: snapshots are not
+// supported inside concurrent tests.
 test("dependency on workspace without version in package.json", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
   await Promise.all([
     write(
       join(packageDir, "package.json"),
@@ -134,9 +191,11 @@ test("dependency on workspace without version in package.json", async () => {
     rmSync(join(packageDir, "packages", "bar", "node_modules"), { recursive: true, force: true });
     rmSync(join(packageDir, "bun.lock"), { recursive: true, force: true });
   }
-}, 20_000);
+});
 
-test("allowing negative workspace patterns", async () => {
+test.concurrent("allowing negative workspace patterns", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
   await Promise.all([
     write(
       join(packageDir, "package.json"),
@@ -175,6 +234,8 @@ test("allowing negative workspace patterns", async () => {
 });
 
 test("dependency on same name as workspace and dist-tag", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
   await Promise.all([
     write(
       join(packageDir, "package.json"),
@@ -217,7 +278,9 @@ test("dependency on same name as workspace and dist-tag", async () => {
   ]);
 });
 
-test("successfully installs workspace when path already exists in node_modules", async () => {
+test.concurrent("successfully installs workspace when path already exists in node_modules", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
   await Promise.all([
     write(
       join(packageDir, "package.json"),
@@ -248,7 +311,9 @@ test("successfully installs workspace when path already exists in node_modules",
   });
 });
 
-test("adding workspace in workspace edits package.json with correct version (workspace:*)", async () => {
+test.concurrent("adding workspace in workspace edits package.json with correct version (workspace:*)", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
   await Promise.all([
     write(
       join(packageDir, "package.json"),
@@ -303,7 +368,9 @@ test("adding workspace in workspace edits package.json with correct version (wor
   });
 });
 
-test("workspaces with invalid versions should still install", async () => {
+test.concurrent("workspaces with invalid versions should still install", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
   await Promise.all([
     write(
       join(packageDir, "package.json"),
@@ -377,7 +444,9 @@ test("workspaces with invalid versions should still install", async () => {
 });
 
 describe("workspace aliases", async () => {
-  test("combination", async () => {
+  test.concurrent("combination", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
     await Promise.all([
       write(
         join(packageDir, "package.json"),
@@ -443,7 +512,9 @@ describe("workspace aliases", async () => {
     "workspace:@org/b@",
   ];
   for (const version of shouldPass) {
-    test(`version range ${version} and workspace with no version`, async () => {
+    test.concurrent(`version range ${version} and workspace with no version`, async () => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
       await Promise.all([
         write(
           join(packageDir, "package.json"),
@@ -481,7 +552,9 @@ describe("workspace aliases", async () => {
   }
   let shouldFail: string[] = ["workspace:@org/b@1.0.0", "workspace:@org/b@1", "workspace:@org/b"];
   for (const version of shouldFail) {
-    test(`version range ${version} and workspace with no version (should fail)`, async () => {
+    test.concurrent(`version range ${version} and workspace with no version (should fail)`, async () => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
       await Promise.all([
         write(
           join(packageDir, "package.json"),
@@ -527,7 +600,9 @@ describe("workspace aliases", async () => {
 });
 
 for (const glob of [true, false]) {
-  test(`does not crash when root package.json is in "workspaces"${glob ? " (glob)" : ""}`, async () => {
+  test.concurrent(`does not crash when root package.json is in "workspaces"${glob ? " (glob)" : ""}`, async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
     await Promise.all([
       write(
         join(packageDir, "package.json"),
@@ -551,7 +626,9 @@ for (const glob of [true, false]) {
   });
 }
 
-test("cwd in workspace script is not the symlink path on windows", async () => {
+test.concurrent("cwd in workspace script is not the symlink path on windows", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
   await Promise.all([
     write(
       join(packageDir, "package.json"),
@@ -577,7 +654,9 @@ test("cwd in workspace script is not the symlink path on windows", async () => {
 });
 
 describe("relative tarballs", async () => {
-  test("from package.json", async () => {
+  test.concurrent("from package.json", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
     await Promise.all([
       write(
         join(packageDir, "package.json"),
@@ -605,7 +684,9 @@ describe("relative tarballs", async () => {
       version: "0.0.2",
     });
   });
-  test("from cli", async () => {
+  test.concurrent("from cli", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
     await Promise.all([
       write(
         join(packageDir, "package.json"),
@@ -653,9 +734,92 @@ describe("relative tarballs", async () => {
       },
     });
   });
+
+  // Regression test for a data race where the `.local_tarball` task callback
+  // (running on a ThreadPool worker) read `lockfile.packages` and
+  // `lockfile.buffers.string_bytes` to resolve the workspace-relative tarball
+  // path while the main thread was concurrently reallocating those buffers via
+  // `appendPackage` / `StringBuilder.allocate` as other tarball tasks completed.
+  // Under ASAN this surfaces as a heap-use-after-free; in release it can read
+  // a garbage workspace path and fail to open the tarball.
+  //
+  // The fix moves the lockfile lookup to `enqueueLocalTarball` on the main
+  // thread and stores the resolved path in the task request so the worker
+  // never touches mutable lockfile state.
+  //
+  // The race window (iterating `lockfile.packages`) is measured in
+  // microseconds while tarball extraction takes milliseconds, so this test
+  // does not deterministically reproduce the UAF — it exercises the concurrent
+  // path and verifies each workspace-relative tarball resolves correctly.
+  test.concurrent("many concurrent local tarballs in workspaces", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    // Enough workspaces that `getWorkspacePkgIfWorkspaceDep` has a non-trivial
+    // `lockfile.packages` to iterate, and enough tarballs that several
+    // ThreadPool tasks are running while the main thread appends the packages
+    // from tarballs that have already finished.
+    const workspaceCount = 6;
+    const tarballsPerWorkspace = 2;
+
+    const srcTarball = join(import.meta.dir, "bar-0.0.2.tgz");
+    const tarballBytes = await file(srcTarball).bytes();
+
+    const writes: Promise<unknown>[] = [
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "root",
+          workspaces: ["pkgs/*"],
+        }),
+      ),
+    ];
+    for (let i = 0; i < workspaceCount; i++) {
+      const deps: Record<string, string> = {};
+      for (let j = 0; j < tarballsPerWorkspace; j++) {
+        // Each tarball has a unique path so each one gets its own
+        // `.local_tarball` ThreadPool task.
+        deps[`tarball-${i}-${j}`] = `./tarball-${i}-${j}.tgz`;
+        writes.push(write(join(packageDir, "pkgs", `pkg${i}`, `tarball-${i}-${j}.tgz`), tarballBytes));
+      }
+      writes.push(
+        write(
+          join(packageDir, "pkgs", `pkg${i}`, "package.json"),
+          JSON.stringify({
+            name: `pkg${i}`,
+            dependencies: deps,
+          }),
+        ),
+      );
+    }
+    await Promise.all(writes);
+
+    const { stderr, exited } = Bun.spawn({
+      cmd: [bunExe(), "install", "--ignore-scripts"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+
+    // Verify the workspace-relative path was resolved correctly for every tarball.
+    for (let i = 0; i < workspaceCount; i++) {
+      for (let j = 0; j < tarballsPerWorkspace; j++) {
+        expect(await file(join(packageDir, "node_modules", `tarball-${i}-${j}`, "package.json")).json()).toMatchObject({
+          name: "bar",
+          version: "0.0.2",
+        });
+      }
+    }
+  });
 });
 
-test("$npm_package_config_ works in root", async () => {
+test.concurrent("$npm_package_config_ works in root", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
   await write(
     join(packageDir, "package.json"),
     JSON.stringify({
@@ -683,7 +847,9 @@ test("$npm_package_config_ works in root", async () => {
   expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_package_config_foo $npm_package_config_qux\n`);
   expect(await new Response(p.stdout).text()).toBe(`bar\n`);
 });
-test("$npm_package_config_ works in root in subpackage", async () => {
+test.concurrent("$npm_package_config_ works in root in subpackage", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
   await write(
     join(packageDir, "package.json"),
     JSON.stringify({
@@ -712,7 +878,9 @@ test("$npm_package_config_ works in root in subpackage", async () => {
   expect(await new Response(p.stdout).text()).toBe(`tab\n`);
 });
 
-test("adding packages in a subdirectory of a workspace", async () => {
+test.concurrent("adding packages in a subdirectory of a workspace", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
   await write(
     packageJson,
     JSON.stringify({
@@ -831,7 +999,9 @@ test("adding packages in a subdirectory of a workspace", async () => {
 
   expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "foo", "no-deps", "what-bin"]);
 });
-test("adding packages in workspaces", async () => {
+test.concurrent("adding packages in workspaces", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
   await write(
     packageJson,
     JSON.stringify({
@@ -995,7 +1165,9 @@ test("adding packages in workspaces", async () => {
     description: "not a workspace",
   });
 });
-test("it should detect duplicate workspace dependencies", async () => {
+test.concurrent("it should detect duplicate workspace dependencies", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
   await write(
     packageJson,
     JSON.stringify({
@@ -1043,7 +1215,9 @@ const versions = ["workspace:1.0.0", "workspace:*", "workspace:^1.0.0", "1.0.0",
 
 for (const rootVersion of versions) {
   for (const packageVersion of versions) {
-    test(`it should allow duplicates, root@${rootVersion}, package@${packageVersion}`, async () => {
+    test.concurrent(`it should allow duplicates, root@${rootVersion}, package@${packageVersion}`, async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       await write(
         packageJson,
         JSON.stringify({
@@ -1173,155 +1347,162 @@ for (const rootVersion of versions) {
 }
 
 for (const version of versions) {
-  test(`it should allow listing workspace as dependency of the root package version ${version}`, async () => {
-    await write(
-      packageJson,
-      JSON.stringify({
-        name: "foo",
-        workspaces: ["packages/*"],
-        dependencies: {
-          "workspace-1": version,
-        },
-      }),
-    );
+  test.concurrent(
+    `it should allow listing workspace as dependency of the root package version ${version}`,
+    async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "workspace-1": version,
+          },
+        }),
+      );
 
-    await mkdir(join(packageDir, "packages", "workspace-1"), { recursive: true });
-    await write(
-      join(packageDir, "packages", "workspace-1", "package.json"),
-      JSON.stringify({
+      await mkdir(join(packageDir, "packages", "workspace-1"), { recursive: true });
+      await write(
+        join(packageDir, "packages", "workspace-1", "package.json"),
+        JSON.stringify({
+          name: "workspace-1",
+          version: "1.0.0",
+        }),
+      );
+      // install first from the root, the workspace package
+      var { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      var err = await stderr.text();
+      var out = await stdout.text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("already exists");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("Duplicate dependency");
+      expect(err).not.toContain('workspace dependency "workspace-1" not found');
+      expect(err).not.toContain("error:");
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        `+ workspace-1@workspace:packages/workspace-1`,
+        "",
+        "1 package installed",
+      ]);
+      expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+
+      expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
         name: "workspace-1",
         version: "1.0.0",
-      }),
-    );
-    // install first from the root, the workspace package
-    var { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
-    });
+      });
 
-    var err = await stderr.text();
-    var out = await stdout.text();
-    expect(err).toContain("Saved lockfile");
-    expect(err).not.toContain("already exists");
-    expect(err).not.toContain("not found");
-    expect(err).not.toContain("Duplicate dependency");
-    expect(err).not.toContain('workspace dependency "workspace-1" not found');
-    expect(err).not.toContain("error:");
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun install v1."),
-      "",
-      `+ workspace-1@workspace:packages/workspace-1`,
-      "",
-      "1 package installed",
-    ]);
-    expect(await exited).toBe(0);
-    assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      ({ stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: join(packageDir, "packages", "workspace-1"),
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      }));
 
-    expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
-      name: "workspace-1",
-      version: "1.0.0",
-    });
+      err = await stderr.text();
+      out = await stdout.text();
+      expect(err).not.toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("already exists");
+      expect(err).not.toContain("Duplicate dependency");
+      expect(err).not.toContain('workspace dependency "workspace-1" not found');
+      expect(err).not.toContain("error:");
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        "Checked 1 install across 2 packages (no changes)",
+      ]);
+      expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
-    ({ stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: join(packageDir, "packages", "workspace-1"),
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
-    }));
+      expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
+        name: "workspace-1",
+        version: "1.0.0",
+      });
 
-    err = await stderr.text();
-    out = await stdout.text();
-    expect(err).not.toContain("Saved lockfile");
-    expect(err).not.toContain("not found");
-    expect(err).not.toContain("already exists");
-    expect(err).not.toContain("Duplicate dependency");
-    expect(err).not.toContain('workspace dependency "workspace-1" not found');
-    expect(err).not.toContain("error:");
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun install v1."),
-      "",
-      "Checked 1 install across 2 packages (no changes)",
-    ]);
-    expect(await exited).toBe(0);
-    assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await rm(join(packageDir, "bun.lock"), { recursive: true, force: true });
 
-    expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
-      name: "workspace-1",
-      version: "1.0.0",
-    });
+      // install from workspace package then from root
+      ({ stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: join(packageDir, "packages", "workspace-1"),
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      }));
 
-    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-    await rm(join(packageDir, "bun.lock"), { recursive: true, force: true });
+      err = await stderr.text();
+      out = await stdout.text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("already exists");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("Duplicate dependency");
+      expect(err).not.toContain('workspace dependency "workspace-1" not found');
+      expect(err).not.toContain("error:");
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        "1 package installed",
+      ]);
+      expect(await exited).toBe(0);
+      expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
+        name: "workspace-1",
+        version: "1.0.0",
+      });
 
-    // install from workspace package then from root
-    ({ stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: join(packageDir, "packages", "workspace-1"),
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
-    }));
+      ({ stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      }));
 
-    err = await stderr.text();
-    out = await stdout.text();
-    expect(err).toContain("Saved lockfile");
-    expect(err).not.toContain("already exists");
-    expect(err).not.toContain("not found");
-    expect(err).not.toContain("Duplicate dependency");
-    expect(err).not.toContain('workspace dependency "workspace-1" not found');
-    expect(err).not.toContain("error:");
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun install v1."),
-      "",
-      "1 package installed",
-    ]);
-    expect(await exited).toBe(0);
-    expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
-      name: "workspace-1",
-      version: "1.0.0",
-    });
+      err = await stderr.text();
+      out = await stdout.text();
+      expect(err).not.toContain("Saved lockfile");
+      expect(err).not.toContain("already exists");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("Duplicate dependency");
+      expect(err).not.toContain('workspace dependency "workspace-1" not found');
+      expect(err).not.toContain("error:");
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        "Checked 1 install across 2 packages (no changes)",
+      ]);
+      expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
-    ({ stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
-    }));
-
-    err = await stderr.text();
-    out = await stdout.text();
-    expect(err).not.toContain("Saved lockfile");
-    expect(err).not.toContain("already exists");
-    expect(err).not.toContain("not found");
-    expect(err).not.toContain("Duplicate dependency");
-    expect(err).not.toContain('workspace dependency "workspace-1" not found');
-    expect(err).not.toContain("error:");
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun install v1."),
-      "",
-      "Checked 1 install across 2 packages (no changes)",
-    ]);
-    expect(await exited).toBe(0);
-    assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
-
-    expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
-      name: "workspace-1",
-      version: "1.0.0",
-    });
-  });
+      expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
+        name: "workspace-1",
+        version: "1.0.0",
+      });
+    },
+  );
 }
 
 describe("install --filter", () => {
-  test("does not run root scripts if root is filtered out", async () => {
+  test.concurrent("does not run root scripts if root is filtered out", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
     await Promise.all([
       write(
         packageJson,
@@ -1375,7 +1556,9 @@ describe("install --filter", () => {
     expect(await exists(join(packageDir, "packages", "pkg1.txt"))).toBeFalse();
   });
 
-  test("basic", async () => {
+  test.concurrent("basic", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
     await Promise.all([
       write(
         packageJson,
@@ -1434,7 +1617,9 @@ describe("install --filter", () => {
     ).toEqual([false, true]);
   });
 
-  test("all but one or two", async () => {
+  test.concurrent("all but one or two", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
     await Promise.all([
       write(
         packageJson,
@@ -1506,7 +1691,9 @@ describe("install --filter", () => {
     ).toEqual([false, true, true, true]);
   });
 
-  test("matched workspace depends on filtered workspace", async () => {
+  test.concurrent("matched workspace depends on filtered workspace", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
     await Promise.all([
       write(
         packageJson,
@@ -1558,7 +1745,9 @@ describe("install --filter", () => {
     ).toEqual([true, { name: "no-deps", version: "2.0.0" }, true, true]);
   });
 
-  test("filter with a path", async () => {
+  test.concurrent("filter with a path", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
     await Promise.all([
       write(
         packageJson,
@@ -1666,7 +1855,9 @@ describe("install --filter", () => {
   });
 });
 
-test("can override npm package with workspace package under a different name", async () => {
+test.concurrent("can override npm package with workspace package under a different name", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
   await Promise.all([
     write(
       packageJson,
@@ -1722,11 +1913,9 @@ test("can override npm package with workspace package under a different name", a
 });
 
 describe("LinkWorkspacePackages", () => {
-  let bunfigPath: string;
-
-  beforeEach(async () => {
-    bunfigPath = join(packageDir, "bunfig.toml");
-
+  // Shared setup previously done in a `beforeEach`: each test gets its own dir,
+  // a root workspace package.json, and a `no-deps` workspace package.
+  async function setupWorkspace(packageDir: string): Promise<string> {
     await Promise.all([
       write(
         join(packageDir, "package.json"),
@@ -1744,18 +1933,13 @@ describe("LinkWorkspacePackages", () => {
         }),
       ),
     ]);
-  });
+    return join(packageDir, "bunfig.toml");
+  }
 
-  afterEach(async () => {
-    await Promise.all([
-      rm(bunfigPath, { force: true }),
-      rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
-      rm(join(packageDir, "packages"), { recursive: true, force: true }),
-      rm(join(packageDir, "package.json"), { force: true }),
-    ]);
-  });
-
-  test("linkWorkspacePackages = false uses registry instead of linking workspace packages", async () => {
+  test.concurrent("linkWorkspacePackages = false uses registry instead of linking workspace packages", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const bunfigPath = await setupWorkspace(packageDir);
     // Create bunfig.toml with linkWorkspacePackages set to false
     await Promise.all([
       write(
@@ -1805,7 +1989,10 @@ registry = "${verdaccio.registryUrl()}"
     expect(lockfile.packages.find(p => p.id === barDependency?.package_id).resolution.tag).toEqual("npm");
   });
 
-  test("linkWorkspacePackages = false but workspace: prefix still links workspace", async () => {
+  test.concurrent("linkWorkspacePackages = false but workspace: prefix still links workspace", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const bunfigPath = await setupWorkspace(packageDir);
     // Create bunfig.toml with linkWorkspacePackages set to false
     await Promise.all([
       write(
@@ -1857,6 +2044,8 @@ registry = "${verdaccio.registryUrl()}"
 });
 
 test("matching workspace devDependency and npm peerDependency", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
   await Promise.all([
     write(
       packageJson,
@@ -1902,7 +2091,7 @@ test("matching workspace devDependency and npm peerDependency", async () => {
   expect((await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"))
     .toMatchInlineSnapshot(`
     "{
-      "lockfileVersion": 1,
+      "lockfileVersion": 2,
       "configVersion": 1,
       "workspaces": {
         "": {

@@ -421,8 +421,22 @@ describe("disallowed raw HTML (tagfilter)", () => {
 
   test("tagfilter in inline context", () => {
     const md = `hello <script>alert("xss")</script> world`;
-    const expected = `<p>hello &lt;script>alert("xss")&lt;/script> world</p>`;
+    const expected = `<p>hello &lt;script>alert(&quot;xss&quot;)&lt;/script> world</p>`;
     expect(renderGFM(md).trim()).toBe(expected);
+  });
+
+  test("backslash-escaped angle brackets cannot rebuild a filtered tag", () => {
+    const md = `a <script>\\<script>alert(document.cookie)\\</script></script>`;
+    const out = renderGFM(md);
+    expect(out).not.toContain("<script>");
+    expect(out).toContain("&lt;script>");
+  });
+
+  test("text after a single-line disallowed HTML block stays escaped", () => {
+    const md = `<script>x</script>\n\nafter <b>\\<img src=x onerror=alert(1)></b>`;
+    const out = renderGFM(md);
+    expect(out).not.toContain("<img");
+    expect(out).toContain("&lt;img");
   });
 
   test("self-closing filtered tag", () => {
@@ -750,4 +764,52 @@ bar | baz`;
 
     expect(normalize(renderGFM(md))).toBe(expected);
   });
+});
+
+// ============================================================================
+// Tag filter: normal text must always be entity-escaped, even after the
+// renderer has seen an inline or single-line disallowed HTML tag. A
+// backslash-escaped `\<` in normal text must never come out as a literal `<`.
+// ============================================================================
+test("escaped angle brackets after an inline disallowed tag remain entity-escaped", () => {
+  // The leading inline `<script>` is filtered to `&lt;script>`, but it must not
+  // switch the renderer into a raw mode where the following backslash-escaped
+  // `\<` characters (emitted as normal text) are written unescaped.
+  const md = `a <script>\\<script>alert(document.cookie)\\</script></script>`;
+  const out = renderGFM(md);
+  expect(out).not.toContain("<script>");
+  expect(out).toContain("&lt;script>");
+
+  // Normal text later in the document must also stay escaped after a
+  // single-line disallowed HTML block.
+  const md2 = `<script>x</script>\n\nafter <b>\\<img src=x onerror=alert(1)></b>`;
+  const out2 = renderGFM(md2);
+  expect(out2).not.toContain("<img");
+  expect(out2).toContain("&lt;img");
+
+  // Allowed tags are unaffected by the tag filter.
+  expect(renderGFM(`<strong>bold</strong> and <em>italic</em>`).trim()).toBe(
+    `<p><strong>bold</strong> and <em>italic</em></p>`,
+  );
+});
+
+// ============================================================================
+// Tag filter: the filter must accept every byte the inline HTML scanner
+// treats as whitespace after a tag name (including form feed and vertical
+// tab), or a tag like `<script\fsrc=...>` slips through unfiltered while
+// browsers still parse it as a script tag.
+// ============================================================================
+test("disallowed tag followed by form-feed or vertical-tab whitespace is still filtered", () => {
+  for (const ws of ["\f", "\v"]) {
+    const md = `a <script${ws}src=https://example.com/x.js></script${ws}> b`;
+    const out = renderGFM(md);
+    expect(out).not.toContain(`<script${ws}`);
+    expect(out).not.toContain(`</script${ws}`);
+    expect(out).toContain(`&lt;script${ws}`);
+  }
+
+  // A regular space delimiter is still filtered the same way.
+  const out = renderGFM(`a <script src=https://example.com/x.js></script> b`);
+  expect(out).not.toContain("<script ");
+  expect(out).toContain("&lt;script ");
 });

@@ -5,7 +5,7 @@ import { exec } from "node:child_process";
 const SIZE = 262145;
 
 // https://github.com/oven-sh/bun/issues/5319
-describe("child_process.exec", () => {
+describe.concurrent("child_process.exec", () => {
   const shell = Bun.which(isWindows ? "powershell" : "bash");
 
   describe.each(["stdout", "stderr"])("%s", io => {
@@ -104,7 +104,7 @@ describe("child_process.exec", () => {
   });
 });
 
-test("exec with verbatim arguments", async () => {
+test.concurrent("exec with verbatim arguments", async () => {
   const { resolve, reject, promise } = Promise.withResolvers();
 
   const fixture = require.resolve("./fixtures/child-process-echo-argv.js");

@@ -128,17 +128,17 @@ for (let i = 0; i < expected.length; i++) {
 }
 
 function getDirentPath(dirent) {
-  return pathModule.relative(testDir, pathModule.join(dirent.path, dirent.name));
+  return pathModule.relative(testDir, pathModule.join(dirent.parentPath, dirent.name));
 }
 
 function assertDirents(dirents) {
   assert.strictEqual(dirents.length, expected.length);
   dirents.sort((a, b) => (getDirentPath(a) < getDirentPath(b) ? -1 : 1));
   assert.deepStrictEqual(
-    dirents.map((dirent) => {
+    dirents.map(common.mustCallAtLeast((dirent) => {
       assert(dirent instanceof fs.Dirent);
       return getDirentPath(dirent);
-    }),
+    })),
     expected
   );
 }

@@ -1,24 +1,17 @@
-import { bunEnv, runBunInstall, tmpdirSync } from "harness";
-import { rm } from "node:fs/promises";
+import { bunEnv, runBunInstall } from "harness";
+import { join } from "node:path";
 import {
+  createTestContext,
+  destroyTestContext,
   dummyAfterAll,
-  dummyAfterEach,
   dummyBeforeAll,
-  dummyBeforeEach,
-  dummyRegistry,
-  package_dir,
-  read,
-  root_url,
-  setHandler,
-  write,
+  dummyRegistryForContext,
+  setContextHandler,
+  type TestContext,
 } from "./dummy.registry.js";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
-beforeEach(async () => {
-  await dummyBeforeEach();
-});
-afterEach(dummyAfterEach);
 
 function test(
   name: string,
@@ -26,66 +19,81 @@ function test(
     testTimeout?: number;
     scanner: Bun.Security.Scanner["scan"] | string;
     fails?: boolean;
-    expect?: (std: { out: string; err: string }) => void | Promise<void>;
+    expect?: (std: { out: string; err: string; ctx: TestContext }) => void | Promise<void>;
     expectedExitCode?: number;
     bunfigScanner?: string | false;
     packages?: string[];
     scannerFile?: string;
     packageJson?: object;
-    customRegistry?: (urls: string[]) => any;
+    customRegistry?: (urls: string[], ctx: TestContext) => any;
+    concurrent?: boolean;
   },
 ) {
-  it(
+  const itFn = options.concurrent === false ? it : it.concurrent;
+  itFn(
     name,
     async () => {
-      const urls: string[] = [];
-      setHandler(options.customRegistry ? options.customRegistry(urls) : dummyRegistry(urls));
+      const ctx = await createTestContext();
+      try {
+        const urls: string[] = [];
+        setContextHandler(
+          ctx,
+          options.customRegistry ? options.customRegistry(urls, ctx) : dummyRegistryForContext(ctx, urls),
+        );
 
-      const scannerPath = options.scannerFile || "./scanner.ts";
-      if (typeof options.scanner === "string") {
-        await write(scannerPath, options.scanner);
-      } else {
-        const s = `export const scanner = {
+        const write = (path: string, content: string | object) =>
+          Bun.write(join(ctx.package_dir, path), typeof content === "string" ? content : JSON.stringify(content));
+
+        const scannerPath = options.scannerFile || "./scanner.ts";
+        if (typeof options.scanner === "string") {
+          await write(scannerPath, options.scanner);
+        } else {
+          const s = `export const scanner = {
   version: "1",
   scan: ${options.scanner.toString()},
 };`;
-        await write(scannerPath, s);
+          await write(scannerPath, s);
+        }
+
+        const bunfig = await Bun.file(join(ctx.package_dir, "bunfig.toml")).text();
+        if (options.bunfigScanner !== false) {
+          const scannerPath = options.bunfigScanner ?? "./scanner.ts";
+          await write("./bunfig.toml", `${bunfig}\n[install.security]\nscanner = "${scannerPath}"`);
+        }
+
+        await write(
+          "package.json",
+          options.packageJson ?? {
+            name: "my-app",
+            version: "1.0.0",
+            dependencies: {},
+          },
+        );
+
+        const expectedExitCode = options.expectedExitCode ?? (options.fails ? 1 : 0);
+        const packages = options.packages ?? ["bar"];
+
+        const { out, err } = await runBunInstall(bunEnv, ctx.package_dir, {
+          packages,
+          allowErrors: true,
+          allowWarnings: false,
+          savesLockfile: false,
+          expectedExitCode,
+        });
+
+        if (options.fails) {
+          expect(out).toContain("Installation aborted due to fatal security advisories");
+        }
+
+        await options.expect?.({ out, err, ctx });
+      } finally {
+        destroyTestContext(ctx);
       }
-
-      const bunfig = await read("./bunfig.toml").text();
-      if (options.bunfigScanner !== false) {
-        const scannerPath = options.bunfigScanner ?? "./scanner.ts";
-        await write("./bunfig.toml", `${bunfig}\n[install.security]\nscanner = "${scannerPath}"`);
-      }
-
-      await write(
-        "package.json",
-        options.packageJson ?? {
-          name: "my-app",
-          version: "1.0.0",
-          dependencies: {},
-        },
-      );
-
-      const expectedExitCode = options.expectedExitCode ?? (options.fails ? 1 : 0);
-      const packages = options.packages ?? ["bar"];
-
-      const { out, err } = await runBunInstall(bunEnv, package_dir, {
-        packages,
-        allowErrors: true,
-        allowWarnings: false,
-        savesLockfile: false,
-        expectedExitCode,
-      });
-
-      if (options.fails) {
-        expect(out).toContain("Installation aborted due to fatal security advisories");
-      }
-
-      await options.expect?.({ out, err });
     },
     {
-      timeout: options.testTimeout ?? 5_000,
+      // Default raised from 5_000 because tests now run concurrently; per-test
+      // wall time is higher under CPU contention even though total time drops.
+      timeout: options.testTimeout ?? 30_000,
     },
   );
 }
@@ -100,11 +108,17 @@ test("basic", {
       url: "https://example.com/advisory-1",
     },
   ],
+  expect: ({ out }) => {
+    expect(out).toContain("Advisory 1 description");
+    expect(out).toContain("https://example.com/advisory-1");
+  },
 });
 
 test("shows progress message when scanner takes more than 1 second", {
   scanner: async () => {
-    await Bun.sleep(2000);
+    // Product boundary is `duration >= 1000` (security_scanner.rs); 1250ms
+    // crosses it with margin without burning 2s of wall clock per lane.
+    await Bun.sleep(1250);
     return [];
   },
   expect: async ({ err }) => {
@@ -133,11 +147,11 @@ test("stdout contains all input package metadata", {
     console.log(JSON.stringify(packages));
     return [];
   },
-  expect: ({ out }) => {
+  expect: ({ out, ctx }) => {
     expect(out).toContain('\"version\":\"0.0.2\"');
     expect(out).toContain('\"name\":\"bar\"');
     expect(out).toContain('\"requestedRange\":\"^0.0.2\"');
-    expect(out).toContain(`\"tarball\":\"${root_url}/bar-0.0.2.tgz\"`);
+    expect(out).toContain(`\"tarball\":\"${ctx.registry_url}bar-0.0.2.tgz\"`);
   },
 });
 
@@ -590,6 +604,10 @@ describe("Edge Cases", () => {
   test("empty advisories array", {
     scanner: async () => [],
     expectedExitCode: 0,
+    expect: ({ out }) => {
+      expect(out).toContain("installed bar@");
+      expect(out).not.toContain("advisory");
+    },
   });
 
   test("special characters in advisory", {
@@ -689,32 +707,26 @@ describe("Package Resolution", () => {
 });
 
 describe("Large payload via ipc pipe", () => {
-  let tgzTempDir: string;
+  // The >1MB payload threshold is reached via long tarball URLs (query-string
+  // padding) rather than many packages. Each package still costs a manifest
+  // fetch + tarball fetch + extract, so fewer packages keeps this test fast on
+  // Windows aarch64 while the IPC pipe still round-trips >1MB of JSON.
+  //
+  // 400 packages x ~3KB tarball URL = ~1.25MB; the scanner returns a fatal
+  // advisory after validating the payload so the subsequent node_modules link
+  // step (which is not under test here) is skipped.
+  const PKG_COUNT = 400;
+  const URL_PAD = Buffer.alloc(3000, "p").toString();
+  const pkgName = (i: number) => `test-pkg-${i}`;
 
-  // Pad package names so the JSON exceeds 1MB with fewer packages. Each
-  // package resolution triggers an HTTP round-trip to the dummy registry,
-  // which is the slow part on Windows aarch64. The name appears twice in
-  // each JSON entry (name field + tarball URL), so 150-char padding gives
-  // ~430 bytes/entry; 3000 entries = ~1.3MB. Filenames stay under 200 chars.
-  const PKG_COUNT = 3000;
-  const NAME_PAD = Buffer.alloc(150, "x").toString();
-  const pkgName = (i: number) => `test-pkg-${NAME_PAD}-${i}`;
+  let barTarballBytes: Uint8Array;
 
   beforeAll(async () => {
-    tgzTempDir = tmpdirSync();
-
-    const barTarball = Bun.file(`${import.meta.dir}/bar-0.0.2.tgz`);
-    for (let i = 0; i < PKG_COUNT; i++) {
-      await Bun.write(`${tgzTempDir}/${pkgName(i)}-0.0.2.tgz`, barTarball);
-    }
-  });
-
-  afterAll(async () => {
-    await rm(tgzTempDir, { recursive: true, force: true });
+    barTarballBytes = await Bun.file(`${import.meta.dir}/bar-0.0.2.tgz`).bytes();
   });
 
   test("handles packages JSON larger than max arg length (>1MB)", {
-    testTimeout: 120_000,
+    testTimeout: 60_000,
     scanner: async ({ packages }) => {
       const jsonSize = JSON.stringify(packages).length;
       console.log(`Received JSON payload of ${jsonSize} bytes from ${packages.length} packages`);
@@ -727,7 +739,9 @@ describe("Large payload via ipc pipe", () => {
         throw new Error("Expected to receive packages");
       }
 
-      return [];
+      // Abort the install after the IPC payload has been validated; linking
+      // hundreds of packages into node_modules is not what is under test here.
+      return [{ package: packages[0].name, description: "abort after IPC payload check", level: "fatal", url: null }];
     },
 
     packageJson: (() => {
@@ -743,15 +757,43 @@ describe("Large payload via ipc pipe", () => {
       };
     })(),
     packages: [],
-    customRegistry: urls => dummyRegistry(urls, { "0.0.2": {} }, 0, tgzTempDir),
-    expectedExitCode: 0,
+    fails: true,
+    customRegistry: (_urls, ctx) => {
+      return async (request: Request) => {
+        const url = request.url.replaceAll("%2f", "/");
+        expect(request.method).toBe("GET");
+        if (new URL(url).pathname.endsWith(".tgz")) {
+          return new Response(barTarballBytes);
+        }
+        expect(request.headers.get("accept")).toBe(
+          "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+        );
+        expect(request.headers.get("npm-auth-type")).toBe(null);
+        expect(await request.text()).toBe("");
+        const name = new URL(url).pathname.replace(`/${ctx.id}/`, "");
+        return new Response(
+          JSON.stringify({
+            name,
+            versions: {
+              "0.0.2": {
+                name,
+                version: "0.0.2",
+                dist: { tarball: `${ctx.registry_url}${name}-0.0.2.tgz?pad=${URL_PAD}` },
+              },
+            },
+            "dist-tags": { latest: "0.0.2" },
+          }),
+        );
+      };
+    },
     expect: ({ out }) => {
-      expect(out).toContain("Received JSON payload");
-
-      const match = out.match(/Received JSON payload of (\d+) bytes/);
+      const match = out.match(/Received JSON payload of (\d+) bytes from (\d+) packages/);
       expect(match).not.toBeNull();
       const bytes = parseInt(match![1], 10);
+      const count = parseInt(match![2], 10);
       expect(bytes).toBeGreaterThan(1024 * 1024);
+      expect(count).toBe(PKG_COUNT);
+      expect(out).toContain("abort after IPC payload check");
     },
   });
 });

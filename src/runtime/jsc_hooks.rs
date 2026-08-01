@@ -834,12 +834,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
             }
         }
 
-        // Rejected: hand the promise up so the caller reports it. Pending
-        // (unsettleable top-level await): hand it up too instead of
-        // pretending the preload loaded; the run loop then exits like any
-        // unsettled top-level await.
         // SAFETY: `promise` is a live (still-protected) JSC heap cell.
-        if unsafe { &*promise }.status() != PromiseStatus::Fulfilled {
+        if unsafe { &*promise }.status() == PromiseStatus::Rejected {
             return Ok(promise);
         }
         // `_protected` drops here → unprotect.

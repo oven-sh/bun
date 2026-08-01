@@ -552,11 +552,7 @@ pub mod js_bundler {
                             match promise
                                 .unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled)
                             {
-                                jsc::PromiseResult::Pending => {
-                                    return Err(global_this.throw(format_args!(
-                                        "Plugin setup() returned a promise that never settled"
-                                    )));
-                                }
+                                jsc::PromiseResult::Pending => unreachable!(),
                                 jsc::PromiseResult::Fulfilled(val) => {
                                     plugin_result = val;
                                 }

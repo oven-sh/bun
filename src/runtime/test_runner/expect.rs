@@ -526,21 +526,7 @@ impl Expect {
                             }
                             Promise::None => unreachable!(),
                         },
-                        js_promise::Status::Pending => {
-                            if !silent {
-                                let expectation = match resolution {
-                                    Promise::Rejects => "Expected promise that rejects",
-                                    _ => "Expected promise that resolves",
-                                };
-                                return Err(Self::throw_promise_matcher_error(
-                                    global_this, custom_label, matcher_name, matcher_params, flags,
-                                    expectation,
-                                    "Received promise that is still pending: ",
-                                    "the event loop drained before it settled",
-                                ));
-                            }
-                            return Err(JsError::Thrown);
-                        }
+                        js_promise::Status::Pending => unreachable!(),
                     }
 
                     new_value.ensure_still_alive();
@@ -917,11 +903,7 @@ impl Expect {
                     // since we know for sure it rejected, we should always return the error
                     return Ok((Some(rejected.to_error().unwrap_or(rejected)), return_value_from_function));
                 }
-                js_promise::Unwrapped::Pending => {
-                    return Err(global_this.throw(format_args!(
-                        "Promise is still pending: the event loop drained before it settled",
-                    )));
-                }
+                js_promise::Unwrapped::Pending => unreachable!(),
             }
         }
 
@@ -1508,21 +1490,13 @@ impl Expect {
             // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
             global_this.bun_vm().as_mut().wait_for_promise(promise);
 
+            result = promise.result(vm);
+            result.ensure_still_alive();
+            debug_assert!(!result.is_empty());
             match promise.status() {
-                js_promise::Status::Pending => {
-                    return Err(global_this.throw(format_args!(
-                        "Matcher `{}` returned a promise that is still pending: the event loop drained before it settled",
-                        matcher_name,
-                    )));
-                }
-                js_promise::Status::Fulfilled => {
-                    result = promise.result(vm);
-                    result.ensure_still_alive();
-                    debug_assert!(!result.is_empty());
-                }
+                js_promise::Status::Pending => unreachable!(),
+                js_promise::Status::Fulfilled => {}
                 js_promise::Status::Rejected => {
-                    result = promise.result(vm);
-                    result.ensure_still_alive();
                     // TODO: rewrite this code to use .then() instead of blocking the event loop
                     // SAFETY: per-use reborrow of the thread-local VM (see VirtualMachine::get docs).
                     VirtualMachine::get().as_mut().run_error_handler(result, None);

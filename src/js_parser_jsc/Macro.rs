@@ -462,18 +462,13 @@ impl Macro {
         let unwrapped = unsafe {
             (*loaded_result).unwrap(&*(*vm).jsc_vm, jsc::PromiseUnwrapMode::LeaveUnhandled)
         };
-        match unwrapped {
-            jsc::PromiseResult::Rejected(result) => {
-                // SAFETY: `vm.global` is the live per-thread global;
-                // `loaded_result` is a live promise cell.
-                unsafe {
-                    (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
-                }
-                return Err(crate::Error::MacroLoadError);
+        if let jsc::PromiseResult::Rejected(result) = unwrapped {
+            // SAFETY: `vm.global` is the live per-thread global; `loaded_result`
+            // is a live promise cell.
+            unsafe {
+                (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
             }
-            // Unsettleable top-level await in the macro module.
-            jsc::PromiseResult::Pending => return Err(crate::Error::MacroLoadError),
-            jsc::PromiseResult::Fulfilled(_) => {}
+            return Err(crate::Error::MacroLoadError);
         }
 
         Ok(Macro {
@@ -844,17 +839,6 @@ impl<'a> Run<'a> {
                 let _ = self.macro_.vm();
                 let vm = VirtualMachine::get();
                 vm.as_mut().wait_for_promise(promise);
-
-                // On a pending promise `result()` reads the reactions list,
-                // not a value, so bail before touching it.
-                if promise.status() == jsc::js_promise::Status::Pending {
-                    self.log.add_error_fmt(
-                        Some(self.source),
-                        self.caller.loc,
-                        format_args!("macro returned a promise that never settled"),
-                    );
-                    return Err(MacroError::MacroFailed);
-                }
 
                 let promise_result = promise.result(vm.jsc_vm());
                 let rejected = promise.status() == jsc::js_promise::Status::Rejected;

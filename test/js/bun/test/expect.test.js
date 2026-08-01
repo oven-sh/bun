@@ -1264,8 +1264,6 @@ describe("expect()", () => {
     expect(w).toEqual(w);
   });
 
-  // Allocation-heavy by design (GC stress for #14256); measured at ~4 minutes
-  // under a debug+ASAN build, far past the 5s default per-test timeout.
   test("deepEquals Set/Map stress test", () => {
     // https://github.com/oven-sh/bun/issues/14250. Distinct array keys take the
     // JSSetIterator/JSMapIterator linear fallback (quadratic in N); 20 x 500
@@ -1294,7 +1292,7 @@ describe("expect()", () => {
       let innerMap = new Map(arr4);
       expect(Bun.deepEquals(outerMap, innerMap)).toBe(true);
     }
-  }, 480_000);
+  });
 
   test("deepEquals - Date", () => {
     let d = new Date();

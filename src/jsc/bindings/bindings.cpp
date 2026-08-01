@@ -864,9 +864,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     if constexpr (isStrict) {
-        // Reaching here with two arrays means a Proxy skipped the fast path above, and
-        // the generic path below never sees "length" (it is not enumerable), so trailing
-        // holes would go unnoticed. Compare the observable lengths through the traps.
+        // Proxies skip the array fast path above, which is the only place array length is compared.
         if (v1Array && v2Array) {
             JSValue lengthValue = o1->get(globalObject, vm.propertyNames->length);
             RETURN_IF_EXCEPTION(scope, false);
@@ -884,9 +882,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
     if constexpr (isStrict && !skipPrototype) {
         if (c1->type() == ProxyObjectType || c2->type() == ProxyObjectType) {
-            // calculatedClassName() reports the internal "ProxyObject" for any Proxy, so
-            // compare observable prototypes instead. A transparent Proxy then matches its
-            // target, as in Node's util.isDeepStrictEqual and Jest's toStrictEqual.
+            // calculatedClassName() is always "ProxyObject" for a Proxy; compare observable prototypes instead.
             JSValue p1 = o1->getPrototype(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
             JSValue p2 = o2->getPrototype(globalObject);
@@ -1780,8 +1776,7 @@ bool Bun__deepMatch(
     bool subsetIsArray = isArray(globalObject, subsetValue);
     RETURN_IF_EXCEPTION(throwScope, false);
 
-    // An array expectation only matches an array. The reverse is allowed: a
-    // plain-object expectation is a key subset, so a received array can satisfy it.
+    // An array expectation only matches an array; the reverse is allowed (object expectation is a key subset).
     if (subsetIsArray && !objIsArray) {
         return false;
     }
@@ -1794,8 +1789,7 @@ bool Bun__deepMatch(
             objLength = obj->getArrayLength();
             subsetLength = subsetObj->getArrayLength();
         } else {
-            // getArrayLength() reads internal indexed storage, which a Proxy does not
-            // have; read the observable length so a Proxy over an array matches as one.
+            // getArrayLength() reads the indexed butterfly, which a Proxy does not have.
             JSValue lengthValue = obj->get(globalObject, vm.propertyNames->length);
             RETURN_IF_EXCEPTION(throwScope, false);
             objLength = lengthValue.toLength(globalObject);

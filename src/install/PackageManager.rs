@@ -1490,11 +1490,21 @@ pub fn init(
                 }
             }
 
-            if cli.global {
+            if cli.global
+                && !matches!(
+                    subcommand,
+                    Subcommand::Update
+                        | Subcommand::Remove
+                        | Subcommand::Patch
+                        | Subcommand::PatchCommit
+                )
+            {
                 // `-g` already fchdir'd into the global dir above; the global
                 // manifest may not exist until the first `bun add -g`. Create it
                 // so read-only queries like `bun pm -g bin` work on a fresh
                 // install instead of failing with MissingPackageJSON.
+                // Update/Remove/Patch keep returning the error so their callers
+                // can print "nothing to remove/update/patch" and exit 1.
                 this_cwd = original_cwd;
                 created_package_json = true;
                 break 'child attempt_to_create_package_json_and_open()?;

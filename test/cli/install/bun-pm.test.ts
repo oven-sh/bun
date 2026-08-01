@@ -970,3 +970,33 @@ test("bun pm bin without -g still requires a package.json", async () => {
   expect(stdout).toBe("");
   expect(exitCode).toBe(1);
 });
+
+test("bun remove -g with no global package.json still says nothing to remove", async () => {
+  using dir = tempDir("remove-global-fresh", {
+    "cwd/.keep": "",
+  });
+  const dirStr = String(dir);
+  const bunInstallDir = join(dirStr, "bun-install");
+
+  const spawnEnv: NodeJS.Dict<string> = {
+    ...env,
+    BUN_INSTALL: bunInstallDir,
+    XDG_CACHE_HOME: join(dirStr, "xdg-cache"),
+    HOME: dirStr,
+  };
+  delete spawnEnv.BUN_INSTALL_GLOBAL_DIR;
+  delete spawnEnv.BUN_INSTALL_BIN;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "remove", "-g", "some-pkg"],
+    cwd: join(dirStr, "cwd"),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: spawnEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("nothing to remove");
+  expect(await exists(join(bunInstallDir, "install", "global", "package.json"))).toBeFalse();
+  expect(exitCode).toBe(1);
+});

@@ -373,7 +373,7 @@ pub struct CommandLineArguments {
     pub production: bool,
     pub(crate) frozen_lockfile: bool,
     pub(crate) no_save: bool,
-    pub(crate) dry_run: bool,
+    pub dry_run: bool,
     pub(crate) force: bool,
     pub(crate) no_cache: bool,
     pub silent: bool,

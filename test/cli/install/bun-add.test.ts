@@ -2643,3 +2643,26 @@ for (const cmd of ["add", "install"]) {
     expect(entries).toEqual([]);
   });
 }
+
+for (const cmd of ["link", "unlink"]) {
+  it(`should not create package.json for \`bun ${cmd} --dry-run\` in an empty directory`, async () => {
+    expect(await readdir(add_dir)).toEqual([]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), cmd, "--dry-run"],
+      cwd: add_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    await stdout.text();
+    // There is no package.json to link/unlink; the command should refuse
+    // rather than create one.
+    expect(err).toContain("could not find a package.json");
+    expect(await exited).not.toBe(0);
+
+    expect(await readdir(add_dir)).toEqual([]);
+  });
+}

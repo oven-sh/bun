@@ -4355,6 +4355,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     why = b"All code inside a class is implicitly in strict mode";
                     where_ = self.enclosing_class_keyword;
                 }
+                js_ast::StrictModeKind::ExplicitStrictMode => {
+                    why = b"Strict mode is triggered by the \"use strict\" directive here";
+                    where_ = self.source.range_of_string(self.module_scope_directive_loc);
+                }
                 _ => {}
             }
             if why.is_empty() {

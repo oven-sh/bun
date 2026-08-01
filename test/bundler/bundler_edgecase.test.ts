@@ -2858,6 +2858,78 @@ describe("bundler", () => {
       expect(out).not.toContain("require_foo\u2014bar");
     },
   });
+  itBundled("edgecase/WithStatementESMOutputError", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import w from './w.cjs';
+        console.log(w.read());
+      `,
+      "/w.cjs": /* js */ `
+        var scope = { greeting: 'hi' };
+        function read() { with (scope) { return greeting; } }
+        module.exports = { read };
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/w.cjs": [`With statements cannot be used with the ESM output format due to strict mode`],
+    },
+  });
+  itBundled("edgecase/WithStatementESMSourceError", {
+    files: {
+      "/entry.js": /* js */ `
+        with (globalThis) { console.log(1); }
+        export {};
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/entry.js": [`With statements cannot be used in strict mode`],
+    },
+  });
+  itBundled("edgecase/WithStatementUseStrictSourceError", {
+    files: {
+      "/entry.js": /* js */ `
+        "use strict";
+        with (globalThis) { console.log(1); }
+      `,
+    },
+    format: "cjs",
+    bundleErrors: {
+      "/entry.js": [`With statements cannot be used in strict mode`],
+    },
+  });
+  itBundled("edgecase/WithStatementCJSOutputAllowed", {
+    files: {
+      "/entry.js": /* js */ `
+        const w = require('./w.cjs');
+        console.log(w.read());
+      `,
+      "/w.cjs": /* js */ `
+        var scope = { greeting: 'hi' };
+        function read() { with (scope) { return greeting; } }
+        module.exports = { read };
+      `,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("with (scope)");
+    },
+    run: { stdout: "hi" },
+  });
+  itBundled("edgecase/WithStatementIIFEOutputAllowed", {
+    files: {
+      "/entry.js": /* js */ `
+        var scope = { greeting: 'hi' };
+        with (scope) { console.log(greeting); }
+      `,
+    },
+    format: "iife",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("with (scope)");
+    },
+    run: { stdout: "hi" },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

@@ -495,9 +495,9 @@ impl Subcommand {
 }
 
 /// For `bun install -g .` and friends: rewrite positionals that refer to a
-/// relative folder so the global package.json records an absolute path instead
-/// of `.` (which would later resolve against the global dir). Must be called
-/// before `init()` chdirs away from the user's invocation cwd.
+/// relative local path (folder or tarball) so the global package.json records
+/// an absolute path instead of `.`, which would otherwise resolve against the
+/// global dir after `init()` chdirs there. Must be called before `init()`.
 ///
 /// Returns `None` when no positional needed rewriting.
 pub(crate) fn absolutize_folder_positionals(
@@ -534,13 +534,21 @@ pub(crate) fn absolutize_folder_positionals(
             (b"", input)
         };
 
-        if let Some(rest) = value.strip_prefix(b"file:") {
+        let had_file_scheme = if let Some(rest) = value.strip_prefix(b"file:") {
             value = rest;
-        }
+            true
+        } else {
+            false
+        };
 
-        // Only relative folder specifiers: `.`, `./foo`, `../foo`. Absolute
-        // paths, `~/`, and tarballs already work or are handled elsewhere.
-        if value.is_empty() || value[0] != b'.' || Dependency::is_tarball(value) {
+        // Rewrite when the value is a relative local path: either `.`/`./x`/`../x`
+        // (folder or local tarball), or a `file:` URI whose remainder is relative.
+        // Absolute paths and `~/` do not depend on the cwd.
+        if value.is_empty()
+            || !(had_file_scheme || value[0] == b'.')
+            || value.starts_with(b"~/")
+            || bun_paths::is_absolute(value)
+        {
             continue;
         }
 
@@ -556,8 +564,13 @@ pub(crate) fn absolutize_folder_positionals(
             },
         };
 
-        let abs =
-            resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut join_buf[..], &[value]);
+        let Some(abs) = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+            cwd,
+            &mut join_buf[..],
+            &[value],
+        ) else {
+            continue;
+        };
         let mut rewritten = Vec::with_capacity(alias.len() + abs.len());
         rewritten.extend_from_slice(alias);
         rewritten.extend_from_slice(abs);

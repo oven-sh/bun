@@ -112,4 +112,18 @@ describe("bun install -g with a relative folder (#5682)", () => {
     expect(Object.keys(globalManifest.dependencies)).toEqual(["mypkg-5682"]);
     expect(posix(globalManifest.dependencies["mypkg-5682"])).toBe(posix(pkg));
   });
+
+  test.concurrent("`file:pkg` (relative path without a leading dot) resolves against the invocation cwd", async () => {
+    using dir = makePkg(false);
+    const root = String(dir);
+
+    const { stderr, exitCode } = await runInstall(root, root, ["install", "-g", "file:pkg"]);
+
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const globalManifest = await file(join(globalDir(root), "package.json")).json();
+    expect(Object.keys(globalManifest.dependencies)).toEqual(["mypkg-5682"]);
+    expect(posix(globalManifest.dependencies["mypkg-5682"])).toBe(posix(join(root, "pkg")));
+  });
 });

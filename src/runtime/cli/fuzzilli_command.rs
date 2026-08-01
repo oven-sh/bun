@@ -92,7 +92,7 @@ impl FuzzilliCommand {
             let temp_path: &[u8] = b"/tmp/bun-fuzzilli-reprl.js";
             // The `Run.boot` entry point is hosted on `RunCommand` to avoid the
             // higher-tier crate cycle (see run_command.rs §`Run`).
-            let result = RunCommand::boot(_ctx, temp_path.to_vec().into_boxed_slice(), None);
+            let result = RunCommand::boot(_ctx, temp_path.to_vec().into_boxed_slice(), None, None);
 
             // `defer fd.close()` — Fd is Copy and has no Drop; close explicitly.
             temp_file_fd.close();

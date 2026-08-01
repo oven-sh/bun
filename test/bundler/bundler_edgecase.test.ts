@@ -2931,6 +2931,45 @@ describe("bundler", () => {
     },
     run: { stdout: "true\ntrue\ntrue" },
   });
+  // The visit pass substitutes unbound `undefined` to EUndefined, which
+  // `print_undefined` emits as the bare identifier when not minifying.
+  itBundled("edgecase/DeleteFoldedUndefinedRef", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(delete (null ?? undefined));
+      `,
+    },
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toMatch(/delete\s+undefined\b/);
+    },
+    run: { stdout: "true" },
+  });
+  // `import.meta.main` is rewritten to EImportMetaMain; under `target: node`
+  // that prints as `__require.main == __require.module` without its own paren
+  // wrap, so an unwrapped `delete` would bind to `__require.main`.
+  itBundled("edgecase/DeleteFoldedImportMetaMainRef", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(delete (null ?? import.meta.main));
+      `,
+    },
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toMatch(/delete\s+import\.meta\.main\b/);
+    },
+    run: { stdout: "true" },
+  });
+  itBundled("edgecase/DeleteFoldedImportMetaMainRefNode", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(delete (null ?? import.meta.main));
+      `,
+    },
+    target: "node",
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toMatch(/delete\s+__require\.main\b/);
+    },
+    run: { runtime: "node", stdout: "true" },
+  });
   // A same-file `const enum` member is inlined to an EInlinedEnum wrapping an
   // ENumber during the visit pass, so the NaN/Infinity check has to look
   // through the wrapper.

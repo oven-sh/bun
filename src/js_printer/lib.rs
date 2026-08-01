@@ -1223,7 +1223,9 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
         | ExprData::ERequireCallTarget
         | ExprData::ERequireResolveCallTarget
         | ExprData::ERequireMain
-        | ExprData::EImportMeta(_) => true,
+        | ExprData::EImportMeta(_)
+        | ExprData::EImportMetaMain(_)
+        | ExprData::EUndefined(_) => true,
         ExprData::EInlinedEnum(e) => is_identifier_or_numeric_constant_or_property_access(&e.value),
         ExprData::ENumber(e) => e.value().is_infinite() || e.value().is_nan(),
         _ => false,

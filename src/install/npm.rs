@@ -1680,7 +1680,10 @@ pub enum FindVersionResult<'a> {
     },
     /// `dist-tags.latest` did not resolve to a known version; fell back to the
     /// highest published version.
-    FoundLatestFallback(FindResult<'a>),
+    FoundLatestFallback {
+        result: FindResult<'a>,
+        had_too_recent: bool,
+    },
     Err(FindVersionError),
 }
 
@@ -1689,7 +1692,7 @@ impl<'a> FindVersionResult<'a> {
         match self {
             FindVersionResult::Found(result) => Some(result),
             FindVersionResult::FoundWithFilter { result, .. } => Some(result),
-            FindVersionResult::FoundLatestFallback(result) => Some(result),
+            FindVersionResult::FoundLatestFallback { result, .. } => Some(result),
             FindVersionResult::Err(_) => None,
         }
     }
@@ -1699,6 +1702,7 @@ impl<'a> FindVersionResult<'a> {
             FindVersionResult::FoundWithFilter {
                 newest_filtered, ..
             } => newest_filtered.is_some(),
+            FindVersionResult::FoundLatestFallback { had_too_recent, .. } => *had_too_recent,
             FindVersionResult::Err(err) => *err == FindVersionError::AllVersionsTooRecent,
             // .err.too_recent is only for direct version checks which doesn't prove there was a later version that could have been chosen
             _ => false,
@@ -1728,7 +1732,10 @@ impl PackageManifest {
                 if let Some(highest) =
                     self.find_highest_version(min_age_gate_ms, &mut had_too_recent)
                 {
-                    return FindVersionResult::FoundLatestFallback(highest);
+                    return FindVersionResult::FoundLatestFallback {
+                        result: highest,
+                        had_too_recent,
+                    };
                 }
                 if had_too_recent {
                     return FindVersionResult::Err(FindVersionError::AllVersionsTooRecent);

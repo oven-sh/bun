@@ -1461,10 +1461,13 @@ impl VirtualMachine {
                     let global = self.global;
                     // `on_before_exit` armed this; clear it so a user
                     // `uncaughtException` listener is consulted instead of
-                    // `uncaught_exception` hard-exiting.
+                    // `uncaught_exception` hard-exiting, then restore so an
+                    // 'exit'-listener throw during `on_exit` still hard-exits.
+                    let was_exit_on_uncaught = self.exit_on_uncaught_exception;
                     self.exit_on_uncaught_exception = false;
                     // SAFETY: `global` valid for VM lifetime.
                     let _ = self.uncaught_exception(unsafe { &*global }, result, true);
+                    self.exit_on_uncaught_exception = was_exit_on_uncaught;
                     promise.set_handled();
                     self.pending_internal_promise_reported_at = self.hot_reload_counter;
                 }

@@ -80,8 +80,6 @@ async function runBun(cwd: string, cache: string, env: Record<string, string | u
 }
 
 describe("bun update re-resolves git dependencies", () => {
-  const timeout = 60_000;
-
   async function setup(root: string) {
     const env = gitEnv(root);
     const { upstream, serve } = await makeUpstream(root, env);
@@ -98,106 +96,90 @@ describe("bun update re-resolves git dependencies", () => {
     expect(body).toContain(marker);
   }
 
-  test.concurrent(
-    "`bun update` moves a no-committish git dependency to the new HEAD",
-    async () => {
-      using root = tempDir("issue-13769-head", {});
-      const { env, upstream, serve, server, repoUrl, app, cache } = await setup(String(root));
-      await using _server = server;
+  test.concurrent("`bun update` moves a no-committish git dependency to the new HEAD", async () => {
+    using root = tempDir("issue-13769-head", {});
+    const { env, upstream, serve, server, repoUrl, app, cache } = await setup(String(root));
+    await using _server = server;
 
-      {
-        const { stderr, exitCode } = await runBun(app, cache, env, "add", "--no-progress", repoUrl);
-        expect(stderr).not.toContain("error:");
-        expect(exitCode).toBe(0);
-        await assertInstalled(app, "COMMIT_A");
-      }
-
-      const shaB = await publishCommit(env, upstream, serve, "COMMIT_B");
-
-      const { stdout, stderr, exitCode } = await runBun(app, cache, env, "update", "--no-progress");
-      expect(stderr).not.toContain("error:");
-      expect(stdout).not.toContain("no changes");
-      expect(exitCode).toBe(0);
-      await assertInstalled(app, "COMMIT_B");
-
-      const lock = await Bun.file(join(app, "bun.lock")).text();
-      expect(lock).toContain(shaB);
-    },
-    timeout,
-  );
-
-  test.concurrent(
-    "`bun update <name>` moves a branch-tracking git dependency to the branch tip",
-    async () => {
-      using root = tempDir("issue-13769-branch", {});
-      const { env, upstream, serve, server, repoUrl, app, cache } = await setup(String(root));
-      await using _server = server;
-
-      {
-        const { stderr, exitCode } = await runBun(app, cache, env, "add", "--no-progress", `${repoUrl}#main`);
-        expect(stderr).not.toContain("error:");
-        expect(exitCode).toBe(0);
-        await assertInstalled(app, "COMMIT_A");
-      }
-
-      await publishCommit(env, upstream, serve, "COMMIT_B");
-
-      const { stderr, exitCode } = await runBun(app, cache, env, "update", "--no-progress", "issue13769lib");
-      expect(stderr).not.toContain("error:");
-      expect(exitCode).toBe(0);
-      await assertInstalled(app, "COMMIT_B");
-    },
-    timeout,
-  );
-
-  test.concurrent(
-    "`bun update` is a no-op when the remote HEAD is unchanged",
-    async () => {
-      using root = tempDir("issue-13769-noop", {});
-      const { env, server, repoUrl, app, cache } = await setup(String(root));
-      await using _server = server;
-
-      {
-        const { exitCode } = await runBun(app, cache, env, "add", "--no-progress", repoUrl);
-        expect(exitCode).toBe(0);
-        await assertInstalled(app, "COMMIT_A");
-      }
-
-      const lockBefore = await Bun.file(join(app, "bun.lock")).text();
-      const { stderr, exitCode } = await runBun(app, cache, env, "update", "--no-progress");
+    {
+      const { stderr, exitCode } = await runBun(app, cache, env, "add", "--no-progress", repoUrl);
       expect(stderr).not.toContain("error:");
       expect(exitCode).toBe(0);
       await assertInstalled(app, "COMMIT_A");
-      const lockAfter = await Bun.file(join(app, "bun.lock")).text();
-      expect(lockAfter).toBe(lockBefore);
-    },
-    timeout,
-  );
+    }
 
-  test.concurrent(
-    "`bun install` keeps the lockfile pin when the remote has moved",
-    async () => {
-      using root = tempDir("issue-13769-install", {});
-      const { env, upstream, serve, server, repoUrl, app, cache } = await setup(String(root));
-      await using _server = server;
+    const shaB = await publishCommit(env, upstream, serve, "COMMIT_B");
 
-      {
-        const { exitCode } = await runBun(app, cache, env, "add", "--no-progress", repoUrl);
-        expect(exitCode).toBe(0);
-        await assertInstalled(app, "COMMIT_A");
-      }
+    const { stdout, stderr, exitCode } = await runBun(app, cache, env, "update", "--no-progress");
+    expect(stderr).not.toContain("error:");
+    expect(stdout).not.toContain("no changes");
+    expect(exitCode).toBe(0);
+    await assertInstalled(app, "COMMIT_B");
 
-      await publishCommit(env, upstream, serve, "COMMIT_B");
+    const lock = await Bun.file(join(app, "bun.lock")).text();
+    expect(lock).toContain(shaB);
+  });
 
-      const lockBefore = await Bun.file(join(app, "bun.lock")).text();
-      const { stderr, exitCode } = await runBun(app, cache, env, "install", "--no-progress");
+  test.concurrent("`bun update <name>` moves a branch-tracking git dependency to the branch tip", async () => {
+    using root = tempDir("issue-13769-branch", {});
+    const { env, upstream, serve, server, repoUrl, app, cache } = await setup(String(root));
+    await using _server = server;
+
+    {
+      const { stderr, exitCode } = await runBun(app, cache, env, "add", "--no-progress", `${repoUrl}#main`);
       expect(stderr).not.toContain("error:");
       expect(exitCode).toBe(0);
-      // `install` must honour the lockfile pin, not float to HEAD.
       await assertInstalled(app, "COMMIT_A");
-      const lockAfter = await Bun.file(join(app, "bun.lock")).text();
-      expect(lockAfter).toBe(lockBefore);
-    },
-    timeout,
-  );
+    }
+
+    await publishCommit(env, upstream, serve, "COMMIT_B");
+
+    const { stderr, exitCode } = await runBun(app, cache, env, "update", "--no-progress", "issue13769lib");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    await assertInstalled(app, "COMMIT_B");
+  });
+
+  test.concurrent("`bun update` is a no-op when the remote HEAD is unchanged", async () => {
+    using root = tempDir("issue-13769-noop", {});
+    const { env, server, repoUrl, app, cache } = await setup(String(root));
+    await using _server = server;
+
+    {
+      const { exitCode } = await runBun(app, cache, env, "add", "--no-progress", repoUrl);
+      expect(exitCode).toBe(0);
+      await assertInstalled(app, "COMMIT_A");
+    }
+
+    const lockBefore = await Bun.file(join(app, "bun.lock")).text();
+    const { stderr, exitCode } = await runBun(app, cache, env, "update", "--no-progress");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    await assertInstalled(app, "COMMIT_A");
+    const lockAfter = await Bun.file(join(app, "bun.lock")).text();
+    expect(lockAfter).toBe(lockBefore);
+  });
+
+  test.concurrent("`bun install` keeps the lockfile pin when the remote has moved", async () => {
+    using root = tempDir("issue-13769-install", {});
+    const { env, upstream, serve, server, repoUrl, app, cache } = await setup(String(root));
+    await using _server = server;
+
+    {
+      const { exitCode } = await runBun(app, cache, env, "add", "--no-progress", repoUrl);
+      expect(exitCode).toBe(0);
+      await assertInstalled(app, "COMMIT_A");
+    }
+
+    await publishCommit(env, upstream, serve, "COMMIT_B");
+
+    const lockBefore = await Bun.file(join(app, "bun.lock")).text();
+    const { stderr, exitCode } = await runBun(app, cache, env, "install", "--no-progress");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    // `install` must honour the lockfile pin, not float to HEAD.
+    await assertInstalled(app, "COMMIT_A");
+    const lockAfter = await Bun.file(join(app, "bun.lock")).text();
+    expect(lockAfter).toBe(lockBefore);
+  });
 });

@@ -4,34 +4,35 @@
 // a different position showed up as both "-" and "+". The fix sorts entries by
 // their serialized form before diffing so only true membership differences are
 // reported.
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 function stripAnsi(s: string) {
   return s.replaceAll(/\x1B\[[0-9;]*m/g, "");
 }
 
-function diffLines(stderr: string, testName: string) {
-  // Pull out the diff body for a single test: lines starting with "+ " / "- " / "  "
-  // between the "error:" line and the "- Expected" summary.
+function diffBlock(stderr: string, testName: string) {
+  // Isolate the diff for a single fixture test: lines between this test's
+  // "error:" line and its "(fail) <name>" line.
   const lines = stripAnsi(stderr).split("\n");
-  const start = lines.findIndex(l => l.includes(`(fail) ${testName}`));
-  // walk backwards from the (fail) line to the preceding "error:" for this test
-  let errIdx = start;
+  const failIdx = lines.findIndex(l => l.includes(`(fail) ${testName}`));
+  if (failIdx < 0) throw new Error(`fixture test "${testName}" not found in stderr`);
+  let errIdx = failIdx;
   while (errIdx > 0 && !lines[errIdx].startsWith("error:")) errIdx--;
   let summaryIdx = errIdx;
-  while (summaryIdx < start && !lines[summaryIdx].startsWith("- Expected")) summaryIdx++;
-  return lines
+  while (summaryIdx < failIdx && !lines[summaryIdx].startsWith("- Expected")) summaryIdx++;
+  const body = lines
     .slice(errIdx + 1, summaryIdx)
     .filter(l => l.startsWith("+ ") || l.startsWith("- ") || l.startsWith("  "))
     .map(l => l.trimEnd());
+  const footer = lines.slice(summaryIdx, summaryIdx + 2).join("\n");
+  return { body, footer };
 }
 
 describe("issue #13015: toEqual diff for Set/Map is order-insensitive", () => {
   let stderr = "";
-  let exitCode = -1;
 
-  test("run fixture", async () => {
+  beforeAll(async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", import.meta.dir + "/13015.fixture.ts"],
       env: { ...bunEnv, FORCE_COLOR: "0" },
@@ -39,13 +40,12 @@ describe("issue #13015: toEqual diff for Set/Map is order-insensitive", () => {
     });
     const [, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     stderr = err;
-    exitCode = code;
-    expect(exitCode).toBe(1);
+    expect(code).toBe(1);
   });
 
   test("Set: shared element is not shown as both removed and added", () => {
-    const body = diffLines(stderr, "Set diff shows only membership differences");
-    // "xx" is in both sets; it must not appear on a +/- line.
+    const { body, footer } = diffBlock(stderr, "Set diff shows only membership differences");
+    // "xx" and "asdf" are in both sets; they must not appear on a +/- line.
     for (const line of body) {
       if (line.startsWith("+ ") || line.startsWith("- ")) {
         expect(line).not.toContain('"xx"');
@@ -54,13 +54,11 @@ describe("issue #13015: toEqual diff for Set/Map is order-insensitive", () => {
     }
     // "sdf" is only in expected, so it must appear on a "-" line.
     expect(body.some(l => l.startsWith("- ") && l.includes('"sdf"'))).toBe(true);
-    // The footer should count exactly 1 expected-only and 0 received-only lines.
-    expect(stripAnsi(stderr)).toContain("- Expected  - 1");
-    expect(stripAnsi(stderr)).toContain("+ Received  + 0");
+    expect(footer).toBe("- Expected  - 1\n+ Received  + 0");
   });
 
   test("Set: numeric members", () => {
-    const body = diffLines(stderr, "Set diff with numbers");
+    const { body, footer } = diffBlock(stderr, "Set diff with numbers");
     // 1 and 2 are in both sets.
     for (const line of body) {
       if (line.startsWith("+ ") || line.startsWith("- ")) {
@@ -70,10 +68,11 @@ describe("issue #13015: toEqual diff for Set/Map is order-insensitive", () => {
     // 4 is only in expected, 3 is only in received.
     expect(body.some(l => l.startsWith("- ") && /\b4\b/.test(l))).toBe(true);
     expect(body.some(l => l.startsWith("+ ") && /\b3\b/.test(l))).toBe(true);
+    expect(footer).toBe("- Expected  - 1\n+ Received  + 1");
   });
 
   test("Map: shared entry is not shown as both removed and added", () => {
-    const body = diffLines(stderr, "Map diff shows only entry differences");
+    const { body, footer } = diffBlock(stderr, "Map diff shows only entry differences");
     // "a" => 1 and "b" => 2 are in both maps.
     for (const line of body) {
       if (line.startsWith("+ ") || line.startsWith("- ")) {
@@ -83,10 +82,11 @@ describe("issue #13015: toEqual diff for Set/Map is order-insensitive", () => {
     }
     // "c" => 3 is only in expected.
     expect(body.some(l => l.startsWith("- ") && l.includes('"c" => 3'))).toBe(true);
+    expect(footer).toBe("- Expected  - 1\n+ Received  + 0");
   });
 
   test("Set nested in object", () => {
-    const body = diffLines(stderr, "Set nested in object");
+    const { body, footer } = diffBlock(stderr, "Set nested in object");
     // "x" and "y" are in both sets.
     for (const line of body) {
       if (line.startsWith("+ ") || line.startsWith("- ")) {
@@ -96,5 +96,6 @@ describe("issue #13015: toEqual diff for Set/Map is order-insensitive", () => {
     }
     // "z" is only in expected.
     expect(body.some(l => l.startsWith("- ") && l.includes('"z"'))).toBe(true);
+    expect(footer).toBe("- Expected  - 1\n+ Received  + 0");
   });
 });

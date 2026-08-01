@@ -2941,7 +2941,10 @@ pub(crate) fn hoist_external_jsx_imports(c: &mut LinkerContext<'_>, chunks: &mut
         for &source_index in js.files_in_chunk_order.iter() {
             let import_records = all_import_records[source_index as usize].as_slice();
             let parts_live = &c.graph.parts_live[source_index as usize];
-            for (part_index, part) in all_parts[source_index as usize].as_slice().iter().enumerate()
+            for (part_index, part) in all_parts[source_index as usize]
+                .as_slice()
+                .iter()
+                .enumerate()
             {
                 if !parts_live.is_set(part_index) {
                     continue;
@@ -3020,8 +3023,10 @@ pub(crate) fn hoist_external_jsx_imports(c: &mut LinkerContext<'_>, chunks: &mut
                     original_name: bun_ast::StoreStr::EMPTY,
                 })
                 .collect();
-            js.jsx_import_rewrites
-                .insert(entry.survivor_key, crate::chunk::JsxImportRewrite::Items(items));
+            js.jsx_import_rewrites.insert(
+                entry.survivor_key,
+                crate::chunk::JsxImportRewrite::Items(items),
+            );
             for key in entry.drops {
                 js.jsx_import_rewrites
                     .insert(key, crate::chunk::JsxImportRewrite::Drop);

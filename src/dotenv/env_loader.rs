@@ -1011,8 +1011,7 @@ impl<'a> Expand<'a> {
             return true;
         }
         if self.seen.contains(&idx) {
-            // Re-entrant: treat as unset so `${NAME:-default}` falls through
-            // to the default (`PORT=${PORT:-3000}` resolves to `3000`).
+            // Re-entrant: treat as unset so `${NAME:-default}` takes the default.
             return false;
         }
         self.resolve(idx, depth);

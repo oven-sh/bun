@@ -1088,9 +1088,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                     bstr::BStr::new(&chunk.final_rel_path)
                                 ),
                             );
-                            // `output_files` was pre-sized assuming this chunk
-                            // would produce a bytecode entry; bailing here keeps
-                            // the `take()` insertion-count invariant intact.
                             return Err(crate::Error::BuildFailed);
                         }
                     }

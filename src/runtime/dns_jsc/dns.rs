@@ -2102,9 +2102,6 @@ pub mod internal {
 
         #[cfg(target_os = "macos")]
         pub(crate) libinfo: MacAsyncDNS,
-
-        #[cfg(not(windows))]
-        pub(crate) can_retry_for_addrconfig: bool,
     }
 
     impl Request {
@@ -2119,8 +2116,6 @@ pub mod internal {
                 valid: true,
                 #[cfg(target_os = "macos")]
                 libinfo: MacAsyncDNS::default(),
-                #[cfg(not(windows))]
-                can_retry_for_addrconfig: DEFAULT_HINTS_ADDRCONFIG,
             }))
         }
 
@@ -2281,9 +2276,6 @@ pub mod internal {
     }
 
     // we just hardcode a STREAM socktype
-    #[cfg(unix)]
-    const DEFAULT_HINTS_ADDRCONFIG: bool = true;
-
     #[allow(dead_code)]
     fn default_hints() -> AddrInfo {
         let mut h: AddrInfo = bun_core::ffi::zeroed();
@@ -2593,7 +2585,6 @@ pub mod internal {
             // optional fallback
             if err == netc::EAI_NONAME && (hints.ai_flags & netc::AI_ADDRCONFIG) != 0 {
                 hints.ai_flags &= !netc::AI_ADDRCONFIG;
-                (*req).can_retry_for_addrconfig = false;
                 err = libc::getaddrinfo(host_ptr, service, &raw const hints, &raw mut addrinfo);
             }
             after_result(req, addrinfo, err);

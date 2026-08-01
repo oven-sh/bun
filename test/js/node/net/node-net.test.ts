@@ -706,7 +706,7 @@ it("unref survives an autoSelectFamily retry", async () => {
   // Server bound to IPv4 loopback only; the injected async lookup lists ::1
   // first so that attempt is refused and the connection retries on 127.0.0.1.
   // unref() runs while the lookup is pending (handle still detached).
-  const server = require("net").createServer(() => {});
+  const server = createServer(() => {});
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   try {
     await using proc = Bun.spawn({

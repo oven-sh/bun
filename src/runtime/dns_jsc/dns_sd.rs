@@ -159,8 +159,11 @@ pub(crate) struct QueryState {
     /// `kDNSServiceProtocol_*` bits with no reply yet; any family-tagged
     /// callback (Add, NoSuchRecord, Timeout) clears its bit.
     pub(crate) pending_proto: DNSServiceProtocol,
-    /// Some family has answered while another is still pending: the
-    /// timestamp starts the `SECOND_FAMILY_EXTRA_MS` early-out.
+    /// Answers are in hand but something is outstanding (a silent family, or
+    /// a `MoreComing` continuation): the timestamp starts the
+    /// `SECOND_FAMILY_EXTRA_MS` early-out. A stale reply for a deallocated
+    /// subordinate is dropped by the client stub without a callback, so this
+    /// timer is also what clears an orphaned `awaiting_more`.
     partial_at_ms: Option<i64>,
     gave_up_on_pending: bool,
     /// Set when the query was issued with `SuppressUnusable`; an all-empty
@@ -243,8 +246,11 @@ impl QueryState {
         {
             self.sd_error = error_code;
         }
-        if !self.results.is_empty() && self.pending_proto != 0 && self.partial_at_ms.is_none() {
+        let waiting = self.pending_proto != 0 || self.awaiting_more;
+        if !self.results.is_empty() && waiting && self.partial_at_ms.is_none() {
             self.partial_at_ms = Some(now_ms());
+        } else if !waiting {
+            self.partial_at_ms = None;
         }
     }
 
@@ -254,10 +260,13 @@ impl QueryState {
             || (self.pending_proto == 0 && !self.awaiting_more)
     }
 
-    /// Deadline for giving up on the still-pending family, if one family
-    /// has already answered.
+    /// Deadline for giving up on whatever is still outstanding (a silent
+    /// family, or an unanswered `MoreComing`) once answers are in hand.
     pub(crate) fn early_out_deadline_ms(&self) -> Option<i64> {
-        if self.pending_proto == 0 || self.gave_up_on_pending {
+        if self.gave_up_on_pending || self.results.is_empty() {
+            return None;
+        }
+        if self.pending_proto == 0 && !self.awaiting_more {
             return None;
         }
         self.partial_at_ms.map(|t| t + SECOND_FAMILY_EXTRA_MS)
@@ -589,6 +598,11 @@ impl SharedConnection {
     pub(crate) fn on_early_out(&mut self) {
         // See `on_readable`: keep one scope open across `finish()`.
         let _exit = event_loop_scope();
+        // The heap popped this timer to fire it but leaves the state for the
+        // owner to update; mark it so a re-arm below inserts rather than
+        // trying to remove an entry that is no longer in the heap.
+        self.early_out_timer
+            .with_mut(|t| t.state = EventLoopTimerState::FIRED);
         self.early_out_armed_for.set(0);
         let now = now_ms();
         let ready = self.take_ready(|q| {

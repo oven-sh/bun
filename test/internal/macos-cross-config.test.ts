@@ -274,7 +274,7 @@ describe.skipIf(isMacOS)("native darwin ASAN → ld64.lld (workarounds.ts 'darwi
   // point it at a CLT-shaped fake SDK and no xcode-select/xcrun is spawned.
   const darwinHost: Host = { os: "darwin", arch: "aarch64", exeSuffix: "", rustTriple: undefined };
   function resolveNativeDarwin(partial: PartialConfig, toolchain = mockToolchain()): Config {
-    return resolveConfig({ os: "darwin", arch: "aarch64", ...partial }, toolchain, { ...darwinHost });
+    return resolveConfig({ os: "darwin", arch: "aarch64", ...partial }, toolchain, darwinHost);
   }
 
   let fakeClt: ReturnType<typeof tempDir>;
@@ -315,6 +315,9 @@ describe.skipIf(isMacOS)("native darwin ASAN → ld64.lld (workarounds.ts 'darwi
     expect(() =>
       resolveNativeDarwin({ buildType: "Debug", mode: "rust-only" }, mockToolchain({ ld64Lld: undefined })),
     ).not.toThrow();
+    // resolveConfig never mutates the caller's Host (rustTriple is stamped on
+    // an internal copy).
+    expect(darwinHost).toEqual({ os: "darwin", arch: "aarch64", exeSuffix: "", rustTriple: undefined });
   });
 
   test("native ASAN links through --ld-path=ld64.lld instead of Apple's -ld_new", () => {

@@ -723,10 +723,10 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
  * concrete values. After this runs, everything downstream sees plain booleans.
  *
  * `host` defaults to the real process host; tests pass a fake to exercise
- * native-vs-cross branches on any machine.
+ * native-vs-cross branches on any machine. The input is never mutated.
  */
-export function resolveConfig(partial: PartialConfig, toolchain: Toolchain, host: Host = detectHost()): Config {
-  host.rustTriple = toolchain.rustHostTriple;
+export function resolveConfig(partial: PartialConfig, toolchain: Toolchain, hostIn: Host = detectHost()): Config {
+  const host: Host = { ...hostIn, rustTriple: toolchain.rustHostTriple };
 
   // ─── Target platform ───
   const os = partial.os ?? host.os;

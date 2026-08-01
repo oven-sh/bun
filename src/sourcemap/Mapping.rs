@@ -554,8 +554,11 @@ pub fn parse(
 
         needs_sort = needs_sort || generated_column_delta.value < 0;
 
-        generated.columns = generated.columns.add_scalar(generated_column_delta.value);
-        if generated.columns.zero_based() < 0 {
+        let generated_column = generated
+            .columns
+            .zero_based()
+            .wrapping_add(generated_column_delta.value);
+        if generated_column < 0 {
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Invalid generated column value",
                 err: crate::Error::InvalidGeneratedColumnValue,
@@ -564,6 +567,7 @@ pub fn parse(
                 },
             });
         }
+        generated.columns = Ordinal::from_zero_based(generated_column);
 
         remain = &remain[generated_column_delta.start..];
 
@@ -598,7 +602,7 @@ pub fn parse(
                 ..Default::default()
             });
         }
-        source_index += source_index_delta.value;
+        source_index = source_index.wrapping_add(source_index_delta.value);
 
         if source_index < 0 || source_index >= sources_count {
             return ParseResult::Fail(ParseResultFail {
@@ -624,8 +628,11 @@ pub fn parse(
             });
         }
 
-        original.lines = original.lines.add_scalar(original_line_delta.value);
-        if original.lines.zero_based() < 0 {
+        let original_line = original
+            .lines
+            .zero_based()
+            .wrapping_add(original_line_delta.value);
+        if original_line < 0 {
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Invalid original line value",
                 err: crate::Error::InvalidOriginalLineValue,
@@ -634,6 +641,7 @@ pub fn parse(
                 },
             });
         }
+        original.lines = Ordinal::from_zero_based(original_line);
         remain = &remain[original_line_delta.start..];
 
         // Read the original column
@@ -648,8 +656,11 @@ pub fn parse(
             });
         }
 
-        original.columns = original.columns.add_scalar(original_column_delta.value);
-        if original.columns.zero_based() < 0 {
+        let original_column = original
+            .columns
+            .zero_based()
+            .wrapping_add(original_column_delta.value);
+        if original_column < 0 {
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Invalid original column value",
                 err: crate::Error::InvalidOriginalColumnValue,
@@ -658,6 +669,7 @@ pub fn parse(
                 },
             });
         }
+        original.columns = Ordinal::from_zero_based(original_column);
         remain = &remain[original_column_delta.start..];
 
         if remain.len() > 0 {
@@ -686,7 +698,7 @@ pub fn parse(
                     remain = &remain[name_index_delta.start..];
 
                     if options.allow_names {
-                        name_index += name_index_delta.value;
+                        name_index = name_index.wrapping_add(name_index_delta.value);
                         if !has_names {
                             if mapping.ensure_with_names().is_err() {
                                 return ParseResult::Fail(ParseResultFail {

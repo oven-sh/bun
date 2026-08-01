@@ -20,8 +20,15 @@ pub struct ReadableStream {
 
 // ─── ReadableStream::Strong ──────────────────────────────────────────────────
 
+/// A `ReadableStream` handle for [`crate::webcore::body::PendingValue`] and the
+/// producers that feed it. `held` roots the stream as a GC root; `weak` stores
+/// the same JSValue after the owning wrapper's traced `m_stream` slot has taken
+/// ownership, so readers of `Locked.readable` keep working without the handle
+/// pinning the stream (and its captured async context) past the wrapper's
+/// lifetime.
 pub struct Strong {
     held: bun_jsc::strong::Optional, // jsc.Strong.Optional = .empty
+    weak: JSValue,
 }
 
 /// Re-export under the qualified name callers expect.
@@ -31,13 +38,24 @@ impl Default for Strong {
     fn default() -> Self {
         Self {
             held: bun_jsc::strong::Optional::empty(),
+            weak: JSValue::ZERO,
         }
     }
 }
 
 impl Strong {
+    fn value(&self) -> Option<JSValue> {
+        self.held.get().or_else(|| {
+            if self.weak.is_empty() {
+                None
+            } else {
+                Some(self.weak)
+            }
+        })
+    }
+
     pub(crate) fn has(&mut self) -> bool {
-        self.held.has()
+        self.held.has() || !self.weak.is_empty()
     }
 
     pub(crate) fn is_disturbed(&self, global: &JSGlobalObject) -> bool {
@@ -50,15 +68,27 @@ impl Strong {
     pub(crate) fn init(this: ReadableStream, global: &JSGlobalObject) -> Strong {
         Strong {
             held: bun_jsc::strong::Optional::create(this.value, global),
+            weak: JSValue::ZERO,
+        }
+    }
+
+    /// Release the GC root while keeping the JSValue readable for native
+    /// consumers. Caller must keep the stream alive elsewhere (the owning
+    /// `Request`/`Response` wrapper's `m_stream` `WriteBarrier` slot).
+    pub(crate) fn downgrade(&mut self) {
+        if let Some(value) = self.held.get() {
+            self.weak = value;
+            self.held.deinit();
         }
     }
 
     pub(crate) fn deinit(&mut self) {
         self.held.deinit();
+        self.weak = JSValue::ZERO;
     }
 
     pub(crate) fn get(&self, global: &JSGlobalObject) -> Option<ReadableStream> {
-        if let Some(value) = self.held.get() {
+        if let Some(value) = self.value() {
             // TODO: properly propagate exception upwards
             return ReadableStream::from_js(value, global).ok().flatten();
         }
@@ -72,7 +102,11 @@ impl Strong {
             let Some((first, second)) = stream.tee(global)? else {
                 return Ok(None);
             };
-            self.held.set(global, first.value);
+            if self.held.has() {
+                self.held.set(global, first.value);
+            } else {
+                self.weak = first.value;
+            }
             return Ok(Some(second));
         }
         Ok(None)

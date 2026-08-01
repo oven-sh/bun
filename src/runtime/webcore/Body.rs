@@ -1694,7 +1694,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if let Some(stream) = locked.readable.get(global_object) {
                     stream.value.ensure_still_alive();
                     Self::stream_set_cached(js_value, global_object, stream.value);
-                    let _ = core::mem::take(&mut locked.readable);
+                    locked.readable.downgrade();
                 }
             }
         }
@@ -1799,7 +1799,11 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 return Ok(readable.value);
             }
         }
-        self.get_body_value().to_readable_stream(global_this)
+        let stream = self.get_body_value().to_readable_stream(global_this)?;
+        // The wrapper's traced `m_stream` slot owns the stream from here;
+        // release the `Strong` `to_readable_stream` parked in `Locked.readable`.
+        self.check_body_stream_ref(global_this);
+        Ok(stream)
     }
 
     /// <https://fetch.spec.whatwg.org/#dom-body-textstream>

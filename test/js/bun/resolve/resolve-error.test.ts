@@ -194,7 +194,12 @@ describe("ResolveMessage", () => {
           name: "has-postinstall",
           version: "1.0.0",
           main: "index.js",
-          scripts: { postinstall: "node scripts/recover-modules.js temp_modules node_modules" },
+          scripts: {
+            // `}` inside an earlier script value must not truncate the scan
+            // before the postinstall key is seen.
+            clean: "rimraf {dist,build} && echo ${CI:+done}",
+            postinstall: "node scripts/recover-modules.js temp_modules node_modules",
+          },
         }),
         "node_modules/has-postinstall/index.js": `module.exports = require("missing-inner-dep");`,
       });

@@ -449,12 +449,13 @@ fn first_lifecycle_script(pkg_dir: &[u8]) -> Option<&'static str> {
     {
         // Bound the scan to the `"scripts"` object so a sibling key like
         // `"dependencies": { "install": "^1.0.0" }` cannot match. `scripts` is
-        // a flat `Record<string, string>`, so the first `}` after the key
-        // closes it.
+        // a flat `Record<string, string>`, so the closing `}` is the first one
+        // that appears outside a JSON string. Script values are arbitrary
+        // shell commands and commonly contain literal `}` (brace expansion,
+        // `${VAR:-}`), so a naive `index_of_char(.., b'}')` would truncate
+        // early.
         let after = &bytes[scripts_at + b"\"scripts\"".len()..];
-        let end = strings::index_of_char(after, b'}')
-            .map(|i| i as usize)
-            .unwrap_or(after.len());
+        let end = end_of_flat_json_object(after);
         let scripts = &after[..end];
         for (hook, key) in [
             ("preinstall", b"\"preinstall\"" as &[u8]),
@@ -476,4 +477,23 @@ fn first_lifecycle_script(pkg_dir: &[u8]) -> Option<&'static str> {
     }
 
     None
+}
+
+/// Return the byte offset just past the first `}` that is not inside a JSON
+/// string. Assumes the input sits between a flat object's opening `{` (or the
+/// key preceding it) and the rest of the document; no brace nesting is tracked.
+#[cold]
+fn end_of_flat_json_object(bytes: &[u8]) -> usize {
+    let mut in_string = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if in_string => i += 1,
+            b'"' => in_string = !in_string,
+            b'}' if !in_string => return i,
+            _ => {}
+        }
+        i += 1;
+    }
+    bytes.len()
 }

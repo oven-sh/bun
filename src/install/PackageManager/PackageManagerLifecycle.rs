@@ -418,7 +418,7 @@ impl PackageManager {
             let package_json_path = join_abs_string_z::<platform::Auto>(cwd, &[b"package.json"]);
             script_env.put(b"npm_package_json", package_json_path.as_bytes())?;
 
-            let mut name: Box<[u8]> = list.package_name.clone();
+            let mut name: Option<Box<[u8]>> = None;
             let mut version: Box<[u8]> = Box::default();
 
             if let Ok(json_buf) = Syscall::File::read_from(Fd::cwd(), package_json_path.as_bytes())
@@ -431,7 +431,7 @@ impl PackageManager {
                     if let Some(e) = parsed.root.get(b"name")
                         && let Some(n) = e.as_utf8_string_literal()
                     {
-                        name = Box::from(n);
+                        name = Some(Box::from(n));
                     }
                     if let Some(e) = parsed.root.get(b"version")
                         && let Some(v) = e.as_utf8_string_literal()
@@ -441,7 +441,10 @@ impl PackageManager {
                 }
             }
 
-            script_env.put(b"npm_package_name", &name)?;
+            script_env.put(
+                b"npm_package_name",
+                name.as_deref().unwrap_or(&list.package_name),
+            )?;
             script_env.put(b"npm_package_version", &version)?;
         }
 

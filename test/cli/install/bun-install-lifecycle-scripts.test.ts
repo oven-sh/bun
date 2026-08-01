@@ -1501,7 +1501,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         ),
       ]);
 
-      const { stderr, exited } = spawn({
+      const { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
@@ -1510,9 +1510,9 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      const err = await stderr.text();
+      const [, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
       expect(err).not.toContain("error:");
-      expect(await exited).toBe(0);
+      expect(exitCode).toBe(0);
 
       const depEnv = await file(join(packageDir, "node_modules", "my-dep", "env.json")).json();
       expect(depEnv).toEqual({

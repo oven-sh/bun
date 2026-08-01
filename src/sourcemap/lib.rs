@@ -922,16 +922,6 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
         return Err(crate::Error::InvalidSourceMap);
     };
 
-    let sources_content = match json
-        .get(b"sourcesContent")
-        .ok_or(crate::Error::InvalidSourceMap)?
-        .data
-    {
-        bun_ast::ExprData::EArrayJSON(arr) => arr,
-        _ => return Err(crate::Error::InvalidSourceMap),
-    };
-    let sources_content = sources_content.get();
-
     let sources_paths = match json
         .get(b"sources")
         .ok_or(crate::Error::InvalidSourceMap)?
@@ -942,7 +932,17 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
     };
     let sources_paths = sources_paths.get();
 
-    if sources_content.items().len() != sources_paths.items().len() {
+    // `sourcesContent` is optional in the spec; tsc and other tools omit it
+    // unless asked. When absent, mappings still work and source-content lookups
+    // fall through to reading the original file on disk.
+    let sources_content = match json.get(b"sourcesContent").map(|e| e.data) {
+        Some(bun_ast::ExprData::EArrayJSON(arr)) => Some(arr),
+        None => None,
+        _ => return Err(crate::Error::InvalidSourceMap),
+    };
+    let sources_content = sources_content.as_ref().map(|a| a.get());
+
+    if sources_content.is_some_and(|c| c.items().len() != sources_paths.items().len()) {
         return Err(crate::Error::InvalidSourceMap);
     }
 
@@ -950,7 +950,7 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 
     // `Vec<Box<[u8]>>` drops automatically on error.
     let source_paths_slice: Option<Vec<Box<[u8]>>> = if !source_only {
-        let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_content.items().len());
+        let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_paths.items().len());
         for item in sources_paths.items() {
             let Some(s) = item.as_str() else {
                 return Err(crate::Error::InvalidSourceMap);
@@ -1041,8 +1041,8 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
         ParseUrlResultHint::MappingsOnly => (None, None),
     };
 
-    let content_slice: Option<Box<[u8]>> = match source_index {
-        Some(idx)
+    let content_slice: Option<Box<[u8]>> = match (source_index, sources_content) {
+        (Some(idx), Some(sources_content))
             if !matches!(hint, ParseUrlResultHint::MappingsOnly)
                 && (idx as usize) < sources_content.items().len() =>
         'content: {
@@ -1135,6 +1135,87 @@ pub fn append_source_map_chunk<'a>(
     // Then append everything after that without modification.
     j.push_static(source_map);
     Ok(())
+}
+
+/// Scan a file's input bytes for a trailing `//# sourceMappingURL=` comment
+/// and return the URL portion. Used by the runtime transpiler to detect an
+/// input-side source map that should be chained through for stack traces.
+pub fn find_input_source_mapping_url(source: &[u8]) -> Option<&[u8]> {
+    const NEEDLE: &[u8] = b"//# sourceMappingURL=";
+    let found = bun_core::strings::last_index_of(source, NEEDLE)?;
+    // Must be at the start of a line (or of the file) so the string inside a
+    // literal does not match.
+    if found != 0 && source[found - 1] != b'\n' {
+        return None;
+    }
+    let start = found + NEEDLE.len();
+    let end = source[start..]
+        .iter()
+        .position(|&b| b == b'\n')
+        .map(|p| start + p)
+        .unwrap_or(source.len());
+    let url = bun_core::strings::trim_right(&source[start..end], b" \r");
+    if url.is_empty() {
+        return None;
+    }
+    Some(url)
+}
+
+/// Load the source map referenced by a `//# sourceMappingURL=` comment in a
+/// runtime-transpiled module's input. `url` is the value after the `=`;
+/// `source_filename` anchors a relative path. Inline `data:` URIs are decoded
+/// directly, anything else is treated as a path relative to the source file.
+pub fn load_input_source_map(
+    source_filename: &[u8],
+    url: &[u8],
+    hint: ParseUrlResultHint,
+) -> Option<ParseUrl> {
+    if bun_core::strings::has_prefix_comptime(url, b"data:") {
+        let arena = bun_alloc::Arena::new();
+        return match parse_url(&arena, url, hint) {
+            Ok(parsed) => Some(parsed),
+            Err(err) => {
+                bun_core::warn!(
+                    "Could not decode sourcemap in '{}': {}",
+                    ::bstr::BStr::new(source_filename),
+                    ::bstr::BStr::new(err.name()),
+                );
+                crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(true);
+                None
+            }
+        };
+    }
+
+    // Network URLs are not fetched; Node's --enable-source-maps ignores them too.
+    if bun_core::strings::has_prefix_comptime(url, b"http:")
+        || bun_core::strings::has_prefix_comptime(url, b"https:")
+    {
+        return None;
+    }
+
+    // Resolve `url` relative to the source file and read it.
+    let mut load_buf = bun_paths::path_buffer_pool::get();
+    let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(source_filename);
+    let load_path =
+        bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(
+            dir,
+            &mut load_buf,
+            &[url],
+        );
+    let data = bun_sys::File::read_from(bun_core::Fd::cwd(), load_path).ok()?;
+
+    match parse_json(&data, hint) {
+        Ok(parsed) => Some(parsed),
+        Err(err) => {
+            bun_core::warn!(
+                "Could not decode sourcemap in '{}': {}",
+                ::bstr::BStr::new(source_filename),
+                ::bstr::BStr::new(err.name()),
+            );
+            crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(true);
+            None
+        }
+    }
 }
 
 /// Always returns UTF-8.

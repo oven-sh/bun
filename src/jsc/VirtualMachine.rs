@@ -5391,12 +5391,11 @@ impl VirtualMachine {
             } else {
                 None
             };
-            let external_code = if enable_source_code_preview.get()
-                && !already_remapped
-                && lookup
-                    .source_map
-                    .as_deref()
-                    .is_some_and(|m| m.is_external())
+            let is_external = lookup
+                .source_map
+                .as_deref()
+                .is_some_and(|m| m.is_external());
+            let external_code = if enable_source_code_preview.get() && !already_remapped && is_external
             {
                 lookup.get_source_code(top_source_url.slice())
             } else {
@@ -5415,6 +5414,13 @@ impl VirtualMachine {
                 }
                 if let Some(src) = external_code {
                     break 'code src;
+                }
+                if is_external {
+                    // The map points at a different source than the loaded
+                    // file but neither `sourcesContent` nor the on-disk
+                    // original were available; showing the generated file's
+                    // lines would pair the wrong text with remapped positions.
+                    break 'code bun_core::ZigStringSlice::EMPTY;
                 }
                 if top_frame_is_builtin {
                     // Avoid printing "export default 'native'"

@@ -322,8 +322,15 @@ impl Lookup {
     ///
     /// - `bun build --sourcemap`, it is another file on disk
     /// - `bun build --compile --sourcemap`, it is an embedded file.
+    /// - the runtime transpiler chained through an input-side source map.
     pub fn display_source_url_if_needed(&self, base_filename: &[u8]) -> Option<bun_core::String> {
-        let source_map = self.source_map.as_deref()?;
+        let mut source_map = self.source_map.as_deref()?;
+        // When the transpiler's map is chained onto the input's own map, the
+        // `source_index` came from `find_mapping`'s second hop and indexes the
+        // input map's sources.
+        if let Some(input_map) = source_map.input_map.as_deref() {
+            source_map = input_map;
+        }
         // See doc comment on `external_source_names`
         if source_map.external_source_names.len() == 0 {
             return None;
@@ -362,12 +369,33 @@ impl Lookup {
                 break 'bytes code.into_vec();
             }
 
-            let source_map = self.source_map.as_deref()?;
+            let mut source_map = self.source_map.as_deref()?;
+            if let Some(input_map) = source_map.input_map.as_deref() {
+                source_map = input_map;
+            }
             debug_assert!(source_map.is_external());
 
-            let provider = source_map.underlying_provider.provider()?;
-
             let index = usize::try_from(self.mapping.source_index).ok()?;
+
+            let Some(provider) = source_map.underlying_provider.provider() else {
+                // No provider (runtime-transpiled chain): fall through to
+                // reading the original source from disk by name.
+                if index >= source_map.external_source_names.len() {
+                    return None;
+                }
+                let name: &[u8] = &source_map.external_source_names[index];
+                let mut buf = bun_paths::PathBuffer::uninit();
+                let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                    base_filename,
+                );
+                let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<
+                    bun_paths::platform::Loose,
+                >(dir, &mut buf, &[name]);
+                match bun_sys::File::read_from(bun_sys::Fd::cwd(), normalized) {
+                    Ok(r) => break 'bytes r,
+                    Err(_) => return None,
+                }
+            };
 
             // Standalone module graph source maps are stored (in memory) compressed.
             // They are decompressed on demand.

@@ -700,10 +700,13 @@ it("should fall back to the highest prerelease when the manifest has no releases
     stderr: "pipe",
     env,
   });
-  const [, err, exitCode] = await Promise.all([new Response(stdout).text(), new Response(stderr).text(), exited]);
+  const [out, err, exitCode] = await Promise.all([new Response(stdout).text(), new Response(stderr).text(), exited]);
 
   expect(err).not.toContain('with tag "latest" not found');
   expect(err).not.toContain("failed to resolve");
   expect(err).toContain("falling back to 1.0.0-beta.2");
+  expect(out).toContain("baz 1.0.0-beta.1 -> 1.0.0-beta.2");
   expect(exitCode).toBe(0);
+
+  expect((await file(join(package_dir, "package.json")).json()).dependencies.baz).toContain("1.0.0-beta.2");
 });

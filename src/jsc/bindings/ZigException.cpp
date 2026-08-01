@@ -636,6 +636,42 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
     }
 
     if (except.stack.frames_len == 0 && getFromSourceURL) {
+        // A JSC parser SyntaxError created before any JS runs has no stack, so
+        // materializeErrorInfoIfNeeded() never publishes line/column/sourceURL as
+        // JS properties. The C++ fields on ErrorInstance are still set by
+        // addErrorInfo(), so read those directly and synthesize a frame.
+        const String& nativeSourceURL = err->sourceURL();
+        if (!nativeSourceURL.isEmpty()) {
+            auto& frame = except.stack.frames_ptr[0];
+            frame.source_url.deref();
+            frame.source_url = Bun::toStringRef(nativeSourceURL);
+            bool columnUnknown = err->column() == 0;
+            if (err->line() > 0) {
+                frame.position.line_zero_based = OrdinalNumber::fromOneBasedInt(err->line()).zeroBasedInt();
+                frame.position.column_zero_based = columnUnknown ? 0 : OrdinalNumber::fromOneBasedInt(err->column()).zeroBasedInt();
+                if (auto* zigGlobal = dynamicDowncast<Zig::GlobalObject>(global)) {
+                    if (columnUnknown) {
+                        // addErrorInfo() never records the parser-error column. A
+                        // source-map lookup at column 0 resolves to bun's own
+                        // start-of-line mapping, which points at the end of the
+                        // previous source line; querying the last mapping on the
+                        // generated line (any column past the line end) reliably
+                        // lands on the correct source line. Report column 1 since
+                        // the true column is unknown.
+                        frame.position.column_zero_based = std::numeric_limits<int32_t>::max();
+                        Bun__remapStackFramePositions(zigGlobal->bunVM(), &frame, 1);
+                        frame.position.column_zero_based = 0;
+                    } else {
+                        Bun__remapStackFramePositions(zigGlobal->bunVM(), &frame, 1);
+                    }
+                }
+            }
+            except.stack.frames_len = 1;
+            frame.remapped = true;
+            except.remapped = true;
+            return;
+        }
+
         JSC::JSValue sourceURL = getNonObservable(vm, global, obj, vm.propertyNames->sourceURL);
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;

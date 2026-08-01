@@ -188,7 +188,14 @@ WTF::String formatStackTrace(
                 memset(&remappedFrame, 0, sizeof(ZigStackFrame));
 
                 remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
-                remappedFrame.position.column_zero_based = 0;
+                // JSC's addErrorInfo() discards the parser-error column. Querying
+                // the source map at column 0 resolves to bun's start-of-line
+                // mapping for the previous source line when the statement is
+                // indented; query past end-of-line so the lookup lands on the
+                // last mapping of the generated line instead.
+                remappedFrame.position.column_zero_based = err->column() > 0
+                    ? WTF::OrdinalNumber::fromOneBasedInt(err->column()).zeroBasedInt()
+                    : std::numeric_limits<int32_t>::max();
 
                 String sourceURLForFrame = err->sourceURL();
 
@@ -203,6 +210,8 @@ WTF::String formatStackTrace(
                         sourceURLForFrame = remappedFrame.source_url.toWTFString();
                     }
                 }
+                if (err->column() == 0)
+                    remappedFrame.position.column_zero_based = 0;
 
                 // there is always a newline before each stack frame line, ensuring that the name + message
                 // exist on the first line, even if both are empty

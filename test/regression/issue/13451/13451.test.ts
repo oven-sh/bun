@@ -127,6 +127,32 @@ console.log(JSON.stringify({
   expect(exitCode).toBe(0);
 });
 
+test("comments inside erased TS this-params/decorators are not relocated onto real args", async () => {
+  using dir = tempDir("issue-13451-ts", {
+    "in.ts": `
+export function f1(this: /* Self */ number, x: number) { return x; }
+export function f2(/* ctx */ this: number, x: number) { return x; }
+declare const dec: any;
+export class C {
+  constructor(@dec(/* opts */) x: number) {}
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--target=bun", "in.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).not.toContain("/* Self */");
+  expect(stdout).not.toContain("/* ctx */");
+  expect(stdout).not.toContain("/* opts */");
+  expect(exitCode).toBe(0);
+});
+
 test("legal comments in parameter lists survive minification", async () => {
   using dir = tempDir("issue-13451-legal", {
     "in.js": `

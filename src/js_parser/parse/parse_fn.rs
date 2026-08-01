@@ -167,6 +167,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn take_arg_leading_comments(&mut self, base: usize) -> bun_ast::StoreSlice<G::Comment> {
         let buf = &mut self.lexer.comments_to_preserve_before;
+        let base = base.min(buf.len());
         if buf.len() <= base {
             return bun_ast::StoreSlice::EMPTY;
         }
@@ -187,7 +188,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn discard_non_legal_comments_from(&mut self, base: usize) {
         let buf = &mut self.lexer.comments_to_preserve_before;
-        let mut i = base;
+        let mut i = base.min(buf.len());
         while i < buf.len() {
             if is_legal_comment(buf[i].text.slice()) {
                 i += 1;
@@ -225,7 +226,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Keep `/* ... */` inside `(...)` for Function.prototype.toString().
         let old_preserve_comments = p.lexer.preserve_all_comments_before;
-        let comments_base = p.lexer.comments_to_preserve_before.len();
+        let mut comments_base = p.lexer.comments_to_preserve_before.len();
         p.lexer.preserve_all_comments_before = true;
         p.lexer.expect(T::TOpenParen)?;
 
@@ -258,6 +259,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         while p.lexer.token != T::TCloseParen {
             // Skip over "this" type annotations
             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TThis {
+                p.discard_non_legal_comments_from(comments_base);
+                p.lexer.preserve_all_comments_before = old_preserve_comments;
                 p.lexer.next()?;
                 if p.lexer.token == T::TColon {
                     p.lexer.next()?;
@@ -267,13 +270,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     break;
                 }
 
+                comments_base = p.lexer.comments_to_preserve_before.len();
+                p.lexer.preserve_all_comments_before = true;
                 p.lexer.next()?;
                 continue;
             }
 
             let mut ts_decorators = bun_alloc::AstAlloc::vec();
             if opts.allow_ts_decorators {
+                p.lexer.preserve_all_comments_before = old_preserve_comments;
                 ts_decorators = p.parse_type_script_decorators()?;
+                p.lexer.preserve_all_comments_before = true;
                 if ts_decorators.len_u32() > 0 {
                     arg_has_decorators = true;
                 }
@@ -389,6 +396,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 break;
             }
 
+            comments_base = p.lexer.comments_to_preserve_before.len();
             p.lexer.preserve_all_comments_before = true;
             p.lexer.next()?;
             rest_arg = false;

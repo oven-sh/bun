@@ -1366,7 +1366,7 @@ describe.each([true, false])("Response(Bun.file()) open-error status mapping (de
     expect({ status: res.status, body: await res.text() }).toEqual({ status: 410, body: "custom ENOENT" });
   });
 
-  it("async error handler resolving to undefined falls through to 404", async () => {
+  it("error handler returning an already-fulfilled Promise<undefined> falls through to 404", async () => {
     await using s = Bun.serve({
       port: 0,
       development,

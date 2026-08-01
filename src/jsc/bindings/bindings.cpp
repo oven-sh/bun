@@ -2797,12 +2797,7 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
-// Idle memory reduction for GarbageCollectionController: one synchronous full
-// GC so old-generation garbage (webpack/transpiler temporaries that outlived
-// every eden GC) is actually swept, then hand freed fastMalloc pages back to
-// the OS. Unlike VM::shrinkFootprintWhenIdle this does not delete code blocks,
-// so bytecode/JIT survive the next request. collectNow (not collectSync) so
-// the sweep completes before we ask the allocator to decommit.
+// GarbageCollectionController idle reducer: JSC__VM__runGC(sync=true)'s body (so unlinked code blocks go, linked ones stay) minus PreventCollectionAndDeleteAllCode, plus releaseFastMallocFreeMemory; collectNow (not collectSync) so sweeping completes before the allocator decommits.
 extern "C" void JSC__VM__reduceMemoryFootprintOnIdle(JSC::VM* vm)
 {
     JSC::JSLockHolder lock(*vm);

@@ -9,10 +9,7 @@ use bun_uws as uws;
 use crate::virtual_machine::VirtualMachine;
 
 const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;
-/// Fast-interval ticks with a stable heap before we run one full GC +
-/// allocator scavenge and drop to the slow interval. 30 s at the default
-/// 1 s interval; long enough that a brief pause between requests on a busy
-/// server does not trigger a full-GC latency spike.
+/// Stable fast ticks before the one-shot full GC + scavenge and the drop to slow mode; 30 s at the default 1 s interval so a brief lull on a busy server doesn't eat a full-GC pause.
 const STABLE_TICKS_BEFORE_REDUCTION: u8 = 30;
 /// Skip the idle full GC for small heaps; the pause isn't worth the bytes.
 const MIN_HEAP_FOR_IDLE_REDUCTION: usize = 16 * 1024 * 1024;
@@ -21,10 +18,7 @@ pub struct GarbageCollectionController {
     pub gc_repeating_timer: EventLoopTimer,
     /// Written by every `perform_gc()` caller, so the fast/slow comparison sees the last such call, not strictly the last fire; external callers are one-shot so worst case is one extra 30 s slow interval.
     pub(crate) gc_last_heap_size: usize,
-    /// Heap size observed the last time we ran the idle reduction. A fresh
-    /// reduction only fires once the heap has grown past this by at least the
-    /// stability tolerance, so a truly idle process doesn't re-run full GC
-    /// every `STABLE_TICKS_BEFORE_REDUCTION` seconds.
+    /// Post-reduction heap size; another reduction only fires once the heap has grown past this by the stability tolerance, so a truly idle process doesn't re-run full GC every `STABLE_TICKS_BEFORE_REDUCTION` ticks.
     pub(crate) gc_last_reduction_heap_size: usize,
     pub(crate) heap_size_didnt_change_for_repeating_timer_ticks_count: u8,
     pub(crate) gc_timer_interval: i32,
@@ -53,9 +47,7 @@ impl Default for GarbageCollectionController {
     }
 }
 
-/// `block_bytes_allocated()` includes `extraMemorySize()`, which jitters by a
-/// few KB between eden collections on an otherwise-idle heap. Treat two
-/// samples within `max(prev/32, 64 KiB)` of each other as unchanged.
+/// `block_bytes_allocated()` includes `extraMemorySize()` which jitters a few KB between eden sweeps on an idle heap, so treat samples within `max(prev/32, 64 KiB)` as unchanged.
 #[inline]
 fn heap_size_is_stable(prev: usize, new: usize) -> bool {
     let tolerance = (prev >> 5).max(64 * 1024);
@@ -157,11 +149,7 @@ impl GarbageCollectionController {
         self.gc_last_reduction_heap_size = self.gc_last_heap_size;
     }
 
-    /// `Tag::GcRepeating` fire body: 1 s in fast mode, 30 s in slow mode.
-    /// After `STABLE_TICKS_BEFORE_REDUCTION` consecutive fast ticks with no
-    /// meaningful heap change, runs one full GC plus allocator scavenge and
-    /// drops to slow mode; heap growth beyond the stability tolerance resets
-    /// to fast mode.
+    /// `Tag::GcRepeating` fire body: 1 s fast / 30 s slow; after `STABLE_TICKS_BEFORE_REDUCTION` stable fast ticks runs one full GC + scavenge and drops to slow, heap growth past the tolerance resets to fast.
     ///
     /// # Safety
     /// `this` is the live per-VM controller; `vm` is the per-thread VM.

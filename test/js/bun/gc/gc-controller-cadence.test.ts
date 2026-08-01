@@ -111,6 +111,7 @@ describe("GarbageCollectionController idle memory reducer", () => {
         ...bunEnv,
         BUN_GC_TIMER_DISABLE: undefined,
         BUN_GC_TIMER_INTERVAL: "50",
+        BUN_IDLE_MEMORY_REDUCER_DISABLE: undefined,
         BUN_JSC_logGC: "true",
         ...extraEnv,
       },

@@ -103,8 +103,7 @@ impl VM {
         JSC__VM__collectAsync(self)
     }
 
-    /// One synchronous full GC followed by `WTF::releaseFastMallocFreeMemory()`
-    /// so freed pages are decommitted. Does not delete code blocks.
+    /// Synchronous full `collectNow` (plus source-provider-cache clear and `deleteAllUnlinkedCodeBlocks`) then `WTF::releaseFastMallocFreeMemory()`; unlike [`shrink_footprint`](Self::shrink_footprint) leaves linked code blocks and JIT code alone.
     pub(crate) fn reduce_memory_footprint_on_idle(&self) {
         JSC__VM__reduceMemoryFootprintOnIdle(self)
     }

@@ -751,17 +751,9 @@ impl Package<u64> {
                 'list: for (i, (key, version_string_)) in
                     keys.iter().zip(version_strings.iter()).enumerate()
                 {
-                    // Duplicate dev dependencies are promoted to whichever appeared first.
-                    // In practice, npm validates this so it shouldn't happen.
-                    //
-                    // Duplicate optional dependencies override the earlier entry (npm docs).
-                    //
-                    // Duplicate peer dependencies override the earlier entry: a package that
-                    // lists the same name in both `dependencies` and `peerDependencies` is
-                    // asking to defer to whatever version its consumer provides. Keeping only
-                    // the `dependencies` entry (the old behaviour) forces a nested copy when
-                    // the root already has a version that satisfies the peer range. yarn and
-                    // pnpm both honour the peer entry in this case.
+                    // A name that appears in more than one group keeps a single entry.
+                    // dev: keep the earlier entry. optional, peer: override the earlier
+                    // entry (peer-over-prod matches yarn/pnpm; see #7869).
                     let mut duplicate_at: Option<usize> = None;
                     if group.behavior.is_peer()
                         || group.behavior.is_dev()

@@ -3,7 +3,7 @@
 // stage/swap: a cancel during the long data-transfer window must leave every
 // live asset name intact.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, isWindows, tempDir } from "harness";
+import { bunEnv, isLinux, tempDir } from "harness";
 import { join, resolve } from "node:path";
 
 const scriptPath = resolve(import.meta.dir, "../../.buildkite/scripts/upload-release.sh");
@@ -109,7 +109,10 @@ upload_github_assets canary a.zip b.zip c.zip
 const live = (assets: Asset[]) => assets.filter(a => !a.name.startsWith("incoming-"));
 const staged = (assets: Asset[]) => assets.filter(a => a.name.startsWith("incoming-"));
 
-describe.concurrent.skipIf(isWindows)("upload_github_assets", () => {
+// Linux only: the :rocket: step runs on the debian-13 aarch64 host, and
+// upload_github_assets uses bash 4+ associative arrays which macOS /bin/bash
+// (3.2) does not have.
+describe.concurrent.skipIf(!isLinux)("upload_github_assets", () => {
   const initial: Asset[] = [
     { id: 1, name: "a.zip" },
     { id: 2, name: "b.zip" },

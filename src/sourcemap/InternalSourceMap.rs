@@ -637,9 +637,10 @@ impl InternalSourceMap {
     }
 }
 
-/// Stateful forward cursor. `move_to` is cheap when successive targets are
-/// monotonically non-decreasing in generated position; otherwise it reseeks via
-/// the sync index.
+/// Stateful forward cursor. `move_to` is cheapest for nearby non-decreasing
+/// targets; a backward jump, or a forward jump past the next sync entry,
+/// reseeks via the sync index so any single call is bounded by one
+/// `locate_window` plus at most `SYNC_INTERVAL` delta decodes.
 ///
 /// Invariant: when `has_state`, `reader` is positioned such that calling
 /// `advance_one()` produces the mapping immediately after `peek orelse state`.
@@ -664,14 +665,22 @@ impl Cursor {
         }
     }
 
+    #[inline]
+    fn should_reseek(&self, target_line: i32, target_col: i32) -> bool {
+        if !self.has_state || !self.state.less_or_equal(target_line, target_col) {
+            return true;
+        }
+        let next = self.sync_idx as usize + 1;
+        next < self.map.sync_count() as usize
+            && self.map.sync_entry(next).less_or_equal(target_line, target_col)
+    }
+
     pub fn move_to(&mut self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
         let target_line = line.zero_based();
         let target_col = column.zero_based();
 
-        if !self.has_state || !self.state.less_or_equal(target_line, target_col) {
-            if !self.reseek(target_line, target_col) {
-                return None;
-            }
+        if self.should_reseek(target_line, target_col) && !self.reseek(target_line, target_col) {
+            return None;
         }
 
         loop {
@@ -695,6 +704,86 @@ impl Cursor {
             return None;
         }
         Some(self.state.to_mapping())
+    }
+
+    /// Walk every mapping segment on generated `line` whose generated-column
+    /// span intersects `[col_lo, col_hi)`, calling `each(original_line, width)`
+    /// where `width` is the number of generated columns in the intersection.
+    /// Columns before the first segment on the line are ignored (matching
+    /// `move_to`'s `None` return for that range). The cursor is left positioned
+    /// so that successive calls with non-decreasing `(line, col_lo)` stay on
+    /// the forward-only fast path.
+    pub fn for_each_segment_on_line(
+        &mut self,
+        line: i32,
+        col_lo: i32,
+        col_hi: i32,
+        mut each: impl FnMut(i32, u32),
+    ) {
+        if col_lo >= col_hi {
+            return;
+        }
+
+        // Position `state` at the last mapping <= (line, col_lo). Unlike
+        // `move_to` we don't early-return when that mapping is on an earlier
+        // line: the walk below still needs to step forward into segments that
+        // start inside the range.
+        if self.should_reseek(line, col_lo) && !self.reseek(line, col_lo) {
+            // The first sync entry is already past (line, col_lo). Seed at
+            // window 0 so segments that start inside the range are still seen.
+            if self.map.sync_count() == 0 {
+                return;
+            }
+            self.sync_idx = 0;
+            self.map.seed_window(0, &mut self.state, &mut self.reader);
+            self.peek = None;
+            self.has_state = true;
+        }
+        loop {
+            if let Some(p) = self.peek {
+                if !p.less_or_equal(line, col_lo) {
+                    break;
+                }
+                self.state = p;
+                self.peek = None;
+            }
+            let Some(nxt) = self.advance_one() else { break };
+            if nxt.less_or_equal(line, col_lo) {
+                self.state = nxt;
+            } else {
+                self.peek = Some(nxt);
+                break;
+            }
+        }
+
+        // `state` covers `col_lo` on `line` iff it's on `line`. Otherwise the
+        // first contributing segment (if any) is the next peeked state.
+        let mut seg = (self.state.generated_line == line).then_some(self.state);
+        loop {
+            if self.peek.is_none() {
+                self.peek = self.advance_one();
+            }
+            let nxt = self.peek;
+            let span_end = match nxt {
+                Some(n) if n.generated_line == line => n.generated_column,
+                _ => col_hi,
+            };
+            if let Some(s) = seg {
+                let lo = col_lo.max(s.generated_column);
+                let hi = col_hi.min(span_end);
+                if lo < hi {
+                    each(s.original_line, (hi - lo) as u32);
+                }
+            }
+            match nxt {
+                Some(n) if n.generated_line == line && n.generated_column < col_hi => {
+                    self.state = n;
+                    self.peek = None;
+                    seg = Some(n);
+                }
+                _ => break,
+            }
+        }
     }
 
     fn advance_one(&mut self) -> Option<State> {

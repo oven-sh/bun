@@ -539,6 +539,88 @@ Ran 1 test across 1 file."
   expect(result.exitCode).toBe(0);
 });
 
+for (const ignoreSourcemaps of [false, true]) {
+  test(`lcov output shapes (coverageIgnoreSourcemaps=${ignoreSourcemaps})`, () => {
+    // Lock lcov output across file shapes that exercise distinct paths in
+    // generate_report_from_blocks: plain .js, transpiled .ts with several
+    // original statements on one generated line, and a never-executed function.
+    using dir = tempDir("cov", {
+      "bunfig.toml": `[test]\ncoverageIgnoreSourcemaps = ${ignoreSourcemaps}\ncoverageSkipTestFiles = true\n`,
+      "plain.js": [
+        "exports.a = function a() { return 1; };",
+        "exports.b = function b() { return 2; };",
+        "exports.dead = function dead() { return 3; };",
+        "",
+      ].join("\n"),
+      "multi.ts": [
+        "export function f(a: number, b: number) { const x = a; const y = b; return x + y; }",
+        "export function dead() {",
+        "  const a = 1;",
+        "  return a;",
+        "}",
+        "",
+      ].join("\n"),
+      "shapes.test.ts": [
+        `import { a, b } from "./plain.js";`,
+        `import { f } from "./multi";`,
+        `import { test, expect } from "bun:test";`,
+        `test("x", () => { expect(a() + b() + f(1, 2)).toBe(6); });`,
+        "",
+      ].join("\n"),
+    });
+
+    const result = Bun.spawnSync(
+      [bunExe(), "test", "--coverage", "--coverage-reporter", "lcov", "./shapes.test.ts"],
+      { cwd: dir, env: bunEnv, stdio: ["inherit", "pipe", "pipe"] },
+    );
+    expect(result.exitCode).toBe(0);
+    const lcov = normalizeBunSnapshot(readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8"), dir);
+    expect(lcov).toMatchSnapshot();
+  });
+}
+
+test("coverage report generation scales with ranges, not bytes", () => {
+  // A .ts module wrapped in an outer function so one JSC basic block spans the
+  // whole file. Before the per-segment rewrite of generate_report_from_blocks
+  // the sourcemap path visited every byte of every block, so report generation
+  // was O(sum of block byte-lengths); now it visits one entry per covered line
+  // / mapping segment. Compare two sizes so the assertion is a scaling ratio
+  // rather than an absolute time.
+  const mk = (n: number) => {
+    const lines = ["export function outer() {"];
+    for (let i = 0; i < n; i++) {
+      lines.push(`  if (globalThis.never) { console.log("pad pad pad pad pad pad pad pad ${i}"); }`);
+    }
+    lines.push("}", "outer();", "");
+    return lines.join("\n");
+  };
+  using dir = tempDir("cov", {
+    "small.ts": mk(400),
+    "big.ts": mk(1500),
+    "tsmall.test.ts": `import { outer } from "./small"; import { test } from "bun:test"; test("t", () => { outer(); });\n`,
+    "tbig.test.ts": `import { outer } from "./big"; import { test } from "bun:test"; test("t", () => { outer(); });\n`,
+  });
+
+  const run = (file: string) => {
+    const t0 = Bun.nanoseconds();
+    const r = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "lcov", file], {
+      cwd: dir,
+      env: bunEnv,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    const ms = (Bun.nanoseconds() - t0) / 1e6;
+    expect(r.exitCode).toBe(0);
+    return ms;
+  };
+
+  run("./tsmall.test.ts"); // warm
+  const small = run("./tsmall.test.ts");
+  const big = run("./tbig.test.ts");
+  // 3.75x the line count: linear growth keeps big/small comfortably under 3;
+  // the per-byte report path put it above 5x.
+  expect(big, `small=${small.toFixed(0)}ms big=${big.toFixed(0)}ms`).toBeLessThan(small * 3);
+});
+
 test("coveragePathIgnorePatterns - ignore all files", () => {
   using dir = tempDir("cov", {
     "bunfig.toml": `

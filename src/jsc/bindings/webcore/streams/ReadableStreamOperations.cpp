@@ -256,6 +256,12 @@ void readableStreamFulfillReadIntoRequest(JSGlobalObject* globalObject, JSReadab
         readIntoRequest->chunkSteps(globalObject, chunk);
 }
 
+void readableStreamClearSourceBarriers(JSReadableStream* stream)
+{
+    stream->m_asyncContext.clear();
+    stream->m_directUnderlyingSource.clear();
+}
+
 // ReadableStreamClose(stream)
 void readableStreamClose(JSGlobalObject* globalObject, JSReadableStream* stream)
 {
@@ -324,6 +330,7 @@ void readableStreamError(JSGlobalObject* globalObject, JSReadableStream* stream,
     ASSERT(stream->m_state == ReadableStreamState::Readable);
     stream->m_state = ReadableStreamState::Errored;
     stream->m_storedError.set(vm, stream, error);
+    readableStreamClearSourceBarriers(stream);
     rejectStreamClosedPromise(vm, stream, error);
     auto* reader = stream->m_reader.get();
     if (!reader)
@@ -440,6 +447,9 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
             pendingRead->fulfill(vm, doneResult);
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
+        controller->m_underlyingSource.clear();
+        controller->m_pull.clear();
+        controller->m_deferCloseReason.clear();
         sourceCancelPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
         break;
     }
@@ -462,6 +472,8 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     }
     }
     RETURN_IF_EXCEPTION(scope, nullptr);
+
+    readableStreamClearSourceBarriers(stream);
 
     auto* result = JSPromise::create(vm, globalObject->promiseStructure());
     sourceCancelPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReturnUndefined(), jsUndefined(), result, jsUndefined());

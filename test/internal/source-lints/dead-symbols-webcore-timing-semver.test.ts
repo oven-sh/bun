@@ -10,7 +10,7 @@
 // built binary, so it belongs in test/internal/source-lints/ per the README.
 
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
@@ -19,18 +19,12 @@ function src(p: string): string {
   return readFileSync(path.join(repoRoot, p), "utf8");
 }
 
-test("deleted webcore C++ files do not reappear", () => {
-  const deleted = [
-    "src/jsc/bindings/webcore/RFC7230.cpp",
-    "src/jsc/bindings/webcore/RFC7230.h",
-    "src/jsc/bindings/webcore/CommonAtomStrings.cpp",
-    "src/jsc/bindings/webcore/CommonAtomStrings.h",
-    "src/jsc/bindings/webcore/DOMPromiseProxy.h",
-    "src/jsc/bindings/webcore/ServerTiming.cpp",
-  ];
-  const resurrected = deleted.filter(p => existsSync(path.join(repoRoot, p)));
-  expect(resurrected).toEqual([]);
-});
+// Whole-file deletions (RFC7230.{cpp,h}, CommonAtomStrings.{cpp,h},
+// DOMPromiseProxy.h) are asserted indirectly via the surviving files that used
+// to reference them: JSSubtleCrypto.cpp no longer includes DOMPromiseProxy.h,
+// and the deleted RFC7230/CommonAtomStrings pair were never #included outside
+// their own .cpp. If any of those headers were referenced anywhere, the build
+// would fail.
 
 test("dead C++ symbols in webcore headers/timing do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
@@ -51,6 +45,7 @@ test("dead C++ symbols in webcore headers/timing do not reappear", () => {
     ["src/jsc/bindings/webcore/ResourceTiming.h", /ResourceTiming isolatedCopy/],
     ["src/jsc/bindings/webcore/ResourceTiming.cpp", /ResourceTiming::isolatedCopy/],
     ["src/jsc/bindings/webcore/ServerTiming.h", /ServerTiming isolatedCopy/],
+    ["src/jsc/bindings/webcore/ServerTiming.cpp", /ServerTiming::isolatedCopy/],
     ["src/jsc/bindings/webcore/HTTPHeaderMap.h", /\baddIfNotPresent\b/],
     ["src/jsc/bindings/webcore/HTTPHeaderMap.h", /HTTPHeaderMap isolatedCopy/],
     ["src/jsc/bindings/webcore/HTTPHeaderMap.h", /HTTPHeaderMap::encode/],

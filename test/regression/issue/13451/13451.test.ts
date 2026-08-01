@@ -23,7 +23,7 @@ function diParse(src: string): string[] {
   });
 }
 
-test("inline /* */ comments in function parameter lists survive the runtime transpiler", async () => {
+test.concurrent("inline /* */ comments in function parameter lists survive the runtime transpiler", async () => {
   using dir = tempDir("issue-13451", {
     "mod.cjs": `
 exports.anonExpr = function (/* a */ x, /* b.c */ y, /* d */ z) {
@@ -127,7 +127,7 @@ console.log(JSON.stringify({
   expect(exitCode).toBe(0);
 });
 
-test("comments inside erased TS this-params/decorators are not relocated onto real args", async () => {
+test.concurrent("comments inside erased TS this-params/decorators are not relocated onto real args", async () => {
   using dir = tempDir("issue-13451-ts", {
     "in.ts": `
 export function f1(this: /* Self */ number, x: number) { return x; }
@@ -153,7 +153,7 @@ export class C {
   expect(exitCode).toBe(0);
 });
 
-test("legal comments in parameter lists survive minification", async () => {
+test.concurrent("legal comments in parameter lists survive minification", async () => {
   using dir = tempDir("issue-13451-legal", {
     "in.js": `
 export const f = function(/*! @license MIT */ x) { return x; };

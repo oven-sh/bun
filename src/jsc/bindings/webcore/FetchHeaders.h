@@ -67,7 +67,6 @@ public:
 
     ExceptionOr<void> fill(const Init&);
     ExceptionOr<void> fill(const FetchHeaders&);
-    void filterAndFill(const HTTPHeaderMap&, Guard);
 
     size_t memoryCost() const;
 

@@ -25,7 +25,6 @@
 
 #include "JSSubtleCrypto.h"
 
-#include "DOMPromiseProxy.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSCryptoKey.h"

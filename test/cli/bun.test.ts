@@ -173,7 +173,11 @@ describe.concurrent("global flag before subcommand", () => {
     }),
   };
 
-  for (const pre of [["--cwd", "."], ["--env-file", "my.env"], ["--cwd", ".", "--env-file", "my.env"]] as const) {
+  for (const pre of [
+    ["--cwd", "."],
+    ["--env-file", "my.env"],
+    ["--cwd", ".", "--env-file", "my.env"],
+  ] as const) {
     test(`bun ${pre.join(" ")} run <script> dispatches RunCommand`, async () => {
       using dir = tempDir("which-run", files);
       const { stdout, stderr, exitCode } = await run(String(dir), [...pre, "run", "greet"]);

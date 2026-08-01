@@ -139,9 +139,10 @@ describe("Bun.Transpiler", () => {
     it("works nested", () => {
       ts.expectPrintedMin_('const a = ["hey"][0][0];', 'const a = "h"');
     });
-    it("bails out when the index is a delete or assignment target", () => {
+    it("bails out when the index is a delete/assign/call target", () => {
       // `a[n]` is a property reference; folding it to a value changes the
-      // result of `delete` and the effect of assignment.
+      // result of `delete`, the effect of assignment, and the `this`
+      // binding of a call.
       ts.expectPrintedMin_("x = delete [y][0]", "x = delete [y][0]");
       ts.expectPrintedMin_("x = delete [y.z][0]", "x = delete [y.z][0]");
       ts.expectPrintedMin_("x = delete { f: y }.f", "x = delete { f: y }.f");
@@ -151,10 +152,13 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_("x = [y][0] += 5", "x = [y][0] += 5");
       ts.expectPrintedMin_("[y][0]++", "[y][0]++");
       ts.expectPrintedMin_('x = "foo"[2] = 5', 'x = "foo"[2] = 5');
+      ts.expectPrintedMin_("x = [y.z][0]()", "x = [y.z][0]()");
+      ts.expectPrintedMin_("x = [y][0]()", "x = [y][0]()");
       // Still inlined outside those positions.
       ts.expectPrintedMin_("x = [y][0]", "x = y");
       ts.expectPrintedMin_('x = "foo"[2]', 'x = "o"');
       ts.expectPrintedMin_("x = delete [y][0].z", "x = delete y.z");
+      ts.expectPrintedMin_("x = f([y][0])", "x = f(y)");
     });
     it("does not inline an enum member under delete", () => {
       const pre = "enum E { A = 1 }\n";
@@ -174,7 +178,7 @@ describe("Bun.Transpiler", () => {
         "x = delete user_undefined;\ny = void 0;\n",
       );
     });
-    it("preserves delete/assign semantics at runtime", async () => {
+    it("preserves delete/assign/call-receiver semantics at runtime", async () => {
       const src = `
         var obj = { p: 1 };
         var r1 = delete [obj.p][0];
@@ -182,12 +186,14 @@ describe("Bun.Transpiler", () => {
         [y][0] = 5;
         var k = { f: 7 };
         var r2 = delete { f: k.f }.f;
-        console.log(JSON.stringify([obj.p, r1, y, k.f, r2]));
+        var o = { m() { return this === o } };
+        var r3 = [o.m][0]();
+        console.log(JSON.stringify([obj.p, r1, y, k.f, r2, r3]));
       `;
       await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(stdout).toBe("[1,true,1,7,true]\n");
+      expect(stdout).toBe("[1,true,1,7,true,false]\n");
       expect(exitCode).toBe(0);
     });
     it("bails out on optional-chain index into enum", () => {

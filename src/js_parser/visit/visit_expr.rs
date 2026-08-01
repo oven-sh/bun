@@ -1058,11 +1058,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let index = e_.index.unwrap_inlined();
 
         // `a[n]` is a property reference; replacing it with a value changes
-        // the result of `delete` (reference → value makes it return `true`)
-        // and of assignment (writes to the wrong place). Neither `"foo"[2]`
-        // → `"o"` nor `[x][0]` → `x` is safe in those positions.
+        // the result of `delete` (reference → value makes it return `true`),
+        // the effect of assignment (writes to the wrong place), and the
+        // receiver of a call (`[o.m][0]()` has `this = [o.m]`, not `o`).
+        // Neither `"foo"[2]` → `"o"` nor `[x][0]` → `x` is safe in those
+        // positions.
         if p.options.features.minify_syntax
             && !is_delete_target
+            && !is_call_target
             && in_.assign_target == js_ast::AssignTarget::None
         {
             if let Some(number) = index.data.as_e_number() {

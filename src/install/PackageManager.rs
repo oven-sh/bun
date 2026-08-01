@@ -208,7 +208,10 @@ pub use enqueue::{
 };
 
 use self::package_manager_lifecycle as lifecycle;
-pub use lifecycle::{determine_preinstall_state, get_preinstall_state, set_preinstall_state};
+pub use lifecycle::{
+    LifecycleScriptTimeLog, LifecycleScriptTimeLogEntry, determine_preinstall_state,
+    get_preinstall_state, set_preinstall_state,
+};
 
 use self::package_manager_resolution as resolution;
 pub use resolution::{assign_root_resolution, resolve_from_disk_cache};
@@ -345,6 +348,9 @@ pub struct PackageManager {
     pub total_tasks: u32,
     pub(crate) preallocated_network_tasks: PreallocatedNetworkTasks,
     pub(crate) preallocated_resolve_tasks: PreallocatedTaskStore,
+
+    /// items are only inserted into this if they took more than 500ms
+    pub(crate) lifecycle_script_time_log: LifecycleScriptTimeLog,
 
     pub pending_lifecycle_script_tasks: AtomicU32,
     pub(crate) finished_installing: AtomicBool,
@@ -1918,6 +1924,7 @@ pub fn init(
         wr!(pending_pre_calc_hashes, AtomicU32::new(0));
         wr!(pending_tasks, AtomicU32::new(0));
         wr!(total_tasks, 0);
+        wr!(lifecycle_script_time_log, LifecycleScriptTimeLog::default());
         wr!(pending_lifecycle_script_tasks, AtomicU32::new(0));
         wr!(finished_installing, AtomicBool::new(false));
         wr!(total_scripts, 0);
@@ -2350,6 +2357,7 @@ fn init_with_runtime_once(
         wr!(pending_pre_calc_hashes, AtomicU32::new(0));
         wr!(pending_tasks, AtomicU32::new(0));
         wr!(total_tasks, 0);
+        wr!(lifecycle_script_time_log, LifecycleScriptTimeLog::default());
         wr!(pending_lifecycle_script_tasks, AtomicU32::new(0));
         wr!(finished_installing, AtomicBool::new(false));
         wr!(total_scripts, 0);

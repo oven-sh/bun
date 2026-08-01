@@ -1,8 +1,7 @@
 // Guards against reintroduction of symbols and files removed as dead code from
 // the C++ bindings (llhttp/api.h, helpers.h, headers-handwritten.h,
 // HTTPHeaderValues, JSDOMConvertJSON/WebGL, TaskSource, JSVMClientDataClient,
-// ares_build.h, headers-cpp.h), the install crate's write-only
-// LifecycleScriptTimeLog chain, and a handful of uncalled Rust helpers in
+// ares_build.h, headers-cpp.h) and a handful of uncalled Rust helpers in
 // bun_core::String / bun_jsc. Each entry was verified to have zero callers
 // across src/ and build/debug/codegen/ before deletion.
 //
@@ -56,13 +55,8 @@ test("dead C++ symbols in helpers.h / headers-handwritten.h / JSDOMWrapper.h / B
   expect(resurrected).toEqual([]);
 });
 
-test("dead Rust symbols in install / bun_core / jsc do not reappear", () => {
+test("dead Rust symbols in bun_core / jsc do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
-    ["src/install/PackageManager/PackageManagerLifecycle.rs", /\bLifecycleScriptTimeLog\b/],
-    ["src/install/PackageManager.rs", /\blifecycle_script_time_log\b/],
-    ["src/install/lifecycle_script_runner.rs", /\bMIN_MILLISECONDS_TO_LOG\b/],
-    ["src/install/lifecycle_script_runner.rs", /pub\(crate\) timer: Option<Timer>/],
-    ["src/install/lifecycle_script_runner.rs", /unsafe fn manager_mut\b/],
     ["src/bun_core/string/mod.rs", /\bStringGithubActionFormatter\b/],
     ["src/jsc/JSUint8Array.rs", /pub fn ptr\(&self\) -> \*mut u8/],
     ["src/jsc/sizes.rs", /\bBUN_FFI_POINTER_OFFSET_TO_TYPED_ARRAY_VECTOR\b/],

@@ -403,12 +403,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) enclosing_class_keyword: bun_ast::Range,
     pub(crate) import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
     pub(crate) is_import_item: RefMap,
-    /// Maps a named or default import's local ref to `(namespace_ref, alias)`,
-    /// where `alias` is the external name in the source module. Only
-    /// `serialize_metadata` reads it: decorator metadata can reference an
-    /// imported type alias or interface, which has no value export, so the
-    /// reference is emitted as `ns.alias` and the named binding is not kept
-    /// for the metadata alone.
+    /// Named/default import local ref -> `(namespace_ref, alias)`. Read by
+    /// `serialize_metadata` to emit metadata references as `ns.alias`, since
+    /// the named export may be type-only.
     pub(crate) import_namespace_of_item: HashMap<Ref, (Ref, js_ast::StoreStr)>,
     pub(crate) named_imports: NamedImportsType<'a>,
     pub(crate) named_exports: bun_ast::ast_result::NamedExports,
@@ -3761,11 +3758,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // TODO: not sure how to handle macro remappings for namespace imports
         } else {
             let path_name = fs::PathName::init(path.text);
-            // When decorator metadata routes through this namespace ref the
-            // name is printed as a `* as name` binding under NoOpRenamer, so
-            // it must not collide with a user binding or another import's
-            // namespace. The bundler's renamer deduplicates, so keep the
-            // plain form there.
+            // Decorator metadata can print this name as a `* as` binding
+            // under NoOpRenamer, so hash it to avoid collisions. The
+            // bundler's renamer deduplicates, so keep the plain form there.
             let name: &'a [u8] =
                 if self.options.features.emit_decorator_metadata && !self.options.bundle {
                     let hash =
@@ -5918,12 +5913,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // the value is ignored because that's what the TypeScript compiler does.
     }
 
-    /// `find_symbol` for an identifier in a type annotation being tracked for
-    /// decorator metadata. The lookup must create an unbound symbol for
-    /// globals like `Map`, but a type annotation is not a value use: the
-    /// identifier may be folded away by a union or array type before
-    /// `serialize_metadata` ever sees it. The emit path records a use for
-    /// what it actually emits.
+    /// `find_symbol` without counting a use: a metadata identifier may fold
+    /// away (union, array) before emit, so `serialize_metadata` records the
+    /// use for what it actually emits.
     pub(crate) fn find_symbol_for_ts_metadata(
         &mut self,
         name: &'a [u8],
@@ -7269,13 +7261,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// For a named or default import referenced from decorator metadata, build
-    /// `ns.alias` and record a use on the namespace ref. A single-file
-    /// transpiler cannot know whether the import is a class or a type-only
-    /// export; keeping the named binding for a type alias makes the module
-    /// fail to link (`Export named 'X' not found`). Going through the
-    /// namespace keeps a real class reachable and lets the `typeof` guard
-    /// fall back to `Object` for a missing export.
+    /// Build `ns.alias` for an import referenced from decorator metadata. A
+    /// named binding fails to link when the export is type-only; the
+    /// namespace path lets the `typeof` guard fall back to `Object`.
     fn metadata_root_for_import_item(&mut self, ref_: Ref) -> Option<Expr> {
         let &(namespace_ref, alias) = self.import_namespace_of_item.get(&ref_)?;
         self.record_usage(namespace_ref);

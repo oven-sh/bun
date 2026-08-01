@@ -694,8 +694,7 @@ impl<'a> Transpiler<'a> {
             let top_level_dir = self.fs().top_level_dir;
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
                 if let Some(tsconfig) = root_dir.tsconfig_json() {
-                    // `merge_jsx` skips fields already in `options.jsx.set_fields`,
-                    // so explicit bunfig / --jsx-* / Bun.build({jsx}) config wins.
+                    // Skips fields in `set_fields` so explicit bunfig/CLI/Bun.build config wins.
                     merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
                     self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                     self.options.experimental_decorators = tsconfig.experimental_decorators;

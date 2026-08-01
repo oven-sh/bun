@@ -211,8 +211,7 @@ impl TSConfigJSON {
         !self.base_url.is_empty()
     }
 
-    /// Apply this tsconfig's JSX settings on top of `current`, skipping any
-    /// field already in `current.set_fields` (user-set config wins over tsconfig).
+    /// Apply this tsconfig's JSX settings on top of `current`, skipping fields in `current.set_fields`.
     pub fn merge_jsx(&self, current: options::jsx::Pragma) -> options::jsx::Pragma {
         let mut out = current;
         let apply = self.jsx_flags.difference(out.set_fields);

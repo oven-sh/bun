@@ -1278,8 +1278,10 @@ pub(crate) struct ESModule<'a> {
     pub(crate) conditions: &'a ConditionsMap,
     // allocator dropped — global mimalloc
     pub(crate) module_type: &'a mut ModuleType,
-    /// Ignore the "bun" condition; retry when its target file is absent on disk (#7142).
+    /// Input: ignore the "bun" condition on a retry when its target was absent on disk (#7142).
     pub(crate) skip_bun_condition: bool,
+    /// Output: set to true iff the returned resolution came from matching the "bun" condition.
+    pub(crate) matched_bun_condition: &'a mut bool,
 }
 
 #[derive(Clone)]
@@ -2146,6 +2148,18 @@ impl<'a> ESModule<'a> {
 
                         if key == b"require" {
                             *self.module_type = ModuleType::Cjs;
+                        }
+
+                        if key == b"bun"
+                            && matches!(
+                                result.status,
+                                Status::Exact
+                                    | Status::ExactEndsWithStar
+                                    | Status::Inexact
+                                    | Status::PackageResolve
+                            )
+                        {
+                            *self.matched_bun_condition = true;
                         }
 
                         return result;

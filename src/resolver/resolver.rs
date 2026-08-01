@@ -2654,29 +2654,18 @@ impl<'a> Resolver<'a> {
                                     // want problems due to Windows paths, which are very unlike URL
                                     // paths. We also want to avoid any "%" characters in the absolute
                                     // directory path accidentally being interpreted as URL escapes.
-                                    let has_bun_condition = self
-                                        .opts
-                                        .conditions
-                                        .kind(kind)
-                                        .contains_key(b"bun".as_slice());
-                                    let retry_without_bun;
+                                    let mut matched_bun = false;
                                     {
                                         let esm_resolution = ESModule {
                                             conditions: self.opts.conditions.kind(kind),
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
                                             skip_bun_condition: false,
+                                            matched_bun_condition: &mut matched_bun,
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
                                         // ESModule temporary dropped here; `self` is unborrowed.
 
-                                        retry_without_bun = has_bun_condition
-                                            && matches!(
-                                                esm_resolution.status,
-                                                crate::package_json::Status::Exact
-                                                    | crate::package_json::Status::ExactEndsWithStar
-                                                    | crate::package_json::Status::Inexact
-                                            );
                                         if self
                                             .handle_esm_resolution(
                                                 esm_resolution,
@@ -2699,7 +2688,7 @@ impl<'a> Resolver<'a> {
                                     }
 
                                     // #7142: retry without "bun" so pruned node_modules that only kept the "node" variant resolve.
-                                    if retry_without_bun {
+                                    if matched_bun {
                                         let prev_module_type = module_type;
                                         module_type = package_json.module_type;
                                         let esm_resolution = ESModule {
@@ -2707,6 +2696,7 @@ impl<'a> Resolver<'a> {
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
                                             skip_bun_condition: true,
+                                            matched_bun_condition: &mut matched_bun,
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
 
@@ -2765,6 +2755,7 @@ impl<'a> Resolver<'a> {
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
                                             skip_bun_condition: false,
+                                            matched_bun_condition: &mut matched_bun,
                                         }
                                         .resolve(
                                             b"/",
@@ -3192,15 +3183,7 @@ impl<'a> Resolver<'a> {
                                     // want problems due to Windows paths, which are very unlike URL
                                     // paths. We also want to avoid any "%" characters in the absolute
                                     // directory path accidentally being interpreted as URL escapes.
-                                    let has_bun_condition = match kind {
-                                        ast::ImportKind::Require
-                                        | ast::ImportKind::RequireResolve => {
-                                            &self.opts.conditions.require
-                                        }
-                                        _ => &self.opts.conditions.import,
-                                    }
-                                    .contains_key(b"bun".as_slice());
-                                    let retry_without_bun;
+                                    let mut matched_bun = false;
                                     {
                                         let esm_resolution = ESModule {
                                             conditions: match kind {
@@ -3213,16 +3196,10 @@ impl<'a> Resolver<'a> {
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
                                             skip_bun_condition: false,
+                                            matched_bun_condition: &mut matched_bun,
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
 
-                                        retry_without_bun = has_bun_condition
-                                            && matches!(
-                                                esm_resolution.status,
-                                                crate::package_json::Status::Exact
-                                                    | crate::package_json::Status::ExactEndsWithStar
-                                                    | crate::package_json::Status::Inexact
-                                            );
                                         if self
                                             .handle_esm_resolution(
                                                 esm_resolution,
@@ -3243,7 +3220,7 @@ impl<'a> Resolver<'a> {
                                     }
 
                                     // Same "bun"-condition fallback as the non-global-cache branch (#7142).
-                                    if retry_without_bun {
+                                    if matched_bun {
                                         let prev_module_type = module_type;
                                         module_type = options::ModuleType::Unknown;
                                         let esm_resolution = ESModule {
@@ -3257,6 +3234,7 @@ impl<'a> Resolver<'a> {
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
                                             skip_bun_condition: true,
+                                            matched_bun_condition: &mut matched_bun,
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
 
@@ -3298,6 +3276,7 @@ impl<'a> Resolver<'a> {
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
                                             skip_bun_condition: false,
+                                            matched_bun_condition: &mut matched_bun,
                                         }
                                         .resolve(
                                             b"/",
@@ -4920,17 +4899,9 @@ impl<'a> Resolver<'a> {
             }
             return MatchStatus::NotFound;
         }
-        let has_bun_condition = match kind {
-            ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
-                &self.opts.conditions.require
-            }
-            _ => &self.opts.conditions.import,
-        }
-        .contains_key(b"bun".as_slice());
-
-        let mut retry_without_bun = false;
+        let mut matched_bun = false;
         for skip_bun in [false, true] {
-            if skip_bun && !retry_without_bun {
+            if skip_bun && !matched_bun {
                 break;
             }
 
@@ -4949,20 +4920,10 @@ impl<'a> Resolver<'a> {
                 debug_logs: self.debug_logs.as_mut(),
                 module_type: &mut module_type,
                 skip_bun_condition: skip_bun,
+                matched_bun_condition: &mut matched_bun,
             }
             .resolve_imports(import_path, &imports_map.root);
             let _ = module_type;
-
-            if !skip_bun {
-                retry_without_bun = has_bun_condition
-                    && matches!(
-                        esm_resolution.status,
-                        crate::package_json::Status::Exact
-                            | crate::package_json::Status::ExactEndsWithStar
-                            | crate::package_json::Status::Inexact
-                            | crate::package_json::Status::PackageResolve
-                    );
-            }
 
             if esm_resolution.status == crate::package_json::Status::PackageResolve {
                 // https://github.com/oven-sh/bun/issues/4972

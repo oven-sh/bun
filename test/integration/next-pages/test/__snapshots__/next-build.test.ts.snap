@@ -26725,7 +26725,7 @@ exports[`next build works: bun 1`] = `
           "package_id": 315,
         },
         "jiti": {
-          "id": 434,
+          "id": 937,
           "package_id": 316,
         },
         "js-tokens": {
@@ -54704,7 +54704,7 @@ exports[`next build works: node 1`] = `
           "package_id": 315,
         },
         "jiti": {
-          "id": 434,
+          "id": 937,
           "package_id": 316,
         },
         "js-tokens": {

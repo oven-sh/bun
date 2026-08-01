@@ -2979,6 +2979,11 @@ impl RunCommand {
         // `Command::which()` before dispatch.
         debug_assert!(crate::cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed));
 
+        // Node.js does not auto-load `.env` files; match that here so tools with
+        // their own `.env.{mode}` resolution (Vite etc.) don't see pre-populated
+        // values. Explicit `--env-file` is still honored. #6338
+        ctx.args.disable_default_env_files = true;
+
         // `node --interactive [-e code]`: same gate as AutoCommand — a script
         // positional wins, and `-p` currently bypasses the REPL (see mod.rs).
         if ctx.runtime_options.interactive

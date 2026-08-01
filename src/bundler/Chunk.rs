@@ -1270,6 +1270,9 @@ pub struct JavaScriptChunk {
     pub(crate) files_in_chunk_order: Box<[IndexInt]>,
     pub parts_in_chunk_in_order: Box<[PartRange]>,
 
+    /// Sorted `(source_index << 32) | import_record_index`; see `merge_external_esm_imports`.
+    pub redundant_external_imports: Vec<u64>,
+
     // for code splitting
     // The map hashes via `Ref`'s `Hash` impl. Values
     // are `&'static`-erased slices into bundler-owned storage (see the

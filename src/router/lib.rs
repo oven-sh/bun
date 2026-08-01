@@ -1290,8 +1290,7 @@ pub mod pattern {
             let mut offset: RoutePathInt = 0;
             debug_assert!(!input.is_empty());
             let mut kind = Tag::Static;
-            let end = (input.len() - 1) as u32;
-            while (offset as u32) < end {
+            while (offset as usize) < input.len() {
                 let pattern: Pattern = match Pattern::init_unhashed(input, offset) {
                     Ok(p) => p,
                     Err(err) => {
@@ -1830,6 +1829,26 @@ mod tests {
                 bstr::BStr::new(route),
                 params.len(),
                 bstr::BStr::new(url),
+            );
+        }
+    }
+
+    #[test]
+    fn validate_rejects_trailing_open_bracket() {
+        // `match_inner` would panic on these if they reached the dynamic list.
+        let mut log = bun_ast::Log::default();
+        for route in [b"[x][" as &[u8], b"[id]/foo[", b"[x]/foo/[", b"[", b"a/["] {
+            assert!(
+                Pattern::validate(route, &mut log).is_none(),
+                "validate should reject {:?}",
+                bstr::BStr::new(route),
+            );
+        }
+        for route in [b"[x]" as &[u8], b"[x]/a", b"a/[x]", b"a"] {
+            assert!(
+                Pattern::validate(route, &mut log).is_some(),
+                "validate should accept {:?}",
+                bstr::BStr::new(route),
             );
         }
     }

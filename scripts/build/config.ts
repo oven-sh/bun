@@ -721,9 +721,11 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
  *
  * This is where all the "X defaults to Y unless Z" chains get resolved into
  * concrete values. After this runs, everything downstream sees plain booleans.
+ *
+ * `host` defaults to the real process host; tests pass a fake to exercise
+ * native-vs-cross branches on any machine.
  */
-export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Config {
-  const host = detectHost();
+export function resolveConfig(partial: PartialConfig, toolchain: Toolchain, host: Host = detectHost()): Config {
   host.rustTriple = toolchain.rustHostTriple;
 
   // ─── Target platform ───

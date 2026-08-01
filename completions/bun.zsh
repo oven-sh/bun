@@ -731,8 +731,10 @@ _bun() {
     # ---- Command:
     # Runtime flags are declared here so that `_arguments` skips over them when
     # locating the first positional word; otherwise `bun --hot run …` dispatches
-    # on `--hot` and completes nothing.
-    _arguments -s \
+    # on `--hot` and completes nothing. `-A '-*'` stops option matching at the
+    # first positional so that e.g. `-d` after `bun add` is left for
+    # `_bun_add_completion` instead of being claimed here as `--define`.
+    _arguments -s -A '-*' \
         '1: :->cmd' \
         '*: :->args' \
         '--hot[Enable auto reload in Bun'"'"'s JavaScript runtime]' \

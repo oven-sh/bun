@@ -116,6 +116,34 @@ describe.skipIf(isWindows)("shell completions: `bun <path>` and runtime flags (#
     expect(reply).toContain("src/index.ts");
   });
 
+  test.concurrent.skipIf(bashMajor < 4)("bash: `--flag=value` token triples are skipped", async () => {
+    // With default COMP_WORDBREAKS, readline splits `--inspect=127.0.0.1` into
+    // three tokens. A bare `=` must also consume the value after it so
+    // `first_word` lands on `run`, not the address.
+    const script = await embeddedCompletions("bash");
+    using dir = tempDir("bun-bash-completion-7805c", { "bun.bash": script, ...fixtureFiles });
+    const probe =
+      "source ./bun.bash\n" +
+      "COMP_WORDS=(bun --inspect = 127.0.0.1 run src/)\n" +
+      "COMP_CWORD=5\n" +
+      'COMP_LINE="bun --inspect=127.0.0.1 run src/"\n' +
+      "COMP_POINT=${#COMP_LINE}\n" +
+      "COMPREPLY=()\n" +
+      "_bun_completions\n" +
+      "for w in \"${COMPREPLY[@]}\"; do printf '%s\\n' \"$w\"; done\n";
+    await using proc = Bun.spawn({
+      cmd: ["bash", "-c", probe],
+      cwd: String(dir),
+      env: { ...bunEnv, PATH: process.env.PATH },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toContain("src/index.ts");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent.skipIf(bashMajor < 1)("bash: script passes bash -n", async () => {
     const script = await embeddedCompletions("bash");
     using dir = tempDir("bun-bash-n", { "bun.bash": script });
@@ -223,6 +251,10 @@ describe.skipIf(isWindows)("shell completions: `bun <path>` and runtime flags (#
       for (const flag of ["--hot", "--watch", "--smol", "--bun", "--preload", "--cwd"]) {
         expect(topArguments).toContain(`'${flag}[`);
       }
+      // `-A '-*'` stops option matching at the first positional, so e.g. `-d`
+      // after `bun add` is left for `_bun_add_completion` (where it means
+      // `--dev`) instead of being claimed here as `--define`.
+      expect(topArguments).toMatch(/_arguments\b[^\\\n]* -A ['"]-\*['"]/);
       // `bun <TAB>` (state=cmd) should offer real file completion, not just
       // `bun getcompletes j` (which only lists the current directory).
       expect(bun).toMatch(/"globbed-files:file:_files/);

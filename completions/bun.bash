@@ -70,17 +70,6 @@ _read_scripts_in_package_json() {
             [[ -n "${keep}" ]] && filtered_reply+=( "${reply_word}" );
         done
         COMPREPLY=( "${filtered_reply[@]}" );
-        replaced_script="${prev}";
-    }
-}
-
-
-_subcommand_comp_reply() {
-    local cur_word="${1}"
-    local sub_commands="${2}"
-    local regexp_subcommand="^[dbcriauh]";
-    [[ "${prev}" =~ ${regexp_subcommand} ]] && {
-        COMPREPLY+=( $(compgen -W "${sub_commands}" -- "${cur_word}") );
     }
 }
 
@@ -92,7 +81,7 @@ _bun_completions() {
 
     local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update outdated link unlink build";
 
-    GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js --hot --watch --smol --bun --silent --preload --require --import --inspect --inspect-brk --inspect-wait";
+    GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js --hot --watch --no-clear-screen --smol --bun --silent --preload --require --import --inspect --inspect-brk --inspect-wait";
     GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p -b -r";
 
     PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional --peer";
@@ -114,7 +103,7 @@ _bun_completions() {
     local first_word="" i;
     for (( i=1; i < COMP_CWORD; i++ )); do
         case "${COMP_WORDS[i]}" in
-            =) ;;
+            =) ((i++));;
             --conditions|--config|--console-depth|--cwd|--define|--dns-result-order|--elide-lines|--env-file|--eval|--extension-order|--fetch-preconnect|--filter|--import|--install|--jsx-factory|--jsx-fragment|--jsx-import-source|--jsx-runtime|--loader|--main-fields|--max-http-header-size|--origin|--port|--preload|--print|--public-dir|--require|--shell|--target|--title|--tsconfig-override|--unhandled-rejections|-F|-c|-d|-e|-l|-p|-r|-u)
                 ((i++)); [[ "${COMP_WORDS[i]}" == "=" ]] && ((i++));;
             -*) ;;

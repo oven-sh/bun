@@ -595,12 +595,8 @@ describe("bundler", () => {
     },
   });
   // https://github.com/oven-sh/bun/issues/8993
-  // With both "module" and "main" present, the resolver records the "main" path as a
-  // secondary CJS-interop fallback. The sideEffects check must only consider the primary
-  // ("module") path; previously the secondary path overwrote it and a bare `import "pkg"`
-  // was tree-shaken even though the module entry was listed in sideEffects.
   // The "name" field is load-bearing: without it the package is not recorded as the
-  // enclosing package.json and the second iteration happens to be a no-op.
+  // enclosing package.json and the secondary-path iteration is a no-op.
   itBundled("dce/PackageJsonSideEffectsArrayModuleMainBareImport", {
     todo: isWindows,
     files: {
@@ -659,8 +655,6 @@ describe("bundler", () => {
       stdout: "this should be kept\nafter import",
     },
   });
-  // Inverse guard: when the primary (module) entry is NOT listed in sideEffects but the
-  // secondary (main) is, the bare import is still droppable (the primary is what is bundled).
   itBundled("dce/PackageJsonSideEffectsArrayModuleMainBareImportRemove", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `

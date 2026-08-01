@@ -1556,11 +1556,6 @@ impl<'a> Resolver<'a> {
         let mut module_type = result.module_type;
         let mut is_primary_path = true;
         while let Some(path) = iter.next() {
-            // `primary_side_effects_data` describes the primary path only. The secondary
-            // path is the "main" fallback carried alongside a "module" entry for CJS
-            // interop; matching the package's `sideEffects` array against it would clobber
-            // the primary's result and cause bare `import "pkg"` to be tree-shaken when the
-            // `module` entry is listed in `sideEffects` but the `main` entry isn't.
             let is_primary = core::mem::replace(&mut is_primary_path, false);
             let name = path.name();
             let Ok(Some(dir)) = self.read_dir_info(name.dir) else {

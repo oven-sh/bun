@@ -211,9 +211,6 @@ impl Loader {
         self.get_node_env() == Some(b"test")
     }
 
-    /// `.env.*` suffix derived from the process environment (`BUN_ENV` /
-    /// `NODE_ENV`). Matches `bun run`'s selection: `production` / `test`
-    /// pick their namesake, anything else (including unset) is Development.
     pub fn default_suffix(&self) -> DotEnvFileSuffix {
         if self.is_test() {
             DotEnvFileSuffix::Test

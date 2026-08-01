@@ -13,11 +13,8 @@ use bun_sourcemap::{self as SourceMap, InternalSourceMap, ParsedSourceMap};
 use bun_threading::Mutex;
 use bun_wyhash::hash;
 
-/// Resolved source-preview lines for an error's code frame, cached so that
-/// repeated `Bun.inspect(err)` / `console.error(err)` on the same site
-/// does not re-read and re-parse the source (or its external `.map`) per
-/// print. Lines are owned, length-capped copies; a `None` entry memoizes a
-/// miss so the expensive path is not retried.
+/// Owned, length-capped source-preview lines for one error code-frame site,
+/// so repeat `Bun.inspect(err)` skips the re-read/re-parse.
 pub(crate) struct CachedCodeFrame {
     pub(crate) lines: SmallList<Box<[u8]>, { CachedCodeFrame::LINES }>,
     /// Zero-based line number of `lines[0]`; subsequent entries count down.
@@ -25,15 +22,12 @@ pub(crate) struct CachedCodeFrame {
 }
 
 impl CachedCodeFrame {
-    /// Matches `zig_exception::Holder::SOURCE_LINES_COUNT`.
+    /// = `zig_exception::Holder::SOURCE_LINES_COUNT`.
     pub(crate) const LINES: usize = 6;
-    /// Minified or generated lines longer than this are truncated so a single
-    /// bundled line cannot pin megabytes. Strictly wider than the code-frame
-    /// printer's own `MAX_LINE_LENGTH` (1024) so a cached hit still trips its
-    /// `clamped != trimmed` check and keeps the "... truncated" suffix.
+    /// Strictly > the printer's `MAX_LINE_LENGTH` (1024) so a cached hit
+    /// still trips `clamped != trimmed` and keeps the "... truncated" suffix.
     pub(crate) const MAX_LINE_LEN: usize = 1280;
-    /// Sentinel for the non-external (runtime-transpiled) branch where
-    /// `source_index` is not meaningful.
+    /// `source_index` sentinel for the non-external branch.
     pub(crate) const NO_SOURCE_INDEX: u32 = u32::MAX;
 
     #[inline]
@@ -42,10 +36,9 @@ impl CachedCodeFrame {
     }
 }
 
+/// `wyhash(generated_source_url) -> (source_index, original_line) -> frame`.
+/// `None` inner value memoizes a miss.
 type CodeFrameInner = HashMap<u64, Option<CachedCodeFrame>, IdentityContext<u64>>;
-/// Outer key: `wyhash(generated_source_url)`. Inner key: packed
-/// `(source_index, original_line)`. One generated file may fan out to several
-/// originals via `sourcesContent`, so `source_index` is part of the key.
 type CodeFrameCache = HashMap<u64, CodeFrameInner, IdentityContext<u64>>;
 
 pub struct SavedSourceMap {
@@ -212,11 +205,8 @@ impl SavedSourceMap {
         self.unlock();
     }
 
-    /// Looks up a cached code frame for `(path_hash, source_index, line)` and,
-    /// on a positive hit, clones its lines into the caller's
-    /// `source_lines` / `source_line_numbers` slots. Returns `Some(n)` (lines
-    /// filled, `0` for a memoized miss) when an entry exists, `None` when
-    /// nothing is recorded.
+    /// `Some(n)` = `n` lines cloned into the out-slots (`0` for a memoized
+    /// miss); `None` = nothing recorded.
     pub(crate) fn fill_code_frame_from_cache(
         &mut self,
         path_hash: u64,

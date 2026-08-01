@@ -70,52 +70,43 @@ test("Bun.inspect(error) reuses the resolved code frame on repeat (transpiled)",
   expect(large).toBeLessThan(small * 8);
 }, 30_000);
 
-test("Bun.inspect(error) reuses the resolved code frame on repeat (external .map)", async () => {
-  const mkSrc = (lines: number) => {
-    const src: string[] = [];
-    for (let i = 0; i < lines; i++) src.push(`export const v${i} = ${i};`);
-    src.push(`export const err = new Error("boom");`);
-    return src.join("\n") + "\n";
-  };
+test("Bun.inspect(error) serves a stable code frame from the cache (external .map)", async () => {
+  // Exercises the external-sourcemap branch of the cache: the first inspect
+  // reads sourcesContent out of the .map, later inspects hit the cache. No
+  // timing assertion here because release builds show a separate
+  // source-size-dependent cost on this path that persists with
+  // BUN_DISABLE_SOURCE_CODE_PREVIEW=1 (i.e. unrelated to the code-frame
+  // cache); the transpiled test above carries the perf proof.
+  const src: string[] = [];
+  for (let i = 0; i < 4000; i++) src.push(`export const v${i} = ${i};`);
+  src.push(`export const err = new Error("boom");`);
   using dir = tempDir("inspect-code-frame-cache-ext", {
-    "small.ts": mkSrc(40),
-    "large.ts": mkSrc(4000),
+    "src.ts": src.join("\n") + "\n",
     "run.ts": RUN_TS,
   });
 
-  const buildOne = async (name: string) => {
-    await using build = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "build",
-        path.join(String(dir), `${name}.ts`),
-        "--sourcemap=external",
-        "--target=bun",
-        "--outdir",
-        path.join(String(dir), "out"),
-      ],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-    });
-    const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-    expect(buildErr).toBe("");
-    expect(buildExit).toBe(0);
-  };
-  await Promise.all([buildOne("small"), buildOne("large")]);
+  await using build = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "build",
+      path.join(String(dir), "src.ts"),
+      "--sourcemap=external",
+      "--target=bun",
+      "--outdir",
+      path.join(String(dir), "out"),
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(buildErr).toBe("");
+  expect(buildExit).toBe(0);
 
-  const N = 100;
-  const { loop_ms: small } = await measure(String(dir), "./out/small.js", N);
-  const { loop_ms: large } = await measure(String(dir), "./out/large.js", N);
-  console.log(
-    `external .map: small ${small.toFixed(1)} ms, large ${large.toFixed(1)} ms ` +
-      `(${((large * 1000) / N).toFixed(1)} us/call), ratio ${(large / small).toFixed(1)}x`,
-  );
-
-  // Residual scaling here is not from the code frame (it persists with
-  // BUN_DISABLE_SOURCE_CODE_PREVIEW=1); the cache removes the dominant
-  // per-inspect .map re-read + JSON re-parse.
-  expect(large).toBeLessThan(small * 10);
+  // `measure` asserts the code frame is present in the first inspect and that
+  // every subsequent inspect returns an identical string (cache correctness).
+  const { loop_ms } = await measure(String(dir), "./out/src.js", 50);
+  console.log(`external .map: 50x inspect = ${loop_ms.toFixed(1)} ms`);
 }, 30_000);
 
 test("Bun.inspect(error) cached code frame matches the first inspect for >1024-char lines", async () => {

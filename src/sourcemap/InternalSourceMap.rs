@@ -637,10 +637,9 @@ impl InternalSourceMap {
     }
 }
 
-/// Stateful forward cursor. `move_to` is cheapest for nearby non-decreasing
-/// targets; a backward jump, or a forward jump past the next sync entry,
-/// reseeks via the sync index so any single call is bounded by one
-/// `locate_window` plus at most `SYNC_INTERVAL` delta decodes.
+/// Stateful forward cursor. Each `move_to` is bounded by one `locate_window`
+/// plus <= `SYNC_INTERVAL` deltas (reseeks on a backward jump or a forward
+/// jump past the next sync entry).
 ///
 /// Invariant: when `has_state`, `reader` is positioned such that calling
 /// `advance_one()` produces the mapping immediately after `peek orelse state`.
@@ -709,13 +708,9 @@ impl Cursor {
         Some(self.state.to_mapping())
     }
 
-    /// Walk every mapping segment on generated `line` whose generated-column
-    /// span intersects `[col_lo, col_hi)`, calling `each(original_line, width)`
-    /// where `width` is the number of generated columns in the intersection.
-    /// Columns before the first segment on the line are ignored (matching
-    /// `move_to`'s `None` return for that range). The cursor is left positioned
-    /// so that successive calls with non-decreasing `(line, col_lo)` stay on
-    /// the forward-only fast path.
+    /// Call `each(original_line, width)` for every mapping segment on
+    /// generated `line` whose column span intersects `[col_lo, col_hi)`.
+    /// Forward-only when called with non-decreasing `(line, col_lo)`.
     pub fn for_each_segment_on_line(
         &mut self,
         line: i32,
@@ -727,13 +722,8 @@ impl Cursor {
             return;
         }
 
-        // Position `state` at the last mapping <= (line, col_lo). Unlike
-        // `move_to` we don't early-return when that mapping is on an earlier
-        // line: the walk below still needs to step forward into segments that
-        // start inside the range.
         if self.should_reseek(line, col_lo) && !self.reseek(line, col_lo) {
-            // The first sync entry is already past (line, col_lo). Seed at
-            // window 0 so segments that start inside the range are still seen.
+            // first sync entry is already past target; seed from window 0
             if self.map.sync_count() == 0 {
                 return;
             }
@@ -759,8 +749,6 @@ impl Cursor {
             }
         }
 
-        // `state` covers `col_lo` on `line` iff it's on `line`. Otherwise the
-        // first contributing segment (if any) is the next peeked state.
         let mut seg = (self.state.generated_line == line).then_some(self.state);
         loop {
             if self.peek.is_none() {

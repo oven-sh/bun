@@ -418,16 +418,10 @@ pub struct BasicBlockRange {
     execution_count: usize,
 }
 
-/// Walks the generated-source lines that a JSC basic-block byte range
-/// `[min, max)` covers, using the sorted `line_starts` table. For each line `L`
-/// where the block intersects `(line_starts[L], line_starts[L+1])` (open on the
-/// left, matching the old per-byte `line_start >= byte_offset` skip), calls
-/// `each(L, lo, hi)` with the byte range `[lo, hi)` of that intersection.
-///
-/// Returns `(min_line, max_line)` over the lines visited, or `(u32::MAX, 0)` if
-/// none. The final entry in `line_starts` is never visited, preserving
-/// `LineOffsetTable::find_index`'s behavior of returning `None` past the last
-/// line start.
+/// Calls `each(line, lo, hi)` for every generated line in `[min, max)` with
+/// `[lo, hi) = [min, max) ∩ (line_starts[line], line_starts[line+1])`.
+/// Returns `(min_line, max_line)`, or `(u32::MAX, 0)` if none. The last entry
+/// in `line_starts` is never visited so the last line is never marked (lcov).
 #[inline]
 fn walk_block_lines(
     line_starts: &[u32],
@@ -441,7 +435,6 @@ fn walk_block_lines(
         return (lo_line, hi_line);
     }
     let last = line_starts.len() - 1;
-    // line_starts[0] == 0, so this is >= 1.
     let mut line = line_starts.partition_point(|&s| (s as usize) <= min) - 1;
     while line < last {
         let s_l = line_starts[line] as usize;
@@ -464,14 +457,9 @@ fn walk_block_lines(
     (lo_line, hi_line)
 }
 
-/// Sourcemap-aware variant of [`walk_block_lines`]: for each generated line the
-/// block covers, resolve the original-source line(s) via the sourcemap and call
-/// `each(original_line, width)` once per mapping segment, where `width` is the
-/// number of generated columns the block contributes on that segment.
-///
-/// One generated line can carry several segments pointing at different original
-/// lines, and original lines aren't monotone in generated order, so every
-/// segment in range is visited rather than sampling endpoints.
+/// Sourcemap-aware [`walk_block_lines`]: call `each(original_line, width)`
+/// once per mapping segment the block covers. Visits every segment because one
+/// generated line can hold several segments with different original lines.
 fn walk_block_segments(
     line_starts: &[u32],
     min: usize,
@@ -500,9 +488,7 @@ fn walk_block_segments(
             if let Some(c) = cur_.as_mut() {
                 c.for_each_segment_on_line(gen_line, col_lo, col_hi, &mut each);
             } else {
-                // Fallback for a materialized `mapping::List` (no internal
-                // cursor). Runtime-transpiled sources always have an internal
-                // cursor, so this path is defensive.
+                // no internal cursor (materialized `mapping::List`)
                 for col in col_lo..col_hi {
                     if let Some(p) = parsed_mapping.find_mapping(
                         Ordinal::from_zero_based(gen_line),
@@ -586,11 +572,9 @@ impl ByteRangeMapping {
     ) -> Result<Report, bun_alloc::AllocError> {
         let line_starts = self.line_offset_table.items_byte_offset_to_start_of_line();
 
-        // JSC returns ranges in hash-map iteration order. Sort by start offset
-        // so the sourcemap cursor advances monotonically instead of reseeking
-        // on every block. Only `.len()`/`.count()` of the derived
-        // `stmts`/`functions` vectors and bitsets are observed downstream, so
-        // block order is not part of the report output.
+        // JSC returns blocks in hash-map order; sort so the sourcemap cursor
+        // advances monotonically. Report consumers only read `.len()`/`.count()`
+        // of the derived vectors/bitsets, so block order is not observable.
         let sorted = |b: &[BasicBlockRange]| -> Vec<BasicBlockRange> {
             let mut v = b.to_vec();
             v.sort_unstable_by_key(|b| {

@@ -2,8 +2,8 @@
 // mock `gh` on PATH that keeps a JSON asset list. The point is the two-phase
 // stage/swap: a cancel during the long data-transfer window must leave every
 // live asset name intact.
-import { test, expect, describe } from "bun:test";
-import { bunEnv, tempDir, isWindows } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, isWindows, tempDir } from "harness";
 import { join, resolve } from "node:path";
 
 const scriptPath = resolve(import.meta.dir, "../../.buildkite/scripts/upload-release.sh");
@@ -65,11 +65,7 @@ esac
 
 type Asset = { id: number; name: string };
 
-async function run(opts: {
-  initialAssets: Asset[];
-  killOn?: string;
-  fail5xxOnce?: string;
-}) {
+async function run(opts: { initialAssets: Asset[]; killOn?: string; fail5xxOnce?: string }) {
   using dir = tempDir("upload-release-assets", {
     "bin/gh": mockGh,
     "state.json": JSON.stringify(opts.initialAssets),
@@ -124,7 +120,11 @@ describe.concurrent.skipIf(isWindows)("upload_github_assets", () => {
     const r = await run({ initialAssets: initial });
     expect(r.stderr).not.toContain("error:");
     expect(r.exitCode).toBe(0);
-    expect(live(r.assets).map(a => a.name).sort()).toEqual(["a.zip", "b.zip", "c.zip"]);
+    expect(
+      live(r.assets)
+        .map(a => a.name)
+        .sort(),
+    ).toEqual(["a.zip", "b.zip", "c.zip"]);
     expect(live(r.assets).every(a => a.id > 3)).toBe(true);
     expect(staged(r.assets)).toEqual([]);
   });
@@ -139,7 +139,9 @@ describe.concurrent.skipIf(isWindows)("upload_github_assets", () => {
   test("cancel between DELETE and PATCH loses at most the one asset mid-swap", async () => {
     const r = await run({ initialAssets: initial, killOn: "PATCH .*assets/4 " });
     expect(r.exitCode).not.toBe(0);
-    const liveNames = live(r.assets).map(a => a.name).sort();
+    const liveNames = live(r.assets)
+      .map(a => a.name)
+      .sort();
     expect(liveNames).toEqual(["b.zip", "c.zip"]);
     // a.zip's data is still present under its staged name.
     expect(staged(r.assets).some(a => a.name === "incoming-999-a.zip")).toBe(true);
@@ -148,15 +150,28 @@ describe.concurrent.skipIf(isWindows)("upload_github_assets", () => {
   test("transient 5xx on PATCH is retried instead of aborting mid-swap", async () => {
     const r = await run({ initialAssets: initial, fail5xxOnce: "PATCH .*assets/4 " });
     expect(r.exitCode).toBe(0);
-    expect(live(r.assets).map(a => a.name).sort()).toEqual(["a.zip", "b.zip", "c.zip"]);
+    expect(
+      live(r.assets)
+        .map(a => a.name)
+        .sort(),
+    ).toEqual(["a.zip", "b.zip", "c.zip"]);
     expect(staged(r.assets)).toEqual([]);
     expect(r.stderr).toContain("retrying");
   });
 
   test("release already missing an asset is healed", async () => {
-    const r = await run({ initialAssets: [{ id: 1, name: "a.zip" }, { id: 3, name: "c.zip" }] });
+    const r = await run({
+      initialAssets: [
+        { id: 1, name: "a.zip" },
+        { id: 3, name: "c.zip" },
+      ],
+    });
     expect(r.exitCode).toBe(0);
-    expect(live(r.assets).map(a => a.name).sort()).toEqual(["a.zip", "b.zip", "c.zip"]);
+    expect(
+      live(r.assets)
+        .map(a => a.name)
+        .sort(),
+    ).toEqual(["a.zip", "b.zip", "c.zip"]);
   });
 
   test("stale incoming-* from a previous interrupted run is swept before staging", async () => {
@@ -164,7 +179,11 @@ describe.concurrent.skipIf(isWindows)("upload_github_assets", () => {
       initialAssets: [...initial, { id: 100, name: "incoming-777-a.zip" }, { id: 101, name: "incoming-777-c.zip" }],
     });
     expect(r.exitCode).toBe(0);
-    expect(live(r.assets).map(a => a.name).sort()).toEqual(["a.zip", "b.zip", "c.zip"]);
+    expect(
+      live(r.assets)
+        .map(a => a.name)
+        .sort(),
+    ).toEqual(["a.zip", "b.zip", "c.zip"]);
     expect(staged(r.assets)).toEqual([]);
     // The sweep hit the two stale ids before the new upload.
     expect(r.calls.some(c => c.includes("DELETE") && c.endsWith("/100"))).toBe(true);

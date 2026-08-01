@@ -537,27 +537,19 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
     case ControllerKind::Default: {
         auto* controller = defaultControllerOf(stream);
         controller->releaseSteps();
-        // Bun: drop the native handle's event-loop ref when its consumer releases the lock.
-        if (stream->m_nativePtr && controller->m_algorithms.kind == SourceKind::Native) {
-            const auto* adapter = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
-            if (auto* handle = adapter->handle()) {
-                JSValue updateRef = handle->getIfPropertyExists(globalObject, builtinNames(vm).updateRefPublicName());
-                RETURN_IF_EXCEPTION(scope, void());
-                if (updateRef && updateRef.isCallable()) {
-                    auto callData = JSC::getCallData(updateRef);
-                    MarkedArgumentBuffer args;
-                    args.append(jsBoolean(false));
-                    ASSERT(!args.hasOverflowed());
-                    JSC::call(globalObject, updateRef, callData, handle, args);
-                    RETURN_IF_EXCEPTION(scope, void());
-                }
-            }
-        }
+        if (stream->m_nativePtr && controller->m_algorithms.kind == SourceKind::Native)
+            nativeSourceDropEventLoopRef(globalObject, uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get()));
+        RETURN_IF_EXCEPTION(scope, void());
         break;
     }
-    case ControllerKind::Byte:
-        byteControllerOf(stream)->releaseSteps();
+    case ControllerKind::Byte: {
+        auto* controller = byteControllerOf(stream);
+        controller->releaseSteps();
+        if (stream->m_nativePtr && controller->m_algorithms.kind == SourceKind::Native)
+            nativeSourceDropEventLoopRef(globalObject, uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get()));
+        RETURN_IF_EXCEPTION(scope, void());
         break;
+    }
     }
     stream->m_reader.clear();
     reader->m_stream.clear();

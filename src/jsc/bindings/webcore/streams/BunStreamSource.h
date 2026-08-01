@@ -8,6 +8,7 @@
 #include "root.h"
 #include "StreamsForward.h"
 
+#include "JSReadableByteStreamController.h"
 #include "JSReadableStreamDefaultController.h"
 #include <JavaScriptCore/JSCast.h>
 #include <JavaScriptCore/JSInternalFieldObjectImpl.h>
@@ -67,13 +68,18 @@ public:
     JSC::JSObject* pendingView() const { return internalField(Field::PendingView).get().getObject(); }
     JSC::JSObject* closer() const { return internalField(Field::Closer).get().getObject(); }
     JSC::JSValue drainValue() const { return internalField(Field::DrainValue).get(); }
-    JSReadableStreamDefaultController* controller() const { return dynamicDowncast<JSReadableStreamDefaultController>(internalField(Field::Controller).get()); }
+    // Exactly one of these is non-null once set: a text-mode adapter installs a default
+    // controller (it enqueues JSStrings), a binary adapter installs a byte controller so
+    // BYOB readers can attach.
+    JSC::JSObject* controller() const { return internalField(Field::Controller).get().getObject(); }
+    JSReadableStreamDefaultController* defaultController() const { return dynamicDowncast<JSReadableStreamDefaultController>(internalField(Field::Controller).get()); }
+    JSReadableByteStreamController* byteController() const { return dynamicDowncast<JSReadableByteStreamController>(internalField(Field::Controller).get()); }
 
     void setHandle(JSC::VM& vm, JSC::JSValue v) { internalField(Field::Handle).set(vm, this, v); }
     void setPendingView(JSC::VM& vm, JSC::JSValue v) { internalField(Field::PendingView).set(vm, this, v); }
     void setCloser(JSC::VM& vm, JSC::JSValue v) { internalField(Field::Closer).set(vm, this, v); }
     void setDrainValue(JSC::VM& vm, JSC::JSValue v) { internalField(Field::DrainValue).set(vm, this, v); }
-    void setController(JSC::VM& vm, JSReadableStreamDefaultController* c) { internalField(Field::Controller).set(vm, this, c); }
+    void setController(JSC::VM& vm, JSC::JSObject* c) { internalField(Field::Controller).set(vm, this, c); }
 
     void clearHandle(JSC::VM& vm) { internalField(Field::Handle).set(vm, this, JSC::jsUndefined()); }
     void clearPendingView(JSC::VM& vm) { internalField(Field::PendingView).set(vm, this, JSC::jsUndefined()); }
@@ -88,6 +94,9 @@ public:
     bool m_closed : 1 { false };
     // Body.textStream(): each pulled byte span is UTF-8-decoded before enqueue.
     bool m_textMode : 1 { false };
+    // the in-flight async pull's PendingView is the head pull-into descriptor's buffer
+    // (respond(n) on fulfilment) rather than an adapter-owned scratch buffer (enqueue()).
+    bool m_pendingIsBYOB : 1 { false };
     Bun::WebStreams::StreamingUTF8DecodeState m_textState;
 
 private:

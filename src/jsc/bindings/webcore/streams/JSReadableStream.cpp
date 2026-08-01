@@ -599,7 +599,14 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_getReader, (JSGlobalO
     }
 
     if (isBYOB) {
-        // A BYOB reader never materializes Bun's lazy modes.
+        // A lazy binary native stream is a byte stream; materialize it so the BYOB reader
+        // attaches. A text-mode native stream and a DirectPending stream can never satisfy
+        // BYOB, so leave them unmaterialized and let SetUpReadableStreamBYOBReader reject
+        // without running user code.
+        if (stream->m_bunMode == BunStreamMode::NativePending && !stream->m_nativeTextMode) {
+            stream->materializeIfNeeded(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         auto* reader = acquireReadableStreamBYOBReader(lexicalGlobalObject, stream);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(reader);

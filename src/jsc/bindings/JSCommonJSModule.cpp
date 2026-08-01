@@ -972,20 +972,10 @@ void populateESMExports(
     auto& vm = JSC::getVM(globalObject);
     const Identifier& esModuleMarker = vm.propertyNames->__esModule;
 
-    // The ESM `default` binding is always the `module.exports` value itself,
-    // matching Node.js. The `__esModule` annotation only affects which named
-    // exports are exposed and whether `__esModule` itself is filtered from
-    // the namespace; it does not cause `exports.default` to be unwrapped as
-    // the ESM default.
-    //
-    // https://stackoverflow.com/questions/50943704/whats-the-purpose-of-object-definepropertyexports-esmodule-value-0
-    // https://github.com/nodejs/node/issues/40891
-    // https://github.com/evanw/bundler-esm-cjs-tests
-    // https://github.com/evanw/esbuild/issues/1591
-    // https://github.com/oven-sh/bun/issues/3383
-    // https://github.com/oven-sh/bun/issues/7623
-    // https://github.com/oven-sh/bun/issues/27810
-    // https://github.com/oven-sh/bun/issues/29304
+    // The ESM `default` binding is always `module.exports` itself (Node.js
+    // semantics, see nodejs/node#40891). `__esModule` only affects named
+    // export enumeration below; it never causes `exports.default` to be
+    // unwrapped as the ESM default.
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* exports = result.getObject()) {

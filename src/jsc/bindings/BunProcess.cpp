@@ -3095,9 +3095,9 @@ static JSValue maybe_uid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* gl
     return {};
 }
 
-static JSValue maybe_gid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* globalObject, JSValue value)
+static JSValue maybe_gid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* globalObject, JSValue value, WTF::StringView argName = "id"_s)
 {
-    if (!value.isNumber() && !value.isString()) return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "id"_s, "number or string"_s, value));
+    if (!value.isNumber() && !value.isString()) return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, argName, "number or string"_s, value));
     if (!value.isString()) return value;
 
     auto str = value.getString(globalObject);
@@ -3277,7 +3277,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObj
     auto username = usernameUtf8.data();
 
     auto is_number = extraGroupValue.isNumber();
-    extraGroupValue = maybe_gid_by_name(scope, globalObject, extraGroupValue);
+    extraGroupValue = maybe_gid_by_name(scope, globalObject, extraGroupValue, "extraGroup"_s);
     RETURN_IF_EXCEPTION(scope, {});
     uint32_t extraGroup = 0;
     if (is_number) Bun::V::validateInteger(scope, globalObject, extraGroupValue, "extraGroup"_s, jsNumber(0), jsNumber(std::numeric_limits<int32_t>::max()), &extraGroup);

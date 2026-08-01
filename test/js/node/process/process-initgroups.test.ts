@@ -31,18 +31,22 @@ test("process.initgroups argument validation", () => {
 test("process.initgroups system error or EPERM", () => {
   if (process.platform === "win32") return;
 
+  const existingGroup = process.getgroups ? (process.getgroups()[0] ?? process.getgid?.() ?? 0) : 0;
+
   if (process.getuid && process.getuid() !== 0) {
     expect(() => {
       process.initgroups("root", 0);
     }).toThrow(/EPERM/);
     
     expect(() => {
-      process.initgroups(0, "wheel");
+      process.initgroups(0, existingGroup);
     }).toThrow(/EPERM/);
   } else {
-    expect(() => {
-      process.initgroups("root", 0);
-    }).not.toThrow();
+    const { exitCode, stderr } = Bun.spawnSync({
+      cmd: [process.execPath, "-e", "process.initgroups('root', 0);"],
+    });
+    expect(stderr.toString()).toBe("");
+    expect(exitCode).toBe(0);
   }
 });
 

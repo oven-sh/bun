@@ -676,8 +676,7 @@ impl Value {
         }
     }
 
-    /// `Content-Type` the fetch spec's "extract a body" assigns to this body;
-    /// `None` for kinds with no implicit type (ArrayBuffer, ReadableStream, null).
+    /// `Content-Type` the fetch spec's "extract a body" assigns to this body.
     pub fn content_type(&self) -> Option<&[u8]> {
         match self {
             Value::Blob(blob) => {

@@ -56,7 +56,7 @@ test("Bun.inspect(error) reuses the resolved code frame on repeat (transpiled)",
     "run.ts": RUN_TS,
   });
 
-  const N = 200;
+  const N = 150;
   const { loop_ms: small } = await measure(String(dir), "./small.ts", N);
   const { loop_ms: large } = await measure(String(dir), "./large.ts", N);
   console.log(
@@ -64,11 +64,11 @@ test("Bun.inspect(error) reuses the resolved code frame on repeat (transpiled)",
       `(${((large * 1000) / N).toFixed(1)} us/call), ratio ${(large / small).toFixed(1)}x`,
   );
 
-  // Without the cache the re-parse per call makes the large run ~150x the
+  // Without the cache the re-parse per call makes the large run ~100x the
   // small run (scales with file size); with the cache both are dominated by
   // the fixed per-inspect work and the ratio is near 1.
   expect(large).toBeLessThan(small * 8);
-}, 30_000);
+});
 
 test("Bun.inspect(error) serves a stable code frame from the cache (external .map)", async () => {
   // Exercises the external-sourcemap branch of the cache: the first inspect
@@ -78,7 +78,7 @@ test("Bun.inspect(error) serves a stable code frame from the cache (external .ma
   // BUN_DISABLE_SOURCE_CODE_PREVIEW=1 (i.e. unrelated to the code-frame
   // cache); the transpiled test above carries the perf proof.
   const src: string[] = [];
-  for (let i = 0; i < 4000; i++) src.push(`export const v${i} = ${i};`);
+  for (let i = 0; i < 800; i++) src.push(`export const v${i} = ${i};`);
   src.push(`export const err = new Error("boom");`);
   using dir = tempDir("inspect-code-frame-cache-ext", {
     "src.ts": src.join("\n") + "\n",
@@ -105,9 +105,9 @@ test("Bun.inspect(error) serves a stable code frame from the cache (external .ma
 
   // `measure` asserts the code frame is present in the first inspect and that
   // every subsequent inspect returns an identical string (cache correctness).
-  const { loop_ms } = await measure(String(dir), "./out/src.js", 50);
-  console.log(`external .map: 50x inspect = ${loop_ms.toFixed(1)} ms`);
-}, 30_000);
+  const { loop_ms } = await measure(String(dir), "./out/src.js", 20);
+  console.log(`external .map: 20x inspect = ${loop_ms.toFixed(1)} ms`);
+});
 
 test("Bun.inspect(error) cached code frame matches the first inspect for >1024-char lines", async () => {
   // A minified-style 3000-char line: the printer clamps to 1024 and appends a

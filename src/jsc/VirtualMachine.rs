@@ -5546,6 +5546,7 @@ impl VirtualMachine {
                         Some(cached),
                     );
                 } else {
+                    exception.collect_source_lines(error_instance, global);
                     self.source_mappings.put_cached_code_frame(
                         cache_path_hash,
                         cache_source_index,

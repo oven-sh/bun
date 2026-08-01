@@ -41,8 +41,10 @@ const report = `
   }));
 `;
 
-test.concurrent("Response.body on a buffer body does not pin a ReadableStream GC root through async context", async () => {
-  const script = `
+test.concurrent(
+  "Response.body on a buffer body does not pin a ReadableStream GC root through async context",
+  async () => {
+    const script = `
     const { AsyncLocalStorage } = require("node:async_hooks");
     const als = new AsyncLocalStorage();
     const buf = Buffer.alloc(200, "x");
@@ -56,17 +58,20 @@ test.concurrent("Response.body on a buffer body does not pin a ReadableStream GC
     }
     ${report}
   `;
-  const { protected: p, totalStream, totalOwner } = await collectHeapAfter(script);
-  // Before the fix this reported exactly N strongly rooted ReadableStreams
-  // (and N retained Responses); after the fix the wrapper's visitChildren owns
-  // the stream and the whole cycle is collectable.
-  expect(p).toBe(0);
-  expect(totalStream).toBeLessThan(10);
-  expect(totalOwner).toBeLessThan(10);
-});
+    const { protected: p, totalStream, totalOwner } = await collectHeapAfter(script);
+    // Before the fix this reported exactly N strongly rooted ReadableStreams
+    // (and N retained Responses); after the fix the wrapper's visitChildren owns
+    // the stream and the whole cycle is collectable.
+    expect(p).toBe(0);
+    expect(totalStream).toBeLessThan(10);
+    expect(totalOwner).toBeLessThan(10);
+  },
+);
 
-test.concurrent("Request.body on a buffer body does not pin a ReadableStream GC root through async context", async () => {
-  const script = `
+test.concurrent(
+  "Request.body on a buffer body does not pin a ReadableStream GC root through async context",
+  async () => {
+    const script = `
     const { AsyncLocalStorage } = require("node:async_hooks");
     const als = new AsyncLocalStorage();
     const buf = Buffer.alloc(200, "x");
@@ -88,11 +93,12 @@ test.concurrent("Request.body on a buffer body does not pin a ReadableStream GC 
       totalOwner: stats.objectTypeCounts.Request ?? 0,
     }));
   `;
-  const { protected: p, totalStream, totalOwner } = await collectHeapAfter(script);
-  expect(p).toBe(0);
-  expect(totalStream).toBeLessThan(10);
-  expect(totalOwner).toBeLessThan(10);
-});
+    const { protected: p, totalStream, totalOwner } = await collectHeapAfter(script);
+    expect(p).toBe(0);
+    expect(totalStream).toBeLessThan(10);
+    expect(totalOwner).toBeLessThan(10);
+  },
+);
 
 test.concurrent("fetch response .body does not pin a ReadableStream GC root through async context", async () => {
   // This variant drives the Locked-body path (`locked_to_native_stream`);

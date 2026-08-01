@@ -2,9 +2,9 @@
 // Sourcemap `sources` entries must be relative to the .map file's own
 // directory (per the sourcemap spec), not to the build outdir.
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { tempDir } from "harness";
 
 describe("issue 3332: sourcemap sources are relative to the map file", () => {
   test("nested outdir layout (monorepo-style root)", async () => {

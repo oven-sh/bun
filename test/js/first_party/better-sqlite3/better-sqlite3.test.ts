@@ -1,6 +1,6 @@
 // better-sqlite3 is a V8-API native addon; Bun overrides `require("better-sqlite3")`
 // with a shim backed by bun:sqlite. https://github.com/oven-sh/bun/issues/14997
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 // @ts-expect-error no types for the builtin override
 import Database from "better-sqlite3";

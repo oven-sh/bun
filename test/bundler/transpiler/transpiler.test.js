@@ -148,15 +148,21 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_("x = delete { f: y }.f", "x = delete { f: y }.f");
       ts.expectPrintedMin_("x = delete { f: y }['f']", "x = delete { f: y }.f");
       ts.expectPrintedMin_('x = delete "foo"[2]', 'x = delete "foo"[2]');
+      ts.expectPrintedMin_('x = delete "foo".length', 'x = delete "foo".length');
       ts.expectPrintedMin_("x = [y][0] = 5", "x = [y][0] = 5");
       ts.expectPrintedMin_("x = [y][0] += 5", "x = [y][0] += 5");
       ts.expectPrintedMin_("[y][0]++", "[y][0]++");
       ts.expectPrintedMin_('x = "foo"[2] = 5', 'x = "foo"[2] = 5');
       ts.expectPrintedMin_("x = [y.z][0]()", "x = [y.z][0]()");
       ts.expectPrintedMin_("x = [y][0]()", "x = [y][0]()");
+      // A conditional operand is not a reference; when a fold hoists the
+      // live branch up to the delete, the printer wraps it.
+      ts.expectPrinted_("x = delete (true ? a.b : 0)", "x = delete (0, a.b)");
+      ts.expectPrinted_("x = delete (true ? a : 0)", "x = delete (0, a)");
       // Still inlined outside those positions.
       ts.expectPrintedMin_("x = [y][0]", "x = y");
       ts.expectPrintedMin_('x = "foo"[2]', 'x = "o"');
+      ts.expectPrintedMin_('x = "foo".length', "x = 3");
       ts.expectPrintedMin_("x = delete [y][0].z", "x = delete y.z");
       ts.expectPrintedMin_("x = f([y][0])", "x = f(y)");
     });

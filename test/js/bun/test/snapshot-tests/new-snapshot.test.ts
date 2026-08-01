@@ -118,3 +118,33 @@ test.concurrent("afterAll sees the written .snap file across multiple test files
   expect(stdout).toContain("b:HASKEY:true");
   expect(exitCode).toBe(0);
 });
+
+test.concurrent("describe-level afterAll sees the written .snap file", async () => {
+  using dir = tempDir("snap-afterall-describe", {
+    "snap.test.js": `
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const snap = () => fs.readFileSync(path.join(__dirname, "__snapshots__", "snap.test.js.snap"), "utf8");
+      describe("outer", () => {
+        test("t1", () => expect({ v: "first" }).toMatchSnapshot());
+        describe("inner", () => {
+          test("t2", () => expect({ v: "second" }).toMatchSnapshot());
+          afterAll(() => console.log("INNER:" + snap().includes("second")));
+        });
+        afterAll(() => console.log("OUTER:" + (snap().includes("first") && snap().includes("second"))));
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--update-snapshots", "snap.test.js"],
+    env: { ...bunEnv, CI: "false" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("2 pass");
+  expect(stdout).toContain("INNER:true");
+  expect(stdout).toContain("OUTER:true");
+  expect(exitCode).toBe(0);
+});

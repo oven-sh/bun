@@ -89,8 +89,6 @@ pub struct Execution {
     /// the entries themselves are owned by BunTest, which owns Execution.
     pub(crate) sequences: Box<[ExecutionSequence]>,
     pub(crate) group_index: usize,
-    /// `step_group` flushes the `.snap` file once `group_index` reaches this; `usize::MAX` = done.
-    pub(crate) snapshot_flush_group: usize,
     /// The entry whose callback is synchronously on the stack right now. Set
     /// around `run_test_callback` so code re-entered from a test body (e.g.
     /// spawnSync's wait loop) can read the calling entry's own deadline.
@@ -282,7 +280,6 @@ impl Execution {
             groups: Box::default(),
             sequences: Box::default(),
             group_index: 0,
-            snapshot_flush_group: usize::MAX,
             on_stack_entry: core::cell::Cell::new(None),
             on_stack_entry_data: core::cell::Cell::new(None),
         }
@@ -829,6 +826,13 @@ fn step_group(
             // SAFETY: group_ptr points into this.groups; only this scope holds a `&mut` to it.
             let group = unsafe { &mut *group_ptr.as_ptr() };
             if !group.executing {
+                let (start, end) = (group.sequence_start, group.sequence_end);
+                if this.sequences[start..end].iter().all(|s| s.test_entry.is_none()) {
+                    if let Some(runner) = super::jest::Jest::runner() {
+                        // best-effort; a failure surfaces via write_snapshot_file()? at file-close.
+                        let _ = runner.snapshots.flush_current_file();
+                    }
+                }
                 Execution::on_group_started(global_this);
                 group.executing = true;
             }
@@ -869,13 +873,6 @@ fn step_group(
         } else {
             group_log::log(format_args!("stepGroup: not all sequences failed, advancing to next group"));
             this.group_index += 1;
-        }
-
-        if this.group_index >= this.snapshot_flush_group {
-            this.snapshot_flush_group = usize::MAX;
-            if let Some(runner) = super::jest::Jest::runner() {
-                let _ = runner.snapshots.flush_current_file();
-            }
         }
     }
 }

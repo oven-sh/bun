@@ -31,9 +31,7 @@ impl Order {
 
     pub(crate) fn generate_order_sub(&mut self, current: &mut TestScheduleEntry) -> JsResult<()> {
         match current {
-            TestScheduleEntry::Describe(describe) => {
-                self.generate_order_describe(describe)?;
-            }
+            TestScheduleEntry::Describe(describe) => self.generate_order_describe(describe)?,
             TestScheduleEntry::TestCallback(test_callback) => {
                 self.generate_order_test(NonNull::from(&mut **test_callback))?
             }
@@ -80,10 +78,9 @@ impl Order {
         Ok(AllOrderResult { start, end })
     }
 
-    /// Returns the group index at which `current`'s own afterAll groups begin.
-    pub(crate) fn generate_order_describe(&mut self, current: &mut DescribeScope) -> JsResult<usize> {
+    pub(crate) fn generate_order_describe(&mut self, current: &mut DescribeScope) -> JsResult<()> {
         if current.failed {
-            return Ok(self.groups.len()); // do not schedule any tests in a failed describe scope
+            return Ok(()); // do not schedule any tests in a failed describe scope
         }
         let use_hooks = self.cfg.always_use_hooks || current.base.has_callback;
 
@@ -112,8 +109,6 @@ impl Order {
         // update skip_to values for beforeAll to skip to the first afterAll
         beforeall_order.set_failure_skip_to(self);
 
-        let afterall_start = self.groups.len();
-
         // gather afterAll
         let afterall_order: AllOrderResult = if use_hooks {
             self.generate_all_order(&current.after_all)?
@@ -124,7 +119,7 @@ impl Order {
         // update skip_to values for afterAll to skip the remaining afterAll items
         afterall_order.set_failure_skip_to(self);
 
-        Ok(afterall_start)
+        Ok(())
     }
 
     /// # Safety

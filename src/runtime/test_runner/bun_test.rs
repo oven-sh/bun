@@ -1075,8 +1075,7 @@ impl BunTest {
                     Order::AllOrderResult::EMPTY
                 };
                 let describe_seq_start = order.sequences.len();
-                let root_afterall_group_start =
-                    order.generate_order_describe(&mut self.collection.root_scope)?;
+                order.generate_order_describe(&mut self.collection.root_scope)?;
                 let describe_seq_end = order.sequences.len();
                 // Collect hook-entry clones boxed by `generate_order_test` so `Drop` can
                 // reclaim the Box headers. Must run before `extra_execution_entries` are
@@ -1106,7 +1105,6 @@ impl BunTest {
                 afterall_order.set_failure_skip_to(&mut order);
 
                 self.execution.load_from_order(&mut order);
-                self.execution.snapshot_flush_group = root_afterall_group_start;
                 debug::dump_order(&self.execution)?;
                 Ok(Advance::Cont)
             }

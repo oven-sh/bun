@@ -2135,6 +2135,50 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       return dependenciesList;
     }
 
+    test("slow lifecycle script prints a warning", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      await mkdir(join(packageDir, "slow-pkg"));
+      await writeFile(
+        join(packageDir, "slow-pkg", "package.json"),
+        JSON.stringify({
+          name: "slow-pkg",
+          version: "1.0.0",
+          scripts: {
+            postinstall: `${bunExe()} -e 'Bun.sleepSync(750)'`,
+          },
+        }),
+      );
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "slow-pkg": "file:./slow-pkg",
+          },
+          trustedDependencies: ["slow-pkg"],
+        }),
+      );
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+      expect(err).not.toContain("error:");
+      expect(err).toMatch(/warn: slow-pkg's postinstall script took \d/);
+      expect(out).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+    });
+
     test("reach max concurrent scripts", async () => {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;

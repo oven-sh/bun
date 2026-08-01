@@ -676,6 +676,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (*this).remaining_fds = 0;
             (*this).started_at =
                 bun_core::Timespec::now(bun_core::TimespecMockMode::AllowMockedTime).ns();
+            (*this).timer = Some(Timer::start());
             // Store the allocation-rooted `this` in the intrusive heap — not a `&mut self`
             // reborrow, whose SB tag would be invalidated by the field accesses below.
             (*manager)
@@ -911,7 +912,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
                 if let Some(nanos) = maybe_duration {
                     if nanos > MIN_MILLISECONDS_TO_LOG * bun_core::time::NS_PER_MS {
-                        let entry = LifecycleScriptTimeLogEntry {};
+                        let entry = LifecycleScriptTimeLogEntry {
+                            package_name: self.package_name.clone(),
+                            script_id: self.current_script_index,
+                            duration: nanos,
+                        };
                         // SAFETY: see [`Self::manager_mut`].
                         unsafe { self.manager_mut() }
                             .lifecycle_script_time_log

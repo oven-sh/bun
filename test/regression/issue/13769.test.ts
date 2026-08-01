@@ -4,6 +4,7 @@
 // lockfile's pinned SHA was reused and the update was a no-op.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
 function gitEnv(root: string) {
@@ -172,6 +173,14 @@ describe("bun update re-resolves git dependencies", () => {
     }
 
     await publishCommit(env, upstream, serve, "COMMIT_B");
+
+    // Drop node_modules and the per-SHA checkout cache (keep the bare clone) so
+    // `install` must re-download/checkout from the lockfile's resolved SHA even
+    // after the bare cache has been refreshed to commit B.
+    await rm(join(app, "node_modules"), { recursive: true, force: true });
+    for await (const entry of new Bun.Glob("@G@*").scan({ cwd: cache, onlyFiles: false })) {
+      await rm(join(cache, entry), { recursive: true, force: true });
+    }
 
     const lockBefore = await Bun.file(join(app, "bun.lock")).text();
     const { stderr, exitCode } = await runBun(app, cache, env, "install", "--no-progress");

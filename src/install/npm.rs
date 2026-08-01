@@ -1535,14 +1535,8 @@ impl PackageManifest {
         None
     }
 
-    /// Highest-semver published version, used as a fallback when
-    /// `dist-tags.latest` does not resolve (registry mirrors/CDNs can briefly
-    /// serve a manifest whose `dist-tags.latest` points at a version that has
-    /// not yet propagated into `versions`, or omit `dist-tags` entirely).
-    ///
-    /// Prefers the highest release; falls through to the highest prerelease
-    /// only when there are no releases at all. Both lists are sorted ascending
-    /// at serialization time, so the last entry is the highest.
+    /// Highest release, or highest prerelease if there are no releases.
+    /// Both lists are sorted ascending at serialization time.
     fn find_highest_version(&self, min_age_ms: Option<f64>) -> Option<FindResult<'_>> {
         for list in [&self.pkg.releases, &self.pkg.prereleases] {
             let keys = list.keys.get(&self.versions);
@@ -1564,9 +1558,7 @@ impl PackageManifest {
                     package,
                 });
             }
-            // Releases exist but every one is age-gated: do not fall through to
-            // prereleases, matching `find_best_version` (which only considers
-            // prereleases when the spec opts in).
+            // every release is age-gated; do not fall through to prereleases
             return None;
         }
         None
@@ -1717,10 +1709,9 @@ impl PackageManifest {
         exclusions: Option<&[&[u8]]>,
     ) -> FindVersionResult<'_> {
         let Some(dist_result) = self.find_by_dist_tag(tag) else {
-            // `latest` should always resolve to something if there are any
-            // versions at all; match npm's pick-manifest and fall back to the
-            // highest published version instead of failing the whole install.
-            // https://github.com/oven-sh/bun/issues/12041
+            // https://github.com/oven-sh/bun/issues/12041: match npm and let
+            // `latest` fall back to the highest published version when the
+            // manifest's `dist-tags.latest` is stale or missing.
             if tag == b"latest" {
                 let min_age_gate_ms = match minimum_release_age_ms {
                     Some(min_age_ms) if !self.should_exclude_from_age_filter(exclusions) => {

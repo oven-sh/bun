@@ -14,9 +14,7 @@ bun_output::declare_scope!(ByteStream, visible);
 /// R-2 (`sharedThis`): every JS-reachable inherent method takes `&self` so a
 /// re-entrant JS call (e.g. `pending.run()` → JS → `onPull`) cannot stack two
 /// `&mut ByteStream`. Fields mutated on those paths are wrapped in `Cell`
-/// (Copy scalars / raw ptrs) or [`JsCell`] (non-Copy). `high_water_mark` /
-/// `size_hint` are written only at init time (before the JS wrapper exists)
-/// and stay bare.
+/// (Copy scalars / raw ptrs) or [`JsCell`] (non-Copy).
 ///
 /// The `SourceContext` trait still spells its callbacks `&mut self` (shared
 /// across `ByteBlobLoader` / `FileReader`); the trait impl below auto-derefs
@@ -26,13 +24,8 @@ pub struct ByteStream {
     pub(crate) has_received_last_chunk: Cell<bool>,
     pub(crate) pending: JsCell<streams::Pending>,
     pub(crate) done: Cell<bool>,
-    /// Borrowed view into a JS `Uint8Array` passed from `on_pull`; kept alive by `pending_value`.
-    // Raw fat slice ptr because the backing store is JS-heap-owned and rooted via
-    // `pending_value: Strong`. Never freed by Rust.
-    pub(crate) pending_buffer: Cell<*mut [u8]>,
+    /// Rooted only so `on_cancel` can observe that a pull was outstanding.
     pub(crate) pending_value: JsCell<StrongOptional>, // jsc.Strong.Optional
-    pub offset: Cell<usize>,
-    pub(crate) high_water_mark: blob::SizeType,
     /// Native sink this stream is piped into; `on_data` dispatches and honors `Writable`.
     pub(crate) sink: JsCell<SinkHandle>,
     /// Set on `Writable::Backpressure` (buffer instead of write); cleared by [`Self::resume`].
@@ -51,10 +44,7 @@ impl Default for ByteStream {
                 ..Default::default()
             }),
             done: Cell::new(false),
-            pending_buffer: Cell::new(Self::empty_pending_buffer()),
             pending_value: JsCell::new(StrongOptional::empty()),
-            offset: Cell::new(0),
-            high_water_mark: 0,
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
             size_hint: Cell::new(0),
@@ -109,11 +99,6 @@ impl readable_stream::SourceContext for ByteStream {
 bun_core::impl_field_parent! { ByteStream => Source.context; pub fn parent_const; pub fn parent; }
 
 impl ByteStream {
-    #[inline]
-    const fn empty_pending_buffer() -> *mut [u8] {
-        core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0)
-    }
-
     /// Init-time reset. Runs before the JS
     /// wrapper exists, so `&mut self` is sound here (R-2 exemption).
     pub(crate) fn setup(&mut self) {
@@ -167,7 +152,6 @@ impl ByteStream {
 
         if !self.buffer.get().is_empty() {
             let buffered = self.buffer.replace(Vec::new());
-            self.offset.set(0);
             let result = if self.has_received_last_chunk.get() {
                 streams::Result::OwnedAndDone(buffered)
             } else {
@@ -255,8 +239,7 @@ impl ByteStream {
 
             if self.sink_paused.get() {
                 bun_output::scoped_log!(ByteStream, "ByteStream.onData sink paused → buffer");
-                self.append(stream, 0)
-                    .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
+                self.append(stream);
                 return Ok(());
             }
 
@@ -370,7 +353,6 @@ impl ByteStream {
 
         if self.pending.get().state == streams::PendingState::Pending {
             debug_assert!(self.buffer.get().is_empty());
-            self.pending_buffer.set(Self::empty_pending_buffer());
             // Drop the rooted pull view; the chunk is handed off as its own
             // allocation below, so the view is never written into.
             self.pending_value
@@ -430,24 +412,19 @@ impl ByteStream {
 
         bun_output::scoped_log!(ByteStream, "ByteStream.onData no action just append");
 
-        self.append(stream, 0)
-            .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
+        self.append(stream);
         Ok(())
     }
 
-    fn append(&self, stream: streams::Result, offset: usize) -> Result<(), bun_alloc::AllocError> {
+    fn append(&self, stream: streams::Result) {
         if self.buffer.get().capacity() == 0 {
             match stream {
                 streams::Result::Owned(mut owned) | streams::Result::OwnedAndDone(mut owned) => {
                     // `move_to_list_managed` moves the buffer, no copy.
                     self.buffer.set(owned.move_to_list_managed());
-                    self.offset.set(self.offset.get() + offset);
                 }
                 streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
-                    let chunk = &temp.slice()[offset..];
-                    let mut buf = Vec::with_capacity(chunk.len());
-                    buf.extend_from_slice(chunk);
-                    self.buffer.set(buf);
+                    self.buffer.set(temp.slice().to_vec());
                 }
                 streams::Result::Err(err) => {
                     self.pending
@@ -456,17 +433,15 @@ impl ByteStream {
                 streams::Result::Done => {}
                 _ => unreachable!(),
             }
-            return Ok(());
+            return;
         }
 
         match stream {
             streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
-                self.buffer
-                    .with_mut(|b| b.extend_from_slice(&temp.slice()[offset..]));
+                self.buffer.with_mut(|b| b.extend_from_slice(temp.slice()));
             }
             streams::Result::OwnedAndDone(owned) | streams::Result::Owned(owned) => {
-                self.buffer
-                    .with_mut(|b| b.extend_from_slice(&owned.slice()[offset..]));
+                self.buffer.with_mut(|b| b.extend_from_slice(owned.slice()));
                 // `owned: Vec<u8>` drops here.
             }
             streams::Result::Err(err) => {
@@ -486,8 +461,6 @@ impl ByteStream {
             // We don't support the rest of these yet
             _ => unreachable!(),
         }
-
-        Ok(())
     }
 
     fn set_value(&self, view: JSValue) {
@@ -502,11 +475,7 @@ impl ByteStream {
 
         if !self.buffer.get().is_empty() {
             debug_assert!(self.value().is_empty()); // == .zero
-            let offset = self.offset.replace(0);
-            let mut owned = self.buffer.replace(Vec::new());
-            if offset > 0 {
-                owned.drain(..offset);
-            }
+            let owned = self.buffer.replace(Vec::new());
 
             self.signal_drained();
 
@@ -529,8 +498,8 @@ impl ByteStream {
             return streams::Result::Done;
         }
 
-        // Parked until `on_data`. The pull view is never written into; it is
-        // rooted only so `on_cancel` can observe that a pull was outstanding.
+        // Parked until `on_data`. Rooting the (possibly `undefined`) pull view
+        // lets `on_cancel` observe that a pull was outstanding.
         self.set_value(view);
 
         // R-2: `JsCell::as_ptr` yields the stable `*mut Pending` that the
@@ -551,7 +520,6 @@ impl ByteStream {
         self.pending_value.with_mut(|pv| pv.deinit());
 
         if !view.is_empty() {
-            self.pending_buffer.set(Self::empty_pending_buffer());
             self.pending.with_mut(|p| {
                 p.result.release();
                 p.result = streams::Result::Done;
@@ -596,7 +564,6 @@ impl ByteStream {
         if !self.done.get() {
             self.done.set(true);
 
-            self.pending_buffer.set(Self::empty_pending_buffer());
             let is_promise = self.pending.with_mut(|p| {
                 p.result.release();
                 p.result = streams::Result::Done;

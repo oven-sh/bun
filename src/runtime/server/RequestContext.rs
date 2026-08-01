@@ -4063,7 +4063,7 @@ where
                 let _ = bytes.on_data(WebCore::streams::Result::Temporary(borrowed));
 
                 // What `on_data` buffered; `on_stream_drained` resumes once it empties.
-                let buffered = bytes.buffer.get().len().saturating_sub(bytes.offset.get());
+                let buffered = bytes.buffer.get().len();
                 if bytes.buffer_action.get().is_some()
                     || (bytes.sink.get().is_some() && !bytes.sink_paused.get())
                 {

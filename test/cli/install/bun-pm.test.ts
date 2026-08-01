@@ -906,3 +906,67 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/7501
+test.each([
+  ["pm", "-g", "bin"],
+  ["pm", "bin", "-g"],
+])("bun %s %s %s prints the global bin dir when no global package.json exists yet", async (...args) => {
+  using dir = tempDir("pm-bin-global-fresh", {
+    "cwd/.keep": "",
+  });
+  const dirStr = String(dir);
+  const bunInstallDir = join(dirStr, "bun-install");
+
+  const spawnEnv: NodeJS.Dict<string> = {
+    ...env,
+    BUN_INSTALL: bunInstallDir,
+    XDG_CACHE_HOME: join(dirStr, "xdg-cache"),
+    HOME: dirStr,
+  };
+  delete spawnEnv.BUN_INSTALL_GLOBAL_DIR;
+  delete spawnEnv.BUN_INSTALL_BIN;
+
+  expect(await exists(join(bunInstallDir, "install", "global", "package.json"))).toBeFalse();
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd: join(dirStr, "cwd"),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: spawnEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("No package.json");
+  expect(stderr).not.toContain("MissingPackageJSON");
+  expect(stdout.trim()).toBe(join(bunInstallDir, "bin"));
+  expect(exitCode).toBe(0);
+});
+
+test("bun pm bin without -g still requires a package.json", async () => {
+  using dir = tempDir("pm-bin-local-no-pkgjson", {
+    "cwd/.keep": "",
+  });
+  const dirStr = String(dir);
+
+  const spawnEnv: NodeJS.Dict<string> = {
+    ...env,
+    BUN_INSTALL: join(dirStr, "bun-install"),
+    XDG_CACHE_HOME: join(dirStr, "xdg-cache"),
+    HOME: dirStr,
+  };
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "bin"],
+    cwd: join(dirStr, "cwd"),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: spawnEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("No package.json");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
+});

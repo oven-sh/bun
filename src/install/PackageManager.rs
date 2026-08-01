@@ -1490,6 +1490,15 @@ pub fn init(
                 }
             }
 
+            if cli.global {
+                // `-g` already fchdir'd into the global dir above; the global
+                // manifest may not exist until the first `bun add -g`. Create it
+                // so read-only queries like `bun pm -g bin` work on a fresh
+                // install instead of failing with MissingPackageJSON.
+                this_cwd = original_cwd;
+                created_package_json = true;
+                break 'child attempt_to_create_package_json_and_open()?;
+            }
             if subcommand == Subcommand::Install {
                 if cli.positionals.len() > 1 {
                     // this is `bun add <package>`.

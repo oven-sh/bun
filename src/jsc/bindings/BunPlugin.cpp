@@ -504,8 +504,6 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
     return object;
 }
 
-// Dependents may have captured the target's values at module scope; evict them
-// so the next import/require re-evaluates against the mock.
 static void evictDependentModules(Zig::GlobalObject* globalObject, const WTF::String& mockedKey)
 {
     auto& vm = globalObject->vm();

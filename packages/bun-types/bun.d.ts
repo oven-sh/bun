@@ -2600,6 +2600,71 @@ declare module "bun" {
      * This is a fast path which performs less work than `scan`.
      */
     scanImports(code: Bun.StringOrBuffer): Import[];
+
+    /**
+     * Parse code and return Bun's internal AST as a plain JavaScript object.
+     *
+     * **Unstable.** The returned shape is Bun's internal AST, not ESTree. Node
+     * kinds, field names, and structure may change or be removed in any patch
+     * release without notice. Use this for experimentation and tooling you
+     * control, not for published packages that need forward compatibility.
+     *
+     * Every node is a plain object with at least:
+     * - `kind`: a snake_case tag string (e.g. `"s_local"`, `"e_binary"`, `"b_identifier"`)
+     * - `loc`: byte offset into the source, or `null`
+     *
+     * @param code The code to parse
+     * @param loader Override the loader for this call (defaults to the constructor's `loader`)
+     * @experimental
+     * @example
+     * ```ts
+     * const t = new Bun.Transpiler({ loader: "ts" });
+     * const ast = t.unstable_parse(`const x: number = 1 + 2;`);
+     * ast.stmts[0];
+     * // { kind: "s_local", loc: 0, declKind: "k_const", isExport: false,
+     * //   decls: [{ binding: { kind: "b_identifier", loc: 6, name: "x" },
+     * //             value: { kind: "e_binary", loc: 18, op: "bin_add",
+     * //                      left: { kind: "e_number", loc: 18, value: 1 },
+     * //                      right: { kind: "e_number", loc: 22, value: 2 } } }] }
+     * ```
+     */
+    unstable_parse(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): UnstableAST;
+  }
+
+  /**
+   * The return type of {@link Transpiler.unstable_parse}.
+   *
+   * **Unstable.** This type is intentionally loose: the node shapes are Bun's
+   * internal AST and may change between patch releases.
+   * @experimental
+   */
+  interface UnstableAST {
+    kind: "ast";
+    /** `#!` line without the trailing newline, or `null`. */
+    hashbang: string | null;
+    /** The top-level directive prologue (e.g. `"use strict"`), or `null`. */
+    directive: string | null;
+    exportsKind: string;
+    approximateNewlineCount: number;
+    importRecords: { path: string; kind: ImportKind }[];
+    /** Every symbol the parser created, in declaration order. */
+    symbols: { name: string; kind: string }[];
+    /** Top-level statements. */
+    stmts: UnstableASTNode[];
+  }
+
+  /**
+   * An AST node from {@link Transpiler.unstable_parse}. Only `kind` and `loc`
+   * are stable; all other fields are node-specific and may change between
+   * patch releases.
+   * @experimental
+   */
+  interface UnstableASTNode {
+    /** Snake_case discriminant, e.g. `"s_local"`, `"e_call"`, `"b_identifier"`. */
+    kind: string;
+    /** Byte offset into the input, or `null` for synthetic nodes. */
+    loc: number | null;
+    [field: string]: unknown;
   }
 
   type ImportKind =

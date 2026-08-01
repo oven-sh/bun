@@ -1384,6 +1384,107 @@ impl JSTranspiler {
         )
     }
 
+    /// `Bun.Transpiler.prototype.unstable_parse` — parse and return Bun's
+    /// internal AST as a plain JS object tree.
+    ///
+    /// This is an explicitly unstable API: the output shape is Bun's own AST
+    /// (not ESTree) and may change or be removed between patch releases. See
+    /// `js_transpiler_ast.rs` for the serialization format.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn unstable_parse(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        jsc::mark_binding();
+        let vm = global.bun_vm();
+        let mut args = ArgumentsSlice::init(vm, callframe.arguments());
+        let Some(code_arg) = args.next() else {
+            return Err(global.throw_invalid_argument_type(
+                "unstable_parse",
+                "code",
+                "string or Uint8Array",
+            ));
+        };
+
+        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+            return Err(global.throw_invalid_argument_type(
+                "unstable_parse",
+                "code",
+                "string or Uint8Array",
+            ));
+        };
+        let code = code_holder.slice();
+        args.eat();
+
+        let loader: Option<Loader> = 'brk: {
+            if let Some(arg) = args.next() {
+                args.eat();
+                break 'brk loader_from_js(global, arg)?;
+            }
+            break 'brk None;
+        };
+
+        if global.has_exception() {
+            return Ok(JSValue::ZERO);
+        }
+
+        let arena = Arena::new();
+        let mut log = bun_ast::Log::init();
+        // SAFETY: same contract as `scan()` — `arena`/`log` outlive every use
+        // through `self.transpiler`; `_restore` (declared after them) puts the
+        // previous arena/log back before either drops.
+        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+        let prev_arena = self.transpiler.with_mut(|t| {
+            let prev = t.arena;
+            t.set_arena(arena_ref);
+            t.set_log(&raw mut log);
+            prev
+        });
+        let _restore = TranspilerStateGuard {
+            transpiler: self.transpiler.as_ptr(),
+            prev_arena,
+            restore_log: self.config_log_ptr(),
+            prev_macro_context: None,
+        };
+
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+        let _ast_scope = ast_memory_allocator.enter();
+
+        let parse_result = self.get_parse_result(arena_ref, code, loader, MacroJSCtx::ZERO);
+        let log_ref = self.transpiler.get().log_mut();
+        let Some(parse_result) = parse_result else {
+            if (log_ref.warnings + log_ref.errors) > 0 {
+                return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
+            }
+            return Err(global.throw(format_args!("Failed to parse")));
+        };
+
+        if (log_ref.warnings + log_ref.errors) > 0 {
+            return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
+        }
+
+        let mut json = Vec::<u8>::new();
+        if crate::api::js_transpiler_ast::ast_to_json(&parse_result.ast, &mut json).is_err() {
+            return Err(global.throw_stack_overflow());
+        }
+
+        // One `JSON.parse` over the serialized buffer; see module doc in
+        // `js_transpiler_ast.rs` for why this is faster than per-node
+        // `putDirect` calls. The buffer is ASCII-only (non-ASCII escaped as
+        // `\uXXXX`), so `ZigString` stays untagged and `Zig::toString` wraps it
+        // with `StringImpl::createWithoutCopying` rather than re-allocating.
+        let out = JscZigString::init(&json);
+        let result = out.to_json_object(global);
+        // `ZigString__toJSONObject` clears any thrown exception and returns the
+        // error value; surface it as a throw so callers do not receive an
+        // `Error` object in place of the AST.
+        if result.is_empty() || result.is_any_error() {
+            return Err(global.throw_value(result));
+        }
+        Ok(result)
+    }
+
     #[bun_jsc::host_fn(method)]
     pub(crate) fn transform(
         &self,

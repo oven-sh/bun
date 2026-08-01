@@ -27,6 +27,10 @@ export default [
         fn: "transformSync",
         length: 2,
       },
+      unstable_parse: {
+        fn: "unstableParse",
+        length: 2,
+      },
     },
   }),
   define({

@@ -1372,9 +1372,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         };
                         let dep_name = dep_name_handle.slice(string_buf);
                         let repo = git.repo.slice(string_buf);
-                        // Use the lockfile's stored SHA: `enqueue_git_for_checkout`
-                        // keyed the install-context entry on it, and a branch
-                        // committish's current tip may differ.
                         let resolved = git.resolved.slice(string_buf);
 
                         let checkout_id = Task::Id::for_git_checkout(repo, resolved);

@@ -793,13 +793,13 @@ describe("minimum-release-age", () => {
           return Response.json(packageData);
         }
 
-        // TEST PACKAGE: many-versions-package (large version count, time entries
-        // in reverse order relative to versions). Exercises the publish-time
-        // index built during manifest parse.
+        // TEST PACKAGE: deprecated-package. Newest version is age-blocked,
+        // next is deprecated, oldest is non-deprecated; range resolution must
+        // avoid the deprecated middle version with or without the age gate.
         if (url.pathname === "/deprecated-package") {
           return Response.json({
             name: "deprecated-package",
-            "dist-tags": { latest: "2.0.0" },
+            "dist-tags": { latest: "3.0.0" },
             versions: {
               "1.0.0": {
                 name: "deprecated-package",
@@ -818,14 +818,26 @@ describe("minimum-release-age", () => {
                   integrity: "sha512-dep2==",
                 },
               },
+              "3.0.0": {
+                name: "deprecated-package",
+                version: "3.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/deprecated-package/-/deprecated-package-3.0.0.tgz`,
+                  integrity: "sha512-dep3==",
+                },
+              },
             },
             time: {
               "1.0.0": daysAgo(30),
-              "2.0.0": daysAgo(20),
+              "2.0.0": daysAgo(10),
+              "3.0.0": daysAgo(1),
             },
           });
         }
 
+        // TEST PACKAGE: many-versions-package (large version count, time entries
+        // in reverse order relative to versions). Exercises the publish-time
+        // index built during manifest parse.
         if (url.pathname === "/many-versions-package") {
           if (manyVersionsManifest === undefined) {
             const N = 2000;

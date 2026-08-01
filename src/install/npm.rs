@@ -1592,6 +1592,14 @@ impl PackageManifest {
             let version = versions[i];
             if group.satisfies(version, group_buf, &self.string_buf) {
                 let package = &packages[i];
+                if package.deprecated {
+                    if deprecated_fallback.is_none()
+                        && !Self::is_package_version_too_recent(package, minimum_release_age_ms)
+                    {
+                        *deprecated_fallback = Some(FindResult { version, package });
+                    }
+                    continue;
+                }
                 if Self::is_package_version_too_recent(package, minimum_release_age_ms) {
                     if newest_filtered.is_none() {
                         *newest_filtered = Some(version);
@@ -1623,13 +1631,8 @@ impl PackageManifest {
                         prev_package_blocked_from_age = Some(package);
                         continue;
                     }
-                } else if !package.deprecated {
-                    return Some(FindVersionResult::Found(FindResult { version, package }));
                 } else {
-                    if deprecated_fallback.is_none() {
-                        *deprecated_fallback = Some(FindResult { version, package });
-                    }
-                    continue;
+                    return Some(FindVersionResult::Found(FindResult { version, package }));
                 }
             }
         }

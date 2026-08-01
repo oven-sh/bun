@@ -177,10 +177,20 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_("x = new [a?.b][0]()", "x = new [a?.b][0]");
       ts.expectPrintedMin_("[a?.b][0]`x`", "[a?.b][0]`x`");
 
+      // Same predicate on the sibling `{f: x}.f -> x` fold: `new a?.b` /
+      // `a?.b`x`` are syntax errors, so bail there too.
+      ts.expectPrintedMin_("x = new ({f: a?.b}).f()", "x = new { f: a?.b }.f");
+      ts.expectPrintedMin_("x = new ({f: a?.[b]}).f()", "x = new { f: a?.[b] }.f");
+      ts.expectPrintedMin_("x = new ({f: a?.b.c}).f()", "x = new { f: a?.b.c }.f");
+      ts.expectPrintedMin_("({f: a?.b}).f`x`", "({ f: a?.b }).f`x`");
+      ts.expectPrintedMin_("x = ({f: a?.b}).f", "x = { f: a?.b }.f");
+
       // Non-chain items are still inlined.
       ts.expectPrintedMin_("x = [[y]][0]?.[0].c", "x = y.c");
       ts.expectPrintedMin_("x = [a.b][0].c", "x = a.b.c");
       ts.expectPrintedMin_("x = [(a?.b)][0]", "x = [a?.b][0]");
+      ts.expectPrintedMin_("x = ({f: y}).f", "x = y");
+      ts.expectPrintedMin_("x = new ({f: C}).f()", "x = new C");
     });
     it("bails out or strips `this` when the index is a call/assignment target", () => {
       // `[obj.m][0]()` calls through a Reference into the temporary array,
@@ -222,6 +232,8 @@ describe("Bun.Transpiler", () => {
         check("this",       () => [obj.m][0](), "=> false");
         var o2 = { p: 1 };
         check("assign",     () => ([o2.p][0] = 5, o2.p), "=> 1");
+        var ab = { b: class {} };
+        check("new obj",    () => new ({ f: ab?.b }).f() instanceof ab.b, "=> true");
       `;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", src],
@@ -241,6 +253,7 @@ describe("Bun.Transpiler", () => {
         "chain pure: ok",
         "this: ok",
         "assign: ok",
+        "new obj: ok",
       ]);
       expect(exitCode).toBe(0);
     });

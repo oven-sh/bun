@@ -1057,9 +1057,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let target = e_.target.unwrap_inlined();
         let index = e_.index.unwrap_inlined();
 
-        // `delete [x][0]` and `[x][0] = v` act on the temporary, not on `x`.
+        // `[x][0] = v` writes into the temporary, not `x`.
         if p.options.features.minify_syntax
-            && !is_delete_target
             && in_.assign_target == js_ast::AssignTarget::None
         {
             if let Some(number) = index.data.as_e_number() {

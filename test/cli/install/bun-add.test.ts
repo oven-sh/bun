@@ -1400,10 +1400,7 @@ it("github dep without package.json resolves from cache on the second install", 
       },
     }),
   );
-  await Bun.write(
-    join(package_dir, "bunfig.toml"),
-    `[install]\ncache = "${cacheDir.replaceAll("\\", "\\\\")}"\n`,
-  );
+  await Bun.write(join(package_dir, "bunfig.toml"), `[install]\ncache = "${cacheDir.replaceAll("\\", "\\\\")}"\n`);
 
   {
     const { stderr, exited } = spawn({

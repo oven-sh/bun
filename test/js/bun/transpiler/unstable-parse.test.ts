@@ -35,26 +35,30 @@ describe("Bun.Transpiler.unstable_parse", () => {
     expect(ast.directive).toBeNull();
   });
 
-  test("every node carries kind and loc", () => {
+  test("every object with a kind also has a loc", () => {
     const ast = ts.unstable_parse(`
       import { a } from "m";
       export const [x, { y: z = 1 }] = a;
-      class C extends Object { m() { return this } }
+      class C extends Object { m() { return this } get g() { return 1 } }
       for (const k of [1,2]) if (k) break; else continue;
+      const o = { a: 1, ...b, get c() {} };
     `);
     let count = 0;
     const walk = (v: unknown): void => {
       if (v && typeof v === "object") {
-        if ("kind" in v && typeof (v as any).kind === "string" && "loc" in v) {
+        const o = v as Record<string, unknown>;
+        if (typeof o.kind === "string") {
           count++;
-          const loc = (v as any).loc;
-          expect(loc === null || typeof loc === "number").toBe(true);
+          // Any object in the stmt tree with a `kind` string must also carry
+          // `loc` (number | null) so generic walkers can rely on it.
+          expect(o).toHaveProperty("loc");
+          expect(o.loc === null || typeof o.loc === "number").toBe(true);
         }
-        for (const child of Object.values(v)) walk(child);
+        for (const child of Object.values(o)) walk(child);
       }
     };
-    walk(ast);
-    expect(count).toBeGreaterThan(20);
+    for (const s of ast.stmts) walk(s);
+    expect(count).toBeGreaterThan(30);
   });
 
   test("s_local / e_binary / b_identifier", () => {
@@ -109,8 +113,8 @@ describe("Bun.Transpiler.unstable_parse", () => {
     expect(props.length).toBe(4);
     expect(props[0].isStatic).toBe(true);
     expect(props[1].key.kind).toBe("e_private_identifier");
-    expect(props[2].kind).toBe("get");
-    expect(props[3].kind).toBe("class_static_block");
+    expect(props[2].propertyKind).toBe("get");
+    expect(props[3].propertyKind).toBe("class_static_block");
     expect(props[3].classStaticBlock.stmts.length).toBe(1);
   });
 
@@ -237,17 +241,24 @@ describe("Bun.Transpiler.unstable_parse", () => {
   });
 
   test("loader argument overrides constructor default", () => {
-    const t = new Bun.Transpiler({ loader: "js" });
+    const t: any = new Bun.Transpiler({ loader: "js" });
     // `const x: number = 1` is a syntax error under the `js` loader
-    expect(() => t.unstable_parse(`const x: number = 1`)).toThrow();
+    expect(() => t.unstable_parse(`const x: number = 1`)).toThrow("Parse error");
     // but valid when the second argument selects `ts`
     const ast = t.unstable_parse(`const x: number = 1`, "ts");
     expect(ast.stmts[0].kind).toBe("s_local");
   });
 
   test("parse errors throw", () => {
-    expect(() => ts.unstable_parse(`const x = `)).toThrow();
-    expect(() => ts.unstable_parse(`function (`)).toThrow();
+    expect(() => ts.unstable_parse(`const x = `)).toThrow("Unexpected end of file");
+    expect(() => ts.unstable_parse(`function (`)).toThrow("Parse error");
+  });
+
+  test("deeply nested input throws RangeError rather than crashing", () => {
+    // `a+a+a+...` parses iteratively but produces an e_binary tree N deep,
+    // which trips the serializer's StackCheck guard.
+    const src = "const x = a" + Buffer.alloc(400000, "+a").toString();
+    expect(() => ts.unstable_parse(src)).toThrow(RangeError);
   });
 
   test("accepts Uint8Array", () => {

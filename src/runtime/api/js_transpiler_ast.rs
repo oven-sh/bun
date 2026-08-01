@@ -346,12 +346,11 @@ impl<'a> Writer<'a> {
     fn import_record_idx(&mut self, idx: u32) {
         match self.import_records.get(idx as usize) {
             Some(rec) => {
-                // Inline the path for convenience; the index is still emitted.
                 self.raw(b"{\"index\":");
                 self.uint(idx as u64);
                 self.key("path");
                 self.str(rec.path.text);
-                self.key("kind");
+                self.key("importKind");
                 self.str(rec.kind.label());
                 self.end();
             }
@@ -1055,7 +1054,7 @@ impl<'a> Writer<'a> {
     }
 
     fn g_property(&mut self, p: &G::Property) -> Result<(), StackOverflow> {
-        self.raw(b"{\"kind\":");
+        self.raw(b"{\"propertyKind\":");
         self.enum_(p.kind);
         self.key("key");
         self.opt_expr(p.key)?;

@@ -296,8 +296,10 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd>
     }
 
     if !explicit_global_dir.is_empty() {
+        let expanded = expand_home_tilde(explicit_global_dir);
+        let dir = expanded.as_deref().unwrap_or(explicit_global_dir);
         return Dir::cwd()
-            .make_open_path(explicit_global_dir, OpenDirOptions::default())
+            .make_open_path(dir, OpenDirOptions::default())
             .map(|d| d.into_raw())
             .map_err(Into::into);
     }
@@ -487,7 +489,7 @@ impl Options {
             }
 
             if let Some(cafile) = config.cafile.as_deref() {
-                self.ca_file_name = leak_static(cafile);
+                self.ca_file_name = leak_static_expand_home(cafile);
             }
 
             if config.disable_cache.unwrap_or(false) {

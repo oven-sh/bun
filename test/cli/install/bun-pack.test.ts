@@ -1448,9 +1448,15 @@ describe(".gitignore/.npmignore", () => {
 
     // each expected list below matches `npm pack` output for the same .npmignore
     for (const [ignore, expected] of [
-      ["*\n!dist/**\n", ["package/dist/cli.js", "package/dist/lib/foo.js", "package/dist/sub/deep.js", "package/package.json"]],
+      [
+        "*\n!dist/**\n",
+        ["package/dist/cli.js", "package/dist/lib/foo.js", "package/dist/sub/deep.js", "package/package.json"],
+      ],
       ["*\n!dist/*\n", ["package/dist/cli.js", "package/package.json"]],
-      ["*\n!dist/**/*\n", ["package/dist/cli.js", "package/dist/lib/foo.js", "package/dist/sub/deep.js", "package/package.json"]],
+      [
+        "*\n!dist/**/*\n",
+        ["package/dist/cli.js", "package/dist/lib/foo.js", "package/dist/sub/deep.js", "package/package.json"],
+      ],
       ["*\n!dist/lib/foo.js\n", ["package/dist/lib/foo.js", "package/package.json"]],
       ["*\n!*/keep.js\n", ["package/package.json", "package/src/keep.js"]],
       ["*\n!**/keep.js\n", ["package/keep.js", "package/package.json", "package/src/keep.js"]],
@@ -1458,7 +1464,10 @@ describe(".gitignore/.npmignore", () => {
       // patterns that already matched npm before the fix:
       ["*\n!dist\n", ["package/package.json"]],
       ["*\n!keep.js\n", ["package/keep.js", "package/package.json"]],
-      ["*\n!dist\n!dist/**/*\n", ["package/dist/cli.js", "package/dist/lib/foo.js", "package/dist/sub/deep.js", "package/package.json"]],
+      [
+        "*\n!dist\n!dist/**/*\n",
+        ["package/dist/cli.js", "package/dist/lib/foo.js", "package/dist/sub/deep.js", "package/package.json"],
+      ],
     ] as const) {
       test(JSON.stringify(ignore), async () => {
         await setup(ignore);

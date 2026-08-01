@@ -1695,7 +1695,10 @@ fn is_excluded<'a>(
 fn negated_pattern_matches_under_dir(pattern: &Pattern, dir_rel: &[u8]) -> bool {
     debug_assert!(pattern.flags.contains(PatternFlags::NEGATED));
 
-    if pattern.flags.contains(PatternFlags::LEADING_DOUBLESTAR_SLASH) {
+    if pattern
+        .flags
+        .contains(PatternFlags::LEADING_DOUBLESTAR_SLASH)
+    {
         // `!**/foo...` can match at any depth.
         return true;
     }

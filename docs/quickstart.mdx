@@ -228,10 +228,12 @@ Bun can also execute `"scripts"` from your `package.json`. Add the following scr
     "start": "bun run index.ts" // [!code ++]
   }, // [!code ++]
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/react": "^19"
   },
   "peerDependencies": {
-    "typescript": "^6"
+    "typescript": "^6",
+    "react": "^19"
   }
 }
 ```

@@ -5301,6 +5301,11 @@ restart:
                 CLEAR_IF_EXCEPTION(scope);
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
+                    if constexpr (nonIndexedOnly) {
+                        // Array extra-property listing: match Node's util.inspect and
+                        // skip non-enumerable own properties entirely.
+                        continue;
+                    }
                     if (property == propertyNames->underscoreProto
                         || property == propertyNames->toStringTagSymbol || property == propertyNames->__esModule)
                         continue;

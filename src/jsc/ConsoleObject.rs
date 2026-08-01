@@ -348,10 +348,10 @@ impl Drop for FlushOnDrop<'_> {
     }
 }
 
-/// Re-emits `after_reset` after every `\x1b[0m` so `console.error` stays red
-/// across the value formatter's per-token resets. Empty `after_reset` = passthrough.
+/// Re-emits `after_reset` after every `\x1b[0m` so `console.error` stays red through the value formatter's resets.
 struct LevelColorWriter<'a> {
     inner: &'a mut (dyn bun_io::Write + 'a),
+    /// Empty = transparent passthrough (non-error levels).
     after_reset: &'static [u8],
     /// Bytes of `RESET` matched at the tail of the previous write.
     matched: u8,

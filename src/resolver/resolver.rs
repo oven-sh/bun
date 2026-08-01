@@ -1946,11 +1946,8 @@ impl<'a> Resolver<'a> {
                     import_path
                 };
 
-                // A user `--external` for a node builtin takes precedence over the
-                // browser polyfill / `{}` stub. The exact-match external set is
-                // otherwise only consulted after this block has already returned a
-                // polyfill. Match either spelling (`stream` / `node:stream`) on
-                // both the import and the `--external` value (#13941).
+                // `--external` wins over the browser polyfill / `{}` stub; match either
+                // spelling (`stream` / `node:stream`) on both sides (#13941).
                 if self.opts.external.node_modules.count() > 0 {
                     let bare = import_path_without_node_prefix;
                     let mut buf = [0u8; 64];

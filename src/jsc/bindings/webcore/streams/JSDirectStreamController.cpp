@@ -435,6 +435,17 @@ static void callUnderlyingSourceClose(JSC::VM& vm, JSGlobalObject* globalObject,
     }
 }
 
+// Drop the direct controller's retained user-source state once no further pull/close callbacks
+// can run (m_closed set, or the stream has left Readable). Idempotent.
+static void directStreamControllerClearSource(JSDirectStreamController* controller)
+{
+    controller->m_underlyingSource.clear();
+    controller->m_pull.clear();
+    controller->m_deferCloseReason.clear();
+    if (auto* stream = controller->m_stream.get())
+        readableStreamClearSourceBarriers(stream);
+}
+
 void JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue error)
 {
     auto& vm = getVM(globalObject);
@@ -457,6 +468,7 @@ void JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue
         callUnderlyingSourceClose(vm, globalObject, this, error);
         RETURN_IF_EXCEPTION(scope, );
     }
+    directStreamControllerClearSource(this);
 
     if (auto* pendingRead = m_pendingRead.get()) {
         m_pendingRead.clear();
@@ -648,6 +660,7 @@ void JSDirectStreamController::onClose(JSGlobalObject* globalObject, JSValue rea
 
     callUnderlyingSourceClose(vm, globalObject, this, reason);
     RETURN_IF_EXCEPTION(scope, );
+    directStreamControllerClearSource(this);
 
     JSValue flushed;
     {

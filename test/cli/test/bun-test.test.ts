@@ -1700,11 +1700,6 @@ describe.concurrent("test file discovery (scanner)", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/6655
-  // Previously only the top-level (resolver-cached) directory was sorted;
-  // subdirectories were visited in raw getdents/hash-map order, so the same
-  // project could run its test files in different orders on different
-  // filesystems. Because `bun test` shares the module registry across files,
-  // that made cross-file side effects (module-level caches etc.) non-deterministic.
   test("runs test files in stable sorted order regardless of filesystem readdir order", async () => {
     // These names give a non-alphabetical getdents order on ext4/overlayfs
     // (htree hash: echo, alpha, golf, bravo, delta, charlie, foxtrot, hotel).
@@ -1732,8 +1727,6 @@ describe.concurrent("test file discovery (scanner)", () => {
       .filter(l => l.startsWith("ORDER "))
       .map(l => l.slice("ORDER ".length));
 
-    // BFS over directories, entries within each directory sorted case-insensitively:
-    // pkg -> {lib, src}; lib -> {inner}; src -> 9 files; inner -> 8 files.
     expect(ran).toEqual([
       "src/alpha",
       "src/bravo",

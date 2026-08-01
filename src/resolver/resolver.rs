@@ -1945,6 +1945,10 @@ impl<'a> Resolver<'a> {
                 } else {
                     import_path
                 };
+                // "fs" or "fs/...": stubbed below to match Webpack v4.
+                let is_bare_fs_stub = import_path_without_node_prefix.starts_with(b"fs")
+                    && (import_path_without_node_prefix.len() == 2
+                        || import_path_without_node_prefix[2] == b'/');
 
                 // `--external` (either spelling, or a parent path) wins over the
                 // polyfill/stub. Only imports this block would swallow are checked,
@@ -1952,9 +1956,7 @@ impl<'a> Resolver<'a> {
                 if self.opts.external.node_modules.count() > 0
                     && (had_node_prefix
                         || NodeFallbackModules::map().contains_key(import_path_without_node_prefix)
-                        || (import_path_without_node_prefix.starts_with(b"fs")
-                            && (import_path_without_node_prefix.len() == 2
-                                || import_path_without_node_prefix[2] == b'/')))
+                        || is_bare_fs_stub)
                 {
                     const PREFIX: &[u8] = b"node:";
                     let ext = &self.opts.external.node_modules;
@@ -2050,10 +2052,7 @@ impl<'a> Resolver<'a> {
                     }
 
                     // Always mark "fs" as disabled, matching Webpack v4 behavior
-                    if import_path_without_node_prefix.starts_with(b"fs")
-                        && (import_path_without_node_prefix.len() == 2
-                            || import_path_without_node_prefix[2] == b'/')
-                    {
+                    if is_bare_fs_stub {
                         result.path_pair.primary.namespace = b"node";
                         result.path_pair.primary.text = import_path_without_node_prefix;
                         result.module_type = options::ModuleType::Cjs;

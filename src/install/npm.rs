@@ -1535,6 +1535,43 @@ impl PackageManifest {
         None
     }
 
+    /// Highest-semver published version, used as a fallback when
+    /// `dist-tags.latest` does not resolve (registry mirrors/CDNs can briefly
+    /// serve a manifest whose `dist-tags.latest` points at a version that has
+    /// not yet propagated into `versions`, or omit `dist-tags` entirely).
+    ///
+    /// Prefers the highest release; falls through to the highest prerelease
+    /// only when there are no releases at all. Both lists are sorted ascending
+    /// at serialization time, so the last entry is the highest.
+    fn find_highest_version(&self, min_age_ms: Option<f64>) -> Option<FindResult<'_>> {
+        for list in [&self.pkg.releases, &self.pkg.prereleases] {
+            let keys = list.keys.get(&self.versions);
+            if keys.is_empty() {
+                continue;
+            }
+            let values = list.values.get(&self.package_versions);
+            let mut i = keys.len();
+            while i > 0 {
+                i -= 1;
+                let package = &values[i];
+                if let Some(min_age_ms) = min_age_ms {
+                    if Self::is_package_version_too_recent(package, min_age_ms) {
+                        continue;
+                    }
+                }
+                return Some(FindResult {
+                    version: keys[i],
+                    package,
+                });
+            }
+            // Releases exist but every one is age-gated: do not fall through to
+            // prereleases, matching `find_best_version` (which only considers
+            // prereleases when the spec opts in).
+            return None;
+        }
+        None
+    }
+
     pub(crate) fn should_exclude_from_age_filter(&self, exclusions: Option<&[&[u8]]>) -> bool {
         if let Some(excl) = exclusions {
             let pkg_name = self.name();
@@ -1644,6 +1681,9 @@ pub enum FindVersionResult<'a> {
         result: FindResult<'a>,
         newest_filtered: Option<Semver::Version>,
     },
+    /// `dist-tags.latest` did not resolve to a known version; fell back to the
+    /// highest published version.
+    FoundLatestFallback(FindResult<'a>),
     Err(FindVersionError),
 }
 
@@ -1652,6 +1692,7 @@ impl<'a> FindVersionResult<'a> {
         match self {
             FindVersionResult::Found(result) => Some(result),
             FindVersionResult::FoundWithFilter { result, .. } => Some(result),
+            FindVersionResult::FoundLatestFallback(result) => Some(result),
             FindVersionResult::Err(_) => None,
         }
     }
@@ -1676,6 +1717,21 @@ impl PackageManifest {
         exclusions: Option<&[&[u8]]>,
     ) -> FindVersionResult<'_> {
         let Some(dist_result) = self.find_by_dist_tag(tag) else {
+            // `latest` should always resolve to something if there are any
+            // versions at all; match npm's pick-manifest and fall back to the
+            // highest published version instead of failing the whole install.
+            // https://github.com/oven-sh/bun/issues/12041
+            if tag == b"latest" {
+                let min_age_gate_ms = match minimum_release_age_ms {
+                    Some(min_age_ms) if !self.should_exclude_from_age_filter(exclusions) => {
+                        Some(min_age_ms)
+                    }
+                    _ => None,
+                };
+                if let Some(highest) = self.find_highest_version(min_age_gate_ms) {
+                    return FindVersionResult::FoundLatestFallback(highest);
+                }
+            }
             return FindVersionResult::Err(FindVersionError::NotFound);
         };
         let min_age_gate_ms = match minimum_release_age_ms {

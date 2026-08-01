@@ -91,6 +91,40 @@ describe.concurrent("mock.module evicts cached dependents", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("CJS dependent that require()s an ESM intermediate", async () => {
+    using dir = tempDir("mock-module-9316-cjs-req-esm", {
+      ...fakeStoragePkg(),
+      "src/helper.ts": /* ts */ `
+        import { Storage } from "fake-storage";
+        export const helper = new Storage();
+      `,
+      "src/app.cjs": /* js */ `
+        const { helper } = require("./helper.ts");
+        module.exports.upload = (f, d) => helper.bucket().file(f).write(d);
+      `,
+      "a.test.ts": /* ts */ `
+        import { test, expect } from "bun:test";
+        const { upload } = require("./src/app.cjs");
+        test("a sees real", () => expect(upload("x", "y")).toBe("real-write"));
+      `,
+      "storage.test.ts": /* ts */ `
+        import { test, expect, mock, jest } from "bun:test";
+        mock.module("fake-storage", () => ({
+          Storage: jest.fn(() => ({
+            bucket: () => ({ file: () => ({ write: () => "mocked-write" }) }),
+          })),
+        }));
+        const { upload } = require("./src/app.cjs");
+        test("uses mock", () => expect(upload("t", "h")).toBe("mocked-write"));
+      `,
+    });
+
+    const { out, exitCode } = await runBunTest(String(dir), ["a.test.ts", "storage.test.ts"]);
+    expect(out).toContain("2 pass");
+    expect(out).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
   test("transitive dependent (mocked -> wrapper -> app)", async () => {
     using dir = tempDir("mock-module-9316-transitive", {
       ...fakeStoragePkg(),

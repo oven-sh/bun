@@ -559,8 +559,29 @@ static void evictDependentModules(Zig::GlobalObject* globalObject, const WTF::St
                         (void)scope.tryClearException();
                         continue;
                     }
-                    if (tainted.contains(keyStr))
+
+                    auto taintParent = [&](Bun::JSCommonJSModule* parent) {
+                        if (!parent)
+                            return;
+                        auto* parentId = parent->m_id.get();
+                        if (!parentId)
+                            return;
+                        WTF::String parentKey = parentId->value(globalObject);
+                        if (scope.exception()) [[unlikely]] {
+                            (void)scope.tryClearException();
+                            return;
+                        }
+                        if (tainted.add(parentKey).isNewEntry)
+                            changed = true;
+                    };
+
+                    if (tainted.contains(keyStr)) {
+                        // require(esm) leaves no m_children edge; m_parent is the only link back.
+                        taintParent(mod->m_parent.get());
+                        if (mod->m_overriddenParent)
+                            taintParent(dynamicDowncast<Bun::JSCommonJSModule>(mod->m_overriddenParent.get()));
                         continue;
+                    }
 
                     bool hit = false;
                     auto checkChild = [&](JSC::JSValue childValue) {
@@ -808,10 +829,10 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     JSValue entryValue = globalObject->requireMap()->get(globalObject, specifierString);
     RETURN_IF_EXCEPTION(scope, {});
-    if (entryValue) {
+    if (!entryValue.isUndefined()) {
         wasAlreadyLoaded = true;
         removeFromCJS = true;
-        if (auto* moduleObject = entryValue ? dynamicDowncast<Bun::JSCommonJSModule>(entryValue) : nullptr) {
+        if (auto* moduleObject = dynamicDowncast<Bun::JSCommonJSModule>(entryValue)) {
             JSValue exportsValue = getJSValue();
             RETURN_IF_EXCEPTION(scope, {});
 

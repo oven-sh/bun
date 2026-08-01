@@ -109,8 +109,7 @@ try {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const extract = (s: string) =>
-    [...s.matchAll(/test\.ts:(\d+):(\d+)/g)].map(m => `${m[1]}:${m[2]}`);
+  const extract = (s: string) => [...s.matchAll(/test\.ts:(\d+):(\d+)/g)].map(m => `${m[1]}:${m[2]}`);
 
   const stackPositions = extract(stdout);
   const printedPositions = extract(stderr);

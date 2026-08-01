@@ -1,6 +1,6 @@
 import { randomUUIDv7, SQL } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -4973,6 +4973,44 @@ describe("Query Normalization Fuzzing Tests", () => {
       await sql.close();
       await rm(dir, { recursive: true });
     });
+
+    // Subprocess so a regression hangs the child (timeout-killed), not this file.
+    test("Query can be used directly with expect().resolves/.rejects", async () => {
+      using dir = tempDir("sql-query-expect", {
+        "query-expect.test.ts": /* ts */ `
+          import { test, expect } from "bun:test";
+          import { SQL } from "bun";
+          test("Query with resolves/rejects", async () => {
+            const sql = new SQL("sqlite://:memory:");
+            await sql\`CREATE TABLE t (a INTEGER, b TEXT)\`;
+            await sql\`INSERT INTO t VALUES (1, 'one')\`;
+
+            await expect(sql\`SELECT a, b FROM t\`).resolves.toEqual([{ a: 1, b: "one" }]);
+            await expect(sql\`SELECT a, b FROM t\`.values()).resolves.toEqual([[1, "one"]]);
+            await expect(sql\`SELECT a, b FROM t\`.raw()).resolves.toBeArray();
+
+            await expect(sql\`SELECT * FROM no_such_table\`).rejects.toThrow(/no such table/);
+            await expect(sql\`SELECT * FROM no_such_table\`.values()).rejects.toThrow(/no such table/);
+            await expect(sql\`SELECT * FROM no_such_table\`.raw()).rejects.toThrow(/no such table/);
+            expect(() => sql\`SELECT * FROM no_such_table\`.values()).toThrow(/no such table/);
+
+            await sql.close();
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "query-expect.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+        timeout: 10000,
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("1 pass");
+      expect(stderr).not.toContain("fail)");
+      expect(exitCode).toBe(0);
+    }, 20000);
   });
 });
 

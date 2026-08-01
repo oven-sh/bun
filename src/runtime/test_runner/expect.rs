@@ -471,6 +471,24 @@ impl Expect {
         }
     }
 
+    /// `wait_for_promise` polls JSPromise internal state and never calls `.then()`,
+    /// so a subclass that starts its work from an overridden `.then()` (Bun.SQL
+    /// `Query`, `ShellPromise`) would spin forever. If `value` is a still-pending
+    /// native promise, resolve it through a fresh wrapper so `.then()` is invoked
+    /// the same way `await value` would. Callers must hold the returned JSValue on
+    /// the stack across `wait_for_promise` to root the wrapper.
+    fn resolve_for_await(global_this: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
+        Ok(match value.as_any_promise() {
+            Some(p) if p.status() == js_promise::Status::Pending => {
+                p.set_handled(global_this.vm());
+                let wrapper = js_promise::JSPromise::create(global_this);
+                wrapper.resolve(global_this, value)?;
+                wrapper.to_js()
+            }
+            _ => value,
+        })
+    }
+
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
     /// If no flags, returns the original value
     /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
@@ -485,7 +503,8 @@ impl Expect {
     ) -> JsResult<JSValue> {
         match flags.promise() {
             resolution @ (Promise::Resolves | Promise::Rejects) => {
-                if let Some(promise) = value.as_any_promise() {
+                let awaited = Self::resolve_for_await(global_this, value)?;
+                if let Some(promise) = awaited.as_any_promise() {
                     let vm = global_this.vm();
                     promise.set_handled(vm);
 
@@ -892,7 +911,8 @@ impl Expect {
             return_value = return_value_from_function;
         }
 
-        if let Some(promise) = return_value.as_any_promise() {
+        let awaited = Self::resolve_for_await(global_this, return_value)?;
+        if let Some(promise) = awaited.as_any_promise() {
             vm.wait_for_promise(promise);
             scope.apply(vm);
             match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
@@ -1483,7 +1503,8 @@ impl Expect {
         // call the custom matcher implementation
         let mut result = matcher_fn.call(global_this, matcher_context_jsvalue, args)?;
         // support for async matcher results
-        if let Some(promise) = result.as_any_promise() {
+        let awaited = Self::resolve_for_await(global_this, result)?;
+        if let Some(promise) = awaited.as_any_promise() {
             let vm = global_this.vm();
             promise.set_handled(vm);
 

@@ -2914,6 +2914,35 @@ describe("when a command fails", () => {
   it("is named ShellError", () => expect(e.name).toBe("ShellError"));
 });
 
+// https://github.com/oven-sh/bun/issues/14670
+// Subprocess so a regression hangs the child (timeout-killed), not this file.
+test("ShellPromise can be used directly with expect().resolves/.rejects", async () => {
+  using dir = tempDir("shell-expect", {
+    "shell-expect.test.ts": /* ts */ `
+      import { test, expect } from "bun:test";
+      import { $ } from "bun";
+      test("shell resolves/rejects", async () => {
+        $.throws(true);
+        await expect($\`exit 7\`.quiet()).rejects.toThrow(/exit code 7/);
+        await expect($\`echo hi\`.quiet()).resolves.toMatchObject({ exitCode: 0 });
+        expect(() => $\`exit 7\`.quiet()).toThrow(/exit code 7/);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "shell-expect.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+    timeout: 10000,
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("1 pass");
+  expect(stderr).not.toContain("fail)");
+  expect(exitCode).toBe(0);
+}, 20000);
+
 describe("ShellError constructor", () => {
   test.failing("new $.ShellError()", () => {
     const e = new Bun.$.ShellError();

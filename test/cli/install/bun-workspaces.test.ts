@@ -1280,7 +1280,7 @@ describe("missing local-protocol devDependency is not an error when devDependenc
         env,
       });
 
-      const err = await stderr.text();
+      const err = (await stderr.text()).replaceAll("\\", "/");
       expect(err).toContain(errSubstring);
       expect(await exited).toBe(1);
     });
@@ -1306,7 +1306,7 @@ describe("missing local-protocol devDependency is not an error when devDependenc
         env,
       });
 
-      const err = await stderr.text();
+      const err = (await stderr.text()).replaceAll("\\", "/");
       expect(err).toContain(errSubstring);
       expect(await exited).toBe(1);
     });

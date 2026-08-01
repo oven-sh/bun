@@ -59,22 +59,23 @@ it("https.createServer rejects a non-function SNICallback", () => {
   );
 });
 
-const sniErrorCases: [string, (name: string, cb: (err: unknown, ctx?: unknown) => void) => void, string][] = [
-  ["cb(error)", (_name, cb) => cb(new Error("sni rejected")), "sni rejected"],
-  ["cb(string)", (_name, cb) => cb("boom"), "SNI callback error"],
-  ["invalid primitive", (_name, cb) => cb(null, true), "Invalid SNI context"],
-  ["invalid object", (_name, cb) => cb(null, {}), "Invalid SNI context"],
+const sniErrorCases: [string, (name: string, cb: (err: unknown, ctx?: unknown) => void) => void, string, unknown][] = [
+  ["cb(error)", (_name, cb) => cb(new Error("sni rejected")), "sni rejected", undefined],
+  ["cb(string)", (_name, cb) => cb("boom"), "SNI callback error", "boom"],
+  ["invalid primitive", (_name, cb) => cb(null, true), "Invalid SNI context", undefined],
+  ["invalid object", (_name, cb) => cb(null, {}), "Invalid SNI context", undefined],
   [
     "throw",
     () => {
       throw new Error("sni threw");
     },
     "sni threw",
+    undefined,
   ],
 ];
 it.each(sniErrorCases)(
   "https.createServer SNICallback %s drops the connection and emits tlsClientError",
-  async (_label, SNICallback, expectedMessage) => {
+  async (_label, SNICallback, expectedMessage, expectedReason) => {
     const server = createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert, SNICallback }, (req, res) => res.end());
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
     try {
@@ -82,12 +83,13 @@ it.each(sniErrorCases)(
       const tlsClientError = once(server, "tlsClientError");
       const client = tlsConnect({ host: "127.0.0.1", port, servername: "a.example.com", rejectUnauthorized: false });
       const [[serverErr], [clientErr]] = (await Promise.all([tlsClientError, once(client, "error")])) as [
-        [Error],
+        [Error & { reason?: unknown }],
         [NodeJS.ErrnoException],
       ];
       // The server dropped the connection before the handshake completed.
       expect(String(clientErr.message)).toMatch(/disconnected before secure TLS connection was established|ECONNRESET/);
       expect(serverErr.message).toBe(expectedMessage);
+      expect(serverErr.reason).toBe(expectedReason);
     } finally {
       server.close();
     }

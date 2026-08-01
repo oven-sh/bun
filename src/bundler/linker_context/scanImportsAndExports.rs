@@ -1084,9 +1084,25 @@ pub(crate) fn scan_imports_and_exports(
                             Index::source(source_index),
                         )?;
                         col!(ast_flags_list)[id].insert(AstFlags::USES_EXPORTS_REF);
-                        col!(import_records_list)[id].as_mut_slice()[*import_record_index as usize]
-                            .flags
-                            .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
+                        {
+                            let record = &mut col!(import_records_list)[id].as_mut_slice()
+                                [*import_record_index as usize];
+                            record
+                                .flags
+                                .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
+                            // convertStmtsForChunk rewrites this external "export * from" into
+                            // "import * as ns from ..." so that __reExport can reference the
+                            // namespace object. The printer emits the "* as ns" clause based on
+                            // CONTAINS_IMPORT_STAR, which the parser never sets for a bare
+                            // "export * from", so set it here to keep the binding.
+                            if rec_source_index.is_invalid()
+                                && output_format.keep_es6_import_export_syntax()
+                            {
+                                record
+                                    .flags
+                                    .insert(ImportRecordFlags::CONTAINS_IMPORT_STAR);
+                            }
+                        }
                         re_export_uses += 1;
                     }
                 }

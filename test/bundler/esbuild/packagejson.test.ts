@@ -1015,6 +1015,66 @@ describe("bundler", () => {
       stdout: "true",
     },
   });
+  // https://github.com/oven-sh/bun/issues/5004
+  // "jsnext:main" is the legacy name for "module" and must get the same
+  // require() -> "main" fallback. moment ships "jsnext:main" + "main" only.
+  itBundled("packagejson/DualPackageHazardJsnextMainRequireOnly", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        const demo = require('demo-pkg')
+        console.log(demo())
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "main": "./main.js",
+          "jsnext:main": "./module.js"
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = function() { return 'main' }`,
+      "/Users/user/project/node_modules/demo-pkg/module.js": `export default function() { return 'module' }`,
+    },
+    run: {
+      stdout: "main",
+    },
+  });
+  itBundled("packagejson/DualPackageHazardJsnextMainImportOnly", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import value from 'demo-pkg'
+        console.log(value)
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "main": "./main.js",
+          "jsnext:main": "./module.js"
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = 'main'`,
+      "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
+    },
+    run: {
+      stdout: "module",
+    },
+  });
+  itBundled("packagejson/DualPackageHazardJsnextMainImportAndRequireSameFile", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import value from 'demo-pkg'
+        console.log(value, require('demo-pkg'))
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "main": "./main.js",
+          "jsnext:main": "./module.js"
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = 'main'`,
+      "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
+    },
+    run: {
+      stdout: "main main",
+    },
+  });
   itBundled("packagejson/MainFieldsA", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `

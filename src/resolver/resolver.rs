@@ -5465,7 +5465,11 @@ impl<'a> Resolver<'a> {
                     // use a special per-module automatic algorithm to decide whether to
                     // use "module" or "main" based on whether the package is imported
                     // using "import" or "require".
-                    if auto_main && key == b"module" {
+                    //
+                    // "jsnext:main" is the legacy predecessor to "module" and points to
+                    // an ESM build, so it gets the same treatment. Packages like moment
+                    // ship "jsnext:main" + "main" without "module".
+                    if auto_main && (key == b"module" || key == b"jsnext:main") {
                         let mut auto_main_result = MatchResult::default();
                         let mut auto_main_found = false;
 
@@ -5510,8 +5514,9 @@ impl<'a> Resolver<'a> {
                             if self.prefer_module_field && kind != ast::ImportKind::Require {
                                 if let Some(debug) = self.debug_logs.as_mut() {
                                     debug.add_note_fmt(format_args!(
-                                        "Resolved to \"{}\" using the \"module\" field in \"{}\"",
+                                        "Resolved to \"{}\" using the \"{}\" field in \"{}\"",
                                         bstr::BStr::new(auto_main_result.path_pair.primary.text()),
+                                        bstr::BStr::new(key),
                                         bstr::BStr::new(pkg_json.source.path.text)
                                     ));
                                     debug.add_note_fmt(format_args!(

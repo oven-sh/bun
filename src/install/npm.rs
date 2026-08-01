@@ -1927,6 +1927,7 @@ impl PackageManifest {
                         .order(result.version, group_buf, &self.string_buf)
                         == core::cmp::Ordering::Equal
                     {
+                        // if prerelease, use latest if semver+tag match range exactly
                         return Some(result);
                     }
                 } else {
@@ -1936,6 +1937,7 @@ impl PackageManifest {
         }
 
         {
+            // This list is sorted at serialization time.
             let releases = self.pkg.releases.keys.get(&self.versions);
             let packages = self.pkg.releases.values.get(&self.package_versions);
             let mut i = releases.len();
@@ -1955,6 +1957,7 @@ impl PackageManifest {
         }
 
         if group.flags.is_set(Semver::query::Flags::PRE) {
+            // This list is sorted at serialization time.
             let prereleases = self.pkg.prereleases.keys.get(&self.versions);
             let packages = self.pkg.prereleases.values.get(&self.package_versions);
             let mut i = prereleases.len();

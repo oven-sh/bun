@@ -494,12 +494,9 @@ impl Subcommand {
     }
 }
 
-/// For `bun install -g .` and friends: rewrite positionals that refer to a
-/// relative local path (folder or tarball) so the global package.json records
-/// an absolute path instead of `.`, which would otherwise resolve against the
-/// global dir after `init()` chdirs there. Must be called before `init()`.
-///
-/// Returns `None` when no positional needed rewriting.
+/// Rewrite relative local-path positionals (`.`, `./x`, `file:x`, `./x.tgz`)
+/// to absolute paths for `-g` installs. Must run before [`init`] chdirs into
+/// the global dir. Returns `None` when nothing needed rewriting.
 pub(crate) fn absolutize_folder_positionals(
     positionals: &'static [&'static [u8]],
 ) -> Option<&'static [&'static [u8]]> {
@@ -541,9 +538,6 @@ pub(crate) fn absolutize_folder_positionals(
             false
         };
 
-        // Rewrite when the value is a relative local path: either `.`/`./x`/`../x`
-        // (folder or local tarball), or a `file:` URI whose remainder is relative.
-        // Absolute paths and `~/` do not depend on the cwd.
         if value.is_empty()
             || !(had_file_scheme || value[0] == b'.')
             || value.starts_with(b"~/")

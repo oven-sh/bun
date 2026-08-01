@@ -176,11 +176,7 @@ impl GarbageCollectionController {
                     && current >= MIN_HEAP_FOR_IDLE_REDUCTION
                     && !heap_size_is_stable(this.gc_last_reduction_heap_size, current)
                 {
-                    // collectNow(Sync, Full) inside the reducer subsumes this
-                    // tick's collectAsync; firing both would let the concurrent
-                    // collector set m_collectionScope between the two
-                    // JSLockHolders and short-circuit
-                    // deleteAllUnlinkedCodeBlocks(DeleteAllCodeIfNotCollecting).
+                    // The reducer's collectNow(Sync, Full) subsumes this tick's collect_async.
                     this.perform_idle_memory_reduction();
                     let interval = this.repeat_interval();
                     Self::arm(vm, &raw mut this.gc_repeating_timer, interval);

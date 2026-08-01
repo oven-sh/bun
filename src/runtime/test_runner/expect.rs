@@ -471,12 +471,8 @@ impl Expect {
         }
     }
 
-    /// Spin the event loop until `promise` settles, like `wait_for_promise`,
-    /// but stop once the enclosing test's timeout deadline passes so a matcher
-    /// awaiting a promise that can only settle *after* the matcher returns
-    /// (e.g. `expect(p).resolves.toBe(x); resolve(x);`) turns into a test
-    /// timeout instead of a 100% CPU hang. Returns `true` if the promise is
-    /// still pending when the spin ends.
+    /// `wait_for_promise` bounded by the enclosing test's deadline.
+    /// Returns `true` if the promise is still pending when the spin stops.
     fn wait_for_promise_bounded_by_test(
         global_this: &JSGlobalObject,
         promise: bun_jsc::AnyPromise,
@@ -485,8 +481,6 @@ impl Expect {
         if promise.status() != js_promise::Status::Pending {
             return false;
         }
-        // `on_stack_entry` is set for the duration of `run_test_callback`, so the
-        // deadline is stable across the spin; read it once. EPOCH = no timeout.
         let deadline = Jest::runner().map_or(Timespec::EPOCH, |r| r.get_active_timeout());
         let jsc_vm = global_this.vm();
         let bun_vm = global_this.bun_vm().as_mut();

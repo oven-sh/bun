@@ -26,13 +26,23 @@ test("coverage maps uncovered class methods to the correct source lines", async 
       "export class Derived extends Base {\n" +
       "    miss() { return 2 }\n" +
       "}\n",
+    "spin.mjs":
+      "export function spin() {\n" + //
+      "    let n = 0;\n" +
+      "    for (let i = 0; i < 5; i++) {\n" +
+      "        n++;\n" +
+      "    }\n" +
+      "    return n;\n" +
+      "}\n",
     "live.test.mjs":
       `import { test, expect } from "bun:test";\n` +
       `import { MockLive } from "./live.mock.mjs";\n` +
       `import { Derived } from "./derived.mjs";\n` +
+      `import { spin } from "./spin.mjs";\n` +
       `test("x", () => {\n` +
       `  expect(new MockLive().covered()).toBe(1);\n` +
       `  expect(new Derived().hit()).toBe(1);\n` +
+      `  expect(spin()).toBe(5);\n` +
       `});\n`,
   });
 
@@ -96,6 +106,16 @@ test("coverage maps uncovered class methods to the correct source lines", async 
   }
   expect(derivedDa[1]).toBeGreaterThan(0);
   expect(derivedDa[3]).toBe(0);
+
+  // Loop body must report the block's execution count (5 iterations), not 1.
+  // This distinguishes reading `block.execution_count` from a hardcoded 1 and
+  // from the old per-byte accumulation.
+  const spinRec = lcov.split("end_of_record").find(r => r.includes("spin.mjs"))!;
+  const spinDa: Record<number, number> = {};
+  for (const m of spinRec.matchAll(/^DA:(\d+),(\d+)$/gm)) {
+    spinDa[Number(m[1])] = Number(m[2]);
+  }
+  expect(spinDa[4]).toBe(5);
 
   expect(text).toContain("1 pass");
   expect(stdout).toContain("bun test");

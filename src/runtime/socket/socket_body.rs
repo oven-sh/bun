@@ -1466,9 +1466,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let handlers = this.get_handlers();
-        // Two JS entries below (resolve_promise then callback.call); a worker
-        // terminate() raised in the first trips assertNoException() in the
-        // second, and is_shutting_down() is still false at that point.
+        // Multiple JS entries below; a worker terminate() raised in one trips
+        // assertNoException() in the next, and is_shutting_down() is still
+        // false at that point.
         if handlers.vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
             return;
         }
@@ -1755,8 +1755,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut is_open = false;
 
         if handlers.vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
-            // `on_close` skips its JS dispatch during shutdown, so the native
-            // close is still safe here.
+            // `on_close` is single-JS-entry, so the native close it routes
+            // through here just takes the trap and returns.
             if reject_unauthorized {
                 this.reject_unauthorized_connection();
             }

@@ -4467,20 +4467,18 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         JSObject* object = nullptr;
         JSArray* array = nullptr;
         Structure* structure = nullptr;
-        if (value.isCell()) {
-            auto* cell = value.asCell();
-            if (cell->isString()) {
-                canUseStringFastPath = true;
-            } else if (cell->isObject()) {
-                object = cell->getObject();
-                structure = object->structure();
+        auto* cell = value.asCell();
+        if (cell->isString()) {
+            canUseStringFastPath = true;
+        } else if (cell->isObject()) {
+            object = cell->getObject();
+            structure = object->structure();
 
-                if (auto* jsArray = dynamicDowncast<JSArray>(object)) {
-                    canUseArrayFastPath = true;
-                    array = jsArray;
-                } else if (isObjectFastPathCandidate(structure)) {
-                    canUseObjectFastPath = true;
-                }
+            if (auto* jsArray = dynamicDowncast<JSArray>(object)) {
+                canUseArrayFastPath = true;
+                array = jsArray;
+            } else if (isObjectFastPathCandidate(structure)) {
+                canUseObjectFastPath = true;
             }
         }
 

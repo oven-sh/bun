@@ -1939,59 +1939,80 @@ impl<'a> Resolver<'a> {
 
         if check_package {
             if self.opts.polyfill_node_globals {
-                result.jsx = self.opts.jsx.clone();
                 let had_node_prefix = import_path.starts_with(b"node:");
-                let import_path_without_node_prefix = if had_node_prefix {
+                let import_path_without_node_prefix: &'static [u8] = if had_node_prefix {
                     &import_path[b"node:".len()..]
                 } else {
                     import_path
                 };
 
-                if let Some(fallback_module) =
-                    NodeFallbackModules::map().get(import_path_without_node_prefix)
-                {
-                    result.path_pair.primary = fallback_module.path;
-                    result.module_type = options::ModuleType::Cjs;
-                    // @ptrFromInt(@intFromPtr(...)) — cast away constness
-                    result.package_json = Some(std::ptr::from_ref::<PackageJSON>(
-                        fallback_module.package_json,
-                    ));
-                    result.flags.set_is_from_node_modules(true);
-                    return ResultUnion::Success(result);
-                }
+                // The importer's package.json "browser" map wins over the builtin
+                // polyfill. The lookup uses the bare name so it matches the same
+                // spellings the polyfill table below does.
+                let browser_map_overrides_builtin = self.care_about_browser_field
+                    && matches!(self.dir_info_cached(source_dir), Ok(Some(info))
+                    if info
+                        .get_enclosing_browser_scope()
+                        .is_some_and(|scope| {
+                            self.check_browser_map::<{ BrowserMapPathKind::PackagePath }>(
+                                &scope,
+                                import_path_without_node_prefix,
+                            )
+                            .is_some()
+                        }));
 
-                if had_node_prefix {
-                    // Module resolution fails automatically for unknown node builtins
-                    if !HardcodedAlias::has(
-                        import_path_without_node_prefix,
-                        options::Target::Node,
-                        HardcodedAliasCfg::default(),
-                    ) {
-                        return ResultUnion::NotFound;
+                if browser_map_overrides_builtin {
+                    // check_package_path re-runs this lookup; give it the bare name.
+                    import_path = import_path_without_node_prefix;
+                } else {
+                    result.jsx = self.opts.jsx.clone();
+
+                    if let Some(fallback_module) =
+                        NodeFallbackModules::map().get(import_path_without_node_prefix)
+                    {
+                        result.path_pair.primary = fallback_module.path;
+                        result.module_type = options::ModuleType::Cjs;
+                        // @ptrFromInt(@intFromPtr(...)) — cast away constness
+                        result.package_json = Some(std::ptr::from_ref::<PackageJSON>(
+                            fallback_module.package_json,
+                        ));
+                        result.flags.set_is_from_node_modules(true);
+                        return ResultUnion::Success(result);
                     }
 
-                    // Valid node:* modules becomes {} in the output
-                    result.path_pair.primary.namespace = b"node";
-                    result.path_pair.primary.text = import_path_without_node_prefix;
-                    result.module_type = options::ModuleType::Cjs;
-                    result.path_pair.primary.is_disabled = true;
-                    result.flags.set_is_from_node_modules(true);
-                    result.primary_side_effects_data = SideEffects::NoSideEffectsPureData;
-                    return ResultUnion::Success(result);
-                }
+                    if had_node_prefix {
+                        // Module resolution fails automatically for unknown node builtins
+                        if !HardcodedAlias::has(
+                            import_path_without_node_prefix,
+                            options::Target::Node,
+                            HardcodedAliasCfg::default(),
+                        ) {
+                            return ResultUnion::NotFound;
+                        }
 
-                // Always mark "fs" as disabled, matching Webpack v4 behavior
-                if import_path_without_node_prefix.starts_with(b"fs")
-                    && (import_path_without_node_prefix.len() == 2
-                        || import_path_without_node_prefix[2] == b'/')
-                {
-                    result.path_pair.primary.namespace = b"node";
-                    result.path_pair.primary.text = import_path_without_node_prefix;
-                    result.module_type = options::ModuleType::Cjs;
-                    result.path_pair.primary.is_disabled = true;
-                    result.flags.set_is_from_node_modules(true);
-                    result.primary_side_effects_data = SideEffects::NoSideEffectsPureData;
-                    return ResultUnion::Success(result);
+                        // Valid node:* modules becomes {} in the output
+                        result.path_pair.primary.namespace = b"node";
+                        result.path_pair.primary.text = import_path_without_node_prefix;
+                        result.module_type = options::ModuleType::Cjs;
+                        result.path_pair.primary.is_disabled = true;
+                        result.flags.set_is_from_node_modules(true);
+                        result.primary_side_effects_data = SideEffects::NoSideEffectsPureData;
+                        return ResultUnion::Success(result);
+                    }
+
+                    // Always mark "fs" as disabled, matching Webpack v4 behavior
+                    if import_path_without_node_prefix.starts_with(b"fs")
+                        && (import_path_without_node_prefix.len() == 2
+                            || import_path_without_node_prefix[2] == b'/')
+                    {
+                        result.path_pair.primary.namespace = b"node";
+                        result.path_pair.primary.text = import_path_without_node_prefix;
+                        result.module_type = options::ModuleType::Cjs;
+                        result.path_pair.primary.is_disabled = true;
+                        result.flags.set_is_from_node_modules(true);
+                        result.primary_side_effects_data = SideEffects::NoSideEffectsPureData;
+                        return ResultUnion::Success(result);
+                    }
                 }
             }
 

@@ -22,12 +22,10 @@ pub(crate) struct CachedCodeFrame {
 }
 
 impl CachedCodeFrame {
-    /// = `zig_exception::Holder::SOURCE_LINES_COUNT`.
-    pub(crate) const LINES: usize = 6;
-    /// = the printer's `MAX_LINE_LENGTH`; see [`Self::line_for_cache`].
-    pub(crate) const PRINTER_CLAMP: usize = 1024;
+    pub(crate) const LINES: usize = crate::zig_exception::Holder::SOURCE_LINES_COUNT;
+    pub(crate) const PRINTER_CLAMP: usize = crate::virtual_machine::CODE_FRAME_MAX_LINE_LENGTH;
     /// Cap on raw bytes stored for a line the printer won't truncate.
-    pub(crate) const MAX_LINE_LEN: usize = 1280;
+    const MAX_LINE_LEN: usize = Self::PRINTER_CLAMP + 256;
     /// `source_index` sentinel for the non-external branch.
     pub(crate) const NO_SOURCE_INDEX: u32 = u32::MAX;
 
@@ -45,16 +43,22 @@ impl CachedCodeFrame {
     /// store the raw bytes (bounded only against pathological trailing
     /// whitespace) so every printer branch including `is_empty()` sees what it
     /// would on a miss; when it doesn't, store the already-normalized visible
-    /// prefix plus one non-whitespace sentinel byte so a hit's own normalize +
-    /// clamp yields the same prefix and still sees `len > clamp` regardless of
-    /// interior whitespace at the boundary.
+    /// prefix, extended to the next UTF-8 char boundary so `clone_utf8` on a
+    /// hit round-trips the bytes instead of substituting U+FFFD, plus one
+    /// non-whitespace sentinel byte so the hit's own normalize+clamp yields
+    /// the same prefix and still sees `len > clamp` regardless of interior
+    /// whitespace at the boundary.
     pub(crate) fn line_for_cache(line: &[u8]) -> Box<[u8]> {
         let normalized = bun_core::strings::trim_right(bun_core::trim(line, b"\n"), b"\t ");
         if normalized.len() <= Self::PRINTER_CLAMP {
             return Box::from(&line[..line.len().min(Self::MAX_LINE_LEN)]);
         }
-        let mut v = Vec::with_capacity(Self::PRINTER_CLAMP + 1);
-        v.extend_from_slice(&normalized[..Self::PRINTER_CLAMP]);
+        let mut end = Self::PRINTER_CLAMP;
+        while end < normalized.len() && normalized[end] & 0xC0 == 0x80 {
+            end += 1;
+        }
+        let mut v = Vec::with_capacity(end + 1);
+        v.extend_from_slice(&normalized[..end]);
         v.push(b'.');
         v.into_boxed_slice()
     }
@@ -329,7 +333,6 @@ impl SavedSourceMap {
         source: &bun_ast::Source,
         mut mappings: MutableString,
     ) -> bun_js_printer::Result<()> {
-        self.invalidate_code_frames_for(source.path.text);
         // --hot can re-read a file mid-rewrite (truncate + write) and transpile
         // a comment-only prefix into a 0-mapping map. Overwriting a real map
         // with that would make any still-unreported error from the previous
@@ -351,6 +354,8 @@ impl SavedSourceMap {
                 // released before returning since no further table access follows.
             }
         }
+
+        self.invalidate_code_frames_for(source.path.text);
 
         // Note: every caller MOVES an owned
         // `Vec<u8>` here (printer chunk by value, cache hit via `mem::take`),

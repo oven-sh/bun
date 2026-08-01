@@ -525,6 +525,11 @@ impl ExitHandler {
 
 pub const MAIN_FILE_NAME: &[u8] = b"bun:main";
 
+/// Byte width at which the error code-frame printer clamps each source line
+/// and appends `... truncated`. Also the single source of truth for
+/// [`crate::saved_source_map::CachedCodeFrame::PRINTER_CLAMP`].
+pub(crate) const CODE_FRAME_MAX_LINE_LENGTH: usize = 1024;
+
 /// Instead of storing timestamp as a i128, we store it as a u64.
 /// We subtract the timestamp from Jan 1, 2000 (Y2K)
 pub(crate) const ORIGIN_RELATIVE_EPOCH: i128 = 946_684_800 * 1_000_000_000;
@@ -5802,7 +5807,7 @@ impl VirtualMachine {
         // case very well — at the very least, we shouldn't dump 100 KB of
         // minified code into your terminal.
         const MAX_LINE_LENGTH_WITH_DIVOT: usize = 512;
-        const MAX_LINE_LENGTH: usize = 1024;
+        const MAX_LINE_LENGTH: usize = CODE_FRAME_MAX_LINE_LENGTH;
 
         // SAFETY: `source_lines_numbers[..source_lines_len]` is the
         // caller-owned buffer (see ZigStackTrace contract).

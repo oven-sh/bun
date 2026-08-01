@@ -120,6 +120,8 @@ test.concurrent("Bun.inspect(error) cached code frame matches the first inspect 
     "plain.ts": `// short\n/* ${m(3000)} */ export const err = new Error("boom");\n`,
     // ~1550 chars with a 300-space interior run spanning the 1024 clamp.
     "interior-ws.ts": `/* ${m(1000)}${sp(300)}${m(200)} */ export const err = new Error("boom");\n`,
+    // Multi-byte UTF-8 char straddling byte 1024 of the normalized line.
+    "straddle.ts": `/* ${m(1019)}\u20AC${m(200)} */ export const err = new Error("boom");\n`,
     // Whitespace-only context line above the throw site.
     "blank.ts": `    \nexport const err = new Error("boom");\n`,
     "run.ts": `
@@ -142,6 +144,7 @@ test.concurrent("Bun.inspect(error) cached code frame matches the first inspect 
   for (const [entry, wantMarker] of [
     ["./plain.ts", true],
     ["./interior-ws.ts", true],
+    ["./straddle.ts", true],
     ["./blank.ts", false],
   ] as const) {
     await using proc = Bun.spawn({

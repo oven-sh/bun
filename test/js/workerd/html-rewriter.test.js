@@ -475,6 +475,29 @@ describe("HTMLRewriter", () => {
       await expect(text).rejects.toThrow("late boom");
     });
 
+    it("controller.error() with no argument still rejects the transformed body", async () => {
+      // A rejection whose reason is undefined/null must still fail the
+      // transform; treating it as success would resolve with a truncated
+      // document and fire onDocument end() for a document that never
+      // completed.
+      let endCalls = 0;
+      const { promise: gate, resolve: openGate } = Promise.withResolvers();
+      const body = new ReadableStream({
+        async start(controller) {
+          controller.enqueue(encode("<p>hi</p>"));
+          await gate;
+          controller.error();
+        },
+      });
+      const text = rewriter()
+        .onDocument({ end: () => void endCalls++ })
+        .transform(new Response(body))
+        .text();
+      openGate();
+      await expect(text).rejects.toBeUndefined();
+      expect(endCalls).toBe(0);
+    });
+
     it("a chunk that is neither a string nor a view surfaces its TypeError", async () => {
       // The bad chunk is queued synchronously in start(), so transform()
       // itself throws the underlying TypeError (not the opaque
@@ -511,6 +534,31 @@ describe("HTMLRewriter", () => {
       // The pump must stop instead of reading the never-closing source
       // forever; a couple of extra pulls queued before the abort lands is
       // fine.
+      expect(pulls).toBeLessThan(5);
+    });
+
+    it("stops reading when a handler throws on a chunk queued synchronously in start()", async () => {
+      // start() queues a chunk, so the first write fires inside transform()
+      // and the pump promise is still Pending when transform() throws. The
+      // async pull must still abort instead of reading forever.
+      let pulls = 0;
+      const body = new ReadableStream({
+        start(c) {
+          c.enqueue(encode("<p>x</p>"));
+        },
+        async pull(c) {
+          pulls++;
+          await Promise.resolve();
+          c.enqueue(encode("<p>y</p>"));
+        },
+      });
+      const rw = new HTMLRewriter().on("p", {
+        element() {
+          throw new Error("boom");
+        },
+      });
+      expect(() => rw.transform(new Response(body))).toThrow("boom");
+      await Bun.sleep(1);
       expect(pulls).toBeLessThan(5);
     });
 

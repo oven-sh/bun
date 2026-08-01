@@ -589,9 +589,12 @@ pub struct BufferOutputSink {
     /// GC root for the output `ByteStream`'s JS wrapper. `SinkRef` writes into
     /// the `ByteStream` pointed at by this stream's `Source::Bytes` payload.
     output: webcore::readable_stream::Strong,
-    /// First error latched by [`Self::fail`]; read back by `init()` so a
-    /// synchronous handler error still makes `transform()` throw.
+    /// First error latched by [`Self::fail`]; read back non-destructively by
+    /// `init()` (sync throw) and `get_pending_error()` (pump abort).
     failed: JsCell<jsc::strong::Optional>,
+    /// Owned Box from `start_reading_input`; freed by [`Self::clear_input_sink`]
+    /// (the `FetchTasklet::clear_sink` pattern).
+    input_sink: Cell<*mut HTMLRewriterInputSink>,
 }
 
 impl BufferOutputSink {
@@ -629,6 +632,7 @@ impl BufferOutputSink {
             context,
             output: webcore::readable_stream::Strong::init(out_readable, global),
             failed: JsCell::new(jsc::strong::Optional::empty()),
+            input_sink: Cell::new(core::ptr::null_mut()),
         }));
         // SAFETY: `sink` is the fresh `heap::into_raw` allocation above.
         let _sink_guard = unsafe { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
@@ -721,7 +725,10 @@ impl BufferOutputSink {
         }
 
         // SAFETY: `sink` is live (refcount >= 1, `_sink_guard` above).
-        if let Some(err) = unsafe { (*sink).failed.with_mut(|f| f.try_swap()) } {
+        // Non-destructive read: `get_pending_error()` reads the same slot to
+        // abort the pump, so clearing it here would let a still-Pending pump
+        // keep reading after `transform()` already threw.
+        if let Some(err) = unsafe { (*sink).failed.get().get() } {
             err.ensure_still_alive();
             return Err(global.throw_value(err));
         }
@@ -807,6 +814,7 @@ impl BufferOutputSink {
         // sequenced so it cannot.
         let input_sink: &mut HTMLRewriterInputSink =
             Box::leak(Box::new(HTMLRewriterInputSink::new(self)));
+        self.input_sink.set(core::ptr::from_mut(input_sink));
         let assignment_result =
             crate::webcore::sink::JSSink::<HTMLRewriterInputSink>::assign_to_stream(
                 global,
@@ -816,7 +824,6 @@ impl BufferOutputSink {
         assignment_result.ensure_still_alive();
 
         if let Some(err) = assignment_result.to_error() {
-            input_sink.owner = None;
             self.on_input_end(Some(err));
             return Ok(());
         }
@@ -831,22 +838,38 @@ impl BufferOutputSink {
                     );
                 }
                 jsc::js_promise::Status::Fulfilled => {
-                    input_sink.owner = None;
                     self.on_input_end(None);
                 }
                 jsc::js_promise::Status::Rejected => {
                     promise.set_handled(global.vm());
                     let result = promise.result(global.vm());
-                    input_sink.owner = None;
                     self.on_input_end(Some(result));
                 }
             }
             return Ok(());
         }
         // undefined/null: drained synchronously inside assignToStream.
-        input_sink.owner = None;
         self.on_input_end(None);
         Ok(())
+    }
+
+    /// Reclaim the `Box<HTMLRewriterInputSink>` leaked in
+    /// `start_reading_input`: null the controller's `m_sinkPtr` via
+    /// [`JSSink::detach`] so `__finalize` cannot later touch the freed
+    /// allocation, then drop the Box. Idempotent.
+    fn clear_input_sink(&self) {
+        let ptr = self.input_sink.replace(core::ptr::null_mut());
+        if ptr.is_null() {
+            return;
+        }
+        // SAFETY: `ptr` is the `Box::leak` from `start_reading_input`; this
+        // field is its sole owner and was just nulled.
+        let mut sink = unsafe { bun_core::heap::take(ptr) };
+        sink.owner = None;
+        crate::webcore::sink::JSSink::<HTMLRewriterInputSink>::detach(
+            &mut sink.source,
+            &self.global,
+        );
     }
 
     fn output_bytes(&self) -> Option<bun_ptr::BackRef<ByteStream>> {
@@ -913,14 +936,15 @@ impl BufferOutputSink {
     }
 
     /// End-of-input: run `finish` under a `HandlerErrorScope` (so an `end()`
-    /// handler that throws is captured), then release the in-flight +1 taken
-    /// in `init()`. `self` must not be touched after this call.
+    /// handler that throws is captured), free the input sink, then release
+    /// the in-flight +1 taken in `init()`. `self` must not be touched after.
     fn on_input_end(&self, err: Option<JSValue>) {
         let captured = Cell::new(JSValue::ZERO);
         {
             let _scope = HandlerErrorScope::enter(&self.global, &captured);
             self.finish(err);
         }
+        self.clear_input_sink();
         // SAFETY: releases the in-flight +1 taken in `init()`.
         unsafe { Self::deref(core::ptr::from_ref(self).cast_mut()) };
     }
@@ -954,6 +978,7 @@ impl Drop for BufferOutputSink {
             // (`finish`/`fail` null the field before freeing).
             unsafe { bun_core::heap::destroy(rewriter) };
         }
+        self.clear_input_sink();
         self.output.deinit();
         self.failed.with_mut(|f| f.deinit());
     }
@@ -1016,12 +1041,19 @@ impl crate::webcore::sink::JsSinkType for HTMLRewriterInputSink {
     }
 
     fn finalize(&mut self) {
+        // Reached only when the controller is collected with `m_sinkPtr` still
+        // set, i.e. `clear_input_sink` never ran. Null the owner's slot so its
+        // `Drop` cannot double-free, release the in-flight +1, then self-free
+        // (the `ArrayBufferSink::finalize` pattern).
         if let Some(owner) = self.owner.take() {
-            // The assign_to_stream-result handler never ran; release the
-            // in-flight +1 it would have balanced.
+            owner.input_sink.set(core::ptr::null_mut());
             // SAFETY: +1 was taken in `BufferOutputSink::init`; `owner` live.
             unsafe { BufferOutputSink::deref(owner.as_ptr()) };
         }
+        // SAFETY: `self` is the `Box::leak` from `start_reading_input`; every
+        // reaching path left it owned here (`clear_input_sink` nulls
+        // `m_sinkPtr` via `detach` before freeing, so cannot precede us).
+        unsafe { bun_core::heap::destroy(core::ptr::from_mut(self)) };
     }
 
     fn write_bytes(&mut self, data: &streams::Result) -> streams::Writable {
@@ -1081,10 +1113,9 @@ fn on_resolve_rewriter_input(_global: &JSGlobalObject, frame: &CallFrame) -> JsR
     let this: *mut HTMLRewriterInputSink =
         args[args.len() - 1].as_promise_ptr::<HTMLRewriterInputSink>();
     // SAFETY: `as_promise_ptr` recovers the `input_sink` stashed by `.then()`
-    // in `start_reading_input`; the JS wrapper created by `assign_to_stream`
-    // keeps the boxed sink alive until `finalize`.
-    let input_sink = unsafe { &mut *this };
-    if let Some(owner) = input_sink.owner.take() {
+    // in `start_reading_input`; `BufferOutputSink.input_sink` owns the Box
+    // and `on_input_end` → `clear_input_sink` frees it as the last step.
+    if let Some(owner) = unsafe { (*this).owner.take() } {
         owner.on_input_end(None);
     }
     Ok(JSValue::UNDEFINED)
@@ -1096,13 +1127,11 @@ fn on_reject_rewriter_input(_global: &JSGlobalObject, frame: &CallFrame) -> JsRe
     let this: *mut HTMLRewriterInputSink =
         args[args.len() - 1].as_promise_ptr::<HTMLRewriterInputSink>();
     // SAFETY: see `on_resolve_rewriter_input`.
-    let input_sink = unsafe { &mut *this };
-    if let Some(owner) = input_sink.owner.take() {
-        owner.on_input_end(if err.is_empty_or_undefined_or_null() {
-            None
-        } else {
-            Some(err)
-        });
+    if let Some(owner) = unsafe { (*this).owner.take() } {
+        // Pass the rejection through unconditionally: `controller.error()`
+        // with no argument rejects with `undefined`, which must still fail
+        // the transform rather than close the output as a truncated success.
+        owner.on_input_end(Some(err));
     }
     Ok(JSValue::UNDEFINED)
 }

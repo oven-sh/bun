@@ -3554,9 +3554,8 @@ where
         // `ServerLike::vm()` is the process-static VM `BackRef`; `as_mut()` is
         // the single audited `&mut VirtualMachine` accessor.
         let vm = server.vm().as_mut();
-        // 404/403 are expected outcomes (e.g. Bun.file() for a missing or
-        // unreadable path), not handler faults: write the status directly and
-        // skip both the unhandled-rejection report and the dev error page.
+        // 404/403 reaching here are expected outcomes (missing/unreadable
+        // Bun.file), not faults: no unhandled-rejection report, no dev page.
         if matches!(status, 403 | 404) {
             self.render_production_error(status);
             vm.log_mut().unwrap().reset();
@@ -3616,10 +3615,7 @@ where
                 let _keep = jsc::EnsureStillAlive(result);
                 if !result.is_empty_or_undefined_or_null() {
                     if let Some(err) = result.to_error() {
-                        // The error handler itself threw or returned an Error.
-                        // That is a handler fault regardless of the status the
-                        // original error would have produced, so report it as
-                        // 500 instead of letting a 404/403 default swallow it.
+                        // error() itself threw: a handler fault, not `status`.
                         self.finish_running_error_handler(err, 500);
                         return;
                     } else if let Some(promise) = result.as_any_promise() {
@@ -3716,8 +3712,7 @@ where
                 return;
             }
             jsc::PromiseResult::Rejected(err) => {
-                // The error handler's promise rejected: a handler fault,
-                // reported as 500 rather than the original default status.
+                // error() rejected: a handler fault, not `status`.
                 ctx.finish_running_error_handler(err, 500);
                 return;
             }

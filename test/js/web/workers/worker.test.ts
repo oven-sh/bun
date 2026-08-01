@@ -143,17 +143,19 @@ describe("web worker", () => {
         expect(exitCode).toBe(0);
       });
 
-      test.concurrent("bunfig preload runs in node:worker_threads Worker; execArgv:[] opts out", async () => {
-        using dir = tempDir("worker-bunfig-preload-wt", {
-          "bunfig.toml": `preload = ["./plugin.ts"]`,
-          "plugin.ts": pluginFile,
-          "worker.ts": `
+      test.concurrent(
+        "bunfig preload runs in node:worker_threads Worker; execArgv:[] opts out",
+        async () => {
+          using dir = tempDir("worker-bunfig-preload-wt", {
+            "bunfig.toml": `preload = ["./plugin.ts"]`,
+            "plugin.ts": pluginFile,
+            "worker.ts": `
             const { parentPort } = require("node:worker_threads");
             let msg = "no-plugin";
             try { msg = (await import("my-virtual-module")).default; } catch {}
             parentPort.postMessage({ msg, preloadRan: globalThis.__preloadRan ?? 0 });
           `,
-          "main.ts": `
+            "main.ts": `
             import { Worker } from "node:worker_threads";
             import msg from "my-virtual-module";
             async function run(opts) {
@@ -172,22 +174,24 @@ describe("web worker", () => {
               optedOut,
             }));
           `,
-        });
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "run", "main.ts"],
-          env: bunEnv,
-          cwd: String(dir),
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stderr).toBe("");
-        expect(JSON.parse(stdout.trim())).toEqual({
-          main: { msg: "from-plugin", preloadRan: 1 },
-          inherited: { msg: "from-plugin", preloadRan: 1 },
-          optedOut: { msg: "no-plugin", preloadRan: 0 },
-        });
-        expect(exitCode).toBe(0);
-      }, 20_000);
+          });
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "run", "main.ts"],
+            env: bunEnv,
+            cwd: String(dir),
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(JSON.parse(stdout.trim())).toEqual({
+            main: { msg: "from-plugin", preloadRan: 1 },
+            inherited: { msg: "from-plugin", preloadRan: 1 },
+            optedOut: { msg: "no-plugin", preloadRan: 0 },
+          });
+          expect(exitCode).toBe(0);
+        },
+        20_000,
+      );
 
       test.concurrent("bunfig preload runs in nested Worker", async () => {
         using dir = tempDir("worker-bunfig-preload-nested", {

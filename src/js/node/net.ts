@@ -4026,14 +4026,13 @@ function listenInCluster(
     if (err) {
       throw new ExceptionWithHostPort(err, "bind", address, port);
     }
-    // Bun: no IPC handle passing yet, so bind here with reusePort (same as
-    // _http_server.ts does for a worker) instead of adopting the faux handle.
     server[kRealListen](
       path,
       port,
       hostname,
       exclusive,
       ipv6Only,
+      // Workers share the port via SO_REUSEPORT; matches _http_server.ts.
       true /* reusePort */,
       readableAll,
       writableAll,

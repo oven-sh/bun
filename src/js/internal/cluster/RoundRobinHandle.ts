@@ -31,14 +31,13 @@ export default class RoundRobinHandle {
 
     if (fd >= 0) this.server.listen({ fd, backlog });
     else if (port >= 0) {
-      // Bun: workers bind this port themselves (no IPC handle passing yet), so
-      // open the reuse group here too or the workers' binds are rejected.
       this.server.listen({
         port,
         host: address,
         // Currently, net module only supports `ipv6Only` option in `flags`.
         ipv6Only: !!(flags & UV_TCP_IPV6ONLY),
         backlog,
+        // Workers bind this port directly; open the reuse group for them.
         reusePort: true,
       });
     } else

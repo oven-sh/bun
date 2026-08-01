@@ -747,7 +747,26 @@ pub fn cached_tarball_folder_name(
 }
 
 pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
-    sys::directory_exists_at(get_cache_directory(this), folder_path).unwrap_or(false)
+    // A cache entry is only usable if it still has a package.json. An entry with the
+    // directory present but package.json missing (interrupted extract, external cleanup,
+    // etc.) would otherwise be copied into node_modules as-is and break lifecycle-script
+    // discovery. Re-extracting over such an entry is safe: extraction renames a temp dir
+    // into place, replacing the stale directory.
+    // https://github.com/oven-sh/bun/issues/10423
+    let folder = bun_core::strings::without_trailing_slash(folder_path.as_bytes());
+    if folder.is_empty() {
+        return false;
+    }
+    let mut buf = PathBuffer::uninit();
+    let mut len = folder.len();
+    buf[..len].copy_from_slice(folder);
+    buf[len] = SEP;
+    len += 1;
+    buf[len..len + b"package.json".len()].copy_from_slice(b"package.json");
+    len += b"package.json".len();
+    buf[len] = 0;
+    let path = ZStr::from_buf(&buf, len);
+    sys::exists_at(get_cache_directory(this), path)
 }
 
 // ─────────────────────────── global directories ───────────────────────────────

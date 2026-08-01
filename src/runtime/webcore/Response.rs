@@ -143,10 +143,7 @@ impl BodyAbortListener {
             }
             let err = BodyValueError::JSValue(bun_jsc::strong::Optional::create(reason, &global));
             // R-2: re-derive after `error()` ran JS.
-            let readable = response.get_body_readable_stream(&global);
-            let _ = response
-                .get_body_value()
-                .to_error_instance_with_readable(err, &global, readable);
+            let _ = response.get_body_value().to_error_instance(err, &global);
         }
     }
 }

@@ -1331,18 +1331,6 @@ impl Value {
         err: ValueError,
         global: &JSGlobalObject,
     ) -> JsTerminated<()> {
-        self.to_error_instance_with_readable(err, global, None)
-    }
-
-    /// [`to_error_instance`] for callers that own the body's JS wrapper.
-    /// `owned_readable` supplies the stream once [`BodyMixin::get_body`] has
-    /// migrated `Locked.readable` into the wrapper's traced `m_stream` slot.
-    pub(crate) fn to_error_instance_with_readable(
-        &mut self,
-        err: ValueError,
-        global: &JSGlobalObject,
-        owned_readable: Option<ReadableStream>,
-    ) -> JsTerminated<()> {
         if let Value::Locked(_) = self {
             // reshaped for borrowck + E0509 (`Value` has `Drop`) — `mem::take`
             // the `PendingValue` out (leaves `Locked(default)`, whose Drop is a no-op on
@@ -1351,17 +1339,16 @@ impl Value {
                 Value::Locked(l) => core::mem::take(l),
                 _ => unreachable!(),
             };
-            let readable = locked.readable.get(global).or(owned_readable);
             let was_disturbed = !locked.action.is_none()
                 || locked.promise.is_some()
-                || readable.as_ref().is_some_and(|r| r.is_disturbed(global));
+                || locked.readable.is_disturbed(global);
             *self = Value::Error(err);
             let Value::Error(err_ref) = self else {
                 unreachable!()
             };
 
             // `deinit` must run on every exit incl. `?` paths.
-            let _strong_readable =
+            let strong_readable =
                 scopeguard::guard(core::mem::take(&mut locked.readable), |mut r| r.deinit());
 
             if let Some(promise_value) = locked.promise.take() {
@@ -1381,7 +1368,7 @@ impl Value {
 
             // The Promise version goes before the ReadableStream version incase the Promise version is used too.
             // Avoid creating unnecessary duplicate JSValue.
-            if let Some(readable) = readable {
+            if let Some(readable) = strong_readable.get(global) {
                 // BACKREF: see `Source::bytes()` — payload live for the
                 // lifetime of the ReadableStream JS wrapper.
                 if let Some(bytes) = readable.ptr.bytes() {
@@ -1707,7 +1694,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if let Some(stream) = locked.readable.get(global_object) {
                     stream.value.ensure_still_alive();
                     Self::stream_set_cached(js_value, global_object, stream.value);
-                    let _ = core::mem::take(&mut locked.readable);
+                    locked.readable.downgrade();
                 }
             }
         }
@@ -1813,8 +1800,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         }
         let stream = self.get_body_value().to_readable_stream(global_this)?;
-        // `to_readable_stream` parked a `Strong` in `Locked.readable`; the
-        // wrapper's traced `m_stream` slot is the owner now.
+        // The wrapper's traced `m_stream` slot owns the stream from here;
+        // release the `Strong` `to_readable_stream` parked in `Locked.readable`.
         self.check_body_stream_ref(global_this);
         Ok(stream)
     }

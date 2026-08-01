@@ -846,11 +846,10 @@ impl FetchTasklet {
             if let Some(response) = self.current_response_mut() {
                 // body value now owns the error
                 let err = scopeguard::ScopeGuard::into_inner(err);
-                let readable = response.get_body_readable_stream(&global_this);
                 let body = response.get_body_value();
                 // Body.rs aliases its `JsTerminated<T>` to `JsResult<T>` for
                 // now; narrow back to the real `JsTerminated` here.
-                body.to_error_instance_with_readable(err, &global_this, readable)
+                body.to_error_instance(err, &global_this)
                     .map_err(|_| bun_jsc::JsTerminated::JSTerminated)?;
             }
             // Cancel the request-body sink last: closing the sink signal fires

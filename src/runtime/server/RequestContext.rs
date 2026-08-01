@@ -2317,17 +2317,15 @@ where
 
         // if we cannot, we have to reject pending promises
         // first, we reject the request body promise
-        // SAFETY: BACKREF
-        let global_this = self.server().global_this();
-        let readable = self.request_body_readable_stream_ref.get(global_this);
         if let Some(body) = self.request_body_mut() {
             // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
             // but we received nothing or the connection was aborted
             if matches!(body, Body::Value::Locked(_)) {
-                body.to_error_instance_with_readable(
+                // SAFETY: BACKREF
+                let global_this = self.server().global_this();
+                body.to_error_instance(
                     Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed),
                     global_this,
-                    readable,
                 )?;
                 return Ok(true);
             }
@@ -2337,6 +2335,7 @@ where
         // Locked check above falls through. Error the ByteStream via our own
         // strong ref instead so a pending read rejects rather than hanging.
         if self.request_body_readable_stream_ref.has() {
+            let global_this = self.server().global_this();
             let strong = core::mem::take(&mut self.request_body_readable_stream_ref);
             if let Some(readable) = strong.get(global_this) {
                 readable.value.ensure_still_alive();

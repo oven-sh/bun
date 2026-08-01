@@ -3,7 +3,7 @@
 // ASCII. Forcing UTF-16 for accented-Latin text doubles the string's footprint
 // and loses JSC's 8-bit fast paths (compare/hash/indexOf, YARR, JSON
 // stringifier, re-encode on write).
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import "harness";
 
 // "café résumé naïve" — é (U+00E9) and ï (U+00EF) are both <= U+00FF.

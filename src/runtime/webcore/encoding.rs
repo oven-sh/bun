@@ -288,9 +288,7 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
         Encoding::Latin1 => create_external_globally_allocated_latin1(input),
         Encoding::Buffer | Encoding::Utf8 => {
             match strings::to_latin1_or_utf16_alloc(&input, false) {
-                Ok(strings::Utf8Decoded::Ascii) => {
-                    create_external_globally_allocated_latin1(input)
-                }
+                Ok(strings::Utf8Decoded::Ascii) => create_external_globally_allocated_latin1(input),
                 Ok(strings::Utf8Decoded::Latin1(latin1)) => {
                     create_external_globally_allocated_latin1(latin1)
                 }

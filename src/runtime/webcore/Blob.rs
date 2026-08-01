@@ -6817,9 +6817,8 @@ impl Internal {
             .map_err(|_| global_this.throw_out_of_memory())?
         {
             strings::Utf8Decoded::Latin1(latin1) => {
-                let return_value =
-                    BunString::create_external_globally_allocated_latin1(latin1)
-                        .transfer_to_js(global_this)?;
+                let return_value = BunString::create_external_globally_allocated_latin1(latin1)
+                    .transfer_to_js(global_this)?;
                 return_value.ensure_still_alive();
                 self.bytes = Vec::new();
                 return Ok(return_value);

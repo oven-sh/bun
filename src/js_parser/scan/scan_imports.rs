@@ -140,11 +140,8 @@ impl<'a> ImportScanner<'a> {
                     let mut did_remove_star_loc = false;
                     let keep_unused_imports = !p.options.features.trim_unused_imports;
 
-                    // `serialize_metadata` emits references to imported types as
-                    // `ns.alias` and records a use on the generated namespace ref
-                    // so a type-only export does not force a named binding that
-                    // fails at link time. Give the statement a star binding so
-                    // the trim pass below keeps it and the printer emits `* as ns`.
+                    // `serialize_metadata` may have recorded a use on the
+                    // generated namespace ref; give it a real `* as ns` binding.
                     let added_star_for_metadata = st.star_name_loc.is_empty()
                         && p.symbols[st.namespace_ref.inner_index() as usize].use_count_estimate
                             > 0;

@@ -3577,7 +3577,14 @@ impl<'a> LinkerContext<'a> {
                         .slice();
 
                     // Report mismatched imports and exports
-                    if symbol.import_item_status == ImportItemStatus::Generated {
+                    if symbol.is_decorator_metadata_guarded() {
+                        // `emitDecoratorMetadata` referenced this import inside a
+                        // `typeof X === "undefined" ? Object : X` guard. A single-file
+                        // transpiler cannot tell an interface from a class, so an import
+                        // that turns out to be type-only is expected here; rewrite it to
+                        // `undefined` so the guard falls back to `Object`.
+                        symbol.import_item_status = ImportItemStatus::Missing;
+                    } else if symbol.import_item_status == ImportItemStatus::Generated {
                         // This is a debug message instead of an error because although it
                         // appears to be a named import, it's actually an automatically-
                         // generated named import that was originally a property access on an

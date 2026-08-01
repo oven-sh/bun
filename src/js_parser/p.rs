@@ -403,12 +403,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) enclosing_class_keyword: bun_ast::Range,
     pub(crate) import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
     pub(crate) is_import_item: RefMap,
-    /// Maps a named or default import's local ref to `(namespace_ref, alias)`,
-    /// where `alias` is the external name in the source module. Only
-    /// `serialize_metadata` reads it: decorator metadata can reference an
-    /// imported type alias or interface, which has no value export, so the
-    /// reference is emitted as `ns.alias` and the named binding is not kept
-    /// for the metadata alone.
+    /// Maps a named/default import's local ref to `(namespace_ref, alias)` so
+    /// `serialize_metadata` can emit `ns.alias` instead of the named binding.
     pub(crate) import_namespace_of_item: HashMap<Ref, (Ref, js_ast::StoreStr)>,
     pub(crate) named_imports: NamedImportsType<'a>,
     pub(crate) named_exports: bun_ast::ast_result::NamedExports,
@@ -3761,11 +3757,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // TODO: not sure how to handle macro remappings for namespace imports
         } else {
             let path_name = fs::PathName::init(path.text);
-            // When decorator metadata routes through this namespace ref the
-            // name is printed as a `* as name` binding under NoOpRenamer, so
-            // it must not collide with a user binding or another import's
-            // namespace. The bundler's renamer deduplicates, so keep the
-            // plain form there.
+            // Under NoOpRenamer this name can surface as a real `* as name`
+            // binding for decorator metadata, so make it unique there.
             let name: &'a [u8] =
                 if self.options.features.emit_decorator_metadata && !self.options.bundle {
                     let hash =
@@ -5918,12 +5911,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // the value is ignored because that's what the TypeScript compiler does.
     }
 
-    /// `find_symbol` for an identifier in a type annotation being tracked for
-    /// decorator metadata. The lookup must create an unbound symbol for
-    /// globals like `Map`, but a type annotation is not a value use: the
-    /// identifier may be folded away by a union or array type before
-    /// `serialize_metadata` ever sees it. The emit path records a use for
-    /// what it actually emits.
+    /// `find_symbol` without recording a use. `serialize_metadata` records
+    /// uses for what it actually emits; a type annotation alone is not one.
     pub(crate) fn find_symbol_for_ts_metadata(
         &mut self,
         name: &'a [u8],
@@ -7116,6 +7105,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 self.record_usage(ref_);
                 let e = if self.is_import_item.contains_key(&ref_) {
+                    self.symbols[ref_.inner_index() as usize].set_is_decorator_metadata_guarded(true);
                     self.new_expr(
                         E::ImportIdentifier {
                             ref_,
@@ -7183,6 +7173,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     *current_expr = root;
                 } else if self.is_import_item.contains_key(&refs[0]) {
                     self.record_usage(refs[0]);
+                    self.symbols[refs[0].inner_index() as usize]
+                        .set_is_decorator_metadata_guarded(true);
                     *current_expr = self.new_expr(
                         E::ImportIdentifier {
                             ref_: refs[0],
@@ -7269,13 +7261,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// For a named or default import referenced from decorator metadata, build
-    /// `ns.alias` and record a use on the namespace ref. A single-file
-    /// transpiler cannot know whether the import is a class or a type-only
-    /// export; keeping the named binding for a type alias makes the module
-    /// fail to link (`Export named 'X' not found`). Going through the
-    /// namespace keeps a real class reachable and lets the `typeof` guard
-    /// fall back to `Object` for a missing export.
+    /// Build `ns.alias` for a named/default import referenced from decorator
+    /// metadata so a type-only export degrades to `undefined` instead of
+    /// failing to link. Bundle mode routes through the named import and the
+    /// linker instead.
     fn metadata_root_for_import_item(&mut self, ref_: Ref) -> Option<Expr> {
         let &(namespace_ref, alias) = self.import_namespace_of_item.get(&ref_)?;
         self.record_usage(namespace_ref);

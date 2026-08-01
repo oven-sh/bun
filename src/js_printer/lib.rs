@@ -5624,10 +5624,8 @@ pub(crate) mod __gated_printer {
                         return Ok(());
                     }
 
-                    // `import * as ns, { X }` is a syntax error. Decorator
-                    // metadata can add a star binding to a statement that
-                    // also keeps named items; print the star import as its
-                    // own statement in that case.
+                    // `import * as ns, { X }` is a syntax error; split the
+                    // star binding into its own statement when both survive.
                     let split_star_from_items = record
                         .flags
                         .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)

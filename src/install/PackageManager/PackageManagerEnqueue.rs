@@ -2523,8 +2523,9 @@ fn get_or_put_resolved_package(
 
         dependency::version::Tag::Folder => {
             let folder = *version.folder();
+            let is_workspace_dep = this.lockfile.is_workspace_dependency(dependency_id);
             let res: FolderResolutionValue = 'res: {
-                if this.lockfile.is_workspace_dependency(dependency_id) {
+                if is_workspace_dep {
                     // relative to cwd
                     // reshaped for borrowck — `folder_path` borrows
                     // `string_bytes`; detach the slice lifetime so the
@@ -2612,7 +2613,7 @@ fn get_or_put_resolved_package(
 
             if let FolderResolutionValue::Err(crate::Error::MissingPackageJSON) = res {
                 'resolve_workspace_from_folder: {
-                    if !this.options.link_workspace_packages {
+                    if !is_workspace_dep || !this.options.link_workspace_packages {
                         break 'resolve_workspace_from_folder;
                     }
                     if this.lockfile.workspace_paths.count() == 0

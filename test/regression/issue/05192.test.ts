@@ -126,13 +126,15 @@ with ({ a: 1 }) { console.log(a); }
   expect(exitCode).toBe(1);
 });
 
-test.concurrent("JSC parse SyntaxError reported line points at the offending statement, not the line before", async () => {
-  // addErrorInfo() discards the parser-error column; a naive source-map lookup
-  // at column 0 resolves to bun's own start-of-line mapping for the *previous*
-  // source line when the offending statement is indented.
-  const { stderr, exitCode } = await run(
-    {
-      "module.mjs": `export const x = 1;
+test.concurrent(
+  "JSC parse SyntaxError reported line points at the offending statement, not the line before",
+  async () => {
+    // addErrorInfo() discards the parser-error column; a naive source-map lookup
+    // at column 0 resolves to bun's own start-of-line mapping for the *previous*
+    // source line when the offending statement is indented.
+    const { stderr, exitCode } = await run(
+      {
+        "module.mjs": `export const x = 1;
 function foo() {
   with ({ a: 1 }) {
     console.log(a);
@@ -140,11 +142,12 @@ function foo() {
 }
 foo();
 `,
-    },
-    "module.mjs",
-  );
-  expect(stderr).toContain("SyntaxError: 'with' statements are not valid in strict mode.");
-  expect(stderr).toMatch(/module\.mjs:3\b/);
-  expect(stderr).toMatch(/3 \|.*\bwith\b/);
-  expect(exitCode).toBe(1);
-});
+      },
+      "module.mjs",
+    );
+    expect(stderr).toContain("SyntaxError: 'with' statements are not valid in strict mode.");
+    expect(stderr).toMatch(/module\.mjs:3\b/);
+    expect(stderr).toMatch(/3 \|.*\bwith\b/);
+    expect(exitCode).toBe(1);
+  },
+);

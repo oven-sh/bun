@@ -385,7 +385,9 @@ describe("bundler", () => {
       `,
     },
     onAfterBundle(api) {
-      expect(api.readFile("out.js")).not.toContain("Could not find module root");
+      const out = api.readFile("out.js");
+      expect(out).not.toMatch(/\.node"/);
+      expect(out).not.toContain("getRoot");
     },
   });
   itBundled("compile/NativeBindingsTryCatchFallsThrough", {

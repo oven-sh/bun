@@ -142,6 +142,11 @@ function read(this: NativeReadable, maxToRead: number) {
     if (typeof result === "number" && result > 1) {
       this[kHasResized] = true;
       this[kHighWaterMark] = Math.min(this[kHighWaterMark], result);
+    } else if (typeof result === "number" && result < 0) {
+      // Source allocates its own chunks; the pull view is unused, so keep it
+      // at the minimum size.
+      this[kHasResized] = true;
+      this[kHighWaterMark] = MIN_BUFFER_SIZE;
     }
     if ($isTypedArrayView(result) && result.byteLength > 0) {
       pushAndCheck(this, result);

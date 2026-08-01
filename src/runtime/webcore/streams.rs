@@ -73,6 +73,10 @@ pub enum Start {
     },
     FileSink(FileSinkOptions),
     Ready,
+    /// Streaming, and `on_pull` hands back its own allocations (`Owned`/
+    /// `Temporary`) rather than writing into the adapter's pull view. The
+    /// adapter skips allocating that view.
+    ReadyOwned,
     OwnedAndDone(Vec<u8>),
 }
 
@@ -97,7 +101,7 @@ pub enum StartTag {
 impl Start {
     pub fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
-            Start::Empty | Start::Ready => Ok(JSValue::UNDEFINED),
+            Start::Empty | Start::Ready | Start::ReadyOwned => Ok(JSValue::UNDEFINED),
             Start::ChunkSize(chunk) => Ok(JSValue::from(chunk)),
             Start::Err(err) => Err(err.throw(global_this)),
             Start::OwnedAndDone(list) => {

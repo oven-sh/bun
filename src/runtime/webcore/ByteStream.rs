@@ -6,7 +6,7 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell};
 use bun_sys::Error as SysError;
 
 use crate::webcore::SinkHandle;
-use crate::webcore::streams::{self, BufferAction, IntoArray};
+use crate::webcore::streams::{self, BufferAction};
 use crate::webcore::{blob, readable_stream};
 
 bun_output::declare_scope!(ByteStream, visible);
@@ -133,17 +133,9 @@ impl ByteStream {
             return streams::Start::OwnedAndDone(Vec::<u8>::move_from_list(buffer));
         }
 
-        if self.high_water_mark == 0 {
-            return streams::Start::Ready;
-        }
-
-        // For HTTP, the maximum streaming response body size will be 512 KB.
-        // #define LIBUS_RECV_BUFFER_LENGTH 524288
-        // For HTTPS, the size is probably quite a bit lower like 64 KB due to TLS transmission.
-        // We add 1 extra page size so that if there's a little bit of excess buffered data, we avoid extra allocations.
-        let page_size: blob::SizeType =
-            blob::SizeType::try_from(bun_sys::page_size()).expect("int cast");
-        streams::Start::ChunkSize((512 * 1024 + page_size).min(self.high_water_mark.max(page_size)))
+        // `on_pull`/`on_data` hand the reader `Owned` buffers rather than copying
+        // into the adapter's pull view, so the adapter skips allocating one.
+        streams::Start::ReadyOwned
     }
 
     fn value(&self) -> JSValue {
@@ -233,7 +225,7 @@ impl ByteStream {
         self.parent_const().producer.get().start();
     }
 
-    pub(crate) fn on_data(&self, mut stream: streams::Result) -> Result<(), bun_jsc::JsTerminated> {
+    pub(crate) fn on_data(&self, stream: streams::Result) -> Result<(), bun_jsc::JsTerminated> {
         bun_jsc::mark_binding!();
         if self.done.get() {
             // The owned `Vec<u8>`/`Vec`
@@ -376,73 +368,54 @@ impl ByteStream {
             return Ok(());
         }
 
-        let chunk = stream.slice();
-
         if self.pending.get().state == streams::PendingState::Pending {
             debug_assert!(self.buffer.get().is_empty());
-            // Re-derive the destination from the GC-rooted view instead of trusting the
-            // raw pointer captured at pull time: JS can detach or transfer the backing
-            // ArrayBuffer between the pull and the data arriving, leaving
-            // `pending_buffer` dangling. A detached view re-derives to an empty slice.
-            let global = self.parent_const().global_this();
-            let mut pending_view = self
-                .pending_value
-                .get()
-                .get()
-                .and_then(|view| view.as_array_buffer(global))
-                .unwrap_or_default();
-            let pending_buf = pending_view.slice_mut();
-            let to_copy_len = chunk.len().min(pending_buf.len());
-            let pending_buffer_len = pending_buf.len();
-            debug_assert!(pending_buf.as_ptr() != chunk.as_ptr());
-            pending_buf[..to_copy_len].copy_from_slice(&chunk[..to_copy_len]);
-            let has_remaining = chunk.len() > to_copy_len;
             self.pending_buffer.set(Self::empty_pending_buffer());
+            // Drop the rooted pull view; the chunk is handed off as its own
+            // allocation below, so the view is never written into.
+            self.pending_value
+                .with_mut(|pv| pv.clear_without_deallocation());
 
-            let is_really_done =
-                self.has_received_last_chunk.get() && to_copy_len <= pending_buffer_len;
-
-            if is_really_done {
-                self.done.set(true);
-
-                if to_copy_len == 0 {
-                    if matches!(stream, streams::Result::Err(_)) {
-                        let err = core::mem::replace(&mut stream, streams::Result::Done);
-                        self.pending.with_mut(|p| p.result = err);
-                    } else {
-                        self.pending.with_mut(|p| p.result = streams::Result::Done);
-                    }
-                } else {
-                    let v = self.value();
-                    self.pending.with_mut(|p| {
-                        p.result = streams::Result::IntoArrayAndDone(IntoArray {
-                            value: v,
-                            len: to_copy_len as blob::SizeType, // @truncate
-                        });
-                    });
+            let is_done = self.has_received_last_chunk.get();
+            let result = match stream {
+                streams::Result::Err(_) => {
+                    self.done.set(true);
+                    stream
                 }
-            } else {
-                let v = self.value();
-                self.pending.with_mut(|p| {
-                    p.result = streams::Result::IntoArray(IntoArray {
-                        value: v,
-                        len: to_copy_len as blob::SizeType, // @truncate
-                    });
-                });
-            }
+                streams::Result::Done => {
+                    self.done.set(true);
+                    streams::Result::Done
+                }
+                streams::Result::Owned(owned) | streams::Result::OwnedAndDone(owned) => {
+                    if is_done {
+                        self.done.set(true);
+                        if owned.is_empty() {
+                            streams::Result::Done
+                        } else {
+                            streams::Result::OwnedAndDone(owned)
+                        }
+                    } else {
+                        streams::Result::Owned(owned)
+                    }
+                }
+                streams::Result::Temporary(temp) | streams::Result::TemporaryAndDone(temp) => {
+                    let owned = temp.slice().to_vec();
+                    if is_done {
+                        self.done.set(true);
+                        if owned.is_empty() {
+                            streams::Result::Done
+                        } else {
+                            streams::Result::OwnedAndDone(owned)
+                        }
+                    } else {
+                        streams::Result::Owned(owned)
+                    }
+                }
+                _ => unreachable!(),
+            };
 
-            if has_remaining {
-                self.append(stream, to_copy_len)
-                    .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
-            } else {
-                // Only resume the producer when the whole chunk fit the pull
-                // view. When the tail spilled into `buffer` the next `on_pull`
-                // signals once it drains, so resuming now would let another
-                // producer chunk land with no reader to take it (it would go
-                // straight to `append` below), inflating `buffer` and the
-                // producer's own staging buffer by an extra recv each cycle.
-                self.signal_drained();
-            }
+            self.pending.with_mut(|p| p.result = result);
+            self.signal_drained();
 
             bun_output::scoped_log!(ByteStream, "ByteStream.onData pending.run()");
 
@@ -523,51 +496,26 @@ impl ByteStream {
         self.pending_value.with_mut(|pv| pv.set(global, view));
     }
 
-    fn on_pull(&self, buffer: &mut [u8], view: JSValue) -> streams::Result {
+    fn on_pull(&self, _buffer: &mut [u8], view: JSValue) -> streams::Result {
         bun_jsc::mark_binding!();
-        debug_assert!(!buffer.is_empty());
         debug_assert!(self.buffer_action.get().is_none());
 
         if !self.buffer.get().is_empty() {
             debug_assert!(self.value().is_empty()); // == .zero
-            // R-2: confine the `&mut Vec<u8>` to a `with_mut` so no `JsCell`
-            // borrow escapes the copy. The result tuple drives the rest.
-            let (to_write, remaining_in_buffer_len) = self.buffer.with_mut(|b| {
-                let to_write = (b.len() - self.offset.get()).min(buffer.len());
-                let remaining_in_buffer_len = to_write; // length of `this.buffer.items[this.offset..][0..to_write]`
-
-                buffer[..to_write].copy_from_slice(&b[self.offset.get()..][..to_write]);
-
-                if self.offset.get() + to_write == b.len() {
-                    self.offset.set(0);
-                    b.clear();
-                } else {
-                    self.offset.set(self.offset.get() + to_write);
-                }
-                (to_write, remaining_in_buffer_len)
-            });
-
-            if self.buffer.get().is_empty() {
-                self.signal_drained();
+            let offset = self.offset.replace(0);
+            let mut owned = self.buffer.replace(Vec::new());
+            if offset > 0 {
+                owned.drain(..offset);
             }
 
-            if self.has_received_last_chunk.get() && remaining_in_buffer_len == 0 {
-                self.buffer.with_mut(|b| {
-                    b.clear();
-                    b.shrink_to_fit();
-                });
+            self.signal_drained();
+
+            if self.has_received_last_chunk.get() {
                 self.done.set(true);
-
-                return streams::Result::IntoArrayAndDone(IntoArray {
-                    value: view,
-                    len: to_write as blob::SizeType, // @truncate
-                });
+                return streams::Result::OwnedAndDone(owned);
             }
 
-            return streams::Result::IntoArray(IntoArray {
-                value: view,
-                len: to_write as blob::SizeType, // @truncate
-            });
+            return streams::Result::Owned(owned);
         }
 
         if self.has_received_last_chunk.get() {
@@ -581,8 +529,8 @@ impl ByteStream {
             return streams::Result::Done;
         }
 
-        // Raw borrow of a JS-owned buffer; rooted by `set_value`.
-        self.pending_buffer.set(std::ptr::from_mut::<[u8]>(buffer));
+        // Parked until `on_data`. The pull view is never written into; it is
+        // rooted only so `on_cancel` can observe that a pull was outstanding.
         self.set_value(view);
 
         // R-2: `JsCell::as_ptr` yields the stable `*mut Pending` that the

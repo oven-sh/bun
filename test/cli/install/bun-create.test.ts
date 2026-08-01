@@ -1,8 +1,8 @@
 import { spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, mkdirSync } from "fs";
-import { exists, stat } from "fs/promises";
-import { bunExe, bunEnv as env, isPosix, tempDir, tls, tmpdirSync } from "harness";
+import { exists, mkdir, stat, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, isPosix, isWindows, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import * as nodetls from "node:tls";
 import { join } from "path";
@@ -85,6 +85,176 @@ it("should create selected template with @ prefix implicit `/create` with versio
   expect(err.split(/\r?\n/)).toContain(`error: GET https://registry.npmjs.org/@second-quick-start%2fcreate - 404`);
 
   await exited;
+});
+
+// https://github.com/oven-sh/bun/issues/13247
+// `bun create @scope/pkg` delegates to bunx, which spawns `bun add` in a temp
+// cache dir. The child could only discover the global ~/.bunfig.toml, so the
+// project-directory [install.scopes] mapping was ignored and the default npm
+// registry was queried instead.
+describe("bun create honors the project-local bunfig.toml [install.scopes]", () => {
+  async function makeCreateTarball(pkgName: string, binName: string) {
+    const root = tmpdirSync();
+    const pkgDir = join(root, "package");
+    await mkdir(pkgDir, { recursive: true });
+    await writeFile(
+      join(pkgDir, "package.json"),
+      JSON.stringify({ name: pkgName, version: "1.0.0", bin: { [binName]: "cli.js" } }),
+    );
+    await writeFile(join(pkgDir, "cli.js"), `#!/usr/bin/env node\nconsole.log("CREATE-RAN-FROM-SCOPED-REGISTRY");\n`);
+    const tgz = join(tmpdirSync(), "pkg.tgz");
+    await Bun.$`tar -czf ${tgz} -C ${root} package`;
+    return new Uint8Array(await Bun.file(tgz).arrayBuffer());
+  }
+
+  function scopedRegistry(pkgName: string, binName: string, tgz: Uint8Array, hits: string[]) {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const path = decodeURIComponent(new URL(req.url).pathname);
+        hits.push(path);
+        if (path.endsWith(".tgz")) return new Response(tgz);
+        return Response.json({
+          name: pkgName,
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name: pkgName,
+              version: "1.0.0",
+              bin: { [binName]: "cli.js" },
+              dist: { tarball: `http://127.0.0.1:${server.port}/pkg.tgz` },
+            },
+          },
+        });
+      },
+    });
+    return server;
+  }
+
+  function isolatedEnv(home: string, tmp: string) {
+    return {
+      ...env,
+      HOME: home,
+      USERPROFILE: home,
+      XDG_CONFIG_HOME: home,
+      TEMP: tmp,
+      TMPDIR: tmp,
+      BUN_TMPDIR: tmp,
+      BUN_INSTALL_CACHE_DIR: join(tmp, ".install-cache"),
+      npm_config_registry: undefined as any,
+      NPM_CONFIG_REGISTRY: undefined as any,
+      BUN_CONFIG_REGISTRY: undefined as any,
+    };
+  }
+
+  it("resolves @scope/create-* from the cwd bunfig.toml scope", async () => {
+    const pkgName = "@bun13247test/create-package";
+    const binName = "create-package";
+    const hits: string[] = [];
+    await using srv = scopedRegistry(pkgName, binName, await makeCreateTarball(pkgName, binName), hits);
+
+    const home = tmpdirSync();
+    const tmp = tmpdirSync();
+    // Global bunfig points at an unroutable address so the test never touches
+    // the public npm registry on the failing path.
+    await writeFile(join(home, ".bunfig.toml"), `[install]\nregistry = "http://127.0.0.1:1/"\n`);
+    await writeFile(
+      join(x_dir, "bunfig.toml"),
+      `[install.scopes]\nbun13247test = { url = "http://127.0.0.1:${srv.port}/" }\n`,
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "create", "@bun13247test/package"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: isolatedEnv(home, tmp),
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).not.toContain("registry.npmjs.org");
+    expect({ out: out.trim(), hits }).toEqual({
+      out: "CREATE-RAN-FROM-SCOPED-REGISTRY",
+      hits: [`/${pkgName}`, "/pkg.tgz"],
+    });
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  it("finds a bunfig.toml in a parent directory", async () => {
+    const pkgName = "@bun13247test/create-package";
+    const binName = "create-package";
+    const hits: string[] = [];
+    await using srv = scopedRegistry(pkgName, binName, await makeCreateTarball(pkgName, binName), hits);
+
+    const home = tmpdirSync();
+    const tmp = tmpdirSync();
+    const sub = join(x_dir, "a", "b");
+    mkdirSync(sub, { recursive: true });
+    await writeFile(join(home, ".bunfig.toml"), `[install]\nregistry = "http://127.0.0.1:1/"\n`);
+    await writeFile(
+      join(x_dir, "bunfig.toml"),
+      `[install.scopes]\nbun13247test = { url = "http://127.0.0.1:${srv.port}/" }\n`,
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "create", "@bun13247test/package"],
+      cwd: sub,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: isolatedEnv(home, tmp),
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ out: out.trim(), hits }).toEqual({
+      out: "CREATE-RAN-FROM-SCOPED-REGISTRY",
+      hits: [`/${pkgName}`, "/pkg.tgz"],
+    });
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  // On Unix the candidate is rejected unless it is (or resolves to) a regular
+  // file owned by the current user, so a bunfig.toml planted in a
+  // world-writable ancestor cannot redirect the install. chown to another uid
+  // needs root, so exercise the regular-file check via a directory named
+  // bunfig.toml.
+  it.skipIf(isWindows)("warns and ignores an ancestor bunfig.toml that is not a trusted regular file", async () => {
+    const pkgName = "@bun13247test/create-package";
+    const binName = "create-package";
+    const hits: string[] = [];
+    await using srv = scopedRegistry(pkgName, binName, await makeCreateTarball(pkgName, binName), hits);
+
+    const home = tmpdirSync();
+    const tmp = tmpdirSync();
+    const sub = join(x_dir, "work");
+    mkdirSync(sub, { recursive: true });
+    mkdirSync(join(x_dir, "bunfig.toml"), { recursive: true });
+    await writeFile(
+      join(home, ".bunfig.toml"),
+      `[install.scopes]\nbun13247test = { url = "http://127.0.0.1:${srv.port}/" }\n`,
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "create", "@bun13247test/package"],
+      cwd: sub,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: isolatedEnv(home, tmp),
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toContain("not a regular file owned by the current user");
+    expect(err).toContain(join(x_dir, "bunfig.toml"));
+    expect({ out: out.trim(), hits }).toEqual({
+      out: "CREATE-RAN-FROM-SCOPED-REGISTRY",
+      hits: [`/${pkgName}`, "/pkg.tgz"],
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // Close-delimited body (no Content-Length, no chunked) split across packets:

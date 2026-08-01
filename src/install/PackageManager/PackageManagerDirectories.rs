@@ -752,25 +752,21 @@ pub fn is_folder_in_cache(
     resolution_tag: ResolutionTag,
 ) -> bool {
     let cache_dir = get_cache_directory(this);
-    if resolution_tag != ResolutionTag::Npm {
-        return sys::directory_exists_at(cache_dir, folder_path).unwrap_or(false);
+    match resolution_tag {
+        // npm and tarball extractions always write a package.json; an entry
+        // without one is incomplete and must be re-extracted (#10423).
+        ResolutionTag::Npm | ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+            let mut buf = PathBuffer::uninit();
+            let path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+                &mut buf.0,
+                &[folder_path.as_bytes(), b"package.json"],
+            );
+            sys::exists_at(cache_dir, path)
+        }
+        // Git/GitHub deps are allowed to have no package.json (see repository.rs
+        // and extract_tarball.rs); their completeness marker is `.bun-tag`.
+        _ => sys::directory_exists_at(cache_dir, folder_path).unwrap_or(false),
     }
-    // Match `PackageInstall::package_missing_from_cache`: an npm cache entry without
-    // package.json is incomplete and must be re-extracted (#10423).
-    let folder = bun_core::strings::without_trailing_slash(folder_path.as_bytes());
-    if folder.is_empty() {
-        return false;
-    }
-    let mut buf = PathBuffer::uninit();
-    let mut len = folder.len();
-    buf[..len].copy_from_slice(folder);
-    buf[len] = SEP;
-    len += 1;
-    buf[len..len + b"package.json".len()].copy_from_slice(b"package.json");
-    len += b"package.json".len();
-    buf[len] = 0;
-    let path = ZStr::from_buf(&buf, len);
-    sys::exists_at(cache_dir, path)
 }
 
 // ─────────────────────────── global directories ───────────────────────────────

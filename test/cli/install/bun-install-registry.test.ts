@@ -1836,34 +1836,42 @@ cache = "${cacheDir.replaceAll("\\", "\\\\")}"
 // https://github.com/oven-sh/bun/issues/10423
 test("cache entry missing package.json is re-downloaded instead of reused", async () => {
   const cacheDir = join(packageDir, ".bun-cache");
-  await write(
-    packageJson,
-    JSON.stringify({
-      name: "foo",
-      version: "1.0.0",
-      dependencies: {
-        "no-deps": "1.0.0",
-        "uses-what-bin": "1.0.0",
-      },
-      trustedDependencies: ["uses-what-bin"],
-    }),
-  );
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "1.0.0",
+          "uses-what-bin": "1.0.0",
+          "baz": "file:baz-0.0.3.tgz",
+        },
+        trustedDependencies: ["uses-what-bin"],
+      }),
+    ),
+    cp(join(import.meta.dir, "baz-0.0.3.tgz"), join(packageDir, "baz-0.0.3.tgz")),
+  ]);
 
   await runBunInstall(env, packageDir);
   expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBeTrue();
   expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
+  expect(await exists(join(packageDir, "node_modules", "baz", "package.json"))).toBeTrue();
 
   // Corrupt the cache: delete package.json from every cached package directory.
   // A partially-written or externally-damaged cache entry looks like this.
-  let deleted = 0;
+  let deletedNpm = 0;
+  let deletedTarball = 0;
   for (const entry of await readdirSorted(cacheDir)) {
     const pkgJson = join(cacheDir, entry, "package.json");
     if (await exists(pkgJson)) {
       await rm(pkgJson);
-      deleted++;
+      if (entry.startsWith("@T@")) deletedTarball++;
+      else deletedNpm++;
     }
   }
-  expect(deleted).toBeGreaterThan(0);
+  expect(deletedNpm).toBeGreaterThan(0);
+  expect(deletedTarball).toBeGreaterThan(0);
 
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   await rm(join(packageDir, "bun.lock"), { force: true });
@@ -1891,18 +1899,27 @@ test("cache entry missing package.json is re-downloaded instead of reused", asyn
     name: "uses-what-bin",
     version: "1.0.0",
   });
+  expect(await file(join(packageDir, "node_modules", "baz", "package.json")).json()).toMatchObject({
+    name: "baz",
+    version: "0.0.3",
+  });
   expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
   expect(exitCode).toBe(0);
 
   // The cache entry itself should have been repopulated.
-  let repopulated = 0;
+  let repopulatedNpm = 0;
+  let repopulatedTarball = 0;
   for (const entry of await readdirSorted(cacheDir)) {
     if (entry.startsWith("no-deps@") || entry.startsWith("uses-what-bin@")) {
       expect(await exists(join(cacheDir, entry, "package.json"))).toBeTrue();
-      repopulated++;
+      repopulatedNpm++;
+    } else if (entry.startsWith("@T@")) {
+      expect(await exists(join(cacheDir, entry, "package.json"))).toBeTrue();
+      repopulatedTarball++;
     }
   }
-  expect(repopulated).toBeGreaterThanOrEqual(2);
+  expect(repopulatedNpm).toBeGreaterThanOrEqual(2);
+  expect(repopulatedTarball).toBeGreaterThanOrEqual(1);
 });
 
 test("dependency from root satisfies range from dependency", async () => {

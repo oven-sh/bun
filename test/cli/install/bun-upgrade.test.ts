@@ -157,6 +157,12 @@ describe.concurrent(() => {
         ...env,
         NODE_TLS_REJECT_UNAUTHORIZED: "0",
         GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+        http_proxy: undefined,
+        https_proxy: undefined,
+        no_proxy: undefined,
+        HTTP_PROXY: undefined,
+        HTTPS_PROXY: undefined,
+        NO_PROXY: undefined,
         // The bogus archive makes the upgrade exit via Global::exit(1) while
         // the HTTP thread and the intentionally-leaked progress buffers are
         // still live; not what this test asserts.
@@ -210,9 +216,13 @@ describe.concurrent(() => {
       },
     });
 
+    const noProxy = `${api.hostname},localhost,127.0.0.1,::1`;
+    const httpsProxy = `http://${proxy.hostname}:${proxy.port}`;
     const cwd = tmpdirSync();
+    const execPath = join(cwd, basename(bunExe()));
+    await copyFile(bunExe(), execPath);
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "upgrade", "--canary"],
+      cmd: [execPath, "upgrade", "--canary"],
       cwd,
       stdout: null,
       stdin: "pipe",
@@ -221,8 +231,12 @@ describe.concurrent(() => {
         ...env,
         NODE_TLS_REJECT_UNAUTHORIZED: "0",
         GITHUB_API_DOMAIN: `${api.hostname}:${api.port}`,
-        HTTPS_PROXY: `http://${proxy.hostname}:${proxy.port}`,
-        NO_PROXY: `${api.hostname},localhost,127.0.0.1,::1`,
+        http_proxy: undefined,
+        HTTP_PROXY: undefined,
+        https_proxy: httpsProxy,
+        HTTPS_PROXY: httpsProxy,
+        no_proxy: noProxy,
+        NO_PROXY: noProxy,
         ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
       },
     });

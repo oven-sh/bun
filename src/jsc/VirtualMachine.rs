@@ -6196,9 +6196,6 @@ impl VirtualMachine {
         Ok(())
     }
 
-    /// If `name`/`message` describe a `ReferenceError: <global> is not defined`
-    /// for a browser-only DOM global, return that global's name so the printer
-    /// can add a "preload a DOM library" hint.
     fn dom_global_from_reference_error(
         name: bun_core::String,
         message: bun_core::String,

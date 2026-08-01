@@ -6332,37 +6332,36 @@ impl<'a> Resolver<'a> {
                 } else {
                     FD::ZERO
                 };
-                let parsed_tsconfig: Option<*mut TSConfigJSON> = match self
-                    .parse_tsconfig(tsconfigpath, tsconfig_dirname_fd)
-                {
-                    Ok(v) => v.map(bun_core::heap::into_raw),
-                    Err(err) => {
-                        let pretty = tsconfigpath;
-                        if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                            let _ = self.log_mut().add_error_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "Cannot find tsconfig file {}",
-                                    bun_core::fmt::quote(pretty)
-                                ),
-                            );
-                        } else if err != crate::Error::ParseErrorAlreadyLogged
-                            && err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
-                        {
-                            let _ = self.log_mut().add_error_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "Cannot read file {}: {}",
-                                    bun_core::fmt::quote(pretty),
-                                    bstr::BStr::new(err.name())
-                                ),
-                            );
+                let parsed_tsconfig: Option<*mut TSConfigJSON> =
+                    match self.parse_tsconfig(tsconfigpath, tsconfig_dirname_fd) {
+                        Ok(v) => v.map(bun_core::heap::into_raw),
+                        Err(err) => {
+                            let pretty = tsconfigpath;
+                            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                                let _ = self.log_mut().add_error_fmt(
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    format_args!(
+                                        "Cannot find tsconfig file {}",
+                                        bun_core::fmt::quote(pretty)
+                                    ),
+                                );
+                            } else if err != crate::Error::ParseErrorAlreadyLogged
+                                && err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
+                            {
+                                let _ = self.log_mut().add_error_fmt(
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    format_args!(
+                                        "Cannot read file {}: {}",
+                                        bun_core::fmt::quote(pretty),
+                                        bstr::BStr::new(err.name())
+                                    ),
+                                );
+                            }
+                            None
                         }
-                        None
-                    }
-                };
+                    };
                 // NOTE: assigning info.tsconfig_json here and then freeing that
                 // allocation in the merge loop below before reassigning would
                 // leave a briefly-dangling reference

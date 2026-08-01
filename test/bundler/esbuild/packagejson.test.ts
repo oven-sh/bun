@@ -990,6 +990,90 @@ describe("bundler", () => {
       stdout: "true",
     },
   });
+  itBundled("packagejson/DualPackageHazardJsnextMainRequireOnly", {
+    // https://github.com/oven-sh/bun/issues/5004
+    // "jsnext:main" is the historical name for "module" and is in Bun's
+    // browser default main-field list, so it needs the same require/import
+    // fallback that "module" gets.
+    files: {
+      "/Users/user/project/src/entry.js": `console.log(require('demo-pkg'))`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "main": "./main.js",
+          "jsnext:main": "./module.js"
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = 'main'`,
+      "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
+    },
+    run: {
+      stdout: "main",
+    },
+  });
+  itBundled("packagejson/DualPackageHazardJsnextMainImportOnly", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import value from 'demo-pkg'
+        console.log(value)
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "main": "./main.js",
+          "jsnext:main": "./module.js"
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = 'main'`,
+      "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
+    },
+    run: {
+      stdout: "module",
+    },
+  });
+  itBundled("packagejson/DualPackageHazardJsnextMainImportAndRequireSameFile", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import value from 'demo-pkg'
+        console.log(value, require('demo-pkg'))
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "main": "./main.js",
+          "jsnext:main": "./module.js"
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = 'main'`,
+      "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
+    },
+    run: {
+      stdout: "main main",
+    },
+  });
+  itBundled("packagejson/DualPackageHazardJsnextMainRequireFunction", {
+    // https://github.com/oven-sh/bun/issues/5004 — the exact moment.js shape:
+    // CJS entry exports a function, ESM entry `export default`s a function.
+    // require() must get the callable, not `{ default: [Function] }`.
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        const demo = require('demo-pkg');
+        console.log(typeof demo, demo());
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "main": "./main.js",
+          "jsnext:main": "./dist/module.js"
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/main.js": /* js */ `
+        module.exports = function demo() { return 'main' }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/module.js": /* js */ `
+        export default function demo() { return 'module' }
+      `,
+    },
+    run: {
+      stdout: "function main",
+    },
+  });
   itBundled("packagejson/DualPackageHazardModuleFieldNoMainField", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `

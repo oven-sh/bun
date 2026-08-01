@@ -1438,16 +1438,9 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
         return;
     }
 
-    // Per the WHATWG spec, "when the WebSocket connection is closed ... the
-    // user agent must queue a task" to set readyState to CLOSED and fire the
-    // close event. This path is reached synchronously from ws.terminate()
-    // (C++ terminate() -> Rust cancel() -> dispatch_abrupt_close ->
-    // didFailWithErrorCode -> here) and from socket-level failures while
-    // OPEN, so dispatching without a task would run onclose before the call
-    // returns. didFailWithErrorCode has already cleared
-    // m_connectedWebSocketKind, so move to CLOSING synchronously: send()/
-    // ping()/pong() called before the task runs then take their CLOSING
-    // branch instead of reaching sendWebSocketData() with kind == None.
+    // Spec: queue a task to set CLOSED and fire the close event. The caller
+    // has already cleared m_connectedWebSocketKind, so move to CLOSING now
+    // to keep send()/ping()/pong() out of sendWebSocketData() with no kind.
     m_state = CLOSING;
     if (auto* context = scriptExecutionContext()) {
         const bool dispatchError = wasConnecting && isConnectionError;
@@ -1521,17 +1514,10 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     // so we just call decPendingActivityCount() after dispatching the event
     ASSERT(m_pendingActivityCount > 0);
 
-    // Per the WHATWG spec, "when the WebSocket connection is closed ... the
-    // user agent must queue a task" to set readyState to CLOSED and fire the
-    // close event. This is reached synchronously from ws.close() (C++
-    // close() -> Rust close() -> send_close_with_body -> dispatch_close ->
-    // here) and from a server-initiated Close, so dispatching without a task
-    // would run onclose before close() returns (issue #15665).
-    // m_connectedWebSocketKind is already None above and the Rust side has
-    // cleared outgoing_websocket, so no second callback can arrive; move to
-    // CLOSING synchronously so send()/ping()/pong() called before the task
-    // runs take their CLOSING branch instead of reaching sendWebSocketData()
-    // with kind == None.
+    // Spec: queue a task to set CLOSED and fire the close event (#15665: this
+    // is reached synchronously from ws.close()). Kind is already None above,
+    // so move to CLOSING now to keep send()/ping()/pong() out of
+    // sendWebSocketData() with no kind until the task runs.
     m_state = CLOSING;
     if (auto* context = scriptExecutionContext()) {
         context->postTask([code, wasClean, reason, protectedThis = Ref { *this }](ScriptExecutionContext& context) {

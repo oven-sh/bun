@@ -527,10 +527,6 @@ impl Expect {
                             Promise::None => unreachable!(),
                         },
                         js_promise::Status::Pending => {
-                            // wait_for_promise() returns Pending when the event
-                            // loop drains with nothing left that could settle
-                            // the promise (or execution is forbidden). Fail the
-                            // matcher instead of spinning at 100% CPU.
                             if !silent {
                                 let expectation = match resolution {
                                     Promise::Rejects => "Expected promise that rejects",

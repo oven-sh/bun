@@ -950,12 +950,9 @@ impl EventLoop {
             }
             self.tick();
             if promise.status() == PromiseStatus::Pending {
-                // auto_tick() does not block when the I/O loop is idle
-                // (`us_loop_run_bun_tick` returns immediately once
-                // `num_polls == 0`), so an unsettleable promise with nothing
-                // keeping the loop alive would spin here at 100% CPU. Bail
-                // like wait_for_promise_with_termination(); the caller sees a
-                // still-pending promise (node's "unsettled TLA" path).
+                // auto_tick() does not block once the I/O loop is idle, so an
+                // unsettleable promise would spin at 100% CPU; bail like
+                // wait_for_promise_with_termination().
                 if !self.vm_ref().is_event_loop_alive() {
                     break;
                 }

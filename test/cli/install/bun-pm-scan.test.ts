@@ -475,6 +475,7 @@ describe.concurrent("bun pm scan", () => {
             scanner: {
               version: "1",
               scan: async function() {
+                // Timing output is only printed when the scan takes >= 1000ms.
                 await new Promise(resolve => setTimeout(resolve, 1050));
                 return [];
               }

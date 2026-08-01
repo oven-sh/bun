@@ -1076,13 +1076,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 ..Default::default()
                             }));
                         } else {
-                            // an error
-                            // logger OOM-only
                             // Split-borrow — `static_route_visitor.c` holds a
                             // detached `&LinkerContext`; `log_disjoint` returns the
                             // disjoint `Transpiler.log` backref so no `&mut c` is
                             // materialized.
-                            let _ = c.log_disjoint().add_error_fmt(
+                            c.log_disjoint().add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 format_args!(
@@ -1090,6 +1088,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                     bstr::BStr::new(&chunk.final_rel_path)
                                 ),
                             );
+                            // `output_files` was pre-sized assuming this chunk
+                            // would produce a bytecode entry; bailing here keeps
+                            // the `take()` insertion-count invariant intact.
+                            return Err(crate::Error::BuildFailed);
                         }
                     }
                 }

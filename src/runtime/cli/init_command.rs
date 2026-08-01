@@ -736,9 +736,8 @@ impl InitCommand {
                     true
                 };
 
-            // tsconfig.default.json sets `"jsx": "react-jsx"`; without react and
-            // @types/react a .tsx file can neither run nor typecheck (#5056).
             let needs_react_dependency = !minimal
+                && template == Template::Blank
                 && 'brk: {
                     for key in [
                         b"dependencies".as_slice(),

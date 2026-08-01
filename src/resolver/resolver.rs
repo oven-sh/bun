@@ -6224,9 +6224,8 @@ impl<'a> Resolver<'a> {
                             // nested package.json dependencies for resolution;
                             // honoring them made auto-install pick the wrong
                             // version constraint (issue #6988).
-                            let enclosing_is_installed = info
-                                .package_json_for_dependencies()
-                                .is_some_and(|p| {
+                            let enclosing_is_installed =
+                                info.package_json_for_dependencies().is_some_and(|p| {
                                     p.package_manager_package_id != Install::INVALID_PACKAGE_ID
                                 });
                             if !enclosing_is_installed {

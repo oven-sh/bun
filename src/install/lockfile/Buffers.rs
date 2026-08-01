@@ -405,9 +405,6 @@ pub(crate) fn load(
 
     macro_rules! load_generic_field {
         ($field:ident, $name:literal, $elem:ty) => {{
-            #[cfg(debug_assertions)]
-            let _pos: usize = stream.pos;
-
             this.$field = read_array::<$elem>(stream)?;
             if let Some(pm) = pm_.as_deref() {
                 if pm.options.log_level.is_verbose() {
@@ -419,9 +416,6 @@ pub(crate) fn load(
 
     // -- trees --
     {
-        #[cfg(debug_assertions)]
-        let _pos: usize = stream.pos;
-
         let tree_list: Vec<tree::External> = read_array(stream)?;
         // `set_len` then `iter_mut()` would form `&mut Tree` to uninitialized
         // memory (UB), so we push into the reserved capacity instead.
@@ -440,9 +434,6 @@ pub(crate) fn load(
 
     // -- dependencies --
     {
-        #[cfg(debug_assertions)]
-        let _pos: usize = stream.pos;
-
         external_dependency_list_ = read_array::<dependency::External>(stream)?;
         if let Some(pm) = pm_.as_deref() {
             if pm.options.log_level.is_verbose() {

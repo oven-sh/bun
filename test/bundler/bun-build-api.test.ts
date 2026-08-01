@@ -1527,9 +1527,9 @@ test("Bun.build can be called thousands of times in one process without crashing
 }, 180_000);
 
 test("sourcemap sourcesContent is valid JSON when source contains C0 control chars", async () => {
-  // RFC 8259 only allows \" \\ \/ \b \f \n \r \t \uXXXX as escapes; \v and
-  // \xNN are JavaScript-only. A VT (0x0B) or BEL (0x07) in the input used to
-  // leak through as \v / \x07 and break JSON.parse on the .map file.
+  // RFC 8259 only allows \" \\ \/ \b \f \n \r \t and six-char \u escapes; \v
+  // and \xNN are JavaScript-only. A VT (0x0B) or BEL (0x07) in the input used
+  // to leak through as \v / \x07 and break JSON.parse on the .map file.
   const controls = Array.from({ length: 0x20 }, (_, i) => String.fromCharCode(i)).join("");
   const source = `/* ctrl: [${controls}] */\nexport const x = 1;\n`;
   using dir = tempDir("sourcemap-json-ctrl", { "in.js": source });

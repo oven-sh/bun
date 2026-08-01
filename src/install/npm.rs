@@ -1949,6 +1949,76 @@ impl PackageManifest {
 
         None
     }
+
+    /// Like [`find_best_version`](Self::find_best_version) but only returns a
+    /// version for which `extra_ok(version)` is also true. Used when
+    /// auto-installing a peer dependency to pick a version that satisfies
+    /// every sibling peer range for the same package name, not just the
+    /// first-seen range.
+    pub fn find_best_version_extra(
+        &self,
+        group: &Semver::query::Group,
+        group_buf: &[u8],
+        extra_ok: impl Fn(Semver::Version) -> bool,
+    ) -> Option<FindResult<'_>> {
+        let left = group.head.head.range.left;
+        if left.op == Semver::range::Op::Eql {
+            let r = self.find_by_version(left.version)?;
+            return extra_ok(r.version).then_some(r);
+        }
+
+        if let Some(result) = self.find_by_dist_tag(b"latest") {
+            if group.satisfies(result.version, group_buf, &self.string_buf)
+                && extra_ok(result.version)
+            {
+                if group.flags.is_set(Semver::query::Flags::PRE) {
+                    if left
+                        .version
+                        .order(result.version, group_buf, &self.string_buf)
+                        == core::cmp::Ordering::Equal
+                    {
+                        return Some(result);
+                    }
+                } else {
+                    return Some(result);
+                }
+            }
+        }
+
+        {
+            let releases = self.pkg.releases.keys.get(&self.versions);
+            let packages = self.pkg.releases.values.get(&self.package_versions);
+            let mut i = releases.len();
+            while i > 0 {
+                let version = releases[i - 1];
+                if group.satisfies(version, group_buf, &self.string_buf) && extra_ok(version) {
+                    return Some(FindResult {
+                        version,
+                        package: &packages[i - 1],
+                    });
+                }
+                i -= 1;
+            }
+        }
+
+        if group.flags.is_set(Semver::query::Flags::PRE) {
+            let prereleases = self.pkg.prereleases.keys.get(&self.versions);
+            let packages = self.pkg.prereleases.values.get(&self.package_versions);
+            let mut i = prereleases.len();
+            while i > 0 {
+                let version = prereleases[i - 1];
+                if group.satisfies(version, group_buf, &self.string_buf) && extra_ok(version) {
+                    return Some(FindResult {
+                        version,
+                        package: &packages[i - 1],
+                    });
+                }
+                i -= 1;
+            }
+        }
+
+        None
+    }
 }
 
 // Keys are pre-hashed string hashes, so don't re-hash them.

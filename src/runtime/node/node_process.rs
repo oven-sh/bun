@@ -359,8 +359,6 @@ mod _impl {
             if worker.is_some_and(|w| w.eval_mode()) {
                 args_list.push(BunString::static_(b"[worker eval]"));
             } else {
-                // Node sets argv[1] to `path.resolve(argv[1])` — absolute but
-                // not realpath'd — so a symlinked entry keeps the link path.
                 args_list.push(BunString::borrow_utf8(vm.main_for_argv()));
             }
         }

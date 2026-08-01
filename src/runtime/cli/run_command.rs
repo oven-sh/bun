@@ -913,10 +913,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// `VirtualMachine::init`,
     /// hand off CLI state, then enter `Run::start` under the JSC API lock.
     ///
-    /// `argv_path`, when `Some`, is the entry path as the user wrote it
-    /// (absolute, `..`/`.` collapsed, symlinks **not** resolved) and becomes
-    /// `process.argv[1]`. `None` means `entry_path` is used for both module
-    /// loading and `argv[1]`.
+    /// `argv_path` becomes `process.argv[1]` when `Some`; `None` means
+    /// `entry_path` is used for both module loading and `argv[1]`.
     pub(crate) fn boot(
         ctx: &mut ContextData,
         entry_path: Box<[u8]>,
@@ -2785,11 +2783,8 @@ impl RunCommand {
         Ok(false)
     }
 
-    /// Absolutize `target` against cwd for `process.argv[1]`: `.`/`..`
-    /// collapsed, separators normalized, symlinks left as-is, trailing
-    /// separator stripped. Matches Node's `path.resolve(argv[1])` for every
-    /// input the CLI accepts as an entry script. Returns `None` only if
-    /// `getcwd` fails.
+    /// Node's `path.resolve(argv[1])`: absolute against cwd, `.`/`..`
+    /// collapsed, trailing separator stripped, symlinks left as-is.
     fn absolutize_for_argv(target: &[u8]) -> Option<Box<[u8]>> {
         let mut cwd_buf = PathBuffer::uninit();
         let cwd = bun_core::getcwd(&mut cwd_buf).ok()?;
@@ -2801,9 +2796,6 @@ impl RunCommand {
             &mut out_buf.0,
             &[target],
         );
-        // `join_abs_string_buf` preserves a trailing separator; `path.resolve`
-        // strips it. The normalizer emits only the native separator, so
-        // checking `SEP` leaves a literal `\` in a POSIX filename alone.
         while joined.len() > 1 && joined[joined.len() - 1] == paths::SEP {
             joined = &joined[..joined.len() - 1];
         }
@@ -2912,9 +2904,6 @@ impl RunCommand {
             ..Default::default()
         });
 
-        // process.argv[1]: the path the user wrote, made absolute but NOT
-        // realpath'd (Node does `path.resolve(argv[1])`). Compute before
-        // `get_fd_path` overwrites `script_name_buf`.
         let argv_path = Self::absolutize_for_argv(target);
 
         // Re-derive the canonical absolute path from the open fd (resolves
@@ -2931,8 +2920,6 @@ impl RunCommand {
         };
         let _ = bun_sys::close(fd);
 
-        // Skip the separate argv allocation when it would be identical to the
-        // realpath (no symlink in the chain).
         let argv_path = argv_path.filter(|p| p[..] != absolute_script_path[..]);
 
         Self::boot_and_handle_error(ctx, &absolute_script_path, argv_path, None)

@@ -156,9 +156,8 @@ pub struct VirtualMachine {
     /// `RawSlice` carries the BACKREF outlives-holder invariant — read via
     /// `main()`.
     main: bun_ptr::RawSlice<u8>,
-    /// Path to report as `process.argv[1]`: the entry path the user wrote,
-    /// made absolute but NOT realpath'd. Empty means "use `main`". BACKREF
-    /// with the same outlives invariant as `main`.
+    /// `process.argv[1]`: the entry path as written (absolute, not realpath'd).
+    /// Empty falls back to `main`. Same BACKREF invariant as `main`.
     main_for_argv: bun_ptr::RawSlice<u8>,
     pub main_is_html_entrypoint: bool,
     pub main_resolved_path: bun_core::String,
@@ -2248,8 +2247,7 @@ impl VirtualMachine {
         self.main = bun_ptr::RawSlice::new(path);
     }
 
-    /// Path to report as `process.argv[1]` (see `main_for_argv` field doc).
-    /// Falls back to [`Self::main`] when empty.
+    /// `process.argv[1]` path; falls back to [`Self::main`] when unset.
     #[inline]
     pub fn main_for_argv(&self) -> &[u8] {
         let argv = self.main_for_argv.slice();
@@ -2260,8 +2258,7 @@ impl VirtualMachine {
         }
     }
 
-    /// Set the `process.argv[1]` path. Caller guarantees `path`'s storage
-    /// outlives this VM (BACKREF — see `main` field doc).
+    /// Caller guarantees `path` outlives this VM (BACKREF; see `main`).
     #[inline]
     pub fn set_main_for_argv(&mut self, path: &[u8]) {
         self.main_for_argv = bun_ptr::RawSlice::new(path);

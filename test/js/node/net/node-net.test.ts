@@ -733,7 +733,7 @@ it("unref survives an autoSelectFamily retry", async () => {
     // Once the sentinel timer fires nothing but the unref'd (connected,
     // reading) socket remains, so the process must exit.
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(new Set(stdout.trim().split("\n"))).toEqual(new Set(["connected 127.0.0.1", "timer"]));
+    expect(stdout.trim().split("\n").sort()).toEqual(["connected 127.0.0.1", "timer"]);
     expect(exitCode).toBe(0);
   } finally {
     server.close();

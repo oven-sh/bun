@@ -114,3 +114,24 @@ test.skipIf(!isMacOS)("concurrent lookups return complete answer sets", async ()
   expect(lines.some(l => l.records >= 2)).toBe(true);
   expect(exitCode).toBe(0);
 });
+
+// The dns_sd backend can't express IP literals (incl. inet_aton shorthand),
+// scoped IPv6, or getaddrinfo hint bits, so those inputs must still route to
+// getaddrinfo and keep resolving as before.
+test.skipIf(!isMacOS)("literals, scoped IPv6 and hints stay on getaddrinfo", async () => {
+  const dns = require("dns");
+  const results = await Promise.all([
+    dns.promises.lookup("::1"),
+    dns.promises.lookup("127.1"),
+    dns.promises.lookup("0x7f000001"),
+    dns.promises.lookup("fe80::1%lo0"),
+    dns.promises.lookup("localhost", { family: 6, hints: dns.V4MAPPED }),
+  ]);
+  expect(results).toEqual([
+    { address: "::1", family: 6 },
+    { address: "127.0.0.1", family: 4 },
+    { address: "127.0.0.1", family: 4 },
+    { address: "fe80::1%lo0", family: 6 },
+    { address: "::1", family: 6 },
+  ]);
+});

@@ -995,7 +995,7 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
                 timer_arm!(
                     crate::dns_jsc::dns_sd::SharedConnection,
                     early_out_timer,
-                    |c, _now, _vm| crate::dns_jsc::dns_sd::SharedConnection::on_early_out(c)
+                    |c, _now, _vm| (*c).on_early_out()
                 )
             }
             #[cfg(not(target_os = "macos"))]

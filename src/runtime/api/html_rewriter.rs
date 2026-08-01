@@ -669,10 +669,9 @@ impl BufferOutputSink {
                 status_code: 200,
                 ..Default::default()
             },
-            webcore::Body::new(webcore::body::Value::from_readable_stream_without_lock_check(
-                out_readable,
-                global,
-            )),
+            webcore::Body::new(
+                webcore::body::Value::from_readable_stream_without_lock_check(out_readable, global),
+            ),
             BunString::empty(),
             false,
         )));
@@ -808,11 +807,12 @@ impl BufferOutputSink {
         // sequenced so it cannot.
         let input_sink: &mut HTMLRewriterInputSink =
             Box::leak(Box::new(HTMLRewriterInputSink::new(self)));
-        let assignment_result = crate::webcore::sink::JSSink::<HTMLRewriterInputSink>::assign_to_stream(
-            global,
-            readable_stream.value,
-            input_sink,
-        );
+        let assignment_result =
+            crate::webcore::sink::JSSink::<HTMLRewriterInputSink>::assign_to_stream(
+                global,
+                readable_stream.value,
+                input_sink,
+            );
         assignment_result.ensure_still_alive();
 
         if let Some(err) = assignment_result.to_error() {

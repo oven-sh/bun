@@ -821,7 +821,7 @@ where
         }
         match c {
             0x07 => {
-                writer.write_all(b"\\x07")?;
+                writer.write_all(if json { b"\\u0007" } else { b"\\x07" })?;
                 i += 1;
             }
             0x08 => {
@@ -846,7 +846,7 @@ where
             }
             // \v
             0x0B => {
-                writer.write_all(b"\\v")?;
+                writer.write_all(if json { b"\\u000B" } else { b"\\v" })?;
                 i += 1;
             }
             // "\\"

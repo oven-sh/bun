@@ -2814,9 +2814,7 @@ impl<'a> Resolver<'a> {
                                 }
                             }
 
-                            // Check the "browser" map before extension resolution so a key
-                            // like "./no-ext" can remap `import 'pkg/no-ext'` before it is
-                            // resolved to `no-ext.js`. Matches esbuild's tryToResolvePackage.
+                            // Check the "browser" map
                             if self.care_about_browser_field {
                                 if let Some(browser_scope) =
                                     pkg_dir_info.get_enclosing_browser_scope()
@@ -2872,10 +2870,8 @@ impl<'a> Resolver<'a> {
                                             return MatchStatus::Success;
                                         }
 
-                                        // A package-path remap recurses into load_node_modules,
-                                        // which overwrites bufs!(node_modules_check) (abs_path)
-                                        // and bufs!(esm_subpath) (esm_.subpath). Recompute both
-                                        // from stable inputs before falling through.
+                                        // A package-path remap recurses here and overwrites the
+                                        // bufs! storage backing abs_path and esm_.subpath.
                                         if remap_is_package_path {
                                             if !is_self_reference {
                                                 abs_path = match self.fs_ref().abs_buf_checked(

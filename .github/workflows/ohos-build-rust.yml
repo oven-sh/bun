@@ -82,14 +82,17 @@ jobs:
           REMOTE="https://gh-proxy.com/https://github.com/springmin/bun.git"
           rm -rf bun
           if [ -d "$LOCAL/.git" ]; then
+            # Hardlink from local checkout — ~5s; a network clone of the 36GB
+            # repo (even depth-1 via gh-proxy) takes 30+ min on this runner.
             git clone --reference "$LOCAL/.git" "$REMOTE" bun 2>/dev/null || \
-              git clone --depth 1 --branch ohos-aarch64 "$REMOTE" bun
+              cp -a --link "$LOCAL" bun
             cd bun
+            git remote set-url origin "$REMOTE"
             git fetch "$REMOTE" ohos-aarch64 --depth=1 2>/dev/null || true
             if git rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
               git checkout -f FETCH_HEAD
             else
-              echo "⚠️  Bun fetch failed — using clone checkout ($(git rev-parse --short HEAD))"
+              echo "⚠️  Bun fetch failed — using local reference checkout ($(git rev-parse --short HEAD))"
             fi
             echo "✅ Cloned from local reference"
           else

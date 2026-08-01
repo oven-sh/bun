@@ -96,9 +96,10 @@ describe("bundler", () => {
         capture({a: 1, set c(v) {}}.a);
         capture({a: 1, c() { return 2; }}.a);
         capture({a: 1, 5: 2, c: 3}.c);
-        capture({a: 1, b: 2}.c = 5);
-        id(delete {a: 1, b: 2}.c);
-        ({a: 1, b: 2}).c\`tag\`;
+        capture({a: 1, b: 2}.a = 5);
+        id({a: bound, b: 2}.a\`tag\`);
+        id({a: bound, b: 2}["a"]\`tag\`);
+        id({a: bound}.a\`tag\`);
       `,
     },
     minifySyntax: true,
@@ -112,12 +113,13 @@ describe("bundler", () => {
       "{a:1,set c(v){}}.a",
       "{a:1,c(){return 2}}.a",
       "{a:1,5:2,c:3}.c",
-      "{a:1,b:2}.c=5",
+      "{a:1,b:2}.a=5",
     ],
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      expect(code).toContain("delete{a:1,b:2}.c");
-      expect(code).toContain("({a:1,b:2}).c`tag`");
+      // Both `.a` and `["a"]` tags must keep the object literal (the bracket form is rewritten to dot).
+      expect(code).toContain("id({a:bound,b:2}.a`tag`);id({a:bound,b:2}.a`tag`)");
+      expect(code).toContain("id({a:bound}.a`tag`)");
     },
   });
   itBundled("minify/InlineObjectLiteralPropertyAccessRuntime", {
@@ -125,6 +127,8 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         var hits = 0;
         const eff = (v) => { hits++; return v; };
+        const __proto__ = 42;
+        const f = function () { return this.marker; };
         console.log(JSON.stringify([
           {a: 1, b: 2, c: 3}.c,
           {a: 1, b: 2, c: 3}["a"],
@@ -134,12 +138,14 @@ describe("bundler", () => {
           {a: 1, c: 3}.missing,
           {a: eff(7), c: 3}.c,
           {a: 1, get c() { return 9; }}.a,
+          {__proto__: null, __proto__}.__proto__,
+          {a: f, b: 2, marker: "OBJ"}.a\`x\`,
         ]));
         console.log("hits=" + hits);
       `,
     },
     minifySyntax: true,
-    run: { stdout: "[3,1,4,1,null,null,3,1]\nhits=1" },
+    run: { stdout: '[3,1,4,1,null,null,3,1,42,"OBJ"]\nhits=1' },
   });
   itBundled("minify/StringAdditionFolding", {
     files: {

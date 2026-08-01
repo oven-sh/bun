@@ -462,6 +462,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             && !identifier_opts.is_delete_target()
                             && identifier_opts.assign_target() == js_ast::AssignTarget::None
                             && !identifier_opts.is_call_target()
+                            && !identifier_opts.is_template_tag()
                         {
                             let len = obj.properties.len_u32() as usize;
 
@@ -516,10 +517,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     break;
                                 };
 
-                                if e_string_eql_bytes(&key_str, b"__proto__") {
+                                if e_string_eql_bytes(&key_str, b"__proto__")
+                                    && !flags.contains(Flags::Property::WasShorthand)
+                                {
+                                    // Colon-form `__proto__:` sets [[Prototype]] (Annex B.3.1), not an own property.
                                     if matches!(value.data, js_ast::ExprData::ENull(_)) {
                                         has_proto_null = true;
                                     }
+                                    if !p.expr_can_be_removed_if_unused(&value) {
+                                        is_unsafe = true;
+                                        break;
+                                    }
+                                    continue;
                                 }
 
                                 if !p.expr_can_be_removed_if_unused(&value) {
@@ -534,11 +543,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
 
                             if !is_unsafe {
-                                // "{__proto__: null}.__proto__" is undefined, not null.
-                                if name != b"__proto__" {
-                                    if let Some(value) = replace {
-                                        return Some(value);
-                                    }
+                                if let Some(value) = replace {
+                                    return Some(value);
                                 }
                                 // A miss may resolve via Object.prototype unless __proto__ was nulled.
                                 if has_proto_null {

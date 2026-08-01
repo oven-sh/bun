@@ -749,11 +749,8 @@ pub unsafe fn spawn_process_posix(
     // index spawned.{stdin,stdout,stderr} via a helper closure.
     let mut dup_stdout_to_stderr: bool = false;
 
-    // A caller-supplied fd at one stdio slot may be the target of an
-    // earlier slot's dup2 (e.g. stdio: [2, 0, 0] → dup2(2,0) clobbers fd 0
-    // before slots 1/2 read it). Like libuv's uv__process_child_init,
-    // F_DUPFD any such source fd to a temporary >= 3 in the parent and
-    // register dup2(tmp, slot) instead.
+    // stdio: [2,0,0] would dup2(2,0) then dup2(0,1), reading the clobbered
+    // fd 0. Save any source fd < 3 aside first (same as uv__process_child_init).
     let mut saved_stdio_src: [Option<Fd>; 3] = [None; 3];
     for (i, stdio) in stdio_options.iter().enumerate() {
         let PosixStdio::Pipe(fd) = *stdio else {

@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { lookup } from "dns/promises";
 import { bunEnv, bunExe, isMacOS } from "harness";
 
 // On macOS, libinfo's getaddrinfo_async_start dispatches each lookup onto the

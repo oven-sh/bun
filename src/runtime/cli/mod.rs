@@ -786,10 +786,26 @@ pub mod command {
 
     /// Apply a `--cwd <dir>` / `--cwd=<dir>` that preceded the subcommand
     /// keyword, for handlers that don't route through `arguments::parse` /
-    /// `CommandLineArguments::parse`.
+    /// `CommandLineArguments::parse`. Last occurrence wins (clap semantics).
     #[cold]
     pub(crate) fn apply_leading_cwd() {
-        fn chdir(dir: &[u8]) {
+        let argv = bun::argv();
+        let end = subcommand_argv_index().min(argv.len());
+        let mut last: Option<&[u8]> = None;
+        let mut i = 1;
+        while i < end {
+            let a = argv.get(i).map(|z| z.as_bytes()).unwrap_or(b"");
+            if a == b"--cwd" {
+                if let Some(dir) = argv.get(i + 1).filter(|_| i + 1 < end) {
+                    last = Some(dir.as_bytes());
+                    i += 1;
+                }
+            } else if let Some(dir) = a.strip_prefix(b"--cwd=") {
+                last = Some(dir);
+            }
+            i += 1;
+        }
+        if let Some(dir) = last {
             let dir_z = bun_core::ZBox::from_bytes(dir);
             if let bun_sys::Result::Err(err) = bun_sys::chdir(&dir_z) {
                 Output::err(
@@ -799,23 +815,6 @@ pub mod command {
                 );
                 Global::exit(1);
             }
-        }
-        let argv = bun::argv();
-        let end = subcommand_argv_index().min(argv.len());
-        let mut i = 1;
-        while i < end {
-            let a = argv.get(i).map(|z| z.as_bytes()).unwrap_or(b"");
-            if a == b"--cwd" {
-                if let Some(dir) = argv.get(i + 1).filter(|_| i + 1 < end) {
-                    chdir(dir.as_bytes());
-                }
-                return;
-            }
-            if let Some(dir) = a.strip_prefix(b"--cwd=") {
-                chdir(dir);
-                return;
-            }
-            i += 1;
         }
     }
 

@@ -1366,6 +1366,39 @@ describe("bundler", () => {
     },
   });
 
+  // A missing export used both in metadata and as a value must keep the
+  // build error; only fully metadata-guarded imports degrade to undefined.
+  itBundled("decorator_metadata/MissingExportWithValueUseStillErrors", {
+    files: {
+      "/entry.ts": /* ts */ `
+            import { User } from "./user";
+
+            function d1(..._: any[]) {}
+
+            class Post {
+                @d1 author!: User;
+            }
+
+            console.log(new User());
+        `,
+      "/user.ts": /* ts */ `
+            export class UserEntity {}
+        `,
+      "/tsconfig.json": /* json */ `
+            {
+                "compilerOptions": {
+                    "experimentalDecorators": true,
+                    "emitDecoratorMetadata": true,
+                }
+            }
+        `,
+    },
+    bundling: true,
+    bundleErrors: {
+      "/entry.ts": ['No matching export in "user.ts" for import "User"'],
+    },
+  });
+
   itBundled("decorator_metadata/ImportedTypeTsconfigPaths", {
     files: {
       "/src/entry.ts": /* ts */ `

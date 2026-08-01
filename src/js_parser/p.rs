@@ -406,6 +406,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Maps a named/default import's local ref to `(namespace_ref, alias)` so
     /// `serialize_metadata` can emit `ns.alias` instead of the named binding.
     pub(crate) import_namespace_of_item: HashMap<Ref, (Ref, js_ast::StoreStr)>,
+    /// How many uses of an import ref sit inside a metadata `typeof` guard;
+    /// the guarded-missing-export flag is only set when that is all of them.
+    pub(crate) decorator_metadata_guarded_uses: HashMap<Ref, u32>,
     pub(crate) named_imports: NamedImportsType<'a>,
     pub(crate) named_exports: bun_ast::ast_result::NamedExports,
 
@@ -7105,8 +7108,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 self.record_usage(ref_);
                 let e = if self.is_import_item.contains_key(&ref_) {
-                    self.symbols[ref_.inner_index() as usize]
-                        .set_is_decorator_metadata_guarded(true);
+                    self.record_decorator_metadata_guarded_use(ref_);
                     self.new_expr(
                         E::ImportIdentifier {
                             ref_,
@@ -7174,8 +7176,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     *current_expr = root;
                 } else if self.is_import_item.contains_key(&refs[0]) {
                     self.record_usage(refs[0]);
-                    self.symbols[refs[0].inner_index() as usize]
-                        .set_is_decorator_metadata_guarded(true);
+                    self.record_decorator_metadata_guarded_use(refs[0]);
                     *current_expr = self.new_expr(
                         E::ImportIdentifier {
                             ref_: refs[0],
@@ -7286,6 +7287,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(None);
         };
         self.maybe_defined_helper(dot).map(Some)
+    }
+
+    /// Mirrors `record_usage`'s liveness checks so the guarded count can be
+    /// compared against `use_count_estimate` when the visit is done.
+    fn record_decorator_metadata_guarded_use(&mut self, ref_: Ref) {
+        if !self.is_revisit_for_substitution && !self.is_control_flow_dead {
+            *self
+                .decorator_metadata_guarded_uses
+                .get_or_put(ref_)
+                .expect("unreachable")
+                .value_ptr += 1;
+        }
+    }
+
+    /// A missing export is only tolerable when every use of the import is a
+    /// metadata `typeof` guard; a real value use must keep the linker error.
+    fn flag_fully_guarded_metadata_imports(&mut self) {
+        for (ref_, guarded_uses) in self.decorator_metadata_guarded_uses.iter() {
+            let symbol = &mut self.symbols[ref_.inner_index() as usize];
+            if symbol.use_count_estimate == *guarded_uses {
+                symbol.set_is_decorator_metadata_guarded(true);
+            }
+        }
     }
 
     #[cold]
@@ -7989,6 +8013,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Box<js_ast::Ast<'a>>, crate::Error> {
         use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
         use crate::scan::scan_imports::ImportScanner;
+
+        self.flag_fully_guarded_metadata_imports();
 
         let arena = self.arena;
 
@@ -8887,6 +8913,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             import_items_for_namespace: Default::default(),
             is_import_item: Default::default(),
             import_namespace_of_item: Default::default(),
+            decorator_metadata_guarded_uses: Default::default(),
             scope_order_to_visit: &[],
             module_scope_directive_loc: bun_ast::Loc::default(),
             is_control_flow_dead: false,

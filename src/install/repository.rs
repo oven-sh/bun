@@ -722,12 +722,30 @@ impl RepositoryExt for Repository {
                     &[folder_name.as_bytes()],
                 );
 
-                if let Err(err) = exec(env, &[b"git", b"-C", path, b"fetch", b"--quiet"]) {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!("\"git fetch\" for \"{}\" failed", BStr::new(name)),
-                    );
+                // `clone --bare` configures `remote.origin.url` but no fetch
+                // refspec, so a bare `git fetch` only updates FETCH_HEAD.
+                // Fetch heads and tags explicitly against `url` so caches
+                // created by older builds are also repaired.
+                if let Err(err) = exec(
+                    env,
+                    &[
+                        b"git",
+                        b"-C",
+                        path,
+                        b"fetch",
+                        b"--quiet",
+                        url,
+                        b"+refs/heads/*:refs/heads/*",
+                        b"+refs/tags/*:refs/tags/*",
+                    ],
+                ) {
+                    if err == crate::Error::RepositoryNotFound || attempt > 1 {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!("\"git fetch\" for \"{}\" failed", BStr::new(name)),
+                        );
+                    }
                     return Err(err);
                 }
                 Ok(dir)

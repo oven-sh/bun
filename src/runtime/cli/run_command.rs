@@ -93,8 +93,7 @@ impl Default for ExecCfg {
 pub(crate) struct RunCommand;
 
 impl RunCommand {
-    /// npm-compat: `npm run script -- args` drops the leading `--`; file
-    /// execution keeps it (Node does), so only script/`.bin` callers use this.
+    /// `npm run script -- args` drops the leading `--`.
     #[inline]
     pub(crate) fn passthrough_for_script(passthrough: &[Box<[u8]>]) -> &[Box<[u8]>] {
         match passthrough.split_first() {

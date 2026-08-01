@@ -309,8 +309,17 @@ impl ResolveMessage {
         msg: &bun_ast::Msg,
         referrer: &[u8],
     ) -> JsResult<JSValue> {
+        let mut cloned = msg.clone();
+        if let bun_ast::Metadata::Resolve(resolve) = &cloned.metadata
+            && resolve.err == bun_ast::Error::ModuleNotFound
+            && let Some(note) = blocked_lifecycle_script_note(referrer)
+        {
+            let mut notes = cloned.notes.into_vec();
+            notes.push(note);
+            cloned.notes = notes.into_boxed_slice();
+        }
         let resolve_error = ResolveMessage {
-            msg: msg.clone(),
+            msg: cloned,
             referrer: Some(Box::<[u8]>::from(referrer)),
             logged: Cell::new(false),
         };
@@ -369,4 +378,102 @@ impl ResolveMessage {
         // Dropping the Box drops `msg` and the owned `referrer` buffer.
         drop(self);
     }
+}
+
+/// When a module fails to resolve from inside `node_modules/<pkg>/...` and
+/// `<pkg>` has an install-class lifecycle script, return a hint pointing at
+/// `bun pm trust`. Bun blocks lifecycle scripts by default for packages not in
+/// `trustedDependencies`, which leaves packages that depend on their own
+/// `postinstall` (for example to rename a bundled `temp_modules/` into
+/// `node_modules/`) in a broken state with no obvious remediation.
+///
+/// Cold path: only called once resolve has already failed.
+#[cold]
+fn blocked_lifecycle_script_note(referrer: &[u8]) -> Option<bun_ast::Data> {
+    let (pkg_name, pkg_dir) = enclosing_node_modules_package(referrer)?;
+    let script = first_lifecycle_script(pkg_dir)?;
+
+    let mut text = Vec::new();
+    write!(
+        &mut text,
+        "\"{name}\" has a \"{script}\" script which may have been blocked. If you trust this \
+         package, run `bun pm trust {name}` and try again.",
+        name = bstr::BStr::new(&pkg_name),
+    )
+    .ok()?;
+    Some(bun_ast::range_data(None, bun_ast::Range::NONE, text))
+}
+
+/// Parse the deepest `node_modules/<name>` the referrer path sits inside.
+/// Returns the package name (with `/` as the scope separator) and the absolute
+/// package directory (a prefix of `referrer`).
+#[cold]
+fn enclosing_node_modules_package(referrer: &[u8]) -> Option<(Vec<u8>, &[u8])> {
+    let nm_start = strings::last_index_of(referrer, bun_paths::NODE_MODULES_NEEDLE)?;
+    let name_start = nm_start + bun_paths::NODE_MODULES_NEEDLE.len();
+    let rest = referrer.get(name_start..)?;
+    let next_sep = |bytes: &[u8]| bytes.iter().position(|&c| bun_paths::is_sep_any(c));
+    let name_len = if rest.first() == Some(&b'@') {
+        let scope_end = next_sep(rest)?;
+        let pkg_end = next_sep(rest.get(scope_end + 1..)?)?;
+        scope_end + 1 + pkg_end
+    } else {
+        next_sep(rest)?
+    };
+    if name_len == 0 || rest[..name_len].starts_with(b".") {
+        return None;
+    }
+    let mut name = rest[..name_len].to_vec();
+    for b in &mut name {
+        if *b == b'\\' {
+            *b = b'/';
+        }
+    }
+    Some((name, &referrer[..name_start + name_len]))
+}
+
+/// Probe `<pkg_dir>/package.json` for an install-class script. This is a
+/// byte-level heuristic rather than a full JSON parse: it looks for `"scripts"`
+/// and then one of the lifecycle hook keys after it. A `binding.gyp` alongside
+/// the manifest also counts, matching the auto `node-gyp rebuild` behaviour.
+#[cold]
+fn first_lifecycle_script(pkg_dir: &[u8]) -> Option<&'static str> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+
+    let manifest = bun_paths::resolve_path::join_string_buf::<bun_paths::platform::Auto>(
+        buf.as_mut_slice(),
+        &[pkg_dir, b"package.json"],
+    );
+    if let Ok(bytes) = bun_sys::File::read_from(bun_sys::Fd::cwd(), manifest)
+        && let Some(scripts_at) = strings::index_of(&bytes, b"\"scripts\"")
+    {
+        // Bound the scan to the `"scripts"` object so a sibling key like
+        // `"dependencies": { "install": "^1.0.0" }` cannot match. `scripts` is
+        // a flat `Record<string, string>`, so the first `}` after the key
+        // closes it.
+        let after = &bytes[scripts_at + b"\"scripts\"".len()..];
+        let end = strings::index_of_char(after, b'}')
+            .map(|i| i as usize)
+            .unwrap_or(after.len());
+        let scripts = &after[..end];
+        for (hook, key) in [
+            ("preinstall", b"\"preinstall\"" as &[u8]),
+            ("install", b"\"install\""),
+            ("postinstall", b"\"postinstall\""),
+        ] {
+            if strings::contains(scripts, key) {
+                return Some(hook);
+            }
+        }
+    }
+
+    let gyp = bun_paths::resolve_path::join_string_buf::<bun_paths::platform::Auto>(
+        buf.as_mut_slice(),
+        &[pkg_dir, b"binding.gyp"],
+    );
+    if bun_sys::exists(gyp) {
+        return Some("install");
+    }
+
+    None
 }

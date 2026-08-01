@@ -7,21 +7,11 @@ using namespace JSC;
 
 namespace Bun {
 
-// CodeBlock::finishCreation registers every nested function expression with
-// FunctionHasExecutedCache::insertUnexecutedRange against the *owner* SourceID,
-// using the expression's unlinkedFunctionStart/End. For a class with no explicit
-// constructor, BytecodeGenerator::emitNewDefaultConstructor adds an executable
-// synthesized from BuiltinExecutables::defaultConstructorSourceCode() to that list,
-// so the range is in the synthetic provider's coordinate space rather than the
-// owner's. UnlinkedFunctionExecutable::linkedSourceCode swaps back to the synthetic
-// provider when the constructor runs, so removeUnexecutedRange fires against the
-// synthetic SourceID and the owner-SourceID entry is never cleared. The entry is
-// therefore always (hasExecuted == false) and always at one of these two offsets,
-// derived by BuiltinExecutables::createExecutable as unlinkedFunctionStart =
-// strlen("(") and unlinkedFunctionEnd = source.length() - 2:
-//
-//   "(function () { })"                         -> (1, 15)
-//   "(function (...args) { super(...args); })"  -> (1, 38)
+// A default class constructor is synthesized from BuiltinExecutables::defaultConstructorSourceCode().
+// CodeBlock::finishCreation inserts its (unlinkedFunctionStart, unlinkedFunctionEnd) against the
+// owner SourceID, but UnlinkedFunctionExecutable::linkedSourceCode routes the matching remove to the
+// synthetic SourceID, so the owner-SourceID entry is permanently !hasExecuted at
+// (strlen("("), sourceLen-2) of one of these two source strings.
 static constexpr std::pair<int, int> defaultConstructorRange(size_t sourceLength)
 {
     return { 1, static_cast<int>(sourceLength) - 2 };

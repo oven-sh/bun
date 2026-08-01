@@ -236,9 +236,7 @@ pub mod text {
         let red = pretty_fmt::<ENABLE_COLORS>("<red>");
         let comma = pretty_fmt::<ENABLE_COLORS>("<r><d>,<r>");
 
-        // Collapse consecutive indices into `a-b` runs. `pending` is the inclusive
-        // [start, end] of the current run; `None` means no run yet (line 0 is a valid
-        // index, so a zero sentinel would alias the first source line).
+        // Inclusive [start, end] of the current run of consecutive uncovered lines.
         let mut pending: Option<(usize, usize)> = None;
         let mut is_first = true;
         while let Some(line) = iter.next() {

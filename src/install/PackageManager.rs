@@ -500,6 +500,8 @@ impl Subcommand {
 pub(crate) fn absolutize_folder_positionals(
     positionals: &'static [&'static [u8]],
 ) -> Option<&'static [&'static [u8]]> {
+    use bun_install::dependency::DependencyExt as _;
+
     let mut cwd_buf = PathBuffer::uninit();
     let mut cwd: Option<&[u8]> = None;
     let mut join_buf = PathBuffer::uninit();
@@ -514,7 +516,9 @@ pub(crate) fn absolutize_folder_positionals(
 
         // `name@<value>` alias form: isolate the value so `name@./pkg` is handled.
         let (alias, mut value): (&[u8], &[u8]) = 'split: {
-            if input.len() > 1 && !strings::is_npm_package_name(input) {
+            if input.len() > 1
+                && !(!Dependency::is_tarball(input) && strings::is_npm_package_name(input))
+            {
                 if let Some(at) = strings::index_of_char(&input[1..], b'@') {
                     let at = at as usize + 1;
                     let name = &input[..at];
@@ -544,7 +548,8 @@ pub(crate) fn absolutize_folder_positionals(
         };
 
         if value.is_empty()
-            || !(had_file_scheme || value[0] == b'.')
+            || !(had_file_scheme || value[0] == b'.' || Dependency::is_tarball(value))
+            || Dependency::is_remote_tarball(value)
             || value.starts_with(b"~/")
             || bun_paths::is_absolute(value)
         {

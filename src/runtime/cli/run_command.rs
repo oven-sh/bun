@@ -93,12 +93,8 @@ impl Default for ExecCfg {
 pub(crate) struct RunCommand;
 
 impl RunCommand {
-    /// Drop a leading `--` from the passthrough args for package.json scripts
-    /// and `node_modules/.bin` binaries. `npm run script -- args` treats that
-    /// `--` as the package manager's end-of-options marker and does not forward
-    /// it; Node running a file keeps it in `process.argv`. The argument parser
-    /// leaves passthrough verbatim so file execution matches Node, and the
-    /// npm-compatible call sites route through here.
+    /// npm-compat: `npm run script -- args` drops the leading `--`; file
+    /// execution keeps it (Node does), so only script/`.bin` callers use this.
     #[inline]
     pub(crate) fn passthrough_for_script(passthrough: &[Box<[u8]>]) -> &[Box<[u8]>] {
         match passthrough.split_first() {

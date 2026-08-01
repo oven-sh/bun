@@ -550,11 +550,6 @@ impl<Id> ComptimeClap<Id> {
             if param.names.long.is_none() && param.names.short.is_none() {
                 pos.push(arg.value.unwrap());
                 if opt.stop_after_positional_at > 0 && pos.len() >= opt.stop_after_positional_at {
-                    // Everything after the terminating positional is passed through
-                    // verbatim, including a leading `--`. Node preserves `--` in
-                    // `process.argv` when running a file; callers that need npm's
-                    // `run script -- args` stripping do it themselves (see
-                    // `RunCommand::passthrough_for_script`).
                     let remaining_ = stream.iter.remain();
                     passthrough_positionals.reserve_exact(remaining_.len());
                     for arg_ in remaining_ {

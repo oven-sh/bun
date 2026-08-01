@@ -171,11 +171,34 @@ impl Lazy {
                     'brk: {
                         #[cfg(unix)]
                         {
-                            let rc = open_as_nonblocking_tty(pl_fd.native(), sys::O::RDONLY);
+                            // Reopen with the original access mode so swapping
+                            // the stdio fd's description does not downgrade
+                            // O_RDWR to O_RDONLY.
+                            let mode = sys::get_fcntl_flags(*pl_fd)
+                                .map(|f| f as i32 & sys::O::ACCMODE)
+                                .unwrap_or(sys::O::RDONLY);
+                            let rc = open_as_nonblocking_tty(pl_fd.native(), mode);
                             if rc > -1 {
+                                let new_fd = Fd::from_native(rc);
+                                // libuv's uv_tty_init reopens the tty and
+                                // dup2's the new description back onto the
+                                // stdio fd so that direct syscalls against it
+                                // (fs.readSync(0) etc.) observe O_NONBLOCK,
+                                // without touching the parent process's open
+                                // file description. Use a second reopen for
+                                // the stdio fd so spawn's inherit path (which
+                                // clears O_NONBLOCK on the inherited fd, like
+                                // libuv) cannot turn our reader's fd blocking.
+                                // https://github.com/oven-sh/bun/issues/5305
+                                let rc2 = open_as_nonblocking_tty(pl_fd.native(), mode);
+                                if rc2 > -1 {
+                                    let tmp = Fd::from_native(rc2);
+                                    let _ = sys::dup2(tmp, *pl_fd);
+                                    tmp.close();
+                                }
                                 is_nonblocking = true;
                                 file.is_atty = Some(true);
-                                break 'brk Fd::from_native(rc);
+                                break 'brk new_fd;
                             }
                         }
                         break 'brk *pl_fd;

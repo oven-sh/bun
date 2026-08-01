@@ -778,6 +778,10 @@ pub unsafe fn spawn_process_posix(
                 }
             }
             PosixStdio::Inherit => {
+                // libuv clears O_NONBLOCK on stdio it passes through so the
+                // child sees blocking stdin/stdout/stderr even if the parent's
+                // stdio stream made the fd nonblocking (uv_tty_init + dup2).
+                let _ = bun_sys::update_nonblocking(fileno, false);
                 actions.inherit(fileno)?;
             }
             PosixStdio::Ipc | PosixStdio::Ignore => {

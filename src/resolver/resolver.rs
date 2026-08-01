@@ -5053,8 +5053,10 @@ impl<'a> Resolver<'a> {
                             dec_ret!(MatchStatus::Success);
                         }
 
-                        field_abs_path =
-                            self.fs_ref().abs_buf(&[path, remap], bufs!(field_abs_path));
+                        // `remap` is relative to the package that owns the browser map.
+                        field_abs_path = self
+                            .fs_ref()
+                            .abs_buf(&[browser_scope.abs_path, remap], bufs!(field_abs_path));
                     }
                 }
             }
@@ -5271,7 +5273,9 @@ impl<'a> Resolver<'a> {
                     {
                         // Is the path disabled?
                         if remap.is_empty() {
-                            let mut _path = Path::init(index_abs_path);
+                            let new_path =
+                                self.fs_ref().abs_alloc(&index_paths).expect("unreachable");
+                            let mut _path = Path::init(new_path);
                             _path.is_disabled = true;
                             *out = MatchResult {
                                 path_pair: PathPair {
@@ -5284,7 +5288,10 @@ impl<'a> Resolver<'a> {
                             return MatchStatus::Success;
                         }
 
-                        let new_paths = [path, remap];
+                        // `remap` is relative to the package that owns the browser map,
+                        // which may be an ancestor of `path` (e.g. `demo-pkg/sub/` with
+                        // the browser map in `demo-pkg/package.json`).
+                        let new_paths = [browser_scope.abs_path, remap];
                         let remapped_abs = self.fs_ref().abs_buf(&new_paths, bufs!(remap_path));
 
                         // Is this a file

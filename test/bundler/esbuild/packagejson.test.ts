@@ -2183,6 +2183,49 @@ describe("bundler", () => {
       stdout: "disabled",
     },
   });
+  // A subpath that resolves to a directory's implicit "index" is checked
+  // against the enclosing package's browser map, and the remap target is
+  // resolved relative to that package (not the subdirectory).
+  itBundled("packagejson/BrowserMapSubpathDirIndex", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import value from 'demo-pkg/sub'
+        console.log(value)
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "browser": {
+            "./sub/index.js": "./browser-sub.js"
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/sub/index.js": `module.exports = 'sub-index'`,
+      "/Users/user/project/node_modules/demo-pkg/browser-sub.js": `module.exports = 'browser-sub'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "browser-sub",
+    },
+  });
+  itBundled("packagejson/BrowserMapSubpathDirIndexDisabled", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        console.log(require('demo-pkg/sub') === 'sub-index' ? 'loaded' : 'disabled')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "browser": {
+            "./sub/index": false
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/sub/index.js": `module.exports = 'sub-index'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "disabled",
+    },
+  });
   // When "main" points at a directory, the implicit "<dir>/index" is checked
   // against the browser map before extension resolution.
   itBundled("packagejson/BrowserMapMainFieldDirIndexNoExt", {

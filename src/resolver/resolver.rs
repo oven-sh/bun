@@ -6075,13 +6075,6 @@ impl<'a> Resolver<'a> {
             info.enclosing_package_json = info
                 .enclosing_package_json
                 .or(parent_.enclosing_package_json);
-            // `package_json_for_dependencies` is used by auto-install to decide
-            // which package.json's `dependencies` constrain a bare specifier.
-            // The parent's field is already the correctly-propagated value
-            // (set when the parent was processed below), so inherit it as-is;
-            // re-deriving from `parent_.package_json` here would let a nested
-            // package.json inside an installed package override the package
-            // root. See https://github.com/oven-sh/bun/issues/6988.
             info.package_json_for_dependencies = parent_.package_json_for_dependencies;
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
@@ -6212,25 +6205,17 @@ impl<'a> Resolver<'a> {
                             info.enclosing_package_json = Some(pkg);
                         }
 
-                        if pkg.package_manager_package_id != Install::INVALID_PACKAGE_ID {
+                        let enclosing_is_installed_root =
+                            info.package_json_for_dependencies().is_some_and(|p| {
+                                p.package_manager_package_id != Install::INVALID_PACKAGE_ID
+                            });
+                        if pkg.package_manager_package_id != Install::INVALID_PACKAGE_ID
+                            || (pkg.dependencies.map.count() > 0 && !enclosing_is_installed_root)
+                        {
                             // NOTE: store the raw `NonNull` field (not the
                             // `&'static` accessor result) so mut-provenance flows
                             // through to `enqueue_dependency_to_resolve`.
                             info.package_json_for_dependencies = info.package_json;
-                        } else if pkg.dependencies.map.count() > 0 {
-                            // A nested package.json with `dependencies` only
-                            // overrides when no enclosing installed-package root
-                            // has already claimed this subtree. npm/node ignore
-                            // nested package.json dependencies for resolution;
-                            // honoring them made auto-install pick the wrong
-                            // version constraint (issue #6988).
-                            let enclosing_is_installed =
-                                info.package_json_for_dependencies().is_some_and(|p| {
-                                    p.package_manager_package_id != Install::INVALID_PACKAGE_ID
-                                });
-                            if !enclosing_is_installed {
-                                info.package_json_for_dependencies = info.package_json;
-                            }
                         }
 
                         if let Some(logs) = self.debug_logs.as_mut() {

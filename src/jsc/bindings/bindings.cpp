@@ -5433,6 +5433,36 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
             (void)scope.tryClearException();
             return;
         }
+
+        // DOM wrappers (URL, Headers, FormData, Event subclasses, etc.) expose their state
+        // through accessors defined on the prototype and have no own data properties, so the
+        // own-property scan above yields an empty `{}` in jest diffs/snapshots and
+        // `Bun.inspect(..., { sorted: true })`. Walk the prototype chain for those types the
+        // way forEachProperty does so their accessors are enumerated. Other objects keep the
+        // own-properties-only behaviour pretty-format expects.
+        if (object->type() == JSC::JSType(JSDOMWrapperType) || object->type() == JSC::JSType(JSEventType)) {
+            size_t prototypeCount = 1;
+            JSObject* iterating = object->getPrototype(globalObject).getObject();
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+                return;
+            }
+            while (iterating && prototypeCount++ < 5
+                && !(iterating == globalObject->objectPrototype()
+                    || iterating == globalObject->functionPrototype()
+                    || (iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject))) {
+                iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
+                if (scope.exception()) [[unlikely]] {
+                    (void)scope.tryClearException();
+                    return;
+                }
+                iterating = iterating->getPrototype(globalObject).getObject();
+                if (scope.exception()) [[unlikely]] {
+                    (void)scope.tryClearException();
+                    return;
+                }
+            }
+        }
     }
 
     auto vector = properties.data()->propertyNameVector();

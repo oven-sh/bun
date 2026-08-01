@@ -1015,116 +1015,118 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.fn_only_data_visit.class_name_ref = old_class_name_ref;
             }
 
-            // note: our version assumes useDefineForClassFields is true
             if Self::IS_TYPESCRIPT_ENABLED {
-                if let Some(mut constructor) = constructor_function {
-                    // `constructor` is a `StoreRef<E::Function>` arena slot captured from
-                    // `class.properties[i].value.data` above; arena-owned for 'a, and the
-                    // per-property `&mut [Property]` borrow has been released. Moving the
-                    // `Property` structs below does not invalidate this pointer (it points to
-                    // a separate Store allocation, not into the Property slice itself).
-                    let func_args: bun_ast::StoreSlice<G::Arg> = constructor.func.args;
-                    let mut to_add: usize = 0;
-                    for arg in func_args.iter() {
-                        if arg.is_typescript_ctor_field
-                            && matches!(arg.binding.data, BData::BIdentifier(_))
-                        {
-                            to_add += 1;
+                let use_define = self.options.use_define_for_class_fields;
+
+                // Count constructor parameter properties.
+                let (func_args, param_props): (bun_ast::StoreSlice<G::Arg>, usize) =
+                    match constructor_function {
+                        Some(cf) => {
+                            let args = cf.func.args;
+                            let n = args
+                                .iter()
+                                .filter(|a| {
+                                    a.is_typescript_ctor_field
+                                        && matches!(a.binding.data, BData::BIdentifier(_))
+                                })
+                                .count();
+                            (args, n)
+                        }
+                        None => (bun_ast::StoreSlice::EMPTY, 0),
+                    };
+
+                // When `useDefineForClassFields: false`, instance fields are lowered to
+                // `this.x = init` in the constructor, after parameter-property
+                // assignments (matching tsc/esbuild). Decorated fields have their
+                // initializer lowered here as well, and the now-initializer-less
+                // property is kept so `lower_class` still emits the decorator call.
+                // Computed non-literal keys are left as native class fields so the
+                // key expression is not re-evaluated per instance.
+                let is_lowerable_field = |prop: &G::Property| -> bool {
+                    if use_define
+                        || prop.kind != PropertyKind::Normal
+                        || prop.flags.contains(flags::Property::IsMethod)
+                        || prop.flags.contains(flags::Property::IsStatic)
+                        || prop.value.is_some()
+                    {
+                        return false;
+                    }
+                    match prop.key.map(|k| k.data) {
+                        None => false,
+                        Some(ExprData::EPrivateIdentifier(_)) => true,
+                        Some(ExprData::EString(_) | ExprData::ENumber(_)) => {
+                            !prop.flags.contains(flags::Property::IsComputed)
+                                || prop.initializer.is_none()
+                        }
+                        _ => {
+                            !prop.flags.contains(flags::Property::IsComputed)
+                                && prop.initializer.is_none()
                         }
                     }
+                };
 
-                    // if this is an expression, we can move statements after super() because there will be 0 decorators
-                    let mut super_index: Option<usize> = None;
-                    if class.extends.is_some() {
-                        let body_stmts = constructor.func.body.stmts.slice();
-                        for (index, stmt) in body_stmts.iter().enumerate() {
-                            let is_super = match &stmt.data {
-                                StmtData::SExpr(se) => match &se.value.data {
-                                    ExprData::ECall(call) => {
-                                        matches!(call.target.data, ExprData::ESuper(_))
-                                    }
-                                    _ => false,
-                                },
-                                _ => false,
-                            };
-                            if !is_super {
+                let fields_to_lower = if use_define {
+                    0
+                } else {
+                    class
+                        .properties
+                        .slice()
+                        .iter()
+                        .filter(|p| is_lowerable_field(p))
+                        .count()
+                };
+
+                if param_props > 0 || fields_to_lower > 0 {
+                    // Build the list of statements to inject (parameter-property
+                    // assignments first, then lowered field initializers).
+                    let mut injected = BumpVec::<Stmt>::with_capacity_in(
+                        param_props + fields_to_lower,
+                        self.arena,
+                    );
+                    // Declaration-only class fields for parameter properties (emitted
+                    // only when use_define is true, matching tsc).
+                    let mut param_prop_decls = BumpVec::<G::Property>::new_in(self.arena);
+
+                    let args_len = func_args.len();
+                    for arg_idx in 0..args_len {
+                        // reshaped for borrowck — copy the scalars we need
+                        // (id_ref, bind_loc) out of the arg before calling `&mut self`
+                        // helpers, so no live `&Arg` overlaps `self.new_expr`/`declare_symbol`.
+                        let (id_ref, bind_loc) = {
+                            let arg = &func_args[arg_idx];
+                            if !arg.is_typescript_ctor_field {
                                 continue;
                             }
-                            super_index = Some(index);
-                            break;
-                        }
-                    }
-
-                    if to_add > 0 {
-                        // to match typescript behavior, we also must prepend to the class body
-                        let old_body: &[Stmt] = constructor.func.body.stmts.slice();
-                        let mut stmts =
-                            BumpVec::<Stmt>::with_capacity_in(old_body.len() + to_add, self.arena);
-                        stmts.extend_from_slice(old_body);
-
-                        let old_props: bun_ast::StoreSlice<G::Property> = class.properties;
-                        let old_props_len = old_props.len();
-                        let mut class_body = BumpVec::<G::Property>::with_capacity_in(
-                            old_props_len + to_add,
-                            self.arena,
-                        );
-                        // BumpVec can't adopt a foreign arena slice, so move each element
-                        // out by `ptr::read` (G::Property has no Drop; old slice becomes dead
-                        // arena bytes).
-                        for i in 0..old_props_len {
-                            // SAFETY: in-bounds; arena-owned; no Drop on Property.
-                            unsafe {
-                                class_body.push(core::ptr::read(old_props.as_ptr().add(i)));
+                            match arg.binding.data {
+                                BData::BIdentifier(id) => (id.r#ref, arg.binding.loc),
+                                _ => continue,
                             }
-                        }
-                        let mut j: usize = 0;
+                        };
 
-                        let args_len = func_args.len();
-                        for arg_idx in 0..args_len {
-                            // reshaped for borrowck — copy the scalars we need
-                            // (id_ref, bind_loc) out of the arg before calling `&mut self`
-                            // helpers, so no live `&Arg` overlaps `self.new_expr`/`declare_symbol`.
-                            let (id_ref, bind_loc) = {
-                                let arg = &func_args[arg_idx];
-                                if !arg.is_typescript_ctor_field {
-                                    continue;
-                                }
-                                match arg.binding.data {
-                                    BData::BIdentifier(id) => (id.r#ref, arg.binding.loc),
-                                    _ => continue,
-                                }
-                            };
+                        // SAFETY: original_name is an arena-owned slice valid for 'a.
+                        let name: &'a [u8] = self.symbols[id_ref.inner_index() as usize]
+                            .original_name
+                            .slice();
+                        let arg_ident = self.new_expr(
+                            E::Identifier {
+                                ref_: id_ref,
+                                ..Default::default()
+                            },
+                            bind_loc,
+                        );
+                        let this_target = self.new_expr(E::This {}, bind_loc);
+                        let dot = self.new_expr(
+                            E::Dot {
+                                target: this_target,
+                                name: name.into(),
+                                name_loc: bind_loc,
+                                ..Default::default()
+                            },
+                            bind_loc,
+                        );
+                        injected.push(Stmt::assign(dot, arg_ident));
 
-                            // SAFETY: original_name is an arena-owned slice valid for 'a.
-                            let name: &'a [u8] = self.symbols[id_ref.inner_index() as usize]
-                                .original_name
-                                .slice();
-                            let arg_ident = self.new_expr(
-                                E::Identifier {
-                                    ref_: id_ref,
-                                    ..Default::default()
-                                },
-                                bind_loc,
-                            );
-                            let this_target = self.new_expr(E::This {}, bind_loc);
-                            let dot = self.new_expr(
-                                E::Dot {
-                                    target: this_target,
-                                    name: name.into(),
-                                    name_loc: bind_loc,
-                                    ..Default::default()
-                                },
-                                bind_loc,
-                            );
-                            let insert_at = match super_index {
-                                Some(k) => j + k + 1,
-                                None => j,
-                            };
-                            stmts.insert(insert_at, Stmt::assign(dot, arg_ident));
-
-                            // O(N)
-                            // `Vec::insert` opens a 1-slot gap at j and writes the
-                            // new field (memmove + write).
+                        if use_define {
                             // Copy the argument name symbol to prevent the class field
                             // declaration from being renamed but not the constructor argument.
                             let field_symbol_ref = self
@@ -1139,19 +1141,182 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 },
                                 bind_loc,
                             );
-                            class_body.insert(
-                                j,
-                                G::Property {
-                                    key: Some(field_ident),
+                            param_prop_decls.push(G::Property {
+                                key: Some(field_ident),
+                                ..Default::default()
+                            });
+                        }
+                    }
+
+                    // Rebuild the class body: prepended param-prop declarations (if any),
+                    // then the original properties minus lowered fields. While walking,
+                    // emit each lowered field's `this.x = init` into `injected`.
+                    let old_props: bun_ast::StoreSlice<G::Property> = class.properties;
+                    let old_props_len = old_props.len();
+                    let mut class_body = BumpVec::<G::Property>::with_capacity_in(
+                        old_props_len + param_prop_decls.len(),
+                        self.arena,
+                    );
+                    for decl in param_prop_decls.drain(..) {
+                        class_body.push(decl);
+                    }
+                    for i in 0..old_props_len {
+                        // BumpVec can't adopt a foreign arena slice, so move each element
+                        // out by `ptr::read` (G::Property has no Drop; old slice becomes dead
+                        // arena bytes).
+                        // SAFETY: in-bounds; arena-owned; no Drop on Property.
+                        let prop: G::Property =
+                            unsafe { core::ptr::read(old_props.as_ptr().add(i)) };
+                        if !is_lowerable_field(&prop) {
+                            class_body.push(prop);
+                            continue;
+                        }
+                        let key = prop.key.expect("infallible: lowerable field has key");
+                        let is_private = matches!(key.data, ExprData::EPrivateIdentifier(_));
+                        if let Some(init) = prop.initializer {
+                            let this_target = self.new_expr(E::This {}, key.loc);
+                            let target = match &key.data {
+                                ExprData::EString(s)
+                                    if s.is_utf8()
+                                        && !prop.flags.contains(flags::Property::IsComputed) =>
+                                {
+                                    self.new_expr(
+                                        E::Dot {
+                                            target: this_target,
+                                            name: s.data,
+                                            name_loc: key.loc,
+                                            ..Default::default()
+                                        },
+                                        key.loc,
+                                    )
+                                }
+                                _ => self.new_expr(
+                                    E::Index {
+                                        target: this_target,
+                                        index: key,
+                                        optional_chain: None,
+                                    },
+                                    key.loc,
+                                ),
+                            };
+                            injected.push(Stmt::assign(target, init));
+                        }
+                        // Private names must stay declared for the brand check; decorated
+                        // fields stay so `lower_class` can emit their decorator call.
+                        if is_private || prop.ts_decorators.len_u32() > 0 {
+                            class_body.push(G::Property {
+                                initializer: None,
+                                ..prop
+                            });
+                        }
+                    }
+
+                    // Splice `injected` into the constructor body, synthesizing one
+                    // (with `super(...arguments)` when extending) if none exists.
+                    // `constructor_function` is a `StoreRef<E::Function>` arena slot
+                    // captured from `class.properties[i].value.data` above. It points to
+                    // a separate Store allocation, not into the Property slice itself,
+                    // so the `ptr::read` moves above do not invalidate it.
+                    if let Some(mut cf) = constructor_function {
+                        let old_body: &[Stmt] = cf.func.body.stmts.slice();
+                        let mut super_end: usize = 0;
+                        if class.extends.is_some() {
+                            for (index, stmt) in old_body.iter().enumerate() {
+                                let is_super = matches!(
+                                    &stmt.data,
+                                    StmtData::SExpr(se)
+                                        if matches!(
+                                            &se.value.data,
+                                            ExprData::ECall(call)
+                                                if matches!(call.target.data, ExprData::ESuper(_))
+                                        )
+                                );
+                                if is_super {
+                                    super_end = index + 1;
+                                    break;
+                                }
+                            }
+                        }
+                        let mut stmts = BumpVec::<Stmt>::with_capacity_in(
+                            old_body.len() + injected.len(),
+                            self.arena,
+                        );
+                        stmts.extend_from_slice(&old_body[..super_end]);
+                        stmts.extend_from_slice(&injected);
+                        stmts.extend_from_slice(&old_body[super_end..]);
+                        cf.func.body.stmts = bun_ast::StoreSlice::from_bump(stmts);
+                    } else {
+                        let loc = class.body_loc;
+                        let mut ctor_stmts = BumpVec::<Stmt>::with_capacity_in(
+                            injected.len() + usize::from(class.extends.is_some()),
+                            self.arena,
+                        );
+                        if class.extends.is_some() {
+                            let target = self.new_expr(E::Super {}, loc);
+                            let arguments_ref = self.new_symbol(
+                                SymbolKind::Unbound,
+                                crate::parser::ARGUMENTS_STR,
+                            );
+                            VecExt::append(
+                                &mut self.current_scope_mut().generated,
+                                arguments_ref,
+                            );
+                            let spread_inner =
+                                self.new_expr(E::Identifier::init(arguments_ref), loc);
+                            let spread = self.new_expr(
+                                E::Spread {
+                                    value: spread_inner,
+                                },
+                                loc,
+                            );
+                            let args = ExprNodeList::init_one(spread);
+                            let call = self.new_expr(
+                                E::Call {
+                                    target,
+                                    args,
                                     ..Default::default()
                                 },
+                                loc,
                             );
-                            j += 1;
+                            ctor_stmts.push(self.s(
+                                S::SExpr {
+                                    value: call,
+                                    ..Default::default()
+                                },
+                                loc,
+                            ));
                         }
-
-                        class.properties = bun_ast::StoreSlice::from_bump(class_body);
-                        constructor.func.body.stmts = bun_ast::StoreSlice::from_bump(stmts);
+                        ctor_stmts.extend_from_slice(&injected);
+                        let key_expr =
+                            self.new_expr(E::EString::from_static(b"constructor"), loc);
+                        let value_expr = self.new_expr(
+                            E::Function {
+                                func: G::Fn {
+                                    name: None,
+                                    open_parens_loc: bun_ast::Loc::EMPTY,
+                                    args: bun_ast::StoreSlice::EMPTY,
+                                    body: G::FnBody {
+                                        loc,
+                                        stmts: bun_ast::StoreSlice::from_bump(ctor_stmts),
+                                    },
+                                    flags: flags::FUNCTION_NONE,
+                                    ..Default::default()
+                                },
+                            },
+                            loc,
+                        );
+                        class_body.insert(
+                            0,
+                            G::Property {
+                                flags: flags::Property::IsMethod.into(),
+                                key: Some(key_expr),
+                                value: Some(value_expr),
+                                ..Default::default()
+                            },
+                        );
                     }
+
+                    class.properties = bun_ast::StoreSlice::from_bump(class_body);
                 }
             }
 

@@ -134,7 +134,9 @@ bitflags::bitflags! {
         const IS_FROM_NODE_MODULES = 1 << 3;
         const EMIT_DECORATOR_METADATA = 1 << 5;
         const EXPERIMENTAL_DECORATORS = 1 << 6;
-        // _padding: u1
+        /// tsconfig `"useDefineForClassFields": false` was set explicitly.
+        /// Unset/`true` both keep native class-field semantics (the default).
+        const SET_SEMANTICS_FOR_CLASS_FIELDS = 1 << 7;
     }
 }
 
@@ -183,6 +185,15 @@ impl ResultFlags {
     #[inline]
     pub(crate) fn set_experimental_decorators(&mut self, v: bool) {
         self.set(Self::EXPERIMENTAL_DECORATORS, v)
+    }
+    /// `true` when the nearest tsconfig set `"useDefineForClassFields": false`.
+    #[inline]
+    pub fn use_define_for_class_fields(self) -> bool {
+        !self.contains(Self::SET_SEMANTICS_FOR_CLASS_FIELDS)
+    }
+    #[inline]
+    pub(crate) fn set_use_define_for_class_fields(&mut self, v: bool) {
+        self.set(Self::SET_SEMANTICS_FOR_CLASS_FIELDS, !v)
     }
 }
 

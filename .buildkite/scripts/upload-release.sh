@@ -225,9 +225,59 @@ function download_buildkite_artifact() {
   fi
 }
 
+function list_release_assets() {
+  gh release view "$1" --repo "$BUILDKITE_REPO" --json assets --jq '.assets[] | "\(.apiUrl) \(.name)"'
+}
+
+# Two-phase: upload everything under a per-build staging suffix first, then
+# swap each asset into place with a DELETE+PATCH pair. `gh release upload
+# --clobber` deletes an asset before uploading its replacement (5 workers in
+# parallel), so a cancel while uploads are in flight leaves those assets
+# deleted on the release and not re-uploaded. Buildkite's
+# cancel_running_branch_builds does exactly that when a later main build
+# starts mid-:rocket: (build 86848: 5 of 32 assets gone). Staging keeps the
+# live names serving users until the data transfer is done; the swap loop is
+# metadata-only so a cancel there costs at most the one asset mid-swap.
 function upload_github_assets() {
   local tag="$(release_tag "$1")"
-  run_command gh release upload "$tag" "${@:2}" --clobber --repo "$BUILDKITE_REPO"
+  local files=("${@:2}")
+  local suffix=".incoming-${BUILDKITE_BUILD_NUMBER:-$$}"
+
+  local assets url name
+  assets="$(list_release_assets "$tag")"
+  while read -r url name; do
+    [ -n "$name" ] || continue
+    [[ "$name" == *.incoming-* ]] || continue
+    run_command gh api -X DELETE "$url"
+  done <<< "$assets"
+
+  local stage file staged=()
+  stage="$(mktemp -d "./release-stage.XXXXXX")"
+  for file in "${files[@]}"; do
+    ln -f "$file" "$stage/${file}${suffix}"
+    staged+=("$stage/${file}${suffix}")
+  done
+  run_command gh release upload "$tag" "${staged[@]}" --clobber --repo "$BUILDKITE_REPO"
+  rm -rf "$stage"
+
+  assets="$(list_release_assets "$tag")"
+  declare -A asset_url=()
+  while read -r url name; do
+    [ -n "$name" ] || continue
+    asset_url["$name"]="$url"
+  done <<< "$assets"
+  for file in "${files[@]}"; do
+    local new_url="${asset_url["${file}${suffix}"]}"
+    if [ -z "$new_url" ]; then
+      echo "error: staged asset ${file}${suffix} missing from release $tag after upload"
+      exit 1
+    fi
+    local old_url="${asset_url["$file"]}"
+    if [ -n "$old_url" ]; then
+      run_command gh api -X DELETE "$old_url"
+    fi
+    run_command gh api -X PATCH "$new_url" -f "name=$file" --jq .name
+  done
 }
 
 function update_github_release() {
@@ -367,8 +417,8 @@ function create_release() {
     run_command rm -rf "$work"
   }
 
-  # Fetch everything up front so the GitHub release can take all assets in one
-  # `gh release upload`; per-file uploads raced on the same release.
+  # Fetch everything up front so upload_github_assets can stage the full set
+  # in one `gh release upload` before touching the live asset names.
   local files=() pids=() artifact
   for artifact in "${artifacts[@]}"; do
     download_buildkite_artifact "$artifact" & pids+=("$!")

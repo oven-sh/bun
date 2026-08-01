@@ -201,27 +201,43 @@ describe.concurrent("fetch-tls", () => {
   // the server observes a resumed session; without one, it's a full handshake.
   describe("client-side TLS session resumption", () => {
     const fixture = join(import.meta.dir, "fetch.tls.session-resumption-fixture.ts");
-    async function run(env: Record<string, string>) {
+    async function run(version: string, env: Record<string, string> = {}, mode = "default") {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), fixture],
+        cmd: [bunExe(), fixture, version, mode],
         env: { ...bunEnv, ...env },
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).not.toMatch(/AddressSanitizer|ERROR: (Leak|Thread)Sanitizer/);
-      expect(stdout.trim()).toMatch(/^\[(true|false),(true|false)\]$/);
+      expect(stdout.trim()).toMatch(/^\[((true|false),?)*\]$/);
       expect(exitCode).toBe(0);
       return JSON.parse(stdout.trim()) as boolean[];
     }
 
-    it("resumes on the second fresh connect to an origin", async () => {
-      expect(await run({})).toEqual([false, true]);
-    });
+    // TLS 1.2 delivers the session inside SSL_do_handshake (before
+    // checkServerIdentity runs), TLS 1.3 as a post-handshake NewSessionTicket;
+    // both paths must cache.
+    for (const version of ["TLSv1.2", "TLSv1.3"]) {
+      it(`resumes on the second fresh connect to an origin (${version})`, async () => {
+        expect(await run(version)).toEqual([false, true]);
+      });
 
-    it("is disabled by BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE", async () => {
-      expect(await run({ BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE: "1" })).toEqual([false, false]);
-    });
+      it(`is disabled by BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE (${version})`, async () => {
+        expect(await run(version, { BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE: "1" })).toEqual([false, false]);
+      });
+
+      // A handshake rejected by checkServerIdentity (trusted chain, wrong SAN)
+      // must not seed the cache. The fixture asserts each fetch rejects with
+      // ERR_TLS_CERT_ALTNAME_INVALID (so a fresh handshake ran), and the
+      // server must never observe a resumption. The client may RST before the
+      // server completes its side of a TLS 1.3 handshake, so fewer than two
+      // entries is acceptable.
+      it(`does not cache a session whose peer hostname was rejected (${version})`, async () => {
+        const reused = await run(version, {}, "mismatch");
+        expect(reused).not.toContain(true);
+      });
+    }
   });
 
   // Covers a family of HTTP-thread crashes (sentry BUN-2WC6 and siblings) where

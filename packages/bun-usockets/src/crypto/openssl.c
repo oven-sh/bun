@@ -505,6 +505,22 @@ void *us_ssl_get_session_sink_owner(SSL *ssl) {
   return sink ? sink->owner : NULL;
 }
 
+/* Free the session sink on every socket in `group`. Called at process shutdown
+ * so LeakSanitizer doesn't report sinks on SSLs that survive until exit (the
+ * HTTP thread's keep-alive pool is never drained, and its TLS-rooted owner is
+ * not scanned as an LSAN root). */
+void us_socket_group_clear_session_sinks(struct us_socket_group_t *group) {
+  if (!group || us_ssl_session_sink_idx < 0) return;
+  for (struct us_socket_t *s = group->head_sockets; s; s = s->next) {
+    if (!s->ssl) continue;
+    struct us_ssl_session_sink_t *sink = SSL_get_ex_data(s_ssl(s), us_ssl_session_sink_idx);
+    if (!sink) continue;
+    SSL_set_ex_data(s_ssl(s), us_ssl_session_sink_idx, NULL);
+    if (sink->on_free) sink->on_free(sink->owner);
+    us_free(sink);
+  }
+}
+
 /* TLS-over-duplex / named-pipe owners (the Rust SSLWrapper): opt this SSL
  * into the parked session/keylog queues so us_ssl_new_session_cb /
  * us_ssl_keylog_cb collect them. There is no us_socket_t to flush into

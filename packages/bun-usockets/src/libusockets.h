@@ -561,6 +561,7 @@ void us_ssl_set_session_sink(struct ssl_st *ssl, void *owner,
                              void (*on_new_session)(void *, struct ssl_session_st *),
                              void (*on_free)(void *));
 void *us_ssl_get_session_sink_owner(struct ssl_st *ssl);
+void us_socket_group_clear_session_sinks(struct us_socket_group_t *group);
 
 /* Public interfaces for loops */
 

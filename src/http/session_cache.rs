@@ -1,26 +1,12 @@
 //! Client-side TLS session cache for `fetch()`.
 //!
-//! BoringSSL's new-session callback is the only place a resumable TLS 1.3
-//! session surfaces, and [`us_ssl_new_session_cb`] discards it for every
-//! consumer except `Bun.connect` / `node:tls`. This module gives the HTTP
-//! client a sink for those sessions so a second cold connect to an origin can
-//! offer the stored ticket via `SSL_set_session` and skip the full handshake
-//! (certificate chain walk + signature verification).
-//!
-//! The cache lives on [`HTTPContext<true>`] — one per interned `SSLConfig` —
-//! and is keyed on the same `(hostname, port, proxy_auth_hash)` tuple the
-//! keep-alive pool uses for direct TLS, so a cached session never crosses an
-//! SNI / Host-override boundary the pool wouldn't. Only handshakes that ran
-//! with `rejectUnauthorized=true` and passed `checkServerIdentity` insert,
-//! because a resumed handshake restores the stored `verify_result` without
-//! re-sending Certificate; caching an unverified session would launder it
-//! into a later strict caller.
-//!
-//! Lifetime: all access is HTTP-thread-only (interior `RefCell`, no locking).
-//! Each entry owns one `SSL_SESSION` reference, released on eviction /
-//! `Drop`. The per-SSL [`SessionSink`] is heap-allocated, stored in a
-//! BoringSSL ex_data slot on the `SSL`, and freed by the ex_data free
-//! callback when the socket's `SSL` is freed.
+//! Keyed on the keep-alive pool tuple `(hostname, port, proxy_auth_hash)` and
+//! scoped to one [`HTTPContext<true>`] per interned `SSLConfig`. A sink is
+//! installed before the handshake and armed only after `checkServerIdentity`
+//! passes, so an unverified handshake never inserts: a resumed handshake
+//! restores the stored `verify_result` without a Certificate message, and
+//! caching an unverified session would launder it into a later strict caller.
+//! HTTP-thread-only.
 
 use core::cell::RefCell;
 use core::ffi::c_void;
@@ -30,35 +16,29 @@ use bun_boringssl_sys::{SSL, SSL_SESSION, SSL_SESSION_free, SSL_set_session};
 use bun_core::strings;
 
 use crate::http_context::MAX_KEEPALIVE_HOSTNAME;
+use crate::signals;
 
-/// Per-context LRU capacity. An `SSL_SESSION` retains the peer's full cert
-/// chain (multi-KB) and there is one `HTTPContext<true>` per interned
-/// `SSLConfig`, so this stays well below rustls' 256-entry default.
+/// An `SSL_SESSION` retains the peer chain, so keep this well below rustls' 256.
 const SESSION_CACHE_CAPACITY: usize = 32;
 
-/// One owned `SSL_SESSION` reference keyed on the pool tuple. `session` is
-/// `Option` so [`SessionCache::take`] can move ownership out and let the
-/// entry drop normally.
 struct CacheEntry {
     hostname: Box<[u8]>,
     port: u16,
     proxy_auth_hash: u64,
+    /// `Option` so [`SessionCache::take`] can move ownership out.
     session: Option<NonNull<SSL_SESSION>>,
 }
 
 impl Drop for CacheEntry {
     fn drop(&mut self) {
         if let Some(s) = self.session.take() {
-            // SAFETY: the entry owns one reference taken by
-            // `us_ssl_new_session_cb` (`SSL_SESSION_up_ref`) before handing
-            // the pointer to [`sink_on_new_session`].
+            // SAFETY: owns one reference from `SSL_SESSION_up_ref` in
+            // `us_ssl_new_session_cb`.
             unsafe { SSL_SESSION_free(s.as_ptr()) };
         }
     }
 }
 
-/// Move-to-front LRU over a small `Vec`. Lookup is O(n) in `CAPACITY`; with
-/// 32 entries this is cheaper than a map and keeps eviction trivial.
 #[derive(Default)]
 pub(crate) struct SessionCache {
     entries: RefCell<Vec<CacheEntry>>,
@@ -71,10 +51,8 @@ impl SessionCache {
         }
     }
 
-    /// Remove and return the session for `(hostname, port, hash)`, passing
-    /// its +1 reference to the caller. Returns `None` for hostnames longer
-    /// than the pool's `MAX_KEEPALIVE_HOSTNAME` (the insert side skips them
-    /// too). A TLS 1.3 ticket is single-use, so this consumes the entry.
+    /// Remove and return the matching session (+1 ref). TLS 1.3 tickets are
+    /// single-use, so a hit consumes the entry.
     pub(crate) fn take(
         &self,
         hostname: &[u8],
@@ -93,8 +71,7 @@ impl SessionCache {
         entries.remove(idx).session.take()
     }
 
-    /// Insert `session` (caller hands over its +1 ref). A matching key
-    /// replaces; a full cache evicts the least-recently-inserted entry.
+    /// Takes ownership of `session` (+1 ref).
     fn insert(
         &self,
         hostname: &[u8],
@@ -126,19 +103,16 @@ impl SessionCache {
     }
 }
 
-/// Per-`SSL` sink installed in `on_open` and torn down by the ex_data free
-/// callback on `SSL_free`. Box-allocated; the ex_data slot holds the raw
-/// pointer.
+/// Per-`SSL` sink. Box-allocated; the ex_data slot on the `SSL` holds the raw
+/// pointer and its free callback reclaims the Box on `SSL_free`.
 pub(crate) struct SessionSink {
     ctx: *const crate::HttpsContext,
     hostname: Box<[u8]>,
     port: u16,
     proxy_auth_hash: u64,
-    /// Set once `checkServerIdentity` passes. Sessions delivered earlier
-    /// (TLS 1.2 fires inside `SSL_do_handshake`, before `on_handshake`) are
-    /// parked in `pending` instead of inserted.
+    /// Set once `checkServerIdentity` passes. TLS 1.2 delivers the session
+    /// inside `SSL_do_handshake`, before `on_handshake` can verify the peer.
     armed: bool,
-    /// Most-recent session delivered before `armed`. Owned +1 reference.
     pending: Option<NonNull<SSL_SESSION>>,
 }
 
@@ -151,7 +125,6 @@ impl Drop for SessionSink {
     }
 }
 
-/// FFI sink callback: receives one `SSL_SESSION_up_ref`'d session.
 extern "C" fn sink_on_new_session(owner: *mut c_void, session: *mut SSL_SESSION) {
     let Some(session) = NonNull::new(session) else {
         return;
@@ -161,16 +134,13 @@ extern "C" fn sink_on_new_session(owner: *mut c_void, session: *mut SSL_SESSION)
         unsafe { SSL_SESSION_free(session.as_ptr()) };
         return;
     };
-    // SAFETY: `owner` is the Box interior installed by [`install`]; the
-    // new-session callback runs on the HTTP thread inside
-    // `SSL_read`/`SSL_do_handshake`, and nothing else holds `&mut` to the
-    // sink during that call.
+    // SAFETY: `owner` is the Box interior installed by [`install`]. Runs on
+    // the HTTP thread inside `SSL_read`/`SSL_do_handshake`; nothing else
+    // holds a borrow of the sink during that call.
     let sink = unsafe { owner.as_ref() };
     if sink.armed {
-        // SAFETY: `ctx` is the live `HTTPContext<true>` owning this socket's
-        // group; the context outlives every SSL attached to it (see
-        // `HTTPContext::ref_count` doc). `session_cache` is accessed via
-        // shared borrow + `RefCell`.
+        // SAFETY: `ctx` is the `HTTPContext<true>` owning this socket's
+        // group; it outlives every SSL attached to it.
         unsafe { &*sink.ctx }.session_cache.insert(
             &sink.hostname,
             sink.port,
@@ -187,14 +157,13 @@ extern "C" fn sink_on_new_session(owner: *mut c_void, session: *mut SSL_SESSION)
     }
 }
 
-/// FFI free callback for the ex_data slot: reclaims the Box.
 extern "C" fn sink_on_free(owner: *mut c_void) {
     if owner.is_null() {
         return;
     }
-    // SAFETY: `owner` is the `Box::into_raw` from [`install`]; the ex_data
+    // SAFETY: `owner` is the `heap::into_raw` from [`install`]; the ex_data
     // free callback fires exactly once on `SSL_free`.
-    drop(unsafe { Box::from_raw(owner.cast::<SessionSink>()) });
+    unsafe { bun_core::heap::destroy(owner.cast::<SessionSink>()) };
 }
 
 unsafe extern "C" {
@@ -205,22 +174,37 @@ unsafe extern "C" {
         on_free: Option<extern "C" fn(*mut c_void)>,
     );
     fn us_ssl_get_session_sink_owner(ssl: *mut SSL) -> *mut c_void;
+    fn us_socket_group_clear_session_sinks(group: *mut bun_uws::SocketGroup);
 }
 
-pub(crate) fn enabled() -> bool {
-    !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE
-        .get()
-        .unwrap_or(false)
+/// Release every cached `SSL_SESSION` and every per-SSL sink in `ctx`. Called
+/// at process shutdown so LeakSanitizer doesn't report them: the HTTP thread's
+/// keep-alive pool is never drained and its TLS-rooted owner is not an LSan
+/// root, so sinks on surviving SSLs and the cache's `Vec` buffer would
+/// otherwise be reported as leaked.
+pub(crate) fn drain_for_exit(ctx: &mut crate::HttpsContext) {
+    ctx.session_cache.entries.borrow_mut().clear();
+    // SAFETY: called on the HTTP thread after it stops ticking; no dispatch
+    // will touch these SSLs again. `sink_on_free` only drops the Box.
+    unsafe { us_socket_group_clear_session_sinks(&raw mut ctx.group) };
 }
 
-/// Look up a cached session on `ctx` for this key and, if found, offer it on
-/// `ssl` before the handshake starts. Then install a sink so new tickets from
-/// this handshake are captured. `ctx` must be the `HTTPContext<true>` that
-/// owns `ssl`'s socket.
+/// Whether this TLS client should read/write the cache. Lax verification and
+/// the JS `checkServerIdentity` path are excluded because [`arm`] only runs
+/// after the native identity check in `on_handshake`; neither reaches it.
+pub(crate) fn eligible(client: &crate::HTTPClient<'_>) -> bool {
+    client.flags.reject_unauthorized
+        && !client.signals.get(signals::Field::CertErrors)
+        && client.unix_socket_path.slice().is_empty()
+        && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE
+            .get()
+            .unwrap_or(false)
+}
+
+/// Offer any cached session for this key and install an unarmed sink.
 ///
 /// # Safety
-/// `ssl` must be a live pre-handshake `SSL*`. `ctx` must be a live
-/// `HTTPContext<true>` that outlives `ssl`.
+/// `ssl` must be a live pre-handshake `SSL*`; `ctx` must outlive `ssl`.
 pub(crate) unsafe fn install(
     ssl: *mut SSL,
     ctx: *const crate::HttpsContext,
@@ -230,11 +214,11 @@ pub(crate) unsafe fn install(
 ) {
     debug_assert!(!ssl.is_null());
     debug_assert!(!ctx.is_null());
-    // SAFETY: caller contract — `ctx` is live.
+    // SAFETY: caller contract.
     let cache = unsafe { &(*ctx).session_cache };
     if let Some(session) = cache.take(hostname, port, proxy_auth_hash) {
-        // SAFETY: `ssl` is live and pre-handshake per caller contract;
-        // `SSL_set_session` takes its own reference, so release ours after.
+        // SAFETY: `ssl` is live and pre-handshake; `SSL_set_session` takes
+        // its own reference, so release ours after.
         unsafe {
             SSL_set_session(ssl, session.as_ptr());
             SSL_SESSION_free(session.as_ptr());
@@ -248,21 +232,18 @@ pub(crate) unsafe fn install(
         armed: false,
         pending: None,
     });
-    // SAFETY: `ssl` is live; ownership of the Box moves to the ex_data slot
-    // whose free callback reclaims it.
+    // SAFETY: `ssl` is live; Box ownership moves to the ex_data slot.
     unsafe {
         us_ssl_set_session_sink(
             ssl,
-            Box::into_raw(sink).cast::<c_void>(),
+            bun_core::heap::into_raw(sink).cast::<c_void>(),
             Some(sink_on_new_session),
             Some(sink_on_free),
         );
     }
 }
 
-/// Called from `on_handshake` after `checkServerIdentity` passes. Flushes any
-/// session parked before verification (TLS 1.2) and lets later tickets
-/// (TLS 1.3 post-handshake) go straight to the cache.
+/// Flush the parked TLS 1.2 session and admit later TLS 1.3 tickets.
 ///
 /// # Safety
 /// `ssl` must be a live `SSL*` on the HTTP thread.
@@ -283,8 +264,7 @@ pub(crate) unsafe fn arm(ssl: *mut SSL) {
     }
     sink.armed = true;
     if let Some(session) = sink.pending.take() {
-        // SAFETY: `ctx` was live at install and outlives `ssl`; see
-        // `HTTPContext::ref_count` doc.
+        // SAFETY: `ctx` outlives `ssl` per [`install`]'s contract.
         unsafe { &*sink.ctx }.session_cache.insert(
             &sink.hostname,
             sink.port,

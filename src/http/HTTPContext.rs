@@ -55,9 +55,7 @@ pub struct HTTPContext<const SSL: bool> {
     // into the box interior; unboxing would dangle it on `Vec` realloc.
     #[expect(clippy::vec_box)]
     pub(crate) pending_h2_connects: Vec<Box<h2::PendingConnect>>,
-    /// Client-side TLS session cache for `SSL_set_session` resumption.
-    /// Only populated when `SSL`; present on both so the struct stays
-    /// const-generic-agnostic like `secure`.
+    /// Client-side TLS session cache; populated only when `SSL`.
     pub(crate) session_cache: crate::session_cache::SessionCache,
 }
 

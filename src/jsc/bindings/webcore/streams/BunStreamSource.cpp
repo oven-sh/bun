@@ -631,8 +631,7 @@ static JSPromise* nativeSourcePullImpl(JSC::VM& vm, JSGlobalObject* globalObject
     closer->putDirectIndex(globalObject, 0, jsBoolean(false));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    JSObject* pendingObject = adapter->pendingView();
-    if (pendingObject || adapter->m_sourceOwnsChunks) {
+    if (JSObject* pendingObject = adapter->pendingView()) {
         MarkedArgumentBuffer noArgs;
         JSValue drained = invokeMethod(vm, globalObject, handle, builtinNames(vm).drainPublicName(), noArgs);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -641,8 +640,7 @@ static JSPromise* nativeSourcePullImpl(JSC::VM& vm, JSGlobalObject* globalObject
         if (isTruthy) {
             bool isClosed = nativeCloserFlag(vm, globalObject, adapter);
             RETURN_IF_EXCEPTION(scope, nullptr);
-            JSC::JSUint8Array* pendingView = pendingObject ? uncheckedDowncast<JSC::JSUint8Array>(pendingObject) : nullptr;
-            JSValue newView = nativeDecodePullResult(vm, globalObject, adapter, controller, drained, pendingView, isClosed);
+            JSValue newView = nativeDecodePullResult(vm, globalObject, adapter, controller, drained, uncheckedDowncast<JSC::JSUint8Array>(pendingObject), isClosed);
             RETURN_IF_EXCEPTION(scope, nullptr);
             nativeStorePendingView(vm, adapter, newView);
             return nullptr;

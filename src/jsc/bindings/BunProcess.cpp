@@ -510,7 +510,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     // Handle known yet-to-be-working in Bun
     {
         static constexpr ASCIILiteral better_sqlite3_node = "better_sqlite3.node"_s;
-        static constexpr ASCIILiteral better_sqlite3_message = "'better-sqlite3' is not yet supported in Bun.\nTrack the status in https://github.com/oven-sh/bun/issues/4290\nIn the meantime, you could try bun:sqlite which has a similar API."_s;
+        static constexpr ASCIILiteral better_sqlite3_message = "Bun cannot load the 'better-sqlite3' native addon because it uses V8 APIs that Bun does not implement (https://github.com/oven-sh/bun/issues/4290).\nBun ships a drop-in 'better-sqlite3' module backed by bun:sqlite; use require('better-sqlite3') instead of loading the .node file directly."_s;
         if (filename.endsWith(better_sqlite3_node)) {
             return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
                 better_sqlite3_message);

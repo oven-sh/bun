@@ -15,7 +15,7 @@ export function createInternalModuleRegistry(basedir: string) {
   for (let i = 0; i < moduleList.length; i++) {
     const prefix = moduleList[i].startsWith("node/")
       ? "node:"
-      : moduleList[i].startsWith("bun:")
+      : moduleList[i].startsWith("bun/")
         ? "bun:"
         : moduleList[i].startsWith("internal/")
           ? "internal/"

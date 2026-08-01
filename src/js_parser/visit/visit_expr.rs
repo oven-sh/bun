@@ -1058,9 +1058,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let index = e_.index.unwrap_inlined();
 
         // `[x][0] = v` writes into the temporary, not `x`.
-        if p.options.features.minify_syntax
-            && in_.assign_target == js_ast::AssignTarget::None
-        {
+        if p.options.features.minify_syntax && in_.assign_target == js_ast::AssignTarget::None {
             if let Some(number) = index.data.as_e_number() {
                 if number.value() >= 0.0
                     && number.value() < (usize::MAX as f64)

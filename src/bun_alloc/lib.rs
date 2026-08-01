@@ -2412,8 +2412,6 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     ) -> core::result::Result<&'a [u8], AllocError> {
         // SAFETY: see `append`.
         let _guard = unsafe { (*this).mutex.lock() };
-        // SAFETY: inner mutex held ⇒ this thread has exclusive access.
-        let this_ref = unsafe { &mut *this };
 
         // `do_append` only reads `slice` via `BSSAppendable::copy_into` (copies
         // into `self.backing_buf` / a fresh heap alloc) and returns raw parts
@@ -2421,7 +2419,10 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // buffer's borrow does not escape.
         let (ptr, len) = if value.len() <= 256 {
             let mut scratch = [0u8; 256];
-            this_ref.do_append(&crate::copy_lowercase(value, &mut scratch[..value.len()]))?
+            // SAFETY: inner mutex held ⇒ this thread has exclusive access.
+            unsafe {
+                (*this).do_append(&crate::copy_lowercase(value, &mut scratch[..value.len()]))?
+            }
         } else {
             // Slow path: input >256 bytes (rare). Use a one-shot heap temp via
             // mimalloc directly (PORTING.md forbids `Vec` in hot allocators).
@@ -2431,7 +2432,8 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             }
             // SAFETY: `p` is a fresh allocation of `value.len()` bytes; sole owner.
             let tmp = unsafe { core::slice::from_raw_parts_mut(p, value.len()) };
-            let r = this_ref.do_append(&crate::copy_lowercase(value, tmp));
+            // SAFETY: inner mutex held ⇒ this thread has exclusive access.
+            let r = unsafe { (*this).do_append(&crate::copy_lowercase(value, tmp)) };
             // SAFETY: `p` was allocated by `mi_malloc` above.
             unsafe { mimalloc::mi_free(p.cast()) };
             r?

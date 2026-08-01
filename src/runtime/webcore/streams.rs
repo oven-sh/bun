@@ -512,8 +512,9 @@ impl Writable {
             // undefined == noop, but we probably won't send it
             Writable::Done => JSValue::TRUE,
             Writable::Pending(pending) => {
-                // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM classification
-                let prom = unsafe { &mut *pending }.promise(global_this);
+                // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM
+                // classification; exclusive borrow scoped to the call.
+                let prom = unsafe { (*pending).promise(global_this) };
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                 JSPromise::opaque_ref(prom).to_js()
             }
@@ -780,8 +781,9 @@ impl StreamResult {
             StreamResult::IntoArray(array) => Ok(JSValue::from(array.len)),
             StreamResult::IntoArrayAndDone(array) => Ok(JSValue::from(array.len)),
             StreamResult::Pending(pending) => {
-                // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM classification
-                let promise = unsafe { &mut **pending }.promise(global_this);
+                // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM
+                // classification; exclusive borrow scoped to the call.
+                let promise = unsafe { (**pending).promise(global_this) };
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                 let promise_js = JSPromise::opaque_ref(promise).to_js();
                 promise_js.protect();
@@ -1847,24 +1849,27 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     /// `this` must point at the live sink owned by the `RequestContext`.
     pub(crate) unsafe fn abort(this: *mut Self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "onAborted()");
-        // SAFETY: caller contract — `this` is live, and every borrow formed here
-        // ends before the signal close below, which may free `*this`.
-        let sink = unsafe { &mut *this };
-        sink.done = true;
-        sink.res = None;
-        sink.unregister_auto_flusher();
-
-        sink.aborted = true;
+        // SAFETY: caller contract — `this` is live, and every access here is scoped
+        // so no borrow spans the signal close below, which may free `*this`.
+        unsafe {
+            (*this).done = true;
+            (*this).res = None;
+            (*this).unregister_auto_flusher();
+            (*this).aborted = true;
+        }
 
         // Only JsTerminated escapes flush_promise; there is no JS caller to
         // surface it to from a socket-close callback, so teardown continues.
-        let _ = sink.flush_promise();
-        sink.finalize();
+        // SAFETY: nothing above freed `*this`; exclusive borrow scoped to the call.
+        let _ = unsafe { (*this).flush_promise() };
+        // SAFETY: as above.
+        unsafe { (*this).finalize() };
 
         // Close the source last and through a stack copy: the close fires the JS
         // onClose callback, and the teardown it can re-enter frees this sink, so
         // no reference into the allocation may be live across the call.
-        let mut source = sink.source;
+        // SAFETY: as above; `source` is copied out before the close.
+        let mut source = unsafe { (*this).source };
         source.close(None);
     }
 
@@ -2229,17 +2234,19 @@ impl NetworkSink {
             task.state.get() as u8
         );
         let _ = task;
-        let mut source = {
-            // SAFETY: `this` is the live sink; this exclusive borrow ends
-            // before the re-entrant wake below.
-            let sink = unsafe { &mut *this };
-            if sink.flush_promise.has_value() {
-                let global = sink.global_this.expect("global_this set at construction");
-                sink.flush_promise
+        // SAFETY: `this` is the live sink; each access is scoped and ends
+        // before the re-entrant wake below.
+        let mut source = unsafe {
+            if (*this).flush_promise.has_value() {
+                let global = (*this)
+                    .global_this
+                    .expect("global_this set at construction");
+                (*this)
+                    .flush_promise
                     .resolve(&global, JSValue::js_number(flushed as f64))?;
             }
-            sink.pending.run();
-            sink.source
+            (*this).pending.run();
+            (*this).source
         };
         // Wake the upstream source (JS controller onPull or native ByteStream
         // resume). No-op when `source` is `None` (the `writer()` path).
@@ -2414,16 +2421,16 @@ impl NetworkSink {
                 Some(StreamError::Error(e)) => Some(e),
                 _ => None,
             };
-            // SAFETY: `end()` does not free `*this` or re-enter the sink.
-            let _ = unsafe { &mut *this }.end(sys_err);
+            // SAFETY: `end()` does not free `*this` or re-enter the sink;
+            // exclusive borrow scoped to the call.
+            let _ = unsafe { (*this).end(sys_err) };
             return;
         }
-        let (task_ref, wrapper) = {
-            // SAFETY: short reborrow for field writes; no re-entry in this block.
-            let this_ref = unsafe { &mut *this };
-            this_ref.ended = true;
-            this_ref.source.clear();
-            let Some(task_ref) = this_ref.task else {
+        // SAFETY: scoped accesses for field writes; no re-entry in this block.
+        let (task_ref, wrapper) = unsafe {
+            (*this).ended = true;
+            (*this).source.clear();
+            let Some(task_ref) = (*this).task else {
                 return;
             };
             let wrapper = task_ref
@@ -2431,13 +2438,13 @@ impl NetworkSink {
                 .get()
                 .cast::<crate::webcore::s3::client::S3UploadStreamWrapper>();
             if let Some(err) = &err {
-                this_ref.done = true;
-                let global = this_ref
+                (*this).done = true;
+                let global = (*this)
                     .global_this
                     .expect("NetworkSink.global_this set at construction");
                 let js_err = err.to_js(&global);
                 if !js_err.is_empty_or_undefined_or_null() {
-                    this_ref.upstream_error.set(&global, js_err);
+                    (*this).upstream_error.set(&global, js_err);
                 }
             }
             (task_ref, wrapper)

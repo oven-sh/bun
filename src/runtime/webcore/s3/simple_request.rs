@@ -414,6 +414,43 @@ impl S3HttpSimpleTask {
         Ok(())
     }
 
+    /// HTTP-thread half of `http_callback`: copy the latest result/body/http
+    /// state into the task.
+    fn stage_http_result(
+        &mut self,
+        async_http: *mut AsyncHTTP<'static>,
+        mut result: HTTPClientResult<'_>,
+    ) {
+        // `metadata` is handed over exactly once, on the first callback carrying response
+        // headers. A close-delimited body (no Content-Length, no Transfer-Encoding) reports
+        // progress again at EOF with `metadata: None`, so carry the earlier one across the
+        // assignment below.
+        let previous_metadata = self.result.metadata.take();
+        result.body_into(&mut self.response_buffer.list);
+        // SAFETY: `result.body` (the only borrowed field) points at `self.response_buffer`,
+        // which lives for the task's lifetime — extending to `'static` here is sound for
+        // self-reference.
+        self.result = unsafe { result.detach_lifetime() };
+        if self.result.metadata.is_none() {
+            self.result.metadata = previous_metadata;
+        }
+        // `AsyncHTTP` transitively owns Drop types (`HTTPClient`, header
+        // `EntryList`s), so a plain `=` here would (a) drop the old `self.http`, freeing heap
+        // buffers that `*async_http` (a bitwise clone created by the HTTP thread) still
+        // aliases, and (b) leave the http-thread side to drop them again → double-free. We
+        // instead write through `MaybeUninit` to suppress the LHS drop, doing a bitwise struct
+        // overwrite with no destructor on either side. Ownership of the inner heap data
+        // conceptually transfers here; the http-thread side must free only its outer
+        // allocation (TrivialDeinit).
+        // SAFETY: `async_http` is a valid live pointer for the duration of this callback;
+        // `self.http` was previously initialised in `execute_simple_s3_request`.
+        unsafe { core::ptr::write(self.http.as_mut_ptr(), core::ptr::read(async_http)) };
+        // `async_http.response_buffer == &self.response_buffer`, so copying it back would be
+        // a self-assignment: the `=` would drop the live Vec before re-installing a stale
+        // bitwise duplicate (UAF + double-free), so we simply omit it —
+        // `self.response_buffer` already holds the body.
+    }
+
     /// this is the AsyncHTTP callback and is always called from the HTTPThread
     ///
     /// # Safety
@@ -427,57 +464,25 @@ impl S3HttpSimpleTask {
     pub(crate) fn http_callback(
         this: *mut Self,
         async_http: *mut AsyncHTTP<'static>,
-        mut result: HTTPClientResult<'_>,
+        result: HTTPClientResult<'_>,
     ) {
         let is_done = !result.has_more;
-        let handoff = {
-            // SAFETY: `this` was produced by `S3HttpSimpleTask::new` and is exclusively owned
-            // by the HTTP thread until the handoff below; this borrow ends before it.
-            let task = unsafe { &mut *this };
-            // `metadata` is handed over exactly once, on the first callback carrying response
-            // headers. A close-delimited body (no Content-Length, no Transfer-Encoding) reports
-            // progress again at EOF with `metadata: None`, so carry the earlier one across the
-            // assignment below.
-            let previous_metadata = task.result.metadata.take();
-            result.body_into(&mut task.response_buffer.list);
-            // SAFETY: `result.body` (the only borrowed field) points at `this.response_buffer`,
-            // which lives for the task's lifetime — extending to `'static` here is sound for
-            // self-reference.
-            task.result = unsafe { result.detach_lifetime() };
-            if task.result.metadata.is_none() {
-                task.result.metadata = previous_metadata;
-            }
-            // `AsyncHTTP` transitively owns Drop types (`HTTPClient`, header
-            // `EntryList`s), so a plain `=` here would (a) drop the old `this.http`, freeing heap
-            // buffers that `*async_http` (a bitwise clone created by the HTTP thread) still
-            // aliases, and (b) leave the http-thread side to drop them again → double-free. We
-            // instead write through `MaybeUninit` to suppress the LHS drop, doing a bitwise struct
-            // overwrite with no destructor on either side. Ownership of the inner heap data
-            // conceptually transfers here; the http-thread side must free only its outer
-            // allocation (TrivialDeinit).
-            // SAFETY: `async_http` is a valid live pointer for the duration of this callback;
-            // `this.http` was previously initialised in `execute_simple_s3_request`.
-            unsafe { core::ptr::write(task.http.as_mut_ptr(), core::ptr::read(async_http)) };
-            // `async_http.response_buffer == &this.response_buffer`, so copying it back would be
-            // a self-assignment: the `=` would drop the live Vec before re-installing a stale
-            // bitwise duplicate (UAF + double-free), so we simply omit it —
-            // `this.response_buffer` already holds the body.
-            if is_done {
-                // `task` is the inline `concurrent_task` field of this heap request;
-                // the queue takes ownership of its `next` link.
+        // SAFETY: `this` was produced by `S3HttpSimpleTask::new` and is exclusively owned
+        // by the HTTP thread until the handoff below; this borrow is scoped to the call.
+        unsafe { (*this).stage_http_result(async_http, result) };
+        if is_done {
+            // SAFETY: same exclusivity as above; the queue takes ownership of the inline
+            // `concurrent_task` field's `next` link, and each access is scoped.
+            let (vm, queued) = unsafe {
                 let queued = core::ptr::NonNull::from(
-                    task.concurrent_task.from(this, AutoDeinit::ManualDeinit),
+                    (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
                 );
                 // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
                 // is set during VM init and outlives this task.
-                Some((task.vm.expect("vm set at task creation"), queued))
-            } else {
-                None
-            }
-        };
-        // Handing `this` to the JS thread transfers ownership (`on_response` `heap::take`s
-        // it), so the enqueue is the terminal action.
-        if let Some((vm, queued)) = handoff {
+                ((*this).vm.expect("vm set at task creation"), queued)
+            };
+            // Handing `this` to the JS thread transfers ownership (`on_response` `heap::take`s
+            // it), so the enqueue is the terminal action.
             vm.event_loop_shared().enqueue_task_concurrent(queued);
         }
     }
@@ -610,6 +615,11 @@ pub(crate) fn execute_simple_s3_request(
         }
     };
 
+    let mut poll_ref = KeepAlive::init();
+    poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
+        bun_io::AllocatorType::Js,
+    ));
+    let proxy = options.proxy_url.unwrap_or(b"");
     let task_ptr = S3HttpSimpleTask::new(S3HttpSimpleTask {
         // written below via `MaybeUninit::write` before any read.
         http: core::mem::MaybeUninit::uninit(),
@@ -621,22 +631,17 @@ pub(crate) fn execute_simple_s3_request(
         response_buffer: MutableString::default(),
         result: HTTPClientResult::default(),
         concurrent_task: ConcurrentTask::default(),
-        proxy_url: Box::default(),
+        proxy_url: if !proxy.is_empty() {
+            Box::<[u8]>::from(proxy)
+        } else {
+            Box::default()
+        },
         body: Box::<[u8]>::from(options.body),
-        poll_ref: KeepAlive::init(),
+        poll_ref,
     });
-    // SAFETY: `task_ptr` is a freshly heap-allocated pointer; exclusive access here.
-    let task = unsafe { &mut *task_ptr };
-    task.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
-        bun_io::AllocatorType::Js,
-    ));
-
-    let proxy = options.proxy_url.unwrap_or(b"");
-    task.proxy_url = if !proxy.is_empty() {
-        Box::<[u8]>::from(proxy)
-    } else {
-        Box::default()
-    };
+    // SAFETY: `task_ptr` is a freshly heap-allocated pointer; shared reads only until
+    // the scoped exclusive `http` writes below.
+    let task = unsafe { &*task_ptr };
     // SAFETY: lifetime extension — `url`, `headers_buf`, and `proxy_url` borrow from
     // heap-allocated fields of `*task` (sign_result.url / headers.buf / proxy_url) which the task
     // outlives. AsyncHTTP::init wants `'static` borrows because the HTTP thread reads them
@@ -662,7 +667,7 @@ pub(crate) fn execute_simple_s3_request(
     let vm = VirtualMachine::get();
     let verbose = vm.get_verbose_fetch();
     let reject_unauthorized = vm.get_tls_reject_unauthorized();
-    task.http.write(AsyncHTTP::init(
+    let async_http = AsyncHTTP::init(
         options.method,
         url,
         task.headers.entries.clone().expect("OOM"),
@@ -681,12 +686,15 @@ pub(crate) fn execute_simple_s3_request(
             reject_unauthorized: Some(reject_unauthorized),
             ..Default::default()
         },
-    ));
+    );
+    // SAFETY: `task_ptr` is still the sole pointer (the HTTP thread only sees it after
+    // `schedule` below); scoped exclusive write of the `http` field.
+    unsafe { (*task_ptr).http.write(async_http) };
     // queue http request
     bun_http::http_thread::init(&Default::default());
     let mut batch = thread_pool::Batch::default();
-    // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
-    unsafe { task.http.assume_init_mut() }.schedule(&mut batch);
+    // SAFETY: `http` was initialised immediately above; scoped exclusive access.
+    unsafe { (*task_ptr).http.assume_init_mut() }.schedule(&mut batch);
     bun_http::HTTPThread::schedule(batch);
     Ok(())
 }

@@ -1604,14 +1604,20 @@ impl WindowsBufferedReader {
                         _ => core::ptr::null_mut(),
                     };
                     if !file_raw.is_null() {
-                        // SAFETY: see above; raw-ptr break for self-aliasing.
-                        let file = unsafe { &mut *file_raw };
+                        // SAFETY (each access below): see the snapshot above —
+                        // `file_raw` points into the boxed `File`, a heap
+                        // allocation disjoint from `*this`, so the scoped
+                        // borrows never overlap the `this` accesses interleaved
+                        // here.
                         // Can only start if file is in deinitialized state
-                        if file.can_start() {
-                            file.fs.data = this_ptr;
-                            file.prepare();
+                        if unsafe { (*file_raw).can_start() } {
+                            // SAFETY: see above.
+                            unsafe { (*file_raw).fs.data = this_ptr };
+                            // SAFETY: see above.
+                            unsafe { (*file_raw).prepare() };
                             let buf = this.get_read_buffer_with_stable_memory_address(64 * 1024);
-                            file.iov = uv::uv_buf_t::init(buf);
+                            // SAFETY: see above.
+                            unsafe { (*file_raw).iov = uv::uv_buf_t::init(buf) };
                             this.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
 
                             let offset = if this.flags.contains(WindowsFlags::USE_PREAD) {
@@ -1619,14 +1625,14 @@ impl WindowsBufferedReader {
                             } else {
                                 -1
                             };
-                            // SAFETY: `file` is fully initialized; libuv stores
-                            // the cb and fires it on the event loop.
+                            // SAFETY: the file is fully initialized; libuv
+                            // stores the cb and fires it on the event loop.
                             if let Some(err) = unsafe {
                                 uv::uv_fs_read(
                                     this.vtable.loop_().cast(),
-                                    &mut file.fs,
-                                    file.file,
-                                    &file.iov,
+                                    &mut (*file_raw).fs,
+                                    (*file_raw).file,
+                                    &(*file_raw).iov,
                                     1,
                                     offset,
                                     Some(Self::on_file_read),
@@ -1637,7 +1643,8 @@ impl WindowsBufferedReader {
                             // stays bit-identical with previous releases.
                             .to_error(sys::Tag::write)
                             {
-                                file.complete(false);
+                                // SAFETY: see above.
+                                unsafe { (*file_raw).complete(false) };
                                 this.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
                                 this.flags.insert(WindowsFlags::IS_PAUSED);
                                 // we should inform the error if we are unable to keep reading
@@ -1671,19 +1678,24 @@ impl WindowsBufferedReader {
         match source {
             Source::File(file) => {
                 let file_raw: *mut crate::source::File = file.as_mut();
-                // SAFETY: `file_raw` points into the boxed File owned by
-                // `self.source`; live until `self.source` is replaced.
-                let file = unsafe { &mut *file_raw };
+                // SAFETY (each access below): `file_raw` points into the boxed
+                // File owned by `self.source` — a heap allocation disjoint
+                // from `*self` — and is live until `self.source` is replaced;
+                // the scoped borrows never overlap the `self` accesses
+                // interleaved here.
                 // If already reading, just set data and unpause
-                file.fs.data = self_ptr;
-                if !file.can_start() {
+                unsafe { (*file_raw).fs.data = self_ptr };
+                // SAFETY: see above.
+                if !unsafe { (*file_raw).can_start() } {
                     return sys::Result::Ok(());
                 }
 
                 // Start new read - set data before prepare
-                file.prepare();
+                // SAFETY: see above.
+                unsafe { (*file_raw).prepare() };
                 let buf = self.get_read_buffer_with_stable_memory_address(64 * 1024);
-                file.iov = uv::uv_buf_t::init(buf);
+                // SAFETY: see above.
+                unsafe { (*file_raw).iov = uv::uv_buf_t::init(buf) };
                 self.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
 
                 let offset = if self.flags.contains(WindowsFlags::USE_PREAD) {
@@ -1691,14 +1703,14 @@ impl WindowsBufferedReader {
                 } else {
                     -1
                 };
-                // SAFETY: file is fully initialized; libuv stores cb and fires
-                // it on the event loop.
+                // SAFETY: the file is fully initialized; libuv stores cb and
+                // fires it on the event loop.
                 if let Some(err) = unsafe {
                     uv::uv_fs_read(
                         self.vtable.loop_().cast(),
-                        &mut file.fs,
-                        file.file,
-                        &file.iov,
+                        &mut (*file_raw).fs,
+                        (*file_raw).file,
+                        &(*file_raw).iov,
                         1,
                         offset,
                         Some(Self::on_file_read),
@@ -1709,7 +1721,8 @@ impl WindowsBufferedReader {
                 // previous releases.
                 .to_error(sys::Tag::write)
                 {
-                    file.complete(false);
+                    // SAFETY: see above.
+                    unsafe { (*file_raw).complete(false) };
                     self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
                     return sys::Result::Err(err);
                 }

@@ -1788,9 +1788,9 @@ impl napi_async_work {
     }
 
     pub(crate) unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // SAFETY: task points to napi_async_work.task.
-        let this = unsafe { &mut *napi_async_work::from_task_ptr(task) };
-        this.run();
+        // SAFETY: `task` is the `task` field of a live heap `napi_async_work`,
+        // exclusively owned by the work pool for this callback's duration.
+        unsafe { (*napi_async_work::from_task_ptr(task)).run() };
     }
 
     fn run(&mut self) {
@@ -2506,14 +2506,15 @@ impl ThreadSafeFunction {
     // a `*mut ThreadSafeFunction`; the signature is fixed by that registry.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_dispatch(this: *mut ThreadSafeFunction) {
-        // SAFETY: `this` is a live heap allocation owned by the event loop dispatch.
-        let self_ = unsafe { &mut *this };
-        if self_.env_dead.load(Ordering::SeqCst) {
+        // SAFETY: `this` is a live heap allocation owned by the event loop
+        // dispatch; `env_dead` is atomic so a shared reborrow suffices.
+        if unsafe { (*this).env_dead.load(Ordering::SeqCst) } {
             // `env_teardown` already released everything and owns the free
             // decision. The loop this task came from is being destroyed.
             return;
         }
-        if self_.closing.load(Ordering::SeqCst) == ClosingState::Closed as u8 {
+        // SAFETY: as above.
+        if unsafe { (*this).closing.load(Ordering::SeqCst) } == ClosingState::Closed as u8 {
             // Finalize the ThreadSafeFunction.
             // SAFETY: `this` is the live heap allocation we own; closed state guarantees no other thread will touch it.
             unsafe { ThreadSafeFunction::destroy(this) };
@@ -2524,14 +2525,22 @@ impl ThreadSafeFunction {
 
         // Run the tasks.
         loop {
-            self_
-                .dispatch_state
-                .store(DispatchState::Running as u8, Ordering::SeqCst);
-            if self_.dispatch_one(is_first) {
-                is_first = false;
-                self_
+            // SAFETY: as above.
+            unsafe {
+                (*this)
                     .dispatch_state
-                    .store(DispatchState::Pending as u8, Ordering::SeqCst);
+                    .store(DispatchState::Running as u8, Ordering::SeqCst)
+            };
+            // SAFETY: as above. `dispatch_one` runs JS that can re-enter other
+            // TSFN entry points, so the exclusive borrow is scoped to this call.
+            if unsafe { (*this).dispatch_one(is_first) } {
+                is_first = false;
+                // SAFETY: as above.
+                unsafe {
+                    (*this)
+                        .dispatch_state
+                        .store(DispatchState::Pending as u8, Ordering::SeqCst)
+                };
             } else {
                 // We're done running tasks, for now. Transition Running → Idle
                 // via CAS instead of an unconditional store: between
@@ -2543,15 +2552,16 @@ impl ThreadSafeFunction {
                 // up. If we blindly stored Idle we'd overwrite that Pending
                 // and the callback would be dropped (flaky lost-wakeup under
                 // load). On CAS failure, loop and re-drain.
-                if self_
-                    .dispatch_state
-                    .compare_exchange(
+                // SAFETY: as above.
+                if unsafe {
+                    (*this).dispatch_state.compare_exchange(
                         DispatchState::Running as u8,
                         DispatchState::Idle as u8,
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                     )
-                    .is_ok()
+                }
+                .is_ok()
                 {
                     break;
                 }
@@ -2718,11 +2728,9 @@ impl ThreadSafeFunction {
         ctx: *mut c_void,
         block: bool,
     ) -> napi_status {
-        let (status, orphaned) = {
-            // SAFETY: live allocation; the borrow ends before the free below.
-            let self_ = unsafe { &mut *this };
-            self_.enqueue(ctx, block)
-        };
+        // SAFETY: live allocation; the borrow is scoped to this call and ends
+        // before the free below.
+        let (status, orphaned) = unsafe { (*this).enqueue(ctx, block) };
 
         if orphaned {
             // SAFETY: the lock is dropped, we dropped the last thread reference
@@ -2797,13 +2805,16 @@ impl ThreadSafeFunction {
     /// SAFETY: `this` must be a live `*mut ThreadSafeFunction` returned from `heap::alloc`
     /// and not aliased; caller transfers ownership.
     pub(crate) unsafe fn destroy(this: *mut ThreadSafeFunction) {
-        // SAFETY: caller contract — `this` is a live heap allocation; we consume it here.
-        let self_ = unsafe { &mut *this };
+        // SAFETY: caller contract — `this` is a live heap allocation and we are
+        // the sole owner; reclaim the Box up front so the body works on owned
+        // state and the drop at scope end frees it.
+        let mut self_ = unsafe { bun_core::heap::take(this) };
         self_.unref();
 
         if let Some(env) = self_.env.as_ref() {
             // SAFETY: env is live (we hold a ref); drops our registry entry so
-            // teardown cannot hand this pointer out after we free it.
+            // teardown cannot hand this pointer out after we free it. `this` is
+            // passed as an opaque registry key only, never dereferenced.
             unsafe { NapiEnv__unregisterThreadSafeFunction(env.get(), this.cast()) };
         }
 
@@ -2819,11 +2830,9 @@ impl ThreadSafeFunction {
             };
             finalizer.enqueue();
         }
-        // else-branch: `env` drops with the Box below.
+        // else-branch: `env` drops with the Box.
 
-        // callback.deinit() and queue.deinit() run via Drop.
-        // SAFETY: `this` was allocated by heap::alloc in `new`.
-        drop(unsafe { bun_core::heap::take(this) });
+        // callback.deinit() and queue.deinit() run via Drop of `self_` here.
     }
 
     /// Frees the allocation and nothing else: no finalizer, no registry entry,
@@ -2941,10 +2950,12 @@ impl ThreadSafeFunction {
         mode: napi_threadsafe_function_release_mode,
     ) -> napi_status {
         let (status, orphaned) = {
-            // SAFETY: live allocation; the borrow ends before the free below.
-            let self_ = unsafe { &mut *this };
-            let _g = self_.lock.lock_guard();
-            self_.release_locked(mode)
+            // SAFETY: live allocation. `MutexGuard` holds the lock by raw
+            // pointer, so it does not keep `*this` borrowed across the call
+            // below; both borrows are scoped and end before the free.
+            let _g = unsafe { (*this).lock.lock_guard() };
+            // SAFETY: as above.
+            unsafe { (*this).release_locked(mode) }
         };
 
         if orphaned {
@@ -3007,9 +3018,9 @@ impl ThreadSafeFunction {
 extern "C" fn napi_internal_threadsafe_function_env_teardown(tsfn: *mut c_void) {
     let this = tsfn.cast::<ThreadSafeFunction>();
     // SAFETY: the registry only holds live TSFN pointers — `destroy` and
-    // `env_teardown` both remove the entry before freeing.
-    let self_ = unsafe { &mut *this };
-    if self_.env_teardown() {
+    // `env_teardown` both remove the entry before freeing. Exclusive borrow
+    // scoped to this call.
+    if unsafe { (*this).env_teardown() } {
         // SAFETY: no other thread holds a reference (thread_count == 0) and no
         // event-loop task will run again.
         unsafe { ThreadSafeFunction::free_orphaned(this) };
@@ -3098,11 +3109,11 @@ extern "C" fn napi_create_threadsafe_function(
         return env.generic_failure();
     }
 
-    // SAFETY: function is non-null (just allocated).
-    let function_ref = unsafe { &mut *function };
     // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
-    function_ref.ref_();
-    function_ref.tracker.did_schedule(vm.global());
+    // SAFETY: function is non-null (just allocated) and not yet handed out.
+    unsafe { (*function).ref_() };
+    // SAFETY: as above.
+    unsafe { (*function).tracker.did_schedule(vm.global()) };
 
     *result = function;
     env.ok()
@@ -3156,18 +3167,21 @@ extern "C" fn napi_unref_threadsafe_function(
     func: napi_threadsafe_function,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_unref_threadsafe_function");
-    // SAFETY: caller passes a pointer from napi_create_threadsafe_function.
-    let Some(func) = (unsafe { func.as_mut() }) else {
+    if func.is_null() {
         return NapiStatus::invalid_arg as napi_status;
-    };
+    }
     #[cfg(debug_assertions)]
-    // SAFETY: env_ is either null or a valid napi_env per N-API contract.
-    if let (Some(loop_), Some(env)) = (func.event_loop.as_ref(), unsafe { env_.as_ref() }) {
+    // SAFETY: `func` was null-checked above; `env_` is either null or a valid
+    // napi_env per N-API contract; JS thread, shared read.
+    if let (Some(loop_), Some(env)) =
+        (unsafe { (*func).event_loop.as_ref() }, unsafe { env_.as_ref() })
+    {
         debug_assert!(core::ptr::eq(loop_.global.unwrap().as_ptr(), env.to_js()));
     }
     #[cfg(not(debug_assertions))]
     let _ = env_;
-    func.unref();
+    // SAFETY: `func` was null-checked above; exclusive borrow scoped to this call.
+    unsafe { (*func).unref() };
     NapiStatus::ok as napi_status
 }
 
@@ -3177,18 +3191,21 @@ extern "C" fn napi_ref_threadsafe_function(
     func: napi_threadsafe_function,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_ref_threadsafe_function");
-    // SAFETY: caller passes a pointer from napi_create_threadsafe_function.
-    let Some(func) = (unsafe { func.as_mut() }) else {
+    if func.is_null() {
         return NapiStatus::invalid_arg as napi_status;
-    };
+    }
     #[cfg(debug_assertions)]
-    // SAFETY: env_ is either null or a valid napi_env per N-API contract.
-    if let (Some(loop_), Some(env)) = (func.event_loop.as_ref(), unsafe { env_.as_ref() }) {
+    // SAFETY: `func` was null-checked above; `env_` is either null or a valid
+    // napi_env per N-API contract; JS thread, shared read.
+    if let (Some(loop_), Some(env)) =
+        (unsafe { (*func).event_loop.as_ref() }, unsafe { env_.as_ref() })
+    {
         debug_assert!(core::ptr::eq(loop_.global.unwrap().as_ptr(), env.to_js()));
     }
     #[cfg(not(debug_assertions))]
     let _ = env_;
-    func.ref_();
+    // SAFETY: `func` was null-checked above; exclusive borrow scoped to this call.
+    unsafe { (*func).ref_() };
     NapiStatus::ok as napi_status
 }
 

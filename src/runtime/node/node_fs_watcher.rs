@@ -261,16 +261,16 @@ impl FSWatchTaskPosix {
     /// `this` must be the unique `heap::alloc` pointer produced by
     /// `enqueue()`; called from the JS-thread task dispatcher only.
     pub(crate) unsafe fn deinit(this: *mut Self) {
-        // SAFETY: caller contract — `this` is the live heap clone.
-        let this_ref = unsafe { &mut *this };
-        this_ref.clean_entries();
+        // SAFETY: caller contract — `this` is the unique live heap clone from
+        // `enqueue()`; reclaim ownership (paired with its `heap::alloc`).
+        let mut task = unsafe { bun_core::heap::take(this) };
+        task.clean_entries();
         #[cfg(debug_assertions)]
         {
-            // SAFETY: ctx is valid for the lifetime of any task (ParentRef).
-            debug_assert!(!core::ptr::eq(this_ref.ctx().current_task.as_ptr(), this));
+            // ctx is valid for the lifetime of any task (ParentRef).
+            debug_assert!(!core::ptr::eq(task.ctx().current_task.as_ptr(), this));
         }
-        // SAFETY: paired with `heap::alloc` in `enqueue()`.
-        drop(unsafe { bun_core::heap::take(this) });
+        // `task` (entries already cleaned) drops here.
     }
 }
 

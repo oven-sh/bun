@@ -1131,13 +1131,13 @@ impl FileSink {
     /// and the caller must hold the last reference.
     unsafe fn deinit(this: *mut FileSink) {
         LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
-        // SAFETY: caller contract — `this` is valid and uniquely owned.
-        let self_ = unsafe { &mut *this };
         // pending/readable_stream/js_sink_ref are dropped by Box drop below.
-        if let Some(global) = self_.js_global() {
+        // SAFETY: caller contract — `this` is valid and uniquely owned; scoped shared access.
+        if let Some(global) = unsafe { (*this).js_global() } {
             // SAFETY: `bun_vm()` is non-null when `js_global()` returned Some.
             let vm = global.bun_vm().as_mut();
-            AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self_, vm);
+            // SAFETY: as above — shared borrow scoped to the unregister call.
+            AutoFlusher::unregister_deferred_microtask_with_type::<Self>(unsafe { &*this }, vm);
         }
         // SAFETY: `this` was produced by `heap::alloc` in the constructors.
         drop(unsafe { bun_core::heap::take(this) });

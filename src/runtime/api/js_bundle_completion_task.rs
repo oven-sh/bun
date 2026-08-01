@@ -386,17 +386,16 @@ impl JSBundleCompletionTask {
             flags |= StandaloneFlags::DISABLE_AUTOLOAD_PACKAGE_JSON;
         }
 
-        // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at
-        // construction; valid for the lifetime of the VirtualMachine.
-        let env = unsafe { &mut *self.env };
-
         let result = match to_executable(
             &compile_options.compile_target,
             output_files,
             root_dir.fd,
             module_prefix,
             outfile_for_executable,
-            env,
+            // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at
+            // construction; valid for the lifetime of the VirtualMachine, and
+            // nothing inside `to_executable` reaches it otherwise.
+            unsafe { &mut *self.env },
             self.config.format,
             &WindowsOptions {
                 hide_console: compile_options.windows_hide_console,
@@ -529,12 +528,19 @@ impl JSBundleCompletionTask {
     /// `task_tag::JSBundleCompletionTask` entry: `onComplete` runs on the JS
     /// thread once the bundle thread posts back via `complete_on_bundle_thread`.
     pub(crate) fn on_complete_anytask(ctx: *mut Self) -> bun_event_loop::JsResult<()> {
-        // SAFETY: `ctx` is the heap::alloc allocation registered in `task`.
-        let this = unsafe { &mut *ctx };
         // For the +1 taken by `complete_on_bundle_thread` enqueue.
         // SAFETY: `ctx` is the live heap allocation; `adopt` consumes the prior +1 on Drop.
         let _drop_ref = unsafe { bun_ptr::ScopedRef::<Self>::adopt(ctx) };
+        // SAFETY: `ctx` is the heap::alloc allocation registered in `task`,
+        // dispatched exactly once per task on the JS thread. Exclusive: the
+        // task has no JS-visible handle, the bundle thread's access ended when
+        // it enqueued this dispatch, and `_drop_ref` keeps the refcount above
+        // zero so re-entrant JS cannot free it.
+        unsafe { &mut *ctx }.on_complete()
+    }
 
+    fn on_complete(&mut self) -> bun_event_loop::JsResult<()> {
+        let this = self;
         let vm = this.global_this.bun_vm_ptr();
         // SAFETY: `vm` is the live per-thread VM (`global_this.bun_vm_ptr()`).
         this.poll_ref
@@ -561,8 +567,10 @@ impl JSBundleCompletionTask {
         // ptr deref inside). Detach via raw ptr so `this` can be reborrowed
         // for `result`/`config`/`log` below.
         let promise: *mut JSPromise = this.promise.swap();
-        // SAFETY: GC-owned cell; valid for the duration of this JS-thread callback.
-        let promise = unsafe { &mut *promise };
+        // `JSPromise` is an opaque ZST handle, so this detached `&mut` covers
+        // zero Rust-visible bytes (see `JSPromiseStrong::get`); the GC-owned
+        // cell is valid for the duration of this JS-thread callback.
+        let promise = JSPromise::opaque_mut(promise);
 
         // `do_compilation` borrows `&mut self` while needing
         // `&mut output_files` from inside `self.result`. Temporarily move the

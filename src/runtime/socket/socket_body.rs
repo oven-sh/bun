@@ -4344,22 +4344,22 @@ impl DuplexUpgradeContext {
                     unsafe { Self::deinit(this) };
                     return;
                 }
-                let started: crate::Result<()> = {
-                    // SAFETY: `this` is live; this `&mut` is scoped to the block
-                    // and ends before any `Self::deinit` call below.
-                    let this_ref = unsafe { &mut *this };
+                // SAFETY: `this` is live; each access below is scoped, so no
+                // `&`/`&mut Self` spans the re-entrant `start_tls*` calls or
+                // any `Self::deinit` call below.
+                let started: crate::Result<()> = unsafe {
                     log!(
                         "DuplexUpgradeContext.startTLS mode={}",
-                        <&'static str>::from(this_ref.mode)
+                        <&'static str>::from((*this).mode)
                     );
-                    let is_client = this_ref.mode == SocketMode::Client;
-                    let verify = this_ref.server_verify;
-                    if let Some(ctx) = this_ref.owned_ctx.take() {
+                    let is_client = (*this).mode == SocketMode::Client;
+                    let verify = (*this).server_verify;
+                    if let Some(ctx) = (*this).owned_ctx.take() {
                         // Transfer the ref into SSLWrapper; null first so the
                         // failure path / deinit don't double-free it.
-                        this_ref.upgrade.start_tls_with_ctx(ctx, is_client, verify)
-                    } else if let Some(config) = &this_ref.ssl_config {
-                        this_ref.upgrade.start_tls(config, is_client, verify)
+                        (*this).upgrade.start_tls_with_ctx(ctx, is_client, verify)
+                    } else if let Some(config) = &(*this).ssl_config {
+                        (*this).upgrade.start_tls(config, is_client, verify)
                     } else {
                         Ok(())
                     }
@@ -4446,18 +4446,19 @@ impl DuplexUpgradeContext {
     /// reclaimed below).
     unsafe fn deinit(this: *mut Self) {
         {
-            // SAFETY: `this` is live; short-lived `&mut` ends before the
-            // `heap::take` free below — no protector spans the dealloc.
-            let this_ref = unsafe { &mut *this };
-            if let Some(tls) = this_ref.tls.take() {
-                // Release the owner's +1.
-                tls.deref();
-            }
-            // Close raced ahead of StartTLS — drop the unconsumed config.
-            this_ref.ssl_config = None;
-            if let Some(ctx) = this_ref.owned_ctx.take() {
-                // SAFETY: BoringSSL FFI; we hold one owned ref.
-                unsafe { boringssl_sys::SSL_CTX_free(ctx) };
+            // SAFETY: `this` is live; each field access is scoped to its own
+            // statement, so nothing spans the `heap::take` free below.
+            unsafe {
+                if let Some(tls) = (*this).tls.take() {
+                    // Release the owner's +1.
+                    tls.deref();
+                }
+                // Close raced ahead of StartTLS — drop the unconsumed config.
+                (*this).ssl_config = None;
+                if let Some(ctx) = (*this).owned_ctx.take() {
+                    // SAFETY: BoringSSL FFI; we hold one owned ref.
+                    boringssl_sys::SSL_CTX_free(ctx);
+                }
             }
         }
         // `UpgradedDuplex` cleanup
@@ -4729,11 +4730,10 @@ pub fn js_upgrade_duplex_to_tls(
             },
         ));
     }
-    // SAFETY: every field initialized above.
-    let dc = unsafe { &mut *duplex_context };
     // ssl_opts is moved into duplexContext.ssl_config when owned_ctx == null;
     // otherwise it was only used for protos/server_name and is freed here.
-    if dc.ssl_config.is_none() {
+    // SAFETY: every field initialized above; scoped read.
+    if unsafe { (*duplex_context).ssl_config.is_none() } {
         drop(ssl_opts.take());
     }
     // Disarm the guard — either moved into duplexContext or just
@@ -4742,7 +4742,10 @@ pub fn js_upgrade_duplex_to_tls(
     let _ = ssl_opts;
     tls_ref.ref_();
 
-    tls_ref.socket.set(from_duplex::<true>(&dc.upgrade));
+    // SAFETY: `duplex_context` is live; shared borrow scoped to this call.
+    tls_ref
+        .socket
+        .set(from_duplex::<true>(unsafe { &(*duplex_context).upgrade }));
     tls_ref.mark_active();
     // Unlike a real socket, a TLS engine over a JS stream has no I/O of its
     // own to wait for - it is driven entirely by the stream's events - so it
@@ -4751,12 +4754,16 @@ pub fn js_upgrade_duplex_to_tls(
     // dangling still exits. If the underlying stream is a real socket, that
     // socket's own handle keeps the loop alive.
 
-    dc.start_tls();
+    // SAFETY: `duplex_context` is live; `&mut` scoped to this call.
+    unsafe { (*duplex_context).start_tls() };
 
     let array = JSValue::create_empty_array(global, 2)?;
     array.put_index(global, 0, tls_js_value)?;
     // data, end, drain and close events must be reported
-    array.put_index(global, 1, dc.upgrade.get_js_handlers(global)?)?;
+    // SAFETY: `duplex_context` is live; shared borrow scoped to this call.
+    array.put_index(global, 1, unsafe {
+        (*duplex_context).upgrade.get_js_handlers(global)?
+    })?;
 
     Ok(array)
 }

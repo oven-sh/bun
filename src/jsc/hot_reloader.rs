@@ -145,8 +145,7 @@ impl HotReloaderCtx for VirtualMachine {
         // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
         // `enable_hot_module_reloading`; non-null whenever the reloader is
         // running. The cast recovers the concrete type the field was erased to.
-        let import_watcher = unsafe { &mut *self.bun_watcher.cast::<ImportWatcher>() };
-        match import_watcher {
+        match unsafe { &mut *self.bun_watcher.cast::<ImportWatcher>() } {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => &mut **w,
             ImportWatcher::None => unreachable!("bun_watcher_mut on un-enabled reloader"),
         }
@@ -700,17 +699,16 @@ where
     /// process lifetime.
     pub unsafe fn enable_hot_module_reloading(this: *mut Ctx, entry_path: Option<&'static [u8]>) {
         // SAFETY: precondition — `this` is the live owning `Ctx`; it outlives
-        // the reloader allocated below.
-        let ctx = unsafe { &mut *this };
-
-        if ctx.is_watcher_enabled() {
+        // the reloader allocated below. Borrows are scoped per access.
+        if unsafe { (*this).is_watcher_enabled() } {
             return;
         }
 
         let reloader = bun_core::heap::into_raw(Box::new(Self {
             // SAFETY: `this` is the live owning context; it outlives the reloader.
             ctx: unsafe { bun_ptr::BackRef::from_raw_mut(this) },
-            verbose: ctx.log_level_at_least_info(),
+            // SAFETY: see above.
+            verbose: unsafe { (*this).log_level_at_least_info() },
             pending_count: AtomicU32::new(0),
             main: MainFile::init(entry_path.unwrap_or(b"")),
             #[cfg(not(windows))]
@@ -718,7 +716,8 @@ where
             _event_loop: PhantomData,
         }));
 
-        let watcher = match Watcher::init(reloader, ctx.watcher_top_level_dir()) {
+        // SAFETY: see above; `watcher_top_level_dir` returns `&'static [u8]`.
+        let watcher = match Watcher::init(reloader, unsafe { (*this).watcher_top_level_dir() }) {
             Ok(w) => w,
             Err(err) => {
                 bun_core::handle_error_return_trace(&err);
@@ -729,15 +728,17 @@ where
             }
         };
 
-        let watcher_ptr = ctx.install_bun_watcher(watcher, RELOAD_IMMEDIATELY);
+        // SAFETY: see above.
+        let watcher_ptr = unsafe { (*this).install_bun_watcher(watcher, RELOAD_IMMEDIATELY) };
 
         // SAFETY: single-threaded init; watcher thread not yet started.
         CLEAR_SCREEN.store(
-            ctx.compute_clear_screen(),
+            // SAFETY: see above.
+            unsafe { (*this).compute_clear_screen() },
             core::sync::atomic::Ordering::Relaxed,
         );
 
-        // SAFETY: `watcher_ptr` was just installed into `ctx` and is live.
+        // SAFETY: `watcher_ptr` was just installed into the ctx and is live.
         if let Err(err) = unsafe { (*watcher_ptr).start() } {
             bun_core::handle_error_return_trace(&err);
             Output::panic(format_args!("Failed to start File Watcher: {}", err.name()));
@@ -827,9 +828,6 @@ where
             // SAFETY: the Watcher outlives this call (it owns the Reloader that calls us).
             unsafe { (*ctx).flush_evictions() };
         });
-        // SAFETY: the Watcher outlives this call (it owns the Reloader that calls us).
-        let ctx = unsafe { &mut *ctx };
-
         let fs: &mut FileSystem = FileSystem::instance();
         let rfs: &mut Fs::file_system::RealFS = &mut fs.fs;
         #[cfg(windows)]
@@ -856,7 +854,19 @@ where
                     if event.op.contains(WatchOp::DELETE)
                         || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE)
                     {
-                        ctx.remove_at_index::<false>(bun_watcher::Kind::File, event.index, 0, &[]);
+                        // SAFETY: the Watcher outlives this call (it owns the
+                        // Reloader that calls us); `remove_at_index::<false>`
+                        // only buffers the eviction, and the borrow is scoped
+                        // to this call so it never overlaps the watchlist
+                        // column slices above.
+                        unsafe {
+                            (*ctx).remove_at_index::<false>(
+                                bun_watcher::Kind::File,
+                                event.index,
+                                0,
+                                &[],
+                            )
+                        };
                     }
 
                     if self.verbose {
@@ -1079,8 +1089,10 @@ where
 
                         if let Some(dir_ent) = entries_option {
                             // SAFETY: dir_ent points into rfs.entries (or a tombstoned copy);
-                            // both outlive this loop iteration.
-                            let dir_ent = unsafe { &mut *dir_ent };
+                            // both outlive this loop iteration. Shared access only —
+                            // `entries()` takes `&self` and per-entry mutation below goes
+                            // through the entry's own mutex + cells.
+                            let dir_ent = unsafe { &*dir_ent };
                             let mut last_file_hash: bun_watcher::HashType =
                                 bun_watcher::HashType::MAX;
 
@@ -1142,12 +1154,17 @@ where
                                                                     )
                                                                 ));
                                                             }
-                                                            ctx.remove_at_index::<false>(
-                                                                bun_watcher::Kind::File,
-                                                                entry_id as u16,
-                                                                0,
-                                                                &[],
-                                                            );
+                                                            // SAFETY: see the
+                                                            // File-arm call
+                                                            // above.
+                                                            unsafe {
+                                                                (*ctx).remove_at_index::<false>(
+                                                                    bun_watcher::Kind::File,
+                                                                    entry_id as u16,
+                                                                    0,
+                                                                    &[],
+                                                                )
+                                                            };
                                                         }
                                                     }
 

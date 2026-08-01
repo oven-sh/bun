@@ -512,8 +512,9 @@ impl EventLoop {
                 let _ = unsafe { bun_core::heap::take(dest) };
             }
 
-            // SAFETY: `task` is non-null (checked above) and owned by this batch.
-            let task_ref = unsafe { &mut *task };
+            // SAFETY: `task` is non-null (checked above) and owned by this
+            // batch; only shared reads follow (`auto_delete`, the `task` copy).
+            let task_ref = unsafe { &*task };
             if task_ref.auto_delete() {
                 to_destroy = Some(task);
             }
@@ -857,9 +858,9 @@ impl EventLoop {
             // this would only occur if we were recursively running tickImmediateTasks.
             bun_core::hint::cold();
             // SAFETY: as above.
-            let r = unsafe { &mut *this };
-            let next = core::mem::take(&mut r.next_immediate_tasks);
-            r.immediate_tasks.extend_from_slice(&next);
+            let next = core::mem::take(unsafe { &mut (*this).next_immediate_tasks });
+            // SAFETY: as above.
+            unsafe { (*this).immediate_tasks.extend_from_slice(&next) };
         }
 
         if to_run_now.capacity() > 1024 * 128 {
@@ -1101,29 +1102,35 @@ impl EventLoop {
 
     pub fn tick_possibly_forever(&mut self) {
         let loop_ptr = self.usockets_loop();
-        // SAFETY: usockets_loop() returns a live uws loop for the VM lifetime.
-        let loop_ = unsafe { &mut *loop_ptr };
 
         #[cfg(unix)]
         {
             let pending_unref = self.vm_ref().take_pending_unref();
             if pending_unref > 0 {
-                loop_.unref_count(pending_unref);
+                // SAFETY: usockets_loop() returns a live uws loop for the VM
+                // lifetime; borrow scoped to this call.
+                unsafe { (*loop_ptr).unref_count(pending_unref) };
             }
         }
 
-        if !loop_.is_active() {
-            self.hold_forever_poll(loop_);
+        // SAFETY: as above.
+        if !unsafe { (*loop_ptr).is_active() } {
+            // SAFETY: as above; `hold_forever_poll` does not re-enter the loop.
+            self.hold_forever_poll(unsafe { &mut *loop_ptr });
         }
 
         self.process_gc_timer();
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
-        loop_.tick_with_timeout(
-            Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
-            uws::NOW_NS_UNKNOWN,
-        );
+        // SAFETY: as above — the tick runs loop callbacks that reach the loop
+        // themselves, so the exclusive borrow is scoped to this call only.
+        unsafe {
+            (*loop_ptr).tick_with_timeout(
+                Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
+                uws::NOW_NS_UNKNOWN,
+            )
+        };
 
         self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();

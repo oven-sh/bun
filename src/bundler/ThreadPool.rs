@@ -274,11 +274,7 @@ impl ThreadPool {
         return false;
     }
 
-    fn schedule_with_options(&self, parse_task: *mut ParseTask, is_inside_thread_pool: bool) {
-        // SAFETY: callers (`schedule`/`schedule_inside_thread_pool`) pass a
-        // live, exclusively-owned ParseTask (heap- or arena-allocated raw
-        // pointer); see call sites in bundle_v2.rs.
-        let parse_task = unsafe { &mut *parse_task };
+    fn schedule_with_options(&self, parse_task: &mut ParseTask, is_inside_thread_pool: bool) {
         if matches!(parse_task.contents_or_fd, ContentsOrFd::Contents(_))
             && matches!(parse_task.stage, ParseTaskStage::NeedsSourceCode)
         {
@@ -335,11 +331,14 @@ impl ThreadPool {
     // takes `*mut` so callers can pass either a
     // raw heap pointer (e.g. `load.parse_task`) or a `&mut` (auto-coerces).
     pub(crate) fn schedule(&self, parse_task: *mut ParseTask) {
-        self.schedule_with_options(parse_task, false);
+        // SAFETY: callers pass a live, exclusively-owned ParseTask (heap- or
+        // arena-allocated raw pointer); see call sites in bundle_v2.rs.
+        self.schedule_with_options(unsafe { &mut *parse_task }, false);
     }
 
     pub(crate) fn schedule_inside_thread_pool(&self, parse_task: *mut ParseTask) {
-        self.schedule_with_options(parse_task, true);
+        // SAFETY: see `schedule`.
+        self.schedule_with_options(unsafe { &mut *parse_task }, true);
     }
 
     // returns `&'static mut` — the `Worker` is `heap::alloc`'d
@@ -568,8 +567,11 @@ impl Worker {
     /// # Safety
     /// `this` must have come from `heap::alloc` in [`ThreadPool::get_worker`].
     pub(crate) unsafe fn deinit(this: *mut Worker) {
-        // SAFETY: caller contract.
-        let worker = unsafe { &mut *this };
+        // SAFETY: caller contract — reclaim the Box; dropping it at scope end
+        // runs the remaining field drop glue (`Option` fields are `None`,
+        // `ast_memory_store` is `ManuallyDrop`), defending against future
+        // `Drop`-carrying fields.
+        let mut worker = unsafe { bun_core::heap::take(this) };
         if worker.has_created {
             // `wire_after_move` boxed a `bun_js_parser_jsc::Macro::MacroContext`
             // behind `macro_context.data` (raw `*mut`, no `Drop` glue);
@@ -606,11 +608,7 @@ impl Worker {
         if worker.has_created {
             worker.heap = None;
         }
-        // SAFETY: caller contract — `this` was heap-allocated via `get_worker`.
-        // Runs full field drop glue: remaining `Option` fields are `None`
-        // (no-op), `ast_memory_store` is `ManuallyDrop` (no auto-drop), so no
-        // double-free; defends against future `Drop`-carrying fields.
-        unsafe { bun_core::heap::destroy(this) };
+        // `worker` (the reclaimed Box) drops here, freeing the allocation.
     }
 
     // returns `&'static mut` (detached) — the `Worker` is

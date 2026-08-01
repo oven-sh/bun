@@ -423,28 +423,28 @@ impl WebSocketProxyTunnel {
         upgrade_client.terminate(ErrorCode::Ended);
     }
 
-    /// Set the connected WebSocket client. Called after successful WebSocket upgrade.
-    /// This transitions the tunnel from upgrade phase to connected phase.
-    /// After calling this, decrypted data will be forwarded to the WebSocket client.
-    fn set_connected_web_socket(&mut self, ws: *mut WebSocketClient) {
-        bun_core::scoped_log!(WebSocketProxyTunnel, "setConnectedWebSocket");
-        self.connected_websocket = ws;
-        // Clear the upgrade client reference since we're now in connected phase
-        self.upgrade_client = UpgradeClientUnion::None;
-    }
-
     /// Clear the connected WebSocket reference. Called before tunnel shutdown during
     /// a clean close so the tunnel's onClose callback doesn't dispatch a spurious
     /// abrupt close (1006) after the WebSocket has already sent a clean close frame.
-    pub(crate) fn clear_connected_web_socket(&mut self) {
-        self.connected_websocket = ptr::null_mut();
+    ///
+    /// # Safety
+    /// `this` must point to a live tunnel. Takes `*mut Self` (not `&mut self`)
+    /// because it can be reached from inside an SSLWrapper callback while the
+    /// driving frame holds `&mut SslWrapper`; the raw write covers only this field.
+    pub(crate) unsafe fn clear_connected_web_socket(this: *mut Self) {
+        // SAFETY: caller contract — `this` is live; raw place write, field-scoped.
+        unsafe { (*this).connected_websocket = ptr::null_mut() };
     }
 
     /// Clear the upgrade client reference. Called before tunnel shutdown during
     /// cleanup so that the SSLWrapper's synchronous onHandshake/onClose callbacks
     /// do not re-enter the upgrade client's terminate/clearData path.
-    pub(crate) fn detach_upgrade_client(&mut self) {
-        self.upgrade_client = UpgradeClientUnion::None;
+    ///
+    /// # Safety
+    /// Same contract as [`Self::clear_connected_web_socket`].
+    pub(crate) unsafe fn detach_upgrade_client(this: *mut Self) {
+        // SAFETY: caller contract — `this` is live; raw place write, field-scoped.
+        unsafe { (*this).upgrade_client = UpgradeClientUnion::None };
     }
 
     /// SSLWrapper callback: Called with encrypted data to send to network
@@ -611,7 +611,9 @@ impl Drop for WebSocketProxyTunnel {
     }
 }
 
-/// C export for setting the connected WebSocket client from C++
+/// C export for setting the connected WebSocket client from C++.
+/// Transitions the tunnel from upgrade phase to connected phase: decrypted
+/// data is forwarded to the WebSocket client from here on.
 // `tunnel` must stay `*mut` for the C ABI; C++ guarantees it is live and
 // non-null, so the deref is sound — not_unsafe_ptr_arg_deref is a false
 // positive at this FFI boundary.
@@ -621,7 +623,12 @@ extern "C" fn WebSocketProxyTunnel__setConnectedWebSocket(
     tunnel: *mut WebSocketProxyTunnel,
     ws: *mut WebSocketClient,
 ) {
-    // SAFETY: C++ guarantees a live, non-null tunnel pointer.
-    let tunnel = unsafe { &mut *tunnel };
-    tunnel.set_connected_web_socket(ws);
+    bun_core::scoped_log!(WebSocketProxyTunnel, "setConnectedWebSocket");
+    // SAFETY: C++ guarantees a live, non-null tunnel pointer; raw field-scoped
+    // writes, nothing re-enters.
+    unsafe {
+        (*tunnel).connected_websocket = ws;
+        // Clear the upgrade client reference since we're now in connected phase
+        (*tunnel).upgrade_client = UpgradeClientUnion::None;
+    }
 }

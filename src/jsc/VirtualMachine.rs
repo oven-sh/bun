@@ -6123,8 +6123,7 @@ impl VirtualMachine {
                 writer.write_all(b"\n")?;
             }
 
-            // "error"/"suppressed" (SuppressedError) and "cause" are
-            // non-enumerable own properties; the loop above skips those.
+            // "error"/"suppressed"/"cause" are non-enumerable, so the loop above won't see them.
             if !saw_error {
                 let key = bun_core::String::static_(b"error");
                 if let Some(inner) = error_instance.get_own(global_ref, &key)? {
@@ -6191,8 +6190,7 @@ impl VirtualMachine {
                 formatter.map_node = Some(node);
             }
 
-            // `formatter.map` is shared with the generic formatter's own cycle
-            // check, so only seed it for values that recurse here (Errors).
+            // Only Errors recurse here; non-Errors use `formatter.map` for their own cycle check.
             let track = err.is_cell() && err.js_type() == JSType::ErrorInstance;
             if track {
                 let entry = formatter.map.get_or_put(err).expect("unreachable");

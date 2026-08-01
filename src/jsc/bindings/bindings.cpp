@@ -1780,7 +1780,9 @@ bool Bun__deepMatch(
 
         if constexpr (enableAsymmetricMatchers) {
             if (subsetPropCell && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
-                switch (matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope)) {
+                auto result = matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope);
+                RETURN_IF_EXCEPTION(throwScope, false);
+                switch (result) {
                 case AsymmetricMatcherResult::FAIL:
                     if (replacePropsWithAsymmetricMatchers) {
                         matched = false;
@@ -1798,7 +1800,9 @@ bool Bun__deepMatch(
                     break;
                 }
             } else if (propCell && propCell->type() == JSC::JSType(JSDOMWrapperType)) {
-                switch (matchAsymmetricMatcher(globalObject, prop, subsetProp, throwScope)) {
+                auto result = matchAsymmetricMatcher(globalObject, prop, subsetProp, throwScope);
+                RETURN_IF_EXCEPTION(throwScope, false);
+                switch (result) {
                 case AsymmetricMatcherResult::FAIL:
                     if (replacePropsWithAsymmetricMatchers) {
                         matched = false;
@@ -1838,7 +1842,9 @@ bool Bun__deepMatch(
                 gcBuffer->append(subsetProp);
                 // property cycle detected
                 if (!didInsertProp.second || !didInsertSubset.second) continue;
-                if (!Bun__deepMatch<enableAsymmetricMatchers>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, replacePropsWithAsymmetricMatchers, isMatchingObjectContaining)) {
+                bool nestedMatched = Bun__deepMatch<enableAsymmetricMatchers>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, replacePropsWithAsymmetricMatchers, isMatchingObjectContaining);
+                RETURN_IF_EXCEPTION(throwScope, false);
+                if (!nestedMatched) {
                     if (!replacePropsWithAsymmetricMatchers) return false;
                     matched = false;
                 }

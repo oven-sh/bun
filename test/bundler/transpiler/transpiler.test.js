@@ -3919,6 +3919,64 @@ console.log(foo, array);
       expectPrinted("(0, func())", "func()");
     });
 
+    it("tagged-template tag folds preserve `this`", () => {
+      const expectPrinted = (code, out) => {
+        expect(parsed(code, true, true, transpilerMinifySyntax)).toBe(out);
+      };
+
+      // A tagged template binds `this` the same way a call does: folding a
+      // wrapper away so that a member expression lands directly in tag
+      // position would change the receiver. These match the call-target
+      // cases above, emitting `(0, obj.m)` to strip `this`.
+      expectPrinted("(0, obj.m)`x`", "(0, obj.m)`x`");
+      expectPrinted("(0, obj[k])`x`", "(0, obj[k])`x`");
+      expectPrinted("(1 ? obj.m : 0)`x`", "(0, obj.m)`x`");
+      expectPrinted("(0 ? 0 : obj.m)`x`", "(0, obj.m)`x`");
+      expectPrinted("(null ?? obj.m)`x`", "(0, obj.m)`x`");
+      expectPrinted("(1 && obj.m)`x`", "(0, obj.m)`x`");
+      expectPrinted("(0 || obj.m)`x`", "(0, obj.m)`x`");
+      // Property-access folds that replace a reference with its value bail
+      // out entirely in tag position.
+      expectPrinted("[obj.m][0]`x`", "[obj.m][0]`x`");
+      expectPrinted("({ m: obj.m }).m`x`", "{ m: obj.m }.m`x`");
+      expectPrinted('({ m: obj.m })["m"]`x`', "{ m: obj.m }.m`x`");
+
+      // Still folded when the wrapped value carries no `this`.
+      expectPrinted("(0, fn)`x`", "fn`x`");
+      expectPrinted("(1 ? fn : 0)`x`", "fn`x`");
+      expectPrinted("(null ?? fn)`x`", "fn`x`");
+      expectPrinted("(1 && fn)`x`", "fn`x`");
+      expectPrinted("(0 || fn)`x`", "fn`x`");
+
+      // Still folded outside call/tag position.
+      expectPrinted("(0, obj.m)", "obj.m");
+      expectPrinted("[obj.m][0]", "obj.m");
+      expectPrinted("({ m: obj.m }).m", "obj.m");
+    });
+
+    it("tagged-template tag `this` matches node at runtime", async () => {
+      const src = `
+        var obj = { m() { return this === obj; } };
+        console.log(JSON.stringify([
+          (0, obj.m)\`x\`,
+          (1 ? obj.m : 0)\`x\`,
+          (0 ? 0 : obj.m)\`x\`,
+          (null ?? obj.m)\`x\`,
+          (true && obj.m)\`x\`,
+          (false || obj.m)\`x\`,
+          [obj.m][0]\`x\`,
+          ({ m: obj.m }).m\`x\`,
+          ({ m: obj.m })["m"]\`x\`,
+          obj.m\`x\`,
+        ]));
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[false,false,false,false,false,false,false,false,false,true]\n");
+      expect(exitCode).toBe(0);
+    });
+
     it("constant folding", () => {
       const expectPrinted = (code, out) => {
         expect(parsed(code, true, true, transpilerMinifySyntax)).toBe(out);

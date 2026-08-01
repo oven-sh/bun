@@ -48,7 +48,10 @@ bun_core::declare_scope!(cache, visible);
 /// bindings from the compiled bytecode after the module-loader rewrite, so the
 /// record no longer carries them; blobs written in the old numbering must not
 /// be read back.
-const EXPECTED_VERSION: u32 = 24;
+/// Version 25: `p.template_tag` is tracked during the visit pass, so wrapper
+/// folds (`(0, a.b)`, `cond ? a.b : x`, `a.b ?? x`, `[a.b][0]`, `{f:a.b}.f`)
+/// no longer strip the indirection when the result is a tagged-template tag.
+const EXPECTED_VERSION: u32 = 25;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

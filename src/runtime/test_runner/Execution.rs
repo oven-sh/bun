@@ -89,10 +89,8 @@ pub struct Execution {
     /// the entries themselves are owned by BunTest, which owns Execution.
     pub(crate) sequences: Box<[ExecutionSequence]>,
     pub(crate) group_index: usize,
-    /// Group index at which `step_group` flushes the snapshot file to disk so
-    /// file-level afterAll can read it (#12114). Set by `BunTest::advance` to
-    /// the root describe's afterAll start; reset to `usize::MAX` once flushed
-    /// so it fires at most once per file.
+    /// `step_group` flushes the `.snap` file once `group_index` reaches this
+    /// (the root describe's afterAll start, or `usize::MAX` once done).
     pub(crate) snapshot_flush_group: usize,
     /// The entry whose callback is synchronously on the stack right now. Set
     /// around `run_test_callback` so code re-entered from a test body (e.g.

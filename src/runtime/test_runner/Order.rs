@@ -80,9 +80,7 @@ impl Order {
         Ok(AllOrderResult { start, end })
     }
 
-    /// Returns the group index at which `current`'s own afterAll groups begin
-    /// (i.e. one past the last child group). The caller for the file-level root
-    /// scope stores this as `Execution::snapshot_flush_group`.
+    /// Returns the group index at which `current`'s own afterAll groups begin.
     pub(crate) fn generate_order_describe(&mut self, current: &mut DescribeScope) -> JsResult<usize> {
         if current.failed {
             return Ok(self.groups.len()); // do not schedule any tests in a failed describe scope

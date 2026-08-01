@@ -28,8 +28,7 @@ pub struct Snapshots<'a> {
     pub(crate) added: usize,
     pub(crate) passed: usize,
     pub(crate) failed: usize,
-    /// `file_buf` has diverged from what `_current_file` has on disk and needs a
-    /// write + ftruncate (see `flush_current_file`).
+    /// `file_buf` differs from `_current_file` on disk; cleared by `flush_current_file`.
     pub(crate) needs_write: bool,
 
     pub(crate) file_buf: &'a mut Vec<u8>,
@@ -333,9 +332,7 @@ impl<'a> Snapshots<'a> {
         Ok(())
     }
 
-    /// Write `file_buf` over the open `.snap` file and truncate any trailing old
-    /// bytes, leaving the fd open and `file_buf`/`values`/`counts` intact so a
-    /// later `toMatchSnapshot()` can keep appending. No-ops unless `needs_write`.
+    /// Overwrite the open `.snap` file with `file_buf` + ftruncate. Keeps the fd open.
     pub(crate) fn flush_current_file(&mut self) -> Result<(), Error> {
         if !self.needs_write {
             return Ok(());
@@ -912,9 +909,6 @@ impl<'a> Snapshots<'a> {
             };
 
             if self.update_snapshots {
-                // Rebuild from a clean header; `flush_current_file` truncates the
-                // old bytes after writing so the on-disk file is never observed
-                // empty mid-run (#12114).
                 self.file_buf.extend_from_slice(Self::FILE_HEADER);
                 self.needs_write = true;
             } else {

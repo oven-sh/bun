@@ -6082,8 +6082,7 @@ impl VirtualMachine {
                             };
                             i += 1;
                             member.protect();
-                            errors_to_append
-                                .push((member, bun_core::String::static_(b"errors")));
+                            errors_to_append.push((member, bun_core::String::static_(b"errors")));
                         }
                     } else if allow_side_effects {
                         global_ref.clear_exception();

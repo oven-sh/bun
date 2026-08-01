@@ -2659,6 +2659,7 @@ impl<'a> Resolver<'a> {
                                         .conditions
                                         .kind(kind)
                                         .contains_key(b"bun".as_slice());
+                                    let retry_without_bun;
                                     {
                                         let esm_resolution = ESModule {
                                             conditions: self.opts.conditions.kind(kind),
@@ -2669,6 +2670,13 @@ impl<'a> Resolver<'a> {
                                         .resolve(b"/", esm.subpath, &exports_map.root);
                                         // ESModule temporary dropped here; `self` is unborrowed.
 
+                                        retry_without_bun = has_bun_condition
+                                            && matches!(
+                                                esm_resolution.status,
+                                                crate::package_json::Status::Exact
+                                                    | crate::package_json::Status::ExactEndsWithStar
+                                                    | crate::package_json::Status::Inexact
+                                            );
                                         if self
                                             .handle_esm_resolution(
                                                 esm_resolution,
@@ -2690,15 +2698,12 @@ impl<'a> Resolver<'a> {
                                         }
                                     }
 
-                                    // The matched export target does not exist on disk. If the
-                                    // "bun" condition is active, retry with it skipped so we
-                                    // fall through to the next matching condition (typically
-                                    // "node" or "default"). This recovers traced/pruned
-                                    // node_modules trees (e.g. Nitro/Nuxt `.output`) where
-                                    // only the "node" variant was copied. When "bun" was not
-                                    // the key that matched, the retry resolves to the same path
-                                    // and the (cached) existence check fails again.
-                                    if has_bun_condition {
+                                    // Target missing on disk: retry once without the "bun"
+                                    // condition so traced node_modules (Nitro/nft) that only
+                                    // shipped the "node" variant still resolve (#7142).
+                                    // `"bun": null` resolves to Null/PackagePathDisabled and is
+                                    // excluded above, so an explicit disable is still honored.
+                                    if retry_without_bun {
                                         let prev_module_type = module_type;
                                         module_type = package_json.module_type;
                                         let esm_resolution = ESModule {
@@ -3199,6 +3204,7 @@ impl<'a> Resolver<'a> {
                                         _ => &self.opts.conditions.import,
                                     }
                                     .contains_key(b"bun".as_slice());
+                                    let retry_without_bun;
                                     {
                                         let esm_resolution = ESModule {
                                             conditions: match kind {
@@ -3214,6 +3220,13 @@ impl<'a> Resolver<'a> {
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
 
+                                        retry_without_bun = has_bun_condition
+                                            && matches!(
+                                                esm_resolution.status,
+                                                crate::package_json::Status::Exact
+                                                    | crate::package_json::Status::ExactEndsWithStar
+                                                    | crate::package_json::Status::Inexact
+                                            );
                                         if self
                                             .handle_esm_resolution(
                                                 esm_resolution,
@@ -3233,10 +3246,8 @@ impl<'a> Resolver<'a> {
                                         }
                                     }
 
-                                    // See the comment on the identical retry in the non-global-cache
-                                    // branch above: fall through when the "bun" condition's target
-                                    // file is missing on disk.
-                                    if has_bun_condition {
+                                    // Same "bun"-condition fallback as the non-global-cache branch (#7142).
+                                    if retry_without_bun {
                                         let prev_module_type = module_type;
                                         module_type = options::ModuleType::Unknown;
                                         let esm_resolution = ESModule {

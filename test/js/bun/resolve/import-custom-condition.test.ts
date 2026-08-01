@@ -304,6 +304,35 @@ describe("'bun' export condition falls through when its target file is missing",
     expect(exitCode).toBe(0);
   });
 
+  it.concurrent("does not fall through for an explicit 'bun': null disable", async () => {
+    using cwd = tempDir("bun-cond-null-disable", {
+      "index.mjs": `import "pkg"; console.log("loaded");`,
+      "node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        type: "module",
+        exports: {
+          ".": {
+            bun: null,
+            default: "./dist/node.mjs",
+          },
+        },
+      }),
+      "node_modules/pkg/dist/node.mjs": `export {};`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(cwd),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("pkg");
+    expect(stdout).toBe("");
+    expect(exitCode).not.toBe(0);
+  });
+
   it.concurrent("still fails when no other condition resolves to an existing file", async () => {
     using cwd = tempDir("bun-cond-no-fallback", {
       "index.mjs": `import "pkg";`,

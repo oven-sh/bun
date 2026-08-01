@@ -1278,11 +1278,8 @@ pub(crate) struct ESModule<'a> {
     pub(crate) conditions: &'a ConditionsMap,
     // allocator dropped — global mimalloc
     pub(crate) module_type: &'a mut ModuleType,
-    /// When set, the "bun" export condition is ignored during resolution. This is used as a
-    /// one-shot fallback when the "bun" condition matched but the target file does not exist
-    /// on disk (e.g. a Node-targeted file tracer such as `@vercel/nft` only copied the
-    /// "node" variant). Since "bun" is Bun's own extension to the condition set, falling
-    /// through to the next matching condition keeps Node-compat semantics intact.
+    /// Ignore the "bun" export condition; one-shot retry when its target file is absent on
+    /// disk so resolution falls through to "node"/"default" (#7142).
     pub(crate) skip_bun_condition: bool,
 }
 

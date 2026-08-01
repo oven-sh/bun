@@ -2376,6 +2376,27 @@ impl PathTemplate {
             sanitize_parent_dirs,
         )
     }
+
+    /// The chunk-relative directory this template expands into, with `[hash]`
+    /// (not yet known during post-process) substituted by a dummy value. The
+    /// hash formatter never emits a path separator, so any value yields the
+    /// correct directory depth. Result uses `/` separators.
+    pub(crate) fn rel_dir(&self, sanitize_parent_dirs: bool) -> Box<[u8]> {
+        let mut rel = Vec::<u8>::new();
+        path_template_print(
+            &mut rel,
+            &self.data,
+            &self.placeholder.dir,
+            &self.placeholder.name,
+            &self.placeholder.ext,
+            self.placeholder.hash.or(Some(0)),
+            &self.placeholder.target,
+            sanitize_parent_dirs,
+        )
+        .expect("write to Vec<u8>");
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut rel);
+        Box::from(bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(&rel))
+    }
 }
 
 #[derive(Debug, Clone, Default)]

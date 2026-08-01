@@ -1015,6 +1015,26 @@ impl<'a> LinkerContext<'a> {
         Ok(rel)
     }
 
+    /// Absolute directory of a chunk's output file, for use as the base of
+    /// source map `sources` entries (which the spec defines as relative to the
+    /// map file itself). `chunk.final_rel_path` is not yet known at
+    /// post-process time, so this is derived from `output_dir` +
+    /// `chunk.template.rel_dir()`.
+    pub(crate) fn source_map_chunk_abs_dir(
+        output_dir: &[u8],
+        template: &crate::options::PathTemplate,
+        sanitize_parent_dirs: bool,
+    ) -> Box<[u8]> {
+        let rel_dir = template.rel_dir(sanitize_parent_dirs);
+        if rel_dir.is_empty() || &*rel_dir == b"." || output_dir.is_empty() {
+            return Box::from(output_dir);
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        Box::from(bun_paths::resolve_path::join_abs_string_buf::<
+            bun_paths::platform::Auto,
+        >(output_dir, &mut buf, &[&rel_dir]))
+    }
+
     pub(crate) fn generate_source_map_for_chunk(
         &mut self,
         isolated_hash: u64,

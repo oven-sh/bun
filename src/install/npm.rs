@@ -734,9 +734,6 @@ pub struct PackageVersion {
     pub(crate) has_install_script: bool,
 
     /// `deprecated` field in registry API (presence of a deprecation message).
-    /// Used to match npm's resolution behavior: a semver range prefers the
-    /// highest non-deprecated match, only falling back to a deprecated version
-    /// if every version satisfying the range is deprecated.
     pub(crate) deprecated: bool,
     pub(crate) _padding_tail: [u8; 1],
 
@@ -1476,12 +1473,14 @@ pub mod package_manifest {
                 let bin_tag_at =
                     core::mem::offset_of!(PackageVersion, bin) + core::mem::offset_of!(Bin, tag);
                 let install_script_at = core::mem::offset_of!(PackageVersion, has_install_script);
+                let deprecated_at = core::mem::offset_of!(PackageVersion, deprecated);
                 for raw_pkg in raw
                     .as_chunks::<{ core::mem::size_of::<PackageVersion>() }>()
                     .0
                 {
                     if !matches!(raw_pkg[bin_tag_at], 0..=4)
                         || !matches!(raw_pkg[install_script_at], 0 | 1)
+                        || !matches!(raw_pkg[deprecated_at], 0 | 1)
                     {
                         return Ok(None);
                     }
@@ -1577,6 +1576,7 @@ impl PackageManifest {
         group_buf: &[u8],
         minimum_release_age_ms: f64,
         newest_filtered: &mut Option<Semver::Version>,
+        deprecated_fallback: &mut Option<FindResult<'a>>,
     ) -> Option<FindVersionResult<'a>> {
         let mut prev_package_blocked_from_age: Option<&PackageVersion> = None;
         let mut best_version: Option<FindResult<'a>> = None;
@@ -1623,8 +1623,13 @@ impl PackageManifest {
                         prev_package_blocked_from_age = Some(package);
                         continue;
                     }
-                } else {
+                } else if !package.deprecated {
                     return Some(FindVersionResult::Found(FindResult { version, package }));
+                } else {
+                    if deprecated_fallback.is_none() {
+                        *deprecated_fallback = Some(FindResult { version, package });
+                    }
+                    continue;
                 }
             }
         }
@@ -1864,6 +1869,8 @@ impl PackageManifest {
             }
         }
 
+        let mut deprecated_fallback: Option<FindResult<'_>> = None;
+
         if let Some(result) = self.search_version_list(
             self.pkg.releases.keys.get(&self.versions),
             self.pkg.releases.values.get(&self.package_versions),
@@ -1871,6 +1878,7 @@ impl PackageManifest {
             group_buf,
             min_age_ms,
             &mut newest_filtered,
+            &mut deprecated_fallback,
         ) {
             return result;
         }
@@ -1883,9 +1891,14 @@ impl PackageManifest {
                 group_buf,
                 min_age_ms,
                 &mut newest_filtered,
+                &mut deprecated_fallback,
             ) {
                 return result;
             }
+        }
+
+        if let Some(result) = deprecated_fallback {
+            return FindVersionResult::Found(result);
         }
 
         if newest_filtered.is_some() {
@@ -1906,31 +1919,27 @@ impl PackageManifest {
             return self.find_by_version(left.version);
         }
 
-        // Match npm's resolution behavior: a range prefers the highest
-        // non-deprecated version that satisfies it. Only when every satisfying
-        // version is deprecated do we fall back to the highest deprecated one.
-        // Lists are sorted ascending at serialization time and scanned from the
-        // top, so the first deprecated match we see is the highest.
-        let mut deprecated_fallback: Option<FindResult<'_>> = None;
-
         if let Some(result) = self.find_by_dist_tag(b"latest") {
-            if group.satisfies(result.version, group_buf, &self.string_buf) {
-                let accept_latest = if group.flags.is_set(Semver::query::Flags::PRE) {
-                    // if prerelease, use latest if semver+tag match range exactly
-                    left.version
+            if !result.package.deprecated
+                && group.satisfies(result.version, group_buf, &self.string_buf)
+            {
+                if group.flags.is_set(Semver::query::Flags::PRE) {
+                    if left
+                        .version
                         .order(result.version, group_buf, &self.string_buf)
                         == core::cmp::Ordering::Equal
-                } else {
-                    true
-                };
-                if accept_latest {
-                    if !result.package.deprecated {
+                    {
+                        // if prerelease, use latest if semver+tag match range exactly
                         return Some(result);
                     }
-                    deprecated_fallback = Some(result);
+                } else {
+                    return Some(result);
                 }
             }
         }
+
+        // npm compat: prefer non-deprecated matches; fall back only if none exist.
+        let mut deprecated_fallback: Option<FindResult<'_>> = None;
 
         {
             // This list is sorted at serialization time.

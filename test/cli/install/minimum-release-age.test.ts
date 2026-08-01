@@ -796,6 +796,36 @@ describe("minimum-release-age", () => {
         // TEST PACKAGE: many-versions-package (large version count, time entries
         // in reverse order relative to versions). Exercises the publish-time
         // index built during manifest parse.
+        if (url.pathname === "/deprecated-package") {
+          return Response.json({
+            name: "deprecated-package",
+            "dist-tags": { latest: "2.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "deprecated-package",
+                version: "1.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/deprecated-package/-/deprecated-package-1.0.0.tgz`,
+                  integrity: "sha512-dep1==",
+                },
+              },
+              "2.0.0": {
+                name: "deprecated-package",
+                version: "2.0.0",
+                deprecated: "This is a stub types definition.",
+                dist: {
+                  tarball: `${mockRegistryUrl}/deprecated-package/-/deprecated-package-2.0.0.tgz`,
+                  integrity: "sha512-dep2==",
+                },
+              },
+            },
+            time: {
+              "1.0.0": daysAgo(30),
+              "2.0.0": daysAgo(20),
+            },
+          });
+        }
+
         if (url.pathname === "/many-versions-package") {
           if (manyVersionsManifest === undefined) {
             const N = 2000;
@@ -910,6 +940,31 @@ describe("minimum-release-age", () => {
       expect(lockfile).toContain("regular-package@2.0.0");
       expect(lockfile).not.toContain("regular-package@2.1.0");
       expect(lockfile).not.toContain("regular-package@3.0.0");
+    });
+
+    test("avoids deprecated versions when resolving a range", async () => {
+      using dir = tempDir("deprecated-avoid", {
+        "package.json": JSON.stringify({
+          dependencies: { "deprecated-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(normalizeBunSnapshot(stdout, dir)).toContain("deprecated-package@1.0.0");
+      expect(exitCode).toBe(0);
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toContain("deprecated-package@1.0.0");
+      expect(lockfile).not.toContain("deprecated-package@2.0.0");
     });
 
     test("handles exact version requests", async () => {

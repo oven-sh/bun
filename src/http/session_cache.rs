@@ -174,19 +174,6 @@ unsafe extern "C" {
         on_free: Option<extern "C" fn(*mut c_void)>,
     );
     fn us_ssl_get_session_sink_owner(ssl: *mut SSL) -> *mut c_void;
-    fn us_socket_group_clear_session_sinks(group: *mut bun_uws::SocketGroup);
-}
-
-/// Release every cached `SSL_SESSION` and every per-SSL sink in `ctx`. Called
-/// at process shutdown so LeakSanitizer doesn't report them: the HTTP thread's
-/// keep-alive pool is never drained and its TLS-rooted owner is not an LSan
-/// root, so sinks on surviving SSLs and the cache's `Vec` buffer would
-/// otherwise be reported as leaked.
-pub(crate) fn drain_for_exit(ctx: &mut crate::HttpsContext) {
-    ctx.session_cache.entries.borrow_mut().clear();
-    // SAFETY: called on the HTTP thread after it stops ticking; no dispatch
-    // will touch these SSLs again. `sink_on_free` only drops the Box.
-    unsafe { us_socket_group_clear_session_sinks(&raw mut ctx.group) };
 }
 
 /// Whether this TLS client should read/write the cache. Lax verification and

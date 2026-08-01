@@ -1069,10 +1069,6 @@ impl HttpThread {
                 );
             }
         }
-        crate::session_cache::drain_for_exit(&mut self.https_context);
-        for entry in custom_ssl_context_map().values_mut() {
-            crate::session_cache::drain_for_exit(entry.ctx_mut());
-        }
     }
 
     pub(crate) fn wakeup(&self) {

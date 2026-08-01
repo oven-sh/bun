@@ -5758,13 +5758,9 @@ pub mod bv2_impl {
         }
     }
 
-    /// Locate a native addon the way the `bindings` npm package would: find
-    /// the nearest enclosing `package.json` above `source_dir`, then probe the
-    /// directories `bindings` tries (in its default order). Returns the first
-    /// existing absolute path. The `compiled/<version>/...` and
-    /// `lib/binding/node-v<abi>-...` patterns are intentionally omitted: they
-    /// embed the build machine's Node ABI/version into the lookup, which would
-    /// not survive a target change.
+    /// Resolve `addon_name` like the `bindings` npm package would: probe below
+    /// the enclosing `package.json` of `source_dir`. Skips node-ABI-specific
+    /// paths (`compiled/<version>/...`, `lib/binding/node-v<abi>-...`).
     fn resolve_native_bindings(
         resolver: &mut _resolver::Resolver,
         source_dir: &[u8],

@@ -300,13 +300,9 @@ describe("bundler", () => {
       setCwd: true,
     },
   });
-  // https://github.com/oven-sh/bun/issues/8697
   // https://github.com/oven-sh/bun/issues/14301
-  // The `bindings` npm package walks the filesystem from the caller's
-  // __filename at runtime to locate a `.node` addon, which breaks once the
-  // caller is bundled. The bundler now resolves `require('bindings')('<name>')`
-  // at build time to a direct require() of the located `.node` file so the
-  // Napi loader can embed it.
+  // `require('bindings')('<name>')` is resolved to the addon's `.node` file at
+  // build time so the Napi loader can embed it.
   const fakeBindingsPkg = {
     "/node_modules/bindings/package.json": JSON.stringify({ name: "bindings", main: "./bindings.js" }),
     "/node_modules/bindings/bindings.js": /* js */ `
@@ -390,6 +386,7 @@ describe("bundler", () => {
       expect(api.readFile("out/entry.js")).toContain("getRoot");
     },
   });
+  // https://github.com/oven-sh/bun/issues/8697
   itBundled("compile/EmbeddedFileOutfile", {
     compile: true,
     files: {

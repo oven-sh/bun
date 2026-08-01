@@ -2007,11 +2007,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // Rewrite `require('bindings')('<name>')` to a tagged require() of the
-        // addon name so the bundler can locate and embed the `.node` file.
-        // The `bindings` npm package walks the filesystem at runtime to find a
-        // native addon relative to the caller's package root, which breaks once
-        // the caller is bundled (and cannot work in a `--compile` binary).
+        // `require('bindings')('<name>')` -> tagged require of the addon name so
+        // the bundler can locate and embed the `.node` file.
         if p.options.bundle && e_.args.len_u32() == 1 {
             if let Data::ERequireString(req) = e_.target.data {
                 let target_loc = e_.target.loc;

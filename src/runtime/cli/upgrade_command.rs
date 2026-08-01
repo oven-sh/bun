@@ -644,8 +644,7 @@ impl UpgradeCommand {
                 size: 0,
                 digest: Integrity::default(),
             });
-            // canary is re-uploaded on every main merge; a digest read now
-            // can race that and fail a good download.
+            // canary is re-uploaded on every main merge; the digest can go stale mid-download.
             v.digest = Integrity::default();
             v
         };

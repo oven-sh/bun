@@ -213,6 +213,38 @@ describe("'bun' export condition falls through when its target file is missing",
     expect(exitCode).toBe(0);
   });
 
+  it.concurrent("falls through for wildcard subpath patterns", async () => {
+    // Mirrors `openai`'s `./_shims/auto/*` subpath which has bun/node/default variants.
+    using cwd = tempDir("bun-cond-fallback-wildcard", {
+      "index.mjs": `import { tag } from "pkg/shims/auto/runtime"; console.log(tag);`,
+      "node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        type: "module",
+        exports: {
+          "./shims/auto/*": {
+            bun: { default: "./shims/auto/*-bun.mjs" },
+            node: { default: "./shims/auto/*-node.mjs" },
+            default: "./shims/auto/*.mjs",
+          },
+        },
+      }),
+      // Only the "node" variant was traced; "*-bun.mjs" does not exist.
+      "node_modules/pkg/shims/auto/runtime-node.mjs": `export const tag = "node-variant";`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(cwd),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("node-variant\n");
+    expect(exitCode).toBe(0);
+  });
+
   it.concurrent("falls through to 'node' condition for require()", async () => {
     using cwd = tempDir("bun-cond-fallback-require", {
       "index.cjs": `console.log(require("pkg").tag);`,

@@ -679,7 +679,8 @@ impl PackageJSON {
         }
 
         if let Some(exports_prop) = json.as_property(b"exports") {
-            if let Some(mut exports_map) = ExportsMap::parse(json_source, r_log, exports_prop.expr) {
+            if let Some(mut exports_map) = ExportsMap::parse(json_source, r_log, exports_prop.expr)
+            {
                 if should_skip_bun_condition(&package_json.name) {
                     remove_condition(&mut exports_map.root, b"bun");
                 }

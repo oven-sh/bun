@@ -96,10 +96,7 @@ describe('jose "bun" export condition override', () => {
 
   test("only jose is overridden; other packages keep their 'bun' condition", async () => {
     using dir = fixture();
-    const { stdout, stderr, exitCode } = await run(String(dir), [
-      "-e",
-      "console.log(require('not-jose').build)",
-    ]);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["-e", "console.log(require('not-jose').build)"]);
     expect(stderr).toBe("");
     expect(stdout).toBe("bun\n");
     expect(exitCode).toBe(0);

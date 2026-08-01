@@ -1,9 +1,4 @@
 // https://github.com/oven-sh/bun/issues/3039
-// The per-module `// path` comments in bundler output were relative to the
-// process cwd, so the same inputs bundled from different working directories
-// produced different bytes. They are now relative to the bundle root (the
-// `--root` directory, defaulting to the entry point's directory / common
-// ancestor), which is stable regardless of cwd.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
@@ -41,11 +36,9 @@ test("bundler filename comments are independent of cwd", async () => {
   const fromProj = await buildFrom(join(root, "proj"), join("src", "entry.js"));
   const fromSrc = await buildFrom(join(root, "proj", "src"), "entry.js");
 
-  // Output must be byte-identical across cwds.
   expect(fromProj).toBe(fromTop);
   expect(fromSrc).toBe(fromTop);
 
-  // Comments are relative to the derived root (the entry point's directory).
   expect(commentLines(fromTop)).toEqual(["// entry.js", "// nested/other.js", "// util.js"]);
 });
 

@@ -45,6 +45,8 @@ test("napi / NodeVM / JSBufferList / JSStringDecoder dead methods do not reappea
     ],
     ["src/jsc/bindings/JSStringDecoder.cpp", /void JSStringDecoderConstructor::initializeProperties\(/],
     ["src/jsc/bindings/JSNextTickQueue.h", /static std::array<JSValue, numberOfInternalFields> initialValues\(\)/],
+    ["src/jsc/bindings/ModuleLoader.h", /static std::array<JSValue, numberOfInternalFields> initialValues\(\)/],
+    ["src/jsc/bindings/JSMockFunction.h", /static std::array<JSValue, numberOfInternalFields> initialValues\(\)/],
   ];
   const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);

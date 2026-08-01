@@ -2610,12 +2610,8 @@ fn get_or_put_resolved_package(
                 break 'res FolderResolutionValue::NewPackageId(package.meta.id);
             };
 
-            // If the file: path does not exist but the dependency name matches a
-            // workspace member, link to the workspace package instead of failing.
-            // npm tolerates a nonexistent file: path (it creates a dangling link) and
-            // the workspace link at the root makes resolution work regardless; users
-            // that wrote e.g. "file: *" for a sibling package expect this to succeed.
-            // https://github.com/oven-sh/bun/issues/13195
+            // file: path missing but name matches a workspace member: link the
+            // workspace package (npm tolerates this, #13195).
             if let FolderResolutionValue::Err(crate::Error::MissingPackageJSON) = res {
                 'resolve_workspace_from_folder: {
                     if !this.options.link_workspace_packages {

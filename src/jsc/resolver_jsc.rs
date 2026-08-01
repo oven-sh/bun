@@ -29,8 +29,7 @@ extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSVa
     node_module_paths_js_value(in_str, global, false)
 }
 
-/// `Module._initPaths()`: sync `process.env.NODE_PATH` into the resolver's env
-/// map (JS `process.env` writes don't reach it otherwise).
+/// `Module._initPaths()`: sync `process.env.NODE_PATH` into the resolver's env map.
 #[unsafe(no_mangle)]
 extern "C" fn Resolver__setNodePath(global: &JSGlobalObject, value: &BunString) {
     crate::mark_binding!();

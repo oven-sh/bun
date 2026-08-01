@@ -485,6 +485,7 @@ pub struct Resolver<'a> {
     /// Read the "browser" field in package.json files?
     /// For Bun's runtime, we don't.
     pub(crate) care_about_browser_field: bool,
+    pub(crate) browser_remap_depth: u8,
 
     pub debug_logs: Option<DebugLogs>,
     pub elapsed: u64, // tracing
@@ -623,6 +624,7 @@ impl<'a> Resolver<'a> {
             care_about_bin_folder: from.care_about_bin_folder,
             care_about_scripts: from.care_about_scripts,
             care_about_browser_field: from.care_about_browser_field,
+            browser_remap_depth: 0,
             // `DebugLogs` owns Vecs — per-worker fresh.
             debug_logs: None,
             elapsed: 0,
@@ -922,6 +924,7 @@ impl<'a> Resolver<'a> {
             log,
             extension_order: options::ExtOrder::DefaultDefault,
             care_about_browser_field,
+            browser_remap_depth: 0,
             care_about_bin_folder: false,
             care_about_scripts: false,
             debug_logs: None,
@@ -2815,7 +2818,7 @@ impl<'a> Resolver<'a> {
                             }
 
                             // Check the "browser" map
-                            if self.care_about_browser_field {
+                            if self.care_about_browser_field && self.browser_remap_depth < 32 {
                                 if let Some(browser_scope) =
                                     pkg_dir_info.get_enclosing_browser_scope()
                                 {
@@ -2852,7 +2855,8 @@ impl<'a> Resolver<'a> {
                                         }
 
                                         let remap_is_package_path = is_package_path(remap);
-                                        if self
+                                        self.browser_remap_depth += 1;
+                                        let remap_resolved = self
                                             .resolve_without_remapping(
                                                 browser_scope,
                                                 remap,
@@ -2860,8 +2864,9 @@ impl<'a> Resolver<'a> {
                                                 global_cache,
                                                 out,
                                             )
-                                            .is_success()
-                                        {
+                                            .is_success();
+                                        self.browser_remap_depth -= 1;
+                                        if remap_resolved {
                                             out.is_node_module = true;
                                             self.extension_order = prev_extension_order;
                                             if let Some(d) = self.debug_logs.as_mut() {

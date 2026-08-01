@@ -678,6 +678,45 @@ describe("bundler", () => {
       `,
     },
   });
+  itBundled("packagejson/BrowserNodeModulesSubpathToPackageCycle", {
+    files: {
+      "/Users/user/project/src/entry.js": `import 'pkg-a/x'`,
+      "/Users/user/project/node_modules/pkg-a/package.json": /* json */ `
+        {
+          "name": "pkg-a",
+          "browser": {
+            "./x": "pkg-a/x"
+          }
+        }
+      `,
+    },
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg-a/x". Maybe you need to "bun install"?`],
+    },
+  });
+  itBundled("packagejson/ExportsShadowsBrowserSubpath", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import {value} from 'demo-pkg/sub'
+        console.log(value)
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "exports": {
+            "./sub": "./from-exports.js"
+          },
+          "browser": {
+            "./sub": "./from-browser.js"
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/from-exports.js": `export let value = 'exports'`,
+      "/Users/user/project/node_modules/demo-pkg/from-browser.js": `export let value = 'browser'`,
+    },
+    run: {
+      stdout: "exports",
+    },
+  });
   itBundled("packagejson/BrowserNoExt", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `

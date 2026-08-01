@@ -52,11 +52,7 @@ console.log(JSON.stringify({
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr.trim()).toBe("");
   expect(JSON.parse(stdout.trim())).toEqual({
@@ -70,44 +66,43 @@ console.log(JSON.stringify({
 
 // https://github.com/oven-sh/bun/issues/29304
 // webpack-cli@7 does: const { default: CLIPlugin } = (await import("./plugins/cli-plugin.js")).default;
-test.concurrent("dynamic import of __esModule-marked CJS: .default.default reaches exports.default (issue #29304)", async () => {
-  using dir = tempDir("issue-07623-dyn", {
-    "plugin.cjs": `"use strict";
+test.concurrent(
+  "dynamic import of __esModule-marked CJS: .default.default reaches exports.default (issue #29304)",
+  async () => {
+    using dir = tempDir("issue-07623-dyn", {
+      "plugin.cjs": `"use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 class CLIPlugin { constructor(o) { this.options = o; } }
 exports.default = CLIPlugin;
 `,
-    "entry.mjs": `const ns = await import("./plugin.cjs");
+      "entry.mjs": `const ns = await import("./plugin.cjs");
 console.log(JSON.stringify({
   nsDefaultType: typeof ns.default,
   nsDefaultDefaultType: typeof ns.default.default,
   ctor: new ns.default.default({ ok: true }).options.ok,
 }));
 `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "entry.mjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr.trim()).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual({
-    nsDefaultType: "object",
-    nsDefaultDefaultType: "function",
-    ctor: true,
-  });
-  expect(exitCode).toBe(0);
-});
+    expect(stderr.trim()).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      nsDefaultType: "object",
+      nsDefaultDefaultType: "function",
+      ctor: true,
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
 // https://github.com/oven-sh/bun/issues/27810
 // Next.js + Turbopack: exports.default is a getter, not a plain value property.
@@ -135,11 +130,7 @@ console.log(JSON.stringify({
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr.trim()).toBe("");
   expect(JSON.parse(stdout.trim())).toEqual({
@@ -167,11 +158,7 @@ console.log(JSON.stringify({ type: typeof fn, call: fn() }));
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr.trim()).toBe("");
   expect(JSON.parse(stdout.trim())).toEqual({ type: "function", call: 42 });

@@ -199,7 +199,17 @@ describe("better-sqlite3 shim", () => {
 
     db.defaultSafeIntegers(true);
     expect(db.prepare("SELECT x FROM t").pluck().get()).toBe(42n);
+    expect(typeof db.pragma("cache_size", { simple: true })).toBe("bigint");
     expect(db.prepare("SELECT x FROM t").safeIntegers(false).pluck().get()).toBe(42);
+    db.close();
+  });
+
+  test(".exec() is a no-op for empty or comment-only input", () => {
+    const db = new Database(":memory:");
+    expect(db.exec("")).toBe(db);
+    expect(db.exec("   ")).toBe(db);
+    expect(db.exec("-- placeholder migration\n")).toBe(db);
+    expect(() => db.exec("NOT VALID SQL")).toThrow(SqliteError);
     db.close();
   });
 

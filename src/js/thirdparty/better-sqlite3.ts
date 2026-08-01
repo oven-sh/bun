@@ -247,7 +247,14 @@ function Database(filenameGiven, options) {
   this.exec = function exec(source) {
     if (typeof source !== "string") throw new TypeError("Expected first argument to be a string");
     if (verbose != null) verbose.$call(this, source);
-    db.run(source);
+    if (source.length > 0) {
+      try {
+        db.run(source);
+      } catch (e) {
+        // sqlite3_exec() is a no-op for whitespace/comment-only input; bun:sqlite's run() throws instead.
+        if ((e as Error)?.message !== "Query contained no valid SQL statement; likely empty query.") throw e;
+      }
+    }
     return this;
   };
 
@@ -267,6 +274,7 @@ function Database(filenameGiven, options) {
     const sql = `PRAGMA ${source}`;
     if (verbose != null) verbose.$call(this, sql);
     const stmt = db.prepare(sql, undefined, 0);
+    if (defaultSafeIntegers) stmt.safeIntegers(true);
     try {
       if (simple) {
         const rows = stmt.values();

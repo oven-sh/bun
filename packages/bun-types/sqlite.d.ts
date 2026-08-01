@@ -829,25 +829,22 @@ declare module "bun:sqlite" {
      * - The exact type string declared in the `CREATE TABLE` statement
      * - `null` for columns without declared types, such as expressions and computed columns
      *
-     * The statement must be executed at least once before accessing this
-     * property. Available for both read-only and read-write statements.
+     * Available immediately after `prepare()`; the statement does not need to
+     * be executed first. Available for both read-only and read-write statements.
      *
      * @example
      * ```ts
      * // For table columns:
      * const stmt = db.prepare("SELECT id, name, weight FROM products");
-     * stmt.get();
      * console.log(stmt.declaredTypes);
      * // => ["INTEGER", "TEXT", "REAL"]
      *
      * // For expressions (no declared types):
      * const exprStmt = db.prepare("SELECT length('bun') AS str_length");
-     * exprStmt.get();
      * console.log(exprStmt.declaredTypes);
      * // => [null]
      * ```
      *
-     * @throws Error if statement hasn't been executed
      * @since Bun v1.2.13
      */
     readonly declaredTypes: Array<string | null>;

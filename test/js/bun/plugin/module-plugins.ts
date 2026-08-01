@@ -41,6 +41,19 @@ plugin({
       };
     });
 
+    builder.module("my-virtual-module-with-accessor", () => {
+      let value = 1;
+      return {
+        exports: {
+          get value() {
+            return value;
+          },
+          increment: () => value++,
+        },
+        loader: "object",
+      };
+    });
+
     builder.onLoad({ filter: /.*/, namespace: "rejected-promise" }, async ({ path }) => {
       throw new Error("Rejected Promise");
     });

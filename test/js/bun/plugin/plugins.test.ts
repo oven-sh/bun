@@ -301,6 +301,15 @@ describe("module", () => {
       expect(there).toBeUndefined();
     }
   });
+
+  // https://github.com/oven-sh/bun/issues/7128
+  it("accessor exports are live", async () => {
+    // @ts-expect-error
+    const m = await import("my-virtual-module-with-accessor");
+    expect(m.value).toBe(1);
+    m.increment();
+    expect(m.value).toBe(2);
+  });
 });
 
 describe("dynamic import", () => {

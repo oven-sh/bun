@@ -1355,6 +1355,59 @@ for (const { desc, dep } of gitNameTests) {
   });
 }
 
+// https://github.com/oven-sh/bun/issues/13891
+// `name@<git-url>` was rejected as "unrecognised dependency format" for every
+// git URL that did not resolve to github.com, because the re-parse that exists
+// to catch scp-style `git@host:path` inputs clobbered the already-parsed
+// alias + git version with a DistTag.
+for (const dep of [
+  "mypkg@git://bun-13891.invalid:some/repo.git",
+  "mypkg@git+ssh://bun-13891.invalid:some/repo.git",
+  "mypkg@git+ssh://git@bun-13891.invalid:some/repo.git#ref",
+  "mypkg@git+file:///bun-13891/repo.git",
+  "mypkg@git+https://bun-13891.invalid:some/repo.git",
+]) {
+  it(`should parse aliased git dependency: ${dep}`, async () => {
+    await Bun.write(join(package_dir, "package.json"), JSON.stringify({ name: "foo" }));
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "add", dep],
+      cwd: package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      // GIT_SSH_COMMAND=false makes the ssh fallback fail immediately without
+      // touching the network; the `:some` path segment makes the https attempt
+      // a syntactic reject (non-numeric port). The clone is expected to fail.
+      env: { ...env, GIT_SSH_COMMAND: "false", GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "false" },
+    });
+
+    const err = await stderr.text();
+    expect(err).not.toContain("unrecognised dependency format");
+    expect(err).toContain("mypkg");
+    expect(await exited).toBe(1);
+  });
+}
+
+// The re-parse must still prefer the unaliased interpretation for scp-style
+// inputs like `git@host:path/repo.git`, where the leading `git` is the SSH
+// user rather than an npm alias.
+it("should parse scp-style git dependency without treating the user as an alias", async () => {
+  await Bun.write(join(package_dir, "package.json"), JSON.stringify({ name: "foo" }));
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "git@bun-13891.invalid:some/repo.git"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env: { ...env, GIT_SSH_COMMAND: "false", GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "false" },
+  });
+
+  const err = await stderr.text();
+  expect(err).not.toContain("unrecognised dependency format");
+  expect(err).not.toContain(`"git"`);
+  expect(await exited).toBe(1);
+});
+
 it("git dep without package.json and with default branch", async () => {
   await Bun.write(
     join(package_dir, "package.json"),

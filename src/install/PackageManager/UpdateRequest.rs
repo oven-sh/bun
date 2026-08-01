@@ -241,8 +241,18 @@ impl UpdateRequest {
                     Some(&mut *log),
                     pm.as_deref_mut(),
                 ) {
-                    alias = None;
-                    version = ver;
+                    // Only discard the alias when the full input is itself a git
+                    // reference (e.g. the scp-style `git@host:path/repo`). For
+                    // `name@git://...` / `name@git+ssh://...` the full input
+                    // infers as DistTag, which must not clobber the already-parsed
+                    // alias + git version (issue #13891).
+                    if matches!(
+                        ver.tag,
+                        dependency::version::Tag::Git | dependency::version::Tag::Github
+                    ) {
+                        alias = None;
+                        version = ver;
+                    }
                 }
             }
             if match version.tag {

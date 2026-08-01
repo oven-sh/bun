@@ -13,13 +13,16 @@
 #include <signal.h>
 #include <sys/resource.h>
 #include <grp.h>
-#include <dirent.h>
 #include <atomic>
 #include <errno.h>
 
 #if OS(LINUX)
 #include <sys/syscall.h>
 #include <sys/prctl.h>
+#endif
+
+#if OS(DARWIN)
+#include <libproc.h>
 #endif
 
 extern char** environ;
@@ -32,31 +35,53 @@ extern char** environ;
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags);
 #endif
 
-// Highest open fd via /proc/self/fd or /dev/fd; -1 if the scan is unusable.
+// Highest open fd in this process, or -1 if the scan is unusable.
 extern "C" int bun_highest_open_fd()
 {
 #if OS(LINUX)
-    DIR* d = opendir("/proc/self/fd");
-#else
-    DIR* d = opendir("/dev/fd");
-#endif
-    if (!d) return -1;
-    int self = dirfd(d);
+    int dir = open("/proc/self/fd", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dir < 0) return -1;
+    struct linux_dirent64 {
+        uint64_t d_ino;
+        int64_t d_off;
+        uint16_t d_reclen;
+        uint8_t d_type;
+        char d_name[];
+    };
+    alignas(linux_dirent64) char buf[4096];
     int highest = -1;
-    while (struct dirent* ent = readdir(d)) {
-        const char* p = ent->d_name;
-        if (*p < '0' || *p > '9') continue;
-        int fd = 0;
-        while (*p >= '0' && *p <= '9')
-            fd = fd * 10 + (*p++ - '0');
-        if (*p != '\0') continue;
-        if (fd > highest) highest = fd;
+    for (;;) {
+        long n = syscall(SYS_getdents64, dir, buf, sizeof(buf));
+        if (n <= 0) break;
+        for (long off = 0; off < n;) {
+            auto* ent = reinterpret_cast<linux_dirent64*>(buf + off);
+            off += ent->d_reclen;
+            const char* p = ent->d_name;
+            if (*p < '0' || *p > '9') continue;
+            int fd = 0;
+            while (*p >= '0' && *p <= '9')
+                fd = fd * 10 + (*p++ - '0');
+            if (*p != '\0') continue;
+            if (fd > highest) highest = fd;
+        }
     }
-    closedir(d);
-    // A real fdescfs/procfs mount lists the scan's own dirfd. FreeBSD's
-    // default devfs /dev/fd has only static 0/1/2 nodes; reject that.
-    if (highest < self) return -1;
+    close(dir);
+    return (highest < dir) ? -1 : highest;
+#elif OS(DARWIN)
+    int n = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, nullptr, 0);
+    if (n <= 0) return -1;
+    n += 32 * (int)sizeof(struct proc_fdinfo);
+    struct proc_fdinfo* fds = (struct proc_fdinfo*)malloc(n);
+    if (!fds) return -1;
+    n = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, fds, n);
+    int highest = -1;
+    for (int i = 0; i < n / (int)sizeof(struct proc_fdinfo); i++)
+        if (fds[i].proc_fd > highest) highest = fds[i].proc_fd;
+    free(fds);
     return highest;
+#else
+    return -1;
+#endif
 }
 
 #if OS(LINUX)

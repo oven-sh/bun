@@ -115,8 +115,9 @@ static napi_value test_cwd(napi_env env, napi_callback_info info) {
   napi_set_named_property(env, obj, "UV_ENOBUFS", v);
 
   size_t zero = 0;
+  size_t one = 1;
   char dummy[1];
-  napi_create_int32(env, uv_cwd(NULL, &zero), &v);
+  napi_create_int32(env, uv_cwd(NULL, &one), &v);
   napi_set_named_property(env, obj, "nullBuffer", v);
   napi_create_int32(env, uv_cwd(dummy, NULL), &v);
   napi_set_named_property(env, obj, "nullSize", v);

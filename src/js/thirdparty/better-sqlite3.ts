@@ -1,5 +1,4 @@
-// Hardcoded module "better-sqlite3" (backed by bun:sqlite; the real package is a V8-API addon Bun cannot dlopen)
-// API reference: https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md
+// Hardcoded module "better-sqlite3": the real package is a V8-API addon Bun cannot dlopen, so wrap bun:sqlite. API: https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md
 const { Database: BunDatabase, SQLiteError, constants } = require("bun:sqlite");
 const { existsSync } = require("node:fs");
 const { dirname, resolve } = require("node:path");

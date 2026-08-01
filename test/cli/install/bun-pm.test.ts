@@ -982,3 +982,37 @@ test.concurrent(
     expect(exitCode).toBe(0);
   },
 );
+
+// https://github.com/oven-sh/bun/issues/26715
+test.concurrent("bun pm cache expands leading tilde from .npmrc cache=", async () => {
+  using dir = tempDir("pm-cache-npmrc-tilde", {
+    "package.json": JSON.stringify({ name: "pm-cache-npmrc-tilde", version: "1.0.0" }),
+    ".npmrc": "cache=~/npmrc-cache-tilde\n",
+    "home/.keep": "",
+  });
+  const dirStr = String(dir);
+  const homeDir = join(dirStr, "home");
+
+  const spawnEnv: NodeJS.Dict<string> = {
+    ...env,
+    HOME: homeDir,
+    USERPROFILE: homeDir,
+  };
+  delete spawnEnv.BUN_INSTALL_CACHE_DIR;
+  delete spawnEnv.BUN_INSTALL;
+  delete spawnEnv.XDG_CACHE_HOME;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "cache"],
+    cwd: dirStr,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: spawnEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("error");
+  expect(stdout.trim().replaceAll("\\", "/")).toBe(join(homeDir, "npmrc-cache-tilde").replaceAll("\\", "/"));
+  expect(await exists(join(dirStr, "~"))).toBeFalse();
+  expect(exitCode).toBe(0);
+});

@@ -627,7 +627,7 @@ test("server.stop() closes idle keep-alive connections", async () => {
         let buf = "";
         let waiter = Promise.withResolvers();
         sock.on("data", d => { buf += d.toString("latin1"); waiter.resolve(); });
-        const recv = async want => {
+        const recv = async () => {
           while (!closed) {
             const headerEnd = buf.indexOf("\\r\\n\\r\\n");
             if (headerEnd !== -1) {

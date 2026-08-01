@@ -893,9 +893,7 @@ pub fn update_package_json_and_install_and_cli(
                         bun_core::pretty_errorln!("<r>No package.json, so nothing to patch");
                         Global::crash();
                     }
-                    // `Subcommand::Add` is the only other caller and `init()` now
-                    // creates (or, for `--dry-run`, synthesizes) the package.json for
-                    // it directly, so `MissingPackageJSON` never bubbles up here.
+                    // `init()` handles `Subcommand::Add` before this error can surface.
                     _ => {}
                 }
             }

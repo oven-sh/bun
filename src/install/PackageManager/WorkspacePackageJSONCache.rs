@@ -128,13 +128,8 @@ pub struct WorkspacePackageJSONCache {
 }
 
 impl WorkspacePackageJSONCache {
-    /// Seed a cache entry from an in-memory JSON string rather than disk.
-    ///
-    /// Used for `bun add --dry-run` in a directory without `package.json`:
-    /// we proceed as if an empty `{"dependencies":{}}` exists so resolution
-    /// can run, without ever touching the filesystem. Later `get_with_path`
-    /// calls for `abs_package_json_path` hit this entry instead of reading
-    /// from disk.
+    /// Seed a cache entry from in-memory JSON so later [`Self::get_with_path`]
+    /// calls hit it instead of reading disk (used by `bun add --dry-run`).
     pub fn seed_with_contents(
         &mut self,
         log: &mut Log,

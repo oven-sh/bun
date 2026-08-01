@@ -1514,11 +1514,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     // Dropped and re-synthesized in `to_ast` for the CJS wrapper.
                                     skip = true;
                                     p.module_scope_directive_loc = stmt.loc;
-                                } else if p.current_scope().kind
-                                    == js_ast::scope::Kind::FunctionBody
-                                {
-                                    // Keep as a directive so the printed function body stays
-                                    // strict under the sloppy CommonJS wrapper (matches esbuild).
+                                } else if matches!(
+                                    p.current_scope().kind,
+                                    js_ast::scope::Kind::Entry | js_ast::scope::Kind::FunctionBody
+                                ) {
+                                    // Keep as a directive so the printed function body (or
+                                    // lowered namespace/enum IIFE) stays strict under the
+                                    // sloppy CommonJS wrapper (matches esbuild and tsc).
                                     let bytes = str_.string(p.arena).expect("OOM");
                                     stmt = Stmt::alloc(
                                         S::Directive {

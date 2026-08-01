@@ -205,3 +205,37 @@ test.concurrent(`a block-scope "use strict" does not make the scope strict`, asy
   expect(stdout.trim()).toBe("1");
   expect(exitCode).toBe(0);
 });
+
+// A "use strict" at the top of a TypeScript namespace body must survive into the
+// lowered IIFE so it runs strict under the sloppy CommonJS wrapper (matches tsc,
+// which preserves the directive in its namespace emit).
+test.concurrent(`a namespace-body "use strict" stays strict in CJS`, async () => {
+  using dir = tempDir("issue-31806-namespace", {
+    "index.cts": String.raw`
+      namespace N {
+        "use strict";
+        try {
+          // @ts-ignore assigning an undeclared binding throws in strict mode
+          leaked31807 = 1;
+          console.log("sloppy");
+        } catch (e) {
+          console.log(e instanceof ReferenceError ? "strict" : "other");
+        }
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.cts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("strict");
+  expect(exitCode).toBe(0);
+});

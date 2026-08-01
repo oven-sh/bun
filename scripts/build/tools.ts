@@ -666,15 +666,24 @@ export function findRustLld(os: OS): {
   const rustup = findTool({ names: ["rustup"], paths: [join(cargoHome, "bin")], required: false })?.path;
   const channel = readRustToolchainChannel();
   if (rustup !== undefined && channel !== undefined) {
-    spawnSync(
-      rustup,
-      ["-q", "toolchain", "install", channel, "--no-self-update", "--profile", "minimal", "--component", "rust-src"],
-      {
-        encoding: "utf8",
-        timeout: 300_000,
-        stdio: ["ignore", "ignore", "inherit"], // surface download/error output; `-q` hides `info:` noise
-      },
-    );
+    // Skip when the toolchain is already on disk (offline-safe): `rustup
+    // toolchain install <nightly-date>` re-resolves the channel manifest
+    // against the network dist server even for an installed toolchain, so a
+    // flaky network turns a complete install into "no release found"
+    // (harmless here — exit 0 — but it leaks the error and can stall the
+    // 300s timeout). Same skip logic as the rust_build_cross rule in rust.ts.
+    const rustHome = process.env.RUSTUP_HOME ?? join(homedir(), ".rustup");
+    if (spawnSync("sh", ["-c", `ls -d "${rustHome}/toolchains/${channel}-"*/lib/rustlib/src/rust >/dev/null 2>&1`]).status !== 0) {
+      spawnSync(
+        rustup,
+        ["-q", "toolchain", "install", channel, "--no-self-update", "--profile", "minimal", "--component", "rust-src"],
+        {
+          encoding: "utf8",
+          timeout: 300_000,
+          stdio: ["ignore", "ignore", "inherit"], // surface download/error output; `-q` hides `info:` noise
+        },
+      );
+    }
   }
 
   // One spawn for both sysroot and host triple / LLVM version. `-vV` prints

@@ -298,9 +298,27 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
 
   const rustup = findRustup(cfg);
   if (rustup !== undefined && cfg.rustToolchain !== undefined) {
-    const chain =
-      `${stream} --console $env ${q(rustup)} toolchain install ${cfg.rustToolchain} --force --component rust-src $rust_target_arg && ` +
-      `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`;
+    const install =
+      `${stream} --console $env ${q(rustup)} toolchain install ${cfg.rustToolchain} --force --component rust-src $rust_target_arg`;
+    let chain: string;
+    if (hostWin) {
+      // Windows keeps the unconditional install (rare cross path; the
+      // toolchain is MSVC-hosted and the channel manifest is usually warm).
+      chain = `${install} && ${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`;
+    } else {
+      // Skip the `--force` reinstall when the needed component is already on
+      // disk: rustup re-resolves `nightly-<date>` against the network channel
+      // manifest on every install, so a flaky network turns an installed
+      // toolchain into "error: no release found". Tier 1/2 check the std dir
+      // (installed via --target); Tier 3 has no prebuilt std, so check the
+      // rust-src component it builds std from with -Zbuild-std.
+      const checkDir = rustTargetIsTier3(rustTarget(cfg)) ? "src/rust" : rustTarget(cfg);
+      const check =
+        `[ -d "\${RUSTUP_HOME:-\$HOME/.rustup}/toolchains/${cfg.rustToolchain}-"*/lib/rustlib/${checkDir} ]`;
+      chain =
+        `if ! ${check}; then ${install}; fi && ` +
+        `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`;
+    }
     n.rule("rust_build_cross", {
       command: hostWin ? `cmd /c "${chain}"` : chain,
       description: "cargo bun_bin → $label ($rust_target_arg)",

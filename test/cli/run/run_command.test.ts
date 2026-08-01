@@ -142,8 +142,10 @@ describe.concurrent("process.argv passthrough", () => {
       : `#!/bin/sh\nexec "${bunExe()}" "$(dirname "$0")/../mybin/argv.js" "$@"\n`;
     using dir = tempDir("argv-bin", {
       "package.json": JSON.stringify({ name: "consumer" }),
-      [path.join("node_modules", ".bin", binName)]: binBody,
-      [path.join("node_modules", "mybin", "argv.js")]: argvJs,
+      "node_modules": {
+        ".bin": { [binName]: binBody },
+        "mybin": { "argv.js": argvJs },
+      },
     });
     if (!isWindows) {
       chmodSync(path.join(String(dir), "node_modules", ".bin", binName), 0o755);

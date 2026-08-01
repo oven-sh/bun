@@ -369,13 +369,12 @@ function Server(options, callback): void {
       throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
     }
 
-    const sniCallback = options.SNICallback;
-    if (sniCallback != null) {
-      validateFunction(sniCallback, "options.SNICallback");
-      this._SNICallback = sniCallback;
-    }
-
     if (this[isTlsSymbol]) {
+      const sniCallback = options.SNICallback;
+      if (sniCallback) {
+        validateFunction(sniCallback, "options.SNICallback");
+        this._SNICallback = sniCallback;
+      }
       // Translate minVersion/maxVersion/secureProtocol into the integer
       // protocol range the native layer applies (secureProtocol wins, like
       // Node's SecureContext::Init); 0 keeps the native defaults.
@@ -1220,10 +1219,14 @@ function onServerSNI(this: Server, servername, socketHandle) {
     return true;
   }
   if (failed !== undefined) {
-    this.emit("tlsClientError", failed);
+    process.nextTick(emitTlsClientError, this, failed);
     return failed;
   }
   return selected;
+}
+
+function emitTlsClientError(server, err) {
+  server.emit("tlsClientError", err);
 }
 
 function httpAllowHalfOpenGet(this: Server) {

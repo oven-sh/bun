@@ -3,8 +3,10 @@ const { Database: BunDatabase, SQLiteError, constants } = require("bun:sqlite");
 const { existsSync } = require("node:fs");
 const { dirname, resolve } = require("node:path");
 const { inspect } = require("node:util");
+const { throwNotImplemented } = require("internal/shared");
 
 const nodejsUtilInspectCustom = Symbol.for("nodejs.util.inspect.custom");
+const notImplementedExtra = "This module is backed by bun:sqlite; see https://bun.sh/docs/api/sqlite";
 
 function getBooleanOption(options, key) {
   let value = false;
@@ -12,14 +14,6 @@ function getBooleanOption(options, key) {
     throw new TypeError(`Expected the "${key}" option to be a boolean`);
   }
   return value;
-}
-
-function notImplemented(name) {
-  const err = new Error(
-    `${name} is not implemented in Bun's better-sqlite3 shim. This shim is backed by bun:sqlite; see https://bun.sh/docs/api/sqlite.`,
-  );
-  err.code = "ERR_NOT_IMPLEMENTED";
-  throw err;
 }
 
 // better-sqlite3 Statement: .raw()/.pluck()/.expand()/.bind() are chainable mode setters, not one-shot getters.
@@ -50,7 +44,7 @@ class Statement {
     return this.#stmt.native.columnsCount > 0;
   }
   get readonly() {
-    return true;
+    return this.#stmt.native.readonly;
   }
   get busy() {
     return false;
@@ -118,13 +112,11 @@ class Statement {
   *iterate(...args) {
     const params = this.#params(args);
     if (this.#raw || this.#pluck || this.#expand) {
+      const rows = this.#stmt.values.$apply(this.#stmt, params);
       const names = this.#stmt.columnNames;
-      for (const row of this.#stmt.iterate.$apply(this.#stmt, params)) {
-        // bun:sqlite iterate() yields objects; re-shape to raw/pluck/expand.
-        const arr = $newArrayWithSize(names.length);
-        for (let i = 0; i < names.length; i++) arr[i] = row[names[i]];
-        if (this.#expand) yield this.#expandRow(arr);
-        else yield this.#mapRow(arr, names);
+      for (let i = 0; i < rows.length; i++) {
+        if (this.#expand) yield this.#expandRow(rows[i]);
+        else yield this.#mapRow(rows[i], names);
       }
       return;
     }
@@ -325,16 +317,16 @@ function Database(filenameGiven, options) {
   };
 
   this.backup = function backup() {
-    notImplemented("Database#backup()");
+    throwNotImplemented("better-sqlite3 Database#backup()", 4290, notImplementedExtra);
   };
   this.function = function defineFunction() {
-    notImplemented("Database#function()");
+    throwNotImplemented("better-sqlite3 Database#function()", 4290, notImplementedExtra);
   };
   this.aggregate = function aggregate() {
-    notImplemented("Database#aggregate()");
+    throwNotImplemented("better-sqlite3 Database#aggregate()", 4290, notImplementedExtra);
   };
   this.table = function table() {
-    notImplemented("Database#table()");
+    throwNotImplemented("better-sqlite3 Database#table()", 4290, notImplementedExtra);
   };
 
   this[nodejsUtilInspectCustom] = function (depth, opts) {

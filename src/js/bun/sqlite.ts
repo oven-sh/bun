@@ -110,6 +110,7 @@ interface CppSQLStatement {
   paramsCount: number;
   columnTypes: string[];
   declaredTypes: (string | null)[];
+  readonly: boolean;
   safeIntegers: boolean;
 }
 

@@ -114,13 +114,16 @@ describe("better-sqlite3 shim", () => {
     db.close();
   });
 
-  test(".columns() and .reader", () => {
+  test(".columns(), .reader and .readonly", () => {
     const db = new Database(":memory:");
     db.exec("CREATE TABLE t (a INTEGER, b TEXT)");
-    const stmt = db.prepare("SELECT a, b FROM t");
-    expect(stmt.columns().map((c: any) => c.name)).toEqual(["a", "b"]);
-    expect(stmt.reader).toBe(true);
-    expect(db.prepare("INSERT INTO t VALUES (1, 'x')").reader).toBe(false);
+    const sel = db.prepare("SELECT a, b FROM t");
+    expect(sel.columns().map((c: any) => c.name)).toEqual(["a", "b"]);
+    expect(sel.reader).toBe(true);
+    expect(sel.readonly).toBe(true);
+    const ins = db.prepare("INSERT INTO t VALUES (1, 'x')");
+    expect(ins.reader).toBe(false);
+    expect(ins.readonly).toBe(false);
     db.close();
   });
 
@@ -135,6 +138,17 @@ describe("better-sqlite3 shim", () => {
 
     const raw = [...db.prepare("SELECT a FROM t").raw().iterate()];
     expect(raw).toEqual([[1], [2], [3]]);
+    db.close();
+  });
+
+  test(".raw().iterate() preserves positional values with duplicate column names", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE a (id INTEGER); CREATE TABLE b (id INTEGER)");
+    db.exec("INSERT INTO a VALUES (1); INSERT INTO b VALUES (2)");
+    const stmt = db.prepare("SELECT a.id, b.id FROM a JOIN b");
+    expect(stmt.raw().all()).toEqual([[1, 2]]);
+    expect([...stmt.raw().iterate()]).toEqual([[1, 2]]);
+    expect(db.prepare("SELECT a.id, b.id FROM a JOIN b").pluck().get()).toBe(1);
     db.close();
   });
 
@@ -169,7 +183,7 @@ describe("better-sqlite3 shim", () => {
     using dir = tempDir("better-sqlite3", {});
     const path = `${dir}/data.db`;
 
-    expect(() => new Database(path, { fileMustExist: true })).toThrow();
+    expect(() => new Database(path, { fileMustExist: true })).toThrow(SqliteError);
 
     const db = new Database(path);
     db.exec("CREATE TABLE t (x INTEGER)");

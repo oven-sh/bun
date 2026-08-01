@@ -5535,12 +5535,7 @@ impl VirtualMachine {
                         source_lines[i] = bun_core::String::init(*line);
                         source_line_numbers[i] = current_line_number;
                         current_line_number -= 1;
-                        // The printer trims trailing tab/space before its 1024
-                        // clamp, so trim first so the cap never lands inside a
-                        // run of whitespace and loses the "... truncated" mark.
-                        let trimmed = bun_core::strings::trim_right(line, b"\t ");
-                        let capped = &trimmed[..trimmed.len().min(CachedCodeFrame::MAX_LINE_LEN)];
-                        cached.lines.0.push(Box::<[u8]>::from(capped));
+                        cached.lines.0.push(CachedCodeFrame::line_for_cache(line));
                     }
                     exception.stack.source_lines_len = take as u8;
                     self.source_mappings.put_cached_code_frame(

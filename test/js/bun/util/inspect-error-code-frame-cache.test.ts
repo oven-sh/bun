@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "node:path";
 
 // Repeatedly calling Bun.inspect() on an error from the same (file, line)
@@ -108,35 +108,51 @@ test.concurrent("Bun.inspect(error) serves a stable code frame from the cache (e
 });
 
 test.concurrent("Bun.inspect(error) cached code frame matches the first inspect for >1024-char lines", async () => {
-  // A minified-style 3000-char line: the printer clamps to 1024 and appends a
-  // "... truncated" suffix (color mode). The cache must preserve that suffix.
-  const longLine = `/* ${Buffer.alloc(3000, "m").toString()} */ export const err = new Error("boom");`;
+  // The printer clamps each line to 1024 chars and (in color mode) appends a
+  // "... truncated" suffix when the normalized line was longer. The cache
+  // stores a bounded slice, so it must preserve that suffix for minified
+  // lines, for a line with an interior whitespace run straddling the cap, and
+  // must not change blank / whitespace-only context lines.
+  const m = (n: number) => Buffer.alloc(n, "m").toString();
+  const sp = (n: number) => Buffer.alloc(n, " ").toString();
   using dir = tempDir("inspect-code-frame-cache-long", {
-    "entry.ts": `// short\n${longLine}\n`,
+    // 3000-char minified line ending in non-whitespace.
+    "plain.ts": `// short\n/* ${m(3000)} */ export const err = new Error("boom");\n`,
+    // ~1550 chars with a 300-space interior run spanning the 1024 clamp.
+    "interior-ws.ts": `/* ${m(1000)}${sp(300)}${m(200)} */ export const err = new Error("boom");\n`,
+    // Whitespace-only context line above the throw site.
+    "blank.ts": `    \nexport const err = new Error("boom");\n`,
     "run.ts": `
-      const { err } = require("./entry");
+      const { err } = require(process.env.ENTRY!);
       const first = Bun.inspect(err, { colors: true });
       const second = Bun.inspect(err, { colors: true });
       if (first !== second) {
         console.error("mismatch:\\n--- first ---\\n" + first + "\\n--- second ---\\n" + second);
         process.exit(1);
       }
-      if (!Bun.stripANSI(first).includes("truncated")) {
-        console.error("expected truncation marker:\\n" + Bun.stripANSI(first));
+      const wantMarker = process.env.WANT_MARKER === "1";
+      const hasMarker = Bun.stripANSI(first).includes("truncated");
+      if (wantMarker !== hasMarker) {
+        console.error((wantMarker ? "missing" : "unexpected") + " truncation marker:\\n" + Bun.stripANSI(first));
         process.exit(1);
       }
-      process.stdout.write(Bun.stripANSI(first));
     `,
   });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", path.join(String(dir), "run.ts")],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(normalizeBunSnapshot(stdout, dir)).toContain("truncated");
-  expect(exitCode).toBe(0);
+  for (const [entry, wantMarker] of [
+    ["./plain.ts", true],
+    ["./interior-ws.ts", true],
+    ["./blank.ts", false],
+  ] as const) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", path.join(String(dir), "run.ts")],
+      env: { ...bunEnv, ENTRY: entry, WANT_MARKER: wantMarker ? "1" : "0" },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr, `entry ${entry}`).toBe("");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  }
 });

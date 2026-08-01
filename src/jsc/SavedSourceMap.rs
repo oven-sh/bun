@@ -24,8 +24,9 @@ pub(crate) struct CachedCodeFrame {
 impl CachedCodeFrame {
     /// = `zig_exception::Holder::SOURCE_LINES_COUNT`.
     pub(crate) const LINES: usize = 6;
-    /// Strictly > the printer's `MAX_LINE_LENGTH` (1024) so a cached hit
-    /// still trips `clamped != trimmed` and keeps the "... truncated" suffix.
+    /// = the printer's `MAX_LINE_LENGTH`; see [`Self::line_for_cache`].
+    pub(crate) const PRINTER_CLAMP: usize = 1024;
+    /// Cap on raw bytes stored for a line the printer won't truncate.
     pub(crate) const MAX_LINE_LEN: usize = 1280;
     /// `source_index` sentinel for the non-external branch.
     pub(crate) const NO_SOURCE_INDEX: u32 = u32::MAX;
@@ -33,6 +34,29 @@ impl CachedCodeFrame {
     #[inline]
     pub(crate) fn inner_key(source_index: u32, line: i32) -> u64 {
         ((source_index as u64) << 32) | (line as u32 as u64)
+    }
+
+    /// Returns the bytes to cache for `line` such that the code-frame printer
+    /// renders a cached hit identically to the miss-path's full `line`. The
+    /// printer normalizes with `trim(line, "\n")` then `trim_right(_, "\t ")`,
+    /// clamps to [`Self::PRINTER_CLAMP`] and adds a "... truncated" suffix
+    /// when the normalized length exceeds the clamp, with an early break when
+    /// the raw slice is empty. So: when the normalized line fits the clamp,
+    /// store the raw bytes (bounded only against pathological trailing
+    /// whitespace) so every printer branch including `is_empty()` sees what it
+    /// would on a miss; when it doesn't, store the already-normalized visible
+    /// prefix plus one non-whitespace sentinel byte so a hit's own normalize +
+    /// clamp yields the same prefix and still sees `len > clamp` regardless of
+    /// interior whitespace at the boundary.
+    pub(crate) fn line_for_cache(line: &[u8]) -> Box<[u8]> {
+        let normalized = bun_core::strings::trim_right(bun_core::trim(line, b"\n"), b"\t ");
+        if normalized.len() <= Self::PRINTER_CLAMP {
+            return Box::from(&line[..line.len().min(Self::MAX_LINE_LEN)]);
+        }
+        let mut v = Vec::with_capacity(Self::PRINTER_CLAMP + 1);
+        v.extend_from_slice(&normalized[..Self::PRINTER_CLAMP]);
+        v.push(b'.');
+        v.into_boxed_slice()
     }
 }
 

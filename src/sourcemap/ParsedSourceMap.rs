@@ -266,8 +266,7 @@ impl ParsedSourceMap {
     }
 
     pub fn is_external(&self) -> bool {
-        !self.external_source_names.is_empty()
-            || self.input_map().is_some_and(Self::is_external)
+        !self.external_source_names.is_empty() || self.input_map().is_some_and(Self::is_external)
     }
 
     pub fn find_mapping(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {

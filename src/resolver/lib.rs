@@ -1202,7 +1202,7 @@ pub mod fs {
                         // scrutinee directly so no second `&mut *cached_ptr` is materialized
                         // while the first is on the borrow stack (Stacked Borrows hygiene).
                         match unsafe { &mut *cached_ptr } {
-                            EntriesOption::Entries(e) if e.generation < generation => {
+                            EntriesOption::Entries(e) if e.stale || e.generation < generation => {
                                 in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                             }
                             cached => return Ok(cached),
@@ -1285,6 +1285,19 @@ pub mod fs {
                     entries.fd = handle;
                 }
 
+                // See `DirEntry::stale`: carry an existing handle forward and
+                // release the fresh one the guard above would keep open.
+                if let Some(original) = in_place {
+                    // SAFETY: BSSMap-owned; entries_mutex held.
+                    let prev_fd = unsafe { (*original).fd };
+                    if prev_fd.is_valid() {
+                        if !should_close_handle && !had_handle && entries.fd != prev_fd {
+                            let _ = bun_sys::close(entries.fd);
+                        }
+                        entries.fd = prev_fd;
+                    }
+                }
+
                 // SAFETY: `entries_ptr` is either a live BSSMap slot (`in_place`) or a fresh
                 // leaked Box; exclusively owned here under `entries_mutex`.
                 unsafe { *entries_ptr = entries };
@@ -1308,16 +1321,24 @@ pub mod fs {
             })))
         }
 
-        /// Evicts `file_path` from the directory-entry cache; returns whether
-        /// an entry was removed.
+        /// Invalidates `file_path` in the directory-entry cache; returns
+        /// whether an entry was invalidated.
+        ///
+        /// `BSSMap::remove()` only drops the hash→index mapping, so removing a
+        /// live `DirEntry` would orphan its open `.fd` (also cached in
+        /// `ParseTask.contents_or_fd`, the watcher's watchlist, and the dev
+        /// server's `DirectoryWatchStore`, so closing it here would race those
+        /// readers). Mark it [stale](DirEntry::stale) instead so the next
+        /// locked directory read re-scans the slot in place and carries the
+        /// fd forward.
         pub(crate) fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
-            // `entries` is the process-global
-            // BSSMap singleton and `remove` mutates it; callers (transpiler /
-            // hot-reloader / VM) reach this without `RESOLVER_MUTEX`, so take
-            // `entries_mutex` to satisfy `EntriesMap::inner`'s aliasing
-            // invariant. No caller already holds it (no re-entry from
-            // `read_directory`/`dir_info_cached_maybe_log`).
+            // No caller already holds `entries_mutex` (non-recursive).
             let _g = self.entries_mutex.lock_guard();
+            if let Some(EntriesOption::Entries(entries)) = self.entries.get(file_path) {
+                entries.stale = true;
+                return true;
+            }
+            // `Err`/`NotFound` sentinels hold no `DirEntry`.
             self.entries.remove(file_path)
         }
 
@@ -1599,9 +1620,11 @@ pub mod fs {
                     // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
                     let prev = Some(unsafe { &mut (*e_ptr).data });
                     match self.readdir(false, prev, dir, generation, handle, ()) {
-                        Ok(new_entry) => {
+                        Ok(mut new_entry) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
+                            // SAFETY: see above. Preserve any stored descriptor.
+                            new_entry.fd = unsafe { (*e_ptr).fd };
                             // SAFETY: see above — slot is exclusively owned here.
                             unsafe { *e_ptr = new_entry };
                         }

@@ -934,8 +934,7 @@ where
 
                         let affected_len: usize = 'brk: {
                             if IS_KQUEUE {
-                                // SAFETY: hot-reload runs single-threaded on the JS thread;
-                                // no other live `&mut EntriesOption` for this key here.
+                                // Slot contents are read under `entries_mutex` below.
                                 if let Some(existing) = rfs.entries.get(file_path) {
                                     self.put_tombstone(file_path, existing);
                                     entries_option = Some(existing);
@@ -1087,12 +1086,21 @@ where
                             }
                         }
 
-                        if let Some(dir_ent) = entries_option {
+                        'locked: {
+                            let Some(dir_ent) = entries_option else {
+                                break 'locked;
+                            };
+                            // A stale `DirEntry` slot can be rewritten in place by a
+                            // JS-thread resolve; serialize with those writers.
+                            let _entries_g = rfs.entries_mutex.lock_guard();
                             // SAFETY: dir_ent points into rfs.entries (or a tombstoned copy);
                             // both outlive this loop iteration. Shared access only —
                             // `entries()` takes `&self` and per-entry mutation below goes
                             // through the entry's own mutex + cells.
                             let dir_ent = unsafe { &*dir_ent };
+                            if !matches!(dir_ent, Fs::EntriesOption::Entries(_)) {
+                                break 'locked;
+                            }
                             let mut last_file_hash: bun_watcher::HashType =
                                 bun_watcher::HashType::MAX;
 

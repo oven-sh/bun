@@ -487,6 +487,14 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   if (cfg.socketFaultInjection) {
     rustflags.push("--cfg=socket_fault_injection");
   }
+  // `bun_track_alloc`: wraps the global allocator in a per-size-bucket live
+  // histogram (src/bun_bin/track_alloc.rs), readable from JS via
+  // `hotReloadDiagnostics().allocHistogram`. Off by default; opt in via
+  // `BUN_TRACK_ALLOC=1` for native-leak investigation.
+  rustflags.push("--check-cfg=cfg(bun_track_alloc)");
+  if (process.env.BUN_TRACK_ALLOC === "1") {
+    rustflags.push("--cfg=bun_track_alloc");
+  }
   // Drop `#[track_caller]` source-location capture in release. Every
   // `Option::unwrap`/`slice[i]`/`RefCell::borrow` etc. otherwise emits a
   // `&'static core::panic::Location` (file/line/col) plus the file-path string

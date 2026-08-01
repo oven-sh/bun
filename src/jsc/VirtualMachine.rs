@@ -3712,7 +3712,7 @@ impl VirtualMachine {
             specifier,
             source_url: create_if_different(&specifier, source_url),
             allocator: source.cast::<c_void>(),
-            source_code_needs_deref: false,
+            source_code_needs_deref: true,
             ..Default::default()
         }
     }
@@ -3780,7 +3780,7 @@ impl VirtualMachine {
         }
     }
 
-    /// Interns `input_` in the VM's ref-string map and returns the ref-counted entry.
+    /// Interns `input_` and returns the entry with exactly +1 owed to the caller.
     pub fn ref_counted_string<const DUPE: bool>(
         &mut self,
         input_: &[u8],
@@ -3788,7 +3788,12 @@ impl VirtualMachine {
     ) -> *mut crate::ref_string::RefString {
         debug_assert!(!input_.is_empty());
         let mut was_new = false;
-        self.ref_counted_string_with_was_new::<DUPE>(&mut was_new, input_, hash_)
+        let r = self.ref_counted_string_with_was_new::<DUPE>(&mut was_new, input_, hash_);
+        if !was_new {
+            // SAFETY: `r` is live in `self.ref_strings`; fresh entries already have +1 from `create_external`.
+            unsafe { (*r).ref_() };
+        }
+        r
     }
 
     // Note: `flags` is a runtime arg —

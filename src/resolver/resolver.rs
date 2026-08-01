@@ -3387,10 +3387,16 @@ impl<'a> Resolver<'a> {
                 return Err(err.into());
             }
         };
+        let open_dir_adopted = core::cell::Cell::new(false);
+        let _close_open_dir = scopeguard::guard((), |()| {
+            if !open_dir_adopted.get() {
+                let _ = ::bun_sys::close(open_dir);
+            }
+        });
 
         if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
             if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                if entries.generation >= self.generation {
+                if !entries.stale && entries.generation >= self.generation {
                     dir_entries_option = cached_entry;
                     needs_iter = false;
                 } else {
@@ -3443,8 +3449,15 @@ impl<'a> Resolver<'a> {
                 unsafe { &mut *existing }.data.clear();
             }
 
-            if self.store_fd {
+            // SAFETY: see block-wide note above.
+            let prev_fd = in_place
+                .map(|p| unsafe { (*p).fd })
+                .filter(|f| f.is_valid());
+            if let Some(prev) = prev_fd {
+                new_entry.fd = prev;
+            } else if self.store_fd {
                 new_entry.fd = open_dir;
+                open_dir_adopted.set(true);
             }
             // NOTE: see `dir_info_cached_maybe_log` — `DirEntry.data` holds a `NonNull`,
             // so a zeroed slot is UB; box `new_entry` directly for the fresh case.
@@ -4205,7 +4218,11 @@ impl<'a> Resolver<'a> {
                         // SAFETY: slot was written immediately above.
                         let slot = unsafe { queue[i].assume_init_mut() };
                         slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
-                        slot.fd = entries.fd;
+                        // A stale entry's stored fd is at EOF from its previous
+                        // iteration; leave it INVALID so the re-scan opens fresh.
+                        if !entries.stale {
+                            slot.fd = entries.fd;
+                        }
                     }
                     Fs::file_system::real_fs::EntriesOption::Err(err) => {
                         debuglog!(
@@ -4242,7 +4259,9 @@ impl<'a> Resolver<'a> {
                             // SAFETY: slot was written immediately above.
                             let slot = unsafe { queue[i].assume_init_mut() };
                             slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
-                            slot.fd = entries.fd;
+                            if !entries.stale {
+                                slot.fd = entries.fd;
+                            }
                         }
                         Fs::file_system::real_fs::EntriesOption::Err(err) => {
                             debuglog!(
@@ -4425,12 +4444,25 @@ impl<'a> Resolver<'a> {
 
             // `open_dir` is INVALID for a permission-denied ancestor treated as
             // an opaque directory; there is nothing to track or close then.
-            if !queue_top.fd.is_valid() && open_dir.is_valid() {
+            let open_dir_freshly_opened = !queue_top.fd.is_valid() && open_dir.is_valid();
+            if open_dir_freshly_opened {
                 Fs::FileSystem::set_max_fd(open_dir.native());
                 // these objects mostly just wrap the file descriptor, so it's fine to keep it.
                 bufs!(open_dirs)[open_dir_count.get()] = open_dir;
                 open_dir_count.set(open_dir_count.get() + 1);
             }
+            // When `open_dir` is not stored as `DirEntry.fd` (entry already
+            // fresh, or an existing handle carried over), it is released at
+            // the end of this iteration; the `store_fd` guard does not.
+            let open_dir_adopted = core::cell::Cell::new(false);
+            let _close_unadopted = scopeguard::guard((), |()| {
+                if open_dir_freshly_opened && !open_dir_adopted.get() {
+                    let n = open_dir_count.get();
+                    debug_assert!(n > 0 && bufs!(open_dirs)[n - 1] == open_dir);
+                    open_dir_count.set(n - 1);
+                    let _ = ::bun_sys::close(open_dir);
+                }
+            });
 
             let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
                 // SAFETY: non-empty `safe_path` is always a dirname_store-backed
@@ -4488,7 +4520,7 @@ impl<'a> Resolver<'a> {
 
             if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
                 if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                    if entries.generation >= self.generation {
+                    if !entries.stale && entries.generation >= self.generation {
                         dir_entries_option = cached_entry;
                         needs_iter = false;
                     } else {
@@ -4550,7 +4582,20 @@ impl<'a> Resolver<'a> {
                     // NOTE: bun_collections::StringHashMap exposes `clear`, which drops all entries.
                     unsafe { &mut *existing }.data.clear();
                 }
-                new_entry.fd = if self.store_fd { open_dir } else { FD::INVALID };
+                // See `bust_entries_cache`: carry an existing handle forward
+                // instead of stranding it.
+                // SAFETY: see block-wide note above.
+                let prev_fd = in_place
+                    .map(|p| unsafe { (*p).fd })
+                    .filter(|f| f.is_valid());
+                new_entry.fd = if let Some(prev) = prev_fd {
+                    prev
+                } else if self.store_fd {
+                    open_dir_adopted.set(open_dir.is_valid());
+                    open_dir
+                } else {
+                    FD::INVALID
+                };
                 // NOTE: `DirEntry.data` is a `HashMap`
                 // (`NonNull` inside), so a zeroed slot is UB and `*ptr = new_entry` would drop it.
                 // Box `new_entry` directly for the fresh case; assign-into only for `in_place`.

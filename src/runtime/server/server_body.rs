@@ -3955,7 +3955,11 @@ fn server_set_on_server_name(
                     // through to the default context (the net.ts handler's
                     // `!socketHandle` guard). Synchronous resolutions are
                     // carried by the return value.
-                    let result = match callback.call(global, JSValue::UNDEFINED, &[js_name, JSValue::UNDEFINED]) {
+                    let result = match callback.call(
+                        global,
+                        JSValue::UNDEFINED,
+                        &[js_name, JSValue::UNDEFINED],
+                    ) {
                         Ok(v) => v,
                         Err(err) => global.take_exception(err),
                     };

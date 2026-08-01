@@ -166,6 +166,7 @@ describe("Bun.Transpiler", () => {
       expect(lastLine(ts.parsed(pre + "x = delete E.A;", false))).toBe("x = delete E.A;");
       expect(lastLine(ts.parsed(pre + 'x = delete E["A"];', false))).toBe('x = delete E["A"];');
       expect(lastLine(ts.parsedMin(pre + "x = delete E.A;", false))).toBe("x = delete E.A;");
+      expect(lastLine(ts.parsedMin(pre + 'x = delete E["A"];', false))).toBe("x = delete E.A;");
       // Still inlined when read.
       expect(lastLine(ts.parsed(pre + "x = E.A;", false))).toBe("x = 1 /* A */;");
     });
@@ -177,6 +178,16 @@ describe("Bun.Transpiler", () => {
         "x = delete user_undefined; y = user_undefined;",
         "x = delete user_undefined;\ny = void 0;\n",
       );
+    });
+    it("does not inline import.meta.<prop> under delete or assignment", () => {
+      // Inlining would produce `delete undefined` (strict-mode SyntaxError) or
+      // `undefined = 5` for the HotDisabled value.
+      ts.expectPrinted_("x = delete import.meta.hot", "x = delete import.meta.hot");
+      ts.expectPrinted_("x = delete import.meta.main", "x = delete import.meta.main");
+      ts.expectPrinted_("import.meta.hot = 5", "import.meta.hot = 5");
+      ts.expectPrinted_("import.meta.main = 5", "import.meta.main = 5");
+      // Reads are still inlined.
+      ts.expectPrinted_("x = import.meta.hot", "x = undefined");
     });
     it("preserves delete/assign/call-receiver semantics at runtime", async () => {
       const src = `

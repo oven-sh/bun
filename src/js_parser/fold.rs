@@ -492,11 +492,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::EImportMeta(_) => {
-                    if name == b"main" {
+                    let can_inline = !identifier_opts.is_delete_target()
+                        && identifier_opts.assign_target() == js_ast::AssignTarget::None;
+
+                    if can_inline && name == b"main" {
                         return Some(p.value_for_import_meta_main(false, target.loc));
                     }
 
-                    if name == b"hot" {
+                    if can_inline && name == b"hot" {
                         return Some(Expr {
                             data: js_ast::ExprData::ESpecial(
                                 if p.options.features.hot_module_reloading {
@@ -510,9 +513,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     // Inline import.meta properties for Bake
-                    if p.options.framework.is_some()
-                        || (p.options.bundle
-                            && p.options.output_format == js_parser::options::Format::Cjs)
+                    if can_inline
+                        && (p.options.framework.is_some()
+                            || (p.options.bundle
+                                && p.options.output_format == js_parser::options::Format::Cjs))
                     {
                         if name == b"dir" || name == b"dirname" {
                             // Inline import.meta.dir

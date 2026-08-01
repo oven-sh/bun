@@ -1057,10 +1057,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let target = e_.target.unwrap_inlined();
         let index = e_.index.unwrap_inlined();
 
-        // These folds replace an index expression (a Reference into a temporary
-        // string/array) with a plain value. That is only sound when the parent
-        // uses the value, not the Reference: `delete [x][0]` and `[x][0] = v`
-        // act on the temporary, and inlining would redirect them at `x`.
+        // `delete [x][0]` and `[x][0] = v` act on the temporary, not on `x`.
         if p.options.features.minify_syntax
             && !is_delete_target
             && in_.assign_target == js_ast::AssignTarget::None

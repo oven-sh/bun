@@ -56,12 +56,8 @@ impl Expr {
             // https://github.com/oven-sh/bun/issues/2594
             Data::ESpread(_) => false,
             Data::EMissing(_) => false,
-            // Inlining `a?.b` as the target of a surrounding member/call
-            // expression can splice two unrelated optional chains together:
-            // `[[a?.b]][0]?.[0].c` would become `a?.b.c`, which short-circuits
-            // past `.c` instead of throwing. The printer can only insert the
-            // `(a?.b)` wrapper when the parent's own optional_chain is None,
-            // which we cannot observe here, so bail out conservatively.
+            // `[[a?.b]][0]?.[0].c` must not become `a?.b.c`: inlining would
+            // splice this chain onto the parent's `?.` continuation.
             Data::EDot(e) => e.optional_chain.is_none(),
             Data::EIndex(e) => e.optional_chain.is_none(),
             Data::ECall(e) => e.optional_chain.is_none(),

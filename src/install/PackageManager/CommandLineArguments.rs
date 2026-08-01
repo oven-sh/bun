@@ -93,6 +93,10 @@ const SHARED_PARAMS: &[ParamType] = &[
     ),
     clap::param!("-g, --global                          Install globally"),
     clap::param!("--cwd <STR>                           Set a specific cwd"),
+    clap::param!(
+        "--env-file <STR>...                   Load environment variables from the specified file(s)"
+    ),
+    clap::param!("--no-env-file                         Disable automatic loading of .env files"),
     BACKEND_PARAM,
     clap::param!(
         "--registry <STR>                      Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables"
@@ -436,6 +440,9 @@ pub struct CommandLineArguments {
     // CPU and OS overrides for optional dependencies
     pub(crate) cpu: Npm::Architecture,
     pub(crate) os: Npm::OperatingSystem,
+
+    pub(crate) env_files: &'static [&'static [u8]],
+    pub(crate) no_env_file: bool,
 }
 
 impl Default for CommandLineArguments {
@@ -515,6 +522,9 @@ impl Default for CommandLineArguments {
 
             cpu: Npm::Architecture::CURRENT,
             os: Npm::OperatingSystem::CURRENT,
+
+            env_files: &[],
+            no_env_file: false,
         }
     }
 }
@@ -1024,6 +1034,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
         cli.no_summary = args.flag(b"--no-summary");
         cli.ca = args.options(b"--ca");
         cli.lockfile_only = args.flag(b"--lockfile-only");
+        cli.env_files = args.options(b"--env-file");
+        cli.no_env_file = args.flag(b"--no-env-file");
 
         if let Some(linker) = args.option(b"--linker") {
             cli.node_linker = Some(match Options::NodeLinker::from_str(linker) {

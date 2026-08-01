@@ -6,7 +6,7 @@
 // the buffered extractor would produce.
 
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, readdirSorted, tempDir } from "harness";
+import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -704,8 +704,12 @@ test("buffered extract does not hold the decompressed local tarball in memory", 
   // through libarchive it stays at baseline (~40 MB release, ~240 MB
   // debug+ASAN), so the midpoint gives wide margin both ways without
   // needing to branch on build type.
-  // `ru_maxrss` is bytes on Darwin, kilobytes on Linux and Windows.
-  const maxRssBytes = (resourceUsage?.maxRSS ?? 0) * (isMacOS ? 1 : 1024);
-  expect(maxRssBytes).toBeGreaterThan(0);
+  // `Subprocess.resourceUsage().maxRSS` is normalised to bytes on every
+  // platform. The > 1 MiB lower bound guards that unit: any bun process
+  // peaks well above 1 MiB in bytes but under 1_048_576 in kB, so a
+  // regression to kB trips the lower bound instead of vacuously passing
+  // the upper one.
+  const maxRssBytes = resourceUsage?.maxRSS ?? 0;
+  expect(maxRssBytes).toBeGreaterThan(1024 * 1024);
   expect(maxRssBytes).toBeLessThan(2 * PAYLOAD_SIZE);
 });

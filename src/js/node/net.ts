@@ -122,7 +122,6 @@ const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const owner_symbol = Symbol("owner_symbol");
 
-const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 // tls.Server exposes its native SecureContext constructor through this key so
@@ -141,7 +140,6 @@ const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
-const kpendingRead = Symbol("kpendingRead");
 const kupgraded = Symbol("kupgraded");
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
 const ksocket = Symbol("ksocket");
@@ -1125,7 +1123,6 @@ function onconnection(err, clientHandle) {
     self.emit("error", err);
     return;
   }
-  clientHandle[kServerSocket] = handle;
   const options = self[bunSocketServerOptions];
   const { pauseOnConnect, connectionListener, [kSocketClass]: SClass } = options;
   // Propagate the server's half-open/highWaterMark settings to the accepted
@@ -1556,7 +1553,6 @@ function Socket(options?) {
   });
   this._parent = null;
   this._parentWrap = null;
-  this[kpendingRead] = undefined;
   this[kupgraded] = null;
 
   this[kSetNoDelay] = Boolean(noDelay);

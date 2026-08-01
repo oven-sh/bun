@@ -155,36 +155,6 @@ impl FilePoll {
 
         vm.loop_add_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
     }
-
-    /// Only intended to be used from EventLoop.Pollable
-    pub fn activate(&mut self, loop_: &mut WindowsLoop) {
-        loop_.add_active(
-            (!self.flags.contains(Flags::Closed)
-                && !self.flags.contains(Flags::HasIncrementedPollCount)) as u32,
-        );
-        bun_core::scoped_log!(FilePoll, "activate - {}", loop_.uv().active_handles);
-        self.flags.insert(Flags::HasIncrementedPollCount);
-    }
-
-    #[inline]
-    pub fn can_ref(&self) -> bool {
-        if self.flags.contains(Flags::Closed) {
-            return false;
-        }
-
-        !self.flags.contains(Flags::HasIncrementedPollCount)
-    }
-
-    /// Allow a poll to keep the process alive.
-    // pub fn ref(this: *FilePoll, vm: *jsc.VirtualMachine) void {
-    pub fn ref_(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.can_ref() {
-            return;
-        }
-        bun_core::scoped_log!(FilePoll, "ref");
-        // this.activate(vm.event_loop_handle.?);
-        self.activate(event_loop_ctx.loop_mut());
-    }
 }
 
 type FilePollHiveArray = bun_collections::hive_array::Fallback<FilePoll, 128>;

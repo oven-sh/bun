@@ -236,10 +236,6 @@ where
             let mut clone: Vec<$elem> = Vec::with_capacity(buffers.$field.len());
             clone.extend_from_slice(buffers.$field.as_slice());
             write_array(stream, clone.as_slice(), $prefix)?;
-            #[cfg(debug_assertions)]
-            {
-                // Output::pretty_errorln(format_args!("Field {}: {} - {}", $name, pos, stream.get_pos()?));
-            }
         }};
     }
 
@@ -264,10 +260,6 @@ where
             // reader ignores this string; only the exact bytes matter.
             "\n<install.lockfile.Tree> 20 sizeof, 4 alignof\n",
         )?;
-        #[cfg(debug_assertions)]
-        {
-            // Output::pretty_errorln(format_args!("Field {}: {} - {}", "trees", pos, stream.get_pos()?));
-        }
     }
 
     // -- hoisted_dependencies --
@@ -349,11 +341,6 @@ where
             to_clone.as_slice(),
             "\n<[26]u8> 26 sizeof, 1 alignof\n",
         )?;
-
-        #[cfg(debug_assertions)]
-        {
-            // Output::pretty_errorln(format_args!("Field {}: {} - {}", "dependencies", pos, stream.get_pos()?));
-        }
     }
 
     // -- extern_strings --
@@ -427,8 +414,6 @@ pub(crate) fn load(
                     bun_core::pretty_errorln!("Loaded {} {}", this.$field.len(), $name);
                 }
             }
-            // #[cfg(debug_assertions)]
-            // Output::pretty_errorln(format_args!("Field {}: {} - {}", $name, _pos, stream.get_pos()?));
         }};
     }
 

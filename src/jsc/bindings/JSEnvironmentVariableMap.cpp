@@ -61,21 +61,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
     return JSValue::encode(result);
 }
 
-JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
-{
-    VM& vm = globalObject->vm();
-    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
-    if (!object)
-        return false;
-
-    auto string = JSValue::decode(value).toString(globalObject);
-    if (!string) [[unlikely]]
-        return false;
-
-    object->putDirect(vm, propertyName, string, 0);
-    return true;
-}
-
 // Proxy-related env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY and lowercase
 // variants) are read by fetch()'s native proxy resolution via
 // env_loader.getHttpProxyFor(). Writes from JS must sync back to the native env
@@ -119,10 +104,10 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * glo
     Bun__setEnvValue(globalObject, &name, &val);
 
     // The proxy-var accessors are added with `DontEnum` when the var was not
-    // present in the OS env at startup. The regular env-var setter
-    // (`jsSetterEnvironmentVariable`) makes a written var enumerable by
-    // replacing the accessor with a data property; this setter keeps the
-    // accessor (so the native env map stays the source of truth) but must
+    // present in the OS env at startup. The regular env-var getter makes a
+    // written var enumerable by replacing the accessor with a data property;
+    // this setter keeps the accessor (so the native env map stays the source
+    // of truth) but must
     // still clear `DontEnum` — otherwise `process.env.HTTP_PROXY = "..."`
     // followed by `Bun.spawn({env: {...process.env}})` silently drops the var
     // (the spread skips non-enumerable properties).

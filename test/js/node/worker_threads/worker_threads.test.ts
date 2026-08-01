@@ -1858,7 +1858,8 @@ test("globalThis inside a Web Worker still exposes Web Worker globals", async ()
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ out: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+  // Don't require an empty stderr on success: ASAN/debug lanes emit benign warnings there.
+  expect({ out: JSON.parse(stdout.trim()), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
     out: {
       self: "object",
       addEventListener: "function",

@@ -5224,8 +5224,7 @@ restart:
             if (!propertyValue)
                 return true;
 
-            // Fast path never sees accessors, so every inherited slot here is
-            // a shared data member (method/constant) Node's formatter omits.
+            // Fast path has no accessors; inherited data slots are shared members, not own state.
             if (objectToUse != object)
                 return true;
 
@@ -5305,8 +5304,7 @@ restart:
                         continue;
                 }
 
-                // Inherited slots: keep only native custom accessors (URL.href,
-                // Event.type); class methods/getters/constants are not own state.
+                // Inherited: only native custom accessors (URL.href) are per-instance state.
                 if (iterating != object && !slot.isCustom())
                     continue;
 

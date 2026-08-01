@@ -548,8 +548,7 @@ pub(crate) fn absolutize_folder_positionals(
         };
 
         if value.is_empty()
-            || !(had_file_scheme || value[0] == b'.' || Dependency::is_tarball(value))
-            || Dependency::is_remote_tarball(value)
+            || !(had_file_scheme || value[0] == b'.')
             || value.starts_with(b"~/")
             || bun_paths::is_absolute(value)
         {

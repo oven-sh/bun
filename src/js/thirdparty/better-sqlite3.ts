@@ -26,13 +26,11 @@ class Statement {
   #pluck = false;
   #expand = false;
   #bound: any[] | null = null;
-  #safeIntegers;
 
-  constructor(stmt, database, source, safeIntegers, verbose) {
+  constructor(stmt, database, source, verbose) {
     this.#stmt = stmt;
     this.#db = database;
     this.#source = source;
-    this.#safeIntegers = safeIntegers;
     this.#verbose = verbose;
   }
 
@@ -66,13 +64,10 @@ class Statement {
     return args;
   }
 
-  #mapRow(row, names) {
-    if (row === null || row === undefined) return undefined;
+  #mapRow(row) {
     if (this.#pluck) return row[0];
-    if (this.#raw) return row;
-    const obj = {};
-    for (let i = 0; i < names.length; i++) obj[names[i]] = row[i];
-    return obj;
+    if (this.#expand) return this.#expandRow(row);
+    return row;
   }
 
   run(...args) {
@@ -85,10 +80,7 @@ class Statement {
     const params = this.#params(args);
     if (this.#raw || this.#pluck || this.#expand) {
       const rows = this.#stmt.values.$apply(this.#stmt, params);
-      const first = rows.length > 0 ? rows[0] : undefined;
-      if (first === undefined) return undefined;
-      if (this.#expand) return this.#expandRow(first);
-      return this.#mapRow(first, this.#stmt.columnNames);
+      return rows.length > 0 ? this.#mapRow(rows[0]) : undefined;
     }
     const row = this.#stmt.get.$apply(this.#stmt, params);
     return row === null ? undefined : row;
@@ -100,19 +92,8 @@ class Statement {
     if (this.#raw || this.#pluck || this.#expand) {
       const rows = this.#stmt.values.$apply(this.#stmt, params);
       if (this.#raw) return rows;
-      const names = this.#stmt.columnNames;
-      if (this.#pluck) {
-        const out = $newArrayWithSize(rows.length);
-        for (let i = 0; i < rows.length; i++) out[i] = rows[i][0];
-        return out;
-      }
-      if (this.#expand) {
-        const out = $newArrayWithSize(rows.length);
-        for (let i = 0; i < rows.length; i++) out[i] = this.#expandRow(rows[i]);
-        return out;
-      }
       const out = $newArrayWithSize(rows.length);
-      for (let i = 0; i < rows.length; i++) out[i] = this.#mapRow(rows[i], names);
+      for (let i = 0; i < rows.length; i++) out[i] = this.#mapRow(rows[i]);
       return out;
     }
     return this.#stmt.all.$apply(this.#stmt, params);
@@ -123,11 +104,7 @@ class Statement {
     const params = this.#params(args);
     if (this.#raw || this.#pluck || this.#expand) {
       const rows = this.#stmt.values.$apply(this.#stmt, params);
-      const names = this.#stmt.columnNames;
-      for (let i = 0; i < rows.length; i++) {
-        if (this.#expand) yield this.#expandRow(rows[i]);
-        else yield this.#mapRow(rows[i], names);
-      }
+      for (let i = 0; i < rows.length; i++) yield this.#mapRow(rows[i]);
       return;
     }
     yield* this.#stmt.iterate.$apply(this.#stmt, params);
@@ -168,8 +145,7 @@ class Statement {
   }
 
   safeIntegers(toggle) {
-    this.#safeIntegers = toggle === undefined ? true : !!toggle;
-    this.#stmt.safeIntegers(this.#safeIntegers);
+    this.#stmt.safeIntegers(toggle === undefined ? true : !!toggle);
     return this;
   }
 
@@ -267,7 +243,7 @@ function Database(filenameGiven, options) {
     if (typeof source !== "string") throw new TypeError("Expected first argument to be a string");
     const stmt = db.prepare(source, undefined, 0);
     if (defaultSafeIntegers) stmt.safeIntegers(true);
-    return new Statement(stmt, this, source, defaultSafeIntegers, verbose);
+    return new Statement(stmt, this, source, verbose);
   };
 
   this.exec = function exec(source) {
@@ -290,7 +266,9 @@ function Database(filenameGiven, options) {
     if (typeof source !== "string") throw new TypeError("Expected first argument to be a string");
     if (typeof opts !== "object") throw new TypeError("Expected second argument to be an options object");
     const simple = getBooleanOption(opts, "simple");
-    const stmt = db.prepare(`PRAGMA ${source}`, undefined, 0);
+    const sql = `PRAGMA ${source}`;
+    if (verbose != null) verbose.$call(this, sql);
+    const stmt = db.prepare(sql, undefined, 0);
     try {
       if (simple) {
         const rows = stmt.values();

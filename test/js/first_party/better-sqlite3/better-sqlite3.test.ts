@@ -224,7 +224,13 @@ describe("better-sqlite3 shim", () => {
     db.exec("CREATE TABLE t (x INTEGER)");
     db.prepare("INSERT INTO t VALUES (?)").run(1);
     db.prepare("SELECT x FROM t").all();
-    expect(seen).toEqual(["CREATE TABLE t (x INTEGER)", "INSERT INTO t VALUES (?)", "SELECT x FROM t"]);
+    db.pragma("journal_mode");
+    expect(seen).toEqual([
+      "CREATE TABLE t (x INTEGER)",
+      "INSERT INTO t VALUES (?)",
+      "SELECT x FROM t",
+      "PRAGMA journal_mode",
+    ]);
     db.close();
   });
 

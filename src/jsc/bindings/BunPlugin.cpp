@@ -660,11 +660,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                             JSObject::getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
                             RETURN_IF_EXCEPTION(scope, {});
 
-                            // overrideExportValue writes through to the record's current
-                            // live-exports source, which is the previous factory object (and
-                            // possibly a user-captured require() result). Clear it first so
-                            // the loop only touches the env slot, then install the new
-                            // source after.
+                            // Clear the live source so overrideExportValue's write-through does not mutate the previous factory object.
                             auto* synthetic = dynamicDowncast<JSC::SyntheticModuleRecord>(mod);
                             bool hadLiveSource = synthetic && synthetic->liveExportsSource();
                             if (hadLiveSource)

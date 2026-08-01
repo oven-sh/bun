@@ -400,8 +400,7 @@ impl BinaryExpressionVisitor {
                     // "(0 || this.fn)" => "this.fn"
                     // "(0 || this.fn)()" => "(0, this.fn)()"
                     // "(0 || this.fn)`x`" => "(0, this.fn)`x`"
-                    if (is_call_target || is_template_tag)
-                        && e_.right.has_value_for_this_in_call()
+                    if (is_call_target || is_template_tag) && e_.right.has_value_for_this_in_call()
                     {
                         return Expr::join_with_comma(
                             Expr {

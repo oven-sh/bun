@@ -1471,8 +1471,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = e.data.e_if().expect("infallible: variant checked");
         let is_call_target =
             matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
-        let is_template_tag =
-            matches!(p.template_tag, Data::EIf(tt) if core::ptr::eq(&raw const *e_, &raw const *tt));
+        let is_template_tag = matches!(p.template_tag, Data::EIf(tt) if core::ptr::eq(&raw const *e_, &raw const *tt));
 
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;

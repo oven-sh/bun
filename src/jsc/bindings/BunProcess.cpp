@@ -389,6 +389,7 @@ extern "C" void Bun__unlink(const char*, size_t);
 
 extern "C" void CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
+extern "C" int32_t Bun__addonNeedsGlibcOnMusl(const char* path, size_t len);
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
@@ -534,6 +535,19 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
 // On Windows, we use GetLastError() for error messages, so we can only delete after checking for errors
 #else
+#if OS(LINUX)
+    // A glibc-linked addon loaded into a musl process segfaults inside the
+    // loader (gcompat provides the soname but not the ABI). Inspect the ELF
+    // DT_NEEDED list first so the user sees a catchable error instead of a
+    // crash report. See https://github.com/oven-sh/bun/issues/15753.
+    if (Bun__addonNeedsGlibcOnMusl(utf8.data(), utf8.length())) [[unlikely]] {
+        tryToDeleteIfNecessary();
+        WTF::StringBuilder msg;
+        msg.append(filename);
+        msg.append(" is linked against glibc (DT_NEEDED libc.so.6), but this Bun build uses musl. glibc-targeted native addons cannot be loaded on Alpine/musl even with gcompat. Use a glibc-based image (e.g. oven/bun:debian) or install a musl build of this addon."_s);
+        return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, msg.toString());
+    }
+#endif
     CrashHandler__setDlOpenAction(utf8.data());
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
     CrashHandler__setDlOpenAction(nullptr);

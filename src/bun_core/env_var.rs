@@ -67,6 +67,9 @@ new!(pub BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: boolean, "BUN_DEBUG_ENA
 // to return true without mutating `/etc/NIXOS` on the shared rootfs. Used by
 // `test/regression/issue/29290.test.ts` to exercise the Nix-host branch.
 new!(pub BUN_DEBUG_FORCE_NIX_HOST: boolean, "BUN_DEBUG_FORCE_NIX_HOST", { default: false });
+// Testing hook for #15753: run the glibc-addon-on-musl ELF check on glibc
+// hosts so the regression test can exercise the parser without a musl build.
+new!(pub BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK: boolean, "BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK", { default: false });
 new!(pub BUN_DEBUG_HASH_RANDOM_SEED: unsigned, "BUN_DEBUG_HASH_RANDOM_SEED", { deser: { error_handling: NotSet } });
 new!(pub BUN_DEBUG_QUIET_LOGS: boolean, "BUN_DEBUG_QUIET_LOGS", {});
 new!(pub BUN_DEBUG_TEST_TEXT_LOCKFILE: boolean, "BUN_DEBUG_TEST_TEXT_LOCKFILE", { default: false });

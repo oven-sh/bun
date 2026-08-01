@@ -1,8 +1,5 @@
-//! `Bun.Transpiler.prototype.unstable_parse` — serialize the parser's AST to a
-//! single ASCII JSON buffer that the host fn hands to `JSON.parse` (one FFI
-//! crossing vs. a `putDirect` per field). Output is Bun's internal AST, not
-//! ESTree; `kind` strings come from `bun_ast`'s `strum::IntoStaticStr` tags.
-//! The API is explicitly unstable.
+//! `Bun.Transpiler.prototype.unstable_parse` — serialize `bun_ast::Ast` to one
+//! ASCII JSON buffer for the host fn to `JSON.parse`. Explicitly unstable.
 
 use bun_ast::{
     self as ast, ArrayBinding, Binding, Case, Catch, ClauseItem, E, EnumValue, Expr, ExprData,
@@ -125,8 +122,7 @@ impl<'a> Writer<'a> {
         self.raw(b"}");
     }
 
-    /// JSON string literal, ASCII-only (non-ASCII → `\uNNNN`) so
-    /// `to_json_object` takes the zero-copy `createWithoutCopying` path.
+    /// ASCII-only JSON string literal (zero-copy in `to_json_object`).
     /// `write_json_string` is not reused: it emits `\v` / `\x07` (invalid JSON).
     fn str(&mut self, s: &[u8]) {
         self.raw(b"\"");

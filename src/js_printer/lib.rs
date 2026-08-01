@@ -1242,6 +1242,11 @@ pub enum ExprFlag {
     HasNonOptionalChainParent,
     ExprResultIsUnused,
     IsFollowedByOf,
+    /// The expression is the direct operand of a `delete` whose source form was
+    /// an identifier or property access. A print-time rewrite that would
+    /// surface a bare identifier here (e.g. cross-module enum inlining to
+    /// `NaN`/`Infinity`) must keep it a value, not a Reference.
+    IsDeleteTarget,
 }
 
 pub(crate) type ExprFlagSet = enumset::EnumSet<ExprFlag>;
@@ -3255,6 +3260,7 @@ pub(crate) mod __gated_printer {
                 }
                 ExprData::EDot(e) => {
                     let is_optional_chain = e.optional_chain == Some(js_ast::OptionalChain::Start);
+                    let is_delete_target = flags.contains(ExprFlag::IsDeleteTarget);
 
                     let mut wrap = false;
                     if e.optional_chain.is_none() {
@@ -3264,7 +3270,7 @@ pub(crate) mod __gated_printer {
                         if let Some(inlined) =
                             self.try_to_get_imported_enum_value(e.target, &e.name)
                         {
-                            self.print_inlined_enum(inlined, &e.name, level);
+                            self.print_inlined_enum(inlined, &e.name, level, is_delete_target);
                             return;
                         }
                     } else {
@@ -3306,6 +3312,11 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EIndex(e) => {
+                    let is_delete_target = flags.contains(ExprFlag::IsDeleteTarget);
+                    // The delete target is this index expression itself, never its target
+                    // or index subexpressions.
+                    flags.remove(ExprFlag::IsDeleteTarget);
+
                     let mut wrap = false;
                     if e.optional_chain.is_none() {
                         flags.insert(ExprFlag::HasNonOptionalChainParent);
@@ -3316,7 +3327,12 @@ pub(crate) mod __gated_printer {
                                 if let Some(value) =
                                     self.try_to_get_imported_enum_value(e.target, str.slice8())
                                 {
-                                    self.print_inlined_enum(value, str.slice8(), level);
+                                    self.print_inlined_enum(
+                                        value,
+                                        str.slice8(),
+                                        level,
+                                        is_delete_target,
+                                    );
                                     return;
                                 }
                             }
@@ -4008,7 +4024,23 @@ pub(crate) mod __gated_printer {
                         self.print_expr(e.value, Level::Prefix.sub(1), ExprFlag::none());
                         self.print(b")");
                     } else {
-                        self.print_expr(e.value, Level::Prefix.sub(1), ExprFlag::none());
+                        let mut value_flags = ExprFlag::none();
+                        if e.op == Op::Code::UnDelete
+                            && e.flags.contains(
+                                E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
+                            )
+                        {
+                            // The operand was a property access / identifier in source, so
+                            // the `(0, ...)` re-wrap above is skipped. Cross-module enum
+                            // inlining in the EDot/EIndex print arms can still replace that
+                            // access with `NaN`/`Infinity` (a strict-mode `delete <id>`
+                            // SyntaxError). Tell the operand it is the delete target so the
+                            // inline path can wrap itself. Gating on the parse-time flag keeps
+                            // this from reaching compound operands (EIf/EBinary) that forward
+                            // `flags` to children which are not themselves delete targets.
+                            value_flags.insert(ExprFlag::IsDeleteTarget);
+                        }
+                        self.print_expr(e.value, Level::Prefix.sub(1), value_flags);
                     }
                     }
 
@@ -6159,7 +6191,23 @@ pub(crate) mod __gated_printer {
             inlined: js_ast::InlinedEnumValueDecoded,
             comment: &[u8],
             level: Level,
+            is_delete_target: bool,
         ) {
+            // `delete E.N` sets WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS, so the
+            // EUnary arm does not re-wrap. Inlining a non-finite number here would then print
+            // `delete NaN` / `delete Infinity`: a strict-mode SyntaxError. Wrap in `(0, ...)`
+            // so the operand stays a value; `delete <value>` evaluates to `true`, matching the
+            // source semantics (enum members are configurable).
+            let wrap = is_delete_target
+                && matches!(inlined, js_ast::InlinedEnumValueDecoded::Number(n) if !n.is_finite());
+            let level = if wrap {
+                self.print(b"(0,");
+                self.print_space();
+                Level::Comma
+            } else {
+                level
+            };
+
             match inlined {
                 js_ast::InlinedEnumValueDecoded::Number(num) => self.print_number(num, level),
                 // TODO: extract printString
@@ -6184,6 +6232,10 @@ pub(crate) mod __gated_printer {
                     self.print(comment);
                     self.print(b" */");
                 }
+            }
+
+            if wrap {
+                self.print(b")");
             }
         }
 

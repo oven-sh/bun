@@ -1662,12 +1662,9 @@ where
         true
     }
 
-    /// Default HTTP status for a `Bun.file()` response body that couldn't be
-    /// opened. A missing file is an expected outcome, so ENOENT/ENOTDIR map to
-    /// 404 and EACCES/EPERM to 403 rather than 500. When `error()` has already
-    /// run, the file being served came from the handler itself and its failure
-    /// is a handler fault, so it stays 500 to keep the report visible.
+    /// Default HTTP status when a `Bun.file()` response body can't be opened.
     fn sendfile_errno_status(&self, errno: bun_sys::E) -> u16 {
+        // After error() has run we're serving its file; that failing is a handler fault.
         if self.flags.has_called_error_handler() {
             return 500;
         }

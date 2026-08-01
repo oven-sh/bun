@@ -21,6 +21,14 @@ static constexpr auto kDerivedDefaultCtorRange = defaultConstructorRange(std::ch
 static_assert(kBaseDefaultCtorRange == std::pair { 1, 15 });
 static_assert(kDerivedDefaultCtorRange == std::pair { 1, 38 });
 
+static constexpr bool isSyntheticDefaultCtorRange(bool hasExecuted, int startOffset, int endOffset)
+{
+    if (hasExecuted)
+        return false;
+    auto offsets = std::pair { startOffset, endOffset };
+    return offsets == kBaseDefaultCtorRange || offsets == kDerivedDefaultCtorRange;
+}
+
 static inline void appendFunctionRangesForCoverage(Vector<JSC::BasicBlockRange>& out, JSC::VM& vm, JSC::SourceID sourceID)
 {
     const auto& functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
@@ -31,11 +39,8 @@ static inline void appendFunctionRangesForCoverage(Vector<JSC::BasicBlockRange>&
         range.m_startOffset = static_cast<int>(std::get<1>(functionRange));
         range.m_endOffset = static_cast<int>(std::get<2>(functionRange));
         range.m_executionCount = range.m_hasExecuted ? 1 : 0;
-        if (!range.m_hasExecuted) {
-            auto offsets = std::pair { range.m_startOffset, range.m_endOffset };
-            if (offsets == kBaseDefaultCtorRange || offsets == kDerivedDefaultCtorRange)
-                continue;
-        }
+        if (isSyntheticDefaultCtorRange(range.m_hasExecuted, range.m_startOffset, range.m_endOffset))
+            continue;
         out.append(range);
     }
 }

@@ -18,10 +18,12 @@ using namespace JSC;
 
 namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetNodePathForRequire);
 JSC::JSValue createStreamIterEnabledFlag(Zig::GlobalObject*);
 void addNodeModuleConstructorProperties(JSC::VM &vm, Zig::GlobalObject *globalObject);
 
 extern "C" JSC::EncodedJSValue Resolver__nodeModulePathsJSValue(BunString specifier, JSC::JSGlobalObject*, bool use_dirname);
+extern "C" void Resolver__setNodePath(JSC::JSGlobalObject*, const BunString* value);
 extern "C" bool ModuleLoader__isBuiltin(const char* data, size_t len);
 
 struct PathResolveModule {

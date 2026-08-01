@@ -7,6 +7,8 @@
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/LazyClassStructure.h>
+#include <JavaScriptCore/LazyClassStructureInlines.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/CallData.h>
@@ -699,6 +701,24 @@ static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
         static_cast<ArrayAllocationProfile*>(nullptr), 0);
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetNodePathForRequire,
+    (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = callFrame->argument(0);
+    BunString str;
+    if (value.isUndefinedOrNull()) {
+        str = Bun::toString(""_s);
+    } else {
+        WTF::String wtf = value.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        str = Bun::toString(wtf);
+    }
+    Resolver__setNodePath(globalObject, &str);
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSetCJSWrapperItem, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -770,17 +790,7 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
 static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    auto prototype = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-
-    prototype->putDirectCustomAccessor(
-        vm, WebCore::clientData(vm)->builtinNames().requirePublicName(),
-        JSC::CustomGetterSetter::create(vm, getterRequireFunction,
-            setterRequireFunction),
-        0);
-
-    prototype->putDirect(vm, Identifier::fromString(vm, "_compile"_s), globalObject->modulePrototypeUnderscoreCompileFunction());
-
-    return prototype;
+    return globalObject->commonJSModulePrototype();
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1086,11 +1096,11 @@ extern "C" JSC::EncodedJSValue Bun__createNodeModuleSourceMapOriginObject(
 void addNodeModuleConstructorProperties(JSC::VM& vm,
     Zig::GlobalObject* globalObject)
 {
-    globalObject->m_nodeModuleConstructor.initLater(
-        [](const Zig::GlobalObject::Initializer<JSObject>& init) {
-            JSObject* moduleConstructor = JSModuleConstructor::create(
-                init.vm, static_cast<Zig::GlobalObject*>(init.owner));
-            init.set(moduleConstructor);
+    globalObject->m_commonJSModuleClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* global = static_cast<Zig::GlobalObject*>(init.global);
+            init.setStructure(Bun::createCommonJSModuleStructure(global));
+            init.setConstructor(JSModuleConstructor::create(init.vm, global));
         });
 
     globalObject->m_nodeModuleSourceMapEntryStructure.initLater(
@@ -1187,7 +1197,7 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+    auto* constructor = globalObject->nodeModuleConstructor();
     // Don't bulk-reifyAllStaticProperties here. JSObject::reifyAllStaticProperties
     // walks every PropertyCallbackAttribute back-to-back without an exception
     // check between them, and several of our callbacks (getBuiltinModulesObject,

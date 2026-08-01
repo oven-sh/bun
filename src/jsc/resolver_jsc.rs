@@ -29,6 +29,20 @@ extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSVa
     node_module_paths_js_value(in_str, global, false)
 }
 
+/// Called from `Module._initPaths()` to sync the current `process.env.NODE_PATH`
+/// into the dotenv loader's map, which is what the native resolver reads
+/// (`load_node_modules` in `resolver.rs`). Writes to `process.env` from JS do
+/// not otherwise reach that map, so without this a runtime-set `NODE_PATH`
+/// never takes effect.
+#[unsafe(no_mangle)]
+extern "C" fn Resolver__setNodePath(global: &JSGlobalObject, value: &BunString) {
+    crate::mark_binding!();
+    let vm = global.bun_vm().as_mut();
+    let env_map = &mut vm.transpiler.env_mut().map;
+    let value_slice = value.to_utf8();
+    bun_core::handle_oom(env_map.put_alloc_key_and_value(b"NODE_PATH", value_slice.slice()));
+}
+
 // C++ callers pass `in_str` by value without transferring a ref:
 // `bun_core::String` is `Copy` with no `Drop` impl, so receiving it by value
 // never releases the caller's ref.

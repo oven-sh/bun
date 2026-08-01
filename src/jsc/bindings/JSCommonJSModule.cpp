@@ -686,12 +686,10 @@ JSC_DEFINE_CUSTOM_SETTER(setterLoaded,
 JSC_DEFINE_CUSTOM_GETTER(getterUnderscoreCompile, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]] {
-        return JSValue::encode(jsUndefined());
-    }
-    if (thisObject->m_overriddenCompile) {
+    if (thisObject && thisObject->m_overriddenCompile) {
         return JSValue::encode(thisObject->m_overriddenCompile.get());
     }
+    // `Module.prototype._compile` is read with the prototype as receiver; still return the function.
     return JSValue::encode(defaultGlobalObject(globalObject)->modulePrototypeUnderscoreCompileFunction());
 }
 
@@ -706,6 +704,11 @@ JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
     thisObject->m_overriddenCompile.set(globalObject->vm(), thisObject, decodedValue);
     return true;
 }
+
+// Defined in NodeModuleModule.cpp: the `Module.prototype.require` accessor that
+// Next.js and others override to hook CommonJS resolution.
+JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
+JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
 
 JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
@@ -771,6 +774,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
 static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
     { "_compile"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterUnderscoreCompile, setterUnderscoreCompile } },
     { "children"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterChildren, setterChildren } },
+    { "require"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterRequireFunction, setterRequireFunction } },
     { "filename"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterFilename, setterFilename } },
     { "id"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterId, setterId } },
     { "loaded"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterLoaded, setterLoaded } },

@@ -851,19 +851,9 @@ pub mod fs {
             PathName::init(self.text)
         }
 
-        /// The path slice whose extension should determine the loader.
-        ///
-        /// When a file-level symlink is resolved, [`set_realpath`](Self::set_realpath)
-        /// moves the pre-symlink path to `pretty` and the target's realpath to
-        /// `text`. If the symlink's own extension differs from the target's, the
-        /// loader must come from the symlink's extension (the path the user
-        /// imported), so return `pretty`. Directory-level symlinks preserve the
-        /// filename and therefore the extension, so they fall through to `text`
-        /// and keep realpath-based module dedup.
-        ///
-        /// The guard uses [`crate::extension`] (dotfiles report no extension)
-        /// and compares case-insensitively so `.babelrc -> x.json` and
-        /// `link.js -> real.JS` both keep the realpath.
+        /// `pretty` (the pre-`set_realpath` path) when this is a file-namespace
+        /// symlink whose own extension differs case-insensitively from the
+        /// target's; `text` otherwise. Dotfiles count as extensionless.
         #[inline]
         pub fn text_for_loader(&self) -> &'a [u8] {
             if self.is_symlink && self.is_file() {

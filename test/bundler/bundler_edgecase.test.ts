@@ -217,7 +217,7 @@ describe("bundler", () => {
     },
     runtimeFiles: {},
     run: {
-      stdout: '1 {"ns":2,"default":1,"def2":3}',
+      stdout: '1 {"def2":3,"default":1,"ns":2}',
     },
   });
   itBundled("edgecase/ExternalES6ConvertedToCommonJSSimplified", {

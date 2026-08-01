@@ -1,4 +1,4 @@
-use crate::webcore::streams::{self, Signal};
+use crate::webcore::streams::{self, SourceHandle};
 use bun_collections::{ByteVecExt, VecExt};
 use bun_jsc::{ArrayBuffer, JSGlobalObject, JSType, JSValue, JsResult};
 use bun_sys as syscall;
@@ -8,16 +8,16 @@ use bun_sys as syscall;
 
 #[derive(Default)]
 pub struct ArrayBufferSink {
-    pub bytes: Vec<u8>,
+    pub(crate) bytes: Vec<u8>,
     // allocator field dropped — global mimalloc (non-AST crate, see PORTING.md §Allocators)
-    pub done: bool,
-    pub signal: Signal,
-    pub streaming: bool,
-    pub as_uint8array: bool,
+    pub(crate) done: bool,
+    pub(crate) source: SourceHandle,
+    pub(crate) streaming: bool,
+    pub(crate) as_uint8array: bool,
 }
 
 impl ArrayBufferSink {
-    pub fn start(&mut self, stream_start: &streams::Start) -> bun_sys::Result<()> {
+    pub(crate) fn start(&mut self, stream_start: &streams::Start) -> bun_sys::Result<()> {
         self.bytes.clear_retaining_capacity();
 
         if let streams::Start::ArrayBufferSink {
@@ -38,7 +38,7 @@ impl ArrayBufferSink {
 
         self.done = false;
 
-        self.signal.start();
+        self.source.start();
         Ok(())
     }
 
@@ -46,7 +46,7 @@ impl ArrayBufferSink {
         Ok(())
     }
 
-    pub fn flush_from_js(
+    pub(crate) fn flush_from_js(
         &mut self,
         global_this: &JSGlobalObject,
         _wait: bool,
@@ -85,11 +85,11 @@ impl ArrayBufferSink {
 
     // In-place init (JSSink m_ctx slot) — codegen calls this on a
     // pre-allocated slot.
-    pub fn construct(this: &mut core::mem::MaybeUninit<Self>) {
+    pub(crate) fn construct(this: &mut core::mem::MaybeUninit<Self>) {
         this.write(ArrayBufferSink {
             bytes: Vec::<u8>::default(),
             done: false,
-            signal: Signal::default(),
+            source: SourceHandle::default(),
             streaming: false,
             as_uint8array: false,
         });
@@ -100,25 +100,20 @@ impl ArrayBufferSink {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
         };
-        self.signal.ready(None, None);
+        self.source.ready(None, None);
         streams::result::Writable::Owned(len as u64)
     }
 
-    #[inline]
-    pub fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable {
-        self.write(data)
-    }
-
-    pub fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable {
+    pub(crate) fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable {
         let len = match self.bytes.write_latin1(data.slice()) {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
         };
-        self.signal.ready(None, None);
+        self.source.ready(None, None);
         streams::result::Writable::Owned(len as u64)
     }
 
-    pub fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable {
+    pub(crate) fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable {
         let bytes = data.slice();
         // The caller guarantees the byte slice is u16-aligned and has even
         // length when the stream encoding is UTF-16. bytemuck checks both at
@@ -128,19 +123,19 @@ impl ArrayBufferSink {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
         };
-        self.signal.ready(None, None);
+        self.source.ready(None, None);
         streams::result::Writable::Owned(len as u64)
     }
 
-    pub fn end(&mut self, err: Option<syscall::Error>) -> bun_sys::Result<()> {
-        self.signal.close(err);
+    pub(crate) fn end(&mut self, err: Option<syscall::Error>) -> bun_sys::Result<()> {
+        self.source.close(err);
         Ok(())
     }
 
     /// # Safety
     /// `this` must have been allocated via `heap::alloc` (i.e. by the JSSink
     /// codegen path) and not yet freed.
-    pub unsafe fn destroy(this: *mut Self) {
+    pub(crate) unsafe fn destroy(this: *mut Self) {
         // SAFETY: reclaiming ownership drops `bytes` (Vec<u8> impls Drop) and
         // frees the box.
         drop(unsafe { bun_core::heap::take(this) });
@@ -178,13 +173,16 @@ impl ArrayBufferSink {
         .to_js_unchecked(global_this)
     }
 
-    pub fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<ArrayBuffer> {
+    pub(crate) fn end_from_js(
+        &mut self,
+        _global_this: &JSGlobalObject,
+    ) -> bun_sys::Result<ArrayBuffer> {
         if self.done {
             return Ok(ArrayBuffer::from_bytes(&mut [], JSType::ArrayBuffer));
         }
 
         self.done = true;
-        self.signal.close(None);
+        self.source.close(None);
         // `defer this.bytes = bun.Vec<u8>.empty` → take ownership, leave empty.
         let mut bytes = core::mem::take(&mut self.bytes);
         // Ownership transfers to JSC; the caller wraps the returned
@@ -201,7 +199,7 @@ impl ArrayBufferSink {
         ))
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink)
         // which includes @sizeOf(ArrayBufferSink).
         self.bytes.capacity() as usize
@@ -258,8 +256,8 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     fn start(&mut self, config: streams::Start) -> bun_sys::Result<()> {
         Self::start(self, &config)
     }
-    fn signal(&mut self) -> Option<&mut Signal> {
-        Some(&mut self.signal)
+    fn source(&mut self) -> Option<&mut SourceHandle> {
+        Some(&mut self.source)
     }
     fn done(&self) -> bool {
         self.done

@@ -19,15 +19,17 @@ class DOMWrapperWorld;
 // #include "WorkerThreadType.h"
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
-#include <wtf/WeakHashSet.h>
 #include <wtf/RefPtr.h>
-#include "JSVMClientDataClient.h"
 #include <JavaScriptCore/WeakInlines.h>
 #include <wtf/StdLibExtras.h>
 #include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
 namespace Zig {
 class GlobalObject;
+}
+
+namespace Bun {
+class StrongRootBlock;
 }
 
 namespace WebCore {
@@ -127,6 +129,18 @@ public:
     void* bunVM;
     Bun::JSCTaskScheduler deferredWorkTimer;
 
+    // Linked list of StrongRootBlock cells backing bun_jsc::Strong handles
+    // (see StrongRootBlock.h). Raw pointers into the GC heap: they are rooted
+    // by a SimpleMarkingConstraint registered in JSVMClientData::create(), so
+    // no HandleSet node is needed and no GlobalObject owns them (ShadowRealm /
+    // node:vm / `bun test --isolate` globals share one list).
+    Bun::StrongRootBlock* m_strongRootBlockHead { nullptr };
+    Bun::StrongRootBlock* m_strongRootBlockFree { nullptr };
+    // Last block acquire() found room in; always on the active list (cleared by
+    // release() if unlinked), so it is already rooted via m_strongRootBlockHead.
+    Bun::StrongRootBlock* m_strongRootBlockCursor { nullptr };
+    JSC::Structure* m_strongRootBlockStructure { nullptr };
+
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
     // All access should go through that class. Stored as the JSC base type to
     // avoid pulling ZigSourceProvider.h into this header; the cache class
@@ -134,8 +148,6 @@ public:
     // only owner once the previous global is GC'd, so a weak map would empty
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
-
-    void addClient(JSVMClientDataClient& client) { m_clients.add(client); }
 
 private:
     bool isWebCoreJSClientData() const final { return true; }
@@ -169,7 +181,6 @@ private:
     Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
 
     WebCore::HTTPHeaderIdentifiers m_httpHeaderIdentifiers;
-    WeakHashSet<JSVMClientDataClient> m_clients;
 };
 
 } // namespace WebCore

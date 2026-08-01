@@ -86,12 +86,15 @@ using namespace Zig;
 // - if env is nullptr, return napi_invalid_arg
 // - if there is a pending exception, return napi_pending_exception
 // No do..while is used as this declares a variable that other macros need to use
-#define NAPI_PREAMBLE(_env)                                             \
-    NAPI_LOG_CURRENT_FUNCTION;                                          \
-    NAPI_CHECK_ARG(_env, _env);                                         \
-    /* You should not use this throw scope directly -- if you need */   \
-    /* to throw or clear exceptions, make your own scope */             \
-    auto napi_preamble_throw_scope__ = DECLARE_THROW_SCOPE(_env->vm()); \
+#define NAPI_PREAMBLE(_env)                                                     \
+    NAPI_LOG_CURRENT_FUNCTION;                                                  \
+    NAPI_CHECK_ARG(_env, _env);                                                 \
+    /* TopExceptionScope (not ThrowScope) because NAPI functions return to */   \
+    /* C addon code, not to JS: a ThrowScope's destructor simulates a throw */  \
+    /* to the caller under validateExceptionChecks, which the next NAPI_  */    \
+    /* PREAMBLE then sees as an unchecked exception. If you need to throw */    \
+    /* or clear exceptions, make your own scope. */                             \
+    auto napi_preamble_throw_scope__ = DECLARE_TOP_EXCEPTION_SCOPE(_env->vm()); \
     NAPI_RETURN_IF_EXCEPTION(_env)
 
 // Only use this for functions that need their own throw or catch scope. Functions that call into
@@ -107,10 +110,10 @@ using namespace Zig;
 // for pure value constructors/accessors that are safe to call while an
 // exception is pending. Still declares a throw scope so NAPI_RETURN_SUCCESS
 // can assert and VM-level exceptions from JSC internals are caught.
-#define NAPI_PREAMBLE_NO_PENDING_CHECK(_env)                            \
-    NAPI_LOG_CURRENT_FUNCTION;                                          \
-    NAPI_CHECK_ARG(_env, _env);                                         \
-    auto napi_preamble_throw_scope__ = DECLARE_THROW_SCOPE(_env->vm()); \
+#define NAPI_PREAMBLE_NO_PENDING_CHECK(_env)                                    \
+    NAPI_LOG_CURRENT_FUNCTION;                                                  \
+    NAPI_CHECK_ARG(_env, _env);                                                 \
+    auto napi_preamble_throw_scope__ = DECLARE_TOP_EXCEPTION_SCOPE(_env->vm()); \
     NAPI_RETURN_IF_VM_EXCEPTION(_env)
 
 // Return an error code if arg is null. Only use for input validation.

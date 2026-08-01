@@ -1299,14 +1299,6 @@ JSC::EncodedJSValue CRYPTO_INVALID_KEYTYPE(JSC::ThrowScope& throwScope, JSC::JSG
     return {};
 }
 
-JSC::EncodedJSValue CRYPTO_INVALID_KEYTYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
-{
-    auto message = "Invalid key type"_s;
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEYTYPE, message));
-    throwScope.release();
-    return {};
-}
-
 JSC::EncodedJSValue CRYPTO_UNKNOWN_CIPHER(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView& cipherName)
 {
     // Node dropped the cipher name from the message (exact-match asserted by
@@ -1549,14 +1541,6 @@ JSC::EncodedJSValue CRYPTO_HASH_UPDATE_FAILED(JSC::ThrowScope& throwScope, JSC::
     return {};
 }
 
-JSC::EncodedJSValue CRYPTO_TIMING_SAFE_EQUAL_LENGTH(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject)
-{
-    auto message = "Input buffers must have the same byte length"_s;
-    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH, message));
-    scope.release();
-    return {};
-}
-
 JSC::EncodedJSValue CRYPTO_UNKNOWN_DH_GROUP(JSC::ThrowScope& scope, JSGlobalObject* globalObject)
 {
     auto message = "Unknown DH group"_s;
@@ -1575,14 +1559,6 @@ JSC::EncodedJSValue OSSL_EVP_INVALID_DIGEST(JSC::ThrowScope& scope, JSC::JSGloba
 JSC::EncodedJSValue MISSING_PASSPHRASE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral message)
 {
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_MISSING_PASSPHRASE, message));
-    throwScope.release();
-    return {};
-}
-
-JSC::EncodedJSValue KEY_GENERATION_JOB_FAILED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
-{
-    auto message = "Key generation job failed"_s;
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_KEY_GENERATION_JOB_FAILED, message));
     throwScope.release();
     return {};
 }
@@ -1626,13 +1602,6 @@ JSC::EncodedJSValue INVALID_MIME_SYNTAX(JSC::ThrowScope& scope, JSC::JSGlobalObj
     }
 
     scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_MIME_SYNTAX, builder.toString()));
-    scope.release();
-    return {};
-}
-
-EncodedJSValue CLOSED_MESSAGE_PORT(ThrowScope& scope, JSGlobalObject* globalObject)
-{
-    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CLOSED_MESSAGE_PORT, "Cannot send data on closed MessagePort"_s));
     scope.release();
     return {};
 }
@@ -2582,6 +2551,30 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s));
     case ErrorCode::ERR_DIR_CLOSED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_DIR_CLOSED, "Directory handle was closed"_s));
+    case ErrorCode::ERR_INSPECTOR_ALREADY_ACTIVATED: {
+        auto arg0 = callFrame->argument(1);
+        if (arg0.isString()) {
+            auto message = arg0.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_ALREADY_ACTIVATED, message));
+        }
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_ALREADY_ACTIVATED, "Inspector is already activated. Close it with inspector.close() before activating it again."_s));
+    }
+    case ErrorCode::ERR_INSPECTOR_NOT_ACTIVE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_NOT_ACTIVE, "Inspector is not active"_s));
+    case ErrorCode::ERR_INSPECTOR_ALREADY_CONNECTED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_ALREADY_CONNECTED, "The inspector session is already connected"_s));
+    case ErrorCode::ERR_INSPECTOR_NOT_CONNECTED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_NOT_CONNECTED, "Session is not connected"_s));
+    case ErrorCode::ERR_INSPECTOR_NOT_WORKER:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_NOT_WORKER, "Current thread is not a worker"_s));
+    case Bun::ErrorCode::ERR_INSPECTOR_COMMAND: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Inspector error "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_COMMAND, message));
+    }
     case ErrorCode::ERR_SERVER_ALREADY_LISTEN:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SERVER_ALREADY_LISTEN, "Listen method has been called more than once without closing."_s));
     case ErrorCode::ERR_SOCKET_CLOSED:

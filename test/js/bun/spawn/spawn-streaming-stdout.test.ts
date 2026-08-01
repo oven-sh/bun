@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, dumpStats, expectMaxObjectTypeCount, gcTick, getMaxFD } from "harness";
 
 test("spawn can read from stdout multiple chunks", async () => {
-  gcTick(true);
+  gcTick();
   var maxFD: number = -1;
   let concurrency = 7;
   const count = 100;

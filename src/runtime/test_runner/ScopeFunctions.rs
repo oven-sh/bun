@@ -57,86 +57,86 @@ pub enum Mode {
 // aliased `&mut Self` would not be.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct ScopeFunctions {
-    pub mode: Mode,
-    pub cfg: BaseScopeCfg,
+    pub(crate) mode: Mode,
+    pub(crate) cfg: BaseScopeCfg,
     /// typically `.zero`. not Strong.Optional because codegen visits the C++ `m_each`
     /// WriteBarrier on the JS wrapper (see `values: ["each"]` in jest.classes.ts). This
     /// field is kept in sync with that slot via `js::each_set_cached` in `create_unbound`.
-    pub each: JSValue,
+    pub(crate) each: JSValue,
 }
 
-pub mod strings {
+pub(crate) mod strings {
     use bun_core::String as BunString;
-    #[allow(non_snake_case)] #[inline] pub fn DESCRIBE() -> BunString { BunString::static_str("describe") }
-    #[allow(non_snake_case)] #[inline] pub fn XDESCRIBE() -> BunString { BunString::static_str("xdescribe") }
-    #[allow(non_snake_case)] #[inline] pub fn TEST() -> BunString { BunString::static_str("test") }
-    #[allow(non_snake_case)] #[inline] pub fn XTEST() -> BunString { BunString::static_str("xtest") }
-    #[allow(non_snake_case)] #[inline] pub fn SKIP() -> BunString { BunString::static_str("skip") }
-    #[allow(non_snake_case)] #[inline] pub fn TODO() -> BunString { BunString::static_str("todo") }
-    #[allow(non_snake_case)] #[inline] pub fn FAILING() -> BunString { BunString::static_str("failing") }
-    #[allow(non_snake_case)] #[inline] pub fn CONCURRENT() -> BunString { BunString::static_str("concurrent") }
-    #[allow(non_snake_case)] #[inline] pub fn SERIAL() -> BunString { BunString::static_str("serial") }
-    #[allow(non_snake_case)] #[inline] pub fn ONLY() -> BunString { BunString::static_str("only") }
-    #[allow(non_snake_case)] #[inline] pub fn IF() -> BunString { BunString::static_str("if") }
-    #[allow(non_snake_case)] #[inline] pub fn SKIP_IF() -> BunString { BunString::static_str("skipIf") }
-    #[allow(non_snake_case)] #[inline] pub fn TODO_IF() -> BunString { BunString::static_str("todoIf") }
-    #[allow(non_snake_case)] #[inline] pub fn FAILING_IF() -> BunString { BunString::static_str("failingIf") }
-    #[allow(non_snake_case)] #[inline] pub fn CONCURRENT_IF() -> BunString { BunString::static_str("concurrentIf") }
-    #[allow(non_snake_case)] #[inline] pub fn SERIAL_IF() -> BunString { BunString::static_str("serialIf") }
-    #[allow(non_snake_case)] #[inline] pub fn EACH() -> BunString { BunString::static_str("each") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn DESCRIBE() -> BunString { BunString::static_str("describe") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn XDESCRIBE() -> BunString { BunString::static_str("xdescribe") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn TEST() -> BunString { BunString::static_str("test") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn XTEST() -> BunString { BunString::static_str("xtest") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn SKIP() -> BunString { BunString::static_str("skip") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn TODO() -> BunString { BunString::static_str("todo") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn FAILING() -> BunString { BunString::static_str("failing") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn CONCURRENT() -> BunString { BunString::static_str("concurrent") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn SERIAL() -> BunString { BunString::static_str("serial") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn ONLY() -> BunString { BunString::static_str("only") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn IF() -> BunString { BunString::static_str("if") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn SKIP_IF() -> BunString { BunString::static_str("skipIf") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn TODO_IF() -> BunString { BunString::static_str("todoIf") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn FAILING_IF() -> BunString { BunString::static_str("failingIf") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn CONCURRENT_IF() -> BunString { BunString::static_str("concurrentIf") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn SERIAL_IF() -> BunString { BunString::static_str("serialIf") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn EACH() -> BunString { BunString::static_str("each") }
 }
 
 impl ScopeFunctions {
     #[bun_jsc::host_fn(getter)]
-    pub fn get_skip(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_skip(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"get .skip", strings::SKIP())
     }
     #[bun_jsc::host_fn(getter)]
-    pub fn get_todo(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_todo(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"get .todo", strings::TODO())
     }
     #[bun_jsc::host_fn(getter)]
-    pub fn get_failing(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_failing(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"get .failing", strings::FAILING())
     }
     #[bun_jsc::host_fn(getter)]
-    pub fn get_concurrent(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_concurrent(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"get .concurrent", strings::CONCURRENT())
     }
     #[bun_jsc::host_fn(getter)]
-    pub fn get_serial(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_serial(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"get .serial", strings::SERIAL())
     }
     #[bun_jsc::host_fn(getter)]
-    pub fn get_only(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_only(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_only: true, ..Default::default() }, b"get .only", strings::ONLY())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn fn_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .if()", true, strings::IF())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_skip_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn fn_skip_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .skipIf()", false, strings::SKIP_IF())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_todo_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn fn_todo_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"call .todoIf()", false, strings::TODO_IF())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_failing_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn fn_failing_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"call .failingIf()", false, strings::FAILING_IF())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_concurrent_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn fn_concurrent_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"call .concurrentIf()", false, strings::CONCURRENT_IF())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_serial_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn fn_serial_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"call .serialIf()", false, strings::SERIAL_IF())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_each(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn fn_each(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let _g = group_log::begin();
 
         let [array] = frame.arguments_as_array::<1>();
@@ -153,7 +153,7 @@ impl ScopeFunctions {
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let _g = group_log::begin();
 
     let Some(this_ptr) = ScopeFunctions::from_js(frame.this()) else {
@@ -519,16 +519,16 @@ fn error_in_ci(global: &JSGlobalObject, signature: &[u8]) -> JsResult<()> {
 }
 
 pub struct ParseArgumentsResult {
-    pub description: Option<Vec<u8>>,
+    pub(crate) description: Option<Vec<u8>>,
     pub callback: Option<JSValue>,
-    pub options: ParseArgumentsOptions,
+    pub(crate) options: ParseArgumentsOptions,
 }
 
 #[derive(Default, Clone, Copy)]
 pub struct ParseArgumentsOptions {
-    pub timeout: u32,
-    pub retry: Option<u32>,
-    pub repeats: u32,
+    pub(crate) timeout: u32,
+    pub(crate) retry: Option<u32>,
+    pub(crate) repeats: u32,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -546,7 +546,7 @@ pub enum FunctionKind {
 #[derive(Copy, Clone)]
 pub struct ParseArgumentsCfg {
     pub callback: CallbackMode,
-    pub kind: FunctionKind,
+    pub(crate) kind: FunctionKind,
 }
 impl Default for ParseArgumentsCfg {
     fn default() -> Self {
@@ -597,7 +597,7 @@ fn get_description(
     )))
 }
 
-pub fn parse_arguments(
+pub(crate) fn parse_arguments(
     global: &JSGlobalObject,
     frame: &CallFrame,
     signature: Signature,
@@ -791,7 +791,7 @@ impl ScopeFunctions {
     }
 }
 
-pub(crate) fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, cfg: BaseScopeCfg) -> JSValue {
+fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, cfg: BaseScopeCfg) -> JSValue {
     let _g = group_log::begin();
 
     // `JsClass::to_js` boxes `self` and hands the raw pointer to the C++
@@ -807,7 +807,7 @@ pub(crate) fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue,
     value
 }
 
-pub(crate) fn bind(value: JSValue, global: &JSGlobalObject, name: BunString) -> JsResult<JSValue> {
+fn bind(value: JSValue, global: &JSGlobalObject, name: BunString) -> JsResult<JSValue> {
     // `#[bun_jsc::host_fn]` on `call_as_function` emits the C-ABI thunk
     // `__jsc_host_call_as_function`; `JSFunction::create` wants the raw
     // `JSHostFn` shape, not the safe Rust signature.

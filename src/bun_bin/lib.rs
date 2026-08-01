@@ -69,7 +69,7 @@ static ALLOC: std::alloc::System = std::alloc::System;
 #[cold]
 #[inline(never)]
 #[unsafe(no_mangle)]
-pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
+pub(crate) extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     // detect_stack_use_after_return=0: keep stack locals on the real stack so
     //   JSC's conservative GC scan and `StackBounds::contains` see them.
     // detect_leaks=0: off by default (Linux defaults it on); CI opts in via
@@ -105,7 +105,7 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
 #[cold]
 #[inline(never)]
 #[unsafe(no_mangle)]
-pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
+pub(crate) extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
     // One rule per line. Substring match on any frame in the allocation stack.
     //
     // Every entry below is a structural / process-lifetime allocation that has
@@ -150,7 +150,7 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
 /// `argv` must point to `argc` valid NUL-terminated C strings that live for
 /// the entire process — guaranteed by the C runtime that calls this symbol.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
+pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
     // 0. Capture argv FIRST — before the crash handler, whose panic path
     //    dumps the command line via `bun_core::argv()`.
     //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives
@@ -203,12 +203,6 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
     // 5. Per-thread stack-limit cache for the JS recursion guard.
     StackCheck::configure_thread();
     bun_io::ParentDeathWatchdog::install();
-
-    // 6. Push high-tier allocator vtable addresses into the
-    //    `bun_safety::alloc::has_ptr` registry so debug-only allocator-mismatch
-    //    checks can identify `LinuxMemFdAllocator`/`MimallocArena` instances.
-    //    Runs once; reads are lock-free Relaxed.
-    bun_runtime::allocators::register_safety_vtables();
 
     // 7. CLI dispatch.
     bun_runtime::cli::Cli::start();

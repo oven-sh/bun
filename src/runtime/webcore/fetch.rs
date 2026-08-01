@@ -4,9 +4,8 @@
 
 pub(crate) const FETCH_ERROR_NO_ARGS: &str = "fetch() expects a string but received no arguments.";
 pub(crate) const FETCH_ERROR_BLANK_URL: &str = "fetch() URL must not be a blank string.";
-pub(crate) const FETCH_ERROR_UNEXPECTED_BODY: &str =
-    "fetch() request with GET/HEAD method cannot have body.";
-pub(crate) const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
+const FETCH_ERROR_UNEXPECTED_BODY: &str = "fetch() request with GET/HEAD method cannot have body.";
+const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
 
 pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
     if value.is_undefined() {
@@ -34,6 +33,10 @@ pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
 
 #[path = "fetch/FetchTasklet.rs"]
 pub mod fetch_tasklet;
+
+#[path = "fetch/FetchRequestBodySink.rs"]
+pub mod fetch_request_body_sink;
+pub use self::fetch_request_body_sink::{FetchRequestBodySink, FetchRequestBodySinkJSSink};
 
 #[path = "fetch/compress_body.rs"]
 pub mod compress_body;
@@ -226,7 +229,7 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
 // ──────────────────────────────────────────────────────────────────────────
 
 #[bun_jsc::host_fn(export = "Bun__fetchPreconnect")]
-pub(crate) fn bun_fetch_preconnect(
+fn bun_fetch_preconnect(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -315,10 +318,7 @@ pub(crate) fn bun_fetch_preconnect(
 struct StringOrURL;
 
 impl StringOrURL {
-    pub(crate) fn from_js(
-        value: JSValue,
-        global_this: &JSGlobalObject,
-    ) -> JsResult<Option<BunString>> {
+    fn from_js(value: JSValue, global_this: &JSGlobalObject) -> JsResult<Option<BunString>> {
         if value.is_string() {
             return Ok(Some(BunString::from_js(value, global_this)?));
         }
@@ -337,7 +337,7 @@ impl StringOrURL {
 
 /// Public entry point for `Bun.fetch` - validates body on GET/HEAD
 #[bun_jsc::host_fn(export = "Bun__fetch")]
-pub(crate) fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe))
 }
 
@@ -777,7 +777,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                 return Ok(JSValue::ZERO);
                             }
                             Ok(Some(config)) => {
-                                // Intern via GlobalRegistry for deduplication and pointer equality
+                                // Intern via `ssl_config::global_registry` for dedup and pointer equality
                                 break 'extract_ssl_config Some(ssl_config_intern_for_http(config));
                             }
                             Ok(None) => {}
@@ -1241,6 +1241,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
             if matches!(*body_value, BodyValue::Locked(_)) {
                 if let Some(readable) = req.get_body_readable_stream(global_this) {
+                    if readable.is_disturbed(global_this) || readable.is_locked(global_this) {
+                        return Err(global_this
+                            .err(
+                                jsc::ErrorCode::BODY_ALREADY_USED,
+                                format_args!("Request body already used"),
+                            )
+                            .throw());
+                    }
                     break 'extract_body Some(HTTPRequestBody::ReadableStream(
                         readable_stream::Strong::init(readable, global_this),
                     ));
@@ -1621,9 +1629,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if let Some(sig) = signal.0 {
         let sig = bun_ptr::BackRef::from(sig);
         if sig.aborted() {
-            // `abort_reason()` is the stored `m_reason` (same object as
-            // `signal.reason`), not a reconstructed DOMException.
-            let reason = sig.abort_reason();
+            let reason = sig.js_reason(global_this);
             if let HTTPRequestBody::ReadableStream(stream_ref) = &body {
                 if let Some(stream) = stream_ref.get(global_this) {
                     stream.cancel_with_reason(global_this, reason);
@@ -2129,10 +2135,7 @@ struct S3StreamWrapper<'a> {
 }
 
 impl<'a> S3StreamWrapper<'a> {
-    pub(crate) fn resolve(
-        result: s3::S3UploadResult,
-        self_: *mut Self,
-    ) -> Result<(), bun_jsc::JsTerminated> {
+    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: self_ was created via heap::alloc in fetch_impl; we reclaim
         // ownership here exactly once on the resolve callback.
         let mut self_ = unsafe { bun_core::heap::take(self_) };

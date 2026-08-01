@@ -62,7 +62,7 @@ pub(crate) enum UpgradeClientUnion {
 }
 
 impl UpgradeClientUnion {
-    pub(crate) fn handle_decrypted_data(&self, data: &[u8]) {
+    fn handle_decrypted_data(&self, data: &[u8]) {
         match self {
             // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
             UpgradeClientUnion::Http(client) => unsafe {
@@ -76,7 +76,7 @@ impl UpgradeClientUnion {
         }
     }
 
-    pub(crate) fn terminate(&self, code: ErrorCode) {
+    fn terminate(&self, code: ErrorCode) {
         match self {
             // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
             UpgradeClientUnion::Http(client) => unsafe {
@@ -90,7 +90,7 @@ impl UpgradeClientUnion {
         }
     }
 
-    pub(crate) fn on_proxy_tls_handshake_complete(&self) {
+    fn on_proxy_tls_handshake_complete(&self) {
         match self {
             // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
             UpgradeClientUnion::Http(client) => unsafe {
@@ -104,7 +104,7 @@ impl UpgradeClientUnion {
         }
     }
 
-    pub(crate) fn is_none(&self) -> bool {
+    fn is_none(&self) -> bool {
         matches!(self, UpgradeClientUnion::None)
     }
 }
@@ -427,7 +427,7 @@ impl WebSocketProxyTunnel {
     /// Set the connected WebSocket client. Called after successful WebSocket upgrade.
     /// This transitions the tunnel from upgrade phase to connected phase.
     /// After calling this, decrypted data will be forwarded to the WebSocket client.
-    pub(crate) fn set_connected_web_socket(&mut self, ws: *mut WebSocketClient) {
+    fn set_connected_web_socket(&mut self, ws: *mut WebSocketClient) {
         bun_core::scoped_log!(WebSocketProxyTunnel, "setConnectedWebSocket");
         self.connected_websocket = ws;
         // Clear the upgrade client reference since we're now in connected phase
@@ -618,7 +618,7 @@ impl Drop for WebSocketProxyTunnel {
 // positive at this FFI boundary.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn WebSocketProxyTunnel__setConnectedWebSocket(
+extern "C" fn WebSocketProxyTunnel__setConnectedWebSocket(
     tunnel: *mut WebSocketProxyTunnel,
     ws: *mut WebSocketClient,
 ) {

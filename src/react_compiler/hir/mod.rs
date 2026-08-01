@@ -40,7 +40,6 @@ pub mod environment;
 pub mod environment_config;
 pub mod globals;
 pub mod object_shape;
-pub mod print;
 pub mod reactive;
 pub mod type_config;
 pub mod visitors;
@@ -1679,10 +1678,8 @@ pub struct AliasingSignature {
 
 use crate::hir::object_shape::BUILT_IN_ARRAY_ID;
 use crate::hir::object_shape::BUILT_IN_JSX_ID;
-use crate::hir::object_shape::BUILT_IN_MAP_ID;
 use crate::hir::object_shape::BUILT_IN_PROPS_ID;
 use crate::hir::object_shape::BUILT_IN_REF_VALUE_ID;
-use crate::hir::object_shape::BUILT_IN_SET_ID;
 use crate::hir::object_shape::BUILT_IN_USE_OPERATOR_ID;
 use crate::hir::object_shape::BUILT_IN_USE_REF_ID;
 
@@ -1699,16 +1696,6 @@ pub fn is_props_type(ty: &Type) -> bool {
 /// Returns true if the type is an array.
 pub fn is_array_type(ty: &Type) -> bool {
     matches!(ty, Type::Object { shape_id: Some(id) } if *id == BUILT_IN_ARRAY_ID)
-}
-
-/// Returns true if the type is a Set.
-pub fn is_set_type(ty: &Type) -> bool {
-    matches!(ty, Type::Object { shape_id: Some(id) } if *id == BUILT_IN_SET_ID)
-}
-
-/// Returns true if the type is a Map.
-pub fn is_map_type(ty: &Type) -> bool {
-    matches!(ty, Type::Object { shape_id: Some(id) } if *id == BUILT_IN_MAP_ID)
 }
 
 /// Returns true if the type is JSX.

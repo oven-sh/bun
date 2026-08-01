@@ -2,7 +2,9 @@
 
 use crate::node::fs as node_fs;
 use crate::node::types::PathLikeExt as _;
-use crate::webcore::blob::{self, MAX_SIZE, MkdirpTarget, Retry, SizeType, StoreRef, store};
+#[cfg(not(windows))]
+use crate::webcore::blob::{self, Retry};
+use crate::webcore::blob::{MAX_SIZE, MkdirpTarget, SizeType, StoreRef, store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_io as aio;
@@ -28,31 +30,36 @@ use core::marker::ConstParamTy;
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct CopyFile<'a> {
-    pub destination_file_store: store::File,
-    pub source_file_store: store::File,
+    #[cfg(not(windows))]
+    pub(crate) destination_file_store: store::File,
+    pub(crate) source_file_store: store::File,
     // `StoreRef` is the thread-safe refcounted handle;
     // it keeps the stores — and the path slices the `File` clones borrow — alive
     // while this task is on the work pool.
-    pub store: Option<StoreRef>,
-    pub source_store: Option<StoreRef>,
+    pub(crate) store: Option<StoreRef>,
+    pub(crate) source_store: Option<StoreRef>,
     pub offset: SizeType,
-    pub size: SizeType,
-    pub max_length: SizeType,
-    pub destination_fd: Fd,
-    pub source_fd: Fd,
+    #[cfg(not(windows))]
+    pub(crate) max_length: SizeType,
+    #[cfg(not(windows))]
+    pub(crate) destination_fd: Fd,
+    #[cfg(not(windows))]
+    pub(crate) source_fd: Fd,
 
-    pub system_error: Option<SystemError>,
+    pub(crate) system_error: Option<SystemError>,
 
-    pub read_len: SizeType,
-    pub read_off: SizeType,
+    pub(crate) read_len: SizeType,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) read_off: SizeType,
 
     // per LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject
     // TODO(refactor): lifetime — this struct is Box-allocated and crosses threads;
     // `'a` here is unsound in practice. Likely should be *const JSGlobalObject.
     pub global_this: &'a JSGlobalObject,
 
-    pub mkdirp_if_not_exists: bool,
-    pub destination_mode: Option<Mode>,
+    pub(crate) mkdirp_if_not_exists: bool,
+    #[cfg(not(windows))]
+    pub(crate) destination_mode: Option<Mode>,
 }
 
 impl MkdirpTarget for CopyFile<'_> {
@@ -78,7 +85,8 @@ impl jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for CopyFile<'_>
 }
 
 impl<'a> CopyFile<'a> {
-    pub fn create(
+    #[cfg(not(windows))]
+    pub(crate) fn create(
         store: StoreRef,
         source_store: StoreRef,
         off: SizeType,
@@ -98,17 +106,17 @@ impl<'a> CopyFile<'a> {
             mkdirp_if_not_exists,
             destination_mode,
             // defaults:
-            size: 0,
             destination_fd: Fd::INVALID,
             source_fd: Fd::INVALID,
             system_error: None,
             read_len: 0,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             read_off: 0,
         });
         CopyFilePromiseTask::create_on_js_thread(global_this, read_file)
     }
 
-    pub fn reject(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
+    pub(crate) fn reject(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
         let global_this = self.global_this;
         let mut system_error: SystemError = self.system_error.take().unwrap_or_default();
         if matches!(
@@ -132,7 +140,7 @@ impl<'a> CopyFile<'a> {
         promise.reject(global_this, Ok(instance))
     }
 
-    pub fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
+    pub(crate) fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
         drop(self.source_store.take()); // source_store.?.deref()
 
         if self.system_error.is_some() {
@@ -145,11 +153,8 @@ impl<'a> CopyFile<'a> {
         )
     }
 
-    pub fn run(&mut self) {
-        self.run_async();
-    }
-
-    pub fn do_close(&mut self) {
+    #[cfg(not(windows))]
+    pub(crate) fn do_close(&mut self) {
         let close_input = !matches!(
             self.destination_file_store.pathlike,
             PathOrFileDescriptor::Fd(_)
@@ -157,21 +162,17 @@ impl<'a> CopyFile<'a> {
         let close_output = !matches!(self.source_file_store.pathlike, PathOrFileDescriptor::Fd(_))
             && self.source_fd != Fd::INVALID;
 
-        // Apply destination mode using fchmod before closing (for POSIX platforms)
+        // Apply destination mode using fchmod before closing.
         // This ensures mode is applied even when overwriting existing files, since
         // open()'s mode argument only affects newly created files.
         // On macOS clonefile path, chmod is called separately after clonefile.
-        // On Windows, this is handled via async uv_fs_chmod.
-        #[cfg(not(windows))]
-        {
-            if let Some(mode) = self.destination_mode {
-                if self.destination_fd != Fd::INVALID && self.system_error.is_none() {
-                    match bun_sys::fchmod(self.destination_fd, mode) {
-                        bun_sys::Result::Err(err) => {
-                            self.system_error = Some(err.to_system_error());
-                        }
-                        bun_sys::Result::Ok(()) => {}
+        if let Some(mode) = self.destination_mode {
+            if self.destination_fd != Fd::INVALID && self.system_error.is_none() {
+                match bun_sys::fchmod(self.destination_fd, mode) {
+                    bun_sys::Result::Err(err) => {
+                        self.system_error = Some(err.to_system_error());
                     }
+                    bun_sys::Result::Ok(()) => {}
                 }
             }
         }
@@ -185,7 +186,8 @@ impl<'a> CopyFile<'a> {
         }
     }
 
-    pub fn do_close_file<const WHICH: IOWhich>(&mut self) {
+    #[cfg(not(windows))]
+    pub(crate) fn do_close_file<const WHICH: IOWhich>(&mut self) {
         match WHICH {
             IOWhich::Both => {
                 self.destination_fd.close();
@@ -200,7 +202,8 @@ impl<'a> CopyFile<'a> {
         }
     }
 
-    pub fn do_open_file<const WHICH: IOWhich>(&mut self) -> Result<(), crate::Error> {
+    #[cfg(not(windows))]
+    pub(crate) fn do_open_file<const WHICH: IOWhich>(&mut self) -> Result<(), crate::Error> {
         let mut path_buf1 = PathBuffer::uninit();
         // open source file first
         // if it fails, we don't want the extra destination file hanging out
@@ -292,7 +295,7 @@ impl<'a> CopyFile<'a> {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn do_copy_file_range<const USE: TryWith, const CLEAR_APPEND_IF_INVALID: bool>(
+    pub(crate) fn do_copy_file_range<const USE: TryWith, const CLEAR_APPEND_IF_INVALID: bool>(
         &mut self,
     ) -> Result<(), crate::Error> {
         use bun_sys::linux;
@@ -518,7 +521,9 @@ impl<'a> CopyFile<'a> {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn do_fcopy_file_with_read_write_loop_fallback(&mut self) -> Result<(), crate::Error> {
+    pub(crate) fn do_fcopy_file_with_read_write_loop_fallback(
+        &mut self,
+    ) -> Result<(), crate::Error> {
         match bun_sys::fcopyfile(
             self.source_fd,
             self.destination_fd,
@@ -566,7 +571,7 @@ impl<'a> CopyFile<'a> {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn do_clonefile(&mut self) -> Result<(), crate::Error> {
+    pub(crate) fn do_clonefile(&mut self) -> Result<(), crate::Error> {
         let mut source_buf = PathBuffer::uninit();
         let mut dest_buf = PathBuffer::uninit();
 
@@ -608,7 +613,7 @@ impl<'a> CopyFile<'a> {
         Ok(())
     }
 
-    pub fn run_async(&mut self) {
+    pub(crate) fn run_async(&mut self) {
         #[cfg(windows)]
         {
             return; // why
@@ -939,8 +944,10 @@ const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "a
 #[cfg(not(windows))]
 const PREALLOCATE_LENGTH: SizeType = 2048 * 1024;
 
+#[cfg(not(windows))]
 const OPEN_DESTINATION_FLAGS: i32 =
     bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC;
+#[cfg(not(windows))]
 const OPEN_SOURCE_FLAGS: i32 = bun_sys::O::CLOEXEC | bun_sys::O::RDONLY;
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
@@ -951,7 +958,8 @@ pub enum TryWith {
 }
 
 impl TryWith {
-    pub const fn tag(self) -> bun_sys::Tag {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) const fn tag(self) -> bun_sys::Tag {
         match self {
             TryWith::Sendfile => bun_sys::Tag::sendfile,
             TryWith::CopyFileRange => bun_sys::Tag::copy_file_range,
@@ -966,39 +974,39 @@ impl TryWith {
 
 #[cfg(windows)]
 pub struct CopyFileWindows<'a> {
-    pub destination_file_store: StoreRef,
-    pub source_file_store: StoreRef,
+    pub(crate) destination_file_store: StoreRef,
+    pub(crate) source_file_store: StoreRef,
 
-    pub io_request: libuv::fs_t,
-    pub promise: jsc::JSPromiseStrong,
-    pub mkdirp_if_not_exists: bool,
-    pub destination_mode: Option<Mode>,
+    pub(crate) io_request: libuv::fs_t,
+    pub(crate) promise: jsc::JSPromiseStrong,
+    pub(crate) mkdirp_if_not_exists: bool,
+    pub(crate) destination_mode: Option<Mode>,
     // per LIFETIMES.tsv: JSC_BORROW → &jsc::EventLoop
     // TODO(refactor): lifetime — heap-allocated and re-entered from libuv callbacks;
     // likely should be *const jsc::EventLoop.
-    pub event_loop: &'a jsc::event_loop::EventLoop,
+    pub(crate) event_loop: &'a jsc::event_loop::EventLoop,
 
-    pub size: SizeType,
+    pub(crate) size: SizeType,
 
     /// Bytes written, stored for use after async chmod completes
-    pub written_bytes: usize,
+    pub(crate) written_bytes: usize,
 
     /// For mkdirp
-    pub err: Option<bun_sys::Error>,
+    pub(crate) err: Option<bun_sys::Error>,
 
     /// When we are unable to get the original file path, we do a read-write loop that uses libuv.
-    pub read_write_loop: ReadWriteLoop,
+    pub(crate) read_write_loop: ReadWriteLoop,
 }
 
 #[cfg(windows)]
 pub struct ReadWriteLoop {
-    pub source_fd: Fd,
-    pub must_close_source_fd: bool,
-    pub destination_fd: Fd,
-    pub must_close_destination_fd: bool,
-    pub written: usize,
-    pub read_buf: Vec<u8>,
-    pub uv_buf: libuv::uv_buf_t,
+    pub(crate) source_fd: Fd,
+    pub(crate) must_close_source_fd: bool,
+    pub(crate) destination_fd: Fd,
+    pub(crate) must_close_destination_fd: bool,
+    pub(crate) written: usize,
+    pub(crate) read_buf: Vec<u8>,
+    pub(crate) uv_buf: libuv::uv_buf_t,
 }
 
 #[cfg(windows)]
@@ -1250,7 +1258,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
 
 #[cfg(windows)]
 impl<'a> CopyFileWindows<'a> {
-    pub fn on_read_write_loop_complete(&mut self) {
+    pub(crate) fn on_read_write_loop_complete(&mut self) {
         self.event_loop.unref_concurrently();
 
         if let Some(err) = self.err.take() {
@@ -1262,11 +1270,11 @@ impl<'a> CopyFileWindows<'a> {
         self.on_complete(written);
     }
 
-    pub fn new(init: CopyFileWindows<'a>) -> Box<CopyFileWindows<'a>> {
+    pub(crate) fn new(init: CopyFileWindows<'a>) -> Box<CopyFileWindows<'a>> {
         Box::new(init)
     }
 
-    pub fn init(
+    pub(crate) fn init(
         destination_file_store: StoreRef,
         source_file_store: StoreRef,
         event_loop: &'a jsc::event_loop::EventLoop,
@@ -1557,7 +1565,7 @@ impl<'a> CopyFileWindows<'a> {
         let _ = promise.reject(global_this, err_instance); // TODO: properly propagate exception upwards
     }
 
-    pub fn on_complete(&mut self, written_actual: usize) {
+    pub(crate) fn on_complete(&mut self, written_actual: usize) {
         let mut written = written_actual;
         if written != usize::try_from(self.size).expect("int cast") && self.size != MAX_SIZE {
             self.truncate();
@@ -1661,7 +1669,7 @@ impl<'a> CopyFileWindows<'a> {
 
     /// SAFETY: `this` must have been produced by `heap::alloc` in `init()` and
     /// not yet destroyed. After this call `this` is dangling.
-    pub unsafe fn destroy(this: *mut Self) {
+    pub(crate) unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller contract — `this` is a live `heap::alloc`-ed pointer.
         unsafe {
             (*this).read_write_loop.close();
@@ -1870,5 +1878,5 @@ fn unsupported_non_regular_file_error() -> SystemError {
 // `SystemError` contains `bun_core::String`, which is not const-constructible,
 // so these are constructor fns instead of `const` values.
 
-pub type CopyFilePromiseTask<'a> =
+pub(crate) type CopyFilePromiseTask<'a> =
     jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, CopyFile<'a>>;

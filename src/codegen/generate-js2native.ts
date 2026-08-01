@@ -299,6 +299,7 @@ export function getJS2NativeRust() {
   const handExported = new Set<string>([
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_getRuntimeDefaultResultOrderOption",
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_newResolver",
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_seedCacheForTesting",
   ]);
 
   const srcRoot = path.resolve(import.meta.dir, "..");
@@ -344,6 +345,7 @@ export function getJS2NativeRust() {
     thunks.push(
       `// $rust(${path.basename(call.filename)}, ${call.symbol})`,
       `bun_jsc::jsc_host_abi! {`,
+      `    #[allow(dead_code, unreachable_pub, unused)]`,
       `    #[unsafe(no_mangle)]`,
       `    pub unsafe fn ${sym}(global: &JSGlobalObject) -> JSValue {`,
       `        host_fn::host_fn_lazy(global, |g| ${target}(g))`,
@@ -365,6 +367,7 @@ export function getJS2NativeRust() {
     thunks.push(
       `// $rust(${path.basename(x.filename)}, ${x.symbol_target})`,
       `bun_jsc::jsc_host_abi! {`,
+      `    #[allow(dead_code, unreachable_pub, unused)]`,
       `    #[unsafe(no_mangle)]`,
       `    pub unsafe fn ${sym}(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {`,
       `        host_fn::host_fn_static(global, callframe, |g, cf| ${target}(g, cf))`,
@@ -385,6 +388,7 @@ export function getJS2NativeRust() {
     `// Calling convention: \`jsc.conv\` is plain \`extern "C"\` on every target except`,
     `// Windows-x64 (\`extern "sysv64"\`); see generated_classes.rs for the same note.`,
     ``,
+    `#[allow(dead_code, unreachable_pub, unused)]`,
     `#[allow(unused_imports)] // emitted for thunk shapes that vary per build`,
     `use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};`,
     ``,

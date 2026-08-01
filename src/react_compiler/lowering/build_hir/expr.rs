@@ -584,7 +584,7 @@ fn lower_conditional(
         test_block,
     );
 
-    let test_place = lower_expression_to_temporary(builder, &cond.test_)?;
+    let test_place = lower_expression_to_temporary(builder, &cond.test)?;
     builder.terminate_with_continuation(
         Terminal::Branch {
             test: test_place,
@@ -1346,7 +1346,7 @@ fn is_reorderable_expression(
             _ => false,
         },
         Data::EIf(cond) => {
-            is_reorderable_expression(builder, &cond.test_, allow_local_identifiers)
+            is_reorderable_expression(builder, &cond.test, allow_local_identifiers)
                 && is_reorderable_expression(builder, &cond.yes, allow_local_identifiers)
                 && is_reorderable_expression(builder, &cond.no, allow_local_identifiers)
         }

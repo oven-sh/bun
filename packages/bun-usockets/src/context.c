@@ -94,9 +94,17 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
         c = nextC;
     }
 
-    struct us_socket_t *s = group->head_sockets;
-    while (s) {
-        struct us_socket_t *nextS = s->next;
+    /* Drive the walk off group->iterator rather than a cached s->next: each
+     * us_socket_close dispatches a JS close/handshake handler that may close a
+     * *sibling*, and the sibling is what a plain cached `next` would point at.
+     * us_internal_socket_group_unlink_socket advances group->iterator past any
+     * socket it unlinks, so parking the next pointer there lets a handler free
+     * it without leaving us a dangling step (same pattern as the timeout sweep
+     * in loop.c). */
+    group->iterator = group->head_sockets;
+    while (group->iterator) {
+        struct us_socket_t *s = group->iterator;
+        group->iterator = s->next;
         if (us_internal_poll_type(&s->p) & POLL_TYPE_SEMI_SOCKET) {
             /* In-flight connect — close_raw skips dispatch for SEMI_SOCKET
              * (on_close without on_open is wrong), so the Zig wrapper's
@@ -112,8 +120,8 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
         } else {
             us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
         }
-        s = nextS;
     }
+    group->iterator = 0;
 
     /* TLS sockets may have *deferred* the close above: us_internal_ssl_close
      * with code==0 sends close_notify and, on WANT_READ, leaves the socket
@@ -131,16 +139,25 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
     if (group->low_prio_count) {
         /* Don't pre-unlink — leave low_prio_state==1 so us_socket_close takes
          * its low-prio branch (which knows the socket is NOT in head_sockets
-         * and decrements low_prio_count itself). The cached `next` survives
-         * the close because that branch rewires the list before dispatch. */
+         * and decrements low_prio_count itself). That branch unlinks q before
+         * dispatching the JS close/handshake handler, but the handler may
+         * close any OTHER parked socket (whose close_raw then repoints its
+         * `next` at the closed-socket list), so no pointer into the queue
+         * survives a dispatch: re-scan from the head after every close. The
+         * group->iterator trick from the walk above doesn't apply here — the
+         * low-prio close branch never touches it. `budget` keeps a deferred
+         * TLS close (never observed for parked mid-handshake sockets; the
+         * assert below encodes that) from turning the re-scan into a spin. */
         struct us_internal_loop_data_t *ld = &group->loop->data;
-        struct us_socket_t *q = ld->low_prio_head;
-        while (q) {
-            struct us_socket_t *next = q->next;
-            if (q->group == group) {
-                us_socket_close(q, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+        for (uint16_t budget = group->low_prio_count; budget && group->low_prio_count; budget--) {
+            struct us_socket_t *q = ld->low_prio_head;
+            while (q && q->group != group) {
+                q = q->next;
             }
-            q = next;
+            if (!q) {
+                break;
+            }
+            us_socket_close(q, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
         }
         US_ASSERT(group->low_prio_count == 0);
     }

@@ -38,29 +38,11 @@
 #include "ZigGeneratedClasses.h"
 #include "CloseEvent.h"
 #include <wtf/text/Base64.h>
-// #include "ContentSecurityPolicy.h"
-// #include "DOMWindow.h"
-// #include "Document.h"
 #include "Event.h"
 #include "EventListener.h"
 #include "EventNames.h"
-// #include "Frame.h"
-// #include "FrameLoader.h"
-// #include "FrameLoaderClient.h"
-// #include "InspectorInstrumentation.h"
-// #include "Logging.h"
 #include "MessageEvent.h"
-// #include "MixedContentChecker.h"
-// #include "ResourceLoadObserver.h"
-// #include "ScriptController.h"
 #include "ScriptExecutionContext.h"
-// #include "SecurityOrigin.h"
-// #include "SocketProvider.h"
-// #include "ThreadableWebSocketChannel.h"
-// #include "WebSocketChannel.h"
-// #include "WorkerGlobalScope.h"
-// #include "WorkerLoaderProxy.h"
-// #include "WorkerThread.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/ArrayBufferView.h>
 #include <JavaScriptCore/ScriptCallStack.h>
@@ -68,18 +50,14 @@
 #include <wtf/HexNumber.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/NeverDestroyed.h>
-// #include <wtf/RunLoop.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/StringBuilder.h>
 
 #include "JSBuffer.h"
+#include "BunClientData.h"
 #include "ErrorEvent.h"
 #include "WebSocketDeflate.h"
-
-// #if USE(WEB_THREAD)
-// #include "WebCoreThreadRun.h"
-// #endif
 
 namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSocket);
@@ -227,14 +205,6 @@ WebSocket::~WebSocket()
         Bun__WebSocketClientTLS__finalize(reinterpret_cast<void*>(this->m_connectedWebSocket.clientSSL));
         break;
     }
-    // case ConnectedWebSocketKind::Server: {
-    //     this->m_connectedWebSocket.server->end(None);
-    //     break;
-    // }
-    // case ConnectedWebSocketKind::ServerSSL: {
-    //     this->m_connectedWebSocket.serverSSL->end(None);
-    //     break;
-    // }
     default: {
         break;
     }
@@ -341,23 +311,6 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
 
     return socket;
 }
-ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized)
-{
-    if (url.isNull())
-        return Exception { SyntaxError };
-
-    auto socket = adoptRef(*new WebSocket(context));
-    socket->setRejectUnauthorized(rejectUnauthorized);
-    // socket->suspendIfNeeded();
-
-    auto result = socket->connect(url, protocols, WTF::move(headers));
-    // auto result = socket->connect(url, protocols);
-
-    if (result.hasException())
-        return result.releaseException();
-
-    return socket;
-}
 
 ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate)
 {
@@ -405,16 +358,6 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     return create(context, url, Vector<String> { protocol });
 }
 
-ExceptionOr<void> WebSocket::connect(const String& url)
-{
-    return connect(url, Vector<String> {}, std::nullopt);
-}
-
-ExceptionOr<void> WebSocket::connect(const String& url, const String& protocol)
-{
-    return connect(url, Vector<String> { protocol }, std::nullopt);
-}
-
 static String resourceName(const URL& url)
 {
     auto path = url.path();
@@ -433,11 +376,6 @@ static String hostName(const URL& url, bool secure)
     if (url.port() && ((!secure && url.port().value() != 80) || (secure && url.port().value() != 443)))
         return makeString(asASCIILowercase(url.host()), ':', url.port().value());
     return url.host().convertToASCIILowercase();
-}
-
-ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& protocols)
-{
-    return connect(url, protocols, std::nullopt);
 }
 
 ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headersInit)
@@ -502,30 +440,6 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         return Exception { SyntaxError, makeString("URL has fragment component "_s, m_url.stringCenterEllipsizedToLength()) };
     }
 
-    // ASSERT(context.contentSecurityPolicy());
-    // auto& contentSecurityPolicy = *context.contentSecurityPolicy();
-
-    // contentSecurityPolicy.upgradeInsecureRequestIfNeeded(m_url, ContentSecurityPolicy::InsecureRequestType::Load);
-
-    // if (!portAllowed(m_url)) {
-    //     String message;
-    //     if (m_url.port())
-    //         message = makeString("WebSocket port ", m_url.port().value(), " blocked");
-    //     else
-    //         message = "WebSocket without port blocked"_s;
-    //     context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, message);
-    //     failAsynchronously();
-    //     return {};
-    // }
-
-    // FIXME: Convert this to check the isolated world's Content Security Policy once webkit.org/b/104520 is solved.
-    // if (!context.shouldBypassMainWorldContentSecurityPolicy() && !contentSecurityPolicy.allowConnectToSource(m_url)) {
-    //     m_state = CLOSED;
-
-    //     // FIXME: Should this be throwing an exception?
-    //     return Exception { SecurityError };
-    // }
-
     // FIXME: There is a disagreement about restriction of subprotocols between WebSocket API and hybi-10 protocol
     // draft. The former simply says "only characters in the range U+0021 to U+007E are allowed," while the latter
     // imposes a stricter rule: "the elements MUST be non-empty strings with characters as defined in [RFC2616],
@@ -550,20 +464,6 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             return Exception { SyntaxError, makeString("WebSocket protocols contain duplicates:"_s, encodeProtocolString(protocol), "'"_s) };
         }
     }
-
-    // RunLoop::main().dispatch([targetURL = m_url.isolatedCopy(), mainFrameURL = context.url().isolatedCopy()]() {
-    //     ResourceLoadObserver::shared().logWebSocketLoading(targetURL, mainFrameURL);
-    // });
-
-    // if (is<Document>(context)) {
-    //     Document& document = downcast<Document>(context);
-    //     RefPtr<Frame> frame = document.frame();
-    //     // FIXME: make the mixed content check equivalent to the non-document mixed content check currently in WorkerThreadableWebSocketChannel::Bridge::connect()
-    //     if (!frame || !MixedContentChecker::canRunInsecureContent(*frame, document.securityOrigin(), m_url)) {
-    //         failAsynchronously();
-    //         return { };
-    //     }
-    // }
 
     String protocolString;
     if (!protocols.isEmpty())
@@ -775,19 +675,6 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     }
 
     m_state = CONNECTING;
-
-    // #if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
-    //     auto reportRegistrableDomain = [domain = RegistrableDomain(m_url).isolatedCopy()](auto& context) mutable {
-    //         if (auto* frame = downcast<Document>(context).frame())
-    //             frame->loader().client().didLoadFromRegistrableDomain(WTF::move(domain));
-    //     };
-    //     if (is<Document>(context))
-    //         reportRegistrableDomain(context);
-    //     else
-    //         downcast<WorkerGlobalScope>(context).thread().workerLoaderProxy().postTaskToLoader(WTF::move(reportRegistrableDomain));
-    // #endif
-
-    // m_pendingActivity = makePendingActivity(*this);
     updateHasPendingActivity();
     return {};
 }
@@ -887,16 +774,6 @@ void WebSocket::sendWebSocketData(const char* baseAddress, size_t length, const 
         Bun__WebSocketClientTLS__writeBinaryData(this->m_connectedWebSocket.clientSSL, reinterpret_cast<const unsigned char*>(baseAddress), length, static_cast<uint8_t>(op));
         break;
     }
-    // case ConnectedWebSocketKind::Server: {
-    //     this->m_connectedWebSocket.server->send({ baseAddress, length }, opCode);
-    //     this->m_bufferedAmount = this->m_connectedWebSocket.server->getBufferedAmount();
-    //     break;
-    // }
-    // case ConnectedWebSocketKind::ServerSSL: {
-    //     this->m_connectedWebSocket.serverSSL->send({ baseAddress, length }, opCode);
-    //     this->m_bufferedAmount = this->m_connectedWebSocket.serverSSL->getBufferedAmount();
-    //     break;
-    // }
     default: {
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -918,18 +795,6 @@ void WebSocket::sendWebSocketString(const String& message, const Opcode op)
         Bun__WebSocketClientTLS__writeString(this->m_connectedWebSocket.clientSSL, &zigStr, static_cast<uint8_t>(op));
         break;
     }
-    // case ConnectedWebSocketKind::Server: {
-    //     auto utf8 = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
-    //     this->m_connectedWebSocket.server->send({ utf8.data(), utf8.length() }, uWS::OpCode::TEXT);
-    //     this->m_bufferedAmount = this->m_connectedWebSocket.server->getBufferedAmount();
-    //     break;
-    // }
-    // case ConnectedWebSocketKind::ServerSSL: {
-    //     auto utf8 = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
-    //     this->m_connectedWebSocket.serverSSL->send({ utf8.data(), utf8.length() }, uWS::OpCode::TEXT);
-    //     this->m_bufferedAmount = this->m_connectedWebSocket.serverSSL->getBufferedAmount();
-    //     break;
-    // }
     default: {
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -1026,16 +891,6 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
         // this->m_bufferedAmount = this->m_connectedWebSocket.clientSSL->getBufferedAmount();
         break;
     }
-    // case ConnectedWebSocketKind::Server: {
-    // this->m_connectedWebSocket.server->end(code, { utf8.data(), utf8.length() });
-    // this->m_bufferedAmount = this->m_connectedWebSocket.server->getBufferedAmount();
-    //     break;
-    // }
-    // case ConnectedWebSocketKind::ServerSSL: {
-    //     // this->m_connectedWebSocket.serverSSL->end(code, { utf8.data(), utf8.length() });
-    //     // this->m_bufferedAmount = this->m_connectedWebSocket.serverSSL->getBufferedAmount();
-    //     break;
-    // }
     default: {
         break;
     }
@@ -1318,49 +1173,6 @@ ScriptExecutionContext* WebSocket::scriptExecutionContext() const
     return ContextDestructionObserver::scriptExecutionContext();
 }
 
-// void WebSocket::contextDestroyed()
-// {
-// LOG(Network, "WebSocket %p contextDestroyed()", this);
-//     ASSERT(!m_channel);
-//     ASSERT(m_state == CLOSED);
-//     // ActiveDOMObject::contextDestroyed();
-// }
-
-// void WebSocket::suspend(ReasonForSuspension reason)
-// {
-//     // if (!m_channel)
-//     //     return;
-
-//     // if (reason == ReasonForSuspension::BackForwardCache) {
-//     //     // This will cause didClose() to be called.
-//     //     m_channel->fail("WebSocket is closed due to suspension."_s);
-//     //     return;
-//     // }
-
-//     // m_channel->suspend();
-// }
-
-// void WebSocket::resume()
-// {
-//     // if (m_channel)
-//     //     m_channel->resume();
-// }
-
-// void WebSocket::stop()
-// {
-//     if (m_channel)
-//         m_channel->disconnect();
-//     m_channel = nullptr;
-//     m_state = CLOSED;
-//     // ActiveDOMObject::stop();
-//     // m_pendingActivity = nullptr;
-// }
-
-// const char* WebSocket::activeDOMObjectName() const
-// {
-//     return "WebSocket";
-// }
-
 void WebSocket::didConnect()
 {
     // from new WebSocket() -> connect()
@@ -1556,6 +1368,56 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
     // });
 }
 
+void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, std::span<const uint8_t> body)
+{
+    // Only the `ws` shim listens; the browser-style path pays nothing.
+    if (!this->hasEventListeners(eventNames().handshakeEvent))
+        return;
+
+    auto* context = scriptExecutionContext();
+    if (!context)
+        return;
+    auto* globalObject = context->jsGlobalObject();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto& builtinNames = WebCore::builtinNames(vm);
+
+    auto* obj = JSC::constructEmptyObject(globalObject);
+    obj->putDirect(vm, builtinNames.statusCodePublicName(), JSC::jsNumber(statusCode));
+    obj->putDirect(vm, builtinNames.statusMessagePublicName(),
+        JSC::jsString(vm, WTF::String({ statusMessage.data(), statusMessage.size() })));
+
+    auto* rawHeaders = JSC::constructEmptyArray(globalObject, nullptr, headers.size() * 2);
+    if (!rawHeaders || scope.exception()) [[unlikely]] {
+        scope.clearExceptionExceptTermination();
+        return;
+    }
+    for (size_t i = 0; i < headers.size(); i++) {
+        rawHeaders->putDirectIndex(globalObject, i * 2,
+            JSC::jsString(vm, WTF::String({ headers[i].name_ptr, headers[i].name_len })));
+        rawHeaders->putDirectIndex(globalObject, i * 2 + 1,
+            JSC::jsString(vm, WTF::String({ headers[i].value_ptr, headers[i].value_len })));
+    }
+    obj->putDirect(vm, builtinNames.rawHeadersPublicName(), rawHeaders);
+
+    JSC::JSUint8Array* bodyBuffer = createBuffer(globalObject, body);
+    if (!bodyBuffer || scope.exception()) [[unlikely]] {
+        scope.clearExceptionExceptTermination();
+        return;
+    }
+    obj->putDirect(vm, builtinNames.bodyPublicName(), bodyBuffer);
+
+    JSC::EnsureStillAliveScope ensureStillAlive(obj);
+
+    MessageEvent::Init init;
+    init.data = obj;
+    init.origin = m_url.string();
+
+    this->incPendingActivityCount();
+    dispatchEvent(MessageEvent::create(eventNames().handshakeEvent, WTF::move(init), EventIsTrusted::Yes));
+    this->decPendingActivityCount();
+}
+
 void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError)
 {
     // LOG(Network, "WebSocket %p didReceiveErrorMessage()", this);
@@ -1586,14 +1448,6 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
         dispatchEvent(CloseEvent::create(wasClean == CleanStatus::Clean, code, reason));
         this->decPendingActivityCount();
     }
-}
-
-void WebSocket::didUpdateBufferedAmount(unsigned bufferedAmount)
-{
-    // LOG(Network, "WebSocket %p didUpdateBufferedAmount() New bufferedAmount is %u", this, bufferedAmount);
-    if (m_state == CLOSED)
-        return;
-    m_bufferedAmount = bufferedAmount;
 }
 
 void WebSocket::didStartClosingHandshake()
@@ -1932,6 +1786,11 @@ extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t
 extern "C" void WebSocket__didConnectWithTunnel(WebCore::WebSocket* webSocket, void* tunnel, char* bufferedData, size_t len, const PerMessageDeflateParams* deflate_params)
 {
     webSocket->didConnectWithTunnel(tunnel, bufferedData, len, deflate_params);
+}
+
+extern "C" void WebSocket__didReceiveHandshakeResponse(WebCore::WebSocket* webSocket, uint16_t statusCode, const uint8_t* statusMessage, size_t statusMessageLen, const WebCore::WebSocket::HandshakeRawHeader* headers, size_t headersLen, const uint8_t* body, size_t bodyLen)
+{
+    webSocket->didReceiveHandshakeResponse(statusCode, std::span(statusMessage, statusMessageLen), std::span(headers, headersLen), std::span(body, bodyLen));
 }
 
 extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode)

@@ -73,23 +73,23 @@ use crate::generated_classes::js_Listener;
 // so the impls below compile against either.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct Listener {
-    pub handlers: Rc<Handlers>,
-    pub listener: Cell<ListenerType>,
+    pub(crate) handlers: Rc<Handlers>,
+    pub(crate) listener: Cell<ListenerType>,
 
     pub poll_ref: JsCell<KeepAlive>,
-    pub connection: UnixOrHost,
+    pub(crate) connection: UnixOrHost,
     /// Embedded sweep/iteration list-head for every accepted socket on this
     /// listener. `group.ext` = `*Listener`, so the dispatch handler recovers us
     /// from the socket without a context-ext lookup.
-    pub group: JsCell<uws::SocketGroup>,
+    pub(crate) group: JsCell<uws::SocketGroup>,
     /// `SSL_CTX*` for accepted sockets. One owned ref; `SSL_CTX_free` on close.
     /// `SSL_new()` per-accept takes its own ref, so accepted sockets outlive a
     /// stopped listener safely.
-    pub secure_ctx: Cell<Option<NonNull<boring_sys::SSL_CTX>>>,
-    pub ssl: bool,
-    pub protos: Option<Box<[u8]>>,
-    pub reject_unauthorized: bool,
-    pub strong_data: JsCell<Strong>,
+    pub(crate) secure_ctx: Cell<Option<NonNull<boring_sys::SSL_CTX>>>,
+    pub(crate) ssl: bool,
+    pub(crate) protos: Option<Box<[u8]>>,
+    pub(crate) reject_unauthorized: bool,
+    pub(crate) strong_data: JsCell<Strong>,
     /// Reference to this listener's JS wrapper. Strong while it is listening or
     /// has connections, downgraded to weak once idle so GC can reclaim it.
     pub this_value: JsCell<JsRef>,
@@ -111,13 +111,13 @@ pub enum ListenerType {
 
 impl Listener {
     #[bun_jsc::host_fn(getter)]
-    pub fn get_data(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_data(this: &Self, _global: &JSGlobalObject) -> JSValue {
         log!("getData()");
         this.strong_data.get().get().unwrap_or(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(setter)]
-    pub fn set_data(this: &Self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+    pub(crate) fn set_data(this: &Self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
         log!("setData()");
         this.strong_data.with_mut(|s| s.set(global, value));
         Ok(true)
@@ -133,7 +133,11 @@ pub enum UnixOrHost {
 
 impl Listener {
     #[bun_jsc::host_fn(method)]
-    pub fn reload(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn reload(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let [opts] = frame.arguments_as_array::<1>();
 
         if frame.arguments_count() < 1
@@ -164,7 +168,7 @@ impl Listener {
 
     // Note: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
     // C-ABI shim (it extracts `opts` from the CallFrame and calls this directly).
-    pub fn listen(global: &JSGlobalObject, opts: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn listen(global: &JSGlobalObject, opts: JSValue) -> JsResult<JSValue> {
         log!("listen");
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Expected object")));
@@ -582,7 +586,8 @@ impl Listener {
         }
     }
 
-    pub fn on_name_pipe_created<const SSL: bool>(
+    #[cfg(windows)]
+    pub(crate) fn on_name_pipe_created<const SSL: bool>(
         listener: &Listener,
     ) -> bun_ptr::ThisPtr<NewSocket<SSL>> {
         debug_assert!(SSL == listener.ssl);
@@ -623,7 +628,7 @@ impl Listener {
     /// Allocates the `NewSocket` wrapper, stashes it in the socket ext, then
     /// re-stamps the kind to `.bun_socket_{tcp,tls}` so subsequent events route
     /// straight to `BunSocket` (the listener arm only fires once per accept).
-    pub fn on_create<const SSL: bool>(
+    pub(crate) fn on_create<const SSL: bool>(
         listener: &Listener,
         socket: uws::NewSocketHandler<SSL>,
     ) -> bun_ptr::ThisPtr<NewSocket<SSL>> {
@@ -681,7 +686,7 @@ impl Listener {
         this_socket
     }
 
-    pub fn add_server_name(
+    pub(crate) fn add_server_name(
         this: &Self,
         global: &JSGlobalObject,
         hostname: JSValue,
@@ -777,13 +782,21 @@ impl Listener {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn dispose(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn dispose(
+        this: &Self,
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         Self::do_stop(this, true);
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn stop(this: &Self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn stop(
+        this: &Self,
+        _global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let [arg0] = frame.arguments_as_array::<1>();
         log!("close");
 
@@ -918,7 +931,7 @@ impl Listener {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_unix(this: &Self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_unix(this: &Self, global: &JSGlobalObject) -> JSValue {
         let UnixOrHost::Unix(unix) = &this.connection else {
             return JSValue::UNDEFINED;
         };
@@ -926,7 +939,7 @@ impl Listener {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_hostname(this: &Self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_hostname(this: &Self, global: &JSGlobalObject) -> JSValue {
         let UnixOrHost::Host { host, .. } = &this.connection else {
             return JSValue::UNDEFINED;
         };
@@ -934,7 +947,7 @@ impl Listener {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_port(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_port(this: &Self, _global: &JSGlobalObject) -> JSValue {
         let UnixOrHost::Host { port, .. } = &this.connection else {
             return JSValue::UNDEFINED;
         };
@@ -942,7 +955,7 @@ impl Listener {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_fd(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_fd(this: &Self, _global: &JSGlobalObject) -> JSValue {
         match this.listener.get() {
             ListenerType::Uws(uws_listener) => {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
@@ -974,12 +987,20 @@ impl Listener {
     /// property). Forward to [`ref_`] so the existing call sites that spell it
     /// with the trailing underscore keep working.
     #[inline]
-    pub fn r#ref(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn r#ref(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         Self::ref_(this, global, frame)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn unref(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn unref(
+        this: &Self,
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         if this.handlers.active_connections.get() == 0 {
             this.this_value.with_mut(|r| r.downgrade());
@@ -989,11 +1010,11 @@ impl Listener {
 
     // Note: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
     // C-ABI shim (it extracts `opts` from the CallFrame and calls this directly).
-    pub fn connect(global: &JSGlobalObject, opts: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn connect(global: &JSGlobalObject, opts: JSValue) -> JsResult<JSValue> {
         Self::connect_inner(global, None, None, opts)
     }
 
-    pub fn connect_inner(
+    pub(crate) fn connect_inner(
         global: &JSGlobalObject,
         prev_maybe_tcp: Option<*mut TCPSocket>,
         prev_maybe_tls: Option<*mut TLSSocket>,
@@ -1385,7 +1406,7 @@ impl Listener {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn getsockname(
+    pub(crate) fn getsockname(
         this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -1642,17 +1663,17 @@ fn normalize_pipe_name<'a>(pipe_name: &[u8], buffer: &'a mut [u8]) -> Option<&'a
 
 #[cfg(windows)]
 pub struct WindowsNamedPipeListeningContext {
-    pub uv_pipe: uv::Pipe,
+    pub(crate) uv_pipe: uv::Pipe,
     /// BACKREF: the parent `Listener` heap-allocated this context in
     /// `listen_named_pipe` and outlives it (cleared to `None` in
     /// `close_pipe_and_deinit` before the listener is torn down). `BackRef`
     /// centralises the safe deref so call sites don't open-code a raw
     /// `NonNull::as_ref`.
-    pub listener: Option<bun_ptr::BackRef<Listener>>,
+    pub(crate) listener: Option<bun_ptr::BackRef<Listener>>,
     pub global_this: GlobalRef,
     /// JSC_BORROW: process-lifetime singleton; `&'static` so call sites read
     /// `self.vm.is_shutting_down()` without a raw-pointer deref.
-    pub vm: &'static VirtualMachine,
+    pub(crate) vm: &'static VirtualMachine,
     pub ctx: Option<NonNull<boring_sys::SSL_CTX>>, // server reuses the same ctx
 }
 
@@ -1665,7 +1686,7 @@ pub struct WindowsNamedPipeListeningContext {
 /// code/errno; `Other` covers the non-syscall setup failures, whose payload
 /// names the failure in the caller's generic invalid-arguments message.
 #[cfg(windows)]
-pub(crate) enum ListenPipeError {
+enum ListenPipeError {
     Sys(bun_sys::Error),
     Other(crate::Error),
 }
@@ -1735,7 +1756,7 @@ impl WindowsNamedPipeListeningContext {
     /// # Safety
     /// `this` must be the unique owner (the `ListenerType::NamedPipe` slot was
     /// already cleared by the caller).
-    pub(crate) unsafe fn close_pipe_and_deinit(this: *mut Self) {
+    unsafe fn close_pipe_and_deinit(this: *mut Self) {
         // SAFETY: caller contract — `this` is a live heap allocation.
         unsafe {
             (*this).listener = None;
@@ -1744,7 +1765,7 @@ impl WindowsNamedPipeListeningContext {
         }
     }
 
-    pub(crate) fn listen(
+    fn listen(
         global_this: &JSGlobalObject,
         path: &[u8],
         backlog: i32,
@@ -1848,6 +1869,92 @@ impl WindowsNamedPipeListeningContext {
     }
 }
 
+/// `us_dispatch_server_name` for a socket adopted into TLS: no listen socket,
+/// so the resolver lives on the SSL and the handler's `this` is the socket's
+/// own `data`. Only the fd-adopt path registers this, not the duplex wrap.
+///
+/// # Safety
+/// `socket` is the live us_socket_t processing this ClientHello and `hostname`
+/// is NUL-terminated for the call. JS-thread only.
+pub(crate) extern "C" fn us_dispatch_socket_server_name(
+    socket: *mut uws_sys::us_socket_t,
+    hostname: *const core::ffi::c_char,
+    abort_handshake: *mut core::ffi::c_int,
+) -> *mut uws_sys::SslCtx {
+    jsc::mark_binding!();
+    if socket.is_null() || hostname.is_null() {
+        return core::ptr::null_mut();
+    }
+    let s_ref = uws_sys::us_socket_t::opaque_mut(socket);
+    if s_ref.kind() != uws_sys::SocketKind::BunSocketTls {
+        return core::ptr::null_mut();
+    }
+    let tls = match *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() {
+        Some(tls) => tls,
+        None => return core::ptr::null_mut(),
+    };
+    // An idle socket can drop its Handlers while the us_socket_t lives on;
+    // `get_handlers()` would panic. Same guard as `select_alpn_callback`.
+    if !tls.has_handlers() {
+        return core::ptr::null_mut();
+    }
+    let handlers = tls.get_handlers();
+    if handlers.vm.is_shutting_down() {
+        return core::ptr::null_mut();
+    }
+    let callback = handlers.on_server_name();
+    if callback.is_empty() {
+        return core::ptr::null_mut();
+    }
+    let global = handlers.global_object;
+    let socket_handle = tls.get_this_value(&global);
+    // node:tls stores the JS TLSSocket (which carries `_SNICallback`) in the
+    // native socket's `data`; that is the handler's `this`, mirroring how the
+    // listener path passes the net.Server.
+    let this_value = TLSSocket::data_get_cached(socket_handle).unwrap_or(JSValue::UNDEFINED);
+    // SAFETY: `hostname` is NUL-terminated per the fn contract.
+    let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
+    let js_name = ZigString::init(name.to_bytes()).to_js(&global);
+    let result = match callback.call(&global, this_value, &[this_value, js_name, socket_handle]) {
+        Ok(v) => v,
+        Err(err) => global.take_exception(err),
+    };
+    decode_sni_result(result, abort_handshake).cast()
+}
+
+/// Shared decoding of what the JS SNI handler returned. See
+/// `us_dispatch_server_name` for the contract.
+fn decode_sni_result(result: JSValue, abort_handshake: *mut core::ffi::c_int) -> *mut c_void {
+    if result.is_boolean() && result.to_boolean() {
+        if !abort_handshake.is_null() {
+            // SAFETY: live out-parameter for the duration of this dispatch.
+            unsafe { *abort_handshake = 2 };
+        }
+        return core::ptr::null_mut();
+    }
+    if result.to_error().is_some() {
+        if !abort_handshake.is_null() {
+            // SAFETY: live out-parameter for the duration of this dispatch.
+            unsafe { *abort_handshake = 1 };
+        }
+        return core::ptr::null_mut();
+    }
+    if result.is_undefined_or_null() {
+        return core::ptr::null_mut();
+    }
+    if let Some(sc) = result.as_class_ref::<SecureContext>() {
+        // `SSL_set_SSL_CTX` takes its own reference to the returned SSL_CTX.
+        return sc.borrow().cast();
+    }
+    // Anything else is not a SecureContext: Node treats this as an invalid SNI
+    // context and drops the connection.
+    if !abort_handshake.is_null() {
+        // SAFETY: live out-parameter for the duration of this dispatch.
+        unsafe { *abort_handshake = 1 };
+    }
+    core::ptr::null_mut()
+}
+
 /// `openssl.c`'s `us_select_cert_cb` (the early select-certificate callback)
 /// calls this FIRST for every ClientHello carrying a servername - the user
 /// SNICallback takes precedence over the static SNI tree (Node semantics) -
@@ -1865,7 +1972,7 @@ impl WindowsNamedPipeListeningContext {
 /// `ls` is a live listen socket whose accept-group ext holds a `*mut Listener`
 /// and `hostname` is a NUL-terminated string valid for the call. JS-thread
 /// only.
-pub(crate) extern "C" fn us_dispatch_server_name(
+extern "C" fn us_dispatch_server_name(
     ls: *mut uws_sys::ListenSocket,
     hostname: *const core::ffi::c_char,
     abort_handshake: *mut core::ffi::c_int,
@@ -1944,33 +2051,5 @@ pub(crate) extern "C" fn us_dispatch_server_name(
     //     threw) -> abort the handshake; the connection is dropped without an
     //     alert and the JS side emits 'tlsClientError' from the
     //     handshake-failure path with the stashed error.
-    if result.is_boolean() && result.to_boolean() {
-        if !abort_handshake.is_null() {
-            // SAFETY: live out-parameter for the duration of this dispatch.
-            unsafe { *abort_handshake = 2 };
-        }
-        return core::ptr::null_mut();
-    }
-    if result.to_error().is_some() {
-        if !abort_handshake.is_null() {
-            // SAFETY: the C caller passes a live out-parameter for the
-            // duration of this synchronous dispatch.
-            unsafe { *abort_handshake = 1 };
-        }
-        return core::ptr::null_mut();
-    }
-    if result.is_undefined_or_null() {
-        return core::ptr::null_mut();
-    }
-    if let Some(sc) = result.as_class_ref::<SecureContext>() {
-        // `SSL_set_SSL_CTX` takes its own reference to the returned SSL_CTX.
-        return sc.borrow().cast();
-    }
-    // Anything else is not a SecureContext: Node treats this as an invalid SNI
-    // context and drops the connection.
-    if !abort_handshake.is_null() {
-        // SAFETY: see above.
-        unsafe { *abort_handshake = 1 };
-    }
-    core::ptr::null_mut()
+    decode_sni_result(result, abort_handshake)
 }

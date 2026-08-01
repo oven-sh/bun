@@ -110,14 +110,22 @@ unsafe extern "C" {
     safe fn ReadableStream__empty(global: &JSGlobalObject) -> JSValue;
     safe fn ReadableStream__used(global: &JSGlobalObject) -> JSValue;
     safe fn ReadableStream__errored(global: &JSGlobalObject, reason: JSValue) -> JSValue;
+    safe fn ReadableStream__fromDecodedText(global: &JSGlobalObject, string: JSValue) -> JSValue;
+    safe fn ReadableStream__textDecodeFrom(global: &JSGlobalObject, source: JSValue) -> JSValue;
     safe fn ReadableStream__cancel(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__cancelWithReason(
         stream: JSValue,
         global: &JSGlobalObject,
         reason: JSValue,
     );
+    safe fn ReadableStream__error(stream: JSValue, global: &JSGlobalObject, reason: JSValue);
     safe fn ReadableStream__detach(stream: JSValue, global: &JSGlobalObject);
+    safe fn ReadableStream__lockNative(stream: JSValue, global: &JSGlobalObject);
     safe fn ZigGlobalObject__createNativeReadableStream(
+        global: &JSGlobalObject,
+        native_ptr: JSValue,
+    ) -> JSValue;
+    safe fn ZigGlobalObject__createNativeTextReadableStream(
         global: &JSGlobalObject,
         native_ptr: JSValue,
     ) -> JSValue;
@@ -247,9 +255,23 @@ impl ReadableStream {
         self.cancel(global_this);
     }
 
-    pub fn force_detach(&self, global_object: &JSGlobalObject) {
+    /// Like [`Self::cancel`] but pending reads reject with `reason` instead of resolving `{done: true}`.
+    pub(crate) fn error(&self, global_this: &JSGlobalObject, reason: JSValue) {
+        ReadableStream__error(self.value, global_this, reason);
+        self.done(global_this);
+    }
+
+    pub(crate) fn force_detach(&self, global_object: &JSGlobalObject) {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__detach(self.value, global_object);
+    }
+
+    /// Mark the stream disturbed + locked-without-reader. Called by native
+    /// fast-paths after wiring a `SinkHandle` directly so `.locked`,
+    /// `.getReader()`, and body-mixin disturbed checks behave as they would
+    /// after `readStreamIntoSink` acquires a reader.
+    pub fn lock_native(&self, global_object: &JSGlobalObject) {
+        ReadableStream__lockNative(self.value, global_object);
     }
 
     /// Decrement Source ref count and detach the underlying stream if ref count is zero
@@ -313,7 +335,40 @@ impl ReadableStream {
         })
     }
 
-    pub fn from_owned_slice(
+    /// Same as [`from_native`] but the native source adapter UTF-8-decodes each
+    /// chunk to a string before enqueue (Body.textStream()).
+    pub(crate) fn from_native_text(
+        global_this: &JSGlobalObject,
+        native: JSValue,
+    ) -> JsResult<JSValue> {
+        bun_jsc::from_js_host_call(global_this, || {
+            ZigGlobalObject__createNativeTextReadableStream(global_this, native)
+        })
+    }
+
+    /// A closed stream with `string` (a JS string) as its only chunk. An empty
+    /// string produces an empty closed stream.
+    pub(crate) fn from_decoded_text(
+        global_this: &JSGlobalObject,
+        string: JSValue,
+    ) -> JsResult<JSValue> {
+        bun_jsc::from_js_host_call(global_this, || {
+            ReadableStream__fromDecodedText(global_this, string)
+        })
+    }
+
+    /// Locks a default reader on `source` and returns a stream that
+    /// UTF-8-decodes each chunk from it to a string.
+    pub(crate) fn text_decode_from(
+        global_this: &JSGlobalObject,
+        source: JSValue,
+    ) -> JsResult<JSValue> {
+        bun_jsc::from_js_host_call(global_this, || {
+            ReadableStream__textDecodeFrom(global_this, source)
+        })
+    }
+
+    pub(crate) fn from_owned_slice(
         global_this: &JSGlobalObject,
         bytes: impl Into<Vec<u8>>,
         recommended_chunk_size: webcore::blob::SizeType,
@@ -648,10 +703,9 @@ pub struct NewSource<C: SourceContext> {
     /// owned/freed here). The JS path stores
     /// `on_js_close` and leaves this `None` — see [`Self::on_close`].
     pub close_ctx: Option<NonNull<c_void>>,
-    pub cancel_handler: Cell<Option<fn(Option<*mut c_void>)>>,
-    pub cancel_ctx: Cell<Option<*mut c_void>>,
-    pub drain_handler: Cell<Option<fn(Option<*mut c_void>)>>,
-    pub drain_ctx: Cell<Option<*mut c_void>>,
+    /// Upstream producer to notify on cancel/drain/consumer-attach. Replaces
+    /// the per-signal fn-ptr + ctx-ptr pairs with one typed handle.
+    pub producer: Cell<streams::SourceHandle>,
     // JSC_BORROW: process-lifetime VM global. Heap m_ctx field reassigned in
     // `start()` from a fresh `&JSGlobalObject`; `BackRef` gives a safe `Deref`
     // projection without propagating a lifetime parameter into FFI codegen.
@@ -679,10 +733,7 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             pending_err: None,
             close_handler: None,
             close_ctx: None,
-            cancel_handler: Cell::new(None),
-            cancel_ctx: Cell::new(None),
-            drain_handler: Cell::new(None),
-            drain_ctx: Cell::new(None),
+            producer: Cell::new(streams::SourceHandle::None),
             global_this: None,
             this_jsvalue: jsc::JsRef::empty(),
             is_closed: Cell::new(false),
@@ -833,20 +884,10 @@ impl<C: SourceContext> NewSource<C> {
         unsafe { &mut *Self::new(init) }
     }
 
-    pub fn unref(&mut self) {
-        if C::SUPPORTS_REF {
-            self.context.set_ref_unref(false);
-        }
-    }
-
     pub fn set_ref(&mut self, value: bool) {
         if C::SUPPORTS_REF {
             self.context.set_ref_unref(value);
         }
-    }
-
-    pub fn start(&mut self) -> streams::Start {
-        self.context.on_start()
     }
 
     pub fn on_pull_from_js(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result {
@@ -863,9 +904,8 @@ impl<C: SourceContext> NewSource<C> {
         }
         self.cancelled = true;
         self.context.on_cancel();
-        if let Some(handler) = self.cancel_handler.take() {
-            handler(self.cancel_ctx.get());
-        }
+        let mut p = self.producer.replace(streams::SourceHandle::None);
+        p.close(None);
     }
 
     pub fn on_close(&mut self) {
@@ -968,7 +1008,11 @@ impl<C: SourceContext> NewSource<C> {
         self.context.drain_internal_buffer()
     }
 
-    pub fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    fn to_readable_stream_with(
+        &mut self,
+        global_this: &JSGlobalObject,
+        from_native: fn(&JSGlobalObject, JSValue) -> JsResult<JSValue>,
+    ) -> JsResult<JSValue> {
         let out_value = if let Some(v) = self.this_jsvalue.try_get() {
             v
         } else {
@@ -978,7 +1022,18 @@ impl<C: SourceContext> NewSource<C> {
         if self.this_jsvalue.is_empty() {
             self.this_jsvalue = jsc::JsRef::init_weak(out_value);
         }
-        ReadableStream::from_native(global_this, out_value)
+        from_native(global_this, out_value)
+    }
+
+    pub(crate) fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        self.to_readable_stream_with(global_this, ReadableStream::from_native)
+    }
+
+    pub(crate) fn to_text_readable_stream(
+        &mut self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
+        self.to_readable_stream_with(global_this, ReadableStream::from_native_text)
     }
 
     pub fn set_raw_mode_from_js(

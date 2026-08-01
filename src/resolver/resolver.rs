@@ -1946,12 +1946,9 @@ impl<'a> Resolver<'a> {
                     import_path
                 };
 
-                // `--external` wins over the polyfill / `{}` stub this block would
-                // emit; match either spelling (`stream` / `node:stream`) and, like
-                // the external check below, parent paths of subpath imports. Bare
-                // imports the block would NOT swallow are left for that later
-                // check, so `--external node:foo` cannot capture an npm package
-                // named `foo` (#13941).
+                // `--external` (either spelling, or a parent path) wins over the
+                // polyfill/stub. Only imports this block would swallow are checked,
+                // so `--external node:foo` can't capture an npm package `foo` (#13941).
                 if self.opts.external.node_modules.count() > 0
                     && (had_node_prefix
                         || NodeFallbackModules::map().contains_key(import_path_without_node_prefix)

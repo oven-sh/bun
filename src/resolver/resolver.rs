@@ -1554,7 +1554,14 @@ impl<'a> Resolver<'a> {
 
         let mut iter = result.path_pair.iter();
         let mut module_type = result.module_type;
+        let mut is_primary_path = true;
         while let Some(path) = iter.next() {
+            // `primary_side_effects_data` describes the primary path only. The secondary
+            // path is the "main" fallback carried alongside a "module" entry for CJS
+            // interop; matching the package's `sideEffects` array against it would clobber
+            // the primary's result and cause bare `import "pkg"` to be tree-shaken when the
+            // `module` entry is listed in `sideEffects` but the `main` entry isn't.
+            let is_primary = core::mem::replace(&mut is_primary_path, false);
             let name = path.name();
             let Ok(Some(dir)) = self.read_dir_info(name.dir) else {
                 continue;
@@ -1570,33 +1577,30 @@ impl<'a> Resolver<'a> {
                     PJSideEffects::Unspecified | PJSideEffects::Glob(_) | PJSideEffects::Mixed(_)
                 );
 
-                result.primary_side_effects_data = match &existing.side_effects {
-                    PJSideEffects::Unspecified => SideEffects::HasSideEffects,
-                    PJSideEffects::False => SideEffects::NoSideEffectsPackageJson,
-                    PJSideEffects::Map(map) => {
-                        if map.contains_key(&crate::package_json::StringHashMapUnownedKey::init(
-                            path.text(),
-                        )) {
-                            SideEffects::HasSideEffects
-                        } else {
-                            SideEffects::NoSideEffectsPackageJson
+                if is_primary {
+                    result.primary_side_effects_data = match &existing.side_effects {
+                        PJSideEffects::Unspecified => SideEffects::HasSideEffects,
+                        PJSideEffects::False => SideEffects::NoSideEffectsPackageJson,
+                        PJSideEffects::Map(map) => {
+                            if map
+                                .contains_key(&crate::package_json::StringHashMapUnownedKey::init(
+                                    path.text(),
+                                ))
+                            {
+                                SideEffects::HasSideEffects
+                            } else {
+                                SideEffects::NoSideEffectsPackageJson
+                            }
                         }
-                    }
-                    PJSideEffects::Glob(_) => {
-                        if existing.side_effects.has_side_effects(path.text()) {
-                            SideEffects::HasSideEffects
-                        } else {
-                            SideEffects::NoSideEffectsPackageJson
+                        PJSideEffects::Glob(_) | PJSideEffects::Mixed(_) => {
+                            if existing.side_effects.has_side_effects(path.text()) {
+                                SideEffects::HasSideEffects
+                            } else {
+                                SideEffects::NoSideEffectsPackageJson
+                            }
                         }
-                    }
-                    PJSideEffects::Mixed(_) => {
-                        if existing.side_effects.has_side_effects(path.text()) {
-                            SideEffects::HasSideEffects
-                        } else {
-                            SideEffects::NoSideEffectsPackageJson
-                        }
-                    }
-                };
+                    };
+                }
 
                 if existing.name.is_empty() || self.care_about_bin_folder {
                     result.package_json = None;
@@ -1607,7 +1611,7 @@ impl<'a> Resolver<'a> {
                 .package_json
                 .or_else(|| dir.enclosing_package_json.map(std::ptr::from_ref));
 
-            if needs_side_effects {
+            if needs_side_effects && is_primary {
                 if let Some(package_json) = Result::deref_package_json(result.package_json) {
                     use crate::package_json::SideEffects as PJSideEffects;
                     result.primary_side_effects_data = match &package_json.side_effects {

@@ -594,6 +594,100 @@ describe("bundler", () => {
       stdout: "this should be kept\nunused import",
     },
   });
+  // https://github.com/oven-sh/bun/issues/8993
+  // With both "module" and "main" present, the resolver records the "main" path as a
+  // secondary CJS-interop fallback. The sideEffects check must only consider the primary
+  // ("module") path; previously the secondary path overwrote it and a bare `import "pkg"`
+  // was tree-shaken even though the module entry was listed in sideEffects.
+  // The "name" field is load-bearing: without it the package is not recorded as the
+  // enclosing package.json and the second iteration happens to be a no-op.
+  itBundled("dce/PackageJsonSideEffectsArrayModuleMainBareImport", {
+    todo: isWindows,
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg"
+        console.log('after import')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/index-module.js": /* js */ `
+        import "./register.js"
+        export const foo = 1
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/register.js": /* js */ `
+        console.log('this should be kept')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/index-main.js": /* js */ `
+        console.log('TEST FAILED')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "name": "demo-pkg",
+          "main": "dist/index-main.js",
+          "module": "dist/index-module.js",
+          "sideEffects": ["./dist/index-module.js", "./dist/register.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "this should be kept\nafter import",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsGlobModuleMainBareImport", {
+    todo: isWindows,
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg"
+        console.log('after import')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/index-module.js": /* js */ `
+        console.log('this should be kept')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/bundle.node.js": /* js */ `
+        console.log('TEST FAILED')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "name": "demo-pkg",
+          "main": "dist/bundle.node.js",
+          "module": "dist/index-module.js",
+          "sideEffects": ["./dist/index-*.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "this should be kept\nafter import",
+    },
+  });
+  // Inverse guard: when the primary (module) entry is NOT listed in sideEffects but the
+  // secondary (main) is, the bare import is still droppable (the primary is what is bundled).
+  itBundled("dce/PackageJsonSideEffectsArrayModuleMainBareImportRemove", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg"
+        console.log('unused import')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/index-module.js": /* js */ `
+        export const foo = 'TEST FAILED'
+        console.log('TEST FAILED')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/index-main.js": /* js */ `
+        console.log('TEST FAILED')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "name": "demo-pkg",
+          "main": "dist/index-main.js",
+          "module": "dist/index-module.js",
+          "sideEffects": ["./dist/index-main.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
+    },
+  });
   itBundled("dce/PackageJsonSideEffectsArrayGlob", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `

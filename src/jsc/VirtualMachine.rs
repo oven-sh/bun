@@ -4166,10 +4166,10 @@ impl VirtualMachine {
         let result_path = result
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
-        // SAFETY: `result_path.text` borrows the resolver's arena, which
+        // SAFETY: `result_path.{text,pretty}` borrow the resolver's arena, which
         // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
         // note).
-        ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
+        ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text_for_loader()) };
         ret.result = Some(result);
 
         Ok(())

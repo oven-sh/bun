@@ -851,6 +851,26 @@ pub mod fs {
             PathName::init(self.text)
         }
 
+        /// The path slice whose extension should determine the loader.
+        ///
+        /// When a file-level symlink is resolved, [`set_realpath`](Self::set_realpath)
+        /// moves the pre-symlink path to `pretty` and the target's realpath to
+        /// `text`. If the symlink's own extension differs from the target's, the
+        /// loader must come from the symlink's extension (the path the user
+        /// imported), so return `pretty`. Directory-level symlinks preserve the
+        /// filename and therefore the extension, so they fall through to `text`
+        /// and keep realpath-based module dedup.
+        #[inline]
+        pub fn text_for_loader(&self) -> &'a [u8] {
+            if self.is_symlink && self.is_file() {
+                let pretty_ext = PathName::init(self.pretty).ext;
+                if !pretty_ext.is_empty() && pretty_ext != PathName::init(self.text).ext {
+                    return self.pretty;
+                }
+            }
+            self.text
+        }
+
         /// Sets `text`/`pretty` to the same slice,
         /// namespace defaults to `"file"`.
         #[inline]

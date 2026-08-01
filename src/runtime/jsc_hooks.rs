@@ -3868,7 +3868,7 @@ fn loader_for_path(path: &Fs::Path<'_>, loaders: &bun_ast::LoaderHashTable) -> O
     if path.is_data_url() {
         return Some(Loader::Dataurl);
     }
-    let name = path.name();
+    let name = Fs::PathName::init(path.text_for_loader());
     let ext = name.ext;
     let result = loaders
         .get(ext)

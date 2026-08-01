@@ -655,7 +655,7 @@ pub mod fs {
                 return Some(Loader::Dataurl);
             }
 
-            let name = self.name();
+            let name = PathName::init(self.text_for_loader());
             let ext = name.ext;
 
             let result = loaders

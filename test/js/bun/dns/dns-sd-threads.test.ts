@@ -73,10 +73,11 @@ test.skipIf(!isMacOS)("many concurrent dns.lookup() do not spawn a thread per lo
 // All lookups share one mDNSResponder connection, and a request's answer set
 // arrives as separate replies (one per address). Under enough concurrency the
 // daemon interleaves and pauses those writes, so completing on "each family
-// reported once" truncates multi-record answers. localhost is a 2-record
-// answer set (::1 + 127.0.0.1) served from /etc/hosts, so this needs no
-// network; distinct-case spellings defeat same-name coalescing so every one of
-// the N lookups is its own query on the wire.
+// reported once" truncates multi-record answers. Each name below is
+// multi-record and daemon-cached after the warm-up; distinct-case spellings
+// defeat same-name coalescing so every one of the N lookups is its own query on
+// the wire, and every one of them must return the identical full answer set.
+// (Like node-dns.test.js, this resolves real internet names.)
 test.skipIf(!isMacOS)("concurrent lookups return complete answer sets", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -85,13 +86,15 @@ test.skipIf(!isMacOS)("concurrent lookups return complete answer sets", async ()
       `
         const { lookup } = require("dns").promises;
         const N = 400;
-        const base = "localhost";
-        const names = Array.from({ length: N }, (_, i) =>
-          [...base].map((c, j) => ((i >> j) & 1 ? c.toUpperCase() : c)).join(""),
-        );
-        const results = await Promise.all(names.map(n => lookup(n, { all: true })));
-        const shapes = new Set(results.map(r => r.map(a => a.family + " " + a.address).sort().join(",")));
-        console.log(JSON.stringify([...shapes]));
+        for (const base of ["www.example.com", "google.com"]) {
+          await lookup(base, { all: true });
+          const names = Array.from({ length: N }, (_, i) =>
+            [...base].map((c, j) => ((i >> j) & 1 && c !== "." ? c.toUpperCase() : c)).join(""),
+          );
+          const results = await Promise.all(names.map(n => lookup(n, { all: true })));
+          const shapes = new Set(results.map(r => r.map(a => a.family + " " + a.address).sort().join(",")));
+          console.log(JSON.stringify({ base, distinct: shapes.size, records: results[0].length }));
+        }
       `,
     ],
     env: bunEnv,
@@ -100,6 +103,14 @@ test.skipIf(!isMacOS)("concurrent lookups return complete answer sets", async ()
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim().split("\n").pop()!)).toEqual(["4 127.0.0.1,6 ::1"]);
+  const lines = stdout
+    .trim()
+    .split("\n")
+    .map(l => JSON.parse(l));
+  expect(lines).toEqual([
+    { base: "www.example.com", distinct: 1, records: expect.any(Number) },
+    { base: "google.com", distinct: 1, records: expect.any(Number) },
+  ]);
+  expect(lines.some(l => l.records >= 2)).toBe(true);
   expect(exitCode).toBe(0);
 });

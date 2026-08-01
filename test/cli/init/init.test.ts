@@ -306,7 +306,8 @@ console.log(<Component message="Hello world!" />);
       stdio: ["ignore", "pipe", "pipe"],
       env: initEnv,
     });
-    await proc.exited;
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
 
     const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
     expect(pkg.dependencies).toEqual({ react: "^18" });

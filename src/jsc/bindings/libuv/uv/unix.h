@@ -36,10 +36,8 @@
 #include <termios.h>
 #include <pwd.h>
 
-#if !defined(__MVS__)
 #include <semaphore.h>
 #include <sys/param.h> /* MAXHOSTNAMELEN on Linux and the BSDs */
-#endif
 #include <pthread.h>
 #include <signal.h>
 
@@ -121,7 +119,7 @@ typedef pthread_cond_t uv_cond_t;
 typedef pthread_key_t uv_key_t;
 
 /* Note: guard clauses should match uv_barrier_init's in src/unix/thread.c. */
-#if defined(_AIX) || defined(__OpenBSD__) || !defined(PTHREAD_BARRIER_SERIAL_THREAD)
+#if defined(__OpenBSD__) || !defined(PTHREAD_BARRIER_SERIAL_THREAD)
 /* TODO(bnoordhuis) Merge into uv_barrier_t in v2. */
 struct _uv_barrier {
     uv_mutex_t mutex;

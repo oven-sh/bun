@@ -27,8 +27,6 @@ fn loop_sub_active(loop_: &mut Loop, value: u32) {
     loop_.active = loop_.active.saturating_sub(value);
 }
 
-bun_core::declare_scope!(KeepAlive, visible);
-
 #[cfg(not(windows))]
 use bun_sys::syslog;
 

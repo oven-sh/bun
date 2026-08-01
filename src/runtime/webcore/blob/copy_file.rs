@@ -547,7 +547,9 @@ impl<'a> CopyFile<'a> {
                     //
                     // bun test bun-write.test | xargs echo
                     //
-                    bun_sys::E::EBADF => {
+                    // ENOTSUP covers a pipe source (e.g. Bun.stdin) which
+                    // fcopyfile rejects.
+                    bun_sys::E::EBADF | bun_sys::E::ENOTSUP => {
                         let mut total_written: u64 = 0;
 
                         // TODO: this should use non-blocking I/O.
@@ -835,10 +837,11 @@ impl<'a> CopyFile<'a> {
                     return;
                 }
 
-                // $ bun run foo.js | bun run bar.js
-                if bun_sys::S::ISFIFO(stat.st_mode as _)
-                    && bun_sys::S::ISFIFO(self.destination_file_store.mode as _)
-                {
+                // $ echo hello | bun run script.js
+                // splice(2) needs at least one end to be a pipe; the source is.
+                // do_copy_file_range falls back to a read/write loop on
+                // EINVAL/ENOTSUP/ENOSYS if the destination cannot be spliced to.
+                if bun_sys::S::ISFIFO(stat.st_mode as _) {
                     if self.destination_file_store.is_atty.unwrap_or(false) {
                         let _ = self.do_copy_file_range::<{ TryWith::Splice }, true>();
                     } else {

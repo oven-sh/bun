@@ -449,6 +449,36 @@ const IS_UV_FS_COPYFILE_DISABLED =
     expect(exitCode).toBe(0);
   });
 
+  // https://github.com/oven-sh/bun/issues/14054
+  // Bun.write(Bun.file(path), Bun.stdin) when stdin is a pipe. On Linux this
+  // used to fall through every fast-path branch (splice was gated on the
+  // destination also being a FIFO) and fail with
+  // "Non-regular files aren't supported yet".
+  // Bun.spawn({stdin: <buffer>}) hands the child a regular-file fd, so use sh
+  // to get a real kernel pipe on fd 0.
+  it.skipIf(isWindows)("Bun.write(Bun.file(path), Bun.stdin) drains a pipe into a file", async () => {
+    using dir = tempDir("bun-write-stdin-pipe", {});
+    const out = join(String(dir), "out.txt");
+    const size = 200_000;
+    const script = `process.stderr.write(String(await Bun.write(Bun.file(${JSON.stringify(out)}), Bun.stdin)))`;
+
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `head -c ${size} /dev/zero | "$BUN" -e ${JSON.stringify(script)}`],
+      env: { ...bunEnv, BUN: bunExe() },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, resolved: stderr, written: Bun.file(out).size }).toEqual({
+      stdout: "",
+      resolved: String(size),
+      written: size,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   it("Bun.file(0) survives GC", async () => {
     for (let i = 0; i < 10; i++) {
       let f = Bun.file(0);

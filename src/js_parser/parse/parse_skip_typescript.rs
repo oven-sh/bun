@@ -911,9 +911,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 if self.lexer.is_identifier_or_keyword() {
                                     let prev = *dot;
                                     let next = self.find_symbol_for_ts_metadata(ident)?;
-                                    let grown = self
-                                        .arena
-                                        .alloc_slice_fill_copy(prev.len() + 1, Ref::NONE);
+                                    let grown =
+                                        self.arena.alloc_slice_fill_copy(prev.len() + 1, Ref::NONE);
                                     grown[..prev.len()].copy_from_slice(&prev);
                                     grown[prev.len()] = next;
                                     *r = Metadata::MDot(bun_ast::StoreSlice::new(grown));

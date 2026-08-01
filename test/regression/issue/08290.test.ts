@@ -21,10 +21,19 @@ test("coverage maps uncovered class methods to the correct source lines", async 
       "\n" +
       "    another() { return 2 }\n" +
       "}\n",
+    "derived.mjs":
+      "class Base { hit() { return 1 } }\n" + //
+      "export class Derived extends Base {\n" +
+      "    miss() { return 2 }\n" +
+      "}\n",
     "live.test.mjs":
       `import { test, expect } from "bun:test";\n` +
       `import { MockLive } from "./live.mock.mjs";\n` +
-      `test("x", () => { expect(new MockLive().covered()).toBe(1); });\n`,
+      `import { Derived } from "./derived.mjs";\n` +
+      `test("x", () => {\n` +
+      `  expect(new MockLive().covered()).toBe(1);\n` +
+      `  expect(new Derived().hit()).toBe(1);\n` +
+      `});\n`,
   });
 
   await using proc = Bun.spawn({
@@ -73,6 +82,20 @@ test("coverage maps uncovered class methods to the correct source lines", async 
   // consume, covered, another. The synthetic default constructor must not be
   // counted as a user function.
   expect(fnf).toBe(3);
+
+  // Derived class without an explicit constructor: the synthetic derived
+  // default constructor (and the base default constructor) must not be
+  // counted, and must not clear line 1.
+  const derived = lcov.split("end_of_record").find(r => r.includes("derived.mjs"))!;
+  const derivedFnf = Number(derived.match(/^FNF:(\d+)$/m)![1]);
+  // hit, miss only.
+  expect(derivedFnf).toBe(2);
+  const derivedDa: Record<number, number> = {};
+  for (const m of derived.matchAll(/^DA:(\d+),(\d+)$/gm)) {
+    derivedDa[Number(m[1])] = Number(m[2]);
+  }
+  expect(derivedDa[1]).toBeGreaterThan(0);
+  expect(derivedDa[3]).toBe(0);
 
   expect(text).toContain("1 pass");
   expect(stdout).toContain("bun test");

@@ -1,23 +1,9 @@
 #include "root.h"
 #include "ZigSourceProvider.h"
+#include "CodeCoverage.h"
 #include <JavaScriptCore/ControlFlowProfiler.h>
 
 using namespace JSC;
-
-// CodeBlock::finishCreation registers every nested function expression with
-// FunctionHasExecutedCache under the owner's SourceID using the expression's
-// unlinked offsets. For a class with no explicit constructor, the synthesized
-// default constructor's offsets are into BuiltinExecutables::defaultConstructorSourceCode()
-// rather than the owner's source, and removeUnexecutedRange later fires against
-// the builtin SourceID, so the owner-side entry is never cleared. Filter it here.
-static constexpr std::pair<int, int> defaultConstructorRange(size_t sourceLength)
-{
-    return { static_cast<int>(std::char_traits<char>::length("(")), static_cast<int>(sourceLength) - 2 };
-}
-static constexpr auto kBaseDefaultCtorRange = defaultConstructorRange(std::char_traits<char>::length("(function () { })"));
-static constexpr auto kDerivedDefaultCtorRange = defaultConstructorRange(std::char_traits<char>::length("(function (...args) { super(...args); })"));
-static_assert(kBaseDefaultCtorRange == std::pair { 1, 15 });
-static_assert(kDerivedDefaultCtorRange == std::pair { 1, 38 });
 
 extern "C" bool CodeCoverage__withBlocksAndFunctions(
     JSC::VM* vmPtr,
@@ -39,25 +25,7 @@ extern "C" bool CodeCoverage__withBlocksAndFunctions(
 
     size_t functionStartOffset = basicBlocks.size();
 
-    const Vector<std::tuple<bool, unsigned, unsigned>>& functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
-
-    basicBlocks.reserveCapacity(functionRanges.size() + basicBlocks.size());
-
-    for (const auto& functionRange : functionRanges) {
-        BasicBlockRange range;
-        range.m_hasExecuted = std::get<0>(functionRange);
-        range.m_startOffset = static_cast<int>(std::get<1>(functionRange));
-        range.m_endOffset = static_cast<int>(std::get<2>(functionRange));
-        range.m_executionCount = range.m_hasExecuted
-            ? 1
-            : 0; // This is a hack. We don't actually count this.
-        if (!range.m_hasExecuted) {
-            auto offsets = std::pair { range.m_startOffset, range.m_endOffset };
-            if (offsets == kBaseDefaultCtorRange || offsets == kDerivedDefaultCtorRange)
-                continue;
-        }
-        basicBlocks.append(range);
-    }
+    Bun::appendFunctionRangesForCoverage(basicBlocks, vm, sourceID);
 
     blockCallback(ctx, basicBlocks.begin(), basicBlocks.size(), functionStartOffset, ignoreSourceMap);
     return true;

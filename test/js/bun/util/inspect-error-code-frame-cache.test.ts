@@ -11,10 +11,6 @@ import path from "node:path";
 // resolver + parser over the whole file to extract the preview lines; for an
 // external .map it re-read and JSON-parsed the whole map. The per-inspect cost
 // therefore scaled with the size of the source. With the cache it does not.
-//
-// These tests time N repeat inspects for a small and a large source and
-// assert the two are comparable. This self-calibrates for debug/ASAN/CI
-// variance because both timings are taken in the same subprocess.
 
 async function measure(dir: string, entry: string, N: number) {
   await using proc = Bun.spawn({
@@ -48,6 +44,8 @@ const RUN_TS = `
   console.log(JSON.stringify({ loop_ms }));
 `;
 
+// serial: small/large are timed in separate subprocesses; concurrent CPU load
+// from the other tests could skew the ratio asymmetrically.
 test("Bun.inspect(error) reuses the resolved code frame on repeat (transpiled)", async () => {
   const pad = (kb: number) => Buffer.alloc(kb * 1024, "// pppppppppppppppppppp\n").toString();
   using dir = tempDir("inspect-code-frame-cache", {
@@ -70,7 +68,7 @@ test("Bun.inspect(error) reuses the resolved code frame on repeat (transpiled)",
   expect(large).toBeLessThan(small * 8);
 });
 
-test("Bun.inspect(error) serves a stable code frame from the cache (external .map)", async () => {
+test.concurrent("Bun.inspect(error) serves a stable code frame from the cache (external .map)", async () => {
   // Exercises the external-sourcemap branch of the cache: the first inspect
   // reads sourcesContent out of the .map, later inspects hit the cache. No
   // timing assertion here because release builds show a separate
@@ -109,7 +107,7 @@ test("Bun.inspect(error) serves a stable code frame from the cache (external .ma
   console.log(`external .map: 20x inspect = ${loop_ms.toFixed(1)} ms`);
 });
 
-test("Bun.inspect(error) cached code frame matches the first inspect for >1024-char lines", async () => {
+test.concurrent("Bun.inspect(error) cached code frame matches the first inspect for >1024-char lines", async () => {
   // A minified-style 3000-char line: the printer clamps to 1024 and appends a
   // "... truncated" suffix (color mode). The cache must preserve that suffix.
   const longLine = `/* ${Buffer.alloc(3000, "m").toString()} */ export const err = new Error("boom");`;

@@ -627,12 +627,8 @@ impl Loader {
         // Create a reusable buffer for parsing multiple files.
         let mut value_buffer: Vec<u8> = Vec::new();
 
-        // Files are loaded in priority order (highest first, without
-        // overwriting), so a higher-priority file may reference a variable that
-        // a lower-priority file defines later. Each file is therefore parsed
-        // with expansion disabled, and `$VAR` references are resolved here in a
-        // single pass against the merged map once every file is in.
-        // https://github.com/oven-sh/bun/issues/15099
+        // Parse every file without expansion, then expand once against the
+        // merged map so cross-file `$VAR` references resolve (#15099).
         let expand_start = self.map.map.count();
 
         if !env_files.is_empty() {
@@ -880,8 +876,6 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                // Expansion is deferred to `Loader::load` so cross-file
-                // references resolve against the merged map.
                 Parser::parse_bytes::<OVERRIDE, false, false>(&buf, &mut self.map, value_buffer)?;
             }
         }
@@ -929,8 +923,6 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                // Expansion is deferred to `Loader::load` so cross-file
-                // references resolve against the merged map.
                 Parser::parse_bytes::<OVERRIDE, false, false>(&buf, &mut self.map, value_buffer)?;
             }
         }
@@ -1147,15 +1139,9 @@ impl<'a> Parser<'a> {
         Ok(strings::trim(&self.src[start..end], WHITESPACE_CHARS))
     }
 
-    /// Expand `$NAME` / `${NAME}` / `${NAME:-default}` references in every
-    /// entry at index `start..map.count()`. Lookups resolve against the full
-    /// map (process env + all loaded files). Called once from `Loader::load`
-    /// after every .env file has been parsed, and from `parse` for the
-    /// single-source `load_from_string` path.
-    ///
-    /// Results are buffered and written back only after the whole range has
-    /// been processed, so `expand_into`'s recursive lookups always see the
-    /// raw (pre-expansion) file values regardless of iteration order.
+    /// Expand `$VAR` references in entries `start..map.count()`. Results are
+    /// written back only after every entry is processed so recursive lookups
+    /// always see raw (pre-expansion) values.
     fn expand_range(
         map: &mut Map,
         start: usize,
@@ -1187,12 +1173,8 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// Append the expansion of `map[key]` to `out`. A hit at index `>= start`
-    /// (i.e. a value that came from a .env file in this load) is expanded
-    /// recursively under the depth guard so that transitive references resolve
-    /// regardless of file load order. Entries at index `< start` (process env
-    /// and anything present before this load) are copied verbatim; those are
-    /// final values and must not be reinterpreted as dotenv syntax.
+    /// Append `map[key]` to `out`: recurse on file-sourced hits (index
+    /// `>= start`); copy process-env hits (index `< start`) verbatim.
     #[inline]
     fn expand_lookup(map: &Map, key: &[u8], out: &mut Vec<u8>, start: usize, depth: u8) -> bool {
         let Some(idx) = map.map.get_index(key) else {
@@ -1209,9 +1191,8 @@ impl<'a> Parser<'a> {
 
     /// Left-to-right expansion of `$NAME` / `${NAME}` / `${NAME:-default}`.
     /// `${...}` locates its matching `}` by depth (`${` opens, `}` closes,
-    /// `\x` skipped); malformed forms fall through as literal text. Both the
-    /// `:-` default clause and looked-up file values are expanded recursively
-    /// (see `expand_lookup`).
+    /// `\x` skipped); malformed forms fall through as literal text. `:-`
+    /// defaults and looked-up file values recurse (see `expand_lookup`).
     fn expand_into(map: &Map, value: &[u8], out: &mut Vec<u8>, start: usize, depth: u8) -> bool {
         #[inline]
         fn is_ident(b: u8) -> bool {

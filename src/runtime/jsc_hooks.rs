@@ -5031,11 +5031,27 @@ unsafe fn resolve<'a>(
 
                 // Only re-query if we previously had something cached.
                 // SAFETY: see above.
-                if unsafe {
+                let mut busted = unsafe {
                     (*vm).transpiler.resolver.bust_dir_cache(
                         bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
                     )
-                } {
+                };
+                // The join above treats the specifier as a relative path; a
+                // tsconfig `paths` alias needs to be mapped through the
+                // tsconfig to find the real directory to bust. Do this even
+                // when the naive bust above returned true, because that hit
+                // may have been a cached negative for the literal
+                // `<source>/<alias>/..` path probed by the baseUrl fallback.
+                if bun_paths::is_package_path(normalized_specifier) {
+                    // SAFETY: see above.
+                    busted |= unsafe {
+                        (*vm)
+                            .transpiler
+                            .resolver
+                            .bust_dir_cache_from_tsconfig_paths(source_to_use, normalized_specifier)
+                    };
+                }
+                if busted {
                     continue;
                 }
                 return Err(crate::Error::ModuleNotFound);

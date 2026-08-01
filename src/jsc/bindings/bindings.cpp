@@ -5320,11 +5320,16 @@ restart:
 
         JSObject* iterating = prototypeObject.getObject();
 
-        while (iterating && !(shouldStopFormattingPrototypeWalk(globalObject, iterating) || (iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
+        while (iterating && !((iterating != object && shouldStopFormattingPrototypeWalk(globalObject, iterating)) || (iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
+            // Node hides the DontEnum members of a built-in prototype but shows any
+            // enumerable properties the user has added to it.
+            DontEnumPropertiesMode dontEnum = (iterating == object && isBuiltinPrototypeForFormatting(globalObject, iterating))
+                ? DontEnumPropertiesMode::Exclude
+                : DontEnumPropertiesMode::Include;
             if constexpr (nonIndexedOnly) {
-                iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
+                iterating->getOwnNonIndexPropertyNames(globalObject, properties, dontEnum);
             } else {
-                iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
+                iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, dontEnum);
             }
 
             RETURN_IF_EXCEPTION(scope, void());
@@ -5481,8 +5486,10 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
 
     JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     {
-
-        JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
+        DontEnumPropertiesMode dontEnum = isBuiltinPrototypeForFormatting(globalObject, object)
+            ? DontEnumPropertiesMode::Exclude
+            : DontEnumPropertiesMode::Include;
+        JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, dontEnum);
         if (scope.exception()) [[unlikely]] {
             (void)scope.tryClearException();
             return;

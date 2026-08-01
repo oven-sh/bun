@@ -685,11 +685,17 @@ it("console.log on null prototype", () => {
 // https://github.com/oven-sh/bun/issues/8627
 describe("built-in prototypes print as {} and are not enumerated via the prototype chain", () => {
   it("String/Number/Boolean.prototype print as {}, not as boxed values", () => {
-    expect(Bun.inspect(String.prototype)).toBe("{}");
     expect(Bun.inspect(Number.prototype)).toBe("{}");
     expect(Bun.inspect(Boolean.prototype)).toBe("{}");
+    // String.prototype: harness.ts adds isLatin1/isUTF16 as enumerable own props, so we
+    // check that no built-in method leaks through instead of asserting exact equality.
+    // The subprocess test below covers the clean `String.prototype` -> `{}` case.
+    const sp = Bun.inspect(String.prototype);
+    expect(sp).not.toContain('"');
+    expect(sp).not.toContain("[String:");
+    expect(sp).not.toContain("charAt");
+    expect(sp).not.toContain("length");
     // nested: must not quote as "" / render as [Number: 0] / [Boolean: false]
-    expect(Bun.inspect({ x: String.prototype })).toBe("{\n  x: {},\n}");
     expect(Bun.inspect({ x: Number.prototype })).toBe("{\n  x: {},\n}");
     expect(Bun.inspect({ x: Boolean.prototype })).toBe("{\n  x: {},\n}");
     // actual boxed primitives are unaffected
@@ -729,6 +735,41 @@ describe("built-in prototypes print as {} and are not enumerated via the prototy
     }
     // Array.prototype is itself an Array
     expect(Bun.inspect(Array.prototype)).toBe("[]");
+    // Object.prototype keeps its null-prototype marker
+    expect(Bun.inspect(Object.prototype)).toBe("[Object: null prototype] {}");
+  });
+
+  it("sorted: true takes the same path", () => {
+    expect(Bun.inspect(Number.prototype, { sorted: true })).toBe("{}");
+    expect(Bun.inspect(Boolean.prototype, { sorted: true })).toBe("{}");
+    expect(Bun.inspect(Date.prototype, { sorted: true })).toBe("{}");
+    expect(Bun.inspect(Map.prototype, { sorted: true })).toBe("{}");
+    expect(Bun.inspect(Object.create(String.prototype), { sorted: true })).toBe("String {}");
+    expect(Bun.inspect(String.prototype, { sorted: true })).not.toContain("charAt");
+  });
+
+  it("user-added enumerable properties on a built-in prototype are still shown", () => {
+    // run in a subprocess so the prototype mutation doesn't leak into other tests
+    const out = Bun.spawnSync({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          Date.prototype.foo = 1;
+          process.stdout.write(Bun.inspect(Date.prototype) + "|");
+          process.stdout.write(Bun.inspect(Date.prototype, { sorted: true }) + "|");
+          String.prototype.bar = 2;
+          process.stdout.write(Bun.inspect(String.prototype) + "|");
+        `,
+      ],
+      env: bunEnv,
+    });
+    expect(out.stdout.toString()).toBe("{\n  foo: 1,\n}|{\n  foo: 1,\n}|{\n  bar: 2,\n}|");
+    expect(out.exitCode).toBe(0);
+  });
+
+  it("nested String.prototype is not colored as a string", () => {
+    expect(Bun.inspect({ x: String.prototype }, { colors: true })).not.toContain("\x1b[32m{");
   });
 
   it("user-defined class prototypes are still walked", () => {

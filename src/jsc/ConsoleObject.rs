@@ -2296,7 +2296,7 @@ pub mod formatter {
             {
                 return Ok(TagResult {
                     tag: TagPayload::Object,
-                    cell: js_type,
+                    cell: T::Object,
                 });
             }
 
@@ -3260,17 +3260,18 @@ pub mod formatter {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<ZigString>> {
+        let mut name_str = ZigString::init(b"");
+        value.get_class_name(global_this, &mut name_str)?;
+        if name_str.eql_comptime(b"Object") {
+            if value.get_prototype(global_this).eql_value(JSValue::NULL) {
+                return Ok(Some(ZigString::static_("[Object: null prototype]")));
+            }
+            return Ok(None);
+        }
         if value.is_builtin_prototype_for_formatting(global_this) {
             return Ok(None);
         }
-        let mut name_str = ZigString::init(b"");
-        value.get_class_name(global_this, &mut name_str)?;
-        if !name_str.eql_comptime(b"Object") {
-            return Ok(Some(name_str));
-        } else if value.get_prototype(global_this).eql_value(JSValue::NULL) {
-            return Ok(Some(ZigString::static_("[Object: null prototype]")));
-        }
-        Ok(None)
+        Ok(Some(name_str))
     }
 
     // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; remaining

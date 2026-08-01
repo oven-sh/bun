@@ -170,7 +170,7 @@ module.exports = {
 
       // Only the requested package is sent to the scanner.
       expect(stderr).toContain(`SCANNED_PACKAGES: ["left-pad"]`);
-      expect(stdout).toMatch(/WARN(ING)?.*left-pad/);
+      expect(stdout).toContain("WARNING: left-pad");
       expect(stdout).toContain("Test warning");
 
       // is-even was not part of this update, so its fatal advisory must not surface.

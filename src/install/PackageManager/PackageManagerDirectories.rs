@@ -885,11 +885,8 @@ pub fn path_for_cached_npm_path<'a>(
         }
     }
 
-    // The version-index symlink `<cache>/<name>/<ver>...` does not exist. A
-    // concurrent writer publishes the data folder `<cache>/<name>@<ver>...`
-    // (via `renameat`) before it creates the index symlink, and
-    // `determine_preinstall_state` probes the data folder, so we can land here
-    // with the package fully extracted. Fall back to the data folder path.
+    // Index symlink absent. A concurrent writer renames the data folder into
+    // place before creating the symlink, so probe `<name>@<ver>...` directly.
     cache_path_buf[package_name.len()] = b'@';
     let folder_name = ZStr::from_buf(&cache_path_buf, cache_path_len);
     if sys::directory_exists_at(cache_dir, folder_name).unwrap_or(false) {

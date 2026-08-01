@@ -479,9 +479,8 @@ pub fn enqueue_dependency_to_root(
         }
     }
 
-    // Schedule anything the enqueue above left in `network_task_fifo`: a
-    // disk-cached `.npm` manifest resolves `resolutions[dep_id]` synchronously
-    // while only queuing (not scheduling) the tarball download.
+    // A disk-cached manifest can resolve `resolutions[dep_id]` above while
+    // only queuing (not scheduling) the tarball; drain before deciding to wait.
     this.drain_dependency_list();
 
     let resolution_id = match this.lockfile.buffers.resolutions[dep_id as usize] {

@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { copyFileSync, mkdirSync } from "fs";
+import { chmodSync, copyFileSync, lstatSync, mkdirSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
@@ -2431,6 +2431,53 @@ describe("binaries", () => {
       });
     });
   }
+
+  // https://github.com/oven-sh/bun/issues/14736
+  test.skipIf(isWindows)("reinstall keeps an already-correct .bin link untouched on a read-only tree", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "what-bin": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall(env, packageDir);
+    const binDir = join(packageDir, "node_modules", ".bin");
+    const binPath = join(binDir, "what-bin");
+    expect(binPath).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+    const before = lstatSync(binPath, { bigint: true });
+
+    // Emulate the `./:/app:ro` Docker-compose mount from the issue: an
+    // already-populated node_modules that cannot be written to. With the link
+    // already pointing at the right target, a second install must be a no-op
+    // rather than unlink+re-symlink (the unlink would fail, and the retry
+    // symlink would then surface EEXIST as "Failed to link what-bin").
+    chmodSync(binDir, 0o555);
+    let err: string, exitCode: number;
+    try {
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    } finally {
+      chmodSync(binDir, 0o755);
+    }
+
+    expect(err).not.toContain("Failed to link");
+    expect(err).not.toContain("error:");
+    expect(binPath).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+    // ctimeNs moves whenever the inode is recreated (unlink + symlink); proves
+    // the skip even on hosts (root) where the chmod above cannot block writes.
+    const after = lstatSync(binPath, { bigint: true });
+    expect({ ino: after.ino, ctimeNs: after.ctimeNs }).toEqual({ ino: before.ino, ctimeNs: before.ctimeNs });
+    expect(exitCode).toBe(0);
+  });
+
   test("it should correctly link binaries after deleting node_modules", async () => {
     const json: any = {
       name: "foo",

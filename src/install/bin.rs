@@ -1320,6 +1320,21 @@ impl<'a> Linker<'a> {
             }
         }
 
+        // If the existing link already points at the intended target, the
+        // install is a no-op here. Skipping the delete+recreate lets a fully
+        // populated node_modules on a read-only mount (docker `:ro`) pass
+        // through: the unlink below would fail with EACCES/EROFS and the retry
+        // symlink would then surface the original EEXIST.
+        {
+            let mut existing = path::path_buffer_pool::get();
+            if let Ok(n) = sys::readlink(abs_dest, &mut existing) {
+                if existing[..n] == *rel_target.as_bytes() {
+                    Self::chmod_on_ok(self.err, abs_target);
+                    return;
+                }
+            }
+        }
+
         // delete and try again
         let _ = sys::delete_tree_absolute(abs_dest.as_bytes());
         if let Err(err) = sys::symlink_running_executable(rel_target, abs_dest) {

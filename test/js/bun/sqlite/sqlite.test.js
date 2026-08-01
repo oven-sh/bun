@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -1543,14 +1543,13 @@ it("should close with WAL enabled", () => {
   expect(readdirSync(dir).sort()).toEqual(["empty.txt", "my.db"]);
 });
 
-it("close(true) should throw an error if the database is in use", () => {
+it("close(true) finalizes outstanding prepared statements instead of throwing", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
   db.exec("INSERT INTO foo (name) VALUES ('foo')");
   const prepared = db.prepare("SELECT * FROM foo");
-  expect(() => db.close(true)).toThrow("database is locked");
-  prepared.finalize();
   expect(() => db.close(true)).not.toThrow();
+  expect(() => prepared.all()).toThrow("Database has closed");
 });
 
 it("close(true) finalizes query() statements created after the cache filled up (#36572)", () => {
@@ -1572,7 +1571,9 @@ it("close(true) finalizes query() statements past the cache limit that are still
     statements.push(db.query(`SELECT a + ${i} AS v FROM foo`));
   }
   expect(() => db.close(true)).not.toThrow();
-  expect(statements.every(stmt => stmt.isFinalized)).toBe(true);
+  for (const stmt of statements) {
+    expect(() => stmt.all()).toThrow(/Database has closed|Statement has finalized/);
+  }
 });
 
 it("close(true) succeeds after unreferenced query() statements were GC'd (#36572)", () => {
@@ -1608,16 +1609,30 @@ it("close() should NOT throw an error if the database is in use", () => {
   expect(() => db.close()).not.toThrow("database is locked");
 });
 
-it("should dispose AND throw an error if the database is in use", () => {
+it("close() releases the database file so it can be deleted immediately (#36572)", () => {
+  using dir = tempDir("sqlite-close-unlink", {});
+  const file = path.join(String(dir), "x.sqlite");
+  const db = new Database(file);
+  db.exec("CREATE TABLE t (a INTEGER)");
+  db.prepare("SELECT a FROM t").all();
+  db.close();
+  // On Windows this throws EBUSY if the statement above kept the
+  // connection (and the file handle) open past close().
+  rmSync(file);
+  expect(existsSync(file)).toBe(false);
+});
+
+it("should dispose even if a prepared statement is still live", () => {
+  let prepared;
   expect(() => {
-    let prepared;
     {
       using db = new Database(":memory:");
       db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
       db.exec("INSERT INTO foo (name) VALUES ('foo')");
       prepared = db.prepare("SELECT * FROM foo");
     }
-  }).toThrow("database is locked");
+  }).not.toThrow();
+  expect(() => prepared.get()).toThrow("Database has closed");
 });
 
 it("should dispose", () => {

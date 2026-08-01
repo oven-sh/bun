@@ -109,10 +109,8 @@ pub struct Symbol {
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
     pub struct SymbolFlags: u8 {
-        /// `emitDecoratorMetadata` emitted this import item inside a
-        /// `typeof X === "undefined" ? Object : X` guard. A missing export is
-        /// therefore not an error; the linker rewrites it to `undefined` so
-        /// the guard falls back to `Object`.
+        /// Decorator metadata wrapped this import item in a `typeof` guard,
+        /// so a missing export becomes `undefined` (not a link error).
         const IS_DECORATOR_METADATA_GUARDED = 1 << 0;
 
         const MUST_START_WITH_CAPITAL_LETTER_FOR_JSX = 1 << 1;

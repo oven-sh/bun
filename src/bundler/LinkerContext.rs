@@ -3578,11 +3578,8 @@ impl<'a> LinkerContext<'a> {
 
                     // Report mismatched imports and exports
                     if symbol.is_decorator_metadata_guarded() {
-                        // `emitDecoratorMetadata` referenced this import inside a
-                        // `typeof X === "undefined" ? Object : X` guard. A single-file
-                        // transpiler cannot tell an interface from a class, so an import
-                        // that turns out to be type-only is expected here; rewrite it to
-                        // `undefined` so the guard falls back to `Object`.
+                        // Decorator metadata already wraps this in a `typeof`
+                        // guard that falls back to `Object` on `undefined`.
                         symbol.import_item_status = ImportItemStatus::Missing;
                     } else if symbol.import_item_status == ImportItemStatus::Generated {
                         // This is a debug message instead of an error because although it

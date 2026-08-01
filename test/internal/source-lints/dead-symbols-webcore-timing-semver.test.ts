@@ -44,7 +44,10 @@ test("dead C++ symbols in webcore headers/timing do not reappear", () => {
     ["src/jsc/bindings/webcore/NetworkLoadMetrics.h", /\bemptyMetrics\b/],
     ["src/jsc/bindings/webcore/NetworkLoadMetrics.h", /NetworkLoadMetrics isolatedCopy/],
     ["src/jsc/bindings/webcore/NetworkLoadMetrics.cpp", /\bupdateFromFinalMetrics\b/],
-    ["src/jsc/bindings/webcore/NetworkLoadMetrics.cpp", /AdditionalNetworkLoadMetricsForWebInspector::create\(NetworkLoadPriority/],
+    [
+      "src/jsc/bindings/webcore/NetworkLoadMetrics.cpp",
+      /AdditionalNetworkLoadMetricsForWebInspector::create\(NetworkLoadPriority/,
+    ],
     ["src/jsc/bindings/webcore/ResourceTiming.h", /ResourceTiming isolatedCopy/],
     ["src/jsc/bindings/webcore/ResourceTiming.cpp", /ResourceTiming::isolatedCopy/],
     ["src/jsc/bindings/webcore/ServerTiming.h", /ServerTiming isolatedCopy/],

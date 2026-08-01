@@ -167,7 +167,11 @@ describe.concurrent("process-stdio", () => {
 // console.log writes natively to fd 1 and used to swallow the error entirely;
 // process.stdout.write went through errorOrDestroy with autoDestroy:false and
 // latched after the first emit. https://github.com/oven-sh/bun/issues/7251
-describe.concurrent.skipIf(isWindows)("process.stdout/stderr EPIPE after reader closes", () => {
+//
+// Not describe.concurrent: the existing process-stdio block above already
+// saturates the debug+ASAN process budget; adding five more concurrent children
+// pushes the timer-paced stdin tests over their 5s timeout.
+describe.skipIf(isWindows)("process.stdout/stderr EPIPE after reader closes", () => {
   // Spawn a child with piped stdout and immediately destroy the read end; the
   // child waits for that by reading stdin to EOF (we close it), then writes.
   // Pure event-driven: no timers.

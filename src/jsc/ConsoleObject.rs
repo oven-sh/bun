@@ -361,9 +361,10 @@ unsafe extern "C" {
 /// than letting it become an uncaught exception (matching
 /// `test-process-external-stdio-close`).
 fn forward_write_error(global: &JSGlobalObject, is_stderr: bool) {
-    // SAFETY: single-JS-thread top-level host call; `&mut` is scoped to this
-    // block so nothing derived from it is live across the re-entrant FFI below.
     let errno = {
+        // SAFETY: single-JS-thread top-level host call; `&mut` is scoped to
+        // this block so nothing derived from it is live across the re-entrant
+        // FFI below.
         let console = unsafe { vm_console_mut(global) };
         let backing = if is_stderr {
             &mut console.error_writer_backing

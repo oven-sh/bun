@@ -3467,19 +3467,14 @@ class Foo {
 
     it("rejects an optional chain as an assignment target at runtime", async () => {
       // https://github.com/oven-sh/bun/issues/15848
-      const source =
-        'for ([{ set y(val) { console.log("accessed") } }?.y = 0] of [[]]) ;';
+      const source = 'for ([{ set y(val) { console.log("accessed") } }?.y = 0] of [[]]) ;';
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", source],
         env: bunEnv,
         stderr: "pipe",
         stdout: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout).toBe("");
       expect(stderr).toContain("Invalid assignment target");
       expect(exitCode).toBe(1);

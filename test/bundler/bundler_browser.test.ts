@@ -222,7 +222,6 @@ describe("bundler", () => {
     },
   });
   itBundled("browser/NodePolyfillExternal", {
-    todo: true,
     skipOnEsbuild: true,
     files: {
       "/entry.js": NodePolyfills.options.files["/entry.js"],
@@ -238,6 +237,69 @@ describe("bundler", () => {
           path: "node:" + x,
         })),
       );
+    },
+  });
+  // #13941: --external for a node builtin must match regardless of which
+  // spelling ("stream" vs "node:stream") the import and the --external value
+  // use. Before the fix, only --external='*' worked; exact names were
+  // swallowed by the polyfill substitution.
+  for (const [label, importSpec, externalSpec] of [
+    ["NodePrefixImportNodePrefixExternal", "node:stream", "node:stream"],
+    ["NodePrefixImportBareExternal", "node:stream", "stream"],
+    ["BareImportNodePrefixExternal", "stream", "node:stream"],
+    ["BareImportBareExternal", "stream", "stream"],
+  ] as const) {
+    itBundled(`browser/NodeBuiltinExternal${label}#13941`, {
+      skipOnEsbuild: true,
+      files: {
+        "/entry.js": `import { Readable } from ${JSON.stringify(importSpec)};\nconsole.log(Readable);\n`,
+      },
+      target: "browser",
+      external: [externalSpec],
+      onAfterBundle(api) {
+        const file = api.readFile("/out.js");
+        const imports = new Bun.Transpiler().scanImports(file);
+        expect(imports).toEqual([{ kind: "import-statement", path: importSpec }]);
+        api.expectFile("/out.js").not.toInclude("bun-vfs$$");
+      },
+    });
+  }
+  // #35210: same ordering bug via dynamic import + minify.
+  itBundled("browser/NodePolyfillExternalNodePrefix#35210", {
+    files: {
+      "/entry.js": /* js */ `
+        export async function go(data) {
+          const { deflateSync } = await import("node:zlib");
+          return new Uint8Array(deflateSync(data));
+        }
+      `,
+    },
+    target: "browser",
+    external: ["node:zlib"],
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toStrictEqual([{ kind: "dynamic-import", path: "node:zlib" }]);
+    },
+  });
+  // #13941: builtins without a polyfill (stubbed to `{}`) must also honor
+  // --external instead of emitting the `(() => ({}))` no-op.
+  itBundled("browser/NodeBuiltinExternalNoOp#13941", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": `import fs from "node:fs";\nimport cp from "node:child_process";\nconsole.log(fs, cp);\n`,
+    },
+    target: "browser",
+    external: ["node:fs", "child_process"],
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toEqual([
+        { kind: "import-statement", path: "node:fs" },
+        { kind: "import-statement", path: "node:child_process" },
+      ]);
+      api.expectFile("/out.js").not.toInclude("() => ({})");
     },
   });
 

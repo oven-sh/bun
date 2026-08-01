@@ -1946,6 +1946,43 @@ impl<'a> Resolver<'a> {
                     import_path
                 };
 
+                // A user `--external` for a node builtin takes precedence over the
+                // browser polyfill / `{}` stub. The exact-match external set is
+                // otherwise only consulted after this block has already returned a
+                // polyfill. Match either spelling (`stream` / `node:stream`) on
+                // both the import and the `--external` value (#13941).
+                if self.opts.external.node_modules.count() > 0 {
+                    let bare = import_path_without_node_prefix;
+                    let mut buf = [0u8; 64];
+                    let prefixed: &[u8] = if had_node_prefix {
+                        import_path
+                    } else if 5 + bare.len() <= buf.len() {
+                        buf[..5].copy_from_slice(b"node:");
+                        buf[5..5 + bare.len()].copy_from_slice(bare);
+                        &buf[..5 + bare.len()]
+                    } else {
+                        b""
+                    };
+                    let ext = &self.opts.external.node_modules;
+                    if ext.contains(bare) || (!prefixed.is_empty() && ext.contains(prefixed)) {
+                        if let Some(debug) = self.debug_logs.as_mut() {
+                            debug.add_note_fmt(format_args!(
+                                "The path \"{}\" was marked as external by the user",
+                                bstr::BStr::new(import_path)
+                            ));
+                        }
+                        return ResultUnion::Success(Result {
+                            import_kind: kind,
+                            path_pair: PathPair {
+                                primary: Path::init(import_path),
+                                secondary: None,
+                            },
+                            flags: ResultFlags::IS_EXTERNAL,
+                            ..Default::default()
+                        });
+                    }
+                }
+
                 // The importer's package.json "browser" map wins over the builtin
                 // polyfill. The lookup uses the bare name so it matches the same
                 // spellings the polyfill table below does.

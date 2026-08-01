@@ -381,7 +381,7 @@ impl<'a> Generator<'a> {
         let all = unsafe { core::slice::from_raw_parts(blocks_ptr, blocks_len) };
         let blocks: &[BasicBlockRange] = &all[0..function_start_offset];
         let mut function_blocks: &[BasicBlockRange] = &all[function_start_offset..blocks_len];
-        if function_blocks.len() > 1 {
+        if !function_blocks.is_empty() {
             function_blocks = &function_blocks[1..];
         }
 
@@ -408,20 +408,6 @@ pub struct BasicBlockRange {
     end_offset: c_int,
     has_executed: bool,
     execution_count: usize,
-}
-
-impl BasicBlockRange {
-    /// JSC synthesizes a default constructor for classes that don't declare one
-    /// (`BuiltinExecutables::defaultConstructorSourceCode`). Its `unlinkedFunctionStart`
-    /// and `unlinkedFunctionEnd` are offsets into that builtin template string, but
-    /// `CodeBlock::finishCreation` registers the range under the user's source ID, so
-    /// `FunctionHasExecutedCache::getFunctionRanges` returns it alongside real functions.
-    /// The range is fixed: `[1, 15]` for a base ctor and `[1, 38]` for a derived ctor,
-    /// and it is never marked executed (the remove path uses the builtin source ID).
-    /// Treat it as not part of the user's file.
-    fn is_jsc_default_class_constructor(&self) -> bool {
-        self.start_offset == 1 && (self.end_offset == 15 || self.end_offset == 38)
-    }
 }
 
 pub struct ByteRangeMapping {
@@ -580,9 +566,6 @@ impl ByteRangeMapping {
                 if function.end_offset < 0 || function.start_offset < 0 {
                     continue; // does not map to anything
                 }
-                if function.is_jsc_default_class_constructor() {
-                    continue;
-                }
 
                 let min: usize = usize::try_from(function.start_offset.min(function.end_offset))
                     .expect("int cast");
@@ -726,9 +709,6 @@ impl ByteRangeMapping {
                 if function.end_offset < 0 || function.start_offset < 0 {
                     continue; // does not map to anything
                 }
-                if function.is_jsc_default_class_constructor() {
-                    continue;
-                }
 
                 let min: usize = usize::try_from(function.start_offset.min(function.end_offset))
                     .expect("int cast");
@@ -777,13 +757,11 @@ impl ByteRangeMapping {
                         if point.original.lines.zero_based() < 0 {
                             continue;
                         }
-                        // The printer emits a mapping at column 0 of each generated line that
-                        // often points at the end of the previous statement. Bytes in leading
-                        // whitespace (and keywords like `async` that get no mapping of their own)
-                        // resolve to that entry via closest-preceding lookup, which would widen
-                        // the function range onto an unrelated earlier line. Ignore those
-                        // fallback hits when computing the function's line span.
-                        if point.generated.columns.zero_based() == 0 && column_position > 0 {
+                        // Generated-column-0 mappings point at the previous statement's end;
+                        // `column_position` is always > 0 here (the `>= byte_offset` check above
+                        // skips column 0), so any column-0 result is a closest-preceding fallback.
+                        if point.generated.columns.zero_based() == 0 {
+                            debug_assert!(column_position > 0);
                             continue;
                         }
 
@@ -910,7 +888,7 @@ extern "C" fn ByteRangeMapping__findExecutedLines(
     let all = unsafe { core::slice::from_raw_parts(blocks_ptr.as_ptr(), blocks_len) };
     let blocks: &[BasicBlockRange] = &all[0..function_start_offset];
     let mut function_blocks: &[BasicBlockRange] = &all[function_start_offset..blocks_len];
-    if function_blocks.len() > 1 {
+    if !function_blocks.is_empty() {
         function_blocks = &function_blocks[1..];
     }
     let url_slice = source_url.to_utf8();

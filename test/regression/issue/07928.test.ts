@@ -5,6 +5,7 @@
 // POSIX.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import path from "node:path";
 
 test.skipIf(isWindows)("`bun test` runs tests from a directory whose name contains '?'", async () => {
   using dir = tempDir("issue-7928-test", {
@@ -46,12 +47,18 @@ test.skipIf(isWindows)("`bun <file>` runs a file under a directory whose name co
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows)("import resolves across a directory whose name contains '?'", async () => {
+test.skipIf(isWindows)("import resolves and import.meta is correct under a '?'-named directory", async () => {
   using dir = tempDir("issue-7928-import", {
     "dir?/dep.js": `export const value = 42;`,
     "dir?/entry.js": `
       import { value } from "./dep.js";
-      console.log(JSON.stringify({ value, url: import.meta.url }));
+      console.log(JSON.stringify({
+        value,
+        url: import.meta.url,
+        path: import.meta.path,
+        dir: import.meta.dir,
+        file: import.meta.file,
+      }));
     `,
   });
   await using proc = Bun.spawn({
@@ -63,9 +70,15 @@ test.skipIf(isWindows)("import resolves across a directory whose name contains '
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  const { value, url } = JSON.parse(stdout.trim());
-  expect(value).toBe(42);
-  expect(decodeURIComponent(url)).toEndWith("dir?/entry.js");
+  const meta = JSON.parse(stdout.trim());
+  expect(meta).toEqual({
+    value: 42,
+    url: Bun.pathToFileURL(path.join(String(dir), "dir?", "entry.js")).href,
+    path: path.join(String(dir), "dir?", "entry.js"),
+    dir: path.join(String(dir), "dir?"),
+    file: "entry.js",
+  });
+  expect(new URL(meta.url).pathname).toEndWith("dir%3F/entry.js");
   expect(exitCode).toBe(0);
 });
 
@@ -91,5 +104,27 @@ test.skipIf(isWindows)("query-string suffix still works when a parent directory 
   expect(decodeURIComponent(a)).toEndWith("dir?/dep.js");
   expect(decodeURIComponent(b)).toEndWith("dir?/dep.js?v=1");
   expect(distinct).toBe(true);
+  expect(exitCode).toBe(0);
+});
+
+test("query string containing '/' still splits at the '?'", async () => {
+  using dir = tempDir("issue-7928-slash-in-query", {
+    "dep.js": `export const url = import.meta.url;`,
+    "entry.js": `
+      const m = await import("./dep.js?path=/a/b");
+      console.log(JSON.stringify({ url: m.url }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { url } = JSON.parse(stdout.trim());
+  expect(decodeURIComponent(url)).toEndWith("dep.js?path=/a/b");
   expect(exitCode).toBe(0);
 });

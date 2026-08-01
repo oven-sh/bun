@@ -166,7 +166,13 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JS
 
 ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
 {
+    // A '?' immediately followed by '/' is a POSIX directory-name byte (e.g.
+    // `/abs/dir?/file.js`), not a query separator. Skip those so the file://
+    // URL's path component covers the full filesystem path. #7928
     auto index = specifier.find('?');
+    while (index != notFound && index + 1 < specifier.length() && specifier[index + 1] == '/') {
+        index = specifier.find('?', index + 1);
+    }
     URL url;
     if (index != notFound) {
         StringView view = specifier;

@@ -443,18 +443,7 @@ pub(crate) fn normalize_specifier<'a>(
     let specifier = slice;
     let mut query: &[u8] = b"";
 
-    if let Some(i) = strings::index_of_char(slice, b'?') {
-        let mut i = i as usize;
-        // A '?' that sits before a path separator is part of a directory name
-        // (POSIX allows '?' in filenames), not a query string. Only split on a
-        // '?' that appears in the final path segment. #7928
-        if strings::contains_char(&slice[i + 1..], b'/') {
-            let base = strings::last_index_of_char(slice, b'/').unwrap_or(0) + 1;
-            match strings::index_of_char(&slice[base..], b'?') {
-                Some(j) => i = base + j as usize,
-                None => return (slice, specifier, query),
-            }
-        }
+    if let Some(i) = strings::index_of_import_query(slice) {
         query = &slice[i..];
         slice = &slice[..i];
     }

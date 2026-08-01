@@ -1348,6 +1348,23 @@ pub fn index_of_char_usize(slice: &[u8], char: u8) -> Option<usize> {
     highway::index_of_char(slice, char)
 }
 
+/// Index of the `?` that begins a query-string suffix in a module specifier.
+///
+/// A `?` immediately followed by `/` is a POSIX directory-name byte (e.g.
+/// `./dir?/file.js`), not a query separator, and is skipped. This keeps
+/// `./foo.js?key=a/b` splitting at the first `?` while letting a file under a
+/// `?`-named directory resolve as a filesystem path. #7928
+pub fn index_of_import_query(specifier: &[u8]) -> Option<usize> {
+    let mut from = 0usize;
+    loop {
+        let i = from + index_of_char_usize(&specifier[from..], b'?')?;
+        if specifier.get(i + 1) != Some(&b'/') {
+            return Some(i);
+        }
+        from = i + 1;
+    }
+}
+
 pub fn index_of_char_pos(slice: &[u8], char: u8, start_index: usize) -> Option<usize> {
     if start_index >= slice.len() {
         return None;

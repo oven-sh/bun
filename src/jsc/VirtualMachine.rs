@@ -2938,17 +2938,7 @@ fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
     query_string: &mut &'a [u8],
 ) -> &'a [u8] {
-    if let Some(mut i) = bun_core::strings::index_of_char_usize(specifier_, b'?') {
-        // A '?' that sits before a path separator is part of a directory name
-        // (POSIX allows '?' in filenames), not a query string. Only split on a
-        // '?' that appears in the final path segment. #7928
-        if bun_core::strings::contains_char(&specifier_[i + 1..], b'/') {
-            let base = bun_core::strings::last_index_of_char(specifier_, b'/').unwrap_or(0) + 1;
-            match bun_core::strings::index_of_char_usize(&specifier_[base..], b'?') {
-                Some(j) => i = base + j,
-                None => return specifier_,
-            }
-        }
+    if let Some(i) = bun_core::strings::index_of_import_query(specifier_) {
         *query_string = &specifier_[i..];
         &specifier_[..i]
     } else {

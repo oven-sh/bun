@@ -381,8 +381,6 @@ impl<'a> LinkerContext<'a> {
         )
     }
 
-    /// Base directory for display ("pretty") paths. See
-    /// `BundleV2::pretty_path_base_dir`.
     pub(crate) fn pretty_path_base_dir(&self) -> &[u8] {
         let root_dir: &[u8] = &self.resolver().opts.root_dir;
         if root_dir.is_empty() {

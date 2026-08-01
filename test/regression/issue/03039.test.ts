@@ -24,7 +24,7 @@ function commentLines(bundle: string) {
     .sort();
 }
 
-test("bundler filename comments are independent of cwd", async () => {
+test.concurrent("bundler filename comments are independent of cwd", async () => {
   using dir = tempDir("bun-build-3039", {
     "proj/src/entry.js": `import { util } from "./util.js";\nimport { other } from "./nested/other.js";\nconsole.log(util(), other());\n`,
     "proj/src/util.js": `export function util() { return "util"; }\n`,
@@ -42,7 +42,7 @@ test("bundler filename comments are independent of cwd", async () => {
   expect(commentLines(fromTop)).toEqual(["// entry.js", "// nested/other.js", "// util.js"]);
 });
 
-test("bundler filename comments honor --root regardless of cwd", async () => {
+test.concurrent("bundler filename comments honor --root regardless of cwd", async () => {
   using dir = tempDir("bun-build-3039-root", {
     "proj/src/entry.js": `import { util } from "./util.js";\nconsole.log(util());\n`,
     "proj/src/util.js": `export function util() { return "util"; }\n`,

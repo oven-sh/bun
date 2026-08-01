@@ -5586,11 +5586,8 @@ pub mod bv2_impl {
             false
         }
 
-        /// Base directory for display ("pretty") paths in bundler output
-        /// (per-module `// path` comments, metafile inputs, diagnostics).
-        /// This is the configured `root` so the bundle is reproducible
-        /// regardless of the cwd `bun build` was invoked from; falls back
-        /// to cwd when no root was configured (e.g. graph-scan-only passes).
+        /// Base directory for display ("pretty") paths: the configured
+        /// bundle `root`, falling back to cwd.
         fn pretty_path_base_dir(&self) -> &[u8] {
             let root_dir: &[u8] = &self.transpiler.options.root_dir;
             if root_dir.is_empty() {

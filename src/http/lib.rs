@@ -1079,8 +1079,6 @@ bun_core::comptime_string_map! {
 // ── shared per-thread buffers ───────────────────────────────────────────
 // All four are HTTP-thread-only scratch (single uws loop thread); `RacyCell`
 // is the alias-safe static cell per docs/PORTING.md §Global mutable state.
-const PRINT_EVERY: usize = 0;
-static PRINT_EVERY_I: AtomicUsize = AtomicUsize::new(0);
 
 // we always rewrite the entire HTTP request when write() returns EAGAIN
 // so we can reuse this buffer
@@ -4238,16 +4236,6 @@ impl<'a> HTTPClient<'a> {
         } else {
             result.body_owned = decoded_body.list;
             callback.run(parent, result);
-        }
-
-        if PRINT_EVERY != 0 {
-            let i = PRINT_EVERY_I.fetch_add(1, Ordering::Relaxed) + 1;
-            if i.is_multiple_of(PRINT_EVERY) {
-                bun_core::prettyln!("Heap stats for HTTP thread\n");
-                Output::flush();
-                // Per-thread allocator stats are no longer collected here.
-                PRINT_EVERY_I.store(0, Ordering::Relaxed);
-            }
         }
     }
 

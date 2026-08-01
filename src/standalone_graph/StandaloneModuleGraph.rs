@@ -1936,10 +1936,6 @@ pub fn to_executable(
                         "Failed to extract executable for '{}'. The download may be incomplete.",
                         target
                     )),
-                    crate::Error::UnsupportedTarget => CompileResult::fail_fmt(format_args!(
-                        "Target '{}' is not supported",
-                        target
-                    )),
                     _ => CompileResult::fail_fmt(format_args!(
                         "Failed to download '{}': {}",
                         target,

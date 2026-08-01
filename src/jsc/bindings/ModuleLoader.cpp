@@ -1271,6 +1271,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
         bool stillInRequireMap = zigGlobal->requireMap()->has(globalObject, specifierString);
         RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
         if (!stillInRequireMap) {
+            scope.release();
             promise->resolve(globalObject, vm, jsUndefined());
             pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
             return JSValue::encode(jsUndefined());

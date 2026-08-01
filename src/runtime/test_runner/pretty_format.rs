@@ -122,11 +122,7 @@ pub struct FormatOptions {
     pub(crate) add_newline: bool,
     pub flush: bool,
     pub(crate) quote_strings: bool,
-    /// Sort `Set`/`Map` entries by their serialized bytes so two collections
-    /// with the same members produce the same text regardless of insertion
-    /// order. Used by the diff formatter so the line-based diff reports only
-    /// real membership differences. Off for snapshots/console output, which
-    /// preserve insertion order.
+    /// Sort `Set`/`Map` entries so the diff formatter is order-insensitive.
     pub(crate) ordered_collections: bool,
 }
 
@@ -860,8 +856,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     }
 }
 
-/// Collects each `Set`/`Map` entry into its own buffer so the caller can sort
-/// them before emitting. Used when [`Formatter::ordered_collections`] is set.
+/// See [`FormatOptions::ordered_collections`].
 pub(crate) struct SortedEntryCollector<'a, 'f, const IS_MAP: bool, const ENABLE_ANSI_COLORS: bool> {
     pub(crate) formatter: &'a mut Formatter<'f>,
     pub(crate) entries: Vec<Vec<u8>>,

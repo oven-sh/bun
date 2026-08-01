@@ -2,7 +2,7 @@
 // Sourcemap `sources` entries must be relative to the .map file's own
 // directory (per the sourcemap spec), not to the build outdir.
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -89,6 +89,7 @@ describe("issue 3332: sourcemap sources are relative to the map file", () => {
     expect(path.dirname(map.path)).toBe(outdir);
 
     const json = JSON.parse(readFileSync(map.path, "utf8"));
+    expect(json.sources.length).toBeGreaterThanOrEqual(2);
     for (const src of json.sources as string[]) {
       const resolved = path.resolve(path.dirname(map.path), src);
       expect(existsSync(resolved), `source ${JSON.stringify(src)} -> ${resolved}`).toBe(true);
@@ -124,9 +125,54 @@ describe("issue 3332: sourcemap sources are relative to the map file", () => {
     const m = code.match(/sourceMappingURL=data:application\/json;[^,]+,([A-Za-z0-9+/=]+)/);
     expect(m).toBeTruthy();
     const json = JSON.parse(Buffer.from(m![1], "base64").toString("utf8"));
+    expect(json.sources.length).toBeGreaterThanOrEqual(2);
     for (const src of json.sources as string[]) {
       const resolved = path.resolve(jsDir, src);
       expect(existsSync(resolved), `source ${JSON.stringify(src)} -> ${resolved}`).toBe(true);
     }
+  });
+
+  test("relative outdir with nested chunks", async () => {
+    // `Bun.build` stores a relative `outdir` verbatim; the sources-base join
+    // must still produce an absolute chunk directory. Run in a subprocess so
+    // the test can chdir without touching the harness cwd.
+    using dir = tempDir("issue-3332-reloutdir", {
+      "proj/a/util.ts": `export const u = 1;`,
+      "proj/a/entry.ts": `import { u } from "./util"; console.log(u);`,
+      "proj/b/entry.ts": `console.log("b");`,
+      "build.ts": `
+        import path from "node:path";
+        import { readFileSync, existsSync } from "node:fs";
+        const root = path.join(import.meta.dir, "proj");
+        const res = await Bun.build({
+          root,
+          entrypoints: [path.join(root, "a/entry.ts"), path.join(root, "b/entry.ts")],
+          outdir: "dist",
+          sourcemap: "external",
+        });
+        if (!res.success) { console.error(res.logs); process.exit(1); }
+        const map = res.outputs.find(o => o.path.endsWith(path.join("a", "entry.js.map")));
+        if (!map) { console.error("no map for a/entry"); process.exit(1); }
+        const mapDir = path.dirname(map.path);
+        const json = JSON.parse(readFileSync(map.path, "utf8"));
+        if (json.sources.length < 2) { console.error("too few sources", json.sources); process.exit(1); }
+        for (const s of json.sources) {
+          const r = path.resolve(mapDir, s);
+          if (!existsSync(r)) { console.error("MISS", s, "->", r); process.exit(1); }
+        }
+        console.log("OK " + json.sources.length);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK 2");
+    expect(exitCode).toBe(0);
   });
 });

@@ -1027,10 +1027,14 @@ impl<'a> LinkerContext<'a> {
         if rel_dir.is_empty() || &*rel_dir == b"." || output_dir.is_empty() {
             return Box::from(output_dir);
         }
+        // `join_abs_string_buf` requires an absolute cwd. `output_dir` may be
+        // relative (Bun.build `outdir: "dist"`), so anchor at `top_level_dir`;
+        // an absolute `output_dir` resets the join base on its own.
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         let mut buf = bun_paths::path_buffer_pool::get();
         Box::from(bun_paths::resolve_path::join_abs_string_buf::<
             bun_paths::platform::Auto,
-        >(output_dir, &mut buf, &[&rel_dir]))
+        >(top_level_dir, &mut buf, &[output_dir, &rel_dir]))
     }
 
     pub(crate) fn generate_source_map_for_chunk(

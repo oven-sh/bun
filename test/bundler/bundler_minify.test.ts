@@ -145,10 +145,22 @@ describe("bundler", () => {
           {__proto__: null, "\\u00c3\\u00a9": 1}.é,
         ]));
         console.log("hits=" + hits);
+        (function () {
+          "use strict";
+          const obj = { fn: function () { return this; } };
+          console.log(JSON.stringify([
+            (null ?? obj.fn)\`x\` === undefined,
+            (0 || obj.fn)\`x\` === undefined,
+            (1 && obj.fn)\`x\` === undefined,
+            (1 ? obj.fn : 2)\`x\` === undefined,
+            (0 ? 2 : obj.fn)\`x\` === undefined,
+            (0, obj.fn)\`x\` === undefined,
+          ]));
+        })();
       `,
     },
     minifySyntax: true,
-    run: { stdout: '[3,1,4,1,null,null,3,1,42,"OBJ",1,1,null]\nhits=1' },
+    run: { stdout: '[3,1,4,1,null,null,3,1,42,"OBJ",1,1,null]\nhits=1\n[true,true,true,true,true,true]' },
   });
   itBundled("minify/StringAdditionFolding", {
     files: {

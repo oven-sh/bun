@@ -992,8 +992,8 @@ impl AsyncPrefixExpression {
     }
 }
 
-// Packed u8 — assign_target:u2, is_delete_target:b1,
-// was_originally_identifier:b1, is_call_target:b1, _padding:u3 (LSB-first).
+// Packed u8 — assign_target:u2, is_delete_target:b1, was_originally_identifier:b1,
+// is_call_target:b1, is_template_tag:b1, _padding:u2 (LSB-first).
 // Not all-bool (assign_target is a 2-bit enum), so per PORTING.md we use a
 // transparent u8 with manual shift accessors.
 #[repr(transparent)]

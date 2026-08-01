@@ -6057,15 +6057,14 @@ pub mod bv2_impl {
                         }
                         None => {
                             import_record.path.is_disabled = true;
-                            let bindings_is_external = transpiler
-                                .resolver
-                                .is_external_pattern(b"bindings")
-                                || transpiler
-                                    .resolver
-                                    .opts
-                                    .external
-                                    .node_modules
-                                    .contains(b"bindings");
+                            let bindings_is_external =
+                                transpiler.resolver.is_external_pattern(b"bindings")
+                                    || transpiler
+                                        .resolver
+                                        .opts
+                                        .external
+                                        .node_modules
+                                        .contains(b"bindings");
                             if !bindings_is_external
                                 && !import_record
                                     .flags

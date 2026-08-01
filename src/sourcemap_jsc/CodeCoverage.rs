@@ -229,9 +229,6 @@ pub mod text {
         executable_lines_that_havent_been_executed.set_intersection(&report.executable_lines);
 
         let mut iter = executable_lines_that_havent_been_executed.iterator::<true, true>();
-        let mut start_of_line_range: usize = 0;
-        let mut prev_line: usize = 0;
-        let mut is_first = true;
 
         // `concat!(pretty_fmt!(..), "{}")` requires a literal; split into a
         // prefix `write_all` + plain `write!` so the const-generic `ENABLE_COLORS` can
@@ -239,48 +236,42 @@ pub mod text {
         let red = pretty_fmt::<ENABLE_COLORS>("<red>");
         let comma = pretty_fmt::<ENABLE_COLORS>("<r><d>,<r>");
 
+        let mut pending: Option<(usize, usize)> = None;
+        let mut is_first = true;
+        macro_rules! flush_range {
+            ($start:expr, $end:expr) => {{
+                if is_first {
+                    is_first = false;
+                } else {
+                    writer.write_all(&comma)?;
+                }
+                writer.write_all(&red)?;
+                if $start == $end {
+                    write!(writer, "{}", $start + 1)?;
+                } else {
+                    write!(writer, "{}-{}", $start + 1, $end + 1)?;
+                }
+            }};
+        }
+
         while let Some(next_line) = iter.next() {
-            if next_line == (prev_line + 1) {
-                prev_line = next_line;
-                continue;
-            } else if is_first && start_of_line_range == 0 && prev_line == 0 {
-                start_of_line_range = next_line;
-                prev_line = next_line;
-                continue;
-            }
-
-            if is_first {
-                is_first = false;
-            } else {
-                writer.write_all(&comma)?;
-            }
-
-            if start_of_line_range == prev_line {
-                writer.write_all(&red)?;
-                write!(writer, "{}", start_of_line_range + 1)?;
-            } else {
-                writer.write_all(&red)?;
-                write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
-            }
-
-            prev_line = next_line;
-            start_of_line_range = next_line;
-        }
-
-        if prev_line != start_of_line_range {
-            if is_first {
-            } else {
-                writer.write_all(&comma)?;
-            }
-
-            if start_of_line_range == prev_line {
-                writer.write_all(&red)?;
-                write!(writer, "{}", start_of_line_range + 1)?;
-            } else {
-                writer.write_all(&red)?;
-                write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
+            match pending {
+                Some((start, prev)) if next_line == prev + 1 => {
+                    pending = Some((start, next_line));
+                }
+                Some((start, prev)) => {
+                    flush_range!(start, prev);
+                    pending = Some((next_line, next_line));
+                }
+                None => {
+                    pending = Some((next_line, next_line));
+                }
             }
         }
+        if let Some((start, prev)) = pending {
+            flush_range!(start, prev);
+        }
+        let _ = is_first;
         Ok(())
     }
 }
@@ -419,6 +410,20 @@ pub struct BasicBlockRange {
     execution_count: usize,
 }
 
+impl BasicBlockRange {
+    /// JSC synthesizes a default constructor for classes that don't declare one
+    /// (`BuiltinExecutables::defaultConstructorSourceCode`). Its `unlinkedFunctionStart`
+    /// and `unlinkedFunctionEnd` are offsets into that builtin template string, but
+    /// `CodeBlock::finishCreation` registers the range under the user's source ID, so
+    /// `FunctionHasExecutedCache::getFunctionRanges` returns it alongside real functions.
+    /// The range is fixed: `[1, 15]` for a base ctor and `[1, 38]` for a derived ctor,
+    /// and it is never marked executed (the remove path uses the builtin source ID).
+    /// Treat it as not part of the user's file.
+    fn is_jsc_default_class_constructor(&self) -> bool {
+        self.start_offset == 1 && (self.end_offset == 15 || self.end_offset == 38)
+    }
+}
+
 pub struct ByteRangeMapping {
     pub(crate) line_offset_table: line_offset_table::List,
     pub(crate) source_id: i32,
@@ -553,7 +558,11 @@ impl ByteRangeMapping {
                     executable_lines.set(line as usize);
                     if has_executed {
                         lines_which_have_executed.set(line as usize);
-                        line_hits_slice[line as usize] += 1;
+                        let hits =
+                            u32::try_from(block.execution_count).unwrap_or(u32::MAX).max(1);
+                        if line_hits_slice[line as usize] < hits {
+                            line_hits_slice[line as usize] = hits;
+                        }
                     }
                 }
 
@@ -569,6 +578,9 @@ impl ByteRangeMapping {
             for (i, function) in function_blocks.iter().enumerate() {
                 if function.end_offset < 0 || function.start_offset < 0 {
                     continue; // does not map to anything
+                }
+                if function.is_jsc_default_class_constructor() {
+                    continue;
                 }
 
                 let min: usize = usize::try_from(function.start_offset.min(function.end_offset))
@@ -601,8 +613,8 @@ impl ByteRangeMapping {
 
                 // only mark the lines as executable if the function has not executed
                 // functions that have executed have non-executable lines in them and thats fine.
-                if !did_fn_execute {
-                    let end = max_line.min(line_count);
+                if !did_fn_execute && min_line != u32::MAX {
+                    let end = (max_line + 1).min(line_count);
                     line_hits_slice[min_line as usize..end as usize].fill(0);
                     for line in min_line..end {
                         executable_lines.set(line as usize);
@@ -687,7 +699,11 @@ impl ByteRangeMapping {
                         executable_lines.set(line as usize);
                         if has_executed {
                             lines_which_have_executed.set(line as usize);
-                            line_hits_slice[line as usize] += 1;
+                            let hits =
+                                u32::try_from(block.execution_count).unwrap_or(u32::MAX).max(1);
+                            if line_hits_slice[line as usize] < hits {
+                                line_hits_slice[line as usize] = hits;
+                            }
                         }
 
                         min_line = min_line.min(line);
@@ -707,6 +723,9 @@ impl ByteRangeMapping {
             for (i, function) in function_blocks.iter().enumerate() {
                 if function.end_offset < 0 || function.start_offset < 0 {
                     continue; // does not map to anything
+                }
+                if function.is_jsc_default_class_constructor() {
+                    continue;
                 }
 
                 let min: usize = usize::try_from(function.start_offset.min(function.end_offset))
@@ -756,6 +775,15 @@ impl ByteRangeMapping {
                         if point.original.lines.zero_based() < 0 {
                             continue;
                         }
+                        // The printer emits a mapping at column 0 of each generated line that
+                        // often points at the end of the previous statement. Bytes in leading
+                        // whitespace (and keywords like `async` that get no mapping of their own)
+                        // resolve to that entry via closest-preceding lookup, which would widen
+                        // the function range onto an unrelated earlier line. Ignore those
+                        // fallback hits when computing the function's line span.
+                        if point.generated.columns.zero_based() == 0 && column_position > 0 {
+                            continue;
+                        }
 
                         let line: u32 =
                             u32::try_from(point.original.lines.zero_based()).expect("int cast");
@@ -777,7 +805,7 @@ impl ByteRangeMapping {
                 // only mark the lines as executable if the function has not executed
                 // functions that have executed have non-executable lines in them and thats fine.
                 if !did_fn_execute {
-                    let end = max_line.min(line_count);
+                    let end = (max_line + 1).min(line_count);
                     for line in min_line..end {
                         executable_lines.set(line as usize);
                         lines_which_have_executed.unset(line as usize);

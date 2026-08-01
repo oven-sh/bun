@@ -137,6 +137,18 @@ function secureProtocolToVersionRange(secureProtocol) {
 
 let NativeSecureContext;
 
+// Node's `sni_context = context.context || context` unwrap: accepts both the
+// SecureContext wrapper and the raw native handle. Returns the native
+// SecureContext, undefined for null/undefined, or an Error for anything else.
+function unwrapSNIContext(context) {
+  if (context == null) return undefined;
+  NativeSecureContext ??= $rust("SecureContext.rs", "js.getConstructor");
+  const inner = typeof context === "object" ? context.context : undefined;
+  if (inner instanceof NativeSecureContext) return inner;
+  if (context instanceof NativeSecureContext) return context;
+  return new Error("Invalid SNI context");
+}
+
 /**
  * Node's `pfx` option: parse each PKCS#12 blob into PEM key/cert/ca and fold
  * them into the regular options so every downstream consumer (the native
@@ -186,5 +198,6 @@ export {
   secureProtocolToVersionRange,
   throwOnInvalidTLSArray,
   tlsStringToProtocolVersion,
+  unwrapSNIContext,
   validateSecureProtocol,
 };

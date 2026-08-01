@@ -63,6 +63,7 @@ it("https.createServer SNICallback errors drop the connection and emit tlsClient
   const cases: [string, (name: string, cb: (err: Error | null, ctx?: unknown) => void) => void, string][] = [
     ["cb(error)", (_name, cb) => cb(new Error("sni rejected")), "sni rejected"],
     ["invalid primitive", (_name, cb) => cb(null, true), "Invalid SNI context"],
+    ["invalid object", (_name, cb) => cb(null, {}), "Invalid SNI context"],
     [
       "throw",
       () => {
@@ -76,13 +77,16 @@ it("https.createServer SNICallback errors drop the connection and emit tlsClient
     const tlsClientErrors: Error[] = [];
     server.on("tlsClientError", err => tlsClientErrors.push(err));
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-    const port = (server.address() as AddressInfo).port;
-    const client = tlsConnect({ host: "127.0.0.1", port, servername: "a.example.com", rejectUnauthorized: false });
-    const [clientErr] = (await once(client, "error")) as [NodeJS.ErrnoException];
-    // The server dropped the connection before the handshake completed.
-    expect(String(clientErr.message)).toMatch(/disconnected before secure TLS connection was established|ECONNRESET/);
-    expect(tlsClientErrors.length).toBe(1);
-    expect(tlsClientErrors[0].message).toBe(expectedMessage);
-    server.close();
+    try {
+      const port = (server.address() as AddressInfo).port;
+      const client = tlsConnect({ host: "127.0.0.1", port, servername: "a.example.com", rejectUnauthorized: false });
+      const [clientErr] = (await once(client, "error")) as [NodeJS.ErrnoException];
+      // The server dropped the connection before the handshake completed.
+      expect(String(clientErr.message)).toMatch(/disconnected before secure TLS connection was established|ECONNRESET/);
+      expect(tlsClientErrors.length).toBe(1);
+      expect(tlsClientErrors[0].message).toBe(expectedMessage);
+    } finally {
+      server.close();
+    }
   }
 });

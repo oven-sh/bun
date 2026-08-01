@@ -627,10 +627,7 @@ impl UpgradeCommand {
 
             version
         } else {
-            // Ask the API for the canary asset URL so `GITHUB_API_DOMAIN`
-            // applies to canary upgrades too. Any lookup failure (API down,
-            // release shape changed, asset not listed) falls back to the
-            // long-standing hardcoded download URL.
+            // Resolve via the API so `GITHUB_API_DOMAIN` applies to canary too.
             let from_api =
                 Self::get_latest_version::<true>(&mut env_loader, None, None, use_profile, true)
                     .ok()
@@ -647,10 +644,8 @@ impl UpgradeCommand {
                 size: 0,
                 digest: Integrity::default(),
             });
-            // The canary tag is mutable (every merged main build re-uploads it
-            // with `--clobber`), so a digest read now can mismatch the bytes
-            // downloaded a few seconds later. Skip the integrity check rather
-            // than turn that publish window into a hard `exit(1)`.
+            // canary is re-uploaded on every main merge; a digest read now
+            // can race that and fail a good download.
             v.digest = Integrity::default();
             v
         };

@@ -4967,6 +4967,48 @@ describe("update", () => {
       version: "1.1.0",
     });
   });
+  for (const args of [undefined, ["a-dep"], ["--latest"]]) {
+    const label = args ? args.join(" ") : "(no args)";
+    // https://github.com/oven-sh/bun/issues/13509
+    test(`peer dependency with stale lockfile entry: bun update ${label}`, async () => {
+      // Lock a-dep at 1.0.1 first, then widen the range. The lockfile keeps
+      // 1.0.1, and `bun update` must re-resolve instead of reusing it.
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          peerDependencies: { "a-dep": "1.0.1" },
+        }),
+      );
+      await runBunInstall(env, packageDir);
+      expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toMatchObject({
+        version: "1.0.1",
+      });
+
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          peerDependencies: { "a-dep": "^1.0.1" },
+        }),
+      );
+      await runBunInstall(env, packageDir);
+      expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toMatchObject({
+        version: "1.0.1",
+      });
+
+      await runBunUpdate(env, packageDir, args);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+      expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toMatchObject({
+        version: "1.0.10",
+      });
+      expect(await file(packageJson).json()).toEqual({
+        name: "foo",
+        peerDependencies: { "a-dep": "^1.0.10" },
+      });
+    });
+  }
   test("dist-tags", async () => {
     await write(
       packageJson,

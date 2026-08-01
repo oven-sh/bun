@@ -312,6 +312,35 @@ test("mock.module: partial re-mock after an accessor-backed mock keeps un-overri
   expect({ a: ns.a, b: ns.b }).toEqual({ a: 99, b: 2 });
 });
 
+test("mock.module: re-mock with an accessor after a hot data-only read invalidates the namespace IC", async () => {
+  mock.module("mock-module-ic-invalidate", () => ({ x: 1, bump: () => {} }));
+  const ns = await import("mock-module-ic-invalidate");
+
+  function readX() {
+    return ns.x;
+  }
+
+  let sum = 0;
+  for (let i = 0; i < 500000; i++) sum += readX();
+  expect(sum).toBe(500000);
+
+  let v = 100;
+  mock.module("mock-module-ic-invalidate", () => ({
+    get x() {
+      return v;
+    },
+    bump() {
+      v++;
+    },
+  }));
+
+  expect(readX()).toBe(100);
+  ns.bump();
+  expect(readX()).toBe(101);
+  for (let i = 0; i < 10; i++) ns.bump();
+  expect(readX()).toBe(111);
+});
+
 test("mock.module: captured require() result does not track a subsequent re-mock", () => {
   mock.module("mock-module-cjs-capture", () => ({ wow: () => 42 }));
   const cjs = require("mock-module-cjs-capture");

@@ -1713,17 +1713,17 @@ impl PackageManifest {
         minimum_release_age_ms: Option<f64>,
         exclusions: Option<&[&[u8]]>,
     ) -> FindVersionResult<'_> {
+        let min_age_gate_ms = match minimum_release_age_ms {
+            Some(min_age_ms) if !self.should_exclude_from_age_filter(exclusions) => {
+                Some(min_age_ms)
+            }
+            _ => None,
+        };
         let Some(dist_result) = self.find_by_dist_tag(tag) else {
             // https://github.com/oven-sh/bun/issues/12041: match npm and let
             // `latest` fall back to the highest published version when the
             // manifest's `dist-tags.latest` is stale or missing.
             if tag == b"latest" {
-                let min_age_gate_ms = match minimum_release_age_ms {
-                    Some(min_age_ms) if !self.should_exclude_from_age_filter(exclusions) => {
-                        Some(min_age_ms)
-                    }
-                    _ => None,
-                };
                 let mut had_too_recent = false;
                 if let Some(highest) =
                     self.find_highest_version(min_age_gate_ms, &mut had_too_recent)
@@ -1735,12 +1735,6 @@ impl PackageManifest {
                 }
             }
             return FindVersionResult::Err(FindVersionError::NotFound);
-        };
-        let min_age_gate_ms = match minimum_release_age_ms {
-            Some(min_age_ms) if !self.should_exclude_from_age_filter(exclusions) => {
-                Some(min_age_ms)
-            }
-            _ => None,
         };
         let Some(min_age_ms) = min_age_gate_ms else {
             return FindVersionResult::Found(dist_result);

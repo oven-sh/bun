@@ -13,7 +13,7 @@
 // uncollectable cycle and every request's ALS store (tens to hundreds of KB)
 // was retained forever.
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import path from "node:path";
 
@@ -24,11 +24,7 @@ test("Response.body on a buffered body does not root the stream when the async c
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const jsonLine = stdout.split("\n").find(l => l.startsWith("{"));
   expect(jsonLine).toBeDefined();

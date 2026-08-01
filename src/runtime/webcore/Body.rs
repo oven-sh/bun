@@ -1357,9 +1357,7 @@ impl Value {
             let readable = locked.readable.get(global).or(owned_readable);
             let was_disturbed = !locked.action.is_none()
                 || locked.promise.is_some()
-                || readable
-                    .as_ref()
-                    .is_some_and(|r| r.is_disturbed(global));
+                || readable.as_ref().is_some_and(|r| r.is_disturbed(global));
             *self = Value::Error(err);
             let Value::Error(err_ref) = self else {
                 unreachable!()

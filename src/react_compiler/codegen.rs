@@ -1995,7 +1995,12 @@ fn codegen_base_instruction_value(
                 E::Unary {
                     op: OpCode::UnDelete,
                     value: property_access_expr(obj, property, loc, None),
-                    flags: E::UnaryFlags::empty(),
+                    // The parser only sets this flag for `delete <ident|dot|index>`;
+                    // lowering only creates PropertyDelete from `delete <EDot>`, so
+                    // the source form always had it set. Without it the printer
+                    // wraps the operand as `delete (0, obj.prop)`, which evaluates
+                    // the property to a value and returns true without deleting.
+                    flags: E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
                 },
                 loc,
             ))
@@ -2055,7 +2060,9 @@ fn codegen_base_instruction_value(
                         },
                         loc,
                     ),
-                    flags: E::UnaryFlags::empty(),
+                    // See PropertyDelete above; lowering only creates
+                    // ComputedDelete from `delete <EIndex>`.
+                    flags: E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
                 },
                 loc,
             ))

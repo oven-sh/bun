@@ -557,6 +557,46 @@ describe("bundler", () => {
     },
   });
 
+  // Regression: codegen.rs PropertyDelete/ComputedDelete emitted `E::Unary` with
+  // `UnaryFlags::empty()`. The parser sets `WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS`
+  // for `delete <dot|index>`; the printer re-wraps any `delete <dot|index>`
+  // lacking that flag as `delete (0, obj.prop)`, which evaluates the property to
+  // a value and returns `true` without deleting anything.
+  itBundled("react-compiler/PropertyDeletePreservesReferenceSemantics", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useMemo } from "react";
+        export function useThing(a, b) {
+          return useMemo(() => {
+            const x = { a, b, c: 3 };
+            delete x.b;
+            const key = "c";
+            delete x[key];
+            return x;
+          }, [a, b]);
+        }
+        console.log(JSON.stringify(useThing(1, 2)));
+      `,
+      "/node_modules/react/index.js": `exports.useMemo = (f) => f();`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: '{"a":1}' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // The hook must be compiled (sanity: codegen, not a bailout, is on trial).
+      // With react bundled the `_c` import is renamed, so assert on the
+      // compiler-runtime body being linked in instead.
+      expect(out).toContain("react.memo_cache_sentinel");
+      // `delete (0, x.b)` / `delete (0, x[...])` evaluates to a value, not a
+      // Reference — must not appear for either the dot or index form.
+      expect(out).not.toMatch(/delete\s*\(\s*0\s*,/);
+    },
+  });
+
   itBundled("react-compiler/NonComponentUntouched", {
     files: {
       "/entry.jsx": /* jsx */ `

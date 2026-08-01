@@ -1034,8 +1034,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         None => (bun_ast::StoreSlice::EMPTY, 0),
                     };
 
-                // useDefineForClassFields: false lowers instance fields to
-                // `this.x = init` in the constructor after parameter properties.
+                // useDefineForClassFields: false => instance field -> `this.x = init` in ctor.
                 let is_lowerable_field = |prop: &G::Property| -> bool {
                     if use_define
                         || prop.kind != PropertyKind::Normal
@@ -1191,8 +1190,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
-                    // `constructor_function` is a `StoreRef` into a separate Store
-                    // allocation, not the Property slice `ptr::read` moved from.
+                    // `StoreRef` -> separate Store alloc, not the slice `ptr::read` moved.
                     if let Some(mut cf) = constructor_function {
                         let old_body: &[Stmt] = cf.func.body.stmts.slice();
                         let mut super_end: usize = 0;

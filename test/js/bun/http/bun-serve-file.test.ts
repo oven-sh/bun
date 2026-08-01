@@ -1373,11 +1373,9 @@ describe.each([true, false])("Response(Bun.file()) open-error status mapping (de
 test.concurrent.each([
   ["sync throw", `error: () => { throw new Error("boom in error handler") },`],
   ["Promise.reject", `error: () => Promise.reject(new Error("boom in error handler")),`],
-])(
-  "Response(Bun.file(missing)): throwing error handler is reported (%s)",
-  async (_label, errorClause) => {
-    using dir = tempDir("serve-file-enoent-handler-fault", { "ok.txt": "ok" });
-    const fixture = `
+])("Response(Bun.file(missing)): throwing error handler is reported (%s)", async (_label, errorClause) => {
+  using dir = tempDir("serve-file-enoent-handler-fault", { "ok.txt": "ok" });
+  const fixture = `
       const dir = ${JSON.stringify(String(dir))};
       const server = Bun.serve({
         port: 0,
@@ -1389,18 +1387,17 @@ test.concurrent.each([
       console.log(res.status);
       server.stop(true);
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("500");
-    expect(stderr).toContain("boom in error handler");
-    expect(exitCode).toBe(1);
-  },
-);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("500");
+  expect(stderr).toContain("boom in error handler");
+  expect(exitCode).toBe(1);
+});
 
 // Same mapping without a user-provided `error` handler: the 404 must land
 // without being reported as an unhandled error on stderr, in dev and prod.

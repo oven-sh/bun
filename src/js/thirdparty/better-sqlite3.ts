@@ -269,6 +269,7 @@ function Database(filenameGiven, options) {
 
   let isOpen = true;
   let defaultSafeIntegers = false;
+  const statements = new Set();
   const self = this;
   const trace =
     verbose == null
@@ -293,6 +294,7 @@ function Database(filenameGiven, options) {
     if (typeof source !== "string") throw new TypeError("Expected first argument to be a string");
     const stmt = db.prepare(source, undefined, 0);
     if (defaultSafeIntegers) stmt.safeIntegers(true);
+    statements.add(stmt);
     return new Statement(stmt, this, source, trace);
   };
 
@@ -313,6 +315,8 @@ function Database(filenameGiven, options) {
   this.close = function close() {
     if (isOpen) {
       isOpen = false;
+      for (const stmt of statements) stmt.finalize();
+      statements.clear();
       db.close();
     }
     return this;

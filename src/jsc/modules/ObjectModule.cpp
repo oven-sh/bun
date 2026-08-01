@@ -21,17 +21,34 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
         RETURN_IF_EXCEPTION(throwScope, void());
         gcUnprotectNullTolerant(object);
 
+        bool hasAccessor = false;
         for (auto& entry : properties.releaseData()->propertyNameVector()) {
             exportNames.append(entry);
 
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            JSValue value = object->get(globalObject, entry);
+            PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+            bool has = object->methodTable()->getOwnPropertySlot(object, globalObject, entry, slot);
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+                exportValues.append(jsUndefined());
+                continue;
+            }
+            if (has && slot.isAccessor())
+                hasAccessor = true;
+            JSValue value = has ? slot.getValue(globalObject, entry) : object->get(globalObject, entry);
             if (scope.exception()) [[unlikely]] {
                 (void)scope.tryClearException();
                 value = jsUndefined();
             }
             exportValues.append(value);
         }
+
+        // When the factory object exposes accessor exports, pass the object as a
+        // trailing value (no matching name) so SyntheticModuleRecord can back the
+        // namespace with it and keep reads live. The environment slots still hold
+        // the snapshots above for static `import { x }` consumers.
+        if (hasAccessor)
+            exportValues.append(object);
     };
 }
 

@@ -166,3 +166,68 @@ test("mocking a builtin", async () => {
   const { readFile } = await import("node:fs/promises");
   expect(await readFile("hello.txt", "utf8")).toBe("hello world");
 });
+
+// https://github.com/oven-sh/bun/issues/9874
+test("mock.module: accessor exports are live bindings (ESM)", async () => {
+  mock.module("mock-module-live-esm", () => {
+    let foo = "foo";
+    return {
+      get foo() {
+        return foo;
+      },
+      updateFoo: () => {
+        foo = "bar";
+      },
+    };
+  });
+
+  const esm = await import("mock-module-live-esm");
+  expect(esm.foo).toBe("foo");
+  esm.updateFoo();
+  expect(esm.foo).toBe("bar");
+});
+
+test("mock.module: accessor exports are live bindings (CJS)", () => {
+  mock.module("mock-module-live-cjs", () => {
+    let foo = "foo";
+    return {
+      get foo() {
+        return foo;
+      },
+      updateFoo: () => {
+        foo = "bar";
+      },
+    };
+  });
+
+  const cjs = require("mock-module-live-cjs");
+  expect(cjs.foo).toBe("foo");
+  cjs.updateFoo();
+  expect(cjs.foo).toBe("bar");
+});
+
+test("mock.module: data properties and accessor properties coexist", async () => {
+  mock.module("mock-module-live-mixed", () => {
+    let v = "a";
+    return {
+      plain: 42,
+      get live() {
+        return v;
+      },
+      set: (next: string) => {
+        v = next;
+      },
+    };
+  });
+
+  const esm = await import("mock-module-live-mixed");
+  expect({ plain: esm.plain, live: esm.live }).toEqual({ plain: 42, live: "a" });
+  esm.set("b");
+  expect({ plain: esm.plain, live: esm.live }).toEqual({ plain: 42, live: "b" });
+
+  const cjs = require("mock-module-live-mixed");
+  expect({ plain: cjs.plain, live: cjs.live }).toEqual({ plain: 42, live: "b" });
+  cjs.set("c");
+  expect({ plain: cjs.plain, live: cjs.live }).toEqual({ plain: 42, live: "c" });
+  expect(esm.live).toBe("c");
+});

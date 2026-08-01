@@ -51,6 +51,18 @@ exports.lineComment = function (
 ) {
   return value;
 };
+
+exports.noMigrateDefault = function (a = /* x */ 1, b) {
+  return [a, b];
+};
+
+exports.noMigrateTrailing = function (a /* trail */, b) {
+  return [a, b];
+};
+
+exports.noLeakIntoBody = function (a = () => { return 1 /* mid */ + 2; }, b) {
+  return [a, b];
+};
 `,
     "main.cjs": `
 const m = require("./mod.cjs");
@@ -60,6 +72,9 @@ console.log(JSON.stringify({
   method: m.obj.method.toString(),
   karma: m.karma.toString(),
   lineComment: m.lineComment.toString(),
+  noMigrateDefault: m.noMigrateDefault.toString(),
+  noMigrateTrailing: m.noMigrateTrailing.toString(),
+  noLeakIntoBody: m.noLeakIntoBody.toString(),
 }));
 `,
   });
@@ -100,5 +115,35 @@ console.log(JSON.stringify({
   expect(results.lineComment).not.toMatch(/\/\/[^\n]*\)/);
   expect(results.lineComment).toContain("token");
 
+  // Comments inside a default value / after a binding must not migrate to the
+  // next argument (that would change the DI token), nor surface as statements
+  // inside a nested body.
+  expect(results.noMigrateDefault).not.toContain("/* x */");
+  expect(diParse(results.noMigrateDefault)).toEqual(["a = 1", "b"]);
+  expect(results.noMigrateTrailing).not.toContain("/* trail */");
+  expect(diParse(results.noMigrateTrailing)).toEqual(["a", "b"]);
+  expect(results.noLeakIntoBody).not.toContain("/* mid */");
+
+  expect(exitCode).toBe(0);
+});
+
+test("legal comments in parameter lists survive minification", async () => {
+  using dir = tempDir("issue-13451-legal", {
+    "in.js": `
+export const f = function(/*! @license MIT */ x) { return x; };
+export const g = function(/*! @preserve */) { return 1; };
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--minify", "in.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("/*! @license MIT */");
+  expect(stdout).toContain("/*! @preserve */");
   expect(exitCode).toBe(0);
 });

@@ -14,6 +14,11 @@ use bun_ast::{E, Expr, Flags, G, S, Stmt};
 
 type Error = crate::Error;
 
+#[inline]
+fn is_legal_comment(text: &[u8]) -> bool {
+    text.len() > 2 && text[2] == b'!'
+}
+
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// This assumes the "function" token has already been parsed
     pub(crate) fn parse_fn_stmt(
@@ -165,8 +170,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if buf.len() <= base {
             return bun_ast::StoreSlice::EMPTY;
         }
-        let slice = self.arena.alloc_slice_fill_iter(buf.drain(base..));
-        bun_ast::StoreSlice::new_mut(slice)
+        let mut taken = bun_alloc::ArenaVec::<G::Comment>::new_in(self.arena);
+        let mut i = base;
+        while i < buf.len() {
+            if is_legal_comment(buf[i].text.slice()) {
+                i += 1;
+            } else {
+                taken.push(buf.remove(i));
+            }
+        }
+        if taken.is_empty() {
+            return bun_ast::StoreSlice::EMPTY;
+        }
+        bun_ast::StoreSlice::from_bump(taken)
+    }
+
+    fn discard_non_legal_comments_from(&mut self, base: usize) {
+        let buf = &mut self.lexer.comments_to_preserve_before;
+        let mut i = base;
+        while i < buf.len() {
+            if is_legal_comment(buf[i].text.slice()) {
+                i += 1;
+            } else {
+                buf.remove(i);
+            }
+        }
     }
 
     pub(crate) fn parse_fn(
@@ -259,6 +287,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             let leading_comments = p.take_arg_leading_comments(comments_base);
+            p.lexer.preserve_all_comments_before = old_preserve_comments;
 
             let mut is_typescript_ctor_field = false;
             let is_identifier = p.lexer.token == T::TIdentifier;
@@ -360,12 +389,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 break;
             }
 
+            p.lexer.preserve_all_comments_before = true;
             p.lexer.next()?;
             rest_arg = false;
         }
-        // Drop any trailing captured comments so they don't leak into the body.
-        p.lexer.comments_to_preserve_before.truncate(comments_base);
         p.lexer.preserve_all_comments_before = old_preserve_comments;
+        p.discard_non_legal_comments_from(comments_base);
 
         if !args.is_empty() {
             func.args = bun_ast::StoreSlice::new_mut(args.into_bump_slice_mut());

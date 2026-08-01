@@ -682,6 +682,98 @@ it("console.log on null prototype", () => {
   expect(Bun.inspect(Object.create(null))).toBe("[Object: null prototype] {}");
 });
 
+// https://github.com/oven-sh/bun/issues/8627
+describe("built-in prototypes print as {} and are not enumerated via the prototype chain", () => {
+  it("String/Number/Boolean.prototype print as {}, not as boxed values", () => {
+    expect(Bun.inspect(String.prototype)).toBe("{}");
+    expect(Bun.inspect(Number.prototype)).toBe("{}");
+    expect(Bun.inspect(Boolean.prototype)).toBe("{}");
+    // nested: must not quote as "" / render as [Number: 0] / [Boolean: false]
+    expect(Bun.inspect({ x: String.prototype })).toBe("{\n  x: {},\n}");
+    expect(Bun.inspect({ x: Number.prototype })).toBe("{\n  x: {},\n}");
+    expect(Bun.inspect({ x: Boolean.prototype })).toBe("{\n  x: {},\n}");
+    // actual boxed primitives are unaffected
+    expect(Bun.inspect(new Number(1))).toBe("[Number: 1]");
+    expect(Bun.inspect(new Boolean(true))).toBe("[Boolean: true]");
+  });
+
+  it("Object.create(X.prototype) does not list the prototype's methods", () => {
+    expect(Bun.inspect(Object.create(String.prototype))).toBe("String {}");
+    expect(Bun.inspect(Object.create(Number.prototype))).toBe("Number {}");
+    expect(Bun.inspect(Object.create(Boolean.prototype))).toBe("Boolean {}");
+    expect(Bun.inspect(Object.create(Array.prototype))).toBe("Array {}");
+    expect(Bun.inspect(Object.create(Date.prototype))).toBe("Date {}");
+    expect(Bun.inspect(Object.create(RegExp.prototype))).toBe("RegExp {}");
+    expect(Bun.inspect(Object.create(Map.prototype))).toBe("Map {}");
+    expect(Bun.inspect(Object.create(Set.prototype))).toBe("Set {}");
+    expect(Bun.inspect(Object.create(Promise.prototype))).toBe("Promise {}");
+    // wrappers in the chain are not enumerated either
+    expect(Bun.inspect(Object.create(new String("a")))).toBe("String {}");
+    expect(Bun.inspect(Object.create(new Number(1)))).toBe("Number {}");
+    // own properties still show; inherited built-in methods do not
+    expect(Bun.inspect(Object.assign(Object.create(String.prototype), { x: 1 }))).toBe("String {\n  x: 1,\n}");
+  });
+
+  it("other built-in prototypes print as {}, not a method dump", () => {
+    for (const proto of [
+      Date.prototype,
+      RegExp.prototype,
+      Map.prototype,
+      Set.prototype,
+      Symbol.prototype,
+      BigInt.prototype,
+      Error.prototype,
+      Promise.prototype,
+    ]) {
+      expect(Bun.inspect(proto)).toBe("{}");
+    }
+    // Array.prototype is itself an Array
+    expect(Bun.inspect(Array.prototype)).toBe("[]");
+  });
+
+  it("user-defined class prototypes are still walked", () => {
+    class Foo {
+      bar() {}
+    }
+    expect(Bun.inspect(new Foo())).toBe("Foo {\n  bar: [Function: bar],\n}");
+    expect(Bun.inspect(Object.create(Foo.prototype))).toBe("Foo {\n  bar: [Function: bar],\n}");
+    class Bar extends Map {
+      baz() {}
+    }
+    // Map.prototype is now a stop point, so only Bar.prototype's own methods show
+    const s = Bun.inspect(Object.create(Bar.prototype));
+    expect(s).toContain("baz: [Function: baz]");
+    expect(s).not.toContain("clear");
+  });
+
+  it("console.log output matches", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          process.stdout.write("|");
+          console.log(String.prototype);
+          process.stdout.write("|");
+          console.log(Object.create(String.prototype));
+          process.stdout.write("|");
+          console.log(Number.prototype);
+          process.stdout.write("|");
+          console.log(Boolean.prototype);
+          process.stdout.write("|");
+          console.log(new String(""));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe('|{}\n|String {}\n|{}\n|{}\n|[String: ""]\n');
+    expect(exitCode).toBe(0);
+  });
+});
+
 it("Symbol", () => {
   expect(Bun.inspect(Symbol())).toBe("Symbol()");
   expect(Bun.inspect(Symbol(""))).toBe("Symbol()");

@@ -2285,6 +2285,21 @@ pub mod formatter {
             }
 
             use jsc::JSType as T;
+
+            // String/Number/Boolean.prototype share a JSType with their boxed
+            // instances (JSC implements them as wrapper objects around ""/0/false)
+            // but should print as plain `{}` like Node does, not as a boxed value.
+            if matches!(
+                js_type,
+                T::NumberObject | T::BooleanObject | T::StringObject | T::DerivedStringObject
+            ) && value.is_builtin_prototype_for_formatting(global_this)
+            {
+                return Ok(TagResult {
+                    tag: TagPayload::Object,
+                    cell: js_type,
+                });
+            }
+
             let tag = match js_type {
                 T::ErrorInstance => TagPayload::Error,
                 T::NumberObject => TagPayload::Double,
@@ -3245,6 +3260,9 @@ pub mod formatter {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<ZigString>> {
+        if value.is_builtin_prototype_for_formatting(global_this) {
+            return Ok(None);
+        }
         let mut name_str = ZigString::init(b"");
         value.get_class_name(global_this, &mut name_str)?;
         if !name_str.eql_comptime(b"Object") {

@@ -755,13 +755,8 @@ pub fn is_folder_in_cache(
     if resolution_tag != ResolutionTag::Npm {
         return sys::directory_exists_at(cache_dir, folder_path).unwrap_or(false);
     }
-    // An npm cache entry is only usable if it still has a package.json. An entry with
-    // the directory present but package.json missing (interrupted extract, external
-    // cleanup, etc.) would otherwise be copied into node_modules as-is and break
-    // lifecycle-script discovery. Re-extracting over such an entry is safe: extraction
-    // renames a temp dir into place, replacing the stale directory. This matches the
-    // per-tag check in `PackageInstall::package_missing_from_cache`.
-    // https://github.com/oven-sh/bun/issues/10423
+    // Match `PackageInstall::package_missing_from_cache`: an npm cache entry without
+    // package.json is incomplete and must be re-extracted (#10423).
     let folder = bun_core::strings::without_trailing_slash(folder_path.as_bytes());
     if folder.is_empty() {
         return false;

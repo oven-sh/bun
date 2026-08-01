@@ -338,8 +338,7 @@ pub struct Arg {
 
     pub ts_metadata: TypeScript::Metadata,
 
-    // `function(/* token */ arg)` — kept so Function.prototype.toString()
-    // preserves DI-style annotations (AngularJS / karma `di`).
+    // `function(/* token */ arg)` — kept for Function.prototype.toString()
     pub leading_comments: StoreSlice<Comment>,
 }
 

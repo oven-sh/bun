@@ -2112,8 +2112,6 @@ pub(crate) mod __gated_printer {
                     for comment in arg.leading_comments.slice() {
                         let text = comment.text.slice();
                         if text.starts_with(b"//") {
-                            // Re-emit as a block comment so it doesn't swallow
-                            // the rest of the line; drop if unrepresentable.
                             let body = &text[2..];
                             if !strings::contains(body, b"*/") {
                                 self.print(b"/*");

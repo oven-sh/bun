@@ -195,8 +195,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ..Default::default()
         };
 
-        // Keep comments inside `(...)` for Function.prototype.toString().
-        // Only entries past `comments_base` belong to this parameter list.
+        // Keep `/* ... */` inside `(...)` for Function.prototype.toString().
         let old_preserve_comments = p.lexer.preserve_all_comments_before;
         let comments_base = p.lexer.comments_to_preserve_before.len();
         p.lexer.preserve_all_comments_before = true;

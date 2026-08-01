@@ -7105,7 +7105,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 self.record_usage(ref_);
                 let e = if self.is_import_item.contains_key(&ref_) {
-                    self.symbols[ref_.inner_index() as usize].set_is_decorator_metadata_guarded(true);
+                    self.symbols[ref_.inner_index() as usize]
+                        .set_is_decorator_metadata_guarded(true);
                     self.new_expr(
                         E::ImportIdentifier {
                             ref_,

@@ -303,6 +303,42 @@ describe("bundler", () => {
     },
   });
 
+  // A node:-spelled external must not capture a bare import of an npm package
+  // that merely shares the builtin-free name.
+  itBundled("browser/NodePrefixExternalDoesNotCaptureNpmPackage", {
+    files: {
+      "/entry.js": `import { x } from "ws";\nconsole.log(x);\n`,
+      "/node_modules/ws/package.json": `{ "name": "ws", "version": "1.0.0", "main": "index.js" }`,
+      "/node_modules/ws/index.js": `export const x = "npm-ws";`,
+    },
+    target: "browser",
+    external: ["node:ws"],
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toEqual([]);
+      api.expectFile("/out.js").toInclude("npm-ws");
+    },
+  });
+  // Subpath imports of a builtin follow the parent's external, matching the
+  // general external check's behavior for "foo/bar" with --external foo.
+  itBundled("browser/NodeBuiltinExternalSubpath#13941", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": `import { pipeline } from "node:stream/promises";\nimport { readFile } from "fs/promises";\nconsole.log(pipeline, readFile);\n`,
+    },
+    target: "browser",
+    external: ["stream", "node:fs"],
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toEqual([
+        { kind: "import-statement", path: "node:stream/promises" },
+        { kind: "import-statement", path: "fs/promises" },
+      ]);
+    },
+  });
+
   // #4928: a package.json "browser": {"<builtin>": false} must win over the
   // builtin polyfill for --target browser. Packages set this to keep their
   // node-only code paths from dragging crypto/stream/buffer into browser bundles.

@@ -1946,22 +1946,40 @@ impl<'a> Resolver<'a> {
                     import_path
                 };
 
-                // `--external` wins over the browser polyfill / `{}` stub; match either
-                // spelling (`stream` / `node:stream`) on both sides (#13941).
-                if self.opts.external.node_modules.count() > 0 {
-                    let bare = import_path_without_node_prefix;
-                    let mut buf = [0u8; 64];
-                    let prefixed: &[u8] = if had_node_prefix {
-                        import_path
-                    } else if 5 + bare.len() <= buf.len() {
-                        buf[..5].copy_from_slice(b"node:");
-                        buf[5..5 + bare.len()].copy_from_slice(bare);
-                        &buf[..5 + bare.len()]
-                    } else {
-                        b""
-                    };
+                // `--external` wins over the polyfill / `{}` stub this block would
+                // emit; match either spelling (`stream` / `node:stream`) and, like
+                // the external check below, parent paths of subpath imports. Bare
+                // imports the block would NOT swallow are left for that later
+                // check, so `--external node:foo` cannot capture an npm package
+                // named `foo` (#13941).
+                if self.opts.external.node_modules.count() > 0
+                    && (had_node_prefix
+                        || NodeFallbackModules::map().contains_key(import_path_without_node_prefix)
+                        || (import_path_without_node_prefix.starts_with(b"fs")
+                            && (import_path_without_node_prefix.len() == 2
+                                || import_path_without_node_prefix[2] == b'/')))
+                {
+                    const PREFIX: &[u8] = b"node:";
                     let ext = &self.opts.external.node_modules;
-                    if ext.contains(bare) || (!prefixed.is_empty() && ext.contains(prefixed)) {
+                    let mut query = import_path_without_node_prefix;
+                    let matched = loop {
+                        if ext.contains(query) {
+                            break true;
+                        }
+                        let mut buf = [0u8; 64];
+                        if PREFIX.len() + query.len() <= buf.len() {
+                            buf[..PREFIX.len()].copy_from_slice(PREFIX);
+                            buf[PREFIX.len()..PREFIX.len() + query.len()].copy_from_slice(query);
+                            if ext.contains(&buf[..PREFIX.len() + query.len()]) {
+                                break true;
+                            }
+                        }
+                        let Some(slash) = strings::last_index_of_char(query, b'/') else {
+                            break false;
+                        };
+                        query = &query[..slash];
+                    };
+                    if matched {
                         if let Some(debug) = self.debug_logs.as_mut() {
                             debug.add_note_fmt(format_args!(
                                 "The path \"{}\" was marked as external by the user",

@@ -5074,9 +5074,7 @@ impl<'a> Resolver<'a> {
                             dec_ret!(MatchStatus::Success);
                         }
 
-                        // A bare-specifier remap ("buffer") is left for the
-                        // post-resolution browser check, which routes it through
-                        // `resolve_without_remapping` for a node_modules lookup.
+                        // Bare-specifier remaps are handled by the post-resolution browser check.
                         if !is_package_path(remap) {
                             field_abs_path = self
                                 .fs_ref()
@@ -5313,9 +5311,7 @@ impl<'a> Resolver<'a> {
                             return MatchStatus::Success;
                         }
 
-                        // A bare-specifier remap ("other-pkg") falls through to
-                        // `load_as_index`; the post-resolution browser check then
-                        // re-derives it via `resolve_without_remapping`.
+                        // Bare-specifier remaps are handled by the post-resolution browser check.
                         if !is_package_path(remap) {
                             let new_paths = [browser_scope.abs_path, remap];
                             let remapped_abs = self.fs_ref().abs_buf(&new_paths, bufs!(remap_path));

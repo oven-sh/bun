@@ -5996,6 +5996,8 @@ impl VirtualMachine {
 
         if is_error_instance {
             let mut saw_cause = false;
+            let mut saw_error = false;
+            let mut saw_suppressed = false;
             // SAFETY: `is_error_instance` ⇒ object.
             let error_obj = unsafe { error_instance.get_object().unwrap_unchecked() };
             let mut iterator = crate::JSPropertyIterator::init(
@@ -6027,6 +6029,10 @@ impl VirtualMachine {
                 if kind == JSType::ErrorInstance && !prev_had_errors {
                     if field.eql_comptime(b"cause") {
                         saw_cause = true;
+                    } else if field.eql_comptime(b"error") {
+                        saw_error = true;
+                    } else if field.eql_comptime(b"suppressed") {
+                        saw_suppressed = true;
                     }
                     value.protect();
                     errors_to_append.push(value);
@@ -6117,7 +6123,26 @@ impl VirtualMachine {
                 writer.write_all(b"\n")?;
             }
 
-            // "cause" is not enumerable, so the above loop won't see it.
+            // "error", "suppressed" (SuppressedError), and "cause" are all
+            // non-enumerable own properties, so the loop above won't see them.
+            if !saw_error {
+                let key = bun_core::String::static_(b"error");
+                if let Some(inner) = error_instance.get_own(global_ref, &key)? {
+                    if inner.is_cell() && inner.js_type() == JSType::ErrorInstance {
+                        inner.protect();
+                        errors_to_append.push(inner);
+                    }
+                }
+            }
+            if !saw_suppressed {
+                let key = bun_core::String::static_(b"suppressed");
+                if let Some(inner) = error_instance.get_own(global_ref, &key)? {
+                    if inner.is_cell() && inner.js_type() == JSType::ErrorInstance {
+                        inner.protect();
+                        errors_to_append.push(inner);
+                    }
+                }
+            }
             if !saw_cause {
                 let key = bun_core::String::static_(b"cause");
                 if let Some(cause) = error_instance.get_own(global_ref, &key)? {

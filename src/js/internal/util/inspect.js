@@ -2027,6 +2027,17 @@ function formatError(err, constructor, tag, ctx, keys) {
     ArrayPrototypePush.$call(keys, "errors");
   }
 
+  // Print the wrapped errors of a SuppressedError
+  if (ObjectPrototypeHasOwnProperty(err, "error") && (keys.length === 0 || !ArrayPrototypeIncludes(keys, "error"))) {
+    ArrayPrototypePush.$call(keys, "error");
+  }
+  if (
+    ObjectPrototypeHasOwnProperty(err, "suppressed") &&
+    (keys.length === 0 || !ArrayPrototypeIncludes(keys, "suppressed"))
+  ) {
+    ArrayPrototypePush.$call(keys, "suppressed");
+  }
+
   stack = improveStack(stack, constructor, name, tag);
 
   // Ignore the error message if it's contained in the stack.

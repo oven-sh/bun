@@ -1260,9 +1260,10 @@ Server.prototype.setTimeout = function (msecs, callback) {
 // instances that share this http server.
 const kBunServeDefaultMaxPayloadLength = 16 * 1024 * 1024;
 Server.prototype[kEnsureWebSocketMaxPayload] = function (maxPayload) {
-  if (typeof maxPayload !== "number" || !(maxPayload > 0)) return;
-  // Bun.serve stores the limit as a u32.
-  if (maxPayload > 0xffffffff) maxPayload = 0xffffffff;
+  if (typeof maxPayload !== "number" || NumberIsNaN(maxPayload)) return;
+  // npm `ws` treats maxPayload < 1 as unlimited. Bun.serve stores the limit as
+  // a u32, so clamp to u32::MAX.
+  if (maxPayload < 1 || maxPayload > 0xffffffff) maxPayload = 0xffffffff;
   maxPayload = MathFloor(maxPayload);
   let ctx = this[kWebSocketReload];
   const current = ctx?.maxPayloadLength ?? kBunServeDefaultMaxPayloadLength;
@@ -1278,6 +1279,10 @@ Server.prototype[kEnsureWebSocketMaxPayload] = function (maxPayload) {
   if (bunServer && websocket) {
     websocket.maxPayloadLength = maxPayload;
     bunServer.reload({ websocket, onNodeHTTPRequest });
+    // reload() clears uWS filterHandlers (HttpContextData::clearRoutes) and
+    // set_routes() does not re-register them, so re-push the connection filter
+    // and the other per-server options that applyServerCustomOptions installs.
+    applyServerCustomOptions(this);
   }
 };
 

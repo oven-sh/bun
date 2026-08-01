@@ -76,6 +76,30 @@ describe("WebSocketServer maxPayload", () => {
     }
   });
 
+  // npm `ws` treats maxPayload < 1 as unlimited (Receiver skips the length
+  // check). An explicit 0 must raise the native cap, not leave it at 16 MiB.
+  it.concurrent("treats maxPayload: 0 as unlimited", async () => {
+    const wss = new WebSocketServer({ port: 0, maxPayload: 0 });
+    const serverOutcome = Promise.withResolvers<{ type: string; length?: number; code?: number }>();
+
+    wss.on("connection", serverWs => {
+      serverWs.on("message", m => serverOutcome.resolve({ type: "message", length: (m as Buffer).length }));
+      serverWs.on("error", () => serverOutcome.resolve({ type: "error" }));
+      serverWs.on("close", code => serverOutcome.resolve({ type: "close", code }));
+    });
+
+    const ws = new WebSocket("ws://127.0.0.1:" + (wss.address() as AddressInfo).port);
+    ws.on("open", () => ws.send(new Uint8Array(BIG)));
+    ws.on("error", () => {});
+
+    try {
+      expect(await serverOutcome.promise).toEqual({ type: "message", length: BIG });
+    } finally {
+      ws.close();
+      wss.close();
+    }
+  });
+
   it.concurrent("delivers a message that is exactly maxPayload bytes", async () => {
     const wss = new WebSocketServer({ port: 0, maxPayload: SMALL });
     const serverOutcome = Promise.withResolvers<{ type: string; length?: number }>();
@@ -99,18 +123,25 @@ describe("WebSocketServer maxPayload", () => {
 
   it.concurrent("raises the native limit when attached to an already-listening server (server mode)", async () => {
     const httpServer = createServer((req, res) => res.end("ok"));
+    let connections = 0;
+    httpServer.on("connection", () => connections++);
     httpServer.listen(0);
     await once(httpServer, "listening");
     const port = (httpServer.address() as AddressInfo).port;
 
     // Attaching with a maxPayload above Bun.serve's default reloads the native
-    // listener; plain HTTP requests on the same server must keep working.
-    expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toBe("ok");
+    // listener; plain HTTP requests and the 'connection' event on the same
+    // server must keep working across the reload. Use `Connection: close` so
+    // each fetch is a fresh TCP connection.
+    const headers = { Connection: "close" };
+    expect(await (await fetch(`http://127.0.0.1:${port}/`, { headers })).text()).toBe("ok");
+    expect(connections).toBe(1);
 
     const wss = new WebSocketServer({ server: httpServer, maxPayload: BIG + 1024 });
     const serverOutcome = Promise.withResolvers<{ type: string; length?: number; code?: number }>();
 
-    expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toBe("ok");
+    expect(await (await fetch(`http://127.0.0.1:${port}/`, { headers })).text()).toBe("ok");
+    expect(connections).toBe(2);
 
     wss.on("connection", serverWs => {
       serverWs.on("message", m => serverOutcome.resolve({ type: "message", length: (m as Buffer).length }));

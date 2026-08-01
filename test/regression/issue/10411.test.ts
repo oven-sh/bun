@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/10411

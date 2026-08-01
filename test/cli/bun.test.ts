@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 
@@ -251,7 +251,8 @@ describe.concurrent("global flag before subcommand", () => {
     });
   }
 
-  test("bun --bun x <bin> still passes --bun through", async () => {
+  // Shebang + chmod bin stub is Unix-only; see test/regression/issue/26207.test.ts.
+  test.skipIf(isWindows)("bun --bun x <bin> still passes --bun through", async () => {
     // `--bun` is handled by bunx's own parser; stepping past leading flags
     // to find the `x` keyword must not strip it.
     using dir = tempDir("which-bunx-bun", {

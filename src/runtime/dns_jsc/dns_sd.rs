@@ -313,7 +313,7 @@ impl Inflight {
         unsafe {
             match *self {
                 Inflight::Jsc(r) => &mut (*r).backend.as_dns_sd_mut().query,
-                Inflight::Internal(r) => &mut (*r).libinfo.query,
+                Inflight::Internal(r) => &mut (*r).dns_sd.query,
             }
         }
     }
@@ -768,7 +768,7 @@ pub(crate) fn lookup(
     let promise_value = unsafe { (*request).head.promise.value() };
 
     let name_z = bun::ZBox::from_bytes(query.name.as_ref());
-    let Some(sub) = shared.start(
+    let Some(_) = shared.start(
         Inflight::Jsc(request),
         protocol,
         &name_z,
@@ -791,8 +791,6 @@ pub(crate) fn lookup(
         return lib_c::lookup(this, query, global_this);
     };
 
-    // SAFETY: request is live (heap-allocated) and exclusively accessed here.
-    unsafe { (*request).backend.as_dns_sd_mut().query.sd_ref = sub };
     this.request_sent(this.vm());
 
     promise_value

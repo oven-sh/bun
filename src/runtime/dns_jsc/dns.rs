@@ -2101,7 +2101,7 @@ pub mod internal {
         pub(crate) valid: bool,
 
         #[cfg(target_os = "macos")]
-        pub(crate) libinfo: MacAsyncDNS,
+        pub(crate) dns_sd: MacAsyncDNS,
     }
 
     impl Request {
@@ -2115,7 +2115,7 @@ pub mod internal {
                 created_at,
                 valid: true,
                 #[cfg(target_os = "macos")]
-                libinfo: MacAsyncDNS::default(),
+                dns_sd: MacAsyncDNS::default(),
             }))
         }
 
@@ -2612,11 +2612,11 @@ pub mod internal {
         let protocol = dns_sd::protocol_for_hints(&get_hints());
         // SAFETY: `req` is the live heap-allocated request owned by the caller.
         unsafe {
-            (*req).libinfo = MacAsyncDNS {
+            (*req).dns_sd = MacAsyncDNS {
                 query: dns_sd::QueryState::new(protocol),
             };
         }
-        let Some(sub) = shared.start(
+        let Some(_) = shared.start(
             dns_sd::Inflight::Internal(req),
             protocol,
             host,
@@ -2625,8 +2625,6 @@ pub mod internal {
         ) else {
             return false;
         };
-        // SAFETY: as above; the subordinate is only stored here.
-        unsafe { (*req).libinfo.query.sd_ref = sub };
 
         true
     }
@@ -2649,7 +2647,7 @@ pub mod internal {
         // `address` (if non-null) is a valid sockaddr per dns_sd.h.
         unsafe {
             (*req)
-                .libinfo
+                .dns_sd
                 .query
                 .record_reply(flags, error_code, address, ttl)
         };
@@ -2661,7 +2659,7 @@ pub mod internal {
     #[cfg(target_os = "macos")]
     pub(super) fn dns_sd_complete(req: *mut Request) {
         // SAFETY: `req` is live and exclusively owned on the event-loop thread.
-        let query = unsafe { &mut (*req).libinfo.query };
+        let query = unsafe { &mut (*req).dns_sd.query };
         let results = query.take_results();
         // SAFETY: `req` is live; `key.port` is set at construction and read-only.
         let port = unsafe { (*req).key.port };

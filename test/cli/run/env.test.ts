@@ -305,8 +305,7 @@ test.concurrent(".env value expansion transitive across files", async () => {
 test.concurrent(".env value expansion does not reinterpret process.env or escaped $", async () => {
   using dir = tempDir("dotenv-expand-verbatim", {
     ".env": "BUNTEST_VB_FILE=file\nBUNTEST_VB_ESC=\\$BUNTEST_VB_FILE\nBUNTEST_VB_REF_ESC=$BUNTEST_VB_ESC\n",
-    ".env.local":
-      "BUNTEST_VB_COMBINED=${BUNTEST_VB_PROC}-${BUNTEST_VB_FILE}\nBUNTEST_VB_REF_PROC=$BUNTEST_VB_PROC\n",
+    ".env.local": "BUNTEST_VB_COMBINED=${BUNTEST_VB_PROC}-${BUNTEST_VB_FILE}\nBUNTEST_VB_REF_PROC=$BUNTEST_VB_PROC\n",
     "index.ts":
       "const o={};for(const n of ['COMBINED','REF_PROC','ESC','REF_ESC'])o[n]=process.env['BUNTEST_VB_'+n];" +
       "console.log(JSON.stringify(o));",

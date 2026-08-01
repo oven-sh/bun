@@ -23,6 +23,12 @@ async function runUpload(
   // One ack per client write so the next write only leaves after the server
   // has observed the previous one as a distinct on_data chunk.
   const acks = writes.map(() => Promise.withResolvers<void>());
+  // `fail` rejects every promise, but only the one currently awaited has a
+  // handler at that point; mark the rest observed so a regression surfaces as
+  // one failure instead of one plus N unhandled-rejection noise entries.
+  void handlerP.catch(() => {});
+  void pullParkedP.catch(() => {});
+  for (const a of acks) void a.promise.catch(() => {});
   let ackIndex = 0;
   const onChunk = () => acks[ackIndex++]?.resolve();
   const fail = (e: unknown) => {

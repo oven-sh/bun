@@ -48,15 +48,15 @@ for (const flag of ["-e", "--print"]) {
       const code = 'const a = 1;\nconst b = 2;\nthrow new Error("x");';
       expect(code.endsWith("\n")).toBe(false);
 
-      const { stderr, exitCode } = Bun.spawnSync({
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
         cmd: [bunExe(), flag, code],
         env: bunEnv,
+        stdout: "pipe",
         stderr: "pipe",
       });
       const text = stderr.toString("utf8");
-      expect(text).toContain("1 | const a = 1;");
-      expect(text).toContain("2 | const b = 2;");
-      expect(text).toContain('3 | throw new Error("x");');
+      expect(stdout.toString("utf8")).toBe("");
+      expect(text).toContain('1 | const a = 1;\n2 | const b = 2;\n3 | throw new Error("x");\n');
       expect(text).toContain("[eval]:3:");
       expect(exitCode).toBe(1);
     });
@@ -139,10 +139,35 @@ describe("error code frame when source has no trailing newline", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("");
-    expect(stderr).toContain("1 | const a = 1;");
-    expect(stderr).toContain("2 | const b = 2;");
-    expect(stderr).toContain('3 | throw new Error("x");');
+    expect(stderr).toContain('1 | const a = 1;\n2 | const b = 2;\n3 | throw new Error("x");\n');
     expect(stderr).toContain("entry.js:3:");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("uncaught error from a file longer than the preview window", async () => {
+    const lines = Array.from({ length: 7 }, (_, i) => `const a${i + 1} = ${i + 1};`);
+    lines.push('throw new Error("x");');
+    using dir = tempDir("no-trailing-nl-long", {
+      "entry.js": lines.join("\n"),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain(
+      "3 | const a3 = 3;\n" +
+        "4 | const a4 = 4;\n" +
+        "5 | const a5 = 5;\n" +
+        "6 | const a6 = 6;\n" +
+        "7 | const a7 = 7;\n" +
+        '8 | throw new Error("x");\n',
+    );
+    expect(stderr).toContain("entry.js:8:");
     expect(exitCode).toBe(1);
   });
 
@@ -159,9 +184,7 @@ describe("error code frame when source has no trailing newline", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout).toContain("1 | const a = 1;");
-    expect(stdout).toContain("2 | const b = 2;");
-    expect(stdout).toContain('3 | console.log(Bun.inspect(new Error("x")));');
+    expect(stdout).toContain('1 | const a = 1;\n2 | const b = 2;\n3 | console.log(Bun.inspect(new Error("x")));\n');
     expect(stdout).toContain("entry.js:3:");
     expect(exitCode).toBe(0);
   });

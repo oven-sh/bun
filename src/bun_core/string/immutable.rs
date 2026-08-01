@@ -1702,10 +1702,12 @@ pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
                     prev_end = cursor.i;
                     r
                 } else {
-                    LineRange {
+                    let r = LineRange {
                         start: prev_end,
-                        end: cursor.i + 1,
-                    }
+                        end: current_end + 1,
+                    };
+                    prev_end = current_end;
+                    r
                 }
             }
             _ => continue,
@@ -1725,10 +1727,7 @@ pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         current_line += 1;
     }
 
-    // The loop exits here when no more newlines/non-ASCII remain, so the tail
-    // `text[prev_end+1..]` is the unterminated final line (index `current_line`,
-    // which is always `<= target_line` at this point). Push it so callers that
-    // assume the last returned range is `target_line` label the right content.
+    // Tail after the last newline is the unterminated final line.
     if (prev_end as usize) + 1 < text.len() {
         if ranges.len() == LINE_RANGE_COUNT {
             let mut new_ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::default();

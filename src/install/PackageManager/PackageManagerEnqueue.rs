@@ -2610,8 +2610,6 @@ fn get_or_put_resolved_package(
                 break 'res FolderResolutionValue::NewPackageId(package.meta.id);
             };
 
-            // file: path missing but name matches a workspace member: link the
-            // workspace package (npm tolerates this, #13195).
             if let FolderResolutionValue::Err(crate::Error::MissingPackageJSON) = res {
                 'resolve_workspace_from_folder: {
                     if !this.options.link_workspace_packages {

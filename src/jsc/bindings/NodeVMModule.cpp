@@ -51,6 +51,7 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
 }
 
 void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout);
+bool isForeignTermination(JSC::VM&, bool sigintReceived, bool hasTimeout);
 
 void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
 {
@@ -105,6 +106,10 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             // below, then convert it to ERR_SCRIPT_EXECUTION_*.
             std::ignore = scope.exception();
             if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
+                if (isForeignTermination(vm, getSigintReceived(), timeout != 0)) {
+                    scope.throwException(globalObject, vm.ensureTerminationException());
+                    return {};
+                }
                 vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
                 DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
                 vm.clearHasTerminationRequest();
@@ -245,16 +250,24 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     // so the exception-check validator is satisfied before the TOP scope.
     std::ignore = scope.exception();
     if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
+        if (isForeignTermination(vm, getSigintReceived(), timeout != 0)) {
+            status(Status::Errored);
+            JSC::Exception* termination = vm.ensureTerminationException();
+            // Store a fresh Exception wrapping TerminatedExecutionError, not the
+            // VM singleton: the errored fast path re-throws m_evaluationException,
+            // and re-throwing the singleton is uncatchable by pointer identity.
+            m_evaluationException.set(vm, this, JSC::Exception::create(vm, termination->value()));
+            scope.throwException(globalObject, termination);
+            return {};
+        }
         vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
         DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
         vm.clearHasTerminationRequest();
         if (getSigintReceived()) {
             setSigintReceived(false);
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else if (timeout != 0) {
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
         } else {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.SourceTextModule evaluation terminated due neither to SIGINT nor to timeout");
+            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
         }
     } else {
         setSigintReceived(false);

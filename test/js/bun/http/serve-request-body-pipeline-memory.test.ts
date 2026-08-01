@@ -7,7 +7,7 @@
 // request held a ~0.5 MB `ArrayBuffer` regardless of how little data was
 // actually read.
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { connect } from "node:net";
 import { Readable } from "node:stream";
 

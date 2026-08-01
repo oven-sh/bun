@@ -53,7 +53,8 @@ const mapJson = {
   sourceRoot: "",
   sources: ["index.ts"],
   names: [],
-  mappings: ";AAAA;AACA;AAGA,SAAS,IAAI;IACX,MAAM,IAAI,KAAK,CAAC,QAAQ,CAAC,CAAC;AAC5B,CAAC;AACD,SAAS,IAAI;IACX,IAAI,EAAE,CAAC;AACT,CAAC;AACD,IAAI,EAAE,CAAC",
+  mappings:
+    ";AAAA;AACA;AAGA,SAAS,IAAI;IACX,MAAM,IAAI,KAAK,CAAC,QAAQ,CAAC,CAAC;AAC5B,CAAC;AACD,SAAS,IAAI;IACX,IAAI,EAAE,CAAC;AACT,CAAC;AACD,IAAI,EAAE,CAAC",
 };
 
 function inlineMapUrl(map: object) {
@@ -69,11 +70,7 @@ async function run(dir: string, file: string, extraEnv: Record<string, string> =
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 

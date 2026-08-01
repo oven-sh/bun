@@ -385,9 +385,8 @@ impl Lookup {
                 }
                 let name: &[u8] = &source_map.external_source_names[index];
                 let mut buf = bun_paths::PathBuffer::uninit();
-                let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                    base_filename,
-                );
+                let dir =
+                    bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
                 let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<
                     bun_paths::platform::Loose,
                 >(dir, &mut buf, &[name]);

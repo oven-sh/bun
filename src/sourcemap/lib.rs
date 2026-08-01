@@ -1196,12 +1196,11 @@ pub fn load_input_source_map(
     // Resolve `url` relative to the source file and read it.
     let mut load_buf = bun_paths::path_buffer_pool::get();
     let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(source_filename);
-    let load_path =
-        bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(
-            dir,
-            &mut load_buf,
-            &[url],
-        );
+    let load_path = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(
+        dir,
+        &mut load_buf,
+        &[url],
+    );
     let data = bun_sys::File::read_from(bun_core::Fd::cwd(), load_path).ok()?;
 
     match parse_json(&data, hint) {

@@ -5395,13 +5395,13 @@ impl VirtualMachine {
                 .source_map
                 .as_deref()
                 .is_some_and(|m| m.is_external());
-            let external_code = if enable_source_code_preview.get() && !already_remapped && is_external
-            {
-                lookup.get_source_code(top_source_url.slice())
-            } else {
-                drop(lookup);
-                None
-            };
+            let external_code =
+                if enable_source_code_preview.get() && !already_remapped && is_external {
+                    lookup.get_source_code(top_source_url.slice())
+                } else {
+                    drop(lookup);
+                    None
+                };
 
             if let Some(src) = display_url {
                 frames[top].source_url.deref();

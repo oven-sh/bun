@@ -2639,7 +2639,10 @@ fn get_or_put_resolved_package(
                         // No member has this name; fall back to the root package.
                         if name_hash != 0 {
                             if let Some(root) = this.lockfile.root_package() {
-                                if root.name_hash == name_hash {
+                                let buf = this.lockfile.buffers.string_bytes.as_slice();
+                                if root.name_hash == name_hash
+                                    && root.name.slice(buf) == name.slice(buf)
+                                {
                                     success_fn(this, dependency_id, 0);
                                     return Ok(Some(ResolvedPackageResult {
                                         package: *this.lockfile.packages.get(0),

@@ -2,11 +2,11 @@
 const { Database: BunDatabase, SQLiteError } = require("bun:sqlite");
 const { existsSync } = require("node:fs");
 const { dirname, resolve } = require("node:path");
-const { inspect } = require("node:util");
 const { throwNotImplemented } = require("internal/shared");
 
 const nodejsUtilInspectCustom = Symbol.for("nodejs.util.inspect.custom");
-const notImplementedExtra = "This module is backed by bun:sqlite; see https://bun.sh/docs/api/sqlite";
+const notImplementedExtra = "This module is backed by bun:sqlite; see https://bun.com/docs/api/sqlite";
+let inspect;
 
 function getBooleanOption(options, key) {
   let value = false;
@@ -317,6 +317,7 @@ function Database(filenameGiven, options) {
   };
 
   this[nodejsUtilInspectCustom] = function (depth, opts) {
+    inspect ??= require("node:util").inspect;
     return `Database ${inspect(
       {
         name: filenameGiven,

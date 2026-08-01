@@ -348,6 +348,87 @@ impl Drop for FlushOnDrop<'_> {
     }
 }
 
+/// Re-applies a base colour after every SGR reset the inner formatter emits,
+/// so the `console.error` red survives the per-token `<r>` resets the value
+/// formatter sprinkles through inspected objects/arrays.
+///
+/// `after_reset` is empty for `console.log` and friends, which makes this a
+/// transparent passthrough. `matched` tracks a partial `\x1b[0m` tail across
+/// `write_all` calls so a reset split over two writes is still recognised.
+struct LevelColorWriter<'a> {
+    inner: &'a mut (dyn bun_io::Write + 'a),
+    after_reset: &'static [u8],
+    matched: u8,
+}
+
+impl<'a> LevelColorWriter<'a> {
+    const RESET: &'static [u8] = b"\x1b[0m";
+
+    #[inline]
+    fn new(inner: &'a mut (dyn bun_io::Write + 'a), after_reset: &'static [u8]) -> Self {
+        Self {
+            inner,
+            after_reset,
+            matched: 0,
+        }
+    }
+}
+
+impl bun_io::Write for LevelColorWriter<'_> {
+    fn write_all(&mut self, mut buf: &[u8]) -> bun_io::Result<()> {
+        if self.after_reset.is_empty() {
+            return self.inner.write_all(buf);
+        }
+
+        if self.matched > 0 {
+            let need = &Self::RESET[self.matched as usize..];
+            let take = need.len().min(buf.len());
+            if buf[..take] == need[..take] {
+                self.inner.write_all(&buf[..take])?;
+                buf = &buf[take..];
+                if take == need.len() {
+                    self.inner.write_all(self.after_reset)?;
+                    self.matched = 0;
+                } else {
+                    self.matched += take as u8;
+                    return Ok(());
+                }
+            } else {
+                self.matched = 0;
+            }
+        }
+
+        while let Some(i) = strings::index_of_char_usize(buf, b'\x1b') {
+            self.inner.write_all(&buf[..i])?;
+            let rest = &buf[i..];
+            if rest.len() >= Self::RESET.len() {
+                if rest[..Self::RESET.len()] == *Self::RESET {
+                    self.inner.write_all(Self::RESET)?;
+                    self.inner.write_all(self.after_reset)?;
+                    buf = &rest[Self::RESET.len()..];
+                } else {
+                    self.inner.write_all(&rest[..1])?;
+                    buf = &rest[1..];
+                }
+            } else if *rest == Self::RESET[..rest.len()] {
+                self.inner.write_all(rest)?;
+                self.matched = rest.len() as u8;
+                return Ok(());
+            } else {
+                self.inner.write_all(&rest[..1])?;
+                buf = &rest[1..];
+            }
+        }
+
+        self.inner.write_all(buf)
+    }
+
+    #[inline]
+    fn flush(&mut self) -> bun_io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 /// <https://console.spec.whatwg.org/#formatter>
 #[crate::host_call]
 pub extern "C" fn message_with_type_and_level(
@@ -1380,6 +1461,12 @@ pub fn format2(
         return Ok(());
     }
 
+    let level_color: &'static [u8] = if options.enable_colors && level == MessageLevel::Error {
+        pfmt!("<red>", true).as_bytes()
+    } else {
+        b""
+    };
+
     if len == 1 {
         // initialized later in this function.
         // `Formatter` has a `Drop` impl, so struct-update from a
@@ -1403,7 +1490,10 @@ pub fn format2(
                 if level == MessageLevel::Error {
                     let _ = writer.write_all(pfmt!("<r><red>", true).as_bytes());
                 }
-                fmt.format::<true>(tag, writer, vals[0], global)?;
+                {
+                    let mut colored = LevelColorWriter::new(&mut *writer, level_color);
+                    fmt.format::<true>(tag, &mut colored, vals[0], global)?;
+                }
                 if level == MessageLevel::Error {
                     let _ = writer.write_all(pfmt!("<r>", true).as_bytes());
                 }
@@ -1467,24 +1557,28 @@ pub fn format2(
         if level == MessageLevel::Error {
             let _ = writer.write_all(pfmt!("<r><red>", true).as_bytes());
         }
-        loop {
-            if any {
-                let _ = writer.write_all(b" ");
-            }
-            any = true;
+        {
+            let mut colored = LevelColorWriter::new(&mut *writer, level_color);
+            let writer: &mut dyn bun_io::Write = &mut colored;
+            loop {
+                if any {
+                    let _ = writer.write_all(b" ");
+                }
+                any = true;
 
-            tag = formatter::Tag::get(this_value, global)?;
-            if matches!(tag.tag, TagPayload::String) && !fmt.remaining().is_empty() {
-                tag.tag = TagPayload::StringPossiblyFormatted;
-            }
+                tag = formatter::Tag::get(this_value, global)?;
+                if matches!(tag.tag, TagPayload::String) && !fmt.remaining().is_empty() {
+                    tag.tag = TagPayload::StringPossiblyFormatted;
+                }
 
-            fmt.format::<true>(tag, writer, this_value, global)?;
-            if fmt.remaining().is_empty() {
-                break;
-            }
+                fmt.format::<true>(tag, writer, this_value, global)?;
+                if fmt.remaining().is_empty() {
+                    break;
+                }
 
-            this_value = fmt.remaining()[0];
-            fmt.advance_remaining();
+                this_value = fmt.remaining()[0];
+                fmt.advance_remaining();
+            }
         }
         if level == MessageLevel::Error {
             let _ = writer.write_all(pfmt!("<r>", true).as_bytes());

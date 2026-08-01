@@ -366,7 +366,10 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     const writer = cs.writable.getWriter();
     // Per the TransformStream spec the transform step (and its chunk
     // validation) waits for the readable side to lift backpressure first.
-    cs.readable.getReader().read().catch(() => {});
+    cs.readable
+      .getReader()
+      .read()
+      .catch(() => {});
     expect.assertions(1);
     try {
       await writer.write(new SharedArrayBuffer(8));

@@ -13,6 +13,8 @@ pub mod bake_response;
 pub mod byte_blob_loader;
 #[path = "webcore/ByteStream.rs"]
 pub mod byte_stream;
+#[path = "webcore/CompressionStreamCoder.rs"]
+pub mod compression_stream_coder;
 #[path = "webcore/CookieMap.rs"]
 pub mod cookie_map;
 #[path = "webcore/Crypto.rs"]
@@ -23,8 +25,6 @@ pub mod s3_client;
 pub mod s3_file;
 #[path = "webcore/S3Stat.rs"]
 pub mod s3_stat;
-#[path = "webcore/CompressionStreamCoder.rs"]
-pub mod compression_stream_coder;
 #[path = "webcore/TextEncoder.rs"]
 pub mod text_encoder;
 #[path = "webcore/TextEncoderStreamEncoder.rs"]

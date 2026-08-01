@@ -7,7 +7,7 @@
 // rebuilt from the lockfile, and enough filler packages that the comparison's
 // sort does not fall back to a stable insertion sort.
 import { expect, test } from "bun:test";
-import { mkdirSync, rmSync } from "fs";
+import { rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -126,15 +126,18 @@ for (const [fillerCount, shiftPrefix] of [
 
     using dir = tempDir(`i36577-${fillerCount}`, {
       "package.json": JSON.stringify({ name: "root", version: "1.0.0", dependencies: root }),
-      "bunfig.toml": `[install]\ncache = "cache"\nregistry = "http://localhost:${server.port}/"\nsaveTextLockfile = true\n`,
+      "bunfig.toml": `[install]\nregistry = "http://localhost:${server.port}/"\nsaveTextLockfile = true\n`,
     });
-    mkdirSync(join(String(dir), "cache"), { recursive: true });
+    // The two concurrent cases install overlapping package names, so each
+    // needs its own cache. BUN_INSTALL_CACHE_DIR (set by the CI runner)
+    // takes precedence over bunfig [install].cache, so override it here.
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
 
     const run = async (args: string[]) => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), ...args],
         cwd: String(dir),
-        env: bunEnv,
+        env,
         stdout: "pipe",
         stderr: "pipe",
       });

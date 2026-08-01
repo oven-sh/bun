@@ -1978,9 +1978,6 @@ impl BuildArtifact {
         jsc::bun_string_jsc::create_utf8_for_js(global_this, &buf[..written])
     }
 
-    /// Quoted entity-tag derived from `self.hash` (the same encoding the
-    /// `.hash` getter exposes). `None` when the bundler left the hash at 0
-    /// (e.g. sourcemap outputs).
     pub(crate) fn etag_bytes(&self) -> Option<[u8; 10]> {
         if self.hash == 0 {
             return None;

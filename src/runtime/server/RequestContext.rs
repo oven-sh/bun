@@ -1662,6 +1662,22 @@ where
         true
     }
 
+    /// Default HTTP status for a `Bun.file()` response body that couldn't be
+    /// opened. A missing file is an expected outcome, so ENOENT/ENOTDIR map to
+    /// 404 and EACCES/EPERM to 403 rather than 500. When `error()` has already
+    /// run, the file being served came from the handler itself and its failure
+    /// is a handler fault, so it stays 500 to keep the report visible.
+    fn sendfile_errno_status(&self, errno: bun_sys::E) -> u16 {
+        if self.flags.has_called_error_handler() {
+            return 500;
+        }
+        match errno {
+            bun_sys::E::ENOENT | bun_sys::E::ENOTDIR | bun_sys::E::EISDIR => 404,
+            bun_sys::E::EACCES | bun_sys::E::EPERM => 403,
+            _ => 500,
+        }
+    }
+
     pub(crate) fn do_sendfile(&mut self, blob: Blob) {
         if self.is_aborted_or_ended() {
             return;
@@ -1693,11 +1709,7 @@ where
             ) {
                 bun_sys::Result::Ok(fd_) => fd_,
                 bun_sys::Result::Err(err) => {
-                    let status = match err.get_errno() {
-                        bun_sys::E::ENOENT | bun_sys::E::ENOTDIR => 404,
-                        bun_sys::E::EACCES | bun_sys::E::EPERM => 403,
-                        _ => 500,
-                    };
+                    let status = self.sendfile_errno_status(err.get_errno());
                     let js_err = err
                         .with_path(file.pathlike.path().slice())
                         .to_js(global_this);
@@ -1755,8 +1767,9 @@ where
                 let mut sys: jsc::SystemError = err.to_system_error().into();
                 sys.message =
                     BunString::static_("Cannot stream a directory as a response body").into();
+                let status = self.sendfile_errno_status(bun_sys::E::EISDIR);
                 return self
-                    .run_error_handler_with_status_code(sys.to_error_instance(global_this), 404);
+                    .run_error_handler_with_status_code(sys.to_error_instance(global_this), status);
             }
             (bun_io::FileType::File, false)
         };

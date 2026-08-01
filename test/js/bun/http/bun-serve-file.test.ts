@@ -1378,13 +1378,19 @@ describe.each([true, false])("Response(Bun.file()) open-error status mapping (de
   });
 });
 
-// An `error()` handler that itself throws while handling a Bun.file ENOENT is
+// An `error()` handler that itself fails while handling a Bun.file ENOENT is
 // a handler fault, not an "expected 404": it must still be reported as an
-// unhandled error and surface as 500.
+// unhandled error and surface as 500. Covers sync throw, async reject, and an
+// error handler whose own Bun.file body can't be opened (custom-404-page case).
 test.concurrent.each([
-  ["sync throw", `error: () => { throw new Error("boom in error handler") },`],
-  ["Promise.reject", `error: () => Promise.reject(new Error("boom in error handler")),`],
-])("Response(Bun.file(missing)): throwing error handler is reported (%s)", async (_label, errorClause) => {
+  ["sync throw", `error: () => { throw new Error("boom in error handler") },`, "boom in error handler"],
+  ["Promise.reject", `error: () => Promise.reject(new Error("boom in error handler")),`, "boom in error handler"],
+  [
+    "Bun.file body missing",
+    `error: () => new Response(Bun.file(dir + "/404-also-missing.html")),`,
+    "404-also-missing.html",
+  ],
+])("Response(Bun.file(missing)): faulting error handler is reported (%s)", async (_label, errorClause, stderrHas) => {
   using dir = tempDir("serve-file-enoent-handler-fault", { "ok.txt": "ok" });
   const fixture = `
       const dir = ${JSON.stringify(String(dir))};
@@ -1406,7 +1412,7 @@ test.concurrent.each([
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim()).toBe("500");
-  expect(stderr).toContain("boom in error handler");
+  expect(stderr).toContain(stderrHas);
   expect(exitCode).toBe(1);
 });
 

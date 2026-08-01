@@ -59,20 +59,22 @@ it("https.createServer rejects a non-function SNICallback", () => {
   );
 });
 
-it("https.createServer SNICallback errors drop the connection and emit tlsClientError", async () => {
-  const cases: [string, (name: string, cb: (err: Error | null, ctx?: unknown) => void) => void, string][] = [
-    ["cb(error)", (_name, cb) => cb(new Error("sni rejected")), "sni rejected"],
-    ["invalid primitive", (_name, cb) => cb(null, true), "Invalid SNI context"],
-    ["invalid object", (_name, cb) => cb(null, {}), "Invalid SNI context"],
-    [
-      "throw",
-      () => {
-        throw new Error("sni threw");
-      },
-      "sni threw",
-    ],
-  ];
-  for (const [, SNICallback, expectedMessage] of cases) {
+const sniErrorCases: [string, (name: string, cb: (err: unknown, ctx?: unknown) => void) => void, string][] = [
+  ["cb(error)", (_name, cb) => cb(new Error("sni rejected")), "sni rejected"],
+  ["cb(string)", (_name, cb) => cb("boom"), "SNI callback error"],
+  ["invalid primitive", (_name, cb) => cb(null, true), "Invalid SNI context"],
+  ["invalid object", (_name, cb) => cb(null, {}), "Invalid SNI context"],
+  [
+    "throw",
+    () => {
+      throw new Error("sni threw");
+    },
+    "sni threw",
+  ],
+];
+it.each(sniErrorCases)(
+  "https.createServer SNICallback %s drops the connection and emits tlsClientError",
+  async (_label, SNICallback, expectedMessage) => {
     const server = createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert, SNICallback }, (req, res) => res.end());
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
     try {
@@ -89,5 +91,5 @@ it("https.createServer SNICallback errors drop the connection and emit tlsClient
     } finally {
       server.close();
     }
-  }
-});
+  },
+);

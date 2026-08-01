@@ -1201,7 +1201,7 @@ function onServerSNI(this: Server, servername, socketHandle) {
     if (settled) return;
     settled = true;
     if (err) {
-      failed = err instanceof Error ? err : new Error("SNI callback error");
+      failed = toSNIError(err);
       return;
     }
     const inner = unwrapSNIContext(context);
@@ -1212,7 +1212,7 @@ function onServerSNI(this: Server, servername, socketHandle) {
     cb.$call(this, servername, done);
   } catch (err) {
     settled = true;
-    failed = err instanceof Error ? err : new Error("SNI callback error");
+    failed = toSNIError(err);
   }
   if (!settled) {
     if (!socketHandle) return undefined;
@@ -1227,6 +1227,10 @@ function onServerSNI(this: Server, servername, socketHandle) {
 
 function emitTlsClientError(server, err) {
   server.emit("tlsClientError", err);
+}
+
+function toSNIError(err) {
+  return err instanceof Error ? err : Object.assign(new Error("SNI callback error"), { reason: err });
 }
 
 function httpAllowHalfOpenGet(this: Server) {

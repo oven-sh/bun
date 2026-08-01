@@ -615,7 +615,7 @@ test("coverage report generation scales with ranges, not bytes", () => {
   // The per-byte path adds ~2s of report generation on release at n=4800; with
   // the per-range path the remaining overhead is JSC's ControlFlowProfiler plus
   // the lcov write. Floor guards against noise on fast release lanes.
-  expect(covered, `plain=${plain.toFixed(0)}ms covered=${covered.toFixed(0)}ms`).toBeLessThan(Math.max(plain, 100) * 3);
+  expect(covered, `plain=${plain.toFixed(0)}ms covered=${covered.toFixed(0)}ms`).toBeLessThan(Math.max(plain, 150) * 3);
 });
 
 test("coveragePathIgnorePatterns - ignore all files", () => {

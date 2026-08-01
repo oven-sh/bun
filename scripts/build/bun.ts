@@ -306,6 +306,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // force-include would lock those in before the source can speak.
   const noPchSources = new Set<string>();
 
+  // Needs the ICU C++ API (icu::Locale::createCanonical) which the PCH hides
+  // via wtf/Platform.h's U_SHOW_CPLUSPLUS_API=0. Also in unified.ts noUnify.
+  noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/IntlCanonicalize.cpp"));
+
   // highway_json.cpp is compiled -O2 even in debug profiles (see its
   // fileOverrides entry in flags.ts); a TU at a different -O level than the
   // PCH cannot use the PCH ("__OPTIMIZE__ ... was disabled in precompiled

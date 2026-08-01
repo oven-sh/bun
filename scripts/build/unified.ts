@@ -140,6 +140,10 @@ const noUnify: readonly string[] = [
   // Fifth highway TU (JSON structural indexer) — same foreach_target.h
   // include-guard reason.
   "src/jsc/bindings/highway_json.cpp",
+  // Needs the ICU C++ API (icu::Locale) which wtf/Platform.h hides via
+  // U_SHOW_CPLUSPLUS_API=0. Bundled siblings would include ICU C headers
+  // first and lock out locid.h's C++-only dependencies. Also noPchSources.
+  "src/jsc/bindings/IntlCanonicalize.cpp",
   // Declares its own minimal CGRect/kCFStringEncodingUTF8/kCFNumberDoubleType
   // so it doesn't pull a CoreGraphics load command; bundled with files that
   // include the real CF headers those names become ambiguous.

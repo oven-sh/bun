@@ -368,7 +368,7 @@ unsafe extern "C" {
     safe fn Bun__emitHandledPromiseEvent(global: &JSGlobalObject, promise: JSValue) -> bool;
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
-    safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
+    safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8) -> bool;
     safe fn Bun__closeAllSQLiteDatabasesForTermination();
     safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
@@ -502,9 +502,14 @@ impl ExitHandler {
     /// parent via `container_of` would escape the provenance of `&mut self`
     /// (which only covers the `ExitHandler` field). Callers pass the VM
     /// reference instead; the body re-enters JS so no `&mut` is held.
-    pub(crate) fn dispatch_on_exit(vm: &VirtualMachine) {
+    pub(crate) fn dispatch_on_exit(vm: &VirtualMachine, drain_microtasks_after_emit: bool) {
         let exit_code = vm.exit_handler.exit_code;
-        Process__dispatchOnExit(vm.global(), exit_code);
+        let emitted = Process__dispatchOnExit(vm.global(), exit_code);
+        if drain_microtasks_after_emit && emitted {
+            // Promise microtasks only (JSC VM::drainMicrotasks): Node's
+            // InternalCallbackScope checkpoint skips nextTick once _exiting.
+            vm.jsc_vm().drain_microtasks();
+        }
         if vm.worker.is_none() {
             Bun__closeAllSQLiteDatabasesForTermination();
             Bun__closeAllNodeSqliteDatabasesForTermination(vm.global());
@@ -1422,22 +1427,28 @@ impl VirtualMachine {
         Some(self.rare_data().hot_map())
     }
 
-    /// True when the entry module's evaluation promise is still `Pending`, i.e.
-    /// (once the loop has drained) an unsettled top-level await that
-    /// `load_entry_point` returned without waiting on.
+    /// True when `load_entry_point` returned with the entry module's
+    /// evaluation promise still `Pending` (an unsettled top-level await).
     pub fn entry_promise_is_pending(&self) -> bool {
-        match self.pending_internal_promise {
-            Some(p) => crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending,
-            None => false,
-        }
+        // Only valid when `load_entry_point` protected the pointer on its
+        // idle-with-pending break; a settled promise is GC-eligible.
+        self.pending_internal_promise_is_protected
+            && matches!(
+                self.pending_internal_promise,
+                Some(p) if crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending,
+            )
     }
 
-    /// Handle the entry module promise once the loop has fully drained (after
-    /// `on_before_exit`): still `Pending` is an unsettled top-level await (Node:
-    /// warn + exit 13, unless user code already set an exit code);
-    /// late-`Rejected` (the resumed body threw) is surfaced via
-    /// `uncaughtException` so a user handler can swallow it.
+    /// Handle the entry promise after the loop fully drained: `Pending` is an
+    /// unsettled top-level await (Node: warn + exit 13); late-`Rejected` is
+    /// surfaced via `uncaughtException` so a user handler can swallow it.
     pub fn report_unsettled_entry_promise(&mut self) {
+        // See `entry_promise_is_pending`: a settled-in-`load_entry_point`
+        // promise is unprotected and GC-eligible; early-Rejected is handled
+        // by the caller before the drain loop so nothing to do here.
+        if !self.pending_internal_promise_is_protected {
+            return;
+        }
         let Some(p) = self.pending_internal_promise else {
             return;
         };
@@ -1445,7 +1456,7 @@ impl VirtualMachine {
             crate::js_promise::Status::Pending => {
                 if self.exit_handler.exit_code == 0 {
                     bun_core::pretty_errorln!(
-                        "<r><yellow>warn<r><d>:<r> Detected unsettled top-level await in <b>{}<r>",
+                        "<r><yellow>warn<r><d>:<r> Detected unsettled top-level await at or below <b>{}<r>",
                         bstr::BStr::new(self.main()),
                     );
                     bun_core::Output::flush();
@@ -1459,10 +1470,8 @@ impl VirtualMachine {
                     // SAFETY: `self.jsc_vm` set in `init`.
                     let result = promise.result(unsafe { &*self.jsc_vm });
                     let global = self.global;
-                    // `on_before_exit` armed this; clear it so a user
-                    // `uncaughtException` listener is consulted instead of
-                    // `uncaught_exception` hard-exiting, then restore so an
-                    // 'exit'-listener throw during `on_exit` still hard-exits.
+                    // `on_before_exit` armed this; clear so a user listener is
+                    // consulted, then restore for the 'exit'-listener-throw path.
                     let was_exit_on_uncaught = self.exit_on_uncaught_exception;
                     self.exit_on_uncaught_exception = false;
                     // SAFETY: `global` valid for VM lifetime.
@@ -1532,7 +1541,11 @@ impl VirtualMachine {
             }
         }
 
-        ExitHandler::dispatch_on_exit(self);
+        // Node drains Promise microtasks once after the natural-shutdown
+        // 'exit' emit so rejections from listeners reach their handlers; an
+        // explicit process.exit() / fatal-exception path drops them.
+        let drain_after_exit = self.unhandled_error_counter == 0 && !self.is_shutting_down;
+        ExitHandler::dispatch_on_exit(self, drain_after_exit);
 
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
         if !self.is_inside_deferred_task_queue.get() {
@@ -2517,9 +2530,8 @@ impl VirtualMachine {
                     break;
                 }
                 if !self.is_event_loop_alive() {
-                    // JSC only roots the load-module promise while Pending; the
-                    // caller will tick (possibly GC) before reading its status
-                    // in `report_unsettled_entry_promise`, so keep it alive.
+                    // JSC only roots the load-module promise while Pending;
+                    // the caller ticks (and may GC) before reading its status.
                     JSValue::from_cell(promise).protect();
                     self.pending_internal_promise_is_protected = true;
                     break;

@@ -883,16 +883,21 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     }
 }
 
-extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
+extern "C" bool Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
 {
     if (!globalObject->hasProcessObject()) {
-        return;
+        return false;
     }
 
     auto* process = globalObject->processObject();
     if (exitCode > 0)
         process->m_isExitCodeObservable = true;
+    // Returns true only when this call emitted 'exit'; the Rust caller uses
+    // that to decide the post-emit microtask drain (natural shutdown only).
+    if (process->m_isExiting)
+        return false;
     dispatchExitInternal(globalObject, process, exitCode);
+    return true;
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionUptime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

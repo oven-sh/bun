@@ -4,9 +4,8 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 
-// All six tests spawn a child bun; under the ASAN debug build six
-// concurrent processes contend enough that the default 5s timeout
-// isn't always sufficient for the readline/stdin cases.
+// Each test spawns a child bun; under debug+ASAN concurrent spawns contend
+// enough that the default 5s timeout isn't always sufficient.
 const timeout = isDebug ? 30_000 : 10_000;
 
 test.concurrent(

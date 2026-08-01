@@ -355,6 +355,13 @@ describe("errors", () => {
     }
   });
 
+  it("md loader renders markdown", () => {
+    globalThis.failingObject = { contents: "# Heading\n\nbody text\n", loader: "md" };
+    const mod = require("fail:my-file-md");
+    expect(mod.default).toContain("<h1>Heading</h1>");
+    expect(mod.default).toContain("<p>body text</p>");
+  });
+
   it("handles invalid 'target'", () => {
     const opts = {
       setup: () => {},

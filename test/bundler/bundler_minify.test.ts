@@ -313,6 +313,37 @@ describe("bundler", () => {
     keepNames: true,
     target: "bun",
   });
+  // https://github.com/oven-sh/bun/issues/15552
+  // mongoose's debug formatter special-cases `options.session` via
+  // `constructor.name === "ClientSession"`; without --keep-names the minified
+  // bundle falls through and hits ClientSession.toBSON()'s throw.
+  itBundled("minify/KeepNamesCommonJSConstructorName#15552", {
+    files: {
+      "/entry.js": /* js */ `
+        const { ClientSession } = require("./sessions.js");
+        function format(x) {
+          if (x.constructor.name === "ClientSession") return "[ClientSession]";
+          return JSON.stringify(x);
+        }
+        const session = new ClientSession();
+        console.log(format(session));
+      `,
+      "/sessions.js": /* js */ `
+        "use strict";
+        class TypedEventEmitter {}
+        class ClientSession extends TypedEventEmitter {
+          toBSON() { throw new Error("ClientSession cannot be serialized to BSON."); }
+        }
+        exports.ClientSession = ClientSession;
+      `,
+    },
+    run: { stdout: "[ClientSession]" },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    keepNames: true,
+    target: "bun",
+  });
   itBundled("minify/KeepNamesDisabledByDefault", {
     files: {
       "/entry.js": /* js */ `

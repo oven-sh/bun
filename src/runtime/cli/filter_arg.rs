@@ -238,13 +238,19 @@ impl FilterSet {
                 PatternKind::Name => name,
                 PatternKind::Path => path,
             };
-            if glob::r#match(&filter.pattern, target).matches() {
+            let primary = glob::r#match(&filter.pattern, target);
+            if primary.matches() {
                 return true;
             }
             // pnpm parity (#10639): a name filter that is not itself scoped also matches the
             // package name with its `@scope/` prefix stripped and the package directory's
-            // basename, so `--filter db` selects `@org/db` and/or `packages/db`.
-            if filter.kind == PatternKind::Name && filter.pattern.first() != Some(&b'@') {
+            // basename, so `--filter db` selects `@org/db` and/or `packages/db`. Skip negated
+            // patterns: OR-ing alternatives is wrong under negation (a `!name` filter that
+            // excluded the full-name target would then "match" any alternative it fails to hit).
+            if filter.kind == PatternKind::Name
+                && !primary.is_negated()
+                && filter.pattern.first() != Some(&b'@')
+            {
                 if let Some(unscoped) = without_scope(name) {
                     if glob::r#match(&filter.pattern, unscoped).matches() {
                         return true;

@@ -15,8 +15,6 @@ The `--filter` (or `-F`) flag selects packages in a monorepo by pattern. Pattern
 
 Name patterns select packages by the `name` field in `package.json`. For example, if you have packages `pkg-a`, `pkg-b` and `other`, you can match all of them with `*`, only `pkg-a` and `pkg-b` with `pkg*`, and a specific package with its full name.
 
-For scoped packages, a pattern that is not itself scoped also matches the name without the scope and the package's directory name, so `--filter db` selects a package named `@org/db` or a package in `packages/db`.
-
 ### Package Path `--filter ./<glob>`
 
 Path patterns start with `./` and select all packages in directories matching the pattern. For example, to match all packages in subdirectories of `packages`, use `--filter './packages/**'`. To match the package in `packages/foo`, use `--filter ./packages/foo`.
@@ -96,6 +94,8 @@ Filters respect your [workspace configuration](/pm/workspaces): if your `package
 # in src/bar: runs myscript in src/foo, no need to cd!
 bun run --filter foo myscript
 ```
+
+For scoped packages, a name pattern that is not itself scoped also matches the name without the scope and the package's directory name, so `bun run --filter db <script>` selects a package named `@org/db` or a package in `packages/db`.
 
 ### Parallel and sequential mode
 

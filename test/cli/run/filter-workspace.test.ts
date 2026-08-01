@@ -317,6 +317,28 @@ describe("bun", () => {
       expect(exitCode).not.toBe(0);
     });
 
+    test("negated filter does not fall back (still excludes the named package)", () => {
+      // `!@org/db` must exclude `@org/db` and keep the other two; the unscoped/dir
+      // fallback must not run for `!`-prefixed patterns.
+      runInCwdSuccess({
+        cwd: dir,
+        pattern: "!@org/db",
+        target_pattern: [/SITE_RAN/, /PLAIN_RAN/],
+        antipattern: /DB_RAN/,
+      });
+    });
+
+    test("negated filter does not fall back via directory name", () => {
+      // `!pkgc` excludes the package named `pkgc` (directory `dirname`); the
+      // directory-basename fallback must not re-include it.
+      runInCwdSuccess({
+        cwd: cwd_root,
+        pattern: "!pkgc",
+        target_pattern: [/scripta/, /scriptb/, /scriptd/],
+        antipattern: /scriptc/,
+      });
+    });
+
     test("full scoped name still matches", () => {
       runInCwdSuccess({
         cwd: dir,

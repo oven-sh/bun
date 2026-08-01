@@ -62,10 +62,8 @@ void KeyPairJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callb
         return;
     }
 
-    // The exported JS wrappers hold their own RefPtr<KeyObjectData>; drop the
-    // ctx's ref before re-entering JS. The ctx is freed (and with it this ref)
-    // only after the callback returns, so a callback that never returns
-    // (process.exit) would otherwise strand the EVP_PKEY past VM teardown.
+    // Drop our ref before re-entering JS: the ctx is freed only after the
+    // callback returns, so process.exit() inside it would strand the EVP_PKEY.
     m_keyObj = {};
 
     Bun__EventLoop__runCallback3(

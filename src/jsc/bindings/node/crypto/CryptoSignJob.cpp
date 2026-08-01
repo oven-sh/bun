@@ -224,9 +224,7 @@ void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // runTask has already produced m_signResult / m_verifyResult; drop the key
-    // ref before re-entering JS so a callback that never returns (process.exit)
-    // cannot strand the EVP_PKEY past VM teardown. See KeyPairJobCtx::runFromJS.
+    // Drop before re-entering JS; see KeyPairJobCtx::runFromJS.
     m_keyData = nullptr;
 
     switch (m_mode) {

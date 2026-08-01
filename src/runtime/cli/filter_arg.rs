@@ -242,11 +242,8 @@ impl FilterSet {
             if primary.matches() {
                 return true;
             }
-            // pnpm parity (#10639): a name filter that is not itself scoped also matches the
-            // package name with its `@scope/` prefix stripped and the package directory's
-            // basename, so `--filter db` selects `@org/db` and/or `packages/db`. Skip negated
-            // patterns: OR-ing alternatives is wrong under negation (a `!name` filter that
-            // excluded the full-name target would then "match" any alternative it fails to hit).
+            // #10639: `--filter db` also matches `@org/db` and the `packages/db` directory.
+            // Negated patterns stay exact-name: OR-ing alternatives under `!` would re-include.
             if filter.kind == PatternKind::Name
                 && !primary.is_negated()
                 && filter.pattern.first() != Some(&b'@')

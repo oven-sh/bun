@@ -277,6 +277,23 @@ describe("bun", () => {
       });
     });
 
+    test("bare name matches every @*/name package (inclusive, unlike pnpm)", () => {
+      using multi = tempDir("filter-unscoped-multi", {
+        packages: {
+          a: { "package.json": JSON.stringify({ name: "@org/db", scripts: { present: "echo ORG_DB" } }) },
+          b: { "package.json": JSON.stringify({ name: "@other/db", scripts: { present: "echo OTHER_DB" } }) },
+          c: { "package.json": JSON.stringify({ name: "@org/unrelated", scripts: { present: "echo UNRELATED" } }) },
+        },
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      });
+      runInCwdSuccess({
+        cwd: String(multi),
+        pattern: "db",
+        target_pattern: [/ORG_DB/, /OTHER_DB/],
+        antipattern: /UNRELATED/,
+      });
+    });
+
     test("bare name matches when only the unscoped package name matches", () => {
       runInCwdSuccess({
         cwd: dir,

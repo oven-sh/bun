@@ -650,7 +650,7 @@ static JSC::JSValue parseJSONModuleSource(JSC::JSGlobalObject* globalObject, JSC
     WTF::String message;
     if (auto* originalError = dynamicDowncast<JSC::ErrorInstance>(exception->value())) {
         message = originalError->sanitizedMessageString(globalObject);
-        scope.assertNoException();
+        RETURN_IF_EXCEPTION(scope, {});
     }
     if (message.isEmpty())
         message = "JSON Parse error"_s;

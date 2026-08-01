@@ -2769,12 +2769,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnDeclaredTypes, (JSGlobalObject *
     CHECK_THIS
     CHECK_PREPARED
 
-    // Ensure the statement has been executed at least once
-    if (!castedThis->hasExecuted) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement must be executed before accessing declaredTypes"_s));
-        return {};
-    }
-
     int count = sqlite3_column_count(castedThis->stmt);
     JSC::JSArray* array = JSC::constructEmptyArray(lexicalGlobalObject, static_cast<ArrayAllocationProfile*>(nullptr), count);
     RETURN_IF_EXCEPTION(scope, {});

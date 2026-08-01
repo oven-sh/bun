@@ -118,7 +118,10 @@ describe("better-sqlite3 shim", () => {
     const db = new Database(":memory:");
     db.exec("CREATE TABLE t (a INTEGER, b TEXT)");
     const sel = db.prepare("SELECT a, b FROM t");
-    expect(sel.columns().map((c: any) => c.name)).toEqual(["a", "b"]);
+    expect(sel.columns()).toEqual([
+      { name: "a", column: null, table: null, database: null, type: "INTEGER" },
+      { name: "b", column: null, table: null, database: null, type: "TEXT" },
+    ]);
     expect(sel.reader).toBe(true);
     expect(sel.readonly).toBe(true);
     const ins = db.prepare("INSERT INTO t VALUES (1, 'x')");

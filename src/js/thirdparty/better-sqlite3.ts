@@ -151,12 +151,7 @@ class Statement {
 
   columns() {
     const names = this.#stmt.columnNames;
-    let declared;
-    try {
-      declared = this.#stmt.declaredTypes;
-    } catch {
-      declared = null;
-    }
+    const declared = this.#stmt.declaredTypes;
     const out = $newArrayWithSize(names.length);
     for (let i = 0; i < names.length; i++) {
       out[i] = {
@@ -164,7 +159,7 @@ class Statement {
         column: null,
         table: null,
         database: null,
-        type: declared ? (declared[i] ?? null) : null,
+        type: declared[i] ?? null,
       };
     }
     return out;
@@ -360,7 +355,7 @@ Object.defineProperty(SqliteError, Symbol.hasInstance, {
     return (
       instance != null &&
       typeof instance === "object" &&
-      (instance.name === "SqliteError" || instance.name === "SQLiteError" || SQLiteError[Symbol.hasInstance](instance))
+      (instance.name === "SqliteError" || SQLiteError[Symbol.hasInstance](instance))
     );
   },
 });

@@ -35,7 +35,7 @@ else if (
   closeAction = {
     reason: "not_planned",
     comment: `Duplicate of #4290.
-better-sqlite3 is not supported yet in Bun due to missing V8 C++ APIs. For now, you can try [bun:sqlite](https://bun.com/docs/api/sqlite) for an almost drop-in replacement.`,
+Bun cannot load the better-sqlite3 native addon because it uses V8 C++ APIs that Bun does not implement. In current Bun releases \`require("better-sqlite3")\` resolves to a built-in module backed by [bun:sqlite](https://bun.com/docs/api/sqlite); please upgrade Bun and use \`require("better-sqlite3")\` directly instead of loading the \`.node\` file.`,
   };
 }
 

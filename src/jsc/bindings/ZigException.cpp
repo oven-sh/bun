@@ -636,8 +636,7 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
     }
 
     if (except.stack.frames_len == 0 && getFromSourceURL) {
-        // Parse-time SyntaxErrors have no JS stack, so .line/.sourceURL are
-        // never materialized; addErrorInfo() still sets the C++ fields.
+        // Parse-time SyntaxErrors have no stack; addErrorInfo() still set the C++ fields (#5192).
         const String& nativeSourceURL = err->sourceURL();
         if (!nativeSourceURL.isEmpty()) {
             auto& frame = except.stack.frames_ptr[0];

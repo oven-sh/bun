@@ -4,7 +4,7 @@ import nodefs from "node:fs";
 import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { connect as tlsConnect, createSecureContext } from "node:tls";
+import { createSecureContext, connect as tlsConnect } from "node:tls";
 
 // https://github.com/oven-sh/bun/issues/14395
 it("https.createServer dispatches SNICallback and serves the selected certificate", async () => {

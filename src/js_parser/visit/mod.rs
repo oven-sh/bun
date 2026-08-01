@@ -1046,11 +1046,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     match prop.key.map(|k| k.data) {
                         None => false,
-                        Some(ExprData::EPrivateIdentifier(_)) => true,
-                        Some(ExprData::EString(_) | ExprData::ENumber(_)) => {
-                            !prop.flags.contains(flags::Property::IsComputed)
-                                || prop.initializer.is_none()
-                        }
+                        Some(
+                            ExprData::EPrivateIdentifier(_)
+                            | ExprData::EString(_)
+                            | ExprData::ENumber(_),
+                        ) => true,
                         _ => {
                             !prop.flags.contains(flags::Property::IsComputed)
                                 && prop.initializer.is_none()

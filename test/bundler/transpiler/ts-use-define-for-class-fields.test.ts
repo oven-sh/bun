@@ -97,6 +97,27 @@ describe("tsconfig compilerOptions.useDefineForClassFields", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("false: computed literal keys use [[Set]] semantics", async () => {
+    using dir = tempDir("udfcf-computed", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
+      "index.ts": `
+        let sets = 0;
+        class Base { set lit(v: any) { sets++; } get lit() { return "g"; } }
+        class C extends Base {
+          ["lit"]: any = this.x;
+          [0] = this.x * 2;
+          constructor(public x: number) { super(); }
+        }
+        const c = new C(3);
+        process.stdout.write(JSON.stringify({ sets, lit: c.lit, zero: c[0] }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ sets: 1, lit: "g", zero: 6 });
+    expect(exitCode).toBe(0);
+  });
+
   for (const explicit of [true, false]) {
     test.concurrent(`${explicit ? "true" : "unset"}: keeps native class-field ([[Define]]) semantics`, async () => {
       using dir = tempDir("udfcf-define", {

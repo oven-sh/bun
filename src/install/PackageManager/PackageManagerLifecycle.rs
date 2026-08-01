@@ -200,7 +200,8 @@ impl PackageManager {
                         });
                     // Owned NUL-terminated copy.
                     let non_patched_path = ZBox::from_bytes(&folder_path.as_bytes()[..idx]);
-                    if directories::is_folder_in_cache(self, &non_patched_path, pkg.resolution.tag) {
+                    if directories::is_folder_in_cache(self, &non_patched_path, pkg.resolution.tag)
+                    {
                         self.set_preinstall_state(pkg.meta.id, PreinstallState::ApplyPatch);
                         // yay step 1 is already done for us
                         return PreinstallState::ApplyPatch;

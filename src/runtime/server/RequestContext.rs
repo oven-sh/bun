@@ -3616,7 +3616,11 @@ where
                 let _keep = jsc::EnsureStillAlive(result);
                 if !result.is_empty_or_undefined_or_null() {
                     if let Some(err) = result.to_error() {
-                        self.finish_running_error_handler(err, status);
+                        // The error handler itself threw or returned an Error.
+                        // That is a handler fault regardless of the status the
+                        // original error would have produced, so report it as
+                        // 500 instead of letting a 404/403 default swallow it.
+                        self.finish_running_error_handler(err, 500);
                         return;
                     } else if let Some(promise) = result.as_any_promise() {
                         Self::process_on_error_promise(self, result, promise, value, status);
@@ -3712,7 +3716,9 @@ where
                 return;
             }
             jsc::PromiseResult::Rejected(err) => {
-                ctx.finish_running_error_handler(err, status);
+                // The error handler's promise rejected: a handler fault,
+                // reported as 500 rather than the original default status.
+                ctx.finish_running_error_handler(err, 500);
                 return;
             }
         }

@@ -1354,7 +1354,53 @@ describe.each([true, false])("Response(Bun.file()) open-error status mapping (de
     const res = await fetch(s.url);
     expect({ status: res.status, body: await res.text() }).toEqual({ status: 410, body: "custom ENOENT" });
   });
+
+  it("async error handler resolving to undefined falls through to 404", async () => {
+    await using s = Bun.serve({
+      port: 0,
+      development,
+      fetch: () => new Response(Bun.file(join(dir, "missing.txt"))),
+      error: () => Promise.resolve(undefined as any),
+    });
+    const res = await fetch(s.url);
+    expect(res.status).toBe(404);
+  });
 });
+
+// An `error()` handler that itself throws while handling a Bun.file ENOENT is
+// a handler fault, not an "expected 404": it must still be reported as an
+// unhandled error and surface as 500.
+test.concurrent.each([
+  ["sync throw", `error: () => { throw new Error("boom in error handler") },`],
+  ["Promise.reject", `error: () => Promise.reject(new Error("boom in error handler")),`],
+])(
+  "Response(Bun.file(missing)): throwing error handler is reported (%s)",
+  async (_label, errorClause) => {
+    using dir = tempDir("serve-file-enoent-handler-fault", { "ok.txt": "ok" });
+    const fixture = `
+      const dir = ${JSON.stringify(String(dir))};
+      const server = Bun.serve({
+        port: 0,
+        development: false,
+        fetch: () => new Response(Bun.file(dir + "/missing.txt")),
+        ${errorClause}
+      });
+      const res = await fetch(server.url);
+      console.log(res.status);
+      server.stop(true);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("500");
+    expect(stderr).toContain("boom in error handler");
+    expect(exitCode).toBe(1);
+  },
+);
 
 // Same mapping without a user-provided `error` handler: the 404 must land
 // without being reported as an unhandled error on stderr, in dev and prod.

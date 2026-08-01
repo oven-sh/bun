@@ -12,6 +12,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/JSMapIterator.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/CyclicModuleRecord.h>
@@ -503,6 +504,132 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
     return object;
 }
 
+// When mock.module() overrides a module that already evaluated, modules which
+// imported it may have captured its values (e.g. `const x = new Imported()` at
+// module scope). Patching the target's live bindings does not help those
+// captures, so evict every cached module whose dependency graph reaches the
+// mocked key. The next import/require of a dependent re-evaluates it against
+// the mock.
+static void evictDependentModules(Zig::GlobalObject* globalObject, const WTF::String& mockedKey)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    auto* moduleLoader = globalObject->moduleLoader();
+    auto* requireMap = globalObject->requireMap();
+
+    WTF::UncheckedKeyHashSet<WTF::String> tainted;
+    tainted.add(mockedKey);
+
+    // Fixed-point over both graphs: a module is tainted once any of its loaded
+    // dependencies is tainted. ESM edges come from AbstractModuleRecord's
+    // loadedModules() (resolved child records); CJS edges from m_children.
+    bool changed = true;
+    while (changed) {
+        changed = false;
+
+        for (auto& [key, entry] : moduleLoader->moduleMap()) {
+            if (!key.first || !entry)
+                continue;
+            WTF::String keyStr { key.first };
+            if (tainted.contains(keyStr))
+                continue;
+            auto* record = entry->record();
+            if (!record)
+                continue;
+            for (auto& [depKey, loaded] : record->loadedModules()) {
+                auto* depRecord = loaded.m_module.get();
+                if (!depRecord)
+                    continue;
+                if (tainted.contains(depRecord->moduleKey().string())) {
+                    tainted.add(keyStr);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+
+        if (requireMap->size() > 0) {
+            auto iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), requireMap, JSC::IterationKind::Entries);
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+            } else {
+                JSC::JSValue keyValue;
+                JSC::JSValue entryValue;
+                while (iter->nextKeyValue(globalObject, keyValue, entryValue)) {
+                    auto* mod = dynamicDowncast<Bun::JSCommonJSModule>(entryValue);
+                    if (!mod)
+                        continue;
+                    auto* keyString = dynamicDowncast<JSC::JSString>(keyValue);
+                    if (!keyString)
+                        continue;
+                    WTF::String keyStr = keyString->value(globalObject);
+                    if (scope.exception()) [[unlikely]] {
+                        (void)scope.tryClearException();
+                        continue;
+                    }
+                    if (tainted.contains(keyStr))
+                        continue;
+
+                    bool hit = false;
+                    auto checkChild = [&](JSC::JSValue childValue) {
+                        if (hit)
+                            return;
+                        auto* child = dynamicDowncast<Bun::JSCommonJSModule>(childValue);
+                        if (!child)
+                            return;
+                        auto* childId = child->m_id.get();
+                        if (!childId)
+                            return;
+                        WTF::String childKey = childId->value(globalObject);
+                        if (scope.exception()) [[unlikely]] {
+                            (void)scope.tryClearException();
+                            return;
+                        }
+                        if (tainted.contains(childKey))
+                            hit = true;
+                    };
+
+                    if (mod->m_childrenValue) {
+                        if (auto* array = dynamicDowncast<JSC::JSArray>(mod->m_childrenValue.get())) {
+                            for (unsigned i = 0, len = array->length(); i < len && !hit; ++i) {
+                                checkChild(array->getIndex(globalObject, i));
+                                if (scope.exception()) [[unlikely]]
+                                    (void)scope.tryClearException();
+                            }
+                        }
+                    } else {
+                        for (auto& child : mod->m_children)
+                            checkChild(child.get());
+                    }
+
+                    if (hit) {
+                        tainted.add(keyStr);
+                        changed = true;
+                    }
+                }
+                if (scope.exception()) [[unlikely]]
+                    (void)scope.tryClearException();
+            }
+        }
+    }
+
+    tainted.remove(mockedKey);
+    if (tainted.isEmpty())
+        return;
+
+    {
+        WTF::Locker locker { moduleLoader->cellLock() };
+        for (auto& key : tainted)
+            moduleLoader->removeEntry(JSC::Identifier::fromString(vm, key));
+    }
+    for (auto& key : tainted) {
+        requireMap->remove(globalObject, jsString(vm, key));
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+    }
+}
+
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsModuleMock);
 extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
@@ -630,10 +757,12 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     bool removeFromESM = false;
     bool removeFromCJS = false;
+    bool wasAlreadyLoaded = false;
 
     auto specifierIdent = JSC::Identifier::fromString(vm, specifierString->value(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
     if (auto* entry = globalObject->moduleLoader()->registryEntry(specifierIdent)) {
+        wasAlreadyLoaded = true;
         removeFromESM = true;
         if (auto* mod = entry->record()) {
             // getModuleNamespace asserts the record has progressed past linking.
@@ -689,6 +818,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     JSValue entryValue = globalObject->requireMap()->get(globalObject, specifierString);
     RETURN_IF_EXCEPTION(scope, {});
     if (entryValue) {
+        wasAlreadyLoaded = true;
         removeFromCJS = true;
         if (auto* moduleObject = entryValue ? dynamicDowncast<Bun::JSCommonJSModule>(entryValue) : nullptr) {
             JSValue exportsValue = getJSValue();
@@ -710,6 +840,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         globalObject->requireMap()->remove(globalObject, specifierString);
         RETURN_IF_EXCEPTION(scope, {});
     }
+
+    if (wasAlreadyLoaded)
+        evictDependentModules(globalObject, specifier);
 
     globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock);
 

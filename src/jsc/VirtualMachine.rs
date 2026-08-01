@@ -5416,10 +5416,8 @@ impl VirtualMachine {
                     break 'code src;
                 }
                 if is_external {
-                    // The map points at a different source than the loaded
-                    // file but neither `sourcesContent` nor the on-disk
-                    // original were available; showing the generated file's
-                    // lines would pair the wrong text with remapped positions.
+                    // Original source unavailable; the generated file's lines
+                    // would not match the remapped positions.
                     break 'code bun_core::ZigStringSlice::EMPTY;
                 }
                 if top_frame_is_builtin {

@@ -325,9 +325,7 @@ impl Lookup {
     /// - the runtime transpiler chained through an input-side source map.
     pub fn display_source_url_if_needed(&self, base_filename: &[u8]) -> Option<bun_core::String> {
         let mut source_map = self.source_map.as_deref()?;
-        // When the transpiler's map is chained onto the input's own map, the
-        // `source_index` came from `find_mapping`'s second hop and indexes the
-        // input map's sources.
+        // `source_index` indexes the chained input map's sources when present.
         if let Some(input_map) = source_map.input_map.as_deref() {
             source_map = input_map;
         }
@@ -378,8 +376,7 @@ impl Lookup {
             let index = usize::try_from(self.mapping.source_index).ok()?;
 
             let Some(provider) = source_map.underlying_provider.provider() else {
-                // No provider (runtime-transpiled chain): fall through to
-                // reading the original source from disk by name.
+                // No provider (chained input map): read the original by name.
                 if index >= source_map.external_source_names.len() {
                     return None;
                 }

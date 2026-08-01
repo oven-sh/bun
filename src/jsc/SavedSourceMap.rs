@@ -63,10 +63,8 @@ impl SavedSourceMap {
 /// handle inside it borrowed) is a registered lazy external source provider.
 /// `ParsedSourceMap` is materialized lazily from such a provider for sources
 /// that ship their own external `.map`.
-/// `InternalWithInputUrl` (boxed; box + blob table-owned) is an
-/// `InternalSourceMap` for a runtime-transpiled module whose on-disk input
-/// carried a `//# sourceMappingURL=` comment; the URL is resolved lazily on
-/// the first lookup and chained after the transpiler's own mappings.
+/// `InternalWithInputUrl` (boxed) pairs an `InternalSourceMap` with the
+/// input file's own `sourceMappingURL`, resolved lazily on first lookup.
 pub(crate) type Value = TaggedPtrUnion<ValueTypes>;
 
 /// Local type-list marker so `TypeList`/`UnionMember` impls satisfy orphan
@@ -91,10 +89,8 @@ impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for InternalWithInputUrl {
     const TAG: TagType = 1021;
 }
 
-/// A runtime-transpiler `InternalSourceMap` blob paired with the
-/// `//# sourceMappingURL=` value found in the transpiled file's on-disk
-/// input. Boxed into the table by [`SavedSourceMap::put_mappings`]; the box
-/// owns the blob (freed via `free_owned` in [`SavedSourceMap::release_value`]).
+/// Transpiler blob plus the input file's `sourceMappingURL` value. Boxed into
+/// the table; the box owns `blob` (freed in [`SavedSourceMap::release_value`]).
 pub(crate) struct InternalWithInputUrl {
     blob: InternalSourceMap,
     url: Box<[u8]>,
@@ -271,9 +267,6 @@ impl SavedSourceMap {
         let blob: Box<[u8]> = core::mem::take(&mut mappings.list).into_boxed_slice();
         let blob_ptr: *mut [u8] = bun_core::heap::into_raw(blob);
 
-        // If the on-disk input carried its own `//# sourceMappingURL=`, stash
-        // the URL alongside the blob so the first stack-trace lookup can chain
-        // the transpiler's map through the input's own map.
         if let Some(url) = SourceMap::find_input_source_mapping_url(source.contents()) {
             let boxed = bun_core::heap::into_raw(Box::new(InternalWithInputUrl {
                 blob: InternalSourceMap {
@@ -367,13 +360,10 @@ impl SavedSourceMap {
                 ..Default::default()
             };
         } else if tag == Value::case::<InternalWithInputUrl>() {
-            // Runtime-transpiled module whose input carried its own source
-            // map. Take ownership of the box (blob + URL) out of the table so
-            // the blob cannot be freed underneath us while the lock is
-            // dropped for JSON parsing.
+            // Take ownership out before dropping the lock for JSON parsing.
             self.map_mut().remove(&h);
-            // SAFETY: the box was stored by `put_mappings` and was live in
-            // the table until the `remove` above transferred ownership here.
+            // SAFETY: box was stored by `put_mappings`; `remove` just
+            // transferred ownership here.
             let chained =
                 unsafe { bun_core::heap::take(tagged.as_unchecked::<InternalWithInputUrl>()) };
             self.unlock();
@@ -385,8 +375,7 @@ impl SavedSourceMap {
             )
             .and_then(|p| p.map);
 
-            // Blob ownership moves into `result` (freed by `ParsedSourceMap`'s
-            // Drop); `chained.url` drops normally.
+            // `result` now owns the blob (freed by `ParsedSourceMap::Drop`).
             let result = match input_map {
                 Some(im) => Arc::new(ParsedSourceMap::from_internal_with_input_map(
                     chained.blob,
@@ -395,8 +384,7 @@ impl SavedSourceMap {
                 None => Arc::new(ParsedSourceMap::from_internal(chained.blob)),
             };
 
-            // Re-insert. If a concurrent `put_mappings` repopulated the slot
-            // while unlocked, keep that newer entry instead.
+            // Keep a concurrently re-inserted entry (e.g. --hot) instead.
             self.lock();
             if !self.map_mut().contains_key(&h) {
                 self.map_mut()

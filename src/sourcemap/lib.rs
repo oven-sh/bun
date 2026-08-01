@@ -932,9 +932,7 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
     };
     let sources_paths = sources_paths.get();
 
-    // `sourcesContent` is optional in the spec; tsc and other tools omit it
-    // unless asked. When absent, mappings still work and source-content lookups
-    // fall through to reading the original file on disk.
+    // `sourcesContent` is optional in the spec (tsc omits it by default).
     let sources_content = match json.get(b"sourcesContent").map(|e| e.data) {
         Some(bun_ast::ExprData::EArrayJSON(arr)) => Some(arr),
         None => None,
@@ -1137,14 +1135,12 @@ pub fn append_source_map_chunk<'a>(
     Ok(())
 }
 
-/// Scan a file's input bytes for a trailing `//# sourceMappingURL=` comment
-/// and return the URL portion. Used by the runtime transpiler to detect an
-/// input-side source map that should be chained through for stack traces.
+/// Returns the value of a trailing `//# sourceMappingURL=` comment in a
+/// module's input bytes, for chaining through to the original source.
 pub fn find_input_source_mapping_url(source: &[u8]) -> Option<&[u8]> {
     const NEEDLE: &[u8] = b"//# sourceMappingURL=";
     let found = bun_core::strings::last_index_of(source, NEEDLE)?;
-    // Must be at the start of a line (or of the file) so the string inside a
-    // literal does not match.
+    // Must start a line so a match inside a string literal is rejected.
     if found != 0 && source[found - 1] != b'\n' {
         return None;
     }
@@ -1161,10 +1157,8 @@ pub fn find_input_source_mapping_url(source: &[u8]) -> Option<&[u8]> {
     Some(url)
 }
 
-/// Load the source map referenced by a `//# sourceMappingURL=` comment in a
-/// runtime-transpiled module's input. `url` is the value after the `=`;
-/// `source_filename` anchors a relative path. Inline `data:` URIs are decoded
-/// directly, anything else is treated as a path relative to the source file.
+/// Loads the map referenced by a `sourceMappingURL` value: `data:` URIs are
+/// decoded inline, anything else is read relative to `source_filename`.
 pub fn load_input_source_map(
     source_filename: &[u8],
     url: &[u8],
@@ -1186,14 +1180,13 @@ pub fn load_input_source_map(
         };
     }
 
-    // Network URLs are not fetched; Node's --enable-source-maps ignores them too.
+    // Not fetched, matching node --enable-source-maps.
     if bun_core::strings::has_prefix_comptime(url, b"http:")
         || bun_core::strings::has_prefix_comptime(url, b"https:")
     {
         return None;
     }
 
-    // Resolve `url` relative to the source file and read it.
     let mut load_buf = bun_paths::path_buffer_pool::get();
     let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(source_filename);
     let load_path = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(

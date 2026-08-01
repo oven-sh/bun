@@ -514,18 +514,23 @@ describe("spawn()", () => {
     // F_DUPFD in uv__process_child_init). Verify the grandchild's fds land
     // on the ORIGINAL parent fds, not on an earlier slot's dup2 target.
     it.skipIf(isWindows).each([
-      { stdio: [2, 0, 0], want: { fA: "ONE TWO ", fB: "", fC: "ZERO " } },
-      { stdio: [0, 2, 1], want: { fA: "ZERO ", fB: "TWO ", fC: "ONE " } },
-      { stdio: [1, 2, 0], want: { fA: "TWO ", fB: "ZERO ", fC: "ONE " } },
+      { stdio: [2, 0, 0], want: { fA: "w1 w2 ", fB: "", fC: "w0 " } },
+      { stdio: [0, 2, 1], want: { fA: "w0 ", fB: "w2 ", fC: "w1 " } },
+      { stdio: [1, 2, 0], want: { fA: "w2 ", fB: "w0 ", fC: "w1 " } },
+      { stdio: ["ignore", "inherit", "inherit", 0], want: { fA: "w3 ", fB: "w1 ", fC: "w2 " } },
+      { stdio: ["ignore", "inherit", "inherit", 0, 1, 2], want: { fA: "w3 ", fB: "w1 w4 ", fC: "w2 w5 " } },
     ] as const)("stdio: $stdio dups the original parent fds, not an earlier slot's target", ({ stdio, want }) => {
       using dir = tempDir("spawn-stdio-dup-order", { fA: "", fB: "", fC: "" });
       // Middle process has fds 0/1/2 bound to three distinct r+w files, then
-      // spawns the grandchild with the test's stdio mapping.
+      // spawns the grandchild with the test's stdio mapping. The grandchild
+      // writes "w<i> " to each numeric-fd slot.
+      const writes = stdio
+        .map((s, i) => (typeof s === "number" || s === "inherit" ? `fs.writeSync(${i}, "w${i} ");` : ""))
+        .join(" ");
       const middle = `
         const { spawnSync } = require("child_process");
         const r = spawnSync(process.execPath, ["-e",
-          'const fs = require("fs");' +
-          'fs.writeSync(0, "ZERO "); fs.writeSync(1, "ONE "); fs.writeSync(2, "TWO ");'
+          'const fs = require("fs"); ${writes}'
         ], { stdio: ${JSON.stringify(stdio)} });
         if (r.error) throw r.error;
         process.exit(r.status);

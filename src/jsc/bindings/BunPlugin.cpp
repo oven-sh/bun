@@ -578,8 +578,6 @@ static void evictDependentModules(Zig::GlobalObject* globalObject, const WTF::St
                     if (tainted.contains(keyStr)) {
                         // require(esm) leaves no m_children edge; m_parent is the only link back.
                         taintParent(mod->m_parent.get());
-                        if (mod->m_overriddenParent)
-                            taintParent(dynamicDowncast<Bun::JSCommonJSModule>(mod->m_overriddenParent.get()));
                         continue;
                     }
 

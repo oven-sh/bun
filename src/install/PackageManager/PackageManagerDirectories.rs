@@ -746,12 +746,21 @@ pub fn cached_tarball_folder_name(
     )
 }
 
-pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
-    // A cache entry is only usable if it still has a package.json. An entry with the
-    // directory present but package.json missing (interrupted extract, external cleanup,
-    // etc.) would otherwise be copied into node_modules as-is and break lifecycle-script
-    // discovery. Re-extracting over such an entry is safe: extraction renames a temp dir
-    // into place, replacing the stale directory.
+pub fn is_folder_in_cache(
+    this: &mut PackageManager,
+    folder_path: &ZStr,
+    resolution_tag: ResolutionTag,
+) -> bool {
+    let cache_dir = get_cache_directory(this);
+    if resolution_tag != ResolutionTag::Npm {
+        return sys::directory_exists_at(cache_dir, folder_path).unwrap_or(false);
+    }
+    // An npm cache entry is only usable if it still has a package.json. An entry with
+    // the directory present but package.json missing (interrupted extract, external
+    // cleanup, etc.) would otherwise be copied into node_modules as-is and break
+    // lifecycle-script discovery. Re-extracting over such an entry is safe: extraction
+    // renames a temp dir into place, replacing the stale directory. This matches the
+    // per-tag check in `PackageInstall::package_missing_from_cache`.
     // https://github.com/oven-sh/bun/issues/10423
     let folder = bun_core::strings::without_trailing_slash(folder_path.as_bytes());
     if folder.is_empty() {
@@ -766,7 +775,7 @@ pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool
     len += b"package.json".len();
     buf[len] = 0;
     let path = ZStr::from_buf(&buf, len);
-    sys::exists_at(get_cache_directory(this), path)
+    sys::exists_at(cache_dir, path)
 }
 
 // ─────────────────────────── global directories ───────────────────────────────

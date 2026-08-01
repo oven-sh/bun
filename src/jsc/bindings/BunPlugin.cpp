@@ -601,6 +601,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionMockModuleResolved, (JSC::JSGlobalObject * le
     if (auto* object = exportsValue.getObject())
         mock->callbackFunctionOrCachedResult.set(vm, mock, object);
 
+    // A later mock.module() call for the same specifier overwrites the
+    // virtualModules entry; in that case this reaction is stale and must not
+    // re-patch the namespace with a superseded value.
+    WTF::String specifier = mock->specifierValue.get()->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
+    if (!virtualModules || virtualModules->get(specifier).get() != mock)
+        return JSValue::encode(jsUndefined());
+
     applyModuleMockOverrides(globalObject, mock, exportsValue);
     RETURN_IF_EXCEPTION(scope, {});
 

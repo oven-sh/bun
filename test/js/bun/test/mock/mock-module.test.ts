@@ -292,4 +292,21 @@ describe("mock.module with an async factory when the module is already loaded", 
       });
     `,
   });
+
+  check("a later mock.module() call supersedes a still-pending async factory", {
+    "fixture.test.ts": `
+      import { expect, test, mock } from "bun:test";
+      import { getValue } from "./dep";
+      test("t", async () => {
+        const p = mock.module("./dep", async () => {
+          await new Promise(resolve => setImmediate(resolve));
+          return { getValue: () => "A" };
+        });
+        mock.module("./dep", () => ({ getValue: () => "B" }));
+        expect(getValue()).toBe("B");
+        await p;
+        expect(getValue()).toBe("B");
+      });
+    `,
+  });
 });

@@ -1193,6 +1193,23 @@ int bsd_set_defer_accept(LIBUS_SOCKET_DESCRIPTOR listenFd) {
 #endif
 }
 
+#ifdef _WIN32
+#define LIBUS_ADDRINUSE WSAEADDRINUSE
+#define LIBUS_ACCES WSAEACCES
+#else
+#define LIBUS_ADDRINUSE EADDRINUSE
+#define LIBUS_ACCES EACCES
+#endif
+
+/* bind() failures that mean "this port is owned by someone else" rather than
+ * "this address family is unusable on this host". The IPv6->IPv4 fallback below
+ * exists for the latter (EAFNOSUPPORT / EADDRNOTAVAIL when IPv6 is disabled),
+ * and must not swallow the former: a second listen(port, "localhost") would
+ * otherwise quietly bind 127.0.0.1 after ::1 returned EADDRINUSE. */
+static int bsd_bind_error_is_fatal(int err) {
+    return err == LIBUS_ADDRINUSE || err == LIBUS_ACCES;
+}
+
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket
 // listen both on ipv6 and ipv4
 LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error) {
@@ -1220,12 +1237,17 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
             }
 
             listenAddr = a;
+            *error = 0;
             if (bsd_bind_listen_fd(listenFd, listenAddr, port, options, error) != LIBUS_SOCKET_ERROR) {
                 freeaddrinfo(result);
                 return listenFd;
             }
 
             bsd_close_socket(listenFd);
+            if (bsd_bind_error_is_fatal(*error)) {
+                freeaddrinfo(result);
+                return LIBUS_SOCKET_ERROR;
+            }
         }
     }
 
@@ -1237,12 +1259,17 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
             }
 
             listenAddr = a;
+            *error = 0;
             if (bsd_bind_listen_fd(listenFd, listenAddr, port, options, error) != LIBUS_SOCKET_ERROR) {
                 freeaddrinfo(result);
                 return listenFd;
             }
 
             bsd_close_socket(listenFd);
+            if (bsd_bind_error_is_fatal(*error)) {
+                freeaddrinfo(result);
+                return LIBUS_SOCKET_ERROR;
+            }
         }
     }
 

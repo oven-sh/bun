@@ -115,6 +115,11 @@ impl Options {
                     ctx.debug.run_in_bun = true;
                 } else if positional == b"--no-install" {
                     opts.no_install = true;
+                } else if positional == b"--cwd" || positional == b"--env-file" {
+                    // Value was already applied by `apply_leading_cwd()` / is
+                    // not used by bunx; step past it so it's not mistaken for
+                    // the package name.
+                    i += 1;
                 } else if positional == b"--package" || positional == b"-p" {
                     // Next argument should be the package name
                     i += 1;

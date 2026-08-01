@@ -784,24 +784,35 @@ pub mod command {
         super::SUBCOMMAND_ARGV_INDEX.load(core::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Apply a `--cwd <dir>` that preceded the subcommand keyword, for handlers
-    /// that don't route through `arguments::parse` / `CommandLineArguments::parse`.
+    /// Apply a `--cwd <dir>` / `--cwd=<dir>` that preceded the subcommand
+    /// keyword, for handlers that don't route through `arguments::parse` /
+    /// `CommandLineArguments::parse`.
     #[cold]
     pub(crate) fn apply_leading_cwd() {
+        fn chdir(dir: &[u8]) {
+            let dir_z = bun_core::ZBox::from_bytes(dir);
+            if let bun_sys::Result::Err(err) = bun_sys::chdir(&dir_z) {
+                Output::err(
+                    err,
+                    "Could not change directory to \"{}\"\n",
+                    format_args!("{}", bstr::BStr::new(dir)),
+                );
+                Global::exit(1);
+            }
+        }
         let argv = bun::argv();
         let end = subcommand_argv_index().min(argv.len());
         let mut i = 1;
-        while i + 1 < end {
-            if argv.get(i).is_some_and(|a| a.as_bytes() == b"--cwd") {
-                let dir = argv.get(i + 1).unwrap();
-                if let bun_sys::Result::Err(err) = bun_sys::chdir(dir) {
-                    Output::err(
-                        err,
-                        "Could not change directory to \"{}\"\n",
-                        format_args!("{}", bstr::BStr::new(dir)),
-                    );
-                    Global::exit(1);
+        while i < end {
+            let a = argv.get(i).map(|z| z.as_bytes()).unwrap_or(b"");
+            if a == b"--cwd" {
+                if let Some(dir) = argv.get(i + 1).filter(|_| i + 1 < end) {
+                    chdir(dir.as_bytes());
                 }
+                return;
+            }
+            if let Some(dir) = a.strip_prefix(b"--cwd=") {
+                chdir(dir);
                 return;
             }
             i += 1;
@@ -1562,10 +1573,10 @@ pub mod command {
         let start_idx = if IS_BUNX_EXE.load(core::sync::atomic::Ordering::Relaxed) {
             0
         } else {
-            subcommand_argv_index()
+            1
         };
         let argv = argv_zslice();
-        super::bunx_command::BunxCommand::exec(ctx, &argv[start_idx.min(argv.len())..])
+        super::bunx_command::BunxCommand::exec(ctx, &argv[start_idx..])
     }
 
     #[cold]
@@ -1825,14 +1836,14 @@ pub mod command {
         let mut print_help = false;
 
         {
-            let remainder = &args[cmd_idx..];
+            let remainder = &args[1..];
             let mut remainder_i: usize = 0;
             while remainder_i < remainder.len() && positional_i < positionals.len() {
                 let slice = strings::trim(remainder[remainder_i].as_bytes(), b" \t\n");
                 if !slice.is_empty() {
                     if !strings::has_prefix(slice, b"--") {
                         if positional_i == 1 {
-                            template_name_start = cmd_idx + remainder_i + 1;
+                            template_name_start = remainder_i + 2;
                         }
                         positionals[positional_i] = slice;
                         positional_i += 1;
@@ -1842,6 +1853,8 @@ pub mod command {
                             dash_dash_bun = true;
                         } else if slice == b"--help" || slice == b"-h" {
                             print_help = true;
+                        } else if slice == b"--cwd" || slice == b"--env-file" {
+                            remainder_i += 1;
                         }
                     }
                 }

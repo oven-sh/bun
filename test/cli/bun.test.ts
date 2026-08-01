@@ -240,12 +240,30 @@ describe.concurrent("global flag before subcommand", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("bun --cwd target init -y -m dispatches InitCommand in target", async () => {
-    using dir = tempDir("which-init", { "target/.gitkeep": "" });
-    const { stderr, exitCode } = await run(String(dir), ["--cwd", "target", "init", "-y", "-m"]);
+  for (const cwd of [["--cwd", "target"], ["--cwd=target"]] as const) {
+    test(`bun ${cwd.join(" ")} init -y -m dispatches InitCommand in target`, async () => {
+      using dir = tempDir("which-init", { "target/.gitkeep": "" });
+      const { stderr, exitCode } = await run(String(dir), [...cwd, "init", "-y", "-m"]);
+      expect(stderr).not.toContain("Script not found");
+      expect(fs.existsSync(`${dir}/target/package.json`)).toBe(true);
+      expect(fs.existsSync(`${dir}/package.json`)).toBe(false);
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  test("bun --bun x <bin> still passes --bun through", async () => {
+    // `--bun` is handled by bunx's own parser; stepping past leading flags
+    // to find the `x` keyword must not strip it.
+    using dir = tempDir("which-bunx-bun", {
+      "node_modules/.bin/probe": `#!/usr/bin/env node\nconsole.log(process.isBun ? "under-bun" : "under-node");`,
+      "package.json": JSON.stringify({ name: "p" }),
+    });
+    fs.chmodSync(`${dir}/node_modules/.bin/probe`, 0o755);
+    const baseline = await run(String(dir), ["x", "--bun", "probe"]);
+    expect(baseline.stdout.trim()).toBe("under-bun");
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--bun", "x", "probe"]);
     expect(stderr).not.toContain("Script not found");
-    expect(fs.existsSync(`${dir}/target/package.json`)).toBe(true);
-    expect(fs.existsSync(`${dir}/package.json`)).toBe(false);
+    expect(stdout.trim()).toBe("under-bun");
     expect(exitCode).toBe(0);
   });
 

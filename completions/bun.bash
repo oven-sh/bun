@@ -2,16 +2,17 @@
 
 _file_arguments() {
     local extensions="${1}"
-    local reset=$(shopt -p globstar)
-    shopt -s globstar
+    local reset="$(shopt -p extglob 2>/dev/null)"
+    shopt -s extglob 2>/dev/null
 
+    COMPREPLY+=( $(compgen -d -- "${cur_word}") )
     if [[ -z "${cur_word}" ]]; then
-        COMPREPLY=( $(compgen -fG -X "${extensions}" -- "${cur_word}") );
+        COMPREPLY+=( $(compgen -fG -X "${extensions}" -- "${cur_word}") );
     else
-        COMPREPLY=( $(compgen -f -X "${extensions}" -- "${cur_word}") );
+        COMPREPLY+=( $(compgen -f -X "${extensions}" -- "${cur_word}") );
     fi
 
-    $reset
+    eval "${reset}" 2>/dev/null
 }
 
 _long_short_completion() {
@@ -91,8 +92,8 @@ _bun_completions() {
 
     local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update outdated link unlink build";
 
-    GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js";
-    GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p";
+    GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js --hot --watch --smol --bun --silent --preload --require --import --inspect --inspect-brk --inspect-wait";
+    GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p -b -r";
 
     PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional --peer";
     PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]="-d";
@@ -107,6 +108,19 @@ _bun_completions() {
 
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}";
     local prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}";
+
+    # Locate the first non-option word so that runtime flags before the
+    # subcommand (e.g. `bun --hot run …`, `bun --watch …`) don't break dispatch.
+    local first_word="" i;
+    for (( i=1; i < COMP_CWORD; i++ )); do
+        case "${COMP_WORDS[i]}" in
+            =) ;;
+            --conditions|--config|--console-depth|--cwd|--define|--dns-result-order|--elide-lines|--env-file|--eval|--extension-order|--fetch-preconnect|--filter|--import|--install|--jsx-factory|--jsx-fragment|--jsx-import-source|--jsx-runtime|--loader|--main-fields|--max-http-header-size|--origin|--port|--preload|--print|--public-dir|--require|--shell|--target|--title|--tsconfig-override|--unhandled-rejections|-F|-c|-d|-e|-l|-p|-r|-u)
+                ((i++)); [[ "${COMP_WORDS[i]}" == "=" ]] && ((i++));;
+            -*) ;;
+            *) first_word="${COMP_WORDS[i]}"; break;;
+        esac
+    done
 
     case "${prev}" in
         help|--help|-h|-v|--version) return;;
@@ -137,8 +151,8 @@ _bun_completions() {
             return;;
     esac
 
-    case "${COMP_WORDS[1]}" in
-        help|completions|--help|-h|-v|--version) return;;
+    case "${first_word}" in
+        help|completions) return;;
         add|a)
             _long_short_completion \
                 "${PACKAGE_OPTIONS[ADD_OPTIONS_LONG]} ${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
@@ -168,35 +182,21 @@ _bun_completions() {
                 "${PM_OPTIONS[LONG_OPTIONS]} ${PM_OPTIONS[SHORT_OPTIONS]}";
             COMPREPLY+=( $(compgen -W "bin ls cache hash hash-print hash-string" -- "${cur_word}") );
             return;;
-        *)
-            local replaced_script;
+        "")
             _long_short_completion \
                 "${GLOBAL_OPTIONS[*]}" \
                 "${GLOBAL_OPTIONS[SHORT_OPTIONS]}"
-
-            _read_scripts_in_package_json;
-            _subcommand_comp_reply "${cur_word}" "${SUBCOMMANDS}";
-
-            # determine if completion should be continued
-            # when the current word is an empty string
-            # the previous word is not part of the allowed completion
-            # the previous word is not an argument to the last two option
-            [[ -z "${cur_word}" ]] && {
-                local prev_in_reply="";
-                local reply_word;
-                for reply_word in "${COMPREPLY[@]}"; do
-                    [[ "${reply_word}" == "${prev}" ]] && { prev_in_reply=1; break; };
-                done
-                [[ -z "${prev_in_reply}" ]] && {
-                    local re_prev_prev="(^| )${COMP_WORDS[(( COMP_CWORD - 2 ))]}($| )";
-                    local global_option_with_extra_args="--bunfile --server-bunfile --config --port --cwd --public-dir --jsx-runtime --platform --loader";
-                    [[
-                        ( -n "${replaced_script}" && "${replaced_script}" == "${prev}" ) || \
-                            ( "${global_option_with_extra_args}" =~ ${re_prev_prev} )
-                    ]] && return;
-                    unset COMPREPLY;
-                }
+            [[ "${cur_word}" != -* ]] && {
+                COMPREPLY+=( $(compgen -W "${SUBCOMMANDS}" -- "${cur_word}") );
+                _read_scripts_in_package_json;
+                _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs|mts|cts|html)?($|))";
             }
+            return;;
+        *)
+            _long_short_completion \
+                "${GLOBAL_OPTIONS[*]}" \
+                "${GLOBAL_OPTIONS[SHORT_OPTIONS]}"
+            [[ "${cur_word}" != -* ]] && COMPREPLY+=( $(compgen -f -- "${cur_word}") );
             return;;
     esac
 

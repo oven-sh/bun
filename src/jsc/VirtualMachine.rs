@@ -1039,6 +1039,7 @@ impl VirtualMachine {
                 + self.active_tasks
                 + el.tasks.readable_length()
                 + (el.has_pending_refs() as usize)
+                + (!el.concurrent_tasks.is_empty() as usize)
                 > 0)
     }
 

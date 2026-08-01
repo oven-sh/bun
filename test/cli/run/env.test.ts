@@ -1178,6 +1178,12 @@ describe("node shim (argv0=node) does not auto-load .env files", () => {
     }));`,
     "package.json": JSON.stringify({ name: "p", scripts: { check: "node ./check.js" } }),
   };
+  const testEnv = {
+    ...bunEnv,
+    NODE_ENV: undefined,
+    PUBLICPATH: undefined,
+    VITE_PUBLIC_PATH: undefined,
+  };
 
   test.concurrent("argv0=node leaves .env keys unset", async () => {
     using dir = tempDir("dotenv-as-node", files);
@@ -1185,12 +1191,12 @@ describe("node shim (argv0=node) does not auto-load .env files", () => {
       cmd: [bunExe(), "check.js"],
       argv0: "node",
       cwd: String(dir),
-      env: { ...bunEnv, NODE_ENV: undefined },
+      env: testEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain('".env"');
+    expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ PUBLICPATH: null, VITE_PUBLIC_PATH: null });
     expect(exitCode).toBe(0);
   });
@@ -1201,11 +1207,12 @@ describe("node shim (argv0=node) does not auto-load .env files", () => {
       cmd: [bunExe(), "--env-file=.env.production", "check.js"],
       argv0: "node",
       cwd: String(dir),
-      env: { ...bunEnv, NODE_ENV: undefined },
+      env: testEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ PUBLICPATH: "/app", VITE_PUBLIC_PATH: "/app" });
     expect(exitCode).toBe(0);
   });
@@ -1213,28 +1220,29 @@ describe("node shim (argv0=node) does not auto-load .env files", () => {
   test.concurrent("`bun --bun run <script>` does not leak .env into the node-shimmed child", async () => {
     using dir = tempDir("dotenv-bun-run", files);
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--bun", "run", "check"],
+      cmd: [bunExe(), "--bun", "run", "--silent", "check"],
       cwd: String(dir),
-      env: { ...bunEnv, NODE_ENV: undefined },
+      env: testEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const line = stdout.split("\n").find(l => l.startsWith("{"))!;
-    expect(JSON.parse(line)).toEqual({ PUBLICPATH: null, VITE_PUBLIC_PATH: null });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ PUBLICPATH: null, VITE_PUBLIC_PATH: null });
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("`bun index.js` (not node shim) still auto-loads .env", async () => {
+  test.concurrent("`bun check.js` (not node shim) still auto-loads .env", async () => {
     using dir = tempDir("dotenv-direct", files);
     await using proc = Bun.spawn({
       cmd: [bunExe(), "check.js"],
       cwd: String(dir),
-      env: { ...bunEnv, NODE_ENV: undefined },
+      env: testEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ PUBLICPATH: "/", VITE_PUBLIC_PATH: "/dev" });
     expect(exitCode).toBe(0);
   });

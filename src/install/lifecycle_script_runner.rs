@@ -910,18 +910,22 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     }
                 }
 
-                if let Some(nanos) = maybe_duration {
-                    if nanos > MIN_MILLISECONDS_TO_LOG * bun_core::time::NS_PER_MS {
-                        let entry = LifecycleScriptTimeLogEntry {
-                            package_name: self.package_name.clone(),
-                            script_id: self.current_script_index,
-                            duration: nanos,
-                        };
-                        // SAFETY: see [`Self::manager_mut`].
-                        unsafe { self.manager_mut() }
-                            .lifecycle_script_time_log
-                            .append_concurrent(entry);
-                    }
+                // Foreground scripts are the root package's own, which the user just
+                // watched run live; the summary warning is for background dependency
+                // scripts whose duration was otherwise invisible.
+                if !self.foreground
+                    && let Some(nanos) = maybe_duration
+                    && nanos > MIN_MILLISECONDS_TO_LOG * bun_core::time::NS_PER_MS
+                {
+                    let entry = LifecycleScriptTimeLogEntry {
+                        package_name: self.package_name.clone(),
+                        script_id: self.current_script_index,
+                        duration: nanos,
+                    };
+                    // SAFETY: see [`Self::manager_mut`].
+                    unsafe { self.manager_mut() }
+                        .lifecycle_script_time_log
+                        .append_concurrent(entry);
                 }
 
                 if let Some(ctx) = &self.ctx {

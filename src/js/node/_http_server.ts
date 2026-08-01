@@ -302,6 +302,11 @@ function Server(options, callback): void {
   this.on("listening", setupConnectionsTracking);
 
   this.listening = false;
+  // Node's net.Server exposes `_handle`: null before listen(), the native
+  // handle while listening, null again after close(). Ecosystem code
+  // (supertest, mocha helpers) branches on its truthiness, so it must track
+  // the Bun.serve instance that backs this server.
+  this._handle = null;
   this._unref = false;
   this.timeout = 0;
   this.maxRequestsPerSocket = 0;
@@ -477,6 +482,7 @@ Server.prototype.closeAllConnections = function () {
     return;
   }
   this[serverSymbol] = undefined;
+  this._handle = null;
   clearInterval(this[kConnectionsCheckingInterval]);
   this.listening = false;
 
@@ -509,6 +515,7 @@ Server.prototype.close = function (optionalCallback?) {
     return this;
   }
   this[serverSymbol] = undefined;
+  this._handle = null;
   if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
   this.listening = false;
   server.closeIdleConnections();
@@ -1148,6 +1155,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       // },
     });
 
+    this._handle = this[serverSymbol];
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
     isHTTPS = this[serverSymbol].protocol === "https";
     applyServerCustomOptions(this);

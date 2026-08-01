@@ -4031,6 +4031,28 @@ it("http.Agent with proxyEnv does not write to a literal 'undefined' property", 
   }
 });
 
+it("http.Server exposes _handle like net.Server (null/truthy/null over listen/close)", async () => {
+  // supertest (and other ecosystem code) gates `server.close()` on
+  // `server._handle` being truthy; without it the ephemeral server is never
+  // closed and the process never exits. https://github.com/oven-sh/bun/issues/13087
+  const server = createServer((req, res) => res.end("hi"));
+  try {
+    expect((server as any)._handle).toBeNull();
+
+    server.listen(0);
+    await once(server, "listening");
+    expect((server as any)._handle).toBeTruthy();
+
+    const closed = once(server, "close");
+    server.close();
+    expect((server as any)._handle).toBeNull();
+    await closed;
+    expect((server as any)._handle).toBeNull();
+  } finally {
+    server.close();
+  }
+});
+
 it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () => {
   expect(typeof OutgoingMessage.prototype._flushOutput).toBe("function");
 

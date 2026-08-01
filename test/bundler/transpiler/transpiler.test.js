@@ -302,10 +302,16 @@ describe("Bun.Transpiler", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
 
-      exp("declare = (...t) => R;e((a) => {(u=> uge);\r\n})", "declare = (...t) => R;\ne((a) => {\n  (u) => uge;\n});\n");
+      exp(
+        "declare = (...t) => R;e((a) => {(u=> uge);\r\n})",
+        "declare = (...t) => R;\ne((a) => {\n  (u) => uge;\n});\n",
+      );
       exp("declare = t => 0; () => () => 0", "declare = (t) => 0;\n() => () => 0;\n");
       exp("declare = function () {}; () => () => 0", "declare = function() {};\n() => () => 0;\n");
-      exp("declare = t => 0; function f() { () => 0; }\nf();", "declare = (t) => 0;\nfunction f() {\n  () => 0;\n}\nf();\n");
+      exp(
+        "declare = t => 0; function f() { () => 0; }\nf();",
+        "declare = (t) => 0;\nfunction f() {\n  () => 0;\n}\nf();\n",
+      );
 
       exp(
         "abstract = (t) => 0\nclass Foo { m() { return () => () => 0 } }",

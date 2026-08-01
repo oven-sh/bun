@@ -54,7 +54,11 @@ test("Bun.$`bun ...` inside a compiled executable runs bun, not the entrypoint",
   // Before the fix the child re-ran the entrypoint (hitting the guard above)
   // instead of printing `bun --revision` output, so the revision line carried
   // the child's "entrypoint pid=" text and the process exited 7.
-  const expectedRevision = `${Bun.version}+${Bun.revision.slice(0, 9)}`;
+  //
+  // Compare against the literal `--revision` output of the binary that built
+  // the executable; `Bun.version` lacks the `-canary.N` tag so reconstructing
+  // the string from it would break on release canary lanes.
+  const expectedRevision = (await Bun.$`${bunExe()} --revision`.env(bunEnv).text()).trim();
   expect(stdout).not.toContain("ERROR: entrypoint re-entered");
   expect(stdout).toContain("child revision=" + expectedRevision);
   expect(stderr).toBe("");

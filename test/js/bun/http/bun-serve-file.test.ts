@@ -2,7 +2,7 @@ import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
-import { unlinkSync } from "node:fs";
+import { chmodSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1279,3 +1279,109 @@ test("file route serves a burst of concurrent requests after reloads", async () 
   const a = await fetch(`${server.url}a`).then(r => r.text());
   expect(a).toBe("a-new");
 });
+
+// https://github.com/oven-sh/bun/issues/4292
+// A Response(Bun.file(path)) returned from the fetch handler for a path that
+// can't be opened should map the open() errno to an HTTP status (404/403)
+// rather than treating it as a handler fault (500 + error page).
+describe.each([true, false])("Response(Bun.file()) open-error status mapping (development: %p)", development => {
+  const isRoot = !isWindows && process.getuid?.() === 0;
+
+  let server: Server;
+  let dir: string;
+  let errorsSeen: unknown[];
+
+  beforeAll(() => {
+    dir = tempDirWithFiles("serve-file-open-errno", {
+      "ok.txt": "ok",
+      "noperm.txt": "secret",
+    });
+    if (!isWindows) chmodSync(join(dir, "noperm.txt"), 0o000);
+    errorsSeen = [];
+    server = Bun.serve({
+      port: 0,
+      development,
+      fetch: req => new Response(Bun.file(join(dir, new URL(req.url).pathname.slice(1)))),
+      error: err => {
+        errorsSeen.push(err);
+        return undefined as any;
+      },
+    });
+    server.unref();
+  });
+
+  afterAll(() => {
+    if (!isWindows) chmodSync(join(dir, "noperm.txt"), 0o644);
+    server?.stop(true);
+    using _ = rmScope(dir);
+  });
+
+  it("existing file -> 200", async () => {
+    const res = await fetch(new URL("/ok.txt", server.url));
+    expect({ status: res.status, body: await res.text() }).toEqual({ status: 200, body: "ok" });
+  });
+
+  it("ENOENT -> 404", async () => {
+    const before = errorsSeen.length;
+    const res = await fetch(new URL("/missing.txt", server.url));
+    expect({ status: res.status, statusText: res.statusText }).toEqual({ status: 404, statusText: "Not Found" });
+    // The error handler must still be invoked with the ENOENT error so
+    // users can customize the response.
+    expect(errorsSeen.length).toBe(before + 1);
+    expect((errorsSeen.at(-1) as any)?.code).toBe("ENOENT");
+  });
+
+  it("ENOTDIR (path component is a file) -> 404", async () => {
+    const res = await fetch(new URL("/ok.txt/whatever", server.url));
+    expect(res.status).toBe(404);
+  });
+
+  it.skipIf(isWindows || isRoot)("EACCES -> 403", async () => {
+    const before = errorsSeen.length;
+    const res = await fetch(new URL("/noperm.txt", server.url));
+    expect({ status: res.status, statusText: res.statusText }).toEqual({ status: 403, statusText: "Forbidden" });
+    expect(errorsSeen.length).toBe(before + 1);
+    expect((errorsSeen.at(-1) as any)?.code).toBe("EACCES");
+  });
+
+  it("error handler can override the 404 with its own Response", async () => {
+    await using s = Bun.serve({
+      port: 0,
+      development,
+      fetch: () => new Response(Bun.file(join(dir, "missing.txt"))),
+      error: err => new Response(`custom ${(err as any).code}`, { status: 410 }),
+    });
+    const res = await fetch(s.url);
+    expect({ status: res.status, body: await res.text() }).toEqual({ status: 410, body: "custom ENOENT" });
+  });
+});
+
+// Same mapping without a user-provided `error` handler: the 404 must land
+// without being reported as an unhandled error on stderr, in dev and prod.
+test.concurrent.each([true, false])(
+  "Response(Bun.file(missing)) -> 404, no unhandled error (development: %p)",
+  async development => {
+    using dir = tempDir("serve-file-enoent-quiet", { "ok.txt": "ok" });
+    const fixture = `
+      const dir = ${JSON.stringify(String(dir))};
+      const server = Bun.serve({
+        port: 0,
+        development: ${development},
+        fetch: () => new Response(Bun.file(dir + "/missing.txt")),
+      });
+      const res = await fetch(server.url);
+      console.log(res.status, JSON.stringify(res.statusText));
+      server.stop(true);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe('404 "Not Found"');
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  },
+);

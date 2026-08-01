@@ -1693,10 +1693,15 @@ where
             ) {
                 bun_sys::Result::Ok(fd_) => fd_,
                 bun_sys::Result::Err(err) => {
+                    let status = match err.get_errno() {
+                        bun_sys::E::ENOENT | bun_sys::E::ENOTDIR => 404,
+                        bun_sys::E::EACCES | bun_sys::E::EPERM => 403,
+                        _ => 500,
+                    };
                     let js_err = err
                         .with_path(file.pathlike.path().slice())
                         .to_js(global_this);
-                    return self.run_error_handler(js_err);
+                    return self.run_error_handler_with_status_code(js_err, status);
                 }
             }
         };
@@ -3474,6 +3479,13 @@ where
                     }
                     self.end_without_body(self.should_close_connection());
                 }
+                403 => {
+                    if !self.flags.has_written_status() {
+                        resp.write_status(b"403 Forbidden");
+                        self.flags.set_has_written_status(true);
+                    }
+                    self.end_without_body(self.should_close_connection());
+                }
                 _ => {
                     const BODY: &[u8] = b"Something went wrong!";
                     if !self.flags.has_written_status() {
@@ -3542,6 +3554,14 @@ where
         // `ServerLike::vm()` is the process-static VM `BackRef`; `as_mut()` is
         // the single audited `&mut VirtualMachine` accessor.
         let vm = server.vm().as_mut();
+        // 404/403 are expected outcomes (e.g. Bun.file() for a missing or
+        // unreadable path), not handler faults: write the status directly and
+        // skip both the unhandled-rejection report and the dev error page.
+        if matches!(status, 403 | 404) {
+            self.render_production_error(status);
+            vm.log_mut().unwrap().reset();
+            return;
+        }
         if DEBUG_MODE {
             let mut exception_list_upstream: jsc::ExceptionList = Vec::new();
             let prev_exception_list = vm.on_unhandled_rejection_exception_list;
@@ -3569,9 +3589,7 @@ where
             log.reset();
             return;
         }
-        if status != 404 {
-            (vm.on_unhandled_rejection)(vm, global_this, value);
-        }
+        (vm.on_unhandled_rejection)(vm, global_this, value);
         self.render_production_error(status);
         vm.log_mut().unwrap().reset();
     }

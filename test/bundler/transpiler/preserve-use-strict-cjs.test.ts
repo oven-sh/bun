@@ -20,6 +20,41 @@ test.concurrent(`function-level "use strict" survives require() of a CJS module`
   expect(await bunRun(path.join(import.meta.dir, "function-use-strict-require-entry-fixture.cjs"))).toSpawn();
 });
 
+// https://github.com/oven-sh/bun/issues/14251
+// A sloppy function's legacy `.caller` must be null when the calling function is
+// strict (matches Node). Before the fix the transpiler dropped the directive, so
+// the strict caller leaked. The call is kept out of tail position so JSC's proper
+// tail calls don't eliminate the strict frame and expose the sloppy wrapper above.
+test.concurrent(`function-level "use strict" hides the caller from .caller`, async () => {
+  using dir = tempDir("issue-14251", {
+    "index.cjs": `
+      function strictCaller() {
+        "use strict";
+        var r = sloppyCallee();
+        return r;
+      }
+      function sloppyCallee() {
+        return sloppyCallee.caller;
+      }
+      console.log(String(strictCaller()));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("null");
+  expect(exitCode).toBe(0);
+});
+
 // Preserving the function-body directive also enables the ES 15.2.1 early error:
 // a "use strict" directive in a function with a non-simple parameter list is a
 // SyntaxError (matches Node). https://github.com/oven-sh/bun/issues/18333

@@ -1956,11 +1956,6 @@ pub(crate) struct ResolvedPackageResult {
 }
 
 /// Is this dependency a direct target of the current `bun update` invocation?
-///
-/// True for any direct dependency of the active workspace when `bun update`
-/// was run without arguments, or when it matches one of the named packages.
-/// Used to force a fresh manifest resolve (instead of reusing a package that
-/// happens to already be in the lockfile and satisfy the range).
 fn should_update_dependency(
     this: &mut PackageManager,
     dependency: &Dependency,
@@ -1969,15 +1964,11 @@ fn should_update_dependency(
     if !this.to_update {
         return false;
     }
-    // reshaped for borrowck: `is_root_dependency(&self, &mut PackageManager, ...)`
-    // borrows `this.lockfile` and `this` at once. Split via raw root.
     let this_ptr: *mut PackageManager = this;
-    // SAFETY: `is_root_dependency` reads `manager.root_package_id` /
-    // `manager.workspace_name_hash` only, disjoint from `manager.lockfile`.
+    // SAFETY: `is_root_dependency` only touches `manager.{root_package_id,workspace_name_hash}`.
     (dependency.version.tag == dependency::version::Tag::Catalog
         || unsafe { &*(*this_ptr).lockfile }
             .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id))
-        // no need to do a look up if update requests are empty (`bun update` with no args)
         && (this.update_requests.is_empty()
             || this.updating_packages.contains(
                 dependency.name.slice(this.lockfile.buffers.string_bytes.as_slice()),

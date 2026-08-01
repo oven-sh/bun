@@ -1939,6 +1939,13 @@ impl<'a> Resolver<'a> {
 
         if check_package {
             if self.opts.polyfill_node_globals {
+                let had_node_prefix = import_path.starts_with(b"node:");
+                let import_path_without_node_prefix: &'static [u8] = if had_node_prefix {
+                    &import_path[b"node:".len()..]
+                } else {
+                    import_path
+                };
+
                 // Honor the importing package's "browser" field before applying a
                 // builtin polyfill. Packages that ship a browser/node split commonly
                 // set `"browser": {"crypto": false}` (or remap to a shim) and guard the
@@ -1946,6 +1953,10 @@ impl<'a> Resolver<'a> {
                 // that and can add hundreds of KB. When the browser map has an entry
                 // for this specifier, fall through to `check_package_path`, which
                 // already handles both the disabled and the remapped case.
+                //
+                // The lookup uses the bare name (no `node:` prefix) because the
+                // polyfill table below is keyed on the bare name too; the two must
+                // agree on which spellings are the same module.
                 let browser_map_overrides_builtin = self.care_about_browser_field
                     && matches!(self.dir_info_cached(source_dir), Ok(Some(info))
                     if info
@@ -1953,19 +1964,17 @@ impl<'a> Resolver<'a> {
                         .is_some_and(|scope| {
                             self.check_browser_map::<{ BrowserMapPathKind::PackagePath }>(
                                 &scope,
-                                import_path,
+                                import_path_without_node_prefix,
                             )
                             .is_some()
                         }));
 
-                if !browser_map_overrides_builtin {
+                if browser_map_overrides_builtin {
+                    // `check_package_path` re-runs the same browser-map lookup, so
+                    // hand it the bare name it can find.
+                    import_path = import_path_without_node_prefix;
+                } else {
                     result.jsx = self.opts.jsx.clone();
-                    let had_node_prefix = import_path.starts_with(b"node:");
-                    let import_path_without_node_prefix = if had_node_prefix {
-                        &import_path[b"node:".len()..]
-                    } else {
-                        import_path
-                    };
 
                     if let Some(fallback_module) =
                         NodeFallbackModules::map().get(import_path_without_node_prefix)

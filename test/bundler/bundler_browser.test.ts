@@ -282,6 +282,37 @@ describe("bundler", () => {
       assert(out.length < 10000, `output should be a small stub, got ${out.length} bytes`);
     },
   });
+  itBundled("browser/BrowserFieldDisablesPolyfilledBuiltinNodePrefix#4928", {
+    // Same as above but with the node: prefix on the import. The polyfill table
+    // strips node: before lookup, so the browser-map check must too.
+    files: {
+      "/entry.js": /* js */ `
+        import pkg from "pkg";
+        console.log(pkg);
+      `,
+      "/node_modules/pkg/package.json": /* json */ `
+        {
+          "name": "pkg",
+          "main": "./index.js",
+          "browser": {
+            "crypto": false
+          }
+        }
+      `,
+      "/node_modules/pkg/index.js": /* js */ `
+        const nodeCrypto = require("node:crypto");
+        module.exports = typeof nodeCrypto.randomBytes;
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "undefined",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      assert(!out.includes("createHash"), "crypto polyfill should not be bundled when browser:{crypto:false}");
+    },
+  });
   itBundled("browser/BrowserFieldRemapsPolyfilledBuiltin#4928", {
     files: {
       "/entry.js": /* js */ `

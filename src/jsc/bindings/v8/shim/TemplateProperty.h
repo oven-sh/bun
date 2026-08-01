@@ -12,7 +12,7 @@ namespace shim {
 struct TemplateProperty {
     JSC::WriteBarrier<JSC::Unknown> name;
     JSC::WriteBarrier<JSC::Unknown> value;
-    unsigned attributes;
+    unsigned attributes { 0 };
 };
 
 // A native-data accessor recorded on a Template via
@@ -20,9 +20,9 @@ struct TemplateProperty {
 struct TemplateAccessor {
     JSC::WriteBarrier<JSC::Unknown> name;
     JSC::WriteBarrier<JSC::Unknown> data;
-    AccessorNameGetterCallback getter;
-    AccessorNameSetterCallback setter;
-    unsigned attributes;
+    AccessorNameGetterCallback getter { nullptr };
+    AccessorNameSetterCallback setter { nullptr };
+    unsigned attributes { 0 };
 };
 
 // Install the recorded properties and native-data accessors of a template onto

@@ -427,6 +427,10 @@ void CpuProfiler::SetSamplingInterval(int us)
 
 CpuProfilingResult CpuProfiler::Start(Local<String>, CpuProfilingMode, bool record_samples, unsigned)
 {
+    // JSC::SamplingProfiler is a single VM-global consumer; Stop() drains all
+    // traces via releaseStackTraces(), so overlapping sessions would lose samples.
+    if (!toImpl(this)->m_sessions.isEmpty())
+        return CpuProfilingResult { 0, CpuProfilingStatus::kAlreadyStarted };
     uint32_t id = toImpl(this)->start(record_samples);
     return CpuProfilingResult { id, CpuProfilingStatus::kStarted };
 }

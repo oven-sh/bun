@@ -3,6 +3,7 @@
 #include "v8.h"
 #include "V8Local.h"
 #include "V8Isolate.h"
+#include <climits>
 #include <optional>
 
 namespace v8 {

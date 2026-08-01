@@ -40,7 +40,7 @@ public:
 
     int internalFieldCount() const { return m_internalFieldCount; }
 
-    void setInternalFieldCount(int newInternalFieldCount) { m_internalFieldCount = newInternalFieldCount; }
+    void setInternalFieldCount(int newInternalFieldCount) { m_internalFieldCount = newInternalFieldCount > 0 ? newInternalFieldCount : 0; }
 
     WTF::Vector<TemplateProperty>& properties() { return m_properties; }
     WTF::Vector<TemplateAccessor>& accessors() { return m_accessors; }

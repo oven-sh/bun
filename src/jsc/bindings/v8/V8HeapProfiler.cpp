@@ -15,32 +15,6 @@ namespace v8 {
 
 namespace shim {
 
-// Concrete AllocationProfile returned to callers. Owns its root Node; children
-// borrow from m_nodes.
-class AllocationProfileImpl final : public AllocationProfile {
-public:
-    AllocationProfileImpl(Isolate* isolate)
-    {
-        auto& vm = isolate->vm();
-        auto* handleScope = isolate->currentHandleScope();
-        Local<String> empty = handleScope->createLocal<String>(vm, JSC::jsEmptyString(vm));
-        m_root.name = empty;
-        m_root.script_name = empty;
-        m_root.script_id = 0;
-        m_root.start_position = 0;
-        m_root.line_number = AllocationProfile::kNoLineNumberInfo;
-        m_root.column_number = AllocationProfile::kNoColumnNumberInfo;
-        m_root.node_id = 1;
-    }
-
-    Node* GetRootNode() override { return &m_root; }
-    const std::vector<Sample>& GetSamples() override { return m_samples; }
-
-private:
-    Node m_root;
-    std::vector<Sample> m_samples;
-};
-
 // Plain-C++ backing storage for v8::HeapProfiler. One instance per Isolate,
 // lazily created by Isolate::GetHeapProfiler() and reinterpret_cast'd to the
 // opaque v8::HeapProfiler* handed to callers.
@@ -79,10 +53,10 @@ void HeapProfiler::StopSamplingHeapProfiler()
 
 AllocationProfile* HeapProfiler::GetAllocationProfile()
 {
-    auto* impl = toImpl(this);
-    if (!impl->m_samplingActive)
-        return nullptr;
-    return new shim::AllocationProfileImpl(impl->m_isolate);
+    // JSC has no allocation-sampling profiler; V8 returns nullptr when the
+    // sampling heap profiler is not active, and callers (e.g. @datadog/pprof)
+    // handle that.
+    return nullptr;
 }
 
 HeapProfiler* Isolate::GetHeapProfiler()

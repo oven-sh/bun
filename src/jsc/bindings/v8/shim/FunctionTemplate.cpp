@@ -137,13 +137,12 @@ Function* FunctionTemplate::makeFunction(JSC::VM& vm, Zig::GlobalObject* globalO
     // of the created function (static members in V8's class model).
     applyTemplateProperties(globalObject, f, m_properties, m_accessors);
 
-    if (auto* protoTemplate = m_prototypeTemplate.get()) {
-        JSC::JSObject* protoObj = JSC::constructEmptyObject(globalObject);
+    JSC::JSObject* protoObj = JSC::constructEmptyObject(globalObject);
+    if (auto* protoTemplate = m_prototypeTemplate.get())
         applyTemplateProperties(globalObject, protoObj, protoTemplate->properties(), protoTemplate->accessors());
-        f->putDirect(vm, vm.propertyNames->prototype, protoObj,
-            JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-        protoObj->putDirect(vm, vm.propertyNames->constructor, f, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
-    }
+    f->putDirect(vm, vm.propertyNames->prototype, protoObj,
+        JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    protoObj->putDirect(vm, vm.propertyNames->constructor, f, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
 
     return f;
 }

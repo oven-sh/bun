@@ -56,9 +56,11 @@ Local<ArrayBuffer> ArrayBufferView::Buffer()
     auto* view = localToObjectPointer<JSC::JSArrayBufferView>();
     RELEASE_ASSERT(view, "v8::ArrayBufferView::Buffer: not an ArrayBufferView");
     auto* globalObject = dynamicDowncast<Zig::GlobalObject>(view->globalObject());
+    RELEASE_ASSERT(globalObject, "v8::ArrayBufferView::Buffer: not a Bun global object");
     auto& vm = globalObject->vm();
 
     JSC::JSArrayBuffer* jsBuffer = view->possiblySharedJSBuffer(globalObject);
+    RELEASE_ASSERT(jsBuffer, "v8::ArrayBufferView::Buffer: failed to materialize the ArrayBuffer");
     HandleScope* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
     return handleScope->createLocal<ArrayBuffer>(vm, jsBuffer);
 }

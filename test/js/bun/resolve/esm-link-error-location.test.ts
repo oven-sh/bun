@@ -58,11 +58,11 @@ describe("ESM link-time SyntaxError reports the importing file", () => {
     expect(stderr).toBe("");
     const importer = path.join(String(dir), "importer.mjs");
     expect({
-      msg: stdout.match(/^MSG:(.+?)'\//m)?.[1],
+      msg: stdout.match(/^MSG:(.*?not found in module)/m)?.[1],
       url: stdout.match(/^URL:(.*)$/m)?.[1],
       line: stdout.match(/^LINE:(.*)$/m)?.[1],
     }).toEqual({
-      msg: "Export named 'gone' not found in module ",
+      msg: "Export named 'gone' not found in module",
       url: importer,
       line: "set",
     });

@@ -1216,6 +1216,13 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
     use js_ast::ExprData;
     match &expr.data {
         ExprData::EIdentifier(_) | ExprData::EDot(_) | ExprData::EIndex(_) => true,
+        // These are produced by the visit pass (namespace-import rewrite, cjs2esm,
+        // `module.exports`/`import.meta.hot` inlining) and print as a bare identifier
+        // or a property access. Without the `(0, ...)` wrap the printed `delete` sees
+        // a Reference and its result/effect differ from the source.
+        ExprData::EImportIdentifier(_)
+        | ExprData::ECommonjsExportIdentifier(_)
+        | ExprData::ESpecial(_) => true,
         ExprData::ENumber(e) => e.value().is_infinite() || e.value().is_nan(),
         _ => false,
     }

@@ -392,6 +392,37 @@ describe("bundler", () => {
       stdout: '[[{"xyz":456},456],[{"xyz":123},123],[{"xyz":456},456],[{"xyz":123},123]]',
     },
   });
+  // `delete (null ?? exports.a)` evaluates to a value, so the result is `true`
+  // with no effect on the property. Under cjs2esm, `exports.a` is rewritten to
+  // an `ECommonjsExportIdentifier`; the printer has to re-wrap it as `(0, ...)`
+  // so `delete` still sees a value instead of the hoisted binding.
+  itBundled("cjs2esm/DeleteFoldedExportsPropertyRef", {
+    files: {
+      "/entry.js": /* js */ `
+        exports.a = 1;
+        console.log(delete (null ?? exports.a), exports.a);
+        console.log(delete (0, exports.a), exports.a);
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).not.toMatch(/^[^"]*delete\s+\$a\b/m);
+    },
+    run: { stdout: "true 1\ntrue 1" },
+  });
+  itBundled("cjs2esm/DeleteFoldedExportsPropertyRefConsumer", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./lib.js";
+        console.log(a);
+      `,
+      "/lib.js": /* js */ `
+        exports.a = 1;
+        console.log(delete (null ?? exports.a), exports.a);
+      `,
+    },
+    run: { stdout: "true 1\n1" },
+  });
   // https://github.com/oven-sh/bun/issues/4565
   // `exports.x = ...` as the unbraced body of if/while/do/else must not be
   // converted to `var $x = ...; export { $x as x };` because `export` is only

@@ -2858,6 +2858,61 @@ describe("bundler", () => {
       expect(out).not.toContain("require_foo\u2014bar");
     },
   });
+  // `delete (null ?? ns.x)` evaluates its operand to a value, so the result is
+  // `true` with no side effect. When bundling rewrites `ns.x` to the local
+  // binding (EImportIdentifier) after folding `??`, the printer must re-wrap
+  // the operand so `delete` still sees a value instead of the binding itself.
+  // Without the wrap the output is `delete x`, a strict-mode SyntaxError.
+  itBundled("edgecase/DeleteFoldedNamespacePropertyRef", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./m.js";
+        console.log(delete (null ?? ns.x), ns.x);
+        console.log(delete (0, ns.x), ns.x);
+        console.log(delete (true ? ns.x : 0), ns.x);
+      `,
+      "/m.js": /* js */ `
+        export let x = 1;
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).not.toMatch(/delete\s+x\b/);
+      expect(code).not.toMatch(/delete\s+ns\.x\b/);
+    },
+    run: { stdout: "true 1\ntrue 1\ntrue 1" },
+  });
+  itBundled("edgecase/DeleteFoldedNamespacePropertyRefMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./m.js";
+        console.log(delete (null ?? ns.x), ns.x);
+      `,
+      "/m.js": /* js */ `
+        export let x = 1;
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    run: { stdout: "true 1" },
+  });
+  // Same path via a direct named import: the identifier becomes an
+  // EImportIdentifier during the visit pass.
+  itBundled("edgecase/DeleteFoldedImportedBindingRef", {
+    files: {
+      "/entry.js": /* js */ `
+        import { x } from "./m.js";
+        console.log(delete (null ?? x), x);
+      `,
+      "/m.js": /* js */ `
+        export let x = 1;
+      `,
+    },
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toMatch(/delete\s+x\b/);
+    },
+    run: { stdout: "true 1" },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

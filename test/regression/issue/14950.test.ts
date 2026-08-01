@@ -102,6 +102,24 @@ describe.concurrent("expect().resolves/.rejects on a not-yet-settled promise", (
     expect(exitCode).toBe(1);
   }, 60_000);
 
+  test("a late rejection from an abandoned toThrow async fn does not fail the next test", async () => {
+    const { stderr, exitCode, hung } = await runTestFile(
+      "issue-14950-late-reject",
+      `test("a", () => {
+           expect(async () => { await Bun.sleep(700); throw new Error("late"); }).toThrow();
+         });
+         test("b", async () => {
+           await Bun.sleep(900);
+           expect(1).toBe(1);
+         }, 5000);`,
+    );
+    expect(hung).toBe(false);
+    expect(stderr).toMatch(/1 pass/);
+    expect(stderr).toMatch(/1 fail/);
+    expect(stderr).not.toContain("Unhandled");
+    expect(exitCode).toBe(1);
+  }, 60_000);
+
   test(".resolves on an already-resolved promise still passes synchronously", async () => {
     const { stderr, exitCode, hung } = await runTestFile(
       "issue-14950-settled",

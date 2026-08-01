@@ -932,6 +932,7 @@ impl Expect {
         }
 
         if let Some(promise) = return_value.as_any_promise() {
+            promise.set_handled(global_this.vm());
             let still_pending = Self::wait_for_promise_bounded_by_test(global_this, promise);
             scope.apply(vm);
             if still_pending {

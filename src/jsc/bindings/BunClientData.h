@@ -188,6 +188,10 @@ public:
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
 
+    // Maintained by Bun::GlobalScope's constructor and destructor, so it counts
+    // every global (main, node:vm contexts, bake) without walking the heap.
+    size_t liveGlobalObjectCount { 0 };
+
 private:
     bool isWebCoreJSClientData() const final { return true; }
 

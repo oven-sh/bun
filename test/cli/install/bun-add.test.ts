@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join, relative, resolve } from "path";
@@ -747,6 +747,208 @@ it("should add to peerDependencies with --peer", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+describe("should move existing dependency when an explicit group flag is given", () => {
+  async function addAndReadPackageJson(initial: Record<string, unknown>, args: string[]) {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeFile(join(package_dir, "package.json"), JSON.stringify(initial));
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", ...args],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    const out = await stdout.text();
+    expect(err).not.toContain("error:");
+    expect(out).toContain("BaR@0.0.2");
+    expect(await exited).toBe(0);
+    return await file(join(package_dir, "package.json")).json();
+  }
+
+  it("dependencies -> devDependencies with --dev", async () => {
+    const pkg = await addAndReadPackageJson(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: { BaR: "^0.0.2" },
+      },
+      ["--dev", "BaR"],
+    );
+    expect(pkg).toEqual({
+      name: "foo",
+      version: "0.0.1",
+      devDependencies: { BaR: "^0.0.2" },
+    });
+  });
+
+  it("dependencies -> optionalDependencies with --optional", async () => {
+    const pkg = await addAndReadPackageJson(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: { BaR: "^0.0.2" },
+      },
+      ["--optional", "BaR"],
+    );
+    expect(pkg).toEqual({
+      name: "foo",
+      version: "0.0.1",
+      optionalDependencies: { BaR: "^0.0.2" },
+    });
+  });
+
+  it("dependencies -> peerDependencies with --peer", async () => {
+    const pkg = await addAndReadPackageJson(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: { BaR: "^0.0.2" },
+      },
+      ["--peer", "BaR"],
+    );
+    expect(pkg).toEqual({
+      name: "foo",
+      version: "0.0.1",
+      peerDependencies: { BaR: "^0.0.2" },
+    });
+  });
+
+  it("devDependencies -> optionalDependencies with --optional", async () => {
+    const pkg = await addAndReadPackageJson(
+      {
+        name: "foo",
+        version: "0.0.1",
+        devDependencies: { BaR: "^0.0.2" },
+      },
+      ["--optional", "BaR"],
+    );
+    expect(pkg).toEqual({
+      name: "foo",
+      version: "0.0.1",
+      optionalDependencies: { BaR: "^0.0.2" },
+    });
+  });
+
+  it("optionalDependencies -> devDependencies with --dev", async () => {
+    const pkg = await addAndReadPackageJson(
+      {
+        name: "foo",
+        version: "0.0.1",
+        optionalDependencies: { BaR: "^0.0.2" },
+      },
+      ["--dev", "BaR"],
+    );
+    expect(pkg).toEqual({
+      name: "foo",
+      version: "0.0.1",
+      devDependencies: { BaR: "^0.0.2" },
+    });
+  });
+
+  it("leaves other entries in the source group intact", async () => {
+    const pkg = await addAndReadPackageJson(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: { BaR: "^0.0.2", boba: "^0.0.2" },
+      },
+      ["--dev", "BaR"],
+    );
+    expect(pkg).toEqual({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: { boba: "^0.0.2" },
+      devDependencies: { BaR: "^0.0.2" },
+    });
+  });
+
+  it("cleans up the other group when already in the target group", async () => {
+    const pkg = await addAndReadPackageJson(
+      {
+        name: "foo",
+        version: "0.0.1",
+        devDependencies: { BaR: "^0.0.2" },
+        optionalDependencies: { BaR: "^0.0.2" },
+      },
+      ["--dev", "BaR"],
+    );
+    expect(pkg).toEqual({
+      name: "foo",
+      version: "0.0.1",
+      devDependencies: { BaR: "^0.0.2" },
+    });
+  });
+
+  it("keeps peerDependencies when adding to devDependencies", async () => {
+    const pkg = await addAndReadPackageJson(
+      {
+        name: "foo",
+        version: "0.0.1",
+        peerDependencies: { BaR: "^0.0.2" },
+      },
+      ["--dev", "BaR"],
+    );
+    expect(pkg).toEqual({
+      name: "foo",
+      version: "0.0.1",
+      peerDependencies: { BaR: "^0.0.2" },
+      devDependencies: { BaR: "^0.0.2" },
+    });
+  });
+
+  it("keeps devDependencies when adding to peerDependencies", async () => {
+    const pkg = await addAndReadPackageJson(
+      {
+        name: "foo",
+        version: "0.0.1",
+        devDependencies: { BaR: "^0.0.2" },
+      },
+      ["--peer", "BaR"],
+    );
+    expect(pkg).toEqual({
+      name: "foo",
+      version: "0.0.1",
+      devDependencies: { BaR: "^0.0.2" },
+      peerDependencies: { BaR: "^0.0.2" },
+    });
+  });
+
+  it("does not move when no flag is given", async () => {
+    const pkg = await addAndReadPackageJson(
+      {
+        name: "foo",
+        version: "0.0.1",
+        devDependencies: { BaR: "^0.0.2" },
+      },
+      ["BaR"],
+    );
+    expect(pkg).toEqual({
+      name: "foo",
+      version: "0.0.1",
+      devDependencies: { BaR: "^0.0.2" },
+    });
+  });
+
+  it("does not move with --only-missing", async () => {
+    const pkg = await addAndReadPackageJson(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: { BaR: "^0.0.2" },
+      },
+      ["--dev", "--only-missing", "BaR"],
+    );
+    expect(pkg).toEqual({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: { BaR: "^0.0.2" },
+    });
+  });
+});
+
 it("should add exact version with install.exact", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
@@ -1486,7 +1688,7 @@ it("should let you add the same package twice", async () => {
       {
         name: "Foo",
         version: "0.0.1",
-        dependencies: {
+        devDependencies: {
           baz: "^0.0.3",
         },
       },

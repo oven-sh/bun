@@ -95,3 +95,25 @@ test("ReadableStream releases source-only WriteBarriers once terminal", async ()
   expect({ leaked, results, threshold }).toEqual({ leaked: [], results, threshold });
   expect(exitCode).toBe(0);
 });
+
+// readableStreamCancel's Direct arm used to leave m_closed false (onClose early-returned
+// because the stream was already Closed), so a captured controller could still reach
+// writeToDirectSink after cancel. With m_closed set, the bound methods throw.
+test("direct controller write() after reader.cancel() throws closed", async () => {
+  let ctrl: any;
+  let pullStarted = Promise.withResolvers<void>();
+  const rs = new ReadableStream({
+    type: "direct",
+    async pull(c: any) {
+      ctrl = c;
+      c.write("first");
+      pullStarted.resolve();
+      await new Promise(() => {});
+    },
+  });
+  const reader = rs.getReader();
+  reader.read().catch(() => {});
+  await pullStarted.promise;
+  await reader.cancel();
+  expect(() => ctrl.write("after-cancel")).toThrow(/closed/);
+});

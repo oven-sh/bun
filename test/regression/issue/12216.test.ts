@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, tempDir } from "harness";
 
 // https://github.com/oven-sh/bun/issues/12216
 // bunfig `[test]` coverage settings must not override explicit CLI flags.

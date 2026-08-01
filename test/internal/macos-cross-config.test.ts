@@ -12,7 +12,13 @@ import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
 import { existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { resolveConfig, type Config, type Host, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
+import {
+  resolveConfig,
+  type Config,
+  type Host,
+  type PartialConfig,
+  type Toolchain,
+} from "../../scripts/build/config.ts";
 import { webkit } from "../../scripts/build/deps/webkit.ts";
 import { parsePackedFeaturesList } from "../../scripts/build/features-json.ts";
 import { computeFlags, DARWIN_STACK_SIZE } from "../../scripts/build/flags.ts";

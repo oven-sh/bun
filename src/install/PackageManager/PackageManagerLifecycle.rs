@@ -61,9 +61,8 @@ impl LifecycleScriptTimeLog {
         }
 
         if let Some(longest) = self.list.iter().max_by_key(|e| e.duration) {
-            // extra \n prints a blank line after this one
             bun_core::warn!(
-                "{}'s {} script took {}\n",
+                "{}'s {} script took {}",
                 BStr::new(&longest.package_name),
                 lockfile::Scripts::NAMES[longest.script_id as usize],
                 bun_fmt::fmt_duration_one_decimal(longest.duration),

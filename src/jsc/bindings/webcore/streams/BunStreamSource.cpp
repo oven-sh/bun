@@ -480,8 +480,6 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
         return jsUndefined();
     }
     if (auto* chunk = dynamicDowncast<JSC::JSArrayBufferView>(result)) {
-        // The source allocated its own buffer; the adapter's pull view was not
-        // the size bottleneck, so don't grow it.
         if (chunk->byteLength() > 0) {
             if (adapter->m_textMode) {
                 nativeEnqueueTextChunk(globalObject, controller, adapter->m_textState, chunk->span(), /* flush */ false);

@@ -118,8 +118,6 @@ impl ByteStream {
             return streams::Start::OwnedAndDone(Vec::<u8>::move_from_list(buffer));
         }
 
-        // `on_pull`/`on_data` hand the reader `Owned` buffers rather than copying
-        // into the adapter's pull view, so the adapter skips allocating one.
         streams::Start::ReadyOwned
     }
 
@@ -353,8 +351,6 @@ impl ByteStream {
 
         if self.pending.get().state == streams::PendingState::Pending {
             debug_assert!(self.buffer.get().is_empty());
-            // Drop the rooted pull view; the chunk is handed off as its own
-            // allocation below, so the view is never written into.
             self.pending_value
                 .with_mut(|pv| pv.clear_without_deallocation());
 
@@ -498,8 +494,7 @@ impl ByteStream {
             return streams::Result::Done;
         }
 
-        // Parked until `on_data`. Rooting the (possibly `undefined`) pull view
-        // lets `on_cancel` observe that a pull was outstanding.
+        // Rooted only so `on_cancel` can observe an outstanding pull.
         self.set_value(view);
 
         // R-2: `JsCell::as_ptr` yields the stable `*mut Pending` that the

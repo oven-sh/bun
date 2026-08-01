@@ -73,9 +73,7 @@ pub enum Start {
     },
     FileSink(FileSinkOptions),
     Ready,
-    /// Streaming, and `on_pull` hands back its own allocations (`Owned`/
-    /// `Temporary`) rather than writing into the adapter's pull view. The
-    /// adapter skips allocating that view.
+    /// `on_pull` hands back `Owned` chunks; the adapter skips its pull view.
     ReadyOwned,
     OwnedAndDone(Vec<u8>),
 }

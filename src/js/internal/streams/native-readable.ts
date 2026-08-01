@@ -143,8 +143,7 @@ function read(this: NativeReadable, maxToRead: number) {
       this[kHasResized] = true;
       this[kHighWaterMark] = Math.min(this[kHighWaterMark], result);
     } else if (typeof result === "number" && result < 0) {
-      // Source allocates its own chunks; the pull view is unused, so keep it
-      // at the minimum size.
+      // Start::ReadyOwned: the pull view is unused.
       this[kHasResized] = true;
       this[kHighWaterMark] = MIN_BUFFER_SIZE;
     }

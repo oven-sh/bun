@@ -1120,8 +1120,6 @@ impl<C: SourceContext> NewSource<C> {
         let result = if let Some(mut buffer) = view.as_array_buffer(global_this) {
             self.on_pull_from_js(buffer.slice_mut(), view)
         } else {
-            // `Start::ReadyOwned`: the adapter passes no pull view and the
-            // source allocates its own chunk.
             self.on_pull_from_js(&mut [], view)
         };
         Self::process_result(this_jsvalue, global_this, flags, result)
@@ -1136,8 +1134,6 @@ impl<C: SourceContext> NewSource<C> {
         match self.on_start_from_js() {
             streams::Start::Empty => Ok(JSValue::js_number(0.0)),
             streams::Start::Ready => Ok(JSValue::js_number(16384.0)),
-            // Negative chunk size tells the native adapter this source hands
-            // back its own allocations; it then skips allocating a pull view.
             streams::Start::ReadyOwned => Ok(JSValue::js_number(-1.0)),
             streams::Start::ChunkSize(size) => Ok(JSValue::js_number(size as f64)),
             streams::Start::Err(err) => Err(global_this.throw_value(err.to_js(global_this))),

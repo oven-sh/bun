@@ -88,8 +88,7 @@ public:
     bool m_closed : 1 { false };
     // Body.textStream(): each pulled byte span is UTF-8-decoded before enqueue.
     bool m_textMode : 1 { false };
-    // start() returned <0: the source hands back its own allocations instead
-    // of writing into the pull view. The adapter never allocates PendingView.
+    // start() returned <0 (Start::ReadyOwned): never allocate PendingView.
     bool m_sourceOwnsChunks : 1 { false };
     Bun::WebStreams::StreamingUTF8DecodeState m_textState;
 

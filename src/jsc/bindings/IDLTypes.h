@@ -365,18 +365,6 @@ struct IDLDate : IDLType<WallTime> {
     static WallTime extractValueFromNullable(WallTime value) { return value; }
 };
 
-struct IDLJSON : IDLType<String> {
-    using ConversionResultType = String;
-    using NullableConversionResultType = String;
-    using ParameterType = const String&;
-    using NullableParameterType = const String&;
-
-    using NullableType = String;
-    static String nullValue() { return String(); }
-    static bool isNullValue(const String& value) { return value.isNull(); }
-    template<typename U> static U&& extractValueFromNullable(U&& value) { return std::forward<U>(value); }
-};
-
 struct IDLScheduledAction : IDLType<std::unique_ptr<ScheduledAction>> {
 };
 template<typename T> struct IDLSerializedScriptValue : IDLWrapper<T> {

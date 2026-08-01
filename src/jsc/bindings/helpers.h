@@ -118,16 +118,6 @@ static const WTF::String toString(ZigString str)
               { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }));
 }
 
-static WTF::AtomString toAtomString(ZigString str)
-{
-
-    if (!isTaggedUTF16Ptr(str.ptr)) {
-        return makeAtomString(std::span<const Latin1Character>(untag(str.ptr), str.len));
-    } else {
-        return makeAtomString(std::span<const char16_t>(reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len));
-    }
-}
-
 static const WTF::String toString(ZigString str, StringPointer ptr)
 {
     if (str.len == 0 || str.ptr == nullptr || ptr.len == 0) {
@@ -245,8 +235,6 @@ static void appendToBuilder(ZigString str, WTF::StringBuilder& builder)
     builder.append({ untag(str.ptr), str.len });
 }
 
-static WTF::String toStringNotConst(ZigString str) { return toString(str); }
-
 static const JSC::JSString* toJSString(ZigString str, JSC::JSGlobalObject* global)
 {
     return JSC::jsOwnedString(global->vm(), toString(str));
@@ -258,22 +246,11 @@ static JSC::JSString* toJSStringGC(ZigString str, JSC::JSGlobalObject* global)
 }
 
 static const ZigString ZigStringEmpty = ZigString { (unsigned char*)"", 0 };
-static const unsigned char __dot_char = '.';
-static const ZigString ZigStringCwd = ZigString { &__dot_char, 1 };
-static const BunString BunStringCwd = BunString { BunStringTag::StaticZigString, ZigStringCwd };
 static const BunString BunStringEmpty = BunString { BunStringTag::Empty, nullptr };
 
 static const unsigned char* taggedUTF16Ptr(const char16_t* ptr)
 {
     return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | (static_cast<uint64_t>(1) << 63));
-}
-
-static ZigString toZigString(WTF::String* str)
-{
-    return str->isEmpty()
-        ? ZigStringEmpty
-        : ZigString { str->is8Bit() ? str->span8().data() : taggedUTF16Ptr(str->span16().data()),
-              str->length() };
 }
 
 static ZigString toZigString(WTF::StringImpl& str)
@@ -326,21 +303,6 @@ static ZigString toZigString(JSC::JSString* str, JSC::JSGlobalObject* global)
         return toZigString(str->view(global));
     }
     return toZigString(str->value(global));
-}
-
-static ZigString toZigString(JSC::Identifier& str, JSC::JSGlobalObject* global)
-{
-    return toZigString(str.string());
-}
-
-static ZigString toZigString(JSC::Identifier* str, JSC::JSGlobalObject* global)
-{
-    return toZigString(str->string());
-}
-
-static WTF::StringView toStringView(ZigString str)
-{
-    return WTF::StringView(std::span { untag(str.ptr), str.len });
 }
 
 static void throwException(JSC::ThrowScope& scope, ZigErrorType err, JSC::JSGlobalObject* global)

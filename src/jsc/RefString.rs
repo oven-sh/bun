@@ -6,10 +6,8 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // `bun_core::WTFStringImpl` is the *pointer* type (= `*mut WTFStringImplStruct`).
 use bun_core::WTFStringImpl;
-use bun_jsc::StringJsc as _; // extension trait providing `.to_js()` on `bun_core::String`
 
 pub(crate) type Hash = u32;
 
@@ -36,13 +34,6 @@ pub struct RefString {
 }
 
 impl RefString {
-    pub fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // Wrap the raw
-        // `WTFStringImpl` pointer without bumping the refcount (`String` has
-        // no `Drop`, so this is adopt-then-forget).
-        bun_core::String::adopt_wtf_impl(self.impl_).to_js(global)
-    }
-
     pub(crate) fn compute_hash(input: &[u8]) -> u32 {
         bun_hash::XxHash32::hash(0, input)
     }

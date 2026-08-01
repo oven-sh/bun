@@ -126,10 +126,10 @@ pub struct WebSocketProxyTunnel {
     /// Snapshot of `wrapper.ssl` taken in `start()`.
     ///
     /// Callbacks fired from inside `SslWrapper::{start,receive_data,...}` run while
-    /// the caller holds a live `&SslWrapper`; under Stacked Borrows, *any* read
-    /// of `(*ctx).wrapper` bytes through the Box-provenance `ctx` pops that Unique
-    /// tag. Snapshotting the `*mut SSL` here lets `on_handshake` read it without
-    /// touching `wrapper`'s bytes.
+    /// the caller holds a live `&SslWrapper` (all its methods are `&self`, so a
+    /// shared read of `wrapper` is harmless; only a whole-struct `&mut *ctx` in a
+    /// callback would overlap it). Snapshotting the `*mut SSL` here — the field is a
+    /// `Cell` — lets `on_handshake` read it without touching `wrapper` at all.
     ssl: Option<NonNull<boringssl::c::SSL>>,
     /// Hostname for SNI (Server Name Indication)
     sni_hostname: Option<Box<[u8]>>,
@@ -365,9 +365,10 @@ impl WebSocketProxyTunnel {
             }
 
             // Verify server identity. Read the `ssl` snapshot + `sni_hostname` via
-            // raw field projections — never bind `&*this` (whole-struct), which
-            // would overlap `wrapper` and pop the `&SslWrapper` held by the
-            // `receive_data()` frame that fired us.
+            // raw field projections; a shared read overlapping `wrapper` would be
+            // harmless (the `receive_data()` frame holds only `&SslWrapper`), but
+            // this path deliberately touches neither `wrapper` nor a whole-struct
+            // borrow, so no exclusive access is ever formed under that frame.
             // SAFETY: ScopedRef guard holds a ref; `this` is live. `ssl` is `Copy`;
             // `sni_hostname` autoref covers only that field's bytes.
             let failed_identity = unsafe {

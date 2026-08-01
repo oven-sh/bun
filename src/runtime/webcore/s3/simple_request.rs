@@ -478,7 +478,8 @@ impl S3HttpSimpleTask {
         // Handing `this` to the JS thread transfers ownership (`on_response` `heap::take`s
         // it), so the enqueue is the terminal action.
         if let Some((vm, queued)) = handoff {
-            vm.event_loop_shared().enqueue_task_concurrent(queued);        }
+            vm.event_loop_shared().enqueue_task_concurrent(queued);
+        }
     }
 }
 

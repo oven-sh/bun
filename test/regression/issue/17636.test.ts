@@ -165,6 +165,35 @@ test.concurrent(
 );
 
 test.concurrent(
+  "Promise microtasks queued from a worker's 'exit' listener run",
+  async () => {
+    const source = `
+    import { Worker } from "node:worker_threads";
+    const w = new Worker(
+      \`process.on("exit", c => {
+         console.log("exit-listener:" + c);
+         Promise.resolve().then(() => console.log("microtask:" + c));
+       });\`,
+      { eval: true },
+    );
+    await new Promise(r => w.on("exit", r));
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["exit-listener:0", "microtask:0"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+test.concurrent(
   "explicit process.exitCode suppresses the unsettled-TLA warning and exit 13",
   async () => {
     // Node: if user code set an exit code, the TLA-unsettled path respects it

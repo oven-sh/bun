@@ -1589,11 +1589,13 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         }
     }
 
-    if !ctx.test_options.coverage.enabled {
-        ctx.test_options.coverage.enabled = args.flag(b"--coverage");
+    if args.flag(b"--coverage") {
+        ctx.test_options.coverage.enabled = true;
+        ctx.test_options.coverage_from_cli = true;
     }
 
     if !args.options(b"--coverage-reporter").is_empty() {
+        ctx.test_options.coverage_reporter_from_cli = true;
         ctx.test_options.coverage.reporters = CoverageReporters {
             text: false,
             lcov: false,
@@ -1650,6 +1652,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
 
     if let Some(dir) = args.option(b"--coverage-dir") {
         ctx.test_options.coverage.reports_directory = Box::<[u8]>::from(dir);
+        ctx.test_options.coverage_dir_from_cli = true;
     }
 
     if !args.options(b"--path-ignore-patterns").is_empty() {

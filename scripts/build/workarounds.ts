@@ -174,9 +174,9 @@ export const workarounds: Workaround[] = [
     cleanup:
       `In scripts/build/config.ts drop the native-darwin-ASAN \`darwinNativeLld\` swap (darwinLld ` +
       `then reduces to \`ld64StripSwap !== undefined\`); in flags.ts delete the native \`--ld-path\` ` +
-      `entry and drop \`!c.darwinLld\` from the -Wl,-ld_new predicate; and delete this entry. Keep ` +
-      `cfg.darwinLld itself and the predicates that read it (flags.ts, shims.ts, workarounds.ts): ` +
-      `they key on "which Mach-O linker", not on this workaround.`,
+      `entry (its predicate is now unreachable); and delete this entry. Keep cfg.darwinLld and ` +
+      `every predicate that reads it, including \`-Wl,-ld_new\`'s \`!c.darwinLld\`: they key on ` +
+      `"which Mach-O linker", not on this workaround.`,
   },
   {
     id: "darwin-cross-stack-size",

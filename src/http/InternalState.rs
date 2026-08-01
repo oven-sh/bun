@@ -287,7 +287,7 @@ impl<'a> InternalState<'a> {
                     && buffer.len() > 16
                     && buffer.len() < 1024 * 1024 * 1024
                 {
-                    let estimated_size: u32 = u32::from_ne_bytes(
+                    let estimated_size: u32 = u32::from_le_bytes(
                         buffer[buffer.len() - 4..][..4]
                             .try_into()
                             .expect("infallible: size matches"),

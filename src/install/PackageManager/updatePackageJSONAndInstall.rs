@@ -874,8 +874,19 @@ fn update_package_json_and_install_with_manager_with_updates(
 pub fn update_package_json_and_install_and_cli(
     ctx: Command::Context,
     subcommand: Subcommand,
-    cli: CommandLineArguments,
+    mut cli: CommandLineArguments,
 ) -> Result<(), Error> {
+    // `bun install -g .` / `bun add -g ./foo`: `init()` chdirs into the global
+    // dir, after which a relative folder positional would resolve against that
+    // dir instead of where the user ran the command from. Rewrite such
+    // positionals to absolute paths while we are still in the invocation cwd.
+    // https://github.com/oven-sh/bun/issues/5682
+    if cli.global && subcommand.supports_folder_positionals() && cli.positionals.len() > 1 {
+        if let Some(rewritten) = super::absolutize_folder_positionals(cli.positionals) {
+            cli.positionals = rewritten;
+        }
+    }
+
     let (manager_ptr, original_cwd) = 'brk: {
         match super::init(ctx, cli.clone(), subcommand) {
             Ok(v) => v,

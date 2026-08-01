@@ -31,12 +31,19 @@ export default class RoundRobinHandle {
 
     if (fd >= 0) this.server.listen({ fd, backlog });
     else if (port >= 0) {
+      // Bun: workers bind this port themselves with SO_REUSEPORT (see
+      // listenOnPrimaryHandle in node:net) because IPC handle passing is not
+      // implemented. Bind with reusePort here as well so the primary's socket
+      // does not lock workers out: on Windows, a default-security wildcard
+      // listener makes later SO_REUSEADDR binds of the same port fail with
+      // WSAEACCES.
       this.server.listen({
         port,
         host: address,
         // Currently, net module only supports `ipv6Only` option in `flags`.
         ipv6Only: !!(flags & UV_TCP_IPV6ONLY),
         backlog,
+        reusePort: true,
       });
     } else
       this.server.listen({

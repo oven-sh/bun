@@ -4026,13 +4026,20 @@ function listenInCluster(
     if (err) {
       throw new ExceptionWithHostPort(err, "bind", address, port);
     }
+    // Bun: IPC socket-handle passing isn't implemented yet, so the primary
+    // cannot forward accepted connections to this worker. Bind the port here
+    // with SO_REUSEPORT (SO_REUSEADDR on Windows) so multiple workers can share
+    // it, the same approach _http_server.ts uses for http.Server in a worker.
+    // Without this the second worker's bind sees EADDRINUSE now that
+    // bsd_create_listen_socket no longer silently falls back to the other
+    // loopback family. See #30603 for the full cluster round-robin rework.
     server[kRealListen](
       path,
       port,
       hostname,
       exclusive,
       ipv6Only,
-      reusePort,
+      true /* reusePort */,
       readableAll,
       writableAll,
       tls,

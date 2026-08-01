@@ -276,6 +276,42 @@ describe("'bun' export condition falls through when its target file is missing",
     expect(exitCode).toBe(0);
   });
 
+  it.concurrent("falls through for '#imports' targeting a bare package specifier", async () => {
+    using cwd = tempDir("bun-cond-fallback-imports-bare", {
+      "node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        type: "module",
+        exports: { ".": "./index.mjs" },
+        imports: {
+          "#fetch": {
+            bun: "./src/fetch-bun.mjs",
+            node: "polyfill-pkg",
+          },
+        },
+      }),
+      "node_modules/pkg/index.mjs": `import { tag } from "#fetch"; console.log(tag);`,
+      "node_modules/polyfill-pkg/package.json": JSON.stringify({
+        name: "polyfill-pkg",
+        type: "module",
+        exports: { ".": "./index.mjs" },
+      }),
+      "node_modules/polyfill-pkg/index.mjs": `export const tag = "polyfill";`,
+      "index.mjs": `import "pkg";`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(cwd),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("polyfill\n");
+    expect(exitCode).toBe(0);
+  });
+
   it.concurrent("falls through to 'node' condition for require()", async () => {
     using cwd = tempDir("bun-cond-fallback-require", {
       "index.cjs": `console.log(require("pkg").tag);`,

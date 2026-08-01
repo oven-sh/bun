@@ -4920,8 +4920,6 @@ impl<'a> Resolver<'a> {
             }
             return MatchStatus::NotFound;
         }
-        let mut module_type = options::ModuleType::Unknown;
-
         let has_bun_condition = match kind {
             ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
                 &self.opts.conditions.require
@@ -4930,91 +4928,17 @@ impl<'a> Resolver<'a> {
         }
         .contains_key(b"bun".as_slice());
 
-        // NOTE: keeping the `ESModule`'s borrow of `self.debug_logs` alive
-        // across the subsequent `&mut self` calls would be aliased-&mut UB, so
-        // the `ESModule` is constructed as a temporary whose
-        // borrow of `self.debug_logs` ends as soon as `resolve_imports` returns.
-        let esm_resolution = ESModule {
-            conditions: match kind {
-                ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
-                    &self.opts.conditions.require
-                }
-                _ => &self.opts.conditions.import,
-            },
-            debug_logs: self.debug_logs.as_mut(),
-            module_type: &mut module_type,
-            skip_bun_condition: false,
-        }
-        .resolve_imports(import_path, &imports_map.root);
-        let _ = module_type;
-
-        let retry_without_bun = has_bun_condition
-            && matches!(
-                esm_resolution.status,
-                crate::package_json::Status::Exact
-                    | crate::package_json::Status::ExactEndsWithStar
-                    | crate::package_json::Status::Inexact
-            );
-
-        if esm_resolution.status == crate::package_json::Status::PackageResolve {
-            // https://github.com/oven-sh/bun/issues/4972
-            // Resolve a subpath import to a Bun or Node.js builtin
-            //
-            // Code example:
-            //
-            //     import { readFileSync } from '#fs';
-            //
-            // package.json:
-            //
-            //     "imports": {
-            //       "#fs": "node:fs"
-            //     }
-            //
-            if self.opts.mark_builtins_as_external || self.opts.target.is_bun() {
-                if let Some(alias) = HardcodedAlias::get(
-                    &esm_resolution.path,
-                    self.opts.target,
-                    HardcodedAliasCfg::default(),
-                ) {
-                    *out = MatchResult {
-                        path_pair: PathPair {
-                            primary: Fs::Path::init(alias.path.as_bytes()),
-                            secondary: None,
-                        },
-                        is_external: true,
-                        ..Default::default()
-                    };
-                    return MatchStatus::Success;
-                }
+        let mut retry_without_bun = false;
+        for skip_bun in [false, true] {
+            if skip_bun && !retry_without_bun {
+                break;
             }
 
-            return self.load_node_modules(
-                &esm_resolution.path,
-                kind,
-                dir_info,
-                global_cache,
-                true,
-                out,
-            );
-        }
-
-        if self
-            .handle_esm_resolution(
-                esm_resolution,
-                package_json.source.path.name().dir,
-                kind,
-                package_json,
-                b"",
-                out,
-            )
-            .is_success()
-        {
-            return MatchStatus::Success;
-        }
-
-        // #7142: same "bun"-condition fallback as in load_node_modules.
-        if retry_without_bun {
             let mut module_type = options::ModuleType::Unknown;
+            // NOTE: keeping the `ESModule`'s borrow of `self.debug_logs` alive
+            // across the subsequent `&mut self` calls would be aliased-&mut UB, so
+            // the `ESModule` is constructed as a temporary whose
+            // borrow of `self.debug_logs` ends as soon as `resolve_imports` returns.
             let esm_resolution = ESModule {
                 conditions: match kind {
                     ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
@@ -5024,20 +4948,75 @@ impl<'a> Resolver<'a> {
                 },
                 debug_logs: self.debug_logs.as_mut(),
                 module_type: &mut module_type,
-                skip_bun_condition: true,
+                skip_bun_condition: skip_bun,
             }
             .resolve_imports(import_path, &imports_map.root);
             let _ = module_type;
 
-            if esm_resolution.status != crate::package_json::Status::PackageResolve {
-                return self.handle_esm_resolution(
+            if !skip_bun {
+                retry_without_bun = has_bun_condition
+                    && matches!(
+                        esm_resolution.status,
+                        crate::package_json::Status::Exact
+                            | crate::package_json::Status::ExactEndsWithStar
+                            | crate::package_json::Status::Inexact
+                    );
+            }
+
+            if esm_resolution.status == crate::package_json::Status::PackageResolve {
+                // https://github.com/oven-sh/bun/issues/4972
+                // Resolve a subpath import to a Bun or Node.js builtin
+                //
+                // Code example:
+                //
+                //     import { readFileSync } from '#fs';
+                //
+                // package.json:
+                //
+                //     "imports": {
+                //       "#fs": "node:fs"
+                //     }
+                //
+                if self.opts.mark_builtins_as_external || self.opts.target.is_bun() {
+                    if let Some(alias) = HardcodedAlias::get(
+                        &esm_resolution.path,
+                        self.opts.target,
+                        HardcodedAliasCfg::default(),
+                    ) {
+                        *out = MatchResult {
+                            path_pair: PathPair {
+                                primary: Fs::Path::init(alias.path.as_bytes()),
+                                secondary: None,
+                            },
+                            is_external: true,
+                            ..Default::default()
+                        };
+                        return MatchStatus::Success;
+                    }
+                }
+
+                return self.load_node_modules(
+                    &esm_resolution.path,
+                    kind,
+                    dir_info,
+                    global_cache,
+                    true,
+                    out,
+                );
+            }
+
+            if self
+                .handle_esm_resolution(
                     esm_resolution,
                     package_json.source.path.name().dir,
                     kind,
                     package_json,
                     b"",
                     out,
-                );
+                )
+                .is_success()
+            {
+                return MatchStatus::Success;
             }
         }
 

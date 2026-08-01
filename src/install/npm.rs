@@ -1537,7 +1537,11 @@ impl PackageManifest {
 
     /// Highest release, or highest prerelease if there are no releases.
     /// Both lists are sorted ascending at serialization time.
-    fn find_highest_version(&self, min_age_ms: Option<f64>) -> Option<FindResult<'_>> {
+    fn find_highest_version(
+        &self,
+        min_age_ms: Option<f64>,
+        had_too_recent: &mut bool,
+    ) -> Option<FindResult<'_>> {
         for list in [&self.pkg.releases, &self.pkg.prereleases] {
             let keys = list.keys.get(&self.versions);
             if keys.is_empty() {
@@ -1550,6 +1554,7 @@ impl PackageManifest {
                 let package = &values[i];
                 if let Some(min_age_ms) = min_age_ms {
                     if Self::is_package_version_too_recent(package, min_age_ms) {
+                        *had_too_recent = true;
                         continue;
                     }
                 }
@@ -1719,8 +1724,13 @@ impl PackageManifest {
                     }
                     _ => None,
                 };
-                if let Some(highest) = self.find_highest_version(min_age_gate_ms) {
+                let mut had_too_recent = false;
+                if let Some(highest) = self.find_highest_version(min_age_gate_ms, &mut had_too_recent)
+                {
                     return FindVersionResult::FoundLatestFallback(highest);
+                }
+                if had_too_recent {
+                    return FindVersionResult::Err(FindVersionError::AllVersionsTooRecent);
                 }
             }
             return FindVersionResult::Err(FindVersionError::NotFound);

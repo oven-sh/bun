@@ -653,3 +653,57 @@ it("should fall back to the highest version when the manifest has no dist-tags",
     version: "0.0.3",
   });
 });
+
+it("should fall back to the highest prerelease when the manifest has no releases and no dist-tags", async () => {
+  setHandler(async request => {
+    const url = request.url.replaceAll("%2f", "/");
+    if (url.endsWith(".tgz")) {
+      return new Response(file(join(import.meta.dir, "baz-0.0.3.tgz")));
+    }
+    const name = url.slice(url.indexOf("/", root_url.length) + 1);
+    const pre = (v: string) => ({ name, version: v, dist: { tarball: `${root_url}/${name}-${v}.tgz` } });
+    return new Response(
+      JSON.stringify({
+        name,
+        versions: {
+          "1.0.0-beta.1": pre("1.0.0-beta.1"),
+          "1.0.0-beta.2": pre("1.0.0-beta.2"),
+        },
+        // no "dist-tags", no stable releases
+      }),
+    );
+  });
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "foo", dependencies: { baz: "1.0.0-beta.1" } }),
+  );
+
+  const install = spawn({
+    cmd: [bunExe(), "install", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [, installErr, installExit] = await Promise.all([
+    new Response(install.stdout).text(),
+    new Response(install.stderr).text(),
+    install.exited,
+  ]);
+  expect(installErr).not.toContain("error:");
+  expect(installExit).toBe(0);
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "--latest", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [, err, exitCode] = await Promise.all([new Response(stdout).text(), new Response(stderr).text(), exited]);
+
+  expect(err).not.toContain('with tag "latest" not found');
+  expect(err).not.toContain("failed to resolve");
+  expect(err).toContain("falling back to 1.0.0-beta.2");
+  expect(exitCode).toBe(0);
+});

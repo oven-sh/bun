@@ -2846,7 +2846,9 @@ impl PackageManager {
         (dep.version.tag == dependency::version::Tag::Catalog
             || self.lockfile.packages.items_dependencies()[root_id as usize].contains(id))
             && (self.update_requests.is_empty()
-                || self.updating_packages.contains(self.lockfile.str(&dep.name)))
+                || self
+                    .updating_packages
+                    .contains(self.lockfile.str(&dep.name)))
     }
 
     #[inline]

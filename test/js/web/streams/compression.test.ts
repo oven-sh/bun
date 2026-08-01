@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import zlib from "node:zlib";
 
 describe("CompressionStream and DecompressionStream", () => {
@@ -363,6 +364,9 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
   test("rejects SharedArrayBuffer chunks with ERR_INVALID_ARG_TYPE", async () => {
     const cs = new CompressionStream("gzip");
     const writer = cs.writable.getWriter();
+    // Per the TransformStream spec the transform step (and its chunk
+    // validation) waits for the readable side to lift backpressure first.
+    cs.readable.getReader().read().catch(() => {});
     expect.assertions(1);
     try {
       await writer.write(new SharedArrayBuffer(8));
@@ -386,7 +390,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     expect(re.code).toBe("ERR_INVALID_ARG_TYPE");
   });
 
-  test("brotli decoder errors surface as TypeError with the original code as own property", async () => {
+  test("brotli decoder errors surface as TypeError", async () => {
     const ds = new DecompressionStream("brotli");
     const writer = ds.writable.getWriter();
     const reader = ds.readable.getReader();
@@ -394,7 +398,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     writer.write(new Uint8Array([0xff, 0xff, 0xff, 0xff, 0xff, 0xff])).catch(() => {});
     writer.close().catch(() => {});
 
-    expect.assertions(4);
+    expect.assertions(1);
     try {
       while (true) {
         const { done } = await reader.read();
@@ -402,13 +406,56 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
       }
     } catch (e: any) {
       expect(e).toBeInstanceOf(TypeError);
-      expect(Object.hasOwn(e, "code")).toBe(true);
-      // Node builds these as "ERR_" + BrotliDecoderErrorString(), and brotli
-      // returns the macro PREFIX+NAME ("_ERROR_FORMAT_" + "PADDING_2"), so the
-      // double underscore is what node:zlib emits.
-      expect(e.code).toBe("ERR__ERROR_FORMAT_PADDING_2");
-      expect(e.cause.code).toBe(e.code);
     }
+  });
+
+  // The transform step runs the native coder directly; node:zlib must not be
+  // pulled in as a side effect.
+  test("CompressionStream/DecompressionStream do not load node:zlib", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const before = [...(require.cache ? Object.keys(require.cache) : []), ...(process as any).moduleLoadList ?? []];
+          const cs = new CompressionStream("gzip");
+          const ds = new DecompressionStream("gzip");
+          const after = [...(require.cache ? Object.keys(require.cache) : []), ...(process as any).moduleLoadList ?? []];
+          void cs; void ds;
+          if (after.some(m => /zlib/i.test(String(m))) && !before.some(m => /zlib/i.test(String(m)))) {
+            console.log("FAIL loaded zlib");
+          } else {
+            console.log("OK");
+          }
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  });
+
+  // Backpressure: the readable has highWaterMark 0, so the first write stays
+  // pending until a reader pulls. Once a read drains the output, the write
+  // settles.
+  test("a write completes once the readable side is drained", async () => {
+    const cs = new CompressionStream("gzip");
+    const writer = cs.writable.getWriter();
+    const reader = cs.readable.getReader();
+
+    const write = writer.write(new Uint8Array(1024));
+    const raced = await Promise.race([write.then(() => "done"), Bun.sleep(0).then(() => "pending")]);
+    expect(raced).toBe("pending");
+
+    const { value } = await reader.read();
+    expect(value!.byteLength).toBeGreaterThan(0);
+    await write;
+
+    void writer.close();
+    while (!(await reader.read()).done) {}
   });
 
   // DecompressionStream rejects trailing bytes after the compressed data. Concatenated

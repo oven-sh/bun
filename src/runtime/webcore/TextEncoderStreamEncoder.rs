@@ -226,3 +226,52 @@ impl TextEncoderStreamEncoder {
         }
     }
 }
+
+// ─── extern "C" surface (JSTextEncoderStream.cpp) ─────────────────────────
+// The TextEncoderStream cell owns its encoder directly as a `void*` (no JS
+// wrapper cell, no prototype lookup) and drives it through these.
+
+#[unsafe(no_mangle)]
+pub extern "C" fn TextEncoderStreamEncoder__createForStream() -> *mut TextEncoderStreamEncoder {
+    Box::into_raw(Box::new(TextEncoderStreamEncoder::default()))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn TextEncoderStreamEncoder__destroyForStream(this: *mut TextEncoderStreamEncoder) {
+    if !this.is_null() {
+        // SAFETY: `this` was returned by `__createForStream` and has not been
+        // freed (the C++ cell clears its pointer before calling).
+        drop(unsafe { Box::from_raw(this) });
+    }
+}
+
+/// The TextEncoderStream transform step: WebIDL `USVString` conversion of
+/// `chunk` (user JS — may throw), then encode. Returns a fresh `Uint8Array`
+/// on success, or `JSValue::zero` with the exception pending on `global`.
+#[unsafe(no_mangle)]
+pub extern "C" fn TextEncoderStreamEncoder__encodeForStream(
+    this: *mut TextEncoderStreamEncoder,
+    global: &JSGlobalObject,
+    chunk: JSValue,
+) -> JSValue {
+    // SAFETY: `this` is the live encoder owned by the calling JS cell; driven
+    // only from the JS thread, so `&*this` has no mutable alias.
+    let this = unsafe { &*this };
+    let Ok(str) = chunk.get_zig_string(global) else {
+        return JSValue::ZERO;
+    };
+    if str.is_16bit() {
+        this.encode_utf16(global, str.utf16_slice_aligned())
+    } else {
+        this.encode_latin1(global, str.slice())
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn TextEncoderStreamEncoder__flushForStream(
+    this: *mut TextEncoderStreamEncoder,
+    global: &JSGlobalObject,
+) -> JSValue {
+    // SAFETY: as in `__encodeForStream`.
+    unsafe { &*this }.flush_body(global)
+}

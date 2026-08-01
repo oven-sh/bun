@@ -1,6 +1,7 @@
 #include "config.h"
 #include "WebStreamsInternals.h"
 
+#include "JSCompressionStream.h"
 #include "JSDOMBinding.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"
@@ -79,6 +80,10 @@ static JSPromise* performFlushAlgorithm(JSC::VM& vm, JSGlobalObject* globalObjec
         RELEASE_AND_RETURN(scope, textEncoderStreamFlush(globalObject, uncheckedDowncast<JSTextEncoderStream>(controller->m_algorithmContext.get()), controller));
     case TransformerKind::TextDecoder:
         RELEASE_AND_RETURN(scope, textDecoderStreamFlush(globalObject, uncheckedDowncast<JSTextDecoderStream>(controller->m_algorithmContext.get()), controller));
+    case TransformerKind::Compression:
+        RELEASE_AND_RETURN(scope, compressionStreamFlush(globalObject, uncheckedDowncast<JSCompressionStream>(controller->m_algorithmContext.get()), controller));
+    case TransformerKind::Decompression:
+        RELEASE_AND_RETURN(scope, decompressionStreamFlush(globalObject, uncheckedDowncast<JSDecompressionStream>(controller->m_algorithmContext.get()), controller));
     }
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }

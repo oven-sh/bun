@@ -1,7 +1,7 @@
 // JSTextEncoderStream — the TextEncoderStream instance cell: it is
-// TransformerKind::TextEncoder's algorithmContext, and the transform/flush algorithms are
-// native code over m_encoder. Non-destructible (the lone-surrogate buffering lives in the
-// held TextEncoderStreamEncoder cell, not here).
+// TransformerKind::TextEncoder's algorithmContext, and the transform/flush arms drive
+// the Rust TextEncoderStreamEncoder (m_encoder) directly through the extern "C" surface
+// in TextEncoderStreamEncoder.rs. Destructible: m_encoder must be freed.
 #pragma once
 
 #include "root.h"
@@ -9,17 +9,18 @@
 
 #include "JSDOMGlobalObject.h"
 #include "StreamConstructor.h"
-#include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/JSDestructibleObject.h>
 
 namespace WebCore {
 
-class JSTextEncoderStream final : public JSC::JSNonFinalObject {
+class JSTextEncoderStream final : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
 
     static JSTextEncoderStream* create(JSC::VM&, JSC::Structure*);
+    static void destroy(JSC::JSCell*);
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
@@ -27,7 +28,7 @@ public:
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit: m_transform, m_encoder.
+    // visitChildrenImpl MUST visit: m_transform.
     DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
@@ -43,11 +44,12 @@ public:
     // the inner TransformStream (created by createTransformStream with
     // TransformerKind::TextEncoder and `this` as the algorithm context).
     JSC::WriteBarrier<JSTransformStream> m_transform;
-    // the existing native TextEncoderStreamEncoder cell (owns the lone-surrogate buffering).
-    JSC::WriteBarrier<JSC::JSObject> m_encoder;
+    // the Rust TextEncoderStreamEncoder (lone-surrogate buffering); freed by destroy().
+    void* m_encoder { nullptr };
 
 private:
     JSTextEncoderStream(JSC::VM&, JSC::Structure*);
+    ~JSTextEncoderStream();
     void finishCreation(JSC::VM&);
 };
 

@@ -6,6 +6,7 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMWrapperCache.h"
+#include "JSCompressionStream.h"
 #include "JSReadableStream.h"
 #include "JSReadableStreamDefaultController.h"
 #include "JSStreamsRuntime.h"
@@ -105,6 +106,10 @@ static JSPromise* performTransformAlgorithm(JSC::VM& vm, JSGlobalObject* globalO
         RELEASE_AND_RETURN(scope, textEncoderStreamTransform(globalObject, uncheckedDowncast<JSTextEncoderStream>(controller->m_algorithmContext.get()), controller, chunk));
     case TransformerKind::TextDecoder:
         RELEASE_AND_RETURN(scope, textDecoderStreamTransform(globalObject, uncheckedDowncast<JSTextDecoderStream>(controller->m_algorithmContext.get()), controller, chunk));
+    case TransformerKind::Compression:
+        RELEASE_AND_RETURN(scope, compressionStreamTransform(globalObject, uncheckedDowncast<JSCompressionStream>(controller->m_algorithmContext.get()), controller, chunk));
+    case TransformerKind::Decompression:
+        RELEASE_AND_RETURN(scope, decompressionStreamTransform(globalObject, uncheckedDowncast<JSDecompressionStream>(controller->m_algorithmContext.get()), controller, chunk));
     }
     RELEASE_AND_RETURN(scope, defaultTransformAlgorithm(vm, globalObject, controller, chunk));
 }

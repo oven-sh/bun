@@ -1,8 +1,8 @@
 // JSTextDecoderStream — the TextDecoderStream instance cell: it is
-// TransformerKind::TextDecoder's algorithmContext, and the transform/flush algorithms are
-// native code over m_decoder ({stream:true} decodes, then a final {stream:false} flush).
-// Non-destructible: the decoder state is held as the TextDecoder WRAPPER CELL (a
-// WriteBarrier), not a RefPtr.
+// TransformerKind::TextDecoder's algorithmContext, and the transform/flush arms drive
+// the Rust TextDecoder (m_decoder) directly through the extern "C" surface in
+// TextDecoder.rs (no per-chunk `{stream: true}` options object, no prototype lookup).
+// Destructible: m_decoder must be freed.
 #pragma once
 
 #include "root.h"
@@ -10,17 +10,18 @@
 
 #include "JSDOMGlobalObject.h"
 #include "StreamConstructor.h"
-#include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/JSDestructibleObject.h>
 
 namespace WebCore {
 
-class JSTextDecoderStream final : public JSC::JSNonFinalObject {
+class JSTextDecoderStream final : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
 
     static JSTextDecoderStream* create(JSC::VM&, JSC::Structure*);
+    static void destroy(JSC::JSCell*);
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
@@ -28,7 +29,7 @@ public:
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit: m_transform, m_decoder.
+    // visitChildrenImpl MUST visit: m_transform.
     DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
@@ -44,13 +45,14 @@ public:
     // the inner TransformStream (created by createTransformStream with
     // TransformerKind::TextDecoder and `this` as the algorithm context).
     JSC::WriteBarrier<JSTransformStream> m_transform;
-    // the native TextDecoder wrapper cell, constructed as
-    // `new TextDecoder(label, {fatal, ignoreBOM})` at TextDecoderStream construction; the
-    // `encoding` / `fatal` / `ignoreBOM` getters delegate to it.
-    JSC::WriteBarrier<JSC::JSObject> m_decoder;
+    // the Rust TextDecoder (encoding state, BOM / partial-sequence buffering); freed by destroy().
+    void* m_decoder { nullptr };
+    bool m_fatal { false };
+    bool m_ignoreBOM { false };
 
 private:
     JSTextDecoderStream(JSC::VM&, JSC::Structure*);
+    ~JSTextDecoderStream();
     void finishCreation(JSC::VM&);
 };
 

@@ -117,6 +117,8 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCountQueuingStrategyConstructor;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoderStreamConstructor;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoderStreamConstructor;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCompressionStreamConstructor;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDecompressionStreamConstructor;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForStreamPipeToOperation;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadRequest;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadIntoRequest;

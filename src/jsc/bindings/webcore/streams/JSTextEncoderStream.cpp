@@ -19,11 +19,18 @@
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
+
+// TextEncoderStreamEncoder.rs
+extern "C" void* TextEncoderStreamEncoder__createForStream();
+extern "C" void TextEncoderStreamEncoder__destroyForStream(void*);
+extern "C" JSC::EncodedJSValue TextEncoderStreamEncoder__encodeForStream(void*, JSC::JSGlobalObject*, JSC::EncodedJSValue chunk);
+extern "C" JSC::EncodedJSValue TextEncoderStreamEncoder__flushForStream(void*, JSC::JSGlobalObject*);
 
 namespace WebCore {
 
@@ -129,12 +136,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextEncoderStreamConst
     auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
     RETURN_IF_EXCEPTION(scope, {});
     auto* stream = JSTextEncoderStream::create(vm, structure);
-
-    // The existing native TextEncoderStreamEncoder owns the lone-surrogate buffering.
-    MarkedArgumentBuffer noArguments;
-    auto* encoder = JSC::construct(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject)->JSTextEncoderStreamEncoderConstructor(), noArguments, "TextEncoderStreamEncoder is not constructible"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-    stream->m_encoder.set(vm, stream, encoder);
+    stream->m_encoder = TextEncoderStreamEncoder__createForStream();
 
     auto* transform = createTransformStream(lexicalGlobalObject, TransformerKind::TextEncoder, stream, 1, nullptr, 0, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
@@ -188,6 +190,17 @@ const ClassInfo JSTextEncoderStream::s_info = { "TextEncoderStream"_s, &Base::s_
 JSTextEncoderStream::JSTextEncoderStream(VM& vm, Structure* structure)
     : Base(vm, structure)
 {
+}
+
+JSTextEncoderStream::~JSTextEncoderStream()
+{
+    if (auto* encoder = std::exchange(m_encoder, nullptr))
+        TextEncoderStreamEncoder__destroyForStream(encoder);
+}
+
+void JSTextEncoderStream::destroy(JSCell* cell)
+{
+    static_cast<JSTextEncoderStream*>(cell)->~JSTextEncoderStream();
 }
 
 void JSTextEncoderStream::finishCreation(VM& vm)
@@ -244,7 +257,6 @@ void JSTextEncoderStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.appendHidden(thisObject->m_transform);
-    visitor.appendHidden(thisObject->m_encoder);
 }
 
 void JSTextEncoderStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -253,7 +265,6 @@ void JSTextEncoderStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto& vm = cell->vm();
     Base::analyzeHeap(cell, analyzer);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_transform, "transform"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_encoder, "encoder"_s);
 }
 
 // Prototype accessors
@@ -306,21 +317,6 @@ namespace WebStreams {
 using namespace JSC;
 using WebCore::JSTextEncoderStream;
 
-// `encoder.encode(chunk)` / `encoder.flush()` on the TextEncoderStreamEncoder cell. The
-// encode arm runs user JS (ToString of the chunk). Empty return = it threw.
-static JSValue invokeEncoderMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* encoder, const Identifier& methodName, const MarkedArgumentBuffer& args)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue method = encoder->get(globalObject, methodName);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto callData = getCallData(method);
-    if (callData.type == CallData::Type::None) [[unlikely]] {
-        throwTypeError(globalObject, scope, "TextEncoderStreamEncoder method is not callable"_s);
-        return {};
-    }
-    RELEASE_AND_RETURN(scope, call(globalObject, method, callData, encoder, args));
-}
-
 static void enqueueIfNonEmptyView(JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller, JSValue buffer)
 {
     auto* view = dynamicDowncast<JSArrayBufferView>(buffer);
@@ -329,10 +325,9 @@ static void enqueueIfNonEmptyView(JSGlobalObject* globalObject, JSTransformStrea
     transformStreamDefaultControllerEnqueue(globalObject, controller, buffer);
 }
 
-// An abrupt encode OR enqueue completion becomes a rejected promise (a transform algorithm
-// must never throw synchronously into ProcessWrite/ProcessClose — the in-flight operation
-// would never settle). Shared by the transform and flush arms.
-static JSPromise* encodeAndEnqueue(JSGlobalObject* globalObject, JSTextEncoderStream* stream, JSTransformStreamDefaultController* controller, const Identifier& methodName, const MarkedArgumentBuffer& args)
+// Abrupt completions from encode (ToString runs user JS) OR enqueue become a rejected
+// promise — a transform algorithm must never throw synchronously into ProcessWrite/ProcessClose.
+static JSPromise* encodeAndEnqueue(JSGlobalObject* globalObject, JSTextEncoderStream* stream, JSTransformStreamDefaultController* controller, JSValue chunk, bool flush)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -340,13 +335,14 @@ static JSPromise* encodeAndEnqueue(JSGlobalObject* globalObject, JSTextEncoderSt
     JSValue thrown;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        JSValue buffer = invokeEncoderMethod(vm, globalObject, stream->m_encoder.get(), methodName, args);
+        JSValue buffer = JSValue::decode(flush
+                ? TextEncoderStreamEncoder__flushForStream(stream->m_encoder, globalObject)
+                : TextEncoderStreamEncoder__encodeForStream(stream->m_encoder, globalObject, JSValue::encode(chunk)));
         if (!catchScope.exception() && !buffer.isEmpty())
             enqueueIfNonEmptyView(globalObject, controller, buffer);
         if (catchScope.exception()) [[unlikely]]
             thrown = takeAbruptCompletion(globalObject, catchScope);
     }
-    // takeAbruptCompletion leaves a VM termination pending and returns the empty value.
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!thrown.isEmpty())
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
@@ -355,16 +351,12 @@ static JSPromise* encodeAndEnqueue(JSGlobalObject* globalObject, JSTextEncoderSt
 
 JSPromise* textEncoderStreamTransform(JSGlobalObject* globalObject, JSTextEncoderStream* stream, JSTransformStreamDefaultController* controller, JSValue chunk)
 {
-    MarkedArgumentBuffer args;
-    args.append(chunk);
-    ASSERT(!args.hasOverflowed());
-    return encodeAndEnqueue(globalObject, stream, controller, builtinNames(getVM(globalObject)).encodePublicName(), args);
+    return encodeAndEnqueue(globalObject, stream, controller, chunk, false);
 }
 
 JSPromise* textEncoderStreamFlush(JSGlobalObject* globalObject, JSTextEncoderStream* stream, JSTransformStreamDefaultController* controller)
 {
-    MarkedArgumentBuffer noArguments;
-    return encodeAndEnqueue(globalObject, stream, controller, builtinNames(getVM(globalObject)).flushPublicName(), noArguments);
+    return encodeAndEnqueue(globalObject, stream, controller, jsUndefined(), true);
 }
 
 } // namespace WebStreams

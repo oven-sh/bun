@@ -473,6 +473,14 @@ JSC::JSPromise* textEncoderStreamFlush(JSC::JSGlobalObject*, JSTextEncoderStream
 JSC::JSPromise* textDecoderStreamTransform(JSC::JSGlobalObject*, JSTextDecoderStream*, JSTransformStreamDefaultController*, JSC::JSValue chunk); // userJS: yes — JSTextDecoderStream.cpp
 JSC::JSPromise* textDecoderStreamFlush(JSC::JSGlobalObject*, JSTextDecoderStream*, JSTransformStreamDefaultController*); // userJS: yes — JSTextDecoderStream.cpp
 
+// JSCompressionStream.cpp — the TransformerKind::Compression / ::Decompression algorithm
+// ARMS. Same dispatch/bridge relationship as the TextEncoder/TextDecoder arms above.
+
+JSC::JSPromise* compressionStreamTransform(JSC::JSGlobalObject*, JSCompressionStream*, JSTransformStreamDefaultController*, JSC::JSValue chunk); // userJS: yes — JSCompressionStream.cpp
+JSC::JSPromise* compressionStreamFlush(JSC::JSGlobalObject*, JSCompressionStream*, JSTransformStreamDefaultController*); // userJS: yes — JSCompressionStream.cpp
+JSC::JSPromise* decompressionStreamTransform(JSC::JSGlobalObject*, JSDecompressionStream*, JSTransformStreamDefaultController*, JSC::JSValue chunk); // userJS: yes — JSCompressionStream.cpp
+JSC::JSPromise* decompressionStreamFlush(JSC::JSGlobalObject*, JSDecompressionStream*, JSTransformStreamDefaultController*); // userJS: yes — JSCompressionStream.cpp
+
 // CrossRealmTransform.cpp — transferable streams are NOT implemented. These signatures are
 // FROZEN, but the .cpp may be a stub whose entry points assert / throw; the per-class
 // transfer / transfer-receiving steps have no declarations here.

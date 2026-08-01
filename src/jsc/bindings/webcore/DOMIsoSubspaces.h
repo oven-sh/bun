@@ -99,6 +99,8 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForCountQueuingStrategyConstructor;
     std::unique_ptr<IsoSubspace> m_subspaceForTextEncoderStreamConstructor;
     std::unique_ptr<IsoSubspace> m_subspaceForTextDecoderStreamConstructor;
+    std::unique_ptr<IsoSubspace> m_subspaceForCompressionStreamConstructor;
+    std::unique_ptr<IsoSubspace> m_subspaceForDecompressionStreamConstructor;
     std::unique_ptr<IsoSubspace> m_subspaceForStreamPipeToOperation;
     std::unique_ptr<IsoSubspace> m_subspaceForReadRequest;
     std::unique_ptr<IsoSubspace> m_subspaceForReadIntoRequest;

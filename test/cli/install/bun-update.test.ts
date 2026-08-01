@@ -573,11 +573,7 @@ it("should fall back to the highest version when dist-tags.latest is not in vers
     stderr: "pipe",
     env,
   });
-  const [out, err, exitCode] = await Promise.all([
-    new Response(stdout).text(),
-    new Response(stderr).text(),
-    exited,
-  ]);
+  const [out, err, exitCode] = await Promise.all([new Response(stdout).text(), new Response(stderr).text(), exited]);
 
   expect(err).not.toContain('with tag "latest" not found');
   expect(err).not.toContain("failed to resolve");
@@ -646,11 +642,7 @@ it("should fall back to the highest version when the manifest has no dist-tags",
     stderr: "pipe",
     env,
   });
-  const [out, err, exitCode] = await Promise.all([
-    new Response(stdout).text(),
-    new Response(stderr).text(),
-    exited,
-  ]);
+  const [out, err, exitCode] = await Promise.all([new Response(stdout).text(), new Response(stderr).text(), exited]);
 
   expect(err).not.toContain('with tag "latest" not found');
   expect(err).not.toContain("failed to resolve");

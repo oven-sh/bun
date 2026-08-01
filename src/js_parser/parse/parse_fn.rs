@@ -160,10 +160,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.s(S::Function { func }, loc))
     }
 
-    fn take_arg_leading_comments(
-        &mut self,
-        base: usize,
-    ) -> bun_ast::StoreSlice<G::Comment> {
+    fn take_arg_leading_comments(&mut self, base: usize) -> bun_ast::StoreSlice<G::Comment> {
         let buf = &mut self.lexer.comments_to_preserve_before;
         if buf.len() <= base {
             return bun_ast::StoreSlice::EMPTY;

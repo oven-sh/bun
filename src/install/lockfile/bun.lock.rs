@@ -2118,6 +2118,7 @@ pub(crate) fn parse_into_binary_lockfile(
         root_pkg.resolutions = PackageIDSlice::new(off, len);
 
         root_pkg.meta.id = 0;
+        root_pkg.meta.origin = Origin::Local;
         // Tag as Root now so `<name>@root:` dedupes to package id 0 below.
         root_pkg.resolution = Resolution::init(crate::resolution::TaggedValue::Root);
         let root_name_hash = root_pkg.name_hash;
@@ -2775,13 +2776,6 @@ pub(crate) fn parse_into_binary_lockfile(
         // a package can list the same dependency in each dependnecy group, but only the first
         // is chosen (dev -> optional -> prod -> peer)
         let mut seen_deps: bun_collections::StringArrayHashMap<()> = Default::default();
-
-        // The two `[0]` writes are done first via
-        // sequential `&mut` accessors so the loops can take all column views
-        // immutably without overlapping exclusive borrows or `unsafe`.
-        lockfile.packages.items_resolution_mut()[0] =
-            Resolution::init(crate::resolution::TaggedValue::Root);
-        lockfile.packages.items_meta_mut()[0].origin = Origin::Local;
 
         let pkgs = lockfile.packages.slice();
         let pkg_deps = pkgs.items_dependencies();

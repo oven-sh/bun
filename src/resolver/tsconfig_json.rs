@@ -226,6 +226,8 @@ impl TSConfigJSON {
 
         if apply.contains(JsxField::ImportSource) {
             out.import_source = self.jsx.import_source.clone();
+            out.package_name = self.jsx.package_name.clone();
+            out.classic_import_source = self.jsx.classic_import_source.clone();
         }
 
         if apply.contains(JsxField::Runtime) {

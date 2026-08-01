@@ -1477,8 +1477,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 } else {
                     prev.runtime
                 },
-                development: false,
-                side_effects: jsx_side_effects,
+                development: prev.development,
+                side_effects: jsx_side_effects || prev.side_effects,
                 set_fields: prev.set_fields | set,
             });
         }

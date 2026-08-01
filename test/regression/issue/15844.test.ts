@@ -84,6 +84,30 @@ describe("bunfig jsx overrides tsconfig jsx (#15844)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("tsconfig jsxImportSource reaches the key-after-spread createElement fallback", async () => {
+    using dir = tempDir("tsconfig-import-source-pkgname", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } }),
+      "index.tsx": `export const A = (p: any) => <div {...p} key="k" />;\n`,
+    });
+    const { stdout, exitCode } = await build(String(dir));
+    expect(stdout).toContain(`from "preact"`);
+    expect(stdout).not.toContain(`from "react"`);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("bunfig jsx = 'react-jsxDEV' survives an unrelated --jsx-* flag", async () => {
+    using dir = tempDir("bunfig-jsxdev-with-cli-flag", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx" } }),
+      "bunfig.toml": `jsx = "react-jsxDEV"\n`,
+      "index.tsx": indexTsx,
+    });
+    const { stdout, stderr, exitCode } = await build(String(dir), ["--jsx-import-source", "react"]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("jsx-dev-runtime");
+    expect(stdout).not.toContain(`"react/jsx-runtime"`);
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("--tsconfig-override does not emit 'directory mismatch'", async () => {
     using dir = tempDir("tsconfig-override-no-mismatch", {
       "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx" } }),

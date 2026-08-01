@@ -1621,6 +1621,7 @@ impl Package<u64> {
         dependencies_count: u32,
         tag: Option<dependency::version::Tag>,
         workspace_ver: Option<SemverVersion>,
+        root_name_hash: PackageNameHash,
         external_alias: ExternalString,
         version: &[u8],
         key_loc: bun_ast::Loc,
@@ -1792,6 +1793,19 @@ impl Package<u64> {
                 }
             }
             dependency::version::Tag::Workspace => 'workspace: {
+                if workspace_path.is_none()
+                    && tag.is_none()
+                    && root_name_hash != 0
+                    && name_hash == root_name_hash
+                {
+                    // A `workspace:` dep on the workspace root package. The
+                    // root is not in `workspace_paths` (only members are), and
+                    // the literal after `workspace:` is a version spec, not a
+                    // path. Leave the dependency as-is;
+                    // `get_or_put_resolved_package` resolves it to package
+                    // id 0.
+                    break 'workspace;
+                }
                 if let Some(path) = workspace_path {
                     if let Some(range) = &workspace_range {
                         if let Some(ver) = workspace_version {
@@ -1829,14 +1843,7 @@ impl Package<u64> {
                     }
 
                     dependency_version.value.workspace = path;
-                } else if tag.is_some() {
-                    // Registering a new member from the `workspaces` array:
-                    // `value.workspace` is the member's path. When `tag` is
-                    // `None` this is a `workspace:` dep on a name that is not
-                    // a known member (either the root package or a typo), and
-                    // `value.workspace` is a version spec, not a path. Leave it
-                    // untouched; `get_or_put_resolved_package` handles the root
-                    // case and reports the not-found error otherwise.
+                } else {
                     // SAFETY: tag == Workspace selects the `workspace` union member.
                     // Bind the (Copy) union field first so `slice()`'s `&self`
                     // borrow has a named place to point at.
@@ -2600,6 +2607,11 @@ impl Package<u64> {
 
         total_dependencies_count = 0;
 
+        if FEATURES.is_main {
+            pm.workspace_root_name_hash = self.name_hash;
+        }
+        let root_name_hash = pm.workspace_root_name_hash;
+
         for group in &dependency_groups {
             if group.behavior.is_workspace() {
                 let mut seen_workspace_names: ArrayHashMap<
@@ -2746,6 +2758,7 @@ impl Package<u64> {
                         total_dependencies_count,
                         Some(dependency::version::Tag::Workspace),
                         workspace_version,
+                        root_name_hash,
                         external_name,
                         path_,
                         bun_ast::Loc::EMPTY,
@@ -2793,6 +2806,7 @@ impl Package<u64> {
                             total_dependencies_count,
                             None,
                             None,
+                            root_name_hash,
                             external_name,
                             version,
                             key_loc,
@@ -2843,6 +2857,7 @@ impl Package<u64> {
                 total_dependencies_count,
                 None,
                 None,
+                root_name_hash,
                 external_name,
                 b"*",
                 bun_ast::Loc::EMPTY,

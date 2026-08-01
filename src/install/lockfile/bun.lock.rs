@@ -2118,6 +2118,10 @@ pub(crate) fn parse_into_binary_lockfile(
         root_pkg.resolutions = PackageIDSlice::new(off, len);
 
         root_pkg.meta.id = 0;
+        // Set the root resolution before the packages loop so a
+        // `<name>@root:` entry dedupes against package id 0 in
+        // `append_package_dedupe` instead of appending a second Root package.
+        root_pkg.resolution = Resolution::init(crate::resolution::TaggedValue::Root);
         let root_name_hash = root_pkg.name_hash;
         lockfile.packages.append(root_pkg)?;
         lockfile.get_or_put_id(0, root_name_hash)?;
@@ -2742,6 +2746,13 @@ pub(crate) fn parse_into_binary_lockfile(
             pkg.resolution = res;
 
             let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
+
+            if pkg_id == 0 && res.tag == ResolutionTag::Root {
+                // `<name>@root:` deduped to package id 0; carry over the bin
+                // parsed from this entry since the root package was created
+                // with a default bin above.
+                lockfile.packages.items_bin_mut()[0] = pkg.bin;
+            }
 
             let entry = pkg_map.get_or_put(pkg_path)?;
             if entry.found_existing {

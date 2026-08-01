@@ -155,6 +155,7 @@ describe.concurrent("issue 7928: '?' in a directory name", () => {
     // An empty .node file can't be dlopen'd; both spellings must fail with the
     // same dlopen error (proving the '?' in the directory name reached dlopen as
     // part of the path, not as a query separator).
+    expect(plain).toContain("addon.node");
     expect(plain).not.toContain("Node-API");
     expect(plain).not.toContain("Module not found");
     expect(withQuery).toBe(plain);
@@ -191,6 +192,7 @@ describe.concurrent("issue 7928: '?' in a directory name", () => {
       expect(decodeURIComponent(out.url)).toEndWith("dep.js?/x");
     } else {
       expect(out.ok).toBe(false);
+      expect(out.msg).toContain("dep.js?/x");
     }
     expect(exitCode).toBe(0);
   });

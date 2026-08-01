@@ -232,11 +232,17 @@ impl CreateOptions {
             ..Default::default()
         };
 
-        if opts.positionals.len() >= 1
-            && (opts.positionals[0] == b"c" || opts.positionals[0] == b"create")
+        // Drop everything up to and including the `c`/`create` keyword so the
+        // template name is `positionals[0]`. A leading global flag's value
+        // (`bun --cwd dir create foo`) falls through as a positional because
+        // `params()` doesn't declare it; scanning by name keeps that harmless.
+        if let Some(i) = opts
+            .positionals
+            .iter()
+            .position(|&p| p == b"c" || p == b"create")
         {
             let mut v = core::mem::take(&mut opts.positionals).into_vec();
-            v.remove(0);
+            v.drain(..=i);
             opts.positionals = v.into_boxed_slice();
         }
 

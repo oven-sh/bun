@@ -492,6 +492,17 @@ pub use bun_install::PRETEND_TO_BE_NODE;
 /// This is set `true` during `Command.which()` if argv0 is "bunx"
 static IS_BUNX_EXE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// argv index of the subcommand keyword (`run`, `test`, `install`, …) as
+/// located by `Command::which()`. Defaults to 1 (argv[1]). Larger when a
+/// value-taking global flag precedes the subcommand, e.g.
+/// `bun --cwd ./dir test …` → 3.
+///
+/// Handlers that re-scan raw `bun::argv()` for their own positionals read
+/// this instead of hard-coding `2` / `argv[2..]`, so the same code path
+/// handles both `bun test …` and `bun --cwd d test …`.
+static SUBCOMMAND_ARGV_INDEX: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(1);
+
 bun_core::declare_scope!(CLI, hidden);
 
 pub(crate) type LoaderColonList =
@@ -746,20 +757,8 @@ pub mod reserved_command {
 
     #[cold]
     pub(crate) fn exec() -> crate::Result<()> {
-        let mut command_name: &[u8] = b"";
-        for (i, arg) in bun::argv().iter().enumerate() {
-            if i == 0 {
-                continue;
-            }
-            if arg.len() > 1 && arg[0] == b'-' {
-                continue;
-            }
-            command_name = arg;
-            break;
-        }
-        if command_name.is_empty() {
-            command_name = bun::argv().get(1).map(|z| z.as_bytes()).unwrap_or(b"");
-        }
+        let idx = super::command::subcommand_argv_index();
+        let command_name: &[u8] = bun::argv().get(idx).map(|z| z.as_bytes()).unwrap_or(b"");
         pretty_error!(
             "<r><red>Uh-oh<r>. <b><yellow>bun {0}<r> is a subcommand reserved for future use by Bun.\n\nIf you were trying to run a package.json script called {0}, use <b><magenta>bun run {0}<r>.\n",
             bstr::BStr::new(command_name)
@@ -783,6 +782,13 @@ pub mod command {
     fn argv_zslice() -> Vec<&'static bun_core::ZStr> {
         let a = bun::argv();
         (0..a.len()).map(|i| a.get(i).unwrap()).collect()
+    }
+
+    /// argv index of the subcommand keyword as found by [`which()`].
+    /// `bun test …` → 1; `bun --cwd ./dir test …` → 3.
+    #[inline]
+    pub(crate) fn subcommand_argv_index() -> usize {
+        super::SUBCOMMAND_ARGV_INDEX.load(core::sync::atomic::Ordering::Relaxed)
     }
 
     pub use bun_options_types::command_tag::Tag;
@@ -930,6 +936,7 @@ pub mod command {
             return Tag::RunAsNodeCommand;
         }
 
+        let mut idx: usize = 1;
         let Some(mut first_arg_name) = iter.next() else {
             return Tag::AutoCommand;
         };
@@ -937,11 +944,26 @@ pub mod command {
             && first_arg_name[0] == b'-'
             && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
         {
+            // Step past the value of the required-value global flags in
+            // `BASE_PARAMS_` so it isn't misread as the subcommand keyword
+            // (`bun --cwd ./dir test …`, `bun --env-file .env run …`).
+            // `-c, --config` is `Values::OneOptional` and intentionally not
+            // listed: clap never consumes a separate token for it.
+            if matches!(first_arg_name, b"--cwd" | b"--env-file") {
+                if iter.next().is_none() {
+                    return Tag::AutoCommand;
+                }
+                idx += 1;
+            }
             match iter.next() {
-                Some(n) => first_arg_name = n,
+                Some(n) => {
+                    idx += 1;
+                    first_arg_name = n;
+                }
                 None => return Tag::AutoCommand,
             }
         }
+        SUBCOMMAND_ARGV_INDEX.store(idx, core::sync::atomic::Ordering::Relaxed);
 
         type RootCommandMatcher = strings::ExactSizeMatcher<12>;
         let x = RootCommandMatcher::r#match(first_arg_name);
@@ -1488,7 +1510,8 @@ pub mod command {
     fn exec_init() -> CmdResult {
         // InitCommand parses its own argv (no Context).
         let argv = argv_zslice();
-        super::init_command::InitCommand::exec(&argv[2.min(argv.len())..])
+        let start = (subcommand_argv_index() + 1).min(argv.len());
+        super::init_command::InitCommand::exec(&argv[start..])
     }
 
     #[cold]
@@ -1498,7 +1521,7 @@ pub mod command {
         // exec handles both the non-tty path (dump the embedded completion
         // script to stdout) and the tty install path (bunx symlink, fpath/XDG
         // dir search, profile patching).
-        for a in bun::argv().iter().skip(2) {
+        for a in bun::argv().iter().skip(subcommand_argv_index() + 1) {
             if matches!(a, b"--help" | b"-h") {
                 tag_print_help(Tag::InstallCompletionsCommand, true);
                 Global::exit(0);
@@ -1522,10 +1545,10 @@ pub mod command {
         let start_idx = if IS_BUNX_EXE.load(core::sync::atomic::Ordering::Relaxed) {
             0
         } else {
-            1
+            subcommand_argv_index()
         };
         let argv = argv_zslice();
-        super::bunx_command::BunxCommand::exec(ctx, &argv[start_idx..])
+        super::bunx_command::BunxCommand::exec(ctx, &argv[start_idx.min(argv.len())..])
     }
 
     #[cold]
@@ -1770,8 +1793,9 @@ pub mod command {
         // Create command wraps bunx
         let ctx = init(Tag::CreateCommand, log)?;
         let args = argv_zslice();
+        let cmd_idx = subcommand_argv_index();
 
-        if args.len() <= 2 {
+        if args.len() <= cmd_idx + 1 {
             tag_print_help(Tag::CreateCommand, false);
             Global::exit(1);
         }
@@ -1782,15 +1806,15 @@ pub mod command {
         let mut dash_dash_bun = false;
         let mut print_help = false;
 
-        if args.len() > 2 {
-            let remainder = &args[1..];
+        {
+            let remainder = &args[cmd_idx..];
             let mut remainder_i: usize = 0;
             while remainder_i < remainder.len() && positional_i < positionals.len() {
                 let slice = strings::trim(remainder[remainder_i].as_bytes(), b" \t\n");
                 if !slice.is_empty() {
                     if !strings::has_prefix(slice, b"--") {
                         if positional_i == 1 {
-                            template_name_start = remainder_i + 2;
+                            template_name_start = cmd_idx + remainder_i + 1;
                         }
                         positionals[positional_i] = slice;
                         positional_i += 1;
@@ -1925,10 +1949,10 @@ To create a project with the official Next.js scaffolding tool, run\n\
         let mut package_name: &[u8] = b"";
         let mut property_path: Option<&[u8]> = None;
 
-        // Find non-flag arguments starting from argv[2] (after "bun info").
+        // Find non-flag arguments after the `info` keyword.
         let mut found_package = false;
         let argv = bun::argv();
-        for arg in argv.iter().skip(2) {
+        for arg in argv.iter().skip(subcommand_argv_index() + 1) {
             // Skip flags
             if !arg.is_empty() && arg[0] == b'-' {
                 continue;

@@ -190,15 +190,16 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
     }
 
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
-        // `bun_core::argv()` includes argv[0]; skip it and collect into a
-        // borrowed-slice Vec so `&[&[u8]]` callers (TrustCommand/UntrustedCommand,
-        // `left_has_any_in_right`) keep their shape.
-        let args_vec: Vec<&'static [u8]> = bun_core::argv().into_iter().skip(1).collect();
+        // `bun_core::argv()` includes argv[0]; skip to the subcommand keyword and
+        // collect into a borrowed-slice Vec so `&[&[u8]]` callers
+        // (TrustCommand/UntrustedCommand, `left_has_any_in_right`) keep their shape.
+        let cmd_idx = Command::subcommand_argv_index();
+        let args_vec: Vec<&'static [u8]> = bun_core::argv().into_iter().skip(cmd_idx).collect();
         let args: &[&[u8]] = &args_vec;
 
         // Check if we're being invoked directly as "bun whoami" instead of "bun pm whoami"
         let is_direct_whoami = bun_core::argv()
-            .get(1)
+            .get(cmd_idx)
             .is_some_and(|arg| strings::eql_comptime(arg.as_bytes(), b"whoami"));
 
         let cli = CommandLineArguments::parse(Subcommand::Pm)?;

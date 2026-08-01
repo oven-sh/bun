@@ -294,7 +294,7 @@ function Database(filenameGiven, options) {
     if (typeof source !== "string") throw new TypeError("Expected first argument to be a string");
     const stmt = db.prepare(source, undefined, 0);
     if (defaultSafeIntegers) stmt.safeIntegers(true);
-    statements.add(stmt);
+    statements.add(new WeakRef(stmt));
     return new Statement(stmt, this, source, trace);
   };
 
@@ -315,7 +315,7 @@ function Database(filenameGiven, options) {
   this.close = function close() {
     if (isOpen) {
       isOpen = false;
-      for (const stmt of statements) stmt.finalize();
+      for (const ref of statements) ref.deref()?.finalize();
       statements.clear();
       db.close();
     }

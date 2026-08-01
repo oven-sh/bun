@@ -1,6 +1,6 @@
+import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { isASAN, rss } from "harness";
-import { serialize, deserialize } from "bun:jsc";
 
 describe("Structured Clone Fast Path", () => {
   // === Primitive fast path tests ===

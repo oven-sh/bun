@@ -1,11 +1,5 @@
-// Hardcoded module "better-sqlite3"
-//
-// better-sqlite3 is a V8-API native addon, so its compiled `.node` file cannot
-// be loaded by Bun. This wrapper provides the better-sqlite3 API on top of
-// bun:sqlite so packages that depend on it (drizzle-kit, Kysely, knex, ...) work
-// without a native compile step.
-//
-// Reference: https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md
+// Hardcoded module "better-sqlite3" (backed by bun:sqlite; the real package is a V8-API addon Bun cannot dlopen)
+// API reference: https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md
 const { Database: BunDatabase, SQLiteError, constants } = require("bun:sqlite");
 const { existsSync } = require("node:fs");
 const { dirname, resolve } = require("node:path");
@@ -29,9 +23,7 @@ function notImplemented(name) {
   throw err;
 }
 
-// Wraps a bun:sqlite Statement to present the better-sqlite3 Statement API:
-// .raw()/.pluck()/.expand()/.bind() are chainable mode setters instead of
-// one-shot result getters.
+// better-sqlite3 Statement: .raw()/.pluck()/.expand()/.bind() are chainable mode setters, not one-shot getters.
 class Statement {
   #stmt;
   #db;
@@ -141,8 +133,7 @@ class Statement {
   }
 
   #expandRow(row) {
-    // better-sqlite3 expand() groups columns by table name. bun:sqlite does not
-    // expose sqlite3_column_table_name; group under "$" as a stable fallback.
+    // sqlite3_column_table_name isn't exposed; group everything under "$" (better-sqlite3's no-table bucket).
     const names = this.#stmt.columnNames;
     const obj = { $: {} };
     for (let i = 0; i < names.length; i++) obj.$[names[i]] = row[i];
@@ -310,8 +301,7 @@ function Database(filenameGiven, options) {
     }
   };
 
-  // bun:sqlite's transaction() already matches better-sqlite3's shape
-  // (.deferred / .immediate / .exclusive on the returned function).
+  // bun:sqlite's transaction() already returns a function with .deferred/.immediate/.exclusive.
   this.transaction = function transaction(fn) {
     return db.transaction(fn);
   };
@@ -381,8 +371,7 @@ function SqliteError(message, code) {
   return new SqliteErrorClass(message, code);
 }
 SqliteError.prototype = SqliteErrorClass.prototype;
-// bun:sqlite throws errors named `SQLiteError` (capital L); let
-// `err instanceof SqliteError` match those too.
+// Let `err instanceof SqliteError` match bun:sqlite's `SQLiteError` (capital L) too.
 Object.defineProperty(SqliteError, Symbol.hasInstance, {
   value(instance) {
     return (

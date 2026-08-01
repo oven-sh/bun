@@ -63,6 +63,96 @@ describe("bundler", () => {
     minifySyntax: true,
     target: "bun",
   });
+  // https://github.com/oven-sh/bun/issues/3463
+  itBundled("minify/InlineObjectLiteralPropertyAccess", {
+    files: {
+      "/entry.js": /* js */ `
+        capture({a: 1, b: 2, c: 3}.c);
+        capture({a: 1, b: 2, c: 3}["a"]);
+        capture({"a": 1, b: 2, c: 3}.a);
+        capture({a: 1, a: 4}.a);
+        capture({a: () => 1, b: () => 2}.a);
+        capture({__proto__: null, a: 1}.a);
+        capture({__proto__: null, a: 1}.missing);
+        capture({__proto__: null}.__proto__);
+        capture({a: 1, c: 3}.missing);
+        capture({}.missing);
+        capture({a: sideEffect()}.a);
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    capture: [
+      "3",
+      "1",
+      "1",
+      "4",
+      "()=>1",
+      "1",
+      "void 0",
+      "void 0",
+      "{a:1,c:3}.missing",
+      "{}.missing",
+      "sideEffect()",
+    ],
+  });
+  itBundled("minify/InlineObjectLiteralPropertyAccessUnsafe", {
+    files: {
+      "/entry.js": /* js */ `
+        const bound = globalThis;
+        capture({a: 1, c: unbound}.a);
+        capture({a: 1, c: bound}.a);
+        capture({a: 1, [k]: 2, c: 3}.c);
+        capture({a: 1, ...spread, c: 3}.c);
+        capture({a: 1, get c() { return 2; }}.a);
+        capture({a: 1, set c(v) {}}.a);
+        capture({a: 1, c() { return 2; }}.a);
+        capture({a: 1, 5: 2, c: 3}.c);
+        capture({a: 1, b: 2}.c = 5);
+        id(delete {a: 1, b: 2}.c);
+        ({a: 1, b: 2}).c\`tag\`;
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    capture: [
+      "{a:1,c:unbound}.a",
+      "1",
+      "{a:1,[k]:2,c:3}.c",
+      "{a:1,...spread,c:3}.c",
+      "{a:1,get c(){return 2}}.a",
+      "{a:1,set c(v){}}.a",
+      "{a:1,c(){return 2}}.a",
+      "{a:1,5:2,c:3}.c",
+      "{a:1,b:2}.c=5",
+    ],
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("delete{a:1,b:2}.c");
+      expect(code).toContain("({a:1,b:2}).c`tag`");
+    },
+  });
+  itBundled("minify/InlineObjectLiteralPropertyAccessRuntime", {
+    files: {
+      "/entry.js": /* js */ `
+        var hits = 0;
+        const eff = (v) => { hits++; return v; };
+        console.log(JSON.stringify([
+          {a: 1, b: 2, c: 3}.c,
+          {a: 1, b: 2, c: 3}["a"],
+          {a: 1, a: 4}.a,
+          {__proto__: null, a: 1}.a,
+          {__proto__: null, a: 1}.missing,
+          {a: 1, c: 3}.missing,
+          {a: eff(7), c: 3}.c,
+          {a: 1, get c() { return 9; }}.a,
+        ]));
+        console.log("hits=" + hits);
+      `,
+    },
+    minifySyntax: true,
+    run: { stdout: '[3,1,4,1,null,null,3,1]\nhits=1' },
+  });
   itBundled("minify/StringAdditionFolding", {
     files: {
       "/entry.js": /* js */ `

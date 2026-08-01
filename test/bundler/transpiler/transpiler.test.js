@@ -3949,6 +3949,21 @@ console.log(foo, array);
       expectPrinted("((() => f`a`), obj.m)`x`", "(0, obj.m)`x`");
       expectPrinted("((true ? 0 : f`a`), obj.m)`x`", "(0, obj.m)`x`");
       expectPrinted("((() => f()), obj.m)()", "(0, obj.m)()");
+      // The `{}.x ??= v` / `{}.x ||= v` HMR fold also needs the guard.
+      expectPrinted("({}.x ??= obj.m)`x`", "(0, obj.m)`x`");
+      expectPrinted("({}.x ??= obj.m)()", "(0, obj.m)()");
+      expectPrinted("({}.x ||= obj.m)`x`", "(0, obj.m)`x`");
+      expectPrinted("({}.x ??= fn)`x`", "fn`x`");
+      // Single-use-symbol inlining must not move a member expression into
+      // identifier tag position (mirrors the existing call-target guard).
+      const subst = src => parsed(src, true, false, transpilerMinifySyntax);
+      expect(subst("function f(obj) { let x = obj.m; return x`t`; }")).toBe(
+        "function f(obj) {\n  let x = obj.m;\n  return x`t`;\n}",
+      );
+      expect(subst("function f(obj) { let x = obj[k]; return x`t`; }")).toBe(
+        "function f(obj) {\n  let x = obj[k];\n  return x`t`;\n}",
+      );
+      expect(subst("function f(obj) { let x = obj.m; return x; }")).toBe("function f(obj) {\n  return obj.m;\n}");
       // Property-access folds that replace a reference with its value bail
       // out entirely in tag position.
       expectPrinted("[obj.m][0]`x`", "[obj.m][0]`x`");
@@ -3984,6 +3999,9 @@ console.log(foo, array);
           (false || obj.m)\`x\`,
           ((() => f\`a\`), obj.m)\`x\`,
           ((() => f()), obj.m)(),
+          ({}.x ??= obj.m)\`x\`,
+          ({}.x ??= obj.m)(),
+          (function(){ let y = obj.m; return y\`t\`; })(),
           [obj.m][0]\`x\`,
           ({ m: obj.m }).m\`x\`,
           ({ m: obj.m })["m"]\`x\`,
@@ -3994,7 +4012,7 @@ console.log(foo, array);
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(stdout).toBe(
-        "[false,false,false,false,false,false,false,false,false,false,false,false,false,false,true]\n",
+        "[false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,true]\n",
       );
       expect(exitCode).toBe(0);
     });

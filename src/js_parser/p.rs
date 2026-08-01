@@ -2647,6 +2647,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::ExprData::ETemplate(mut e) => {
                     if let Some(tag) = e.tag.as_mut() {
+                        // Don't substitute something into a template tag that could change "this"
+                        match replacement.data {
+                            js_ast::ExprData::EDot(_) | js_ast::ExprData::EIndex(_) => {
+                                if matches!(tag.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref))
+                                {
+                                    break 'outer;
+                                }
+                            }
+                            _ => {}
+                        }
                         match self.substitute_single_use_symbol_in_expr(
                             *tag,
                             r#ref,

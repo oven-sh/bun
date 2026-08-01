@@ -725,6 +725,17 @@ impl BinaryExpressionVisitor {
                     if let Some(obj) = dot.target.data.e_object() {
                         if obj.properties.len_u32() == 0 {
                             if dot.name != b"__proto__" {
+                                if (is_call_target || is_template_tag)
+                                    && e_.right.has_value_for_this_in_call()
+                                {
+                                    return Expr::join_with_comma(
+                                        Expr {
+                                            data: prefill::data::ZERO,
+                                            loc: e_.left.loc,
+                                        },
+                                        e_.right,
+                                    );
+                                }
                                 return e_.right;
                             }
                         }

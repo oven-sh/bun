@@ -241,6 +241,139 @@ describe("bundler", () => {
     },
   });
 
+  // #4928: a package.json "browser": {"<builtin>": false} must win over the
+  // builtin polyfill for --target browser. Packages set this to keep their
+  // node-only code paths from dragging crypto/stream/buffer into browser bundles.
+  itBundled("browser/BrowserFieldDisablesPolyfilledBuiltin#4928", {
+    files: {
+      "/entry.js": /* js */ `
+        import pkg from "pkg";
+        console.log(JSON.stringify(pkg));
+      `,
+      "/node_modules/pkg/package.json": /* json */ `
+        {
+          "name": "pkg",
+          "main": "./index.js",
+          "browser": {
+            "crypto": false,
+            "stream": false
+          }
+        }
+      `,
+      "/node_modules/pkg/index.js": /* js */ `
+        const nodeCrypto = require("crypto");
+        const nodeStream = require("stream");
+        module.exports = {
+          hasRandomBytes: typeof nodeCrypto.randomBytes,
+          hasReadable: typeof nodeStream.Readable,
+        };
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: '{"hasRandomBytes":"undefined","hasReadable":"undefined"}',
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // The crypto polyfill pulls in createHash/Transform; neither should appear
+      // when the browser map disables the builtin.
+      assert(!out.includes("createHash"), "crypto polyfill should not be bundled when browser:{crypto:false}");
+      assert(!out.includes("Transform"), "stream polyfill should not be bundled when browser:{stream:false}");
+      assert(out.length < 10000, `output should be a small stub, got ${out.length} bytes`);
+    },
+  });
+  itBundled("browser/BrowserFieldDisablesPolyfilledBuiltinNodePrefix#4928", {
+    // Same as above but with the node: prefix on the import. The polyfill table
+    // strips node: before lookup, so the browser-map check must too.
+    files: {
+      "/entry.js": /* js */ `
+        import pkg from "pkg";
+        console.log(pkg);
+      `,
+      "/node_modules/pkg/package.json": /* json */ `
+        {
+          "name": "pkg",
+          "main": "./index.js",
+          "browser": {
+            "crypto": false
+          }
+        }
+      `,
+      "/node_modules/pkg/index.js": /* js */ `
+        const nodeCrypto = require("node:crypto");
+        module.exports = typeof nodeCrypto.randomBytes;
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "undefined",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      assert(!out.includes("createHash"), "crypto polyfill should not be bundled when browser:{crypto:false}");
+    },
+  });
+  itBundled("browser/BrowserFieldRemapsPolyfilledBuiltin#4928", {
+    files: {
+      "/entry.js": /* js */ `
+        import pkg from "pkg";
+        console.log(pkg.id);
+      `,
+      "/node_modules/pkg/package.json": /* json */ `
+        {
+          "name": "pkg",
+          "main": "./index.js",
+          "browser": {
+            "crypto": "./crypto-shim.js"
+          }
+        }
+      `,
+      "/node_modules/pkg/crypto-shim.js": /* js */ `
+        module.exports = { id: "shimmed-crypto" };
+      `,
+      "/node_modules/pkg/index.js": /* js */ `
+        module.exports = require("crypto");
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "shimmed-crypto",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      assert(out.includes("shimmed-crypto"), "browser shim should be bundled");
+      assert(!out.includes("createHash"), "crypto polyfill should not be bundled when browser map remaps it");
+    },
+  });
+  itBundled("browser/BrowserFieldDisabledBuiltinStillPolyfillsOutsideScope", {
+    // A browser:{events:false} in one package must not leak into a sibling package.
+    files: {
+      "/entry.js": /* js */ `
+        import disabled from "disabled-pkg";
+        import live from "live-pkg";
+        console.log(disabled, live);
+      `,
+      "/node_modules/disabled-pkg/package.json": /* json */ `
+        { "name": "disabled-pkg", "main": "./index.js", "browser": { "events": false } }
+      `,
+      "/node_modules/disabled-pkg/index.js": /* js */ `
+        const ev = require("events");
+        module.exports = typeof ev.EventEmitter;
+      `,
+      "/node_modules/live-pkg/package.json": /* json */ `
+        { "name": "live-pkg", "main": "./index.js" }
+      `,
+      "/node_modules/live-pkg/index.js": /* js */ `
+        const ev = require("events");
+        module.exports = typeof ev.EventEmitter;
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "undefined function",
+    },
+  });
+
   // unsure: do we want polyfills or no-op stuff like node:* has
   // right now all error except bun:wrap which errors at resolve time, but is included if external
   const bunModules: Record<string, "no-op" | "polyfill" | "error"> = {

@@ -646,7 +646,7 @@ impl Loader {
             }
         }
 
-        Parser::expand_range(&mut self.map, expand_start, &mut value_buffer)?;
+        Parser::expand_range(&mut self.map, expand_start)?;
 
         if !self.quiet {
             self.print_loaded(start);
@@ -970,28 +970,47 @@ struct Parser<'a> {
     value_buffer: &'a mut Vec<u8>,
 }
 
-/// State threaded through recursive `$VAR` expansion. `seen` holds the map
-/// indices currently on the lookup stack so a re-entrant reference expands to
-/// empty (dotenv-expand semantics) instead of recursing again.
+/// State threaded through recursive `$VAR` expansion. `seen` is the stack of
+/// indices currently being expanded (re-entry expands to empty, dotenv-expand
+/// semantics). `memo[idx - start]` caches the fully expanded value so each
+/// entry is expanded at most once even under acyclic fan-out.
 struct Expand<'a> {
     map: &'a Map,
     /// First file-sourced index; entries below this are copied verbatim.
     start: usize,
     seen: Vec<usize>,
+    memo: Vec<Option<Box<[u8]>>>,
 }
 
 impl<'a> Expand<'a> {
+    /// Ensure `memo[idx - start]` is populated.
+    fn resolve(&mut self, idx: usize, depth: u8) {
+        let i = idx - self.start;
+        if self.memo[i].is_some() {
+            return;
+        }
+        let map = self.map;
+        let raw = &*map.map.values()[idx].value;
+        if raw.len() < 2 || depth >= 200 {
+            self.memo[i] = Some(Box::from(raw));
+            return;
+        }
+        self.seen.push(idx);
+        let mut buf = Vec::new();
+        self.expand_into(raw, &mut buf, depth + 1);
+        self.seen.pop();
+        self.memo[i] = Some(buf.into_boxed_slice());
+    }
+
     fn lookup(&mut self, key: &[u8], out: &mut Vec<u8>, depth: u8) -> bool {
         let Some(idx) = self.map.map.get_index(key) else {
             return false;
         };
-        if idx < self.start || depth >= 200 {
+        if idx < self.start {
             out.extend_from_slice(&self.map.map.values()[idx].value);
         } else if !self.seen.contains(&idx) {
-            self.seen.push(idx);
-            let v = &*self.map.map.values()[idx].value;
-            self.expand_into(v, out, depth + 1);
-            self.seen.pop();
+            self.resolve(idx, depth);
+            out.extend_from_slice(self.memo[idx - self.start].as_deref().unwrap());
         }
         true
     }
@@ -1264,40 +1283,25 @@ impl<'a> Parser<'a> {
         Ok(strings::trim(&self.src[start..end], WHITESPACE_CHARS))
     }
 
-    /// Expand `$VAR` references in entries `start..map.count()`. Results are
-    /// written back only after every entry is processed so recursive lookups
-    /// always see raw (pre-expansion) values.
-    fn expand_range(
-        map: &mut Map,
-        start: usize,
-        value_buffer: &mut Vec<u8>,
-    ) -> Result<(), AllocError> {
+    /// Expand `$VAR` references in entries `start..map.count()` and write the
+    /// results back. Each entry is expanded at most once (memoized), so
+    /// recursive lookups always see raw values and acyclic fan-out stays
+    /// linear in the number of entries.
+    fn expand_range(map: &mut Map, start: usize) -> Result<(), AllocError> {
         let total = map.map.count();
         if start >= total {
             return Ok(());
         }
-        let mut results: Vec<Option<Box<[u8]>>> = Vec::with_capacity(total - start);
         let mut ex = Expand {
             map,
             start,
             seen: Vec::new(),
+            memo: (start..total).map(|_| None).collect(),
         };
         for idx in start..total {
-            let current = &ex.map.map.values()[idx].value;
-            if current.len() < 2 {
-                results.push(None);
-                continue;
-            }
-            value_buffer.clear();
-            ex.seen.clear();
-            ex.seen.push(idx);
-            if ex.expand_into(current, value_buffer, 0) {
-                results.push(Some(Box::from(value_buffer.as_slice())));
-            } else {
-                results.push(None);
-            }
+            ex.resolve(idx, 0);
         }
-        for (i, expanded) in results.into_iter().enumerate() {
+        for (i, expanded) in ex.memo.into_iter().enumerate() {
             if let Some(v) = expanded {
                 map.map.values_mut()[start + i] = HashTableValue { value: v };
             }
@@ -1332,7 +1336,7 @@ impl<'a> Parser<'a> {
             *entry.value_ptr = HashTableValue { value: value_owned };
         }
         if !IS_PROCESS && EXPAND {
-            Self::expand_range(map, count, self.value_buffer)?;
+            Self::expand_range(map, count)?;
         }
         Ok(())
     }

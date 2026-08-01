@@ -208,11 +208,7 @@ describe.concurrent("fetch-tls", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).not.toMatch(/AddressSanitizer|ERROR: (Leak|Thread)Sanitizer/);
       expect(stdout.trim()).toMatch(/^\[(true|false),(true|false)\]$/);
       expect(exitCode).toBe(0);
@@ -224,10 +220,7 @@ describe.concurrent("fetch-tls", () => {
     });
 
     it("is disabled by BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE", async () => {
-      expect(await run({ BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE: "1" })).toEqual([
-        false,
-        false,
-      ]);
+      expect(await run({ BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE: "1" })).toEqual([false, false]);
     });
   });
 

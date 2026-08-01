@@ -1829,7 +1829,14 @@ impl Package<u64> {
                     }
 
                     dependency_version.value.workspace = path;
-                } else {
+                } else if tag.is_some() {
+                    // Registering a new member from the `workspaces` array:
+                    // `value.workspace` is the member's path. When `tag` is
+                    // `None` this is a `workspace:` dep on a name that is not
+                    // a known member (either the root package or a typo), and
+                    // `value.workspace` is a version spec, not a path. Leave it
+                    // untouched; `get_or_put_resolved_package` handles the root
+                    // case and reports the not-found error otherwise.
                     // SAFETY: tag == Workspace selects the `workspace` union member.
                     // Bind the (Copy) union field first so `slice()`'s `&self`
                     // borrow has a named place to point at.

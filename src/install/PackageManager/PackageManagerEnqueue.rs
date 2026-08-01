@@ -2630,6 +2630,23 @@ fn get_or_put_resolved_package(
             }
         }
         dependency::version::Tag::Workspace => {
+            // A workspace member may depend on the workspace root package by
+            // name via `workspace:`. The root is package id 0 and is never
+            // registered in `workspace_paths` (only members are), so match it
+            // here before the path lookup.
+            if name_hash != 0 {
+                if let Some(root) = this.lockfile.root_package() {
+                    if root.name_hash == name_hash {
+                        success_fn(this, dependency_id, 0);
+                        return Ok(Some(ResolvedPackageResult {
+                            package: *this.lockfile.packages.get(0),
+                            is_first_time: false,
+                            task: None,
+                        }));
+                    }
+                }
+            }
+
             // package name hash should be used to find workspace path from map
             // SAFETY: `version.tag == Workspace` discriminates the union arm.
             let workspace_path_raw: SemverString = this

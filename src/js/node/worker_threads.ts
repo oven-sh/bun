@@ -755,21 +755,31 @@ function receiveMessageOnPort(port: MessagePort) {
 // TODO: parent port emulation is not complete
 function fakeParentPort() {
   const fake = Object.create(MessagePort.prototype);
+  // parentPort.onmessage must not forward to self.onmessage: in a node worker
+  // the global accessor is removed (see below), and in either kind aliasing
+  // them means code that sets both parentPort.on("message", ...) and
+  // self.onmessage receives every message twice.
+  let onmessageHandler: any = null;
   Object.defineProperty(fake, "onmessage", {
     get() {
-      return self.onmessage;
+      return onmessageHandler;
     },
     set(value) {
-      self.onmessage = value;
+      if (onmessageHandler !== null) self.removeEventListener("message", onmessageHandler);
+      onmessageHandler = $isCallable(value) || (value !== null && typeof value === "object") ? value : null;
+      if (onmessageHandler !== null) self.addEventListener("message", onmessageHandler);
     },
   });
 
+  let onmessageerrorHandler: any = null;
   Object.defineProperty(fake, "onmessageerror", {
     get() {
-      return self.onmessageerror;
+      return onmessageerrorHandler;
     },
     set(value) {
-      self.onmessageerror = value;
+      if (onmessageerrorHandler !== null) self.removeEventListener("messageerror", onmessageerrorHandler);
+      onmessageerrorHandler = $isCallable(value) || (value !== null && typeof value === "object") ? value : null;
+      if (onmessageerrorHandler !== null) self.addEventListener("messageerror", onmessageerrorHandler);
     },
   });
 
@@ -832,6 +842,14 @@ let parentPort: MessagePort | null = isMainThread ? null : fakeParentPort();
 // Gate on _isNodeWorker so a raw `new globalThis.Worker` that transitively loads
 // this module does NOT have process.abort/chdir/setuid replaced.
 if (!isMainThread && _isNodeWorker) {
+  // Node.js does not have a global `onmessage` event-handler accessor inside a
+  // worker_threads worker. Bun installs one for Web Workers, but leaving it in
+  // place here means that code which registers both parentPort.on("message", ...)
+  // and self.onmessage (as Emscripten's pthread worker shim does) receives each
+  // message twice, since parentPort is backed by the same global event target.
+  try {
+    delete (globalThis as any).onmessage;
+  } catch {}
   applyWorkerProcessOverrides();
 }
 function applyWorkerProcessOverrides() {

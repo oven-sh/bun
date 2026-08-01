@@ -150,13 +150,23 @@ impl<'a> Writer<'a> {
                 0x0C => self.raw(b"\\f"),
                 0x00..=0x1F => self.uescape(b as u32),
                 _ => {
-                    let w = strings::wtf8_byte_sequence_length_with_invalid(b) as usize;
-                    let w = w.min(s.len() - i);
+                    let width = strings::wtf8_byte_sequence_length_with_invalid(b);
+                    if width == 1 {
+                        self.uescape(0xFFFD);
+                        i += 1;
+                        continue;
+                    }
+                    let take = (width as usize).min(s.len() - i);
                     let mut bytes = [0u8; 4];
-                    bytes[..w].copy_from_slice(&s[i..i + w]);
-                    let cp = strings::decode_wtf8_rune_t::<u32>(bytes, w as u8, 0xFFFD);
-                    self.codepoint(cp);
-                    i += w;
+                    bytes[..take].copy_from_slice(&s[i..i + take]);
+                    let cp = strings::decode_wtf8_rune_t::<i32>(bytes, width, -1);
+                    if cp < 0 {
+                        self.uescape(0xFFFD);
+                        i += 1;
+                    } else {
+                        self.codepoint(cp as u32);
+                        i += take;
+                    }
                     continue;
                 }
             }

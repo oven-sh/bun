@@ -266,6 +266,13 @@ describe("Bun.Transpiler.unstable_parse", () => {
     expect(ast.stmts[0].decls[0].value.value).toBe(7);
   });
 
+  test("malformed UTF-8 in Uint8Array input becomes U+FFFD", () => {
+    // "#!" + truncated 4-byte lead [F0 9F] + stray continuation [9F] + "\n1"
+    const src = Uint8Array.of(0x23, 0x21, 0xf0, 0x9f, 0x9f, 0x0a, 0x31);
+    const ast = js.unstable_parse(src);
+    expect(ast.hashbang).toBe("#!\uFFFD\uFFFD\uFFFD");
+  });
+
   test("symbols are resolvable by name", () => {
     const ast = ts.unstable_parse(`function foo(bar) { return bar }`);
     const names = ast.symbols.map((s: any) => s.name);

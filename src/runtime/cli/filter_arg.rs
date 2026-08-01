@@ -241,9 +241,31 @@ impl FilterSet {
             if glob::r#match(&filter.pattern, target).matches() {
                 return true;
             }
+            // pnpm parity (#10639): a name filter that is not itself scoped also matches the
+            // package name with its `@scope/` prefix stripped and the package directory's
+            // basename, so `--filter db` selects `@org/db` and/or `packages/db`.
+            if filter.kind == PatternKind::Name && filter.pattern.first() != Some(&b'@') {
+                if let Some(unscoped) = without_scope(name) {
+                    if glob::r#match(&filter.pattern, unscoped).matches() {
+                        return true;
+                    }
+                }
+                let dir = bun_paths::basename(path);
+                if !dir.is_empty() && dir != name && glob::r#match(&filter.pattern, dir).matches() {
+                    return true;
+                }
+            }
         }
         false
     }
+}
+
+/// Returns the part of `name` after `@scope/`, or `None` if `name` is not a scoped package name.
+fn without_scope(name: &[u8]) -> Option<&[u8]> {
+    if name.first() != Some(&b'@') {
+        return None;
+    }
+    strings::index_of_char(&name[1..], b'/').map(|i| &name[i as usize + 2..])
 }
 
 pub(crate) struct PackageFilterIterator {

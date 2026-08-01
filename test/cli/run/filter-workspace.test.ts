@@ -239,6 +239,107 @@ describe("bun", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/10639
+  describe("unscoped name filter (pnpm parity)", () => {
+    const dir = tempDirWithFiles("filter-unscoped", {
+      packages: {
+        db: {
+          "package.json": JSON.stringify({
+            name: "@org/db",
+            scripts: { present: "echo DB_RAN" },
+          }),
+        },
+        "site-dir": {
+          "package.json": JSON.stringify({
+            name: "@org/website",
+            scripts: { present: "echo SITE_RAN" },
+          }),
+        },
+        plain: {
+          "package.json": JSON.stringify({
+            name: "plain",
+            scripts: { present: "echo PLAIN_RAN" },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "@org/root",
+        workspaces: ["packages/*"],
+      }),
+    });
+
+    test("bare name matches the @scope/name portion", () => {
+      runInCwdSuccess({
+        cwd: dir,
+        pattern: "db",
+        target_pattern: /DB_RAN/,
+        antipattern: [/SITE_RAN/, /PLAIN_RAN/],
+      });
+    });
+
+    test("bare name matches when only the unscoped package name matches", () => {
+      runInCwdSuccess({
+        cwd: dir,
+        pattern: "website",
+        target_pattern: /SITE_RAN/,
+        antipattern: [/DB_RAN/, /PLAIN_RAN/],
+      });
+    });
+
+    test("bare name matches the package directory name", () => {
+      runInCwdSuccess({
+        cwd: dir,
+        pattern: "site-dir",
+        target_pattern: /SITE_RAN/,
+        antipattern: [/DB_RAN/, /PLAIN_RAN/],
+      });
+    });
+
+    test("bare name matches the package directory name (shared fixture)", () => {
+      runInCwdSuccess({
+        cwd: cwd_root,
+        pattern: "dirname",
+        target_pattern: /scriptc/,
+        antipattern: [/scripta/, /scriptb/, /scriptd/],
+      });
+    });
+
+    test("scoped filter does not fall back to directory name", () => {
+      const { exitCode, stdout, stderr } = spawnSync({
+        cwd: dir,
+        cmd: [bunExe(), "run", "--filter", "@org/site-dir", "present"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(stdout.toString()).toBeEmpty();
+      expect(stderr.toString()).toMatch(/No packages matched/);
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("full scoped name still matches", () => {
+      runInCwdSuccess({
+        cwd: dir,
+        pattern: "@org/db",
+        target_pattern: /DB_RAN/,
+        antipattern: [/SITE_RAN/, /PLAIN_RAN/],
+      });
+    });
+
+    test("--parallel: bare name matches the @scope/name portion", () => {
+      const { exitCode, stdout } = spawnSync({
+        cwd: dir,
+        cmd: [bunExe(), "run", "--parallel", "--filter", "db", "present"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(stdout.toString()).toMatch(/DB_RAN/);
+      expect(stdout.toString()).not.toMatch(/SITE_RAN/);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("run in parallel", () => {
     runInCwdSuccess({
       cwd: cwd_root,

@@ -380,14 +380,9 @@ impl ResolveMessage {
     }
 }
 
-/// When a module fails to resolve from inside `node_modules/<pkg>/...` and
-/// `<pkg>` has an install-class lifecycle script, return a hint pointing at
-/// `bun pm trust`. Bun blocks lifecycle scripts by default for packages not in
-/// `trustedDependencies`, which leaves packages that depend on their own
-/// `postinstall` (for example to rename a bundled `temp_modules/` into
-/// `node_modules/`) in a broken state with no obvious remediation.
-///
-/// Cold path: only called once resolve has already failed.
+/// If `referrer` sits inside `node_modules/<pkg>/` and `<pkg>` has a lifecycle
+/// script that Bun may have blocked, return a `bun pm trust <pkg>` hint.
+/// <https://github.com/oven-sh/bun/issues/12890>
 #[cold]
 fn blocked_lifecycle_script_note(referrer: &[u8]) -> Option<bun_ast::Data> {
     let (pkg_name, pkg_dir) = enclosing_node_modules_package(referrer)?;
@@ -404,9 +399,8 @@ fn blocked_lifecycle_script_note(referrer: &[u8]) -> Option<bun_ast::Data> {
     Some(bun_ast::range_data(None, bun_ast::Range::NONE, text))
 }
 
-/// Parse the deepest `node_modules/<name>` the referrer path sits inside.
-/// Returns the package name (with `/` as the scope separator) and the absolute
-/// package directory (a prefix of `referrer`).
+/// `(package_name, package_dir)` of the deepest `node_modules/<name>` that
+/// `referrer` sits inside. `package_dir` is a prefix of `referrer`.
 #[cold]
 fn enclosing_node_modules_package(referrer: &[u8]) -> Option<(Vec<u8>, &[u8])> {
     let nm_start = strings::last_index_of(referrer, bun_paths::NODE_MODULES_NEEDLE)?;
@@ -432,10 +426,9 @@ fn enclosing_node_modules_package(referrer: &[u8]) -> Option<(Vec<u8>, &[u8])> {
     Some((name, &referrer[..name_start + name_len]))
 }
 
-/// Probe `<pkg_dir>/package.json` for an install-class script. This is a
-/// byte-level heuristic rather than a full JSON parse: it looks for `"scripts"`
-/// and then one of the lifecycle hook keys after it. A `binding.gyp` alongside
-/// the manifest also counts, matching the auto `node-gyp rebuild` behaviour.
+/// Byte-scan `<pkg_dir>/package.json` for a `preinstall`/`install`/`postinstall`
+/// key in `"scripts"`, or a sibling `binding.gyp`. Used only for the UX hint
+/// above, so a full JSON parse is avoided.
 #[cold]
 fn first_lifecycle_script(pkg_dir: &[u8]) -> Option<&'static str> {
     let mut buf = bun_paths::path_buffer_pool::get();
@@ -447,13 +440,8 @@ fn first_lifecycle_script(pkg_dir: &[u8]) -> Option<&'static str> {
     if let Ok(bytes) = bun_sys::File::read_from(bun_sys::Fd::cwd(), manifest)
         && let Some(scripts_at) = strings::index_of(&bytes, b"\"scripts\"")
     {
-        // Bound the scan to the `"scripts"` object so a sibling key like
-        // `"dependencies": { "install": "^1.0.0" }` cannot match. `scripts` is
-        // a flat `Record<string, string>`, so the closing `}` is the first one
-        // that appears outside a JSON string. Script values are arbitrary
-        // shell commands and commonly contain literal `}` (brace expansion,
-        // `${VAR:-}`), so a naive `index_of_char(.., b'}')` would truncate
-        // early.
+        // Bound to the `"scripts"` object so a sibling key like
+        // `"dependencies": { "install": "..." }` cannot match.
         let after = &bytes[scripts_at + b"\"scripts\"".len()..];
         let end = end_of_flat_json_object(after);
         let scripts = &after[..end];
@@ -479,9 +467,8 @@ fn first_lifecycle_script(pkg_dir: &[u8]) -> Option<&'static str> {
     None
 }
 
-/// Return the byte offset just past the first `}` that is not inside a JSON
-/// string. Assumes the input sits between a flat object's opening `{` (or the
-/// key preceding it) and the rest of the document; no brace nesting is tracked.
+/// Offset of the first `}` that is not inside a JSON string. No brace nesting
+/// is tracked (sufficient for `"scripts"`, which is `Record<string, string>`).
 #[cold]
 fn end_of_flat_json_object(bytes: &[u8]) -> usize {
     let mut in_string = false;

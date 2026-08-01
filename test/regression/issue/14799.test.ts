@@ -86,7 +86,9 @@ test.skipIf(!isPosix)("nested bun run waits for the child on SIGINT", async () =
   const stderr = await stderrPromise;
 
   // Best-effort: don't leak the inner process if it outlived the outer runner.
-  try { process.kill(-outer.pid, "SIGKILL"); } catch {}
+  try {
+    process.kill(-outer.pid, "SIGKILL");
+  } catch {}
 
   expect(stderr).not.toContain("error");
   expect({

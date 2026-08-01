@@ -1253,14 +1253,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         );
                         if class.extends.is_some() {
                             let target = self.new_expr(E::Super {}, loc);
-                            let arguments_ref = self.new_symbol(
-                                SymbolKind::Unbound,
-                                crate::parser::ARGUMENTS_STR,
-                            );
-                            VecExt::append(
-                                &mut self.current_scope_mut().generated,
-                                arguments_ref,
-                            );
+                            let arguments_ref =
+                                self.new_symbol(SymbolKind::Unbound, crate::parser::ARGUMENTS_STR);
+                            VecExt::append(&mut self.current_scope_mut().generated, arguments_ref);
                             let spread_inner =
                                 self.new_expr(E::Identifier::init(arguments_ref), loc);
                             let spread = self.new_expr(
@@ -1287,8 +1282,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             ));
                         }
                         ctor_stmts.extend_from_slice(&injected);
-                        let key_expr =
-                            self.new_expr(E::EString::from_static(b"constructor"), loc);
+                        let key_expr = self.new_expr(E::EString::from_static(b"constructor"), loc);
                         let value_expr = self.new_expr(
                             E::Function {
                                 func: G::Fn {

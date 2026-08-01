@@ -178,8 +178,24 @@ impl Meta {
             Meta::SUPPORTS_AUTO_PIPELINING,
             !AUTO_PIPELINE_DISALLOWED_COMMANDS.contains(command.command),
         );
+        if is_subscription_command(command.command) {
+            new.insert(Meta::SUBSCRIPTION_REQUEST);
+        }
         new
     }
+}
+
+fn is_subscription_command(name: &[u8]) -> bool {
+    [
+        &b"SUBSCRIBE"[..],
+        b"PSUBSCRIBE",
+        b"SSUBSCRIBE",
+        b"UNSUBSCRIBE",
+        b"PUNSUBSCRIBE",
+        b"SUNSUBSCRIBE",
+    ]
+    .iter()
+    .any(|c| bun_core::strings::eql_case_insensitive_ascii(name, c, true))
 }
 
 /// Promise for a Valkey command

@@ -283,12 +283,13 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     let args = frame.arguments_as_array::<1>();
     if args.len() > 0 && !args[0].is_undefined() {
         let options_value = args[0];
-        if !options_value.is_object() {
+        if options_value.is_string() {
+            // Jest 26 compat: useFakeTimers("modern" | "legacy") is a no-op.
+        } else if !options_value.is_object() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "useFakeTimers() expects an options object"
             )));
-        }
-        if let Some(now) = options_value.get(global, "now")? {
+        } else if let Some(now) = options_value.get(global, "now")? {
             if now.is_number() {
                 js_now = now.as_number();
             } else if now.is_date() {

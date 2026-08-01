@@ -251,6 +251,10 @@ public:
     JSC::Structure* H3ResponseSinkStructure() const { return m_JSH3ResponseSinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* H3ResponseSink() { return m_JSH3ResponseSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue H3ResponseSinkPrototype() const { return m_JSH3ResponseSinkClassStructure.prototypeInitializedOnMainThread(this); }
+
+    JSC::Structure* FetchRequestBodySinkStructure() const { return m_JSFetchRequestBodySinkClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* FetchRequestBodySink() { return m_JSFetchRequestBodySinkClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue FetchRequestBodySinkPrototype() const { return m_JSFetchRequestBodySinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableNetworkSinkControllerPrototype() const { return m_JSFetchTaskletChunkedRequestControllerPrototype.getInitializedOnMainThread(this); }
 
     JSC::Structure* JSBufferListStructure() const { return m_JSBufferListClassStructure.getInitializedOnMainThread(this); }
@@ -414,8 +418,12 @@ public:
         Bun__HTTPRequestContextDebugH3__onRejectStream,
         Bun__HTTPRequestContextDebugH3__onResolve,
         Bun__HTTPRequestContextDebugH3__onResolveStream,
+        Bun__FetchTasklet__onResolveRequestStream,
+        Bun__FetchTasklet__onRejectRequestStream,
+        Bun__S3UploadStream__onResolveStream,
+        Bun__S3UploadStream__onRejectStream,
     };
-    static constexpr size_t promiseFunctionsSize = 42;
+    static constexpr size_t promiseFunctionsSize = 46;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 
@@ -559,6 +567,7 @@ public:
     V(private, LazyClassStructure, m_JSHTTPSResponseSinkClassStructure)                                      \
     V(private, LazyClassStructure, m_JSNetworkSinkClassStructure)                                            \
     V(private, LazyClassStructure, m_JSH3ResponseSinkClassStructure)                                         \
+    V(private, LazyClassStructure, m_JSFetchRequestBodySinkClassStructure)                                   \
                                                                                                              \
     V(private, LazyClassStructure, m_JSStringDecoderClassStructure)                                          \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSFFICStringConstructor)                              \

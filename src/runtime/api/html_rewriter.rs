@@ -1265,7 +1265,6 @@ where
                 if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
                     // SAFETY: VM-owned pointer set by BufferOutputSink::init.
                     unsafe { *err_ptr = exc_value };
-                    exc_value.protect();
                 }
             }
             // Clear the exception from the scope to prevent assertion failures
@@ -1283,7 +1282,6 @@ where
         if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
             // SAFETY: VM-owned pointer set by BufferOutputSink::init.
             unsafe { *err_ptr = exc_value };
-            exc_value.protect();
         }
         // Clear the exception to prevent assertion failures
         scope.clear_exception();
@@ -1423,7 +1421,6 @@ fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Displa
         // SAFETY: VM-owned pointer; valid while VM lives.
         let slot = unsafe { &mut *err_ptr };
         if !slot.is_empty() {
-            // it's a promise rejection
             let result = *slot;
             *slot = JSValue::ZERO;
             return result;

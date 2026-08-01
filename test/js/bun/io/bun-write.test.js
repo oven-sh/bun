@@ -1,6 +1,16 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
-import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  exampleHtml,
+  exampleSite,
+  gcTick,
+  isLinux,
+  isWindows,
+  tempDir,
+  withoutAggressiveGC,
+} from "harness";
 import path, { join } from "path";
 
 let i = 0;
@@ -412,6 +422,31 @@ const IS_UV_FS_COPYFILE_DISABLED =
 
   it("Bun.write(Bun.stderr, Bun.file(path))", async () => {
     await Bun.write(Bun.stderr, Bun.file(path.join(import.meta.dir, "hello-world.txt")));
+  });
+
+  // On Linux, FIFO -> FIFO goes through splice(2). fstat on a FIFO reports
+  // st_size == 0, and the copy loop used to treat its unknown-size probe as
+  // the total byte budget, silently dropping the rest of the stream.
+  // Bun.spawn({stdin:"pipe"}) hands the child a socketpair, not a FIFO, so
+  // run the pipeline under sh to get real kernel pipes on fd 0/1.
+  it.skipIf(!isLinux)("Bun.write(Bun.stdout, Bun.stdin) copies the whole pipe (> 4096 bytes)", async () => {
+    const size = 1024 * 1024;
+    const script = `process.stderr.write(String(await Bun.write(Bun.stdout, Bun.stdin)))`;
+
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `head -c ${size} /dev/zero | "$BUN" -e ${JSON.stringify(script)} | wc -c`],
+      env: { ...bunEnv, BUN: bunExe() },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ piped: stdout.trim(), resolved: stderr.trim() }).toEqual({
+      piped: String(size),
+      resolved: String(size),
+    });
+    expect(exitCode).toBe(0);
   });
 
   it("Bun.file(0) survives GC", async () => {

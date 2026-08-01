@@ -1864,13 +1864,6 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createEmpty()
     headers->relaxAdoptionRequirement();
     return headers;
 }
-void WebCore__FetchHeaders__append(WebCore::FetchHeaders* headers, const ZigString* arg1, const ZigString* arg2,
-    JSC::JSGlobalObject* lexicalGlobalObject)
-{
-    auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
-    WebCore::propagateException(*lexicalGlobalObject, throwScope, headers->append(Zig::toString(*arg1), Zig::toString(*arg2)));
-    RELEASE_AND_RETURN(throwScope, );
-}
 WebCore::FetchHeaders* WebCore__FetchHeaders__cast_(JSC::EncodedJSValue JSValue0, JSC::VM* vm)
 {
     return WebCoreCast<WebCore::JSFetchHeaders, WebCore::FetchHeaders>(JSValue0);
@@ -1945,15 +1938,6 @@ JSC::EncodedJSValue WebCore__FetchHeaders__toJS(WebCore::FetchHeaders* headers, 
     }
 
     return JSC::JSValue::encode(value);
-}
-
-JSC::EncodedJSValue WebCore__FetchHeaders__clone(WebCore::FetchHeaders* headers, JSC::JSGlobalObject* arg1)
-{
-    auto throwScope = DECLARE_THROW_SCOPE(arg1->vm());
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg1);
-    auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
-    WebCore::propagateException(*arg1, throwScope, clone->fill(*headers));
-    return JSC::JSValue::encode(WebCore::toJSNewlyCreated(arg1, globalObject, WTF::move(clone)));
 }
 
 WebCore::FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore::FetchHeaders* headers, JSC::JSGlobalObject* lexicalGlobalObject)
@@ -2202,16 +2186,6 @@ void WebCore__FetchHeaders__get_(WebCore::FetchHeaders* headers, const ZigString
     else
         *arg2 = Zig::toZigString(result.releaseReturnValue());
 }
-bool WebCore__FetchHeaders__has(WebCore::FetchHeaders* headers, const ZigString* arg1, JSC::JSGlobalObject* global)
-{
-    auto throwScope = DECLARE_THROW_SCOPE(global->vm());
-    auto result = headers->has(Zig::toString(*arg1));
-    if (result.hasException()) {
-        WebCore::propagateException(*global, throwScope, result.releaseException());
-        return false;
-    } else
-        return result.releaseReturnValue();
-}
 extern "C" void WebCore__FetchHeaders__put(WebCore::FetchHeaders* headers, HTTPHeaderName name, const BunString* arg2, JSC::JSGlobalObject* global)
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
@@ -2219,13 +2193,6 @@ extern "C" void WebCore__FetchHeaders__put(WebCore::FetchHeaders* headers, HTTPH
     // `toWTFString()` refs a `WTFStringImpl`-tagged value instead of copying it.
     WebCore::propagateException(*global, throwScope, headers->set(name, arg2->toWTFString()));
 }
-void WebCore__FetchHeaders__remove(WebCore::FetchHeaders* headers, const ZigString* arg1, JSC::JSGlobalObject* global)
-{
-    auto throwScope = DECLARE_THROW_SCOPE(global->vm());
-    WebCore::propagateException(*global, throwScope,
-        headers->remove(Zig::toString(*arg1)));
-}
-
 void WebCore__FetchHeaders__fastRemove_(WebCore::FetchHeaders* headers, unsigned char headerName)
 {
     headers->fastRemove(static_cast<WebCore::HTTPHeaderName>(headerName));
@@ -3024,10 +2991,6 @@ void JSC__JSString__toZigString(JSC::JSString* arg0, JSC::JSGlobalObject* arg1, 
     // We don't need to assert here because ->value returns a reference to the same string as the one owned by the JSString.
 }
 
-bool JSC__JSString__eql(const JSC::JSString* arg0, JSC::JSGlobalObject* obj, JSC::JSString* arg2)
-{
-    return arg0->equal(obj, arg2);
-}
 bool JSC__JSString__is8Bit(const JSC::JSString* arg0) { return arg0->is8Bit(); };
 size_t JSC__JSString__length(const JSC::JSString* arg0) { return arg0->length(); }
 
@@ -3941,6 +3904,12 @@ void JSC__JSValue__put(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, 
 {
     JSC::JSObject* object = JSC::JSValue::decode(JSValue0).asCell()->getObject();
     object->putDirect(arg1->vm(), Zig::toIdentifier(*arg2, arg1), JSC::JSValue::decode(JSValue3));
+}
+
+void JSC__JSValue__putNonEnumerable(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, const ZigString* arg2, JSC::EncodedJSValue JSValue3)
+{
+    JSC::JSObject* object = JSC::JSValue::decode(JSValue0).asCell()->getObject();
+    object->putDirect(arg1->vm(), Zig::toIdentifier(*arg2, arg1), JSC::JSValue::decode(JSValue3), JSC::PropertyAttribute::DontEnum | 0);
 }
 
 void JSC__JSValue__putToPropertyKey(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3)
@@ -4898,10 +4867,6 @@ void JSC__VM__reportExtraMemory(JSC::VM* arg0, size_t arg1)
     arg0->heap.deprecatedReportExtraMemory(arg1);
 }
 
-void JSC__VM__deinit(JSC::VM* arg1, JSC::JSGlobalObject* globalObject)
-{
-}
-
 void JSC__VM__drainMicrotasks(JSC::VM* arg0)
 {
     arg0->drainMicrotasks();
@@ -5700,12 +5665,6 @@ extern "C" bool WebCore__AbortSignal__aborted(WebCore::AbortSignal* arg0)
     return abortSignal->aborted();
 }
 
-extern "C" JSC::EncodedJSValue WebCore__AbortSignal__abortReason(WebCore::AbortSignal* arg0)
-{
-    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
-    return JSC::JSValue::encode(abortSignal->reason().getValue(jsNull()));
-}
-
 // Same value the JS `signal.reason` getter returns: lazily materializes the
 // `DOMException` for a common abort reason and caches it, so repeated reads
 // (native or JS) observe the identical object.
@@ -5742,7 +5701,9 @@ extern "C" void WebCore__AbortSignal__cleanNativeBindings(WebCore::AbortSignal* 
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__addListener(WebCore::AbortSignal* abortSignal, void* ctx, void (*callback)(void* ctx, JSC::EncodedJSValue reason))
 {
     if (abortSignal->aborted()) {
-        callback(ctx, JSC::JSValue::encode(abortSignal->reason().getValue(jsNull())));
+        auto* context = static_cast<WebCore::EventTarget*>(abortSignal)->scriptExecutionContext();
+        auto reason = context ? abortSignal->jsReason(*context->jsGlobalObject()) : abortSignal->reason().getValue(jsNull());
+        callback(ctx, JSC::JSValue::encode(reason));
         return abortSignal;
     }
     abortSignal->addNativeCallback(std::make_tuple(ctx, callback));

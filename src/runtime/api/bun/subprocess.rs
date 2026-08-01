@@ -481,9 +481,9 @@ impl Subprocess<'_> {
             StdioKind::Stdin => self.stdin.with_mut(|stdin| match stdin {
                 Writable::Pipe(pipe) => {
                     let pipe = *pipe;
-                    // `signal` is a `JsCell`, so the shared `&FileSink` from the
+                    // `source` is a `JsCell`, so the shared `&FileSink` from the
                     // centralised `pipe_sink` accessor suffices for `with_mut`.
-                    Writable::pipe_sink(pipe).signal.with_mut(|s| s.clear());
+                    Writable::pipe_sink(pipe).source.with_mut(|s| s.clear());
                     *stdin = Writable::Ignore;
                     // `Writable::Pipe` owns one intrusive ref; release it now
                     // that the variant has been overwritten. Ordered after the
@@ -1073,22 +1073,16 @@ impl Subprocess<'_> {
             // call below stays unsafe.
             let pipe = bun_ptr::BackRef::from(pipe_ptr);
 
-            // `onAttachedProcessExit()` → `writer.close()` → `FileSink.onClose`
-            // fires `pipe.signal` synchronously on POSIX. When the signal still
-            // targets `&self.stdin` (the user never read `.stdin`, or did and
-            // `Writable.toJS` left it wired), that would re-enter
-            // `Writable.onClose` → `pipe.deref()` while `onAttachedProcessExit`
-            // is still running on `pipe`. Detach the signal first and drive the
-            // `onStdinDestroyed()` deref ourselves instead; this also leaves
-            // `self.stdin` as `.pipe` so reading `.stdin` after exit still
-            // returns the sink. (Signal back-pointer is the `*mut Subprocess`,
-            // not `&self.stdin` — see `SignalHandler for Subprocess`.)
-            if pipe.signal.get().ptr.map(|p| p.as_ptr().cast_const())
-                == Some(std::ptr::from_ref::<Self>(self).cast::<c_void>())
-            {
-                // `signal` is a `JsCell`; `with_mut` takes `&self`, so the
+            // Detach the source first so onAttachedProcessExit's sync FileSink.onClose cannot
+            // re-enter Writable.onClose → pipe.deref() on the still-running pipe.
+            let self_ptr = self.as_ctx_ptr().cast::<Subprocess<'static>>();
+            if matches!(
+                *pipe.source.get(),
+                crate::webcore::streams::SourceHandle::Subprocess(p) if p.as_ptr() == self_ptr
+            ) {
+                // `source` is a `JsCell`; `with_mut` takes `&self`, so the
                 // shared `pipe: &FileSink` deref above is sufficient.
-                pipe.signal.with_mut(|s| s.clear());
+                pipe.source.with_mut(|s| s.clear());
             }
             let must_deref = self.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED);
             self.update_flags(|f| f.remove(Flags::DEREF_ON_STDIN_DESTROYED));

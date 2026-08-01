@@ -2979,6 +2979,11 @@ impl RunCommand {
         // `Command::which()` before dispatch.
         debug_assert!(crate::cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed));
 
+        // Node.js does not auto-load `.env` files; match that here so tools with
+        // their own `.env.{mode}` resolution (Vite etc.) don't see pre-populated
+        // values. Explicit `--env-file` is still honored. #6338
+        ctx.args.disable_default_env_files = true;
+
         // `node --interactive [-e code]`: same gate as AutoCommand — a script
         // positional wins, and `-p` currently bypasses the REPL (see mod.rs).
         if ctx.runtime_options.interactive
@@ -3149,7 +3154,7 @@ impl RemoteImageDownload {
     fn on_done(
         this: *mut RemoteImageDownload,
         async_http: *mut bun_http::AsyncHTTP<'static>,
-        _result: bun_http::HTTPClientResult<'_>,
+        mut result: bun_http::HTTPClientResult<'_>,
     ) {
         // The worker's
         // ThreadlocalAsyncHTTP is about to be freed, so copy its
@@ -3167,8 +3172,8 @@ impl RemoteImageDownload {
                 // `*real.as_ptr() = …` would run Drop on the previous
                 // `this.async_http` (whose state the fresh copy still aliases).
                 real.as_ptr().write(::core::ptr::read(async_http));
-                (*real.as_ptr()).response_buffer = async_http.response_buffer;
             }
+            result.body_into(&mut this.response_buffer.list);
             // Channel payload is a placeholder tick — the main thread
             // walks `downloads[]` to read per-task state after N wakeups.
             let _ = (*this.done).write_item(0);
@@ -3297,17 +3302,12 @@ impl RunCommand {
                 let url = &*::core::ptr::addr_of!((*slot).url);
                 ::core::slice::from_raw_parts(url.as_ptr(), url.len())
             };
-            // SAFETY: `slot` is the freshly-allocated `MaybeUninit` heap slot
-            // and `response_buffer` was `ptr::write`n above; address is valid.
-            let response_buffer_ptr: *mut bun_core::MutableString =
-                unsafe { ::core::ptr::addr_of_mut!((*slot).response_buffer) };
             let d_ptr: *mut RemoteImageDownload = slot;
             let async_http = bun_http::AsyncHTTP::init(
                 bun_http::Method::GET,
                 bun_url::URL::parse(url_static),
                 Default::default(),
                 b"",
-                response_buffer_ptr,
                 b"",
                 bun_http::HTTPClientResultCallback::new::<RemoteImageDownload>(
                     d_ptr,
@@ -3405,14 +3405,17 @@ impl RunCommand {
                 continue;
             }
 
-            let fd = match sys::open_a(&path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o600)
-            {
+            let fd = match sys::open_a(
+                &path,
+                sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL | sys::O::CLOEXEC | sys::O::NOFOLLOW,
+                0o600,
+            ) {
                 Ok(f) => f,
                 Err(_) => continue,
             };
             let ok = sys::File::from_fd(fd).write_all(bytes).is_ok();
             if !ok {
-                // openA + TRUNC leaves an orphan even on zero-byte
+                // openA + CREAT leaves an orphan even on zero-byte
                 // write failure. Unlink via stack buffer so cleanup
                 // can't fail for OOM reasons.
                 Self::unlink_staged_path(&path);

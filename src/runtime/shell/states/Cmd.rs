@@ -466,6 +466,15 @@ impl Cmd {
         // SAFETY: `shell_ptr` is the live env owned by this Cmd's scope chain.
         spawn_args.cwd = unsafe { &*shell_ptr }.cwd();
 
+        // Fill env from export_env + cmd_local_env; cmd_local_env wins on overlap.
+        {
+            let env = interp.as_cmd_mut(this).base.shell_mut();
+            let mut iter = env.export_env.iterator();
+            spawn_args.fill_env::<false>(&mut iter, Some(&env.cmd_local_env));
+            let mut iter = env.cmd_local_env.iterator();
+            spawn_args.fill_env::<false>(&mut iter, None);
+        }
+
         // Resolve argv[0] via PATH (`bun_which::which`).
         let resolved: Option<Vec<u8>> = {
             let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -517,15 +526,6 @@ impl Cmd {
         // `execve`).
         resolved.push(0);
         interp.as_cmd_mut(this).args[0] = resolved;
-
-        // Fill env from export_env + cmd_local_env; cmd_local_env wins on overlap.
-        {
-            let env = interp.as_cmd_mut(this).base.shell_mut();
-            let mut iter = env.export_env.iterator();
-            spawn_args.fill_env::<false>(&mut iter, Some(&env.cmd_local_env));
-            let mut iter = env.cmd_local_env.iterator();
-            spawn_args.fill_env::<false>(&mut iter, None);
-        }
 
         // Convert shell IO → subprocess stdio.
         let mut shellio = ShellIO::default();

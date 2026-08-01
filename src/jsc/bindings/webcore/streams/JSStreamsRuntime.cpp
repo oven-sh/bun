@@ -14,7 +14,6 @@
 #include "JSPullIntoDescriptor.h"
 #include "JSReadRequest.h"
 #include "JSReadStreamIntoSinkOperation.h"
-#include "JSResumableSinkPumpOperation.h"
 #include "JSStreamAlgorithmContexts.h"
 #include "JSStreamPipeToOperation.h"
 #include "JSStreamTeeState.h"

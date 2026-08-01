@@ -34,6 +34,10 @@ pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
 #[path = "fetch/FetchTasklet.rs"]
 pub mod fetch_tasklet;
 
+#[path = "fetch/FetchRequestBodySink.rs"]
+pub mod fetch_request_body_sink;
+pub use self::fetch_request_body_sink::{FetchRequestBodySink, FetchRequestBodySinkJSSink};
+
 #[path = "fetch/compress_body.rs"]
 pub mod compress_body;
 
@@ -1237,6 +1241,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
             if matches!(*body_value, BodyValue::Locked(_)) {
                 if let Some(readable) = req.get_body_readable_stream(global_this) {
+                    if readable.is_disturbed(global_this) || readable.is_locked(global_this) {
+                        return Err(global_this
+                            .err(
+                                jsc::ErrorCode::BODY_ALREADY_USED,
+                                format_args!("Request body already used"),
+                            )
+                            .throw());
+                    }
                     break 'extract_body Some(HTTPRequestBody::ReadableStream(
                         readable_stream::Strong::init(readable, global_this),
                     ));
@@ -1617,9 +1629,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if let Some(sig) = signal.0 {
         let sig = bun_ptr::BackRef::from(sig);
         if sig.aborted() {
-            // `abort_reason()` is the stored `m_reason` (same object as
-            // `signal.reason`), not a reconstructed DOMException.
-            let reason = sig.abort_reason();
+            let reason = sig.js_reason(global_this);
             if let HTTPRequestBody::ReadableStream(stream_ref) = &body {
                 if let Some(stream) = stream_ref.get(global_this) {
                     stream.cancel_with_reason(global_this, reason);

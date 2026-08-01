@@ -799,6 +799,15 @@ impl TarballStream {
         let rest: &[OSPathChar] = tokenize_rest_after_first(&pathname[..]);
 
         let mut norm_buf = OSPathBuffer::uninit();
+        if rest.len() >= norm_buf.len() {
+            bun_core::warn!(
+                "Skipping entry with a path longer than the maximum path length: {}\n",
+                bun_core::fmt::fmt_os_path(rest, Default::default()),
+            );
+            self.phase = Phase::WantData;
+            self.out_fd = None;
+            return Ok(());
+        }
         let normalized =
             resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..]);
         let norm_len = normalized.len();

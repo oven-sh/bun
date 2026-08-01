@@ -132,7 +132,6 @@ pub struct PostgresSQLConnection {
     pub(crate) js_value: JsCell<crate::jsc::JsRef>,
 
     pub(crate) backend_parameters: JsCell<StringMap>,
-    pub(crate) backend_key_data: JsCell<protocol::BackendKeyData>,
 
     // Self-referential — `database`/`user`/`password`/`path`/`options` are slices
     // into `options_buf` (built via StringBuilder in `call`). Struct is Box-allocated
@@ -1196,7 +1195,6 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             pending_activity_count: AtomicU32::new(0),
             js_value: JsCell::new(crate::jsc::JsRef::empty()),
             backend_parameters: JsCell::new(StringMap::init(true)),
-            backend_key_data: JsCell::new(protocol::BackendKeyData::default()),
             database,
             user: username,
             password,
@@ -2438,9 +2436,13 @@ impl PostgresSQLConnection {
                 } else {
                     &mut stack_buf[..statement.fields.len().min(max_inline)]
                 };
-                // make sure all cells are reset if reader short breaks the fields will just be null which is better than undefined behavior
-                for c in cells.iter_mut() {
-                    *c = DataCell::SQLDataCell::default();
+                // Seed with the field's column kind so a short DataRow still
+                // matches the Structure built from these fields.
+                for (i, c) in cells.iter_mut().enumerate() {
+                    *c = DataCell::SQLDataCell::null_for_column(
+                        i as u32,
+                        &statement.fields[i].name_or_index,
+                    );
                 }
                 putter.list = cells;
 
@@ -2520,6 +2522,13 @@ impl PostgresSQLConnection {
             }
             MessageType::ReadyForQuery => {
                 let _ready_for_query = protocol::ReadyForQuery::decode_internal(reader.reborrow())?;
+
+                if self.status.get() != Status::Connected
+                    && !matches!(self.authentication_state.get(), AuthenticationState::Ok)
+                {
+                    debug!("ReadyForQuery before authentication completed");
+                    return Err(AnyPostgresError::UnexpectedMessage);
+                }
 
                 self.set_status(Status::Connected);
                 self.update_flags(|f| {
@@ -2965,10 +2974,7 @@ impl PostgresSQLConnection {
                 }
             }
             MessageType::BackendKeyData => {
-                self.backend_key_data
-                    .set(protocol::BackendKeyData::decode_internal(
-                        reader.reborrow(),
-                    )?);
+                let _ = protocol::BackendKeyData::decode_internal(reader.reborrow())?;
             }
             MessageType::ErrorResponse => {
                 let err = protocol::ErrorResponse::decode_internal(reader.reborrow())?;

@@ -96,11 +96,6 @@ void JSVMClientData::JSHeapDataDeleter::operator()(JSHeapData* heapData) const
 
 JSVMClientData::~JSVMClientData()
 {
-    m_clients.forEach([](auto& client) {
-        client.willDestroyVM();
-    });
-    m_clients.clear();
-
     m_normalWorld = nullptr;
 }
 void JSVMClientData::create(VM* vm, void* bunVM)

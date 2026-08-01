@@ -380,6 +380,75 @@ describe("update", () => {
     });
   }
 
+  for (const args of [[], ["-r"]] as const) {
+    test(`update without --latest from root moves catalogs within range (${args.join(" ") || "no args"})`, async () => {
+      // The lockfile pins no-deps@1.0.0 (as if 1.1.0 was published after install).
+      // `bun update` from the workspace root must re-resolve catalog references
+      // within range the same as a direct dependency would be.
+      const { packageDir } = await registry.createTestDir();
+      const url = registry.registryUrl();
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "catalog-update-from-root",
+            workspaces: {
+              packages: ["packages/*"],
+              catalog: { "no-deps": "^1.0.0" },
+            },
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "pkg1", "package.json"),
+          JSON.stringify({
+            name: "pkg1",
+            dependencies: { "no-deps": "catalog:" },
+          }),
+        ),
+        write(
+          join(packageDir, "bun.lock"),
+          JSON.stringify({
+            lockfileVersion: 1,
+            configVersion: 1,
+            workspaces: {
+              "": { name: "catalog-update-from-root" },
+              "packages/pkg1": { name: "pkg1", dependencies: { "no-deps": "catalog:" } },
+            },
+            catalog: { "no-deps": "^1.0.0" },
+            packages: {
+              "no-deps": [
+                "no-deps@1.0.0",
+                `${url}no-deps/-/no-deps-1.0.0.tgz`,
+                {},
+                "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
+              ],
+              "pkg1": ["pkg1@workspace:packages/pkg1"],
+            },
+          }),
+        ),
+      ]);
+
+      const { err, exitCode } = await runUpdate(packageDir, ...args);
+      expect(err).not.toContain("error:");
+
+      const root = await file(join(packageDir, "package.json")).json();
+      expect(root.workspaces.catalog).toEqual({ "no-deps": "^1.1.0" });
+
+      expect((await file(join(packageDir, "packages", "pkg1", "package.json")).json()).dependencies).toEqual({
+        "no-deps": "catalog:",
+      });
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+        name: "no-deps",
+        version: "1.1.0",
+      });
+
+      const lock = await file(join(packageDir, "bun.lock")).text();
+      expect(lock).toContain("no-deps@1.1.0");
+      expect(lock).not.toContain("no-deps@1.0.0");
+      expect(exitCode).toBe(0);
+    });
+  }
+
   test("update without --latest stays in range and keeps catalog references", async () => {
     const { packageDir } = await registry.createTestDir();
     await Promise.all([

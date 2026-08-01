@@ -76,7 +76,7 @@ public:
     WEBCORE_EXPORT ~AbortSignal();
     using NativeCallbackTuple = std::tuple<void*, void (*)(void*, JSC::EncodedJSValue)>;
 
-    static Ref<AbortSignal> abort(JSDOMGlobalObject&, ScriptExecutionContext&, JSC::JSValue reason);
+    static Ref<AbortSignal> abort(ScriptExecutionContext&, JSC::JSValue reason);
     static Ref<AbortSignal> timeout(ScriptExecutionContext&, uint64_t milliseconds);
     static Ref<AbortSignal> any(ScriptExecutionContext&, const Vector<RefPtr<AbortSignal>>&);
 

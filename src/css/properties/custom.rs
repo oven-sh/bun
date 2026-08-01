@@ -388,14 +388,18 @@ impl TokenList {
                             // form a `/*` or `*/` comment delimiter. Emit a real space when
                             // the next token is the other half of that pair.
                             if dest.minify && (*d == b'/' as u32 || *d == b'*' as u32) {
-                                if let Some(TokenOrValue::Token(Token::Delim(next))) =
-                                    self.v.get(i + 1)
-                                {
-                                    if (*d == b'/' as u32 && *next == b'*' as u32)
-                                        || (*d == b'*' as u32 && *next == b'/' as u32)
-                                    {
-                                        dest.write_char(b' ')?;
+                                let needs_space = match self.v.get(i + 1) {
+                                    Some(TokenOrValue::Token(Token::Delim(next))) => {
+                                        (*d == b'/' as u32 && *next == b'*' as u32)
+                                            || (*d == b'*' as u32 && *next == b'/' as u32)
                                     }
+                                    Some(TokenOrValue::Token(Token::SubstringMatch)) => {
+                                        *d == b'/' as u32
+                                    }
+                                    _ => false,
+                                };
+                                if needs_space {
+                                    dest.write_char(b' ')?;
                                 }
                             }
                         }

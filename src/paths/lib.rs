@@ -580,15 +580,14 @@ pub mod fs {
             }
         }
 
-        /// Writes `.<hex(hash|nanos)>-<HEX(counter)>.<extname>\0` into `buf` and returns
+        /// Writes `.<hex(hash^nanos)>-<HEX(counter)>.<extname>\0` into `buf` and returns
         /// the NUL-terminated borrow. Static (no `&self`).
         pub fn tmpname<'b>(
             extname: &[u8],
             buf: &'b mut [u8],
             hash: u64,
         ) -> crate::Result<&'b mut ZStr> {
-            let hex_value: u64 =
-                (u128::from(hash) | (bun_core::time::nano_timestamp() as u128)) as u64;
+            let hex_value: u64 = hash ^ (bun_core::time::nano_timestamp() as u64);
 
             let len = buf.len();
             let mut cursor = &mut buf[..];

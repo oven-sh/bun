@@ -237,8 +237,9 @@ pub struct PendingValue {
     pub(crate) on_start_streaming: Option<fn(ctx: *mut c_void) -> DrainResult>,
     pub(crate) on_readable_stream_available:
         Option<fn(ctx: *mut c_void, global_this: &JSGlobalObject, readable: ReadableStream)>,
-    pub(crate) on_stream_cancelled: Option<fn(ctx: Option<*mut c_void>)>,
-    pub(crate) on_stream_drained: Option<fn(ctx: Option<*mut c_void>)>,
+    /// Upstream producer to notify on cancel/drain/consumer-attach; forwarded
+    /// to the `NewSource` when the locked body is realised as a native stream.
+    pub producer: streams::SourceHandle,
     pub(crate) size_hint: blob::SizeType,
 
     pub(crate) deinit: bool,
@@ -267,8 +268,7 @@ impl Default for PendingValue {
             on_start_buffering: None,
             on_start_streaming: None,
             on_readable_stream_available: None,
-            on_stream_cancelled: None,
-            on_stream_drained: None,
+            producer: streams::SourceHandle::None,
             size_hint: 0,
             deinit: false,
             action: Action::None,
@@ -734,7 +734,10 @@ impl Value {
         match self {
             Value::InternalBlob(b) => b.memory_cost(),
             Value::WTFStringImpl(s) => wtf_impl(s).memory_cost(),
-            Value::Locked(l) => l.size_hint() as usize,
+            // Not `size_hint()`: a Locked body owns no bytes (they live in the
+            // ByteStream buffer, separately accounted), so reporting the
+            // content-length here mis-trains JSC's GC live-size estimate.
+            Value::Locked(_) => 0,
             // Value::InlineBlob(b) => b.slice_const().len(),
             _ => 0,
         }
@@ -744,7 +747,8 @@ impl Value {
         match self {
             Value::InternalBlob(b) => b.slice_const().len(),
             Value::WTFStringImpl(s) => wtf_impl(s).byte_slice().len(),
-            Value::Locked(l) => l.size_hint() as usize,
+            // See memory_cost(): size_hint is anticipated, not allocated.
+            Value::Locked(_) => 0,
             // Value::InlineBlob(b) => b.slice_const().len(),
             _ => 0,
         }
@@ -874,16 +878,7 @@ impl Value {
             },
         );
 
-        if let Some(task) = locked.task {
-            if let Some(on_cancelled) = locked.on_stream_cancelled {
-                reader.cancel_handler.set(Some(on_cancelled));
-                reader.cancel_ctx.set(Some(task));
-            }
-            if let Some(on_drained) = locked.on_stream_drained {
-                reader.drain_handler.set(Some(on_drained));
-                reader.drain_ctx.set(Some(task));
-            }
-        }
+        reader.producer.set(locked.producer);
 
         reader.context.setup();
 
@@ -1532,16 +1527,7 @@ impl Value {
             unreachable!()
         };
 
-        if let Some(task) = locked.task {
-            if let Some(on_cancelled) = locked.on_stream_cancelled {
-                reader.cancel_handler.set(Some(on_cancelled));
-                reader.cancel_ctx.set(Some(task));
-            }
-            if let Some(on_drained) = locked.on_stream_drained {
-                reader.drain_handler.set(Some(on_drained));
-                reader.drain_ctx.set(Some(task));
-            }
-        }
+        reader.producer.set(locked.producer);
 
         let context_ptr: *mut ByteStream = &raw mut reader.context;
         locked.readable = webcore::readable_stream::Strong::init(
@@ -1708,7 +1694,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if let Some(stream) = locked.readable.get(global_object) {
                     stream.value.ensure_still_alive();
                     Self::stream_set_cached(js_value, global_object, stream.value);
-                    let _ = core::mem::take(&mut locked.readable);
+                    locked.readable.downgrade();
                 }
             }
         }
@@ -1813,7 +1799,11 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 return Ok(readable.value);
             }
         }
-        self.get_body_value().to_readable_stream(global_this)
+        let stream = self.get_body_value().to_readable_stream(global_this)?;
+        // The wrapper's traced `m_stream` slot owns the stream from here;
+        // release the `Strong` `to_readable_stream` parked in `Locked.readable`.
+        self.check_body_stream_ref(global_this);
+        Ok(stream)
     }
 
     /// <https://fetch.spec.whatwg.org/#dom-body-textstream>
@@ -2393,22 +2383,25 @@ impl<'a> ValueBufferer<'a> {
         }
     }
 
-    fn on_stream_pipe(&mut self, stream: &streams::Result) {
+    fn write_chunk(&mut self, stream: &streams::Result) -> streams::Writable {
         if let streams::Result::Err(err) = stream {
             bun_core::scoped_log!(BodyValueBufferer, "onStreamPipe error");
             let js_err = err.to_js(self.global);
             let ref_ = jsc::strong::Optional::create(js_err, self.global);
             (self.on_finished_buffering)(self.ctx, b"", Some(ValueError::JSValue(ref_)), true);
-            return;
+            return streams::Writable::Done;
         }
         let chunk = stream.slice();
-        bun_core::scoped_log!(BodyValueBufferer, "onStreamPipe chunk {}", chunk.len());
+        let len = chunk.len();
+        bun_core::scoped_log!(BodyValueBufferer, "onStreamPipe chunk {}", len);
         let _ = self.stream_buffer.write(chunk);
         if stream.is_done() {
             let bytes = self.stream_buffer.list.as_slice();
             bun_core::scoped_log!(BodyValueBufferer, "onStreamPipe done {}", bytes.len());
             (self.on_finished_buffering)(self.ctx, bytes, None, true);
+            return streams::Writable::Done;
         }
+        streams::Writable::Owned(len as u64)
     }
 
     /// Reclaim the `*mut Self` smuggled through a `NativePromiseContext` cell
@@ -2521,7 +2514,7 @@ impl<'a> ValueBufferer<'a> {
                     // readable stream, kept alive via `self.readable_stream_ref`
                     // above. R-2: all touched fields are interior-mutable.
                     let byte_stream = stream.ptr.bytes().expect("matched Bytes");
-                    debug_assert!(byte_stream.pipe.get().ctx.is_none());
+                    debug_assert!(byte_stream.sink.get().is_none());
                     debug_assert!(self.byte_stream.is_none());
 
                     let bytes = byte_stream.buffer.get().as_slice();
@@ -2555,9 +2548,16 @@ impl<'a> ValueBufferer<'a> {
                         return Ok(());
                     }
 
-                    byte_stream
-                        .pipe
-                        .set(crate::webcore::Wrap::<Self>::init(self));
+                    byte_stream.sink.set(webcore::SinkHandle::ValueBufferer(
+                        std::ptr::from_mut::<Self>(self).cast::<c_void>(),
+                        |ctx, stream| {
+                            // SAFETY: `ctx` is the `*mut Self` stored at hook-in time;
+                            // `ValueBufferer` is heap-pinned by its owner (BufferOutputSink).
+                            // `ValueBufferer::Drop` clears `byte_stream.sink` before releasing
+                            // `readable_stream_ref`, so this handle never outlives the pointee.
+                            unsafe { &mut *ctx.cast::<Self>() }.write_chunk(stream)
+                        },
+                    ));
                     self.byte_stream = NonNull::new(byte_stream_ptr);
                     bun_core::scoped_log!(
                         BodyValueBufferer,
@@ -2620,13 +2620,6 @@ impl<'a> ValueBufferer<'a> {
                 (sink.on_finished_buffering)(sink.ctx, bytes, None, true);
             }
         }
-    }
-}
-
-// `webcore::Wrap<T>` requires `T: PipeHandler`.
-impl<'a> crate::webcore::PipeHandler for ValueBufferer<'a> {
-    fn on_pipe(&mut self, stream: streams::Result) {
-        self.on_stream_pipe(&stream)
     }
 }
 

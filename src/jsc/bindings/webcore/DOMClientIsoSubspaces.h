@@ -129,7 +129,6 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDirectSinkCloseState;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAsyncIteratorSourceOperation;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadStreamIntoSinkOperation;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResumableSinkPumpOperation;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunStandaloneTextSink;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForOneShotDirectSink;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamIntoArrayOperation;

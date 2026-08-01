@@ -81,14 +81,6 @@ fn jsv_to_u32(v: JSValue) -> u32 {
     v.as_number() as u32
 }
 
-/// Checked u32 → `FlushValue` validation — `bun_zlib::FlushValue` has
-/// no `TryFrom<u32>` impl upstream.
-#[inline]
-fn flush_value_is_valid(n: u32) -> bool {
-    // FlushValue is `#[repr(C)]` with discriminants 0..=6.
-    n <= 6
-}
-
 impl CountedKeepAlive {
     fn ref_(&mut self, _vm: &VirtualMachine) {
         if self.ref_count == 0 {
@@ -192,6 +184,7 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 pub(crate) trait CompressionContext {
     fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>);
     fn set_flush(&mut self, flush: i32);
+    fn flush_value_is_valid(flush: u32) -> bool;
     fn do_work(&mut self);
     fn reset(&mut self) -> Error;
     fn close(&mut self);
@@ -337,7 +330,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 .throw());
         }
         let flush: u32 = jsv_to_u32(arguments[0]);
-        if !flush_value_is_valid(flush) {
+        if !<T::Stream as CompressionContext>::flush_value_is_valid(flush) {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_VALUE,
@@ -362,6 +355,18 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                         .throw());
                 }
             };
+            // Growable SharedArrayBuffer only grows in place; the captured
+            // (ptr, len) stays valid. Only non-shared resizable can shrink.
+            if in_buf.resizable && !in_buf.shared {
+                return Err(global_this
+                    .err(
+                        ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "The \"in\" argument must not be backed by a resizable ArrayBuffer"
+                        ),
+                    )
+                    .throw());
+            }
             in_off = jsv_to_u32(arguments[2]);
             in_len = jsv_to_u32(arguments[3]);
             if in_buf.byte_len < in_off as usize + in_len as usize {
@@ -396,6 +401,16 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                         "out_off + out_len ({}) exceeds output buffer length ({})",
                         out_off as usize + out_len as usize,
                         out_buf.byte_len,
+                    ),
+                )
+                .throw());
+        }
+        if out_buf.resizable && !out_buf.shared {
+            return Err(global_this
+                .err(
+                    ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The \"out\" argument must not be backed by a resizable ArrayBuffer"
                     ),
                 )
                 .throw());
@@ -602,7 +617,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 .throw());
         }
         let flush: u32 = jsv_to_u32(arguments[0]);
-        if !flush_value_is_valid(flush) {
+        if !<T::Stream as CompressionContext>::flush_value_is_valid(flush) {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_VALUE,
@@ -987,6 +1002,7 @@ macro_rules! __impl_compression_stream {
         impl $crate::node::node_zlib_binding::CompressionContext for $ctx {
             #[inline] fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) { Self::set_buffers(self, in_, out) }
             #[inline] fn set_flush(&mut self, flush: i32) { Self::set_flush(self, flush) }
+            #[inline] fn flush_value_is_valid(flush: u32) -> bool { Self::flush_value_is_valid(flush) }
             #[inline] fn do_work(&mut self) { Self::do_work(self) }
             #[inline] fn reset(&mut self) -> $crate::node::node_zlib_binding::Error { Self::reset(self) }
             #[inline] fn close(&mut self) { Self::close(self) }

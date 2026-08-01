@@ -63,7 +63,6 @@ using namespace JSC;
     macro(cancel) \
     macro(checkBufferRead) \
     macro(checks) \
-    macro(cloneArrayBuffer) \
     macro(close) \
     macro(cmd) \
     macro(code) \
@@ -175,7 +174,6 @@ using namespace JSC;
     macro(sameSite) \
     macro(secure) \
     macro(self) \
-    macro(setHandlers) \
     macro(signal) \
     macro(size) \
     macro(specifier) \
@@ -187,7 +185,6 @@ using namespace JSC;
     macro(statusMessage) \
     macro(statusText) \
     macro(stream) \
-    macro(structuredCloneForStream) \
     macro(syscall) \
     macro(text) \
     macro(textDecoder) \

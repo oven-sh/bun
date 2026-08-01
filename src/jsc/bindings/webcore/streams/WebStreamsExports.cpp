@@ -100,7 +100,10 @@ extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, 
 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto branches = readableStreamTee(globalObject, stream, /* cloneForBranch2 */ true);
+    // Body clone tees with cloneForBranch2 = false (share chunk refs) like Node/Chrome/Firefox;
+    // the spec's per-chunk StructuredClone makes an N-deep clone chain retain N copies of the body
+    // (whatwg/streams#1156).
+    auto branches = readableStreamTee(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, false);
 
     *possibleReadableStream1 = JSValue::encode(branches.first);
@@ -191,6 +194,18 @@ extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStrea
     stream->m_nativePtr.set(globalObject->vm(), stream, jsNumber(-1));
     stream->m_nativeType = 0;
     stream->m_disturbed = true;
+}
+
+// A native sink (fetch body / S3 / FileSink) has attached directly without a reader.
+// Mark the stream disturbed+locked so .locked, .getReader(), and the body-mixin
+// disturbed checks behave as they do after readStreamIntoSink acquires a reader.
+extern "C" void ReadableStream__lockNative(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
+    if (!stream) [[unlikely]]
+        return;
+    stream->m_disturbed = true;
+    stream->m_lockedWithoutReader = true;
 }
 
 extern "C" JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
@@ -333,22 +348,4 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::Gl
     auto* stream = toReadableStream(globalObject, scope, streamValue);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToFormData(globalObject, stream, JSValue::decode(contentType))));
-}
-
-extern "C" JSC::EncodedJSValue Bun__assignStreamIntoResumableSink(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue streamValue, JSC::EncodedJSValue sinkValue)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(streamValue));
-    JSObject* sink = JSValue::decode(sinkValue).getObject();
-    if (!stream || !sink) [[unlikely]]
-        return JSValue::encode(jsUndefined());
-    JSValue result = assignStreamIntoResumableSink(globalObject, stream, sink);
-    if (auto* exception = catchScope.exception()) [[unlikely]] {
-        // The native caller cannot observe VM exception state: hand back the Exception
-        // cell and leave nothing pending (a termination stays pending by design).
-        catchScope.clearExceptionExceptTermination();
-        return JSValue::encode(exception);
-    }
-    return JSValue::encode(result);
 }

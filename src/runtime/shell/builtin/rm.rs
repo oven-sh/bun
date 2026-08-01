@@ -30,7 +30,6 @@ pub enum RmState {
     Done {
         exit_code: ExitCode,
     },
-    WaitingWriteErr,
     Err(ExitCode),
 }
 
@@ -111,7 +110,6 @@ impl Rm {
                 Exec,
                 Done(ExitCode),
                 Err(ExitCode),
-                WaitErr,
             }
             let tag = match &Self::state_mut(interp, cmd).state {
                 RmState::Idle => Tag::Idle,
@@ -122,10 +120,8 @@ impl Rm {
                 RmState::Exec(_) => Tag::Exec,
                 RmState::Done { exit_code } => Tag::Done(*exit_code),
                 RmState::Err(c) => Tag::Err(*c),
-                RmState::WaitingWriteErr => Tag::WaitErr,
             };
             match tag {
-                Tag::WaitErr => return Yield::suspended(),
                 Tag::Idle => {
                     Self::state_mut(interp, cmd).state = RmState::ParseOpts {
                         idx: 0,
@@ -174,24 +170,7 @@ impl Rm {
 
                             // Check that none of the paths will delete the root.
                             {
-                                let mut buf = bun_paths::PathBuffer::uninit();
-                                let cwd = match bun_sys::getcwd_z(&mut buf) {
-                                    Ok(c) => c.as_bytes().to_vec(),
-                                    Err(err) => {
-                                        let msg =
-                                            err.msg().map(bstr::BStr::new).unwrap_or_else(|| {
-                                                bstr::BStr::new(b"failed to get cwd")
-                                            });
-                                        let buf = Builtin::fmt_error_arena(
-                                            interp,
-                                            cmd,
-                                            Some(Kind::Rm),
-                                            format_args!("getcwd: {}", msg),
-                                        )
-                                        .to_vec();
-                                        return Self::write_failing_error(interp, cmd, &buf, 1);
-                                    }
-                                };
+                                let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
 
                                 for i in args_start..argc {
                                     let path = Builtin::of(interp, cmd).arg_bytes(i);
@@ -353,23 +332,6 @@ impl Rm {
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
         Builtin::done(interp, cmd, 1)
-    }
-
-    fn write_failing_error(
-        interp: &Interpreter,
-        cmd: NodeId,
-        buf: &[u8],
-        exit_code: ExitCode,
-    ) -> Yield {
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            Self::state_mut(interp, cmd).state = RmState::WaitingWriteErr;
-            let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stderr
-                .enqueue(child, buf, safeguard);
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
-        Builtin::done(interp, cmd, exit_code)
     }
 
     pub(crate) fn on_io_writer_chunk(

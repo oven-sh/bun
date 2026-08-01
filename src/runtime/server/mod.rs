@@ -830,8 +830,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             on_readable_stream_available: Some(
                                 ServerRequestContext::<SSL, DEBUG>::on_request_body_readable_stream_available,
                             ),
-                            on_stream_drained: Some(
-                                ServerRequestContext::<SSL, DEBUG>::on_request_body_stream_drained_callback,
+                            producer: crate::webcore::streams::SourceHandle::ServerRequestBody(
+                                AnyRequestContext::init(ctx),
                             ),
                             ..Default::default()
                         });

@@ -1396,10 +1396,14 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             #[cfg(unix)]
             {
                 if let Some(fd) = spawned_stdout {
-                    fd.close();
+                    if !stdio[1].borrows_caller_fd() {
+                        fd.close();
+                    }
                 }
                 if let Some(fd) = spawned_stderr {
-                    fd.close();
+                    if !stdio[2].borrows_caller_fd() {
+                        fd.close();
+                    }
                 }
             }
             #[cfg(not(unix))]
@@ -1611,22 +1615,14 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if matches!(subprocess.stdin.get(), Writable::Pipe(_)) && promise_for_stream == JSValue::ZERO {
-        // Note: the SignalHandler impl is on
-        // `Subprocess` and the stored back-pointer is the `*mut Subprocess`
-        // (whole-allocation provenance), so `Writable::on_close` can raw-project
-        // `stdin` instead of doing out-of-provenance pointer arithmetic. The
-        // vtable only dereferences this pointer later on the JS thread, after
-        // the local `subprocess` borrow has ended.
-        // SAFETY: `subprocess_ptr` is the stable boxed `Subprocess` (from
-        // `heap::alloc` above) and `stdin` was just confirmed to be the
-        // `Pipe` variant; the signal's stored back-pointer remains valid for
-        // the lifetime of the FileSink, which is owned by `subprocess.stdin`.
+        // Store the whole-allocation `*mut Subprocess` so Writable::on_close can raw-project stdin.
+        // SAFETY: `subprocess_ptr` is the stable boxed Subprocess; stdin was just confirmed `Pipe`.
         unsafe {
             if let Writable::Pipe(pipe) = (*subprocess_ptr).stdin.get() {
                 (*pipe.as_ptr())
-                    .signal
-                    .set(WebCore::streams::Signal::init_with_type::<SubprocessT<'_>>(
-                        subprocess_ptr,
+                    .source
+                    .set(WebCore::streams::SourceHandle::Subprocess(
+                        bun_ptr::BackRef::from_raw(subprocess_ptr.cast::<SubprocessT<'static>>()),
                     ));
             }
         }

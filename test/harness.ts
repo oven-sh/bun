@@ -313,6 +313,34 @@ export async function expectMaxObjectTypeCount(
   expect(heapStats().objectTypeCounts[type] ?? 0).toBeLessThanOrEqual(count);
 }
 
+/**
+ * Peak RSS of a bun process that runs `fixture`, whose only stdout line is
+ * the JSON `expected` (the transfer's completion result), and the peak RSS of
+ * an empty bun process to subtract as the baseline. Compared as a delta so
+ * the assertion is about the payload, not the runtime's fixed footprint.
+ */
+export async function runFixtureMaxRSS(fixture: string, expected: unknown) {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual(expected);
+  expect(exitCode).toBe(0);
+  const maxRSS = proc.resourceUsage()!.maxRSS;
+  // Guard the unit: any bun process peaks well above 1 MiB in bytes but under
+  // 1_048_576 in kB; a failure here means maxRSS regressed to kB and every
+  // bounded-memory assertion below is vacuous.
+  expect(maxRSS).toBeGreaterThan(1024 * 1024);
+  return maxRSS;
+}
+let emptyBunMaxRSS: Promise<number> | undefined;
+export function emptyProcessMaxRSS() {
+  return (emptyBunMaxRSS ??= (async () => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv });
+    await proc.exited;
+    return proc.resourceUsage()!.maxRSS;
+  })());
+}
+
 // we must ensure that finalizers are run
 // so that the reference-counting logic is exercised
 export function gcTick(traceForDebugging = false) {

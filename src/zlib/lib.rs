@@ -191,7 +191,7 @@ pub struct ZlibReaderArrayList<'a> {
     pub(crate) state: ZlibReaderArrayListState,
     /// Decompression-bomb guard: `read_all` errors instead of growing the
     /// output past this many bytes. Defaults to unbounded.
-    pub max_output_size: usize,
+    pub(crate) max_output_size: usize,
 }
 
 impl<'a> Drop for ZlibReaderArrayList<'a> {
@@ -257,7 +257,7 @@ impl<'a> ZlibReaderArrayList<'a> {
             internal_state: core::ptr::null_mut(),
             user_data: (&raw mut *zlib_reader).cast::<c_void>(),
 
-            data_type: DataType::Unknown,
+            data_type: DataType::Unknown as c_int,
             adler: 0,
             reserved: 0,
         };
@@ -754,7 +754,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
             internal_state: core::ptr::null_mut(),
             user_data: (&raw mut *zlib_reader).cast::<c_void>(),
 
-            data_type: DataType::Unknown,
+            data_type: DataType::Unknown as c_int,
             adler: 0,
             reserved: 0,
         };
@@ -1169,7 +1169,7 @@ fn new_zstream() -> zStream_struct {
         free_func: Some(ZlibAllocator::free),
         internal_state: core::ptr::null_mut(),
         user_data: core::ptr::null_mut(),
-        data_type: DataType::Unknown,
+        data_type: DataType::Unknown as c_int,
         adler: 0,
         reserved: 0,
     }

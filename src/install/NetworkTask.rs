@@ -191,9 +191,9 @@ impl NetworkTask {
         if let Some(stream) = this.tarball_stream.as_deref_mut() {
             // Runs on the HTTP thread. With response-body streaming enabled,
             // `notify` is called once per body chunk (has_more=true) and once
-            // more at the end (has_more=false). `result.body` is our own
-            // `response_buffer`; the HTTP client reuses it for the next
-            // chunk, so we must consume + reset it before returning.
+            // more at the end (has_more=false). `result.body` borrows the
+            // HTTP client's scratch buffer and is cleared after this callback
+            // returns, so we must consume it before returning.
 
             // `metadata` is only populated on the first callback that
             // carries response headers. Cache the status code so both the
@@ -201,9 +201,13 @@ impl NetworkTask {
             if let Some(m) = result.metadata.take() {
                 stream.status_code = m.response.status_code;
                 this.response.metadata = Some(m);
+                // New attempt's headers arrived — drop any bytes buffered from
+                // a prior failed attempt (pre-refactor `HTTPClient::start()`
+                // did this via `body_out_str.reset()`).
+                this.response_buffer.reset();
             }
 
-            let chunk = this.response_buffer.list.as_slice();
+            let chunk = result.body_bytes();
 
             // Only commit to streaming extraction once we've seen a 2xx
             // status *and* the tarball is large enough to be worth the
@@ -240,9 +244,6 @@ impl NetworkTask {
                         // `drain()` concurrently; coercing the `&mut` to a
                         // raw pointer here matches that contract.
                         unsafe { TarballStream::on_chunk(stream, chunk, false, None) };
-                        // Hand the buffer back to the HTTP client empty so
-                        // the next chunk starts at offset 0.
-                        this.response_buffer.reset();
                     }
                     return;
                 }
@@ -250,9 +251,8 @@ impl NetworkTask {
                 // Final callback. If we've already started streaming, hand
                 // over the last bytes and close; the drain task will run
                 // once more, finish up and push to `resolve_tasks`. If not
-                // (whole body arrived in one go, or too small), leave
-                // `response_buffer` intact so the buffered extractor
-                // handles it.
+                // (whole body arrived in one go, or too small), fall through
+                // so the buffered extractor handles it.
                 if committed {
                     // SAFETY: see the `on_chunk` call above — `stream` is
                     // live and `on_chunk` takes `*mut Self` per its
@@ -280,9 +280,10 @@ impl NetworkTask {
                 }
             } else if result.has_more {
                 // Non-2xx response (or too small to stream) still
-                // delivering its body: accumulate in `response_buffer`
-                // (we did *not* reset above) so the main thread can
-                // inspect it. Do not enqueue until the stream ends.
+                // delivering its body: accumulate in `response_buffer` so
+                // the main thread can inspect it. Do not enqueue until the
+                // stream ends.
+                this.response_buffer.list.extend_from_slice(chunk);
                 return;
             }
             // Fall through to the normal completion path for anything that
@@ -290,6 +291,18 @@ impl NetworkTask {
             // `run_tasks` handles it exactly as it would without
             // streaming support.
         }
+
+        // Stash this callback's body bytes into our own accumulation buffer
+        // before `detach_lifetime` clears `result.body` to `&[]`. Covers the
+        // non-streaming manifest path and the tarball fall-through above.
+        if result.metadata.is_some() {
+            // First callback of a fresh attempt on the non-streaming path —
+            // clear stale bytes from a prior retry. The streaming fall-through
+            // already `.take()`d metadata and reset above, so this is a no-op
+            // there and accumulated chunks are preserved.
+            this.response_buffer.reset();
+        }
+        result.body_into(&mut this.response_buffer.list);
 
         // BACKREF — PackageManager owns this task and outlives it. `notify`
         // runs on the HTTP thread, so we never materialize a `&mut
@@ -306,15 +319,13 @@ impl NetworkTask {
         unsafe {
             let real = async_http.real.expect("unreachable").as_ptr();
             ptr::write(real, ptr::read(async_http));
-            (*real).response_buffer = async_http.response_buffer;
         }
         // Preserve metadata captured on an earlier streaming callback; the
         // final `result` won't have it.
         let saved_metadata = this.response.metadata.take();
-        // SAFETY: `result.body` (the only borrowed field) points at
-        // `this.response_buffer`, which `this` owns and outlives the stored
-        // `HTTPClientResult`; erase the callback-scoped `'_` to `'static` to
-        // match the field type.
+        // SAFETY: `detach_lifetime` erases the callback-scoped `'_` to
+        // `'static` and clears `body` to `&[]`; the body bytes were stashed
+        // into `this.response_buffer` above.
         this.response = unsafe { result.detach_lifetime() };
         if this.response.metadata.is_none() {
             this.response.metadata = saved_metadata;
@@ -635,7 +646,6 @@ impl NetworkTask {
             url,
             header_builder.entries,
             headers_buf,
-            ptr::addr_of_mut!(self.response_buffer),
             b"",
             completion_callback,
             http::FetchRedirect::Follow,
@@ -873,7 +883,6 @@ impl NetworkTask {
             url,
             header_builder.entries,
             header_buf,
-            ptr::addr_of_mut!(self.response_buffer),
             b"",
             completion_callback,
             http::FetchRedirect::Follow,

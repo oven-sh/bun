@@ -136,7 +136,6 @@ trait RequestCtxOps: RequestCtx {
         global_this: &JSGlobalObject,
         readable: WebCore::ReadableStream,
     );
-    fn on_request_body_stream_drained_callback(this: Option<*mut c_void>);
 }
 
 impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> RequestCtxOps
@@ -275,10 +274,6 @@ where
         readable: WebCore::ReadableStream,
     ) {
         Self::on_request_body_readable_stream_available(this, global_this, readable)
-    }
-    #[inline]
-    fn on_request_body_stream_drained_callback(this: Option<*mut c_void>) {
-        Self::on_request_body_stream_drained_callback(this)
     }
 }
 
@@ -3282,7 +3277,9 @@ where
                         on_readable_stream_available: Some(
                             Ctx::on_request_body_readable_stream_available,
                         ),
-                        on_stream_drained: Some(Ctx::on_request_body_stream_drained_callback),
+                        producer: crate::webcore::streams::SourceHandle::ServerRequestBody(
+                            AnyRequestContext::init(ctx_slot),
+                        ),
                         ..Default::default()
                     });
                 }

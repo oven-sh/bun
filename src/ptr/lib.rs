@@ -59,8 +59,7 @@ pub use weak_ptr::WeakPtr;
 // (lowest tier, every crate can reach them); re-exported here so callers can
 // spell `bun_ptr::container_of` / `bun_ptr::from_field_ptr!`.
 pub use bun_core::{
-    IntrusiveField, container_of, container_of_const, from_field_ptr, impl_field_parent,
-    intrusive_field,
+    IntrusiveField, container_of, from_field_ptr, impl_field_parent, intrusive_field,
 };
 
 // C-callback `void *user_data` → `&mut T` recovery — same tiering rationale

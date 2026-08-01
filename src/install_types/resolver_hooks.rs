@@ -1003,7 +1003,13 @@ impl Repository {
         if repo_order != Ordering::Equal {
             return repo_order;
         }
-        self.committish.order(rhs.committish, lhs_buf, rhs_buf)
+        let committish_order = self.committish.order(rhs.committish, lhs_buf, rhs_buf);
+        if committish_order != Ordering::Equal {
+            return committish_order;
+        }
+        // Unconditional so the order stays transitive; an empty `resolved` is
+        // an ordinary value here, not a wildcard like in `eql`.
+        self.resolved.order(rhs.resolved, lhs_buf, rhs_buf)
     }
 
     pub fn count<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) {

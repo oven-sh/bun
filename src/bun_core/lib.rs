@@ -662,13 +662,6 @@ pub const unsafe fn container_of<P, F>(field: *const F, offset: usize) -> *mut P
     unsafe { field.byte_sub(offset).cast::<P>().cast_mut() }
 }
 
-/// `*const`-out variant of [`container_of`]. Same safety contract.
-#[inline(always)]
-pub const unsafe fn container_of_const<P, F>(field: *const F, offset: usize) -> *const P {
-    // SAFETY: per fn contract.
-    unsafe { field.byte_sub(offset).cast::<P>() }
-}
-
 /// Recover a typed `&mut T` from a C-callback's opaque user-data pointer.
 ///
 /// This is the canonical spelling for the ubiquitous trampoline pattern where
@@ -2090,7 +2083,7 @@ pub(crate) mod strings_impl {
     /// Only matches http:// and https:// schemes and rejects empty pw.
     pub(crate) fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
         // Case-sensitive prefix match; the search region is truncated at the
-        // first '\n' before scanning for '@'/':'.
+        // first '\n' and at the end of the authority before scanning for '@'/':'.
         let scheme_end = if s.starts_with(b"http://") {
             7
         } else if s.starts_with(b"https://") {
@@ -2101,6 +2094,9 @@ pub(crate) mod strings_impl {
         let mut rest = &s[scheme_end..];
         if let Some(nl) = rest.iter().position(|&b| b == b'\n') {
             rest = &rest[..nl];
+        }
+        if let Some(end) = rest.iter().position(|&b| matches!(b, b'/' | b'?' | b'#')) {
+            rest = &rest[..end];
         }
         let at = rest.iter().position(|&b| b == b'@')?;
         let userinfo = &rest[..at];

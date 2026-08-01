@@ -233,6 +233,7 @@ impl Watcher {
 
     pub fn start(&mut self) -> Result<(), crate::Error> {
         debug_assert!(!self.watchloop_handle.load());
+        self.watchloop_handle.store(true);
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.
         let this = std::ptr::from_mut::<Watcher>(self) as usize;
@@ -245,6 +246,7 @@ impl Watcher {
                     let _ = Watcher::thread_main(this as *mut Watcher);
                 })
                 .map_err(|e| {
+                    self.watchloop_handle.store(false);
                     // Windows: raw_os_error() is a Win32 GetLastError() code, so
                     // route it through the u32 (Win32Error) mapper rather than
                     // from_errno's i64 discriminant-cast path.
@@ -310,7 +312,7 @@ impl Watcher {
         // Scope all `&mut *this` access so the borrow ends *before* we
         // reclaim the Box. Deallocating while a `&mut self` argument is still
         // protected is UB under Stacked Borrows / Tree Borrows.
-        {
+        let owner_still_alive = {
             // SAFETY: caller contract — `this` is a valid, exclusively-accessed
             // heap allocation for the duration of this scope.
             let me = unsafe { &mut *this };
@@ -321,16 +323,18 @@ impl Watcher {
             // defer Output.flush() — handled at end
             log!("Watcher started");
 
-            match me.watch_loop() {
+            let owner_still_alive = match me.watch_loop() {
                 Err(err) => {
                     me.watchloop_handle.store(false);
                     me.platform.stop();
-                    if me.running.load() {
+                    let running = me.running.load();
+                    if running {
                         (me.on_error)(me.ctx, err);
                     }
+                    running
                 }
-                Ok(()) => {}
-            }
+                Ok(()) => false,
+            };
 
             // deinit and close descriptors if needed
             if me.close_descriptors.load() {
@@ -339,19 +343,20 @@ impl Watcher {
                     let _ = bun_sys::close(fd);
                 }
             }
-            // watchlist freed by Drop below
-        }
+            owner_still_alive
+        };
 
         // Close trace file if open
         WatcherTrace::deinit();
 
         Output::flush();
 
-        // SAFETY: `this` is the heap allocation from init(); the watcher thread
-        // owns it now and no `&`/`&mut` borrow of it remains live (the scoped
-        // `me` above has ended).
-        // TODO: ownership model — see shutdown()
-        drop(unsafe { bun_core::heap::take(this) });
+        if !owner_still_alive {
+            // SAFETY: `this` is the heap allocation from init(); the watcher thread
+            // owns it now and no `&`/`&mut` borrow of it remains live (the scoped
+            // `me` above has ended).
+            drop(unsafe { bun_core::heap::take(this) });
+        }
         Ok(())
     }
 
@@ -902,13 +907,15 @@ impl Watcher {
     // Const-generic
     // enum params need `adt_const_params` (nightly); the value is only
     // compared to `.Directory`, so a plain runtime parameter is fine.
-    pub fn remove_at_index(
+    pub fn remove_at_index<const LOCK: bool>(
         &mut self,
         kind: WatchItemKind,
         index: WatchItemIndex,
         hash: HashType,
         parents: &[HashType],
     ) {
+        let _guard = LOCK.then(|| self.mutex.lock_guard());
+
         debug_assert!(index != NO_WATCH_ITEM);
 
         self.evict_list[self.evict_list_i as usize] = index;

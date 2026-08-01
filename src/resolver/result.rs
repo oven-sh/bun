@@ -12,7 +12,6 @@ use bun_core::MutableString;
 use bun_sys::Fd as FD;
 
 use crate::dir_info::DirInfoRef;
-use crate::fs as Fs;
 use crate::options;
 use crate::package_json::PackageJSON;
 use crate::resolver::Dependency;
@@ -93,8 +92,6 @@ pub struct Result {
 
     pub package_json: Option<*const PackageJSON>,
 
-    pub diff_case: Option<Fs::file_system::entry::lookup::DifferentCase>,
-
     // If present, any ES6 imports to this file can be considered to have no side
     // effects. This means they should be removed if unused.
     pub primary_side_effects_data: SideEffects,
@@ -117,7 +114,6 @@ impl Default for Result {
             path_pair: PathPair::default(),
             jsx: options::jsx::Pragma::default(),
             package_json: None,
-            diff_case: None,
             primary_side_effects_data: SideEffects::HasSideEffects,
             module_type: options::ModuleType::Unknown,
             dirname_fd: FD::INVALID,
@@ -363,7 +359,6 @@ pub struct MatchResult {
     pub(crate) file_fd: FD,
     pub(crate) is_node_module: bool,
     pub(crate) package_json: Option<*const PackageJSON>,
-    pub(crate) diff_case: Option<Fs::file_system::entry::lookup::DifferentCase>,
     pub(crate) dir_info: Option<DirInfoRef>,
     pub(crate) module_type: options::ModuleType,
     pub(crate) is_external: bool,
@@ -377,7 +372,6 @@ impl Default for MatchResult {
             file_fd: FD::INVALID,
             is_node_module: false,
             package_json: None,
-            diff_case: None,
             dir_info: None,
             module_type: options::ModuleType::Unknown,
             is_external: false,
@@ -438,7 +432,6 @@ pub struct LoadResult {
     /// Interned in `DirnameStore`/`FilenameStore` (process-lifetime singletons),
     /// so the `'static` borrow is genuine.
     pub(crate) path: &'static [u8],
-    pub(crate) diff_case: Option<Fs::file_system::entry::lookup::DifferentCase>,
     pub(crate) dirname_fd: FD,
     pub(crate) file_fd: FD,
 }

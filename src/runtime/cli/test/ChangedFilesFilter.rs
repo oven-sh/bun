@@ -340,22 +340,18 @@ pub(crate) fn init_watch_trigger() {
         let path: ZBox = if let Some(existing) = getenv_z(TRIGGER_FILE_ENV_VAR_Z) {
             ZBox::from_bytes(existing)
         } else {
-            // SAFETY: getpid is always safe.
-            let seed: u64 =
-                bun_core::time::milli_timestamp() as u64 ^ unsafe { libc::getpid() } as u64;
-            // wyhash of a time^pid seed; only used to make a unique temp
-            // trigger-file name.
-            let rand: u64 = bun_wyhash::hash(&seed.to_ne_bytes());
+            let mut rand = [0u8; 16];
+            bun_boringssl_sys::rand_bytes(&mut rand);
             let tmpdir = RealFS::tmpdir_path();
             let mut fresh: Vec<u8> = Vec::new();
             {
                 use std::io::Write as _;
                 write!(
                     &mut fresh,
-                    "{}{}.bun-test-changed-{:x}.trigger",
+                    "{}{}.bun-test-changed-{}.trigger",
                     BStr::new(strings::without_trailing_slash(tmpdir)),
                     SEP as char,
-                    rand,
+                    bun_fmt::hex_lower(&rand),
                 )
                 .expect("unreachable");
             }

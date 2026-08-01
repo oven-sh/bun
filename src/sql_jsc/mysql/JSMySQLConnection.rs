@@ -816,11 +816,14 @@ impl JSMySQLConnection {
         // outlives this fn (held via `request`'s intrusive ref), satisfying
         // the `ParentRef` liveness invariant.
         let cached_structure: Option<ParentRef<CachedStructure>> = match result_mode {
-            ResultMode::Objects => self.js_value.get().try_get().map(|value| {
-                let cs = statement.structure(value, &self.global_object);
+            ResultMode::Objects => {
+                // Build unconditionally (matches postgres) so toJS always has
+                // either a Structure or a names array.
+                let owner = self.js_value.get().try_get().unwrap_or(JSValue::ZERO);
+                let cs = statement.structure(owner, &self.global_object);
                 structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
-                ParentRef::new(cs)
-            }),
+                Some(ParentRef::new(cs))
+            }
             // no need to check for duplicate fields or structure
             ResultMode::Raw | ResultMode::Values => None,
         };

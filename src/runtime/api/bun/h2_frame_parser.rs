@@ -8169,6 +8169,17 @@ impl H2FrameParser {
                 };
                 let value_slice = value_str.to_slice(global_object);
                 let value = value_slice.slice();
+                if !is_valid_header_value(value) {
+                    return Err(global_object
+                        .err(
+                            JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                            format_args!(
+                                "Invalid value for header \"{}\"",
+                                BStr::new(validated_name)
+                            ),
+                        )
+                        .throw());
+                }
                 if this
                     .encode_header_into_list(
                         &mut encoded_headers,
@@ -9031,7 +9042,8 @@ impl H2FrameParser {
                     let signal_ = unsafe { &mut *signal_ptr };
                     if signal_.aborted() {
                         stream.state = StreamState::IDLE;
-                        let wrapped = Bun__wrapAbortError(global_object, signal_.abort_reason());
+                        let wrapped =
+                            Bun__wrapAbortError(global_object, signal_.js_reason(global_object));
                         this.abort_stream(&mut stream, wrapped);
                         return Ok(JSValue::js_number(stream_id as f64));
                     }

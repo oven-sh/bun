@@ -3247,10 +3247,12 @@ impl TestCommand {
             let restore_global = vm.global().as_ptr();
             let restore_vm = core::ptr::from_mut::<VirtualMachine>(vm);
             scopeguard::defer! {
-                // SAFETY: single-threaded; both pointers outlive this frame.
-                unsafe { (*restore_vm).is_running_preload_hook = false };
-                if !restore_isolation {
-                    unsafe { JSMock__restoreTransientSpies(restore_global) };
+                // SAFETY: single-threaded; `restore_vm` and `restore_global` outlive this frame.
+                unsafe {
+                    (*restore_vm).is_running_preload_hook = false;
+                    if !restore_isolation {
+                        JSMock__restoreTransientSpies(restore_global);
+                    }
                 }
             }
 

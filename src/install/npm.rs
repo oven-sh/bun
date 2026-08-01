@@ -2444,12 +2444,11 @@ impl PackageManifest {
                     package_version.has_install_script = *val;
                 }
 
-                package_version.deprecated =
-                    match version_obj.and_then(|o| o.get(b"deprecated")) {
-                        Some(JSON::E::JsonValue::String(s)) => !s.slice().is_empty(),
-                        Some(JSON::E::JsonValue::Boolean(b)) => *b,
-                        _ => false,
-                    };
+                package_version.deprecated = match version_obj.and_then(|o| o.get(b"deprecated")) {
+                    Some(JSON::E::JsonValue::String(s)) => !s.slice().is_empty(),
+                    Some(JSON::E::JsonValue::Boolean(b)) => *b,
+                    _ => false,
+                };
 
                 'bin: {
                     // bins are extremely repetitive

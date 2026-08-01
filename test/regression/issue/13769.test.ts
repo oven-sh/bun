@@ -43,12 +43,7 @@ async function makeUpstream(root: string, env: Record<string, string | undefined
   return { upstream, serve };
 }
 
-async function publishCommit(
-  env: Record<string, string | undefined>,
-  upstream: string,
-  serve: string,
-  marker: string,
-) {
+async function publishCommit(env: Record<string, string | undefined>, upstream: string, serve: string, marker: string) {
   await Bun.write(join(upstream, "index.js"), `module.exports = '${marker}';\n`);
   await git(env, upstream, "add", "-A");
   await git(env, upstream, "commit", "-q", "-m", marker);

@@ -33,7 +33,6 @@
 #include "HTTPHeaderMap.h"
 
 #include <utility>
-#include <wtf/CrossThreadCopier.h>
 #include <wtf/text/StringView.h>
 
 extern "C" size_t highway_index_of_first_ascii_upper(const uint8_t* input, size_t len);

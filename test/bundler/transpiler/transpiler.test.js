@@ -3418,8 +3418,71 @@ class Foo {
       expect(parsed(code, !out.endsWith(";\n"), false, bunTranspiler)).toBe(out);
     };
 
+    const expectParseError = (code, message) => {
+      try {
+        parsed(code, false, false);
+      } catch (er) {
+        var err = er;
+        if (er instanceof AggregateError) {
+          err = er.errors[0];
+        }
+        expect(err.message).toBe(message);
+        return;
+      }
+      throw new Error("Expected parse error for code\n\t" + code);
+    };
+
     it("unary operator", () => {
       expectPrinted("a = !(b, c)", "a = (b, !c)");
+    });
+
+    // https://github.com/oven-sh/bun/issues/15848
+    it("rejects an optional chain as an assignment target even when the chain target is provably non-null", () => {
+      // "Remove unnecessary optional chains" must not run before the
+      // assignment-target check: `{}?.y = 0` is always a SyntaxError.
+      expectParseError("({}?.y = 0);", "Invalid assignment target");
+      expectParseError("({}?.[y] = 0);", "Invalid assignment target");
+      expectParseError("[{}?.y] = [];", "Invalid assignment target");
+      expectParseError("[{}?.y = 0] = [];", "Invalid assignment target");
+      expectParseError("({a: {}?.y} = {});", "Invalid assignment target");
+      expectParseError("for ({}?.y of []);", "Invalid assignment target");
+      expectParseError("for ([{}?.y] of [[]]);", "Invalid assignment target");
+      expectParseError("for ([{}?.y = 0] of [[]]);", "Invalid assignment target");
+      expectParseError("({}?.y.z = 0);", "Invalid assignment target");
+      expectParseError('("x"?.y = 0);', "Invalid assignment target");
+      expectParseError("([1]?.y = 0);", "Invalid assignment target");
+      expectParseError("({}?.y += 0);", "Invalid assignment target");
+      expectParseError("({}?.y)++;", "Invalid assignment target");
+
+      // The simplification still applies in valid (non-assignment) positions.
+      expectPrinted_("x = {}?.y", "x = {}.y");
+      expectPrinted_("x = {}?.[y]", "x = {}[y]");
+      expectPrinted_("x = {}?.()", "x = {}()");
+      expectPrinted_("x = {}?.y.z", "x = {}.y.z");
+      expectPrinted_("x = []?.y", "x = [].y");
+      expectPrinted_('x = "s"?.y', 'x = "s".y');
+      expectPrinted_("delete {}?.y", "delete {}.y");
+      expectPrinted_("x = a?.y", "x = a?.y");
+    });
+
+    it("rejects an optional chain as an assignment target at runtime", async () => {
+      // https://github.com/oven-sh/bun/issues/15848
+      const source =
+        'for ([{ set y(val) { console.log("accessed") } }?.y = 0] of [[]]) ;';
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", source],
+        env: bunEnv,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect(stdout).toBe("");
+      expect(stderr).toContain("Invalid assignment target");
+      expect(exitCode).toBe(1);
     });
 
     it.todo("const inlining", () => {

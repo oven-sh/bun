@@ -1495,25 +1495,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.visit_expr(&mut e_.no);
                 p.is_control_flow_dead = old;
 
-                if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                    *e = SideEffects::simplify_unused_expr(p, e_.test)
-                        .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
-                        .join_with_comma(e_.yes);
-                    return;
-                }
-
                 // "(1 ? fn : 2)()" => "fn()"
                 // "(1 ? this.fn : 2)" => "this.fn"
                 // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
                 // "(1 ? this.fn : 2)`x`" => "(0, this.fn)`x`"
-                if (is_call_target || is_template_tag) && e_.yes.has_value_for_this_in_call() {
-                    *e = p
-                        .new_expr(E::Number::new(0.0), e_.test.loc)
-                        .join_with_comma(e_.yes);
-                    return;
+                let mut left = if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
+                    SideEffects::simplify_unused_expr(p, e_.test)
+                        .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
+                } else {
+                    p.new_expr(E::Missing {}, e_.test.loc)
+                };
+                if left.is_missing()
+                    && (is_call_target || is_template_tag)
+                    && e_.yes.has_value_for_this_in_call()
+                {
+                    left = p.new_expr(E::Number::new(0.0), e_.test.loc);
                 }
-
-                *e = e_.yes;
+                *e = left.join_with_comma(e_.yes);
                 return;
             } else {
                 // "false ? dead : live"
@@ -1524,24 +1522,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.visit_expr(&mut e_.no);
 
                 // "(a, false) ? b : c" => "a, c"
-                if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                    *e = SideEffects::simplify_unused_expr(p, e_.test)
-                        .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
-                        .join_with_comma(e_.no);
-                    return;
-                }
-
                 // "(0 ? 1 : fn)()" => "fn()"
                 // "(0 ? 1 : this.fn)" => "this.fn"
                 // "(0 ? 1 : this.fn)()" => "(0, this.fn)()"
                 // "(0 ? 1 : this.fn)`x`" => "(0, this.fn)`x`"
-                if (is_call_target || is_template_tag) && e_.no.has_value_for_this_in_call() {
-                    *e = p
-                        .new_expr(E::Number::new(0.0), e_.test.loc)
-                        .join_with_comma(e_.no);
-                    return;
+                let mut left = if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
+                    SideEffects::simplify_unused_expr(p, e_.test)
+                        .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
+                } else {
+                    p.new_expr(E::Missing {}, e_.test.loc)
+                };
+                if left.is_missing()
+                    && (is_call_target || is_template_tag)
+                    && e_.no.has_value_for_this_in_call()
+                {
+                    left = p.new_expr(E::Number::new(0.0), e_.test.loc);
                 }
-                *e = e_.no;
+                *e = left.join_with_comma(e_.no);
                 return;
             }
         }

@@ -3932,6 +3932,13 @@ console.log(foo, array);
       expectPrinted("(0, obj[k])`x`", "(0, obj[k])`x`");
       expectPrinted("(1 ? obj.m : 0)`x`", "(0, obj.m)`x`");
       expectPrinted("(0 ? 0 : obj.m)`x`", "(0, obj.m)`x`");
+      // Statically-known test whose side-effect class is `CouldHaveSideEffects`
+      // but simplifies away entirely: the fold must still keep `(0, obj.m)`.
+      expectPrinted("(typeof x ? obj.m : 0)`x`", "(0, obj.m)`x`");
+      expectPrinted("(typeof x ? obj.m : 0)()", "(0, obj.m)()");
+      // When the test leaves a real side effect behind, the resulting comma
+      // already strips `this`; no extra `0,` is needed.
+      expectPrinted("(f() || 1 ? obj.m : 0)`x`", "(f(), obj.m)`x`");
       expectPrinted("(null ?? obj.m)`x`", "(0, obj.m)`x`");
       expectPrinted("(1 && obj.m)`x`", "(0, obj.m)`x`");
       expectPrinted("(0 || obj.m)`x`", "(0, obj.m)`x`");
@@ -3957,10 +3964,13 @@ console.log(foo, array);
     it("tagged-template tag `this` matches node at runtime", async () => {
       const src = `
         var obj = { m() { return this === obj; } };
+        var x = 1;
         console.log(JSON.stringify([
           (0, obj.m)\`x\`,
           (1 ? obj.m : 0)\`x\`,
           (0 ? 0 : obj.m)\`x\`,
+          (typeof x ? obj.m : 0)\`x\`,
+          (typeof x ? obj.m : 0)(),
           (null ?? obj.m)\`x\`,
           (true && obj.m)\`x\`,
           (false || obj.m)\`x\`,
@@ -3973,7 +3983,7 @@ console.log(foo, array);
       await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(stdout).toBe("[false,false,false,false,false,false,false,false,false,true]\n");
+      expect(stdout).toBe("[false,false,false,false,false,false,false,false,false,false,false,true]\n");
       expect(exitCode).toBe(0);
     });
 

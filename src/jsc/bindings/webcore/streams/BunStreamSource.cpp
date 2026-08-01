@@ -391,8 +391,9 @@ static void nativeByteControllerEnqueue(JSGlobalObject* globalObject, JSReadable
         return;
     // Default-reader fast path: the adapter owns this buffer (no user aliasing), so skip the
     // spec transfer + fresh-view allocation and fulfil the pending read with the view as-is.
+    // The queue must be empty (the spec path drains queued bytes into read requests first).
     JSReadableStream* stream = controller->m_stream.get();
-    if (controller->m_pendingPullIntos.isEmpty() && readableStreamHasDefaultReader(stream)) {
+    if (controller->m_pendingPullIntos.isEmpty() && controller->m_queue.isEmpty() && readableStreamHasDefaultReader(stream)) {
         if (readableStreamGetNumReadRequests(stream)) {
             readableStreamFulfillReadRequest(globalObject, stream, view, false);
             RETURN_IF_EXCEPTION(scope, void());

@@ -664,6 +664,32 @@ describe("Blob.prototype.stream() is a byte stream (supports BYOB readers)", () 
     await r2.cancel();
   });
 
+  test("BYOB read → releaseLock → default read preserves byte order", async () => {
+    // A BYOB reader released while its async native pull is in flight leaves the pull-into
+    // with readerType=None; when that pull settles, respond() clones the bytes into the
+    // queue. A subsequent default read must see those bytes first, not a later pull's.
+    const size = 600 * 1024;
+    const expected = Buffer.from(new Uint8Array(size).map((_, i) => i & 0xff));
+    using dir = tempDir("blob-byob-order", { "seq.bin": expected });
+    const stream = Bun.file(path.join(String(dir), "seq.bin")).stream();
+
+    const r1 = stream.getReader({ mode: "byob" });
+    const pending = r1.read(new Uint8Array(64));
+    r1.releaseLock();
+    await pending.catch(() => {});
+
+    const r2 = stream.getReader();
+    const chunks: Uint8Array[] = [];
+    while (true) {
+      const { value, done } = await r2.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    const out = Buffer.concat(chunks);
+    expect(out.length).toBe(size);
+    expect(out.equals(expected)).toBe(true);
+  });
+
   test("empty Blob byte stream closes immediately for a BYOB reader", async () => {
     const reader = new Blob([]).stream().getReader({ mode: "byob" });
     const { value, done } = await reader.read(new Uint8Array(8));

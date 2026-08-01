@@ -697,12 +697,19 @@ JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
-    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
-    if (!thisObject)
-        return false;
     JSValue decodedValue = JSValue::decode(value);
-    thisObject->m_overriddenCompile.set(globalObject->vm(), thisObject, decodedValue);
-    return true;
+    if (auto* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue))) {
+        thisObject->m_overriddenCompile.set(globalObject->vm(), thisObject, decodedValue);
+        return true;
+    }
+    // `Module.prototype._compile = fn` (APM instrumentation): the receiver is the
+    // prototype, not a module instance. Replace the accessor with a data property
+    // so subsequent reads observe the override.
+    if (auto* receiver = JSValue::decode(thisValue).getObject()) {
+        receiver->putDirect(globalObject->vm(), propertyName, decodedValue, static_cast<unsigned>(PropertyAttribute::DontEnum));
+        return true;
+    }
+    return false;
 }
 
 // Defined in NodeModuleModule.cpp: the `Module.prototype.require` accessor that

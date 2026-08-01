@@ -617,10 +617,17 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
         JSC::EncodedJSValue value,
         JSC::PropertyName propertyName))
 {
-    globalObject->putDirect(globalObject->vm(),
-        WebCore::clientData(globalObject->vm())
-            ->builtinNames()
-            .overridableRequirePrivateName(),
+    auto& vm = globalObject->vm();
+    // Per-instance `m.require = fn` (e.g. on `new Module(id)`): shadow the
+    // prototype with an own property instead of overwriting the process-global
+    // overridable require. Evaluated CJS modules already have an own `require`
+    // and never reach this setter.
+    if (auto* thisModule = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue))) {
+        thisModule->putDirect(vm, propertyName, JSValue::decode(value), 0);
+        return true;
+    }
+    globalObject->putDirect(vm,
+        WebCore::clientData(vm)->builtinNames().overridableRequirePrivateName(),
         JSValue::decode(value), 0);
     return true;
 }
@@ -707,14 +714,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetNodePathForRequire,
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = callFrame->argument(0);
-    BunString str;
-    if (value.isUndefinedOrNull()) {
-        str = Bun::toString(""_s);
-    } else {
-        WTF::String wtf = value.toWTFString(globalObject);
+    WTF::String wtf;
+    if (!value.isUndefinedOrNull()) {
+        wtf = value.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        str = Bun::toString(wtf);
     }
+    BunString str = wtf.isNull() ? Bun::toString(""_s) : Bun::toString(wtf);
     Resolver__setNodePath(globalObject, &str);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

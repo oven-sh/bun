@@ -403,11 +403,45 @@ describe.concurrent("node-module-module", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("assigning require on a new Module() does not hijack the process-global require", async () => {
+    const script = `
+      "use strict";
+      const Module = require("module");
+      const m = new Module("fake");
+      m.require = () => "hijacked";
+      const out = {
+        ownRequire: Object.prototype.hasOwnProperty.call(m, "require"),
+        mRequire: m.require("os"),
+        globalRequire: typeof require("os").platform,
+      };
+      const orig = Module.prototype._compile;
+      Module.prototype._compile = function wrapped() {};
+      out.protoCompileReplaced = Module.prototype._compile !== orig;
+      console.log(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      ownRequire: true,
+      mRequire: "hijacked",
+      globalRequire: "function",
+      protoCompileReplaced: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // https://github.com/oven-sh/bun/issues/5630
   test("Module._initPaths() picks up NODE_PATH set at runtime", async () => {
     using dir = tempDir("init-paths-runtime", {
       "lib/runtime-mod/index.js": "module.exports = 'from-runtime-node-path';",
       "lib2/runtime-mod2/index.js": "module.exports = 'from-runtime-node-path-2';",
+      "lib2/runtime-mod3/index.js": "module.exports = 3;",
       "package.json": JSON.stringify({ name: "p", type: "commonjs" }),
       "app.cjs": `
         const path = require("path");

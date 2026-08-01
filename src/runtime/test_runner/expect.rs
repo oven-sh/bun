@@ -471,8 +471,7 @@ impl Expect {
         }
     }
 
-    /// `wait_for_promise` bounded by the enclosing test's deadline.
-    /// Returns `true` if the promise is still pending when the spin stops.
+    /// `wait_for_promise` bounded by the test's deadline; returns `true` if still pending.
     fn wait_for_promise_bounded_by_test(
         global_this: &JSGlobalObject,
         promise: bun_jsc::AnyPromise,

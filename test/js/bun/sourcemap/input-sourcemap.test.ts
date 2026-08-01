@@ -185,8 +185,7 @@ try { require("./index.js"); } catch (e) { console.log(e.stack); }
   test("inline data: URI with charset parameter (webpack/babel form)", async () => {
     const b64 = Buffer.from(JSON.stringify(mapJson)).toString("base64");
     using dir = tempDir("input-sourcemap-charset", {
-      "index.js":
-        generated + `//# sourceMappingURL=data:application/json;charset=utf-8;base64,${b64}\n`,
+      "index.js": generated + `//# sourceMappingURL=data:application/json;charset=utf-8;base64,${b64}\n`,
       "run.js": `\
 try { require("./index.js"); } catch (e) { console.log(e.stack); }
 `,

@@ -1570,8 +1570,7 @@ fn on_unhandled_rejection(
     {
         let _ = global_object.try_take_exception();
     }
-    // Fire 'exit' before arming termination (Process__dispatchOnExit skips
-    // under termination); m_isExiting stops shutdown() running them twice.
+    // Emit 'exit' before arming termination; m_isExiting prevents the shutdown() re-emit.
     virtual_machine::ExitHandler::dispatch_on_exit(vm, false);
     let _ = worker.set_requested_terminate();
     // Do NOT call `worker.shutdown()` here —

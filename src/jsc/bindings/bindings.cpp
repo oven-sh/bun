@@ -5156,34 +5156,22 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
         return;
     }
 
-    size_t prototypeCount = 0;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::Structure* structure = object->structure();
     bool fast = !nonIndexedOnly && canPerformFastPropertyEnumerationForIterationBun(structure);
-    JSValue prototypeObject = value;
 
     if (fast) {
         if (structure->outOfLineSize() == 0 && structure->inlineSize() == 0) {
             fast = false;
-
-            if (JSValue proto = object->getPrototype(globalObject)) {
-                if ((structure = proto.structureOrNull())) {
-                    prototypeObject = proto;
-                    fast = canPerformFastPropertyEnumerationForIterationBun(structure);
-                    prototypeCount = 1;
-                }
-            }
         }
     }
     auto* propertyNames = vm.propertyNames;
     auto& builtinNames = WebCore::builtinNames(vm);
     WTF::Vector<Identifier, 6> visitedProperties;
 
-restart:
     if (fast) {
         bool anyHits = false;
-        JSC::JSObject* objectToUse = prototypeObject.getObject();
         structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
             if ((entry.attributes() & (PropertyAttribute::Function)) == 0 && (entry.attributes() & (PropertyAttribute::Builtin)) != 0) {
                 return true;
@@ -5192,7 +5180,7 @@ restart:
 
             if (prop == propertyNames->constructor
                 || prop == propertyNames->underscoreProto
-                || prop == propertyNames->toStringTagSymbol || (objectToUse != object && prop == propertyNames->__esModule))
+                || prop == propertyNames->toStringTagSymbol)
                 return true;
 
             if (builtinNames.bunNativePtrPrivateName() == prop)
@@ -5204,18 +5192,14 @@ restart:
             visitedProperties.append(Identifier::fromUid(vm, prop));
 
             ZigString key = toZigString(prop);
-            JSC::JSValue propertyValue = JSValue();
-
-            if (objectToUse == object) {
-                propertyValue = objectToUse->getDirect(entry.offset());
-                if (!propertyValue) {
-                    (void)scope.tryClearException();
-                    return true;
-                }
+            JSC::JSValue propertyValue = object->getDirect(entry.offset());
+            if (!propertyValue) {
+                (void)scope.tryClearException();
+                return true;
             }
 
-            if (!propertyValue || propertyValue.isGetterSetter() && !((entry.attributes() & PropertyAttribute::Accessor) != 0)) {
-                propertyValue = objectToUse->getIfPropertyExists(globalObject, prop);
+            if (propertyValue.isGetterSetter() && !((entry.attributes() & PropertyAttribute::Accessor) != 0)) {
+                propertyValue = object->getIfPropertyExists(globalObject, prop);
             }
 
             // Ignore exceptions due to getters.
@@ -5242,29 +5226,22 @@ restart:
         RETURN_IF_EXCEPTION(scope, );
 
         if (anyHits) {
-            if (prototypeCount++ < 5) {
-
-                if (JSValue proto = prototypeObject.getPrototype(globalObject)) {
-                    if (!(proto == globalObject->objectPrototype() || proto == globalObject->functionPrototype() || (proto.inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(proto)->target() != globalObject))) {
-                        if ((structure = proto.structureOrNull())) {
-                            prototypeObject = proto;
-                            fast = canPerformFastPropertyEnumerationForIterationBun(structure);
-                            goto restart;
-                        }
-                    }
-                }
-                // Ignore exceptions from Proxy "getPrototype" trap.
-                CLEAR_IF_EXCEPTION(scope);
-            }
             return;
         }
     }
+
+    // Native-backed instances (URL, Event, AbortSignal, TextEncoder, ...) keep their
+    // observable state in native slots exposed through prototype accessors, so for those we
+    // still walk the prototype chain. Plain JS objects (object literals, Object.create(),
+    // user class instances) are JSFinalObject and only enumerate own properties, matching Node.
+    bool walkPrototype = !nonIndexedOnly && object->type() != JSC::FinalObjectType;
+    size_t prototypeCount = 0;
 
     JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
 
     {
 
-        JSObject* iterating = prototypeObject.getObject();
+        JSObject* iterating = object;
 
         while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
             if constexpr (nonIndexedOnly) {
@@ -5357,6 +5334,9 @@ restart:
             if constexpr (nonIndexedOnly) {
                 break;
             }
+
+            if (!walkPrototype)
+                break;
 
             // reuse memory
             properties.data()->propertyNameVector().shrink(0);

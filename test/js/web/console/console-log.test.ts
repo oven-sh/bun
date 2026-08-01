@@ -150,3 +150,55 @@ it("console.log with SharedArrayBuffer", () => {
   expect(Bun.inspect(new ArrayBuffer(3))).toBe("ArrayBuffer(3) [ 0, 0, 0 ]");
   expect(Bun.inspect(new SharedArrayBuffer(3))).toBe("SharedArrayBuffer(3) [ 0, 0, 0 ]");
 });
+
+// https://github.com/oven-sh/bun/issues/1713
+it("console.log enumerates only own properties, not inherited prototype keys", async () => {
+  const script = `
+    const obj = Object.create({ key: 123 });
+    console.log(obj);
+    obj.key = 456;
+    console.log(obj);
+
+    const empty = Object.create({ a: 1, b: 2 });
+    console.log(empty);
+
+    const chained = Object.setPrototypeOf({ own: 1 }, { inherited: 2 });
+    console.log(chained);
+
+    class Foo {
+      x = 1;
+      get y() { return 2; }
+      method() {}
+    }
+    console.log(new Foo());
+
+    console.log(Object.prototype);
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.replaceAll("\r\n", "\n")).toBe(
+    [
+      "{}",
+      "{",
+      "  key: 456,",
+      "}",
+      "{}",
+      "{",
+      "  own: 1,",
+      "}",
+      "Foo {",
+      "  x: 1,",
+      "}",
+      "[Object: null prototype] {}",
+      "",
+    ].join("\n"),
+  );
+  expect(exitCode).toBe(0);
+});

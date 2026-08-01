@@ -220,11 +220,7 @@ impl<'a> Scanner<'a> {
             .map_err(Into::into)
     }
 
-    /// Visit a directory listing in sorted order so test-file discovery is
-    /// deterministic. Without this, files inside a subdirectory are visited in
-    /// raw `getdents`/hash-map order, which varies by filesystem and makes test
-    /// file execution order (and therefore cross-file module side effects)
-    /// machine-dependent. See issues #6655 and #26851.
+    /// Sort so test-file discovery order is stable across filesystems (#6655, #26851).
     fn process_entries_sorted(&mut self, entries_option: &mut EntriesOption) {
         let EntriesOption::Entries(entries) = entries_option else {
             return;

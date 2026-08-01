@@ -1072,10 +1072,7 @@ class BunWebSocketMocked extends EventEmitter {
     this.#state = ReadyState_CLOSED;
     this.#ws = null;
 
-    // Bun.serve's native maxPayloadLength check force-closes the transport with
-    // this reason before the frame body is read (no close frame is sent). Map
-    // it to the same server-side surface npm `ws` produces for an oversized
-    // frame so server code written against `ws` observes the error event.
+    // Bun.serve's native maxPayloadLength force-close: surface as ws's RangeError + 1009.
     if (code === 1006 && typeof reason === "string" && reason.startsWith("Received too big message")) {
       const error = new RangeError("Max payload size exceeded");
       error.code = "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH";
@@ -1555,10 +1552,8 @@ class WebSocketServer extends EventEmitter {
 
     if (this._state > RUNNING) return abortHandshake(response, 503);
 
-    // noServer mode: first time we can reach the underlying node:http server.
-    // The raised limit applies to the next upgrade onward; this request already
-    // captured the pre-reload WebSocketContext, so with maxPayload > 16 MiB the
-    // very first noServer connection is still bound to the 16 MiB default.
+    // noServer: takes effect from the next upgrade (this request already
+    // captured the pre-reload WebSocketContext).
     if (!this._server) httpServer[kEnsureWebSocketMaxPayload]?.(this.options.maxPayload);
 
     let protocol = "";

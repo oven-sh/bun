@@ -465,10 +465,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         {
                             let len = obj.properties.len_u32() as usize;
 
-                            // Single-property fast path: "{ f: () => {} }.f" → "() => {}".
-                            // No side-effect check on the value is needed here because the
-                            // value is exactly what we return; only dropped siblings need
-                            // to be proven side-effect free.
+                            // "{ f: v }.f" → "v"; the sole value is returned, so no side-effect gate.
                             if len == 1 {
                                 let prop: &G::Property = &obj.properties.slice()[0];
                                 if let (Some(value), Some(key)) = (prop.value, prop.key) {
@@ -488,9 +485,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 }
                             }
 
-                            // General path: "{a: 1, b: 2, c: 3}.b" → "2". All dropped
-                            // property values must be side-effect free so the object
-                            // literal itself can be discarded.
+                            // "{a: 1, b: 2, c: 3}.b" → "2" when every dropped value is side-effect free.
                             let mut replace: Option<Expr> = None;
                             let mut has_proto_null = false;
                             let mut is_unsafe = false;
@@ -502,9 +497,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 let key = prop.key;
                                 let value = prop.value;
 
-                                // "{ ...a }.a" must be preserved
-                                // "{ get a() {} }.a" must be preserved
-                                // "{ a: 1, [String.fromCharCode(97)]: 2 }.a" must be 2
+                                // Spreads, getters/setters, methods, and computed keys make the access non-static.
                                 if kind != js_ast::g::PropertyKind::Normal
                                     || flags.contains(Flags::Property::IsComputed)
                                     || flags.contains(Flags::Property::IsMethod)
@@ -519,15 +512,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     break;
                                 };
                                 let js_ast::ExprData::EString(key_str) = key.data else {
-                                    // Do not attempt to compare against numeric keys
                                     is_unsafe = true;
                                     break;
                                 };
 
-                                // The "__proto__" key has special behavior
                                 if e_string_eql_bytes(&key_str, b"__proto__") {
                                     if matches!(value.data, js_ast::ExprData::ENull(_)) {
-                                        // Replacing "{__proto__: null}.a" with undefined is safe
                                         has_proto_null = true;
                                     }
                                 }
@@ -544,15 +534,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
 
                             if !is_unsafe {
-                                // "{__proto__: null}.__proto__" is undefined, not null
+                                // "{__proto__: null}.__proto__" is undefined, not null.
                                 if name != b"__proto__" {
                                     if let Some(value) = replace {
                                         return Some(value);
                                     }
                                 }
-                                // Only return undefined for a missing key when the
-                                // prototype has been explicitly nulled out; otherwise
-                                // the access may resolve via Object.prototype.
+                                // A miss may resolve via Object.prototype unless __proto__ was nulled.
                                 if has_proto_null {
                                     return Some(Expr {
                                         data: js_ast::ExprData::EUndefined(E::Undefined),

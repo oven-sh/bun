@@ -128,3 +128,68 @@ test("query string containing '/' still splits at the '?'", async () => {
   expect(decodeURIComponent(url)).toEndWith("dep.js?path=/a/b");
   expect(exitCode).toBe(0);
 });
+
+test.skipIf(isWindows)("require('./x.node') under a '?'-named directory reaches process.dlopen", async () => {
+  using dir = tempDir("issue-7928-napi", {
+    "dir?/addon.node": "",
+    "dir?/entry.cjs": `
+      const out = [];
+      for (const spec of ["./addon.node", "./addon.node?v=1"]) {
+        try { require(spec); out.push(null); }
+        catch (e) { out.push(e.constructor.name + ": " + e.message); }
+      }
+      console.log(JSON.stringify(out));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "./dir?/entry.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const [plain, withQuery] = JSON.parse(stdout.trim());
+  // An empty .node file can't be dlopen'd; both spellings must fail with the
+  // same dlopen error (proving the '?' in the directory name reached dlopen as
+  // part of the path, not as a query separator).
+  expect(plain).not.toContain("Node-API");
+  expect(plain).not.toContain("Module not found");
+  expect(withQuery).toBe(plain);
+  expect(exitCode).toBe(0);
+});
+
+// Pin the accepted trade-off: on POSIX a '?' immediately followed by '/' is a
+// path byte, so a query string that literally begins with '/' is not split.
+// Windows has no such ambiguity ('?' is invalid in paths) and keeps splitting.
+test("import('./dep.js?/x') treats ?/ as a path byte on POSIX", async () => {
+  using dir = tempDir("issue-7928-query-leading-slash", {
+    "dep.js": `export const url = import.meta.url;`,
+    "entry.js": `
+      try {
+        const m = await import("./dep.js?/x");
+        console.log(JSON.stringify({ ok: true, url: m.url }));
+      } catch (e) {
+        console.log(JSON.stringify({ ok: false, msg: String(e) }));
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const out = JSON.parse(stdout.trim());
+  if (isWindows) {
+    expect(out.ok).toBe(true);
+    expect(decodeURIComponent(out.url)).toEndWith("dep.js?/x");
+  } else {
+    expect(out.ok).toBe(false);
+  }
+  expect(exitCode).toBe(0);
+});

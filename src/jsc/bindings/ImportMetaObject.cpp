@@ -166,11 +166,13 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JS
 
 ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
 {
-    // Skip `?/`: a POSIX directory-name byte (`/abs/dir?/file.js`). #7928
     auto index = specifier.find('?');
+#if !OS(WINDOWS)
+    // Skip `?/`: a POSIX directory-name byte (`/abs/dir?/file.js`). #7928
     while (index != notFound && index + 1 < specifier.length() && specifier[index + 1] == '/') {
         index = specifier.find('?', index + 1);
     }
+#endif
     URL url;
     if (index != notFound) {
         StringView view = specifier;

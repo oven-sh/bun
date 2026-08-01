@@ -628,16 +628,15 @@ impl UpgradeCommand {
             version
         } else {
             // Ask the API for the canary asset URL so `GITHUB_API_DOMAIN`
-            // applies to canary upgrades too, and so the download is
-            // integrity-checked against the release's published digest. Any
-            // lookup failure (API down, release shape changed, asset not
-            // listed) falls back to the long-standing hardcoded download URL.
+            // applies to canary upgrades too. Any lookup failure (API down,
+            // release shape changed, asset not listed) falls back to the
+            // long-standing hardcoded download URL.
             let from_api =
                 Self::get_latest_version::<true>(&mut env_loader, None, None, use_profile, true)
                     .ok()
                     .flatten()
                     .filter(|v| &*v.tag == b"canary" && !v.zip_url.is_empty());
-            from_api.unwrap_or_else(|| Version {
+            let mut v = from_api.unwrap_or_else(|| Version {
                 tag: b"canary"[..].into(),
                 zip_url: const_format::concatcp!(
                     "https://github.com/oven-sh/bun/releases/download/canary/",
@@ -647,7 +646,13 @@ impl UpgradeCommand {
                 .into(),
                 size: 0,
                 digest: Integrity::default(),
-            })
+            });
+            // The canary tag is mutable (every merged main build re-uploads it
+            // with `--clobber`), so a digest read now can mismatch the bytes
+            // downloaded a few seconds later. Skip the integrity check rather
+            // than turn that publish window into a hard `exit(1)`.
+            v.digest = Integrity::default();
+            v
         };
 
         let zip_url_bytes = core::mem::take(&mut version.zip_url);
@@ -690,8 +695,13 @@ impl UpgradeCommand {
                 404 => {
                     if use_canary {
                         bun_core::pretty_errorln!(
-                            "<r><red>error:<r> Canary builds are not available for this platform yet\n\n   Release: <cyan>https://github.com/oven-sh/bun/releases/tag/canary<r>\n  Filename: <b>{}<r>\n",
-                            Version::ZIP_FILENAME
+                            "<r><red>error:<r> Canary builds are not available for this platform yet\n\n   Release: <cyan>https://github.com/oven-sh/bun/releases/tag/canary<r>\n  Filename: <b>{}<r>\n       URL: <d>{}<r>\n",
+                            if use_profile {
+                                Version::PROFILE_ZIP_FILENAME
+                            } else {
+                                Version::ZIP_FILENAME
+                            },
+                            bstr::BStr::new(&zip_url_bytes),
                         );
                         Global::exit(1);
                     }

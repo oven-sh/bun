@@ -184,6 +184,55 @@ describe.concurrent(() => {
     // have reached that point.
     expect(exitCode).toBe(1);
   });
+
+  it("canary upgrade falls back to the direct github.com URL when the releases API lookup fails", async () => {
+    // The API endpoint answers 500 so get_latest_version() yields Err; the
+    // canary branch must then fall back to the hardcoded github.com download
+    // URL instead of surfacing the API failure.
+    using api = Bun.serve({
+      tls: tls,
+      port: 0,
+      async fetch() {
+        return new Response("oops", { status: 500 });
+      },
+    });
+
+    // HTTPS proxy that records the CONNECT target. The tunnel is never
+    // actually established (the response isn't a valid CONNECT reply), so the
+    // download fails, but only after the upgrade has committed to the
+    // hardcoded URL.
+    const connectTargets: string[] = [];
+    using proxy = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.method === "CONNECT") connectTargets.push(req.headers.get("host") ?? "");
+        return new Response("not a tunnel", { status: 502 });
+      },
+    });
+
+    const cwd = tmpdirSync();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "upgrade", "--canary"],
+      cwd,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        NODE_TLS_REJECT_UNAUTHORIZED: "0",
+        GITHUB_API_DOMAIN: `${api.hostname}:${api.port}`,
+        HTTPS_PROXY: `http://${proxy.hostname}:${proxy.port}`,
+        NO_PROXY: `${api.hostname},localhost,127.0.0.1,::1`,
+        ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(connectTargets).toContain("github.com:443");
+    expect(stderr).not.toContain("does not take package names");
+    expect(exitCode).toBe(1);
+  });
 });
 
 it("recreates the staging directory in the temp dir instead of reusing a pre-existing one", async () => {

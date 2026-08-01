@@ -970,6 +970,131 @@ struct Parser<'a> {
     value_buffer: &'a mut Vec<u8>,
 }
 
+/// State threaded through recursive `$VAR` expansion. `seen` holds the map
+/// indices currently on the lookup stack so a re-entrant reference expands to
+/// empty (dotenv-expand semantics) instead of recursing again.
+struct Expand<'a> {
+    map: &'a Map,
+    /// First file-sourced index; entries below this are copied verbatim.
+    start: usize,
+    seen: Vec<usize>,
+}
+
+impl<'a> Expand<'a> {
+    fn lookup(&mut self, key: &[u8], out: &mut Vec<u8>, depth: u8) -> bool {
+        let Some(idx) = self.map.map.get_index(key) else {
+            return false;
+        };
+        if idx < self.start || depth >= 200 {
+            out.extend_from_slice(&self.map.map.values()[idx].value);
+        } else if !self.seen.contains(&idx) {
+            self.seen.push(idx);
+            let v = &*self.map.map.values()[idx].value;
+            self.expand_into(v, out, depth + 1);
+            self.seen.pop();
+        }
+        true
+    }
+
+    /// Left-to-right expansion of `$NAME` / `${NAME}` / `${NAME:-default}`.
+    /// `${...}` locates its matching `}` by depth (`${` opens, `}` closes,
+    /// `\x` skipped); malformed forms fall through as literal text. `:-`
+    /// defaults and looked-up file values recurse.
+    fn expand_into(&mut self, value: &[u8], out: &mut Vec<u8>, depth: u8) -> bool {
+        #[inline]
+        fn is_ident(b: u8) -> bool {
+            matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
+        }
+
+        let mut pos = 0;
+        let mut changed = false;
+        while pos < value.len() {
+            let b = value[pos];
+            if b == b'\\' && value.get(pos + 1) == Some(&b'$') {
+                out.push(b'$');
+                pos += 2;
+                changed = true;
+                continue;
+            }
+            if b != b'$' || pos + 1 >= value.len() {
+                out.push(b);
+                pos += 1;
+                continue;
+            }
+            let next = value[pos + 1];
+            if next == b'{' {
+                let inner_start = pos + 2;
+                let close = {
+                    let mut i = inner_start;
+                    let mut nest = 1usize;
+                    loop {
+                        if i >= value.len() {
+                            break None;
+                        }
+                        match value[i] {
+                            b'\\' if i + 1 < value.len() => i += 2,
+                            b'$' if value.get(i + 1) == Some(&b'{') => {
+                                nest += 1;
+                                i += 2;
+                            }
+                            b'}' => {
+                                nest -= 1;
+                                if nest == 0 {
+                                    break Some(i);
+                                }
+                                i += 1;
+                            }
+                            _ => i += 1,
+                        }
+                    }
+                };
+                let Some(close) = close else {
+                    out.extend_from_slice(&value[pos..]);
+                    pos = value.len();
+                    continue;
+                };
+                changed = true;
+                let inner = &value[inner_start..close];
+                let key_end = inner
+                    .iter()
+                    .position(|&c| !is_ident(c))
+                    .unwrap_or(inner.len());
+                let key = &inner[..key_end];
+                let rest = &inner[key_end..];
+                if rest.is_empty() {
+                    self.lookup(key, out, depth);
+                } else if let Some(default) = rest.strip_prefix(b":-") {
+                    if !self.lookup(key, out, depth) {
+                        if depth < 200 {
+                            self.expand_into(default, out, depth + 1);
+                        } else {
+                            out.extend_from_slice(default);
+                        }
+                    }
+                } else {
+                    out.extend_from_slice(&value[pos..=close]);
+                }
+                pos = close + 1;
+                continue;
+            }
+            if is_ident(next) {
+                changed = true;
+                let key_start = pos + 1;
+                let mut k = key_start;
+                while k < value.len() && is_ident(value[k]) {
+                    k += 1;
+                }
+                self.lookup(&value[key_start..k], out, depth);
+                pos = k;
+                continue;
+            }
+            out.push(b'$');
+            pos += 1;
+        }
+        changed
+    }
+}
+
 // Input is UTF-8, so this set must be ASCII-only: 0xA0 is a continuation byte
 // there (NBSP is C2 A0), and trimming it byte-wise corrupts multi-byte sequences.
 const WHITESPACE_CHARS: &[u8] = b"\t\x0B\x0C \n\r";
@@ -1152,14 +1277,21 @@ impl<'a> Parser<'a> {
             return Ok(());
         }
         let mut results: Vec<Option<Box<[u8]>>> = Vec::with_capacity(total - start);
+        let mut ex = Expand {
+            map,
+            start,
+            seen: Vec::new(),
+        };
         for idx in start..total {
-            let current = &map.map.values()[idx].value;
+            let current = &ex.map.map.values()[idx].value;
             if current.len() < 2 {
                 results.push(None);
                 continue;
             }
             value_buffer.clear();
-            if Self::expand_into(map, current, value_buffer, start, 0) {
+            ex.seen.clear();
+            ex.seen.push(idx);
+            if ex.expand_into(current, value_buffer, 0) {
                 results.push(Some(Box::from(value_buffer.as_slice())));
             } else {
                 results.push(None);
@@ -1171,120 +1303,6 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(())
-    }
-
-    /// Append `map[key]` to `out`: recurse on file-sourced hits (index
-    /// `>= start`); copy process-env hits (index `< start`) verbatim.
-    #[inline]
-    fn expand_lookup(map: &Map, key: &[u8], out: &mut Vec<u8>, start: usize, depth: u8) -> bool {
-        let Some(idx) = map.map.get_index(key) else {
-            return false;
-        };
-        let v = &*map.map.values()[idx].value;
-        if idx >= start && depth < 200 {
-            Self::expand_into(map, v, out, start, depth + 1);
-        } else {
-            out.extend_from_slice(v);
-        }
-        true
-    }
-
-    /// Left-to-right expansion of `$NAME` / `${NAME}` / `${NAME:-default}`.
-    /// `${...}` locates its matching `}` by depth (`${` opens, `}` closes,
-    /// `\x` skipped); malformed forms fall through as literal text. `:-`
-    /// defaults and looked-up file values recurse (see `expand_lookup`).
-    fn expand_into(map: &Map, value: &[u8], out: &mut Vec<u8>, start: usize, depth: u8) -> bool {
-        #[inline]
-        fn is_ident(b: u8) -> bool {
-            matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
-        }
-
-        let mut pos = 0;
-        let mut changed = false;
-        while pos < value.len() {
-            let b = value[pos];
-            if b == b'\\' && value.get(pos + 1) == Some(&b'$') {
-                out.push(b'$');
-                pos += 2;
-                changed = true;
-                continue;
-            }
-            if b != b'$' || pos + 1 >= value.len() {
-                out.push(b);
-                pos += 1;
-                continue;
-            }
-            let next = value[pos + 1];
-            if next == b'{' {
-                let inner_start = pos + 2;
-                let close = {
-                    let mut i = inner_start;
-                    let mut nest = 1usize;
-                    loop {
-                        if i >= value.len() {
-                            break None;
-                        }
-                        match value[i] {
-                            b'\\' if i + 1 < value.len() => i += 2,
-                            b'$' if value.get(i + 1) == Some(&b'{') => {
-                                nest += 1;
-                                i += 2;
-                            }
-                            b'}' => {
-                                nest -= 1;
-                                if nest == 0 {
-                                    break Some(i);
-                                }
-                                i += 1;
-                            }
-                            _ => i += 1,
-                        }
-                    }
-                };
-                let Some(close) = close else {
-                    out.extend_from_slice(&value[pos..]);
-                    pos = value.len();
-                    continue;
-                };
-                changed = true;
-                let inner = &value[inner_start..close];
-                let key_end = inner
-                    .iter()
-                    .position(|&c| !is_ident(c))
-                    .unwrap_or(inner.len());
-                let key = &inner[..key_end];
-                let rest = &inner[key_end..];
-                if rest.is_empty() {
-                    Self::expand_lookup(map, key, out, start, depth);
-                } else if let Some(default) = rest.strip_prefix(b":-") {
-                    if !Self::expand_lookup(map, key, out, start, depth) {
-                        if depth < 200 {
-                            Self::expand_into(map, default, out, start, depth + 1);
-                        } else {
-                            out.extend_from_slice(default);
-                        }
-                    }
-                } else {
-                    out.extend_from_slice(&value[pos..=close]);
-                }
-                pos = close + 1;
-                continue;
-            }
-            if is_ident(next) {
-                changed = true;
-                let key_start = pos + 1;
-                let mut k = key_start;
-                while k < value.len() && is_ident(value[k]) {
-                    k += 1;
-                }
-                Self::expand_lookup(map, &value[key_start..k], out, start, depth);
-                pos = k;
-                continue;
-            }
-            out.push(b'$');
-            pos += 1;
-        }
-        changed
     }
 
     fn parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(

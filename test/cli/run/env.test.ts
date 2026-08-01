@@ -257,15 +257,12 @@ test.concurrent(".env value expansion across files (issue #15099)", async () => 
   // .env.local is loaded before .env (higher priority), so at parse time $A
   // is not yet defined. Expansion must run against the merged map after all
   // files are loaded.
+  const k = (s: string) => `BUNTEST_XF_${s}`;
   using dir = tempDir("dotenv-expand-cross-file", {
-    ".env": "A=A\nB=B$A\n",
-    ".env.local": "C=C$A\nD=${A}D\nE=${UNSET:-$A}\n",
-    ".env.development": "F=$A-$G\nG=g\n",
-    "index.ts":
-      "console.log(JSON.stringify({" +
-      "A: process.env.A, B: process.env.B, C: process.env.C, " +
-      "D: process.env.D, E: process.env.E, F: process.env.F, G: process.env.G" +
-      "}));",
+    ".env": `${k("A")}=A\n${k("B")}=B$${k("A")}\n`,
+    ".env.local": `${k("C")}=C$${k("A")}\n${k("D")}=\${${k("A")}}D\n${k("E")}=\${${k("UNSET")}:-$${k("A")}}\n`,
+    ".env.development": `${k("F")}=$${k("A")}-$${k("G")}\n${k("G")}=g\n`,
+    "index.ts": `const k=s=>"BUNTEST_XF_"+s;const o={};for(const n of "ABCDEFG")o[n]=process.env[k(n)];console.log(JSON.stringify(o));`,
   });
   const { stdout } = await bunRun(`${dir}/index.ts`);
   expect(JSON.parse(stdout)).toEqual({
@@ -283,59 +280,80 @@ test.concurrent(".env value expansion transitive across files", async () => {
   // .env.local references a .env value that itself contains a reference.
   // Expansion must recurse on looked-up file values so no raw $VAR text leaks.
   using dir = tempDir("dotenv-expand-transitive", {
-    ".env": "X=1\nY=$X\nDB_HOST=db\nDB_PORT=5432\nDATABASE_URL=postgres://$DB_HOST:$DB_PORT/app\n",
-    ".env.local": "Z=$Y\nTEST_DB=$DATABASE_URL\n",
+    ".env": [
+      "BUNTEST_TR_X=1",
+      "BUNTEST_TR_Y=$BUNTEST_TR_X",
+      "BUNTEST_TR_HOST=db",
+      "BUNTEST_TR_PORT=5432",
+      "BUNTEST_TR_URL=postgres://$BUNTEST_TR_HOST:$BUNTEST_TR_PORT/app",
+    ].join("\n"),
+    ".env.local": "BUNTEST_TR_Z=$BUNTEST_TR_Y\nBUNTEST_TR_TEST_URL=$BUNTEST_TR_URL\n",
     "index.ts":
-      "console.log(JSON.stringify({" +
-      "X:process.env.X,Y:process.env.Y,Z:process.env.Z," +
-      "DATABASE_URL:process.env.DATABASE_URL,TEST_DB:process.env.TEST_DB}));",
+      "const o={};for(const n of ['X','Y','Z','URL','TEST_URL'])o[n]=process.env['BUNTEST_TR_'+n];" +
+      "console.log(JSON.stringify(o));",
   });
   const { stdout } = await bunRun(`${dir}/index.ts`);
   expect(JSON.parse(stdout)).toEqual({
     X: "1",
     Y: "1",
     Z: "1",
-    DATABASE_URL: "postgres://db:5432/app",
-    TEST_DB: "postgres://db:5432/app",
+    URL: "postgres://db:5432/app",
+    TEST_URL: "postgres://db:5432/app",
   });
 });
 
 test.concurrent(".env value expansion does not reinterpret process.env or escaped $", async () => {
   using dir = tempDir("dotenv-expand-verbatim", {
-    ".env": "FROM_FILE=file\nESC=\\$FROM_FILE\nREF_ESC=$ESC\n",
-    ".env.local": "COMBINED=${FROM_PROCESS}-${FROM_FILE}\nREF_PROC=$FROM_PROCESS\n",
+    ".env": "BUNTEST_VB_FILE=file\nBUNTEST_VB_ESC=\\$BUNTEST_VB_FILE\nBUNTEST_VB_REF_ESC=$BUNTEST_VB_ESC\n",
+    ".env.local":
+      "BUNTEST_VB_COMBINED=${BUNTEST_VB_PROC}-${BUNTEST_VB_FILE}\nBUNTEST_VB_REF_PROC=$BUNTEST_VB_PROC\n",
     "index.ts":
-      "console.log(JSON.stringify({" +
-      "COMBINED:process.env.COMBINED,REF_PROC:process.env.REF_PROC," +
-      "ESC:process.env.ESC,REF_ESC:process.env.REF_ESC}));",
+      "const o={};for(const n of ['COMBINED','REF_PROC','ESC','REF_ESC'])o[n]=process.env['BUNTEST_VB_'+n];" +
+      "console.log(JSON.stringify(o));",
   });
-  // FROM_PROCESS contains a literal $FROM_FILE that must NOT be expanded:
-  // process.env values are final, not dotenv syntax.
-  const { stdout } = await bunRun(`${dir}/index.ts`, { FROM_PROCESS: "p/$FROM_FILE" });
+  // BUNTEST_VB_PROC contains literal dotenv syntax that must NOT be expanded:
+  // process.env values are final.
+  const { stdout } = await bunRun(`${dir}/index.ts`, { BUNTEST_VB_PROC: "p/$BUNTEST_VB_FILE" });
   expect(JSON.parse(stdout)).toEqual({
-    COMBINED: "p/$FROM_FILE-file",
-    REF_PROC: "p/$FROM_FILE",
-    ESC: "$FROM_FILE",
-    REF_ESC: "$FROM_FILE",
+    COMBINED: "p/$BUNTEST_VB_FILE-file",
+    REF_PROC: "p/$BUNTEST_VB_FILE",
+    ESC: "$BUNTEST_VB_FILE",
+    REF_ESC: "$BUNTEST_VB_FILE",
   });
 });
 
-test.concurrent(".env value expansion reference cycle terminates", async () => {
+test.concurrent(".env value expansion reference cycles terminate", async () => {
+  // Linear cycle across files, self-reference with fan-out >= 2, and a
+  // cross-file cycle with fan-out >= 2 must all terminate promptly with the
+  // cyclic part expanding to empty (dotenv-expand semantics).
   using dir = tempDir("dotenv-expand-cycle", {
-    ".env": "CYC_A=$CYC_B\n",
-    ".env.local": "CYC_B=$CYC_A\n",
-    "index.ts": "console.log(typeof process.env.CYC_A, typeof process.env.CYC_B);",
+    ".env": [
+      "BUNTEST_CY_A=$BUNTEST_CY_B",
+      "BUNTEST_CY_SELF=$BUNTEST_CY_SELF$BUNTEST_CY_SELF",
+      "BUNTEST_CY_P=[$BUNTEST_CY_Q$BUNTEST_CY_Q]",
+    ].join("\n"),
+    ".env.local": "BUNTEST_CY_B=$BUNTEST_CY_A\nBUNTEST_CY_Q=($BUNTEST_CY_P$BUNTEST_CY_P)\n",
+    "index.ts":
+      "const o={};for(const n of ['A','B','SELF','P','Q'])o[n]=process.env['BUNTEST_CY_'+n];" +
+      "console.log(JSON.stringify(o));",
   });
   const { stdout, exitCode } = await bunRun(`${dir}/index.ts`);
-  expect(stdout).toBe("string string");
+  expect(JSON.parse(stdout)).toEqual({
+    A: "",
+    B: "",
+    SELF: "",
+    P: "[()()]",
+    Q: "([][])",
+  });
   expect(exitCode).toBe(0);
 });
 
 test.concurrent(".env value expansion across --env-file arguments", async () => {
   using dir = tempDir("dotenv-expand-cross-envfile", {
-    "base.env": "BASE=base\n",
-    "extra.env": "EXTRA=x-$BASE\n",
-    "index.ts": "console.log(JSON.stringify({BASE: process.env.BASE, EXTRA: process.env.EXTRA}));",
+    "base.env": "BUNTEST_EF_BASE=base\n",
+    "extra.env": "BUNTEST_EF_EXTRA=x-$BUNTEST_EF_BASE\n",
+    "index.ts":
+      "console.log(JSON.stringify({BASE: process.env.BUNTEST_EF_BASE, EXTRA: process.env.BUNTEST_EF_EXTRA}));",
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--env-file=base.env", "--env-file=extra.env", "index.ts"],

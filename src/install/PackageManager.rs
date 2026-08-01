@@ -483,8 +483,6 @@ impl Subcommand {
         matches!(self, Self::Audit | Self::Pm | Self::Info)
     }
 
-    /// Subcommands whose callers print "nothing to remove/update/patch" and
-    /// exit 1 when no package.json exists, instead of auto-creating one.
     pub(crate) fn wants_missing_package_json_error(self) -> bool {
         matches!(
             self,
@@ -1500,9 +1498,7 @@ pub fn init(
             }
 
             if cli.global && !subcommand.wants_missing_package_json_error() {
-                // `-g` already fchdir'd into the global dir above; create the
-                // global manifest on demand so `bun pm -g bin` etc. work on a
-                // fresh install.
+                // cwd is the global dir (fchdir'd above), so create lands there.
                 this_cwd = original_cwd;
                 created_package_json = true;
                 break 'child attempt_to_create_package_json_and_open()?;

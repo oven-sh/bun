@@ -112,8 +112,6 @@ pub fn install_with_manager(
     // this defaults to false
     // but we force allowing updates to the lockfile when you do bun add
     let mut had_any_diffs = false;
-    // (new root dep id, package id the lockfile had it resolved to) for root
-    // deps being re-resolved; see `dedupe_transitives_to_bumped_root_deps`.
     let mut reresolved_root_deps: Vec<(DependencyID, PackageID)> = Vec::new();
     manager.progress = Default::default();
 

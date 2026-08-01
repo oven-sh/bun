@@ -4957,20 +4957,17 @@ impl<'a> Resolver<'a> {
                     }
                 }
 
-                if self
-                    .load_node_modules(
-                        &esm_resolution.path,
-                        kind,
-                        dir_info,
-                        global_cache,
-                        true,
-                        out,
-                    )
-                    .is_success()
-                {
-                    return MatchStatus::Success;
+                match self.load_node_modules(
+                    &esm_resolution.path,
+                    kind,
+                    dir_info,
+                    global_cache,
+                    true,
+                    out,
+                ) {
+                    MatchStatus::NotFound => continue,
+                    other => return other,
                 }
-                continue;
             }
 
             if self

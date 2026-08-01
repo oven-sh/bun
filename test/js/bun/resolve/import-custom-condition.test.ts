@@ -426,9 +426,9 @@ describe("'bun' export condition falls through when its target file is missing",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toContain("pkg");
+    expect(stderr).toContain("Cannot find package 'pkg'");
     expect(stdout).toBe("");
-    expect(exitCode).not.toBe(0);
+    expect(exitCode).toBe(1);
   });
 
   it.concurrent("still fails when no other condition resolves to an existing file", async () => {
@@ -455,8 +455,8 @@ describe("'bun' export condition falls through when its target file is missing",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toContain("pkg");
+    expect(stderr).toContain("Cannot find package 'pkg'");
     expect(stdout).toBe("");
-    expect(exitCode).not.toBe(0);
+    expect(exitCode).toBe(1);
   });
 });

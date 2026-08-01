@@ -268,8 +268,8 @@ function upload_github_assets() {
     gh_api_retry -X DELETE "$url"
   done <<< "$assets"
 
-  local stage file staged=()
-  stage="$(mktemp -d "./release-stage.XXXXXX")"
+  local stage="./release-stage" file staged=()
+  rm -rf "$stage" && mkdir -p "$stage"
   for file in "${files[@]}"; do
     ln -f "$file" "$stage/${prefix}${file}"
     staged+=("$stage/${prefix}${file}")

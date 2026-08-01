@@ -93,6 +93,20 @@ impl Default for ExecCfg {
 pub(crate) struct RunCommand;
 
 impl RunCommand {
+    /// Drop a leading `--` from the passthrough args for package.json scripts
+    /// and `node_modules/.bin` binaries. `npm run script -- args` treats that
+    /// `--` as the package manager's end-of-options marker and does not forward
+    /// it; Node running a file keeps it in `process.argv`. The argument parser
+    /// leaves passthrough verbatim so file execution matches Node, and the
+    /// npm-compatible call sites route through here.
+    #[inline]
+    pub(crate) fn passthrough_for_script(passthrough: &[Box<[u8]>]) -> &[Box<[u8]>] {
+        match passthrough.split_first() {
+            Some((first, rest)) if &**first == b"--" => rest,
+            _ => passthrough,
+        }
+    }
+
     /// `bun run --help` body.
     pub(crate) fn print_help(package_json: Option<&PackageJSON>) {
         // templates are passed as *string literals* so the
@@ -2487,7 +2501,8 @@ impl RunCommand {
                         // borrowck reshape — `ctx.passthrough` is a
                         // field of `ctx` but `run_package_script_foreground`
                         // takes `&mut ContextData`; clone the slice up-front.
-                        let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
+                        let passthrough: Vec<Box<[u8]>> =
+                            Self::passthrough_for_script(&ctx.passthrough).to_vec();
                         let silent = ctx.debug.silent;
                         let use_system_shell = ctx.debug.use_system_shell;
 
@@ -2657,7 +2672,8 @@ impl RunCommand {
                 ptr += ext.len();
                 buf[ptr] = 0;
 
-                let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
+                let passthrough: Vec<Box<[u8]>> =
+                    Self::passthrough_for_script(&ctx.passthrough).to_vec();
                 BunXFastPath::try_launch(ctx, ptr, env_loader, &passthrough);
             }
         }
@@ -2688,7 +2704,8 @@ impl RunCommand {
                 {
                     let out = destination.as_bytes();
                     let stored = fs.dirname_store.append_slice(out)?;
-                    let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
+                    let passthrough: Vec<Box<[u8]>> =
+                        Self::passthrough_for_script(&ctx.passthrough).to_vec();
                     Self::run_binary_without_bunx_path(
                         ctx,
                         stored,

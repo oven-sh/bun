@@ -971,9 +971,7 @@ extern "C" void Bun__registerSignalsForForwarding()
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sigemptyset(&sa.sa_mask);
-    // Not SA_RESETHAND: a nested `bun run` receives the signal more than once
-    // (terminal pgroup delivery + parent runner's forward) and must keep
-    // forwarding until the child exits, not die on the second delivery.
+    // Not SA_RESETHAND: a nested runner sees the signal more than once and must not die on a repeat delivery.
     sa.sa_flags = 0;
     sa.sa_handler = [](int sig) {
         if (Bun__currentSyncPID == 0) {

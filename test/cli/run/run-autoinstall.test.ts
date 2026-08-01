@@ -179,222 +179,206 @@ describe("auto-install with a disk-cached manifest resolves from the global cach
     return { stdout: stdout.trim(), stderr, exitCode };
   }
 
-  // Each test spawns two debug-build subprocesses back-to-back; give them
-  // headroom over the 5s default.
-  const timeout = 20_000;
-
   // https://github.com/oven-sh/bun/issues/10411
-  test(
-    "second pkg@version specifier installs after the first version is cached",
-    async () => {
-      const makePkg = (version: string) =>
-        makeTgz({
-          "package/package.json": JSON.stringify({ name: "pkg-10411", version, main: "index.js" }),
-          "package/index.js": `module.exports = { VERSION: ${JSON.stringify(version)} };`,
-        });
-      const tarballs: Record<string, Uint8Array> = {
-        "1.0.0": makePkg("1.0.0"),
-        "2.0.0": makePkg("2.0.0"),
-      };
-
-      const tarballRequests: string[] = [];
-      await using registry = Bun.serve({
-        port: 0,
-        hostname: "127.0.0.1",
-        fetch(req) {
-          const url = new URL(req.url);
-          const m = url.pathname.match(/^\/t-(.+)\.tgz$/);
-          if (m) {
-            tarballRequests.push(m[1]);
-            return new Response(tarballs[m[1]]);
-          }
-          return Response.json({
-            name: "pkg-10411",
-            "dist-tags": { latest: "2.0.0" },
-            versions: Object.fromEntries(
-              Object.keys(tarballs).map(v => [
-                v,
-                {
-                  name: "pkg-10411",
-                  version: v,
-                  dist: {
-                    tarball: `http://127.0.0.1:${registry.port}/t-${v}.tgz`,
-                    integrity: integrityOf(tarballs[v]),
-                  },
-                },
-              ]),
-            ),
-          });
-        },
+  test("second pkg@version specifier installs after the first version is cached", async () => {
+    const makePkg = (version: string) =>
+      makeTgz({
+        "package/package.json": JSON.stringify({ name: "pkg-10411", version, main: "index.js" }),
+        "package/index.js": `module.exports = { VERSION: ${JSON.stringify(version)} };`,
       });
+    const tarballs: Record<string, Uint8Array> = {
+      "1.0.0": makePkg("1.0.0"),
+      "2.0.0": makePkg("2.0.0"),
+    };
 
-      using dir = tempDir("autoinstall-10411", {
-        "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
-        "a.mjs": `try { const m = await import("pkg-10411@1.0.0"); console.log("OK " + m.default.VERSION) } catch (e) { console.log("FAIL " + (e.code || e.message)) }`,
-        "b.mjs": `try { const m = await import("pkg-10411@2.0.0"); console.log("OK " + m.default.VERSION) } catch (e) { console.log("FAIL " + (e.code || e.message)) }`,
-      });
-      const cache = join(String(dir), ".cache");
-      mkdirSync(cache, { recursive: true });
-
-      // First version: cold cache.
-      const r1 = await runScript(String(dir), cache, "a.mjs");
-      expect({ stdout: r1.stdout, exitCode: r1.exitCode, tarballRequests: [...tarballRequests] }).toEqual({
-        stdout: "OK 1.0.0",
-        exitCode: 0,
-        tarballRequests: ["1.0.0"],
-      });
-      // Sanity: the `.npm` manifest is now cached on disk and the first version
-      // was extracted; otherwise this test exercises nothing.
-      const entries = readdirSync(cache);
-      expect(entries.some(f => f.endsWith(".npm"))).toBe(true);
-      expect(entries.some(f => f.startsWith("pkg-10411@1.0.0"))).toBe(true);
-
-      // Second version in a fresh process: the manifest is loaded from disk, so
-      // the version resolves synchronously. The tarball for 2.0.0 must still be
-      // downloaded and extracted before `path_for_resolution` is called.
-      const r2 = await runScript(String(dir), cache, "b.mjs");
-      expect({ stdout: r2.stdout, exitCode: r2.exitCode, tarballRequests: [...tarballRequests] }).toEqual({
-        stdout: "OK 2.0.0",
-        exitCode: 0,
-        tarballRequests: ["1.0.0", "2.0.0"],
-      });
-    },
-    timeout,
-  );
-
-  test(
-    "after the extracted package is removed from the cache",
-    async () => {
-      const good = makeTgz({
-        "package/package.json": JSON.stringify({ name: "pkg-cache-a", version: "1.0.0", main: "index.js" }),
-        "package/index.js": 'module.exports = "OK";',
-      });
-
-      let tarballRequests = 0;
-      await using registry = Bun.serve({
-        port: 0,
-        hostname: "127.0.0.1",
-        fetch(req) {
-          const url = new URL(req.url);
-          if (url.pathname === "/t.tgz") {
-            tarballRequests++;
-            return new Response(good);
-          }
-          return Response.json({
-            name: "pkg-cache-a",
-            "dist-tags": { latest: "1.0.0" },
-            versions: {
-              "1.0.0": {
-                name: "pkg-cache-a",
-                version: "1.0.0",
-                dist: { tarball: `http://127.0.0.1:${registry.port}/t.tgz`, integrity: integrityOf(good) },
-              },
-            },
-          });
-        },
-      });
-
-      using dir = tempDir("autoinstall-npm-cache-evict", {
-        "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
-        "imp.mjs": `try { const m = await import("pkg-cache-a"); console.log("IMPORT_OK " + m.default) } catch (e) { console.log("IMPORT_FAIL " + e.code) }`,
-      });
-      const cache = join(String(dir), ".cache");
-      mkdirSync(cache, { recursive: true });
-
-      const r1 = await runScript(String(dir), cache, "imp.mjs");
-      expect({ ...r1, tarballRequests }).toMatchObject({
-        stdout: "IMPORT_OK OK",
-        exitCode: 0,
-        tarballRequests: 1,
-      });
-
-      // Evict everything except the `.npm` manifest cache file.
-      const kept: string[] = [];
-      for (const entry of readdirSync(cache)) {
-        if (entry.endsWith(".npm")) {
-          kept.push(entry);
-          continue;
+    const tarballRequests: string[] = [];
+    await using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const url = new URL(req.url);
+        const m = url.pathname.match(/^\/t-(.+)\.tgz$/);
+        if (m) {
+          tarballRequests.push(m[1]);
+          return new Response(tarballs[m[1]]);
         }
-        rmSync(join(cache, entry), { recursive: true, force: true });
-      }
-      expect(kept.length).toBeGreaterThan(0);
+        return Response.json({
+          name: "pkg-10411",
+          "dist-tags": { latest: "2.0.0" },
+          versions: Object.fromEntries(
+            Object.keys(tarballs).map(v => [
+              v,
+              {
+                name: "pkg-10411",
+                version: v,
+                dist: {
+                  tarball: `http://127.0.0.1:${registry.port}/t-${v}.tgz`,
+                  integrity: integrityOf(tarballs[v]),
+                },
+              },
+            ]),
+          ),
+        });
+      },
+    });
 
-      // Fresh process: the disk-loaded manifest must trigger a tarball download.
-      const r2 = await runScript(String(dir), cache, "imp.mjs");
-      expect({ ...r2, tarballRequests }).toMatchObject({
-        stdout: "IMPORT_OK OK",
-        exitCode: 0,
-        tarballRequests: 2,
-      });
-    },
-    timeout,
-  );
+    using dir = tempDir("autoinstall-10411", {
+      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+      "a.mjs": `try { const m = await import("pkg-10411@1.0.0"); console.log("OK " + m.default.VERSION) } catch (e) { console.log("FAIL " + (e.code || e.message)) }`,
+      "b.mjs": `try { const m = await import("pkg-10411@2.0.0"); console.log("OK " + m.default.VERSION) } catch (e) { console.log("FAIL " + (e.code || e.message)) }`,
+    });
+    const cache = join(String(dir), ".cache");
+    mkdirSync(cache, { recursive: true });
+
+    // First version: cold cache.
+    const r1 = await runScript(String(dir), cache, "a.mjs");
+    expect({ ...r1, tarballRequests: [...tarballRequests] }).toMatchObject({
+      stdout: "OK 1.0.0",
+      exitCode: 0,
+      tarballRequests: ["1.0.0"],
+    });
+    // Sanity: the `.npm` manifest is now cached on disk and the first version
+    // was extracted; otherwise this test exercises nothing.
+    const entries = readdirSync(cache);
+    expect(entries.some(f => f.endsWith(".npm"))).toBe(true);
+    expect(entries.some(f => f.startsWith("pkg-10411@1.0.0"))).toBe(true);
+
+    // Second version in a fresh process: the manifest is loaded from disk, so
+    // the version resolves synchronously. The tarball for 2.0.0 must still be
+    // downloaded and extracted before `path_for_resolution` is called.
+    const r2 = await runScript(String(dir), cache, "b.mjs");
+    expect({ ...r2, tarballRequests: [...tarballRequests] }).toMatchObject({
+      stdout: "OK 2.0.0",
+      exitCode: 0,
+      tarballRequests: ["1.0.0", "2.0.0"],
+    });
+  });
+
+  test("after the extracted package is removed from the cache", async () => {
+    const good = makeTgz({
+      "package/package.json": JSON.stringify({ name: "pkg-cache-a", version: "1.0.0", main: "index.js" }),
+      "package/index.js": 'module.exports = "OK";',
+    });
+
+    let tarballRequests = 0;
+    await using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/t.tgz") {
+          tarballRequests++;
+          return new Response(good);
+        }
+        return Response.json({
+          name: "pkg-cache-a",
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name: "pkg-cache-a",
+              version: "1.0.0",
+              dist: { tarball: `http://127.0.0.1:${registry.port}/t.tgz`, integrity: integrityOf(good) },
+            },
+          },
+        });
+      },
+    });
+
+    using dir = tempDir("autoinstall-npm-cache-evict", {
+      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+      "imp.mjs": `try { const m = await import("pkg-cache-a"); console.log("IMPORT_OK " + m.default) } catch (e) { console.log("IMPORT_FAIL " + e.code) }`,
+    });
+    const cache = join(String(dir), ".cache");
+    mkdirSync(cache, { recursive: true });
+
+    const r1 = await runScript(String(dir), cache, "imp.mjs");
+    expect({ ...r1, tarballRequests }).toMatchObject({
+      stdout: "IMPORT_OK OK",
+      exitCode: 0,
+      tarballRequests: 1,
+    });
+
+    // Evict everything except the `.npm` manifest cache file.
+    const kept: string[] = [];
+    for (const entry of readdirSync(cache)) {
+      if (entry.endsWith(".npm")) {
+        kept.push(entry);
+        continue;
+      }
+      rmSync(join(cache, entry), { recursive: true, force: true });
+    }
+    expect(kept.length).toBeGreaterThan(0);
+
+    // Fresh process: the disk-loaded manifest must trigger a tarball download.
+    const r2 = await runScript(String(dir), cache, "imp.mjs");
+    expect({ ...r2, tarballRequests }).toMatchObject({
+      stdout: "IMPORT_OK OK",
+      exitCode: 0,
+      tarballRequests: 2,
+    });
+  });
 
   // Concurrent-writer window: the data folder `<cache>/pkg@ver...` is renamed
   // into place before the version-index symlink `<cache>/pkg/ver...` is
   // created. `determine_preinstall_state` probes the data folder (present, so
   // `Done`), then `path_for_cached_npm_path` readlinks the index symlink
   // (absent). The fallback probes the data folder directly.
-  test(
-    "when the version-index symlink is absent but the data folder exists",
-    async () => {
-      const good = makeTgz({
-        "package/package.json": JSON.stringify({ name: "race-pkg", version: "1.0.0", main: "index.js" }),
-        "package/index.js": 'module.exports = "race-ok";',
-      });
+  test("when the version-index symlink is absent but the data folder exists", async () => {
+    const good = makeTgz({
+      "package/package.json": JSON.stringify({ name: "race-pkg", version: "1.0.0", main: "index.js" }),
+      "package/index.js": 'module.exports = "race-ok";',
+    });
 
-      let tarballRequests = 0;
-      await using registry = Bun.serve({
-        port: 0,
-        hostname: "127.0.0.1",
-        fetch(req) {
-          const url = new URL(req.url);
-          if (url.pathname === "/t.tgz") {
-            tarballRequests++;
-            return new Response(good);
-          }
-          return Response.json({
-            name: "race-pkg",
-            "dist-tags": { latest: "1.0.0" },
-            versions: {
-              "1.0.0": {
-                name: "race-pkg",
-                version: "1.0.0",
-                dist: { tarball: `http://127.0.0.1:${registry.port}/t.tgz`, integrity: integrityOf(good) },
-              },
+    let tarballRequests = 0;
+    await using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/t.tgz") {
+          tarballRequests++;
+          return new Response(good);
+        }
+        return Response.json({
+          name: "race-pkg",
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name: "race-pkg",
+              version: "1.0.0",
+              dist: { tarball: `http://127.0.0.1:${registry.port}/t.tgz`, integrity: integrityOf(good) },
             },
-          });
-        },
-      });
+          },
+        });
+      },
+    });
 
-      using dir = tempDir("autoinstall-index-race", {
-        "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
-        "imp.mjs": `try { const m = await import("race-pkg"); console.log("IMPORT_OK " + m.default) } catch (e) { console.log("IMPORT_FAIL " + (e.code || e.message)) }`,
-      });
-      const cache = join(String(dir), ".cache");
-      mkdirSync(cache, { recursive: true });
+    using dir = tempDir("autoinstall-index-race", {
+      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+      "imp.mjs": `try { const m = await import("race-pkg"); console.log("IMPORT_OK " + m.default) } catch (e) { console.log("IMPORT_FAIL " + (e.code || e.message)) }`,
+    });
+    const cache = join(String(dir), ".cache");
+    mkdirSync(cache, { recursive: true });
 
-      const r1 = await runScript(String(dir), cache, "imp.mjs");
-      expect({ stdout: r1.stdout, exitCode: r1.exitCode }).toEqual({
-        stdout: "IMPORT_OK race-ok",
-        exitCode: 0,
-      });
+    const r1 = await runScript(String(dir), cache, "imp.mjs");
+    expect({ ...r1 }).toMatchObject({
+      stdout: "IMPORT_OK race-ok",
+      exitCode: 0,
+    });
 
-      // Remove only the `<cache>/race-pkg/` index directory; leave the
-      // `<cache>/race-pkg@1.0.0...` data folder in place.
-      const entries = readdirSync(cache);
-      expect(entries).toContain("race-pkg");
-      expect(entries.some(e => e.startsWith("race-pkg@1.0.0"))).toBe(true);
-      rmSync(join(cache, "race-pkg"), { recursive: true, force: true });
+    // Remove only the `<cache>/race-pkg/` index directory; leave the
+    // `<cache>/race-pkg@1.0.0...` data folder in place.
+    const entries = readdirSync(cache);
+    expect(entries).toContain("race-pkg");
+    expect(entries.some(e => e.startsWith("race-pkg@1.0.0"))).toBe(true);
+    rmSync(join(cache, "race-pkg"), { recursive: true, force: true });
 
-      const r2 = await runScript(String(dir), cache, "imp.mjs");
-      expect({ stdout: r2.stdout, exitCode: r2.exitCode, tarballRequests }).toEqual({
-        stdout: "IMPORT_OK race-ok",
-        exitCode: 0,
-        // The data folder is already present; no second download is needed.
-        tarballRequests: 1,
-      });
-    },
-    timeout,
-  );
+    const r2 = await runScript(String(dir), cache, "imp.mjs");
+    expect({ ...r2, tarballRequests }).toMatchObject({
+      stdout: "IMPORT_OK race-ok",
+      exitCode: 0,
+      // The data folder is already present; no second download is needed.
+      tarballRequests: 1,
+    });
+  });
 });

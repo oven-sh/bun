@@ -1137,6 +1137,22 @@ mod _async_tasks {
             self.signal.as_deref()
         }
     }
+    impl FsArgument for args::AppendFile {
+        const HAVE_ABORT_SIGNAL: bool = true;
+        #[inline]
+        fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+            args::WriteFile::from_js_with_default_flag(ctx, arguments, FileSystemFlags::A)
+                .map(args::AppendFile)
+        }
+        #[inline]
+        fn to_thread_safe(&mut self) {
+            self.0.to_thread_safe();
+        }
+        #[inline]
+        fn signal(&self) -> Option<&AbortSignal> {
+            self.0.signal.as_deref()
+        }
+    }
 
     /// Convert an async-FS result payload to a `JSValue`.
     /// Each `ret::*` type implements this by forwarding to its inherent method.
@@ -4272,6 +4288,13 @@ pub mod args {
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<WriteFile> {
+            Self::from_js_with_default_flag(ctx, arguments, FileSystemFlags::W)
+        }
+        pub(crate) fn from_js_with_default_flag(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+            default_flag: FileSystemFlags,
+        ) -> JsResult<WriteFile> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
@@ -4283,7 +4306,7 @@ pub mod args {
                 .next_eat()
                 .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("data is required")))?;
             let mut encoding = Encoding::Buffer;
-            let mut flag = FileSystemFlags::W;
+            let mut flag = default_flag;
             let mut mode: Mode = DEFAULT_PERMISSION;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
                 if let Some(signal) = s {
@@ -4354,7 +4377,16 @@ pub mod args {
         }
     }
 
-    pub(crate) type AppendFile = WriteFile;
+    /// Same fields as `WriteFile`; distinct type so `FsArgument::from_js` can
+    /// default `flag` to `a` (Node: `if (!options.flag) options.flag = 'a'`)
+    /// while still honoring an explicit `flag` the caller passed.
+    pub struct AppendFile(pub(crate) WriteFile);
+    impl Unprotect for AppendFile {
+        #[inline]
+        fn unprotect(&mut self) {
+            self.0.unprotect();
+        }
+    }
 
     pub struct Exists {
         pub path: Option<PathLike>,
@@ -4766,6 +4798,7 @@ impl NodeFS {
         args: &args::AppendFile,
         _: Flavor,
     ) -> Maybe<ret::AppendFile> {
+        let args = &args.0;
         let mut data = args.data.slice();
         match &args.file {
             PathOrFileDescriptor::Fd(fd) => {
@@ -4777,12 +4810,7 @@ impl NodeFS {
             }
             PathOrFileDescriptor::Path(path_) => {
                 let path = path_.slice_z(&mut self.sync_error_buf);
-                let flags = if args.flag == FileSystemFlags::W {
-                    FileSystemFlags::A
-                } else {
-                    args.flag
-                };
-                let fd = Syscall::open(path, flags.as_int(), args.mode)?;
+                let fd = Syscall::open(path, args.flag.as_int(), args.mode)?;
                 let _close = scopeguard::guard(fd, |fd| fd.close());
                 while !data.is_empty() {
                     let written = Syscall::write(fd, data)?;

@@ -1683,9 +1683,7 @@ fn is_excluded<'a>(
     }
 }
 
-/// True if `pattern` (negated) could match some path under the directory at
-/// `dir_rel`. Mirrors npm ignore-walk's minimatch `partial` test so that
-/// `*` + `!dist/**` still descends into `dist/`.
+/// Mirrors npm ignore-walk's minimatch `partial` test so `*` + `!dist/**` still descends into `dist/`.
 fn negated_pattern_matches_under_dir(pattern: &Pattern, dir_rel: &[u8]) -> bool {
     debug_assert!(pattern.flags.contains(PatternFlags::NEGATED));
     if pattern

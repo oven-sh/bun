@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, isMacOS } from "harness";
+import { expect, test } from "bun:test";
 import { lookup } from "dns/promises";
+import { bunEnv, bunExe, isMacOS } from "harness";
 
 // On macOS, libinfo's getaddrinfo_async_start dispatches each lookup onto the
 // libdispatch overcommit root queue, so N distinct in-flight lookups park N

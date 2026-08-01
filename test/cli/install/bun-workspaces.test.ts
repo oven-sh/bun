@@ -1211,6 +1211,97 @@ test.concurrent("it should detect duplicate workspace dependencies", async () =>
   expect(await exited).toBe(1);
 });
 
+// https://github.com/oven-sh/bun/issues/15102
+describe("missing workspace: devDependency is not an error when devDependencies are skipped", () => {
+  for (const flag of ["--production", "--omit=dev"]) {
+    test.concurrent(flag, async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+          devDependencies: {
+            "not-a-real-workspace": "workspace:*",
+          },
+        }),
+      );
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install", flag],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("not found");
+      expect(out).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+
+      expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBeTrue();
+      expect(await exists(join(packageDir, "node_modules", "not-a-real-workspace"))).toBeFalse();
+    });
+  }
+
+  test.concurrent("still errors for a missing workspace: dependency in `dependencies`", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "not-a-real-workspace": "workspace:*",
+        },
+      }),
+    );
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--production"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    expect(err).toContain('Workspace dependency "not-a-real-workspace" not found');
+    expect(await exited).toBe(1);
+  });
+
+  test.concurrent("still errors for a missing workspace: devDependency without --production", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        devDependencies: {
+          "not-a-real-workspace": "workspace:*",
+        },
+      }),
+    );
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    expect(err).toContain('Workspace dependency "not-a-real-workspace" not found');
+    expect(await exited).toBe(1);
+  });
+});
+
 const versions = ["workspace:1.0.0", "workspace:*", "workspace:^1.0.0", "1.0.0", "*"];
 
 for (const rootVersion of versions) {

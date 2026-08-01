@@ -1411,7 +1411,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         result.package.meta.id,
                     );
                 }
-            } else if dependency.behavior.is_required() {
+            } else if dependency.behavior.is_required()
+                && dependency
+                    .behavior
+                    .is_enabled(this.options.local_package_features)
+            {
                 if dependency_tag == dependency::version::Tag::Workspace {
                     bun_ast::add_error_pretty!(
                         this.log_mut(),

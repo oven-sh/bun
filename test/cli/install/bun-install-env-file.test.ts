@@ -47,6 +47,7 @@ async function runInstall(
       ...bunEnv,
       NODE_ENV: undefined,
       BUN_ENV: undefined,
+      NPM_TOKEN: undefined,
       ...extraEnv,
     },
     stdout: "pipe",
@@ -93,9 +94,12 @@ describe("bun install .env loading (#12011)", () => {
     expect(auth[0]).toBe("Bearer DEV");
   });
 
-  test.concurrent("--no-env-file suppresses auto-loading; only process env is used", async () => {
-    const { auth, stderr } = await runInstall(["--no-env-file"], { NPM_TOKEN: "FROM_PROCESS" });
-    expect(auth[0]).toBe("Bearer FROM_PROCESS");
+  test.concurrent("--no-env-file suppresses auto-loading", async () => {
+    const { auth, stderr } = await runInstall(["--no-env-file"]);
+    // No .env* loaded and no NPM_TOKEN in process env, so bunfig's $NPM_TOKEN
+    // stays literal. If suppression regresses, .env.development leaks and this
+    // becomes "Bearer DEV".
+    expect(auth[0]).toBe("Bearer $NPM_TOKEN");
     expect(stderr).not.toContain(".env");
   });
 
@@ -119,28 +123,30 @@ registry = { url = "http://localhost:${server.port}/", token = "$NPM_TOKEN" }
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
-      env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined, NPM_TOKEN: "FROM_PROCESS" },
+      env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined, NPM_TOKEN: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(received[0]).toBe("Bearer FROM_PROCESS");
+    expect(received[0]).toBe("Bearer $NPM_TOKEN");
     expect(stderr).not.toContain(".env");
   });
 
   test.concurrent("--env-file value is consumed, not treated as a package to add", async () => {
     using dir = tempDir("install-env-missing", {
       "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+      "bunfig.toml": `[install]\nregistry = "http://localhost:1/"\n`,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install", "--env-file", "does-not-exist.env"],
       cwd: String(dir),
-      env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined },
+      env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined, NPM_TOKEN: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("unrecognised dependency format");
     expect(stdout).not.toMatch(/add v\d/);
+    expect(exitCode).toBe(0);
   });
 });

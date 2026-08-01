@@ -313,14 +313,8 @@ static void callUserEmitOverride(JSC::JSGlobalObject* globalObject, Process* pro
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
 {
-    if (process->m_isExiting)
-        return;
-    process->m_isExiting = true;
     auto& emitter = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
-
-    if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
-        return;
 
     // Node: `_exiting` is set regardless of whether any 'exit' listener exists.
     process->putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(true), 0);
@@ -894,6 +888,10 @@ extern "C" bool Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t
         process->m_isExitCodeObservable = true;
     // true = this call emitted; the Rust caller gates the post-emit drain on it.
     if (process->m_isExiting)
+        return false;
+    process->m_isExiting = true;
+    auto& vm = JSC::getVM(globalObject);
+    if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
         return false;
     dispatchExitInternal(globalObject, process, exitCode);
     return true;
@@ -3414,7 +3412,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
 
     auto* zigGlobal = defaultGlobalObject(globalObject);
     // Node's reallyExit is the raw exit that does not run 'exit' listeners. Arm
-    // m_isExiting so dispatchExitInternal (via Bun__Process__exit) skips them
+    // m_isExiting so Process__dispatchOnExit (via Bun__Process__exit) skips them
     // while native shutdown (profiles, cleanup hooks, SQLite close) still runs.
     zigGlobal->processObject()->m_isExiting = true;
     Bun__Process__exit(zigGlobal, exitCode);

@@ -1888,70 +1888,12 @@ impl PackageManifest {
         group: &Semver::query::Group,
         group_buf: &[u8],
     ) -> Option<FindResult<'_>> {
-        let left = group.head.head.range.left;
-        // Fast path: exact version
-        if left.op == Semver::range::Op::Eql {
-            return self.find_by_version(left.version);
-        }
-
-        if let Some(result) = self.find_by_dist_tag(b"latest") {
-            if group.satisfies(result.version, group_buf, &self.string_buf) {
-                if group.flags.is_set(Semver::query::Flags::PRE) {
-                    if left
-                        .version
-                        .order(result.version, group_buf, &self.string_buf)
-                        == core::cmp::Ordering::Equal
-                    {
-                        // if prerelease, use latest if semver+tag match range exactly
-                        return Some(result);
-                    }
-                } else {
-                    return Some(result);
-                }
-            }
-        }
-
-        {
-            // This list is sorted at serialization time.
-            let releases = self.pkg.releases.keys.get(&self.versions);
-            let mut i = releases.len();
-
-            while i > 0 {
-                let version = releases[i - 1];
-
-                if group.satisfies(version, group_buf, &self.string_buf) {
-                    return Some(FindResult {
-                        version,
-                        package: &self.pkg.releases.values.get(&self.package_versions)[i - 1],
-                    });
-                }
-                i -= 1;
-            }
-        }
-
-        if group.flags.is_set(Semver::query::Flags::PRE) {
-            let prereleases = self.pkg.prereleases.keys.get(&self.versions);
-            let mut i = prereleases.len();
-            while i > 0 {
-                let version = prereleases[i - 1];
-
-                // This list is sorted at serialization time.
-                if group.satisfies(version, group_buf, &self.string_buf) {
-                    let packages = self.pkg.prereleases.values.get(&self.package_versions);
-                    return Some(FindResult {
-                        version,
-                        package: &packages[i - 1],
-                    });
-                }
-                i -= 1;
-            }
-        }
-
-        None
+        self.find_best_version_extra(group, group_buf, None, None, |_| true)
     }
 
-    /// [`find_best_version_with_filter`](Self::find_best_version_with_filter)
-    /// restricted to versions for which `extra_ok` also returns true.
+    /// [`find_best_version`](Self::find_best_version) restricted to versions
+    /// for which `extra_ok` also returns true, optionally also applying the
+    /// `minimumReleaseAge` filter.
     pub fn find_best_version_extra(
         &self,
         group: &Semver::query::Group,

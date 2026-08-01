@@ -2503,7 +2503,13 @@ fn get_or_put_resolved_package(
             // Auto-installing a peer: prefer a version that also satisfies
             // every other non-optional npm peer range recorded for the same
             // name, so the first-drained range does not win on its own (#8292).
-            if install_peer && behavior.is_peer() && version.tag == dependency::version::Tag::Npm {
+            // Skip when an override applies: the buffer holds raw ranges and
+            // the override rewrites every peer edge for this name identically.
+            if install_peer
+                && behavior.is_peer()
+                && version.tag == dependency::version::Tag::Npm
+                && this.lockfile.overrides.get(name_hash).is_none()
+            {
                 let lockfile_buf = this.lockfile.buffers.string_bytes.as_slice();
                 let deps = this.lockfile.buffers.dependencies.as_slice();
                 let all_peers_ok = |v: Semver::Version| -> bool {
@@ -2517,6 +2523,9 @@ fn get_or_put_resolved_package(
                         let Some(npm) = dep.version.try_npm() else {
                             return true;
                         };
+                        if npm.is_alias {
+                            return true;
+                        }
                         npm.version.satisfies(v, lockfile_buf, &manifest.string_buf)
                     })
                 };

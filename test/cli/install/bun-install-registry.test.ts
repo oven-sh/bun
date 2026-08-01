@@ -7767,6 +7767,43 @@ describe("yarn tests", () => {
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
+  test("auto-installed peer honours overrides over sibling peer ranges", async () => {
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "mismatched-peer-deps-lvl0": "1.0.0",
+        },
+        overrides: {
+          "no-deps": ">=1.0.0",
+        },
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    const out = await stdout.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("4 packages installed");
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "2.0.0",
+    } as any);
+    expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+  });
+
   test("it should install in such a way that two identical packages with different peer dependencies are different instances", async () => {
     await writeFile(
       packageJson,

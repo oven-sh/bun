@@ -1536,7 +1536,8 @@ impl VirtualMachine {
         }
 
         // Natural shutdown drains post-'exit' microtasks; exit()/fatal paths drop them.
-        let drain_after_exit = self.unhandled_error_counter == 0;
+        let drain_after_exit =
+            self.unhandled_error_counter == 0 && !self.is_handling_uncaught_exception;
         ExitHandler::dispatch_on_exit(self, drain_after_exit);
 
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.

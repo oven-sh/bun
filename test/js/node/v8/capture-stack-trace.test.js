@@ -1125,7 +1125,7 @@ test("lazy error-info materialization does not store an empty stack value when t
 // https://github.com/oven-sh/bun/issues/10483
 // Errors created inside an async function that is awaited at a module's top
 // level should include that top-level await as an async frame, matching Node.
-describe("async stack trace includes the top-level-await caller frame", () => {
+describe.concurrent("async stack trace includes the top-level-await caller frame", () => {
   let dir;
   beforeAll(() => {
     dir = tempDir("tla-async-stack", {

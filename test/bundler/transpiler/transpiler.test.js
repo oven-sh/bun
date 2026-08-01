@@ -139,6 +139,57 @@ describe("Bun.Transpiler", () => {
     it("works nested", () => {
       ts.expectPrintedMin_('const a = ["hey"][0][0];', 'const a = "h"');
     });
+    it("bails out when the index is a delete or assignment target", () => {
+      // `a[n]` is a property reference; folding it to a value changes the
+      // result of `delete` and the effect of assignment.
+      ts.expectPrintedMin_("x = delete [y][0]", "x = delete [y][0]");
+      ts.expectPrintedMin_("x = delete [y.z][0]", "x = delete [y.z][0]");
+      ts.expectPrintedMin_("x = delete { f: y }.f", "x = delete { f: y }.f");
+      ts.expectPrintedMin_("x = delete { f: y }['f']", "x = delete { f: y }.f");
+      ts.expectPrintedMin_('x = delete "foo"[2]', 'x = delete "foo"[2]');
+      ts.expectPrintedMin_("x = [y][0] = 5", "x = [y][0] = 5");
+      ts.expectPrintedMin_("x = [y][0] += 5", "x = [y][0] += 5");
+      ts.expectPrintedMin_("[y][0]++", "[y][0]++");
+      ts.expectPrintedMin_('x = "foo"[2] = 5', 'x = "foo"[2] = 5');
+      // Still inlined outside those positions.
+      ts.expectPrintedMin_("x = [y][0]", "x = y");
+      ts.expectPrintedMin_('x = "foo"[2]', 'x = "o"');
+      ts.expectPrintedMin_("x = delete [y][0].z", "x = delete y.z");
+    });
+    it("does not inline an enum member under delete", () => {
+      const pre = "enum E { A = 1 }\n";
+      const lastLine = out => out.trimEnd().split("\n").at(-1);
+      expect(lastLine(ts.parsed(pre + "x = delete E.A;", false))).toBe("x = delete E.A;");
+      expect(lastLine(ts.parsed(pre + 'x = delete E["A"];', false))).toBe('x = delete E["A"];');
+      expect(lastLine(ts.parsedMin(pre + "x = delete E.A;", false))).toBe("x = delete E.A;");
+      // Still inlined when read.
+      expect(lastLine(ts.parsed(pre + "x = E.A;", false))).toBe("x = 1 /* A */;");
+    });
+    it("does not substitute --define for a delete target", () => {
+      // `user_undefined` is defined as `undefined` in the transpiler config above.
+      ts.expectPrintedMin_("x = delete user_undefined", "x = delete user_undefined");
+      // A later read is still substituted (delete_target is per-node, not per-symbol).
+      ts.expectPrintedMin_(
+        "x = delete user_undefined; y = user_undefined;",
+        "x = delete user_undefined;\ny = void 0;\n",
+      );
+    });
+    it("preserves delete/assign semantics at runtime", async () => {
+      const src = `
+        var obj = { p: 1 };
+        var r1 = delete [obj.p][0];
+        var y = 1;
+        [y][0] = 5;
+        var k = { f: 7 };
+        var r2 = delete { f: k.f }.f;
+        console.log(JSON.stringify([obj.p, r1, y, k.f, r2]));
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[1,true,1,7,true]\n");
+      expect(exitCode).toBe(0);
+    });
     it("bails out on optional-chain index into enum", () => {
       const pre = "enum Foo { A }\nenum Bar { 'a-b' = 1 }\n";
       const lastLine = out => out.trimEnd().split("\n").at(-1);

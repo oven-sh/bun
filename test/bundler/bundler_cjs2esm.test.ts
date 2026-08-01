@@ -392,6 +392,36 @@ describe("bundler", () => {
       stdout: '[[{"xyz":456},456],[{"xyz":123},123],[{"xyz":456},456],[{"xyz":123},123]]',
     },
   });
+  itBundled("cjs2esm/DeleteExportsPropertyDeopt", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as lib from './lib.js';
+        console.log(lib.a, lib.b);
+      `,
+      "/lib.js": /* js */ `
+        exports.a = 1;
+        exports.b = 2;
+        delete exports.a;
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.js"] },
+    run: { stdout: "undefined 2" },
+  });
+  itBundled("cjs2esm/DeleteModuleExportsPropertyDeopt", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as lib from './lib.js';
+        console.log(lib.a, lib.b);
+      `,
+      "/lib.js": /* js */ `
+        module.exports.a = 1;
+        module.exports.b = 2;
+        delete module.exports.a;
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.js"] },
+    run: { stdout: "undefined 2" },
+  });
   // https://github.com/oven-sh/bun/issues/4565
   // `exports.x = ...` as the unbraced body of if/while/do/else must not be
   // converted to `var $x = ...; export { $x as x };` because `export` is only

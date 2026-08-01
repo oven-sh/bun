@@ -1057,7 +1057,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let target = e_.target.unwrap_inlined();
         let index = e_.index.unwrap_inlined();
 
-        if p.options.features.minify_syntax {
+        // `a[n]` is a property reference; replacing it with a value changes
+        // the result of `delete` (reference → value makes it return `true`)
+        // and of assignment (writes to the wrong place). Neither `"foo"[2]`
+        // → `"o"` nor `[x][0]` → `x` is safe in those positions.
+        if p.options.features.minify_syntax
+            && !is_delete_target
+            && in_.assign_target == js_ast::AssignTarget::None
+        {
             if let Some(number) = index.data.as_e_number() {
                 if number.value() >= 0.0
                     && number.value() < (usize::MAX as f64)
@@ -1218,6 +1225,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             Op::UnDelete => {
+                p.delete_target = e_.value.data;
                 p.visit_expr_in_out(&mut e_.value, ExprIn::default());
             }
             _ => {

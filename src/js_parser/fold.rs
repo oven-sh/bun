@@ -671,12 +671,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                     E::Special::HotEnabled | E::Special::HotDisabled => {
-                        if identifier_opts.is_delete_target()
-                            || identifier_opts.assign_target() != js_ast::AssignTarget::None
+                        let enabled = p.options.features.hot_module_reloading;
+                        // The !enabled rewrites below produce `undefined` / `{}`;
+                        // keep the property reference under delete/assign so
+                        // `delete import.meta.hot.accept` stays a reference
+                        // instead of `delete undefined`. The enabled rewrites
+                        // all produce `hmr.<name>` references and must run so
+                        // the printer doesn't fall back to `hmr.indirectHot`.
+                        if !enabled
+                            && (identifier_opts.is_delete_target()
+                                || identifier_opts.assign_target() != js_ast::AssignTarget::None)
                         {
                             return None;
                         }
-                        let enabled = p.options.features.hot_module_reloading;
                         if name == b"data" {
                             return Some(if enabled {
                                 Expr {

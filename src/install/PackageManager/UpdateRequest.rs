@@ -231,10 +231,7 @@ impl UpdateRequest {
 
                 return Err(crate::Error::UnrecognizedDependencyFormat);
             };
-            // Re-parse to catch scp-style `user@host:path/repo`, where `user`
-            // is the SSH user, not an npm alias. A scoped alias (`/`) cannot be
-            // an SSH user, and only a Git/Github re-parse may replace the
-            // already-valid alias + git version (#13891).
+            // Catch scp-style `user@host:path/repo` where `user` was split off as the alias.
             if alias.is_some_and(|a| !a.contains(&b'/'))
                 && version.tag == dependency::version::Tag::Git
             {

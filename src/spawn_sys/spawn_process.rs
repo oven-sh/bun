@@ -980,9 +980,7 @@ pub unsafe fn spawn_process_posix(
     let argv0 = options.argv0.unwrap_or_else(|| unsafe { *argv });
     // SAFETY: argv0 is a valid NUL-terminated C string (caller contract).
     let argv0_cstr = unsafe { bun_core::ffi::cstr(argv0) };
-    // Android's shell lives at /system/bin/sh; /bin is only symlinked on API 29+,
-    // below Bun's minimum (API 28). Matches the rest of the codebase (e.g.
-    // run_command.rs, install/PackageManager.rs, js/node/child_process.ts).
+    // Android ships the shell at /system/bin/sh; /bin only exists on API 29+.
     #[cfg(target_os = "android")]
     const SHELL_PATH: &core::ffi::CStr = c"/system/bin/sh";
     #[cfg(not(target_os = "android"))]
@@ -990,11 +988,7 @@ pub unsafe fn spawn_process_posix(
 
     let spawn_result =
         match posix_spawn::spawn_z(argv0_cstr, Some(&actions), Some(&attr), argv, envp) {
-            // The file is executable but not a recognized format (e.g. a script with
-            // no shebang). libuv/Node retry the exec through the shell, so the file is
-            // run as a shell script. Mirror that: re-exec `sh <file> <args...>`, where
-            // `<file>` is the originally-resolved path (becomes `$0` in the shell) and
-            // `<args...>` are the user-supplied arguments (argv[1..]).
+            // ENOEXEC (e.g. script with no shebang): retry as `sh <file> argv[1..]` like libuv.
             Err(err) if err.get_errno() == bun_sys::E::ENOEXEC => {
                 let mut sh_argv: Vec<*const c_char> = Vec::new();
                 sh_argv.push(SHELL_PATH.as_ptr());

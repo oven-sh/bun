@@ -1098,9 +1098,7 @@ pub(crate) fn scan_imports_and_exports(
                             if rec_source_index.is_invalid()
                                 && output_format.keep_es6_import_export_syntax()
                             {
-                                record
-                                    .flags
-                                    .insert(ImportRecordFlags::CONTAINS_IMPORT_STAR);
+                                record.flags.insert(ImportRecordFlags::CONTAINS_IMPORT_STAR);
                             }
                         }
                         re_export_uses += 1;

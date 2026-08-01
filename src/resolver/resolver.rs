@@ -5288,9 +5288,7 @@ impl<'a> Resolver<'a> {
                             return MatchStatus::Success;
                         }
 
-                        // `remap` is relative to the package that owns the browser map,
-                        // which may be an ancestor of `path` (e.g. `demo-pkg/sub/` with
-                        // the browser map in `demo-pkg/package.json`).
+                        // `remap` is relative to the browser scope, which may be an ancestor of `path`.
                         let new_paths = [browser_scope.abs_path, remap];
                         let remapped_abs = self.fs_ref().abs_buf(&new_paths, bufs!(remap_path));
 

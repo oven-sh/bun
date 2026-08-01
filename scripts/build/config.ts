@@ -1184,9 +1184,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // already links with ld64.lld and is unaffected, so route native darwin
   // ASAN links through it too. Tracked in workarounds.ts
   // ("darwin-asan-ld-new") so this self-obsoletes once Apple's linker (or
-  // rustc's codegen) stops tripping on these objects.
+  // rustc's codegen) stops tripping on these objects. rust-only mode never
+  // links, so skip the ld64.lld requirement (same gate as the darwinCross
+  // block above).
   let darwinNativeLld: string | undefined;
-  if (darwin && !darwinCross && asan) {
+  if (darwin && !darwinCross && asan && (partial.mode ?? "full") !== "rust-only") {
     if (toolchain.ld64Lld === undefined) {
       throw new BuildError(
         "Native darwin ASAN builds link with ld64.lld (Apple's ld rejects rustc's ASAN relocations)",
@@ -1200,8 +1202,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     darwinNativeLld = toolchain.ld64Lld;
   }
   // True whenever a darwin link goes through ld64.lld instead of Apple's ld
-  // (cross-compile, or the native-ASAN swap above). rust-only cross builds
-  // skip the link entirely, so leaving them false is harmless.
+  // (cross-compile, or the native-ASAN swap above). rust-only builds skip
+  // the link entirely, so leaving them false is harmless.
   const darwinLld = ld64StripSwap !== undefined || darwinNativeLld !== undefined;
 
   return {

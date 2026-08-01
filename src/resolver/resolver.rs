@@ -2501,9 +2501,6 @@ impl<'a> Resolver<'a> {
         a || b
     }
 
-    /// Bust the dir cache for every absolute target the enclosing tsconfig's
-    /// `paths`/`baseUrl` map `specifier` to (same substitution as
-    /// [`match_tsconfig_paths`]).
     pub fn bust_dir_cache_from_tsconfig_paths(
         &mut self,
         source_dir: &[u8],
@@ -2519,133 +2516,26 @@ impl<'a> Resolver<'a> {
             return false;
         };
 
-        let mut abs_base_url: &[u8] = &tsconfig.base_url_for_paths;
-        if tsconfig.has_base_url() {
-            abs_base_url = &tsconfig.base_url;
-        }
-
-        let mut busted = false;
-        let mut bust_abs = |this: &mut Self, abs: &[u8]| {
+        fn bust_abs(this: &mut Resolver, abs: &[u8]) -> bool {
             let abs = strings::without_trailing_slash_windows_path(abs);
             let dir = bun_paths::dirname_platform(abs, bun_paths::Platform::AUTO);
             let a = this.bust_dir_cache(dir);
             let b = this.bust_dir_cache(abs);
-            busted |= a | b;
-        };
-
-        // Exact matches.
-        for (key, value) in tsconfig
-            .paths
-            .keys()
-            .iter()
-            .zip(tsconfig.paths.values().iter())
-        {
-            if strings::eql_long(key, specifier, true) {
-                for original_path in value.iter() {
-                    let mut abs: &[u8] = original_path;
-                    if !::bun_paths::is_absolute(abs) {
-                        let parts: [&[u8]; 2] = [abs_base_url, original_path.as_ref()];
-                        match self
-                            .fs_ref()
-                            .abs_buf_checked(&parts, bufs!(tsconfig_path_abs))
-                        {
-                            Some(p) => abs = p,
-                            None => continue,
-                        }
-                    }
-                    bust_abs(self, abs);
-                }
-            }
+            a | b
         }
 
-        // Wildcard match (longest prefix, then longest suffix).
-        let mut longest: Option<(&[u8], &[u8], &[Box<[u8]>])> = None;
-        let mut best_prefix: i32 = -1;
-        let mut best_suffix: i32 = -1;
-        for (key, original_paths) in tsconfig
-            .paths
-            .keys()
-            .iter()
-            .zip(tsconfig.paths.values().iter())
-        {
-            if let Some(star) = strings::index_of_char(key, b'*') {
-                let star = star as usize;
-                let prefix: &[u8] = if star == 0 { b"" } else { &key[0..star] };
-                let suffix: &[u8] = if star == key.len() - 1 {
-                    b""
-                } else {
-                    &key[star + 1..]
-                };
-                let plen = i32::try_from(prefix.len()).expect("int cast");
-                let slen = i32::try_from(suffix.len()).expect("int cast");
-                if specifier.len() >= prefix.len() + suffix.len()
-                    && specifier.starts_with(prefix)
-                    && specifier.ends_with(suffix)
-                    && (plen > best_prefix || (plen == best_prefix && slen > best_suffix))
-                {
-                    best_prefix = plen;
-                    best_suffix = slen;
-                    longest = Some((prefix, suffix, original_paths));
-                }
-            }
-        }
-        if let Some((match_prefix, match_suffix, original_paths)) = longest {
-            for original_path in original_paths.iter() {
-                let matched_text =
-                    &specifier[match_prefix.len()..specifier.len() - match_suffix.len()];
-                let total_length: Option<u32> = strings::index_of_char(original_path, b'*');
-                let prefix_end = total_length
-                    .map(|v| v as usize)
-                    .unwrap_or(original_path.len());
-                let prefix_parts: [&[u8]; 2] = [abs_base_url, &original_path[0..prefix_end]];
+        let mut busted = false;
+        self.for_each_tsconfig_paths_target(tsconfig, specifier, |this, abs| {
+            busted |= bust_abs(this, abs);
+            false
+        });
 
-                let matched_text_with_suffix = bufs!(tsconfig_match_full_buf3);
-                let mut matched_text_with_suffix_len: usize = 0;
-                if total_length.is_some() {
-                    let suffix = strings::trim_left(&original_path[prefix_end..], b"*");
-                    matched_text_with_suffix_len = matched_text.len() + suffix.len();
-                    if matched_text_with_suffix_len > matched_text_with_suffix.len() {
-                        continue;
-                    }
-                    ::bun_core::concat_into(matched_text_with_suffix, &[matched_text, suffix]);
-                }
-
-                let Some(prefix) = self
-                    .fs_ref()
-                    .abs_buf_checked(&prefix_parts, bufs!(tsconfig_match_full_buf2))
-                else {
-                    continue;
-                };
-                let parts: [&[u8]; 3] = [
-                    prefix,
-                    if matched_text_with_suffix_len > 0 {
-                        strings::trim_left(
-                            &matched_text_with_suffix[0..matched_text_with_suffix_len],
-                            b"/",
-                        )
-                    } else {
-                        b""
-                    },
-                    strings::trim_left(match_suffix, b"/"),
-                ];
-                let Some(abs) = self
-                    .fs_ref()
-                    .abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf))
-                else {
-                    continue;
-                };
-                bust_abs(self, abs);
-            }
-        }
-
-        // `baseUrl` fallback: `load_node_modules` probes `baseUrl + specifier`.
         if tsconfig.has_base_url() {
-            let base: &[u8] = &tsconfig.base_url;
             if let Some(abs) = self.fs_ref().abs_buf_checked(
-                &[base, specifier],
+                &[&tsconfig.base_url, specifier],
                 bufs!(load_as_file_or_directory_via_tsconfig_base_path),
             ) {
-                bust_abs(self, abs);
+                busted |= bust_abs(self, abs);
             }
         }
 
@@ -4775,21 +4665,12 @@ impl<'a> Resolver<'a> {
 
     // This closely follows the behavior of "tryLoadModuleUsingPaths()" in the
     // official TypeScript compiler
-    pub(crate) fn match_tsconfig_paths(
+    fn for_each_tsconfig_paths_target(
         &mut self,
         tsconfig: &TSConfigJSON,
         path: &[u8],
-        kind: ast::ImportKind,
-        out: &mut MatchResult,
-    ) -> MatchStatus {
-        if let Some(debug) = self.debug_logs.as_mut() {
-            debug.add_note_fmt(format_args!(
-                "Matching \"{}\" against \"paths\" in \"{}\"",
-                bstr::BStr::new(path),
-                bstr::BStr::new(&tsconfig.abs_path)
-            ));
-        }
-
+        mut f: impl FnMut(&mut Self, &[u8]) -> bool,
+    ) -> bool {
         let mut abs_base_url: &[u8] = &tsconfig.base_url_for_paths;
 
         // The explicit base URL should take precedence over the implicit base URL
@@ -4826,11 +4707,8 @@ impl<'a> Resolver<'a> {
                                 self.fs_ref().abs_buf(&parts, bufs!(tsconfig_path_abs));
                         }
 
-                        if self
-                            .load_as_file_or_directory(absolute_original_path, kind, out)
-                            .is_success()
-                        {
-                            return MatchStatus::Success;
+                        if f(self, absolute_original_path) {
+                            return true;
                         }
                     }
                 }
@@ -4951,13 +4829,34 @@ impl<'a> Resolver<'a> {
                     continue;
                 };
 
-                if self
-                    .load_as_file_or_directory(absolute_original_path, kind, out)
-                    .is_success()
-                {
-                    return MatchStatus::Success;
+                if f(self, absolute_original_path) {
+                    return true;
                 }
             }
+        }
+
+        false
+    }
+
+    pub(crate) fn match_tsconfig_paths(
+        &mut self,
+        tsconfig: &TSConfigJSON,
+        path: &[u8],
+        kind: ast::ImportKind,
+        out: &mut MatchResult,
+    ) -> MatchStatus {
+        if let Some(debug) = self.debug_logs.as_mut() {
+            debug.add_note_fmt(format_args!(
+                "Matching \"{}\" against \"paths\" in \"{}\"",
+                bstr::BStr::new(path),
+                bstr::BStr::new(&tsconfig.abs_path)
+            ));
+        }
+
+        if self.for_each_tsconfig_paths_target(tsconfig, path, |this, abs| {
+            this.load_as_file_or_directory(abs, kind, out).is_success()
+        }) {
+            return MatchStatus::Success;
         }
 
         MatchStatus::NotFound

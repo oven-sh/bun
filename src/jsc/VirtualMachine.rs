@@ -4149,8 +4149,6 @@ impl VirtualMachine {
                     let mut busted = self.transpiler.resolver.bust_dir_cache(
                         bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
                     );
-                    // Unconditional: the literal-join bust above may have hit
-                    // only a cached negative for `<source>/<alias>`.
                     if bun_paths::is_package_path(normalized_specifier) {
                         busted |= self.transpiler.resolver.bust_dir_cache_from_tsconfig_paths(
                             source_to_use,

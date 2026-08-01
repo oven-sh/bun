@@ -2,10 +2,6 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // https://github.com/oven-sh/bun/issues/12372
-// Dynamic import() through a tsconfig `paths` alias must find files that were
-// created after the process started. The resolver caches directory listings;
-// the retry-on-miss path has to bust the cache for the *remapped* directory,
-// not the literal `<source_dir>/@/files` join.
 test("tsconfig paths alias resolves files created at runtime", async () => {
   using dir = tempDir("issue-12372", {
     "tsconfig.json": JSON.stringify({

@@ -5036,8 +5036,6 @@ unsafe fn resolve<'a>(
                         bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
                     )
                 };
-                // Unconditional: the literal-join bust above may have hit
-                // only a cached negative for `<source>/<alias>`.
                 if bun_paths::is_package_path(normalized_specifier) {
                     // SAFETY: see above.
                     busted |= unsafe {

@@ -3,6 +3,47 @@ import { bunEnv, bunExe, isDebug, normalizeBunSnapshot, tempDir } from "harness"
 import { readFileSync } from "node:fs";
 import path from "path";
 
+test("coverage report generation scales with ranges, not bytes", () => {
+  // A .ts module wrapped in nested functions so JSC reports many overlapping
+  // function blocks that each span most of the file. The per-byte report path
+  // in generate_report_from_blocks walked every byte of every block (O(depth *
+  // bytes)); the per-range path walks one entry per covered line / segment.
+  // Debug+ASAN uses a smaller, deeper module so the file compiles quickly but
+  // the sum-of-block-bytes stays large.
+  const [depth, n] = isDebug ? [100, 150] : [1, 4800];
+  const lines = ["export function f0() {"];
+  for (let i = 1; i < depth; i++) lines.push(`function f${i}() {`);
+  for (let i = 0; i < n; i++) {
+    lines.push(`  if (globalThis.never) { console.log("pad pad pad pad pad pad pad pad ${i}"); }`);
+  }
+  for (let i = depth - 1; i >= 1; i--) lines.push(`} f${i}();`);
+  lines.push("}", "f0();", "");
+  using dir = tempDir("cov", {
+    "big.ts": lines.join("\n"),
+    "t.test.ts": `import { f0 } from "./big"; import { test } from "bun:test"; test("t", () => { f0(); });\n`,
+  });
+
+  const run = (coverage: boolean) => {
+    const t0 = Bun.nanoseconds();
+    const r = Bun.spawnSync(
+      [bunExe(), "test", ...(coverage ? ["--coverage", "--coverage-reporter", "lcov"] : []), "./t.test.ts"],
+      { cwd: dir, env: bunEnv, stdio: ["ignore", "ignore", "ignore"] },
+    );
+    const ms = (Bun.nanoseconds() - t0) / 1e6;
+    expect(r.exitCode).toBe(0);
+    return ms;
+  };
+
+  // Covered first (so an O(bytes) report path times the test out), plain second
+  // as the warm baseline.
+  const covered = run(true);
+  const plain = run(false);
+  // The per-byte path adds ~2s on release / ~4.5s on debug+ASAN; the per-range
+  // path keeps `covered` close to `plain`. Floor guards against noise on fast
+  // release lanes where `plain` is a few tens of ms.
+  expect(covered, `plain=${plain.toFixed(0)}ms covered=${covered.toFixed(0)}ms`).toBeLessThan(Math.max(plain, 150) * 3);
+});
+
 test("coverage crash", () => {
   using dir = tempDir("cov", {
     "demo.test.ts": `class Y {
@@ -579,44 +620,6 @@ for (const ignoreSourcemaps of [false, true]) {
     expect(lcov).toMatchSnapshot();
   });
 }
-
-test("coverage report generation scales with ranges, not bytes", () => {
-  // A .ts module wrapped in an outer function so one JSC basic block spans the
-  // whole file. Before the per-segment rewrite of generate_report_from_blocks
-  // the sourcemap path visited every byte of every block, so report generation
-  // was O(sum of block byte-lengths); now it visits one entry per covered line
-  // / mapping segment. Debug+ASAN is ~30x slower, so use a smaller module there
-  // so the test stays inside the default timeout.
-  const n = isDebug ? 1400 : 4800;
-  const lines = ["export function outer() {"];
-  for (let i = 0; i < n; i++) {
-    lines.push(`  if (globalThis.never) { console.log("pad pad pad pad pad pad pad pad ${i}"); }`);
-  }
-  lines.push("}", "outer();", "");
-  using dir = tempDir("cov", {
-    "big.ts": lines.join("\n"),
-    "t.test.ts": `import { outer } from "./big"; import { test } from "bun:test"; test("t", () => { outer(); });\n`,
-  });
-
-  const run = (coverage: boolean) => {
-    const t0 = Bun.nanoseconds();
-    const r = Bun.spawnSync(
-      [bunExe(), "test", ...(coverage ? ["--coverage", "--coverage-reporter", "lcov"] : []), "./t.test.ts"],
-      { cwd: dir, env: bunEnv, stdio: ["ignore", "ignore", "ignore"] },
-    );
-    const ms = (Bun.nanoseconds() - t0) / 1e6;
-    expect(r.exitCode).toBe(0);
-    return ms;
-  };
-
-  run(false); // warm
-  const plain = run(false);
-  const covered = run(true);
-  // The per-byte path adds ~2s of report generation on release at n=4800; with
-  // the per-range path the remaining overhead is JSC's ControlFlowProfiler plus
-  // the lcov write. Floor guards against noise on fast release lanes.
-  expect(covered, `plain=${plain.toFixed(0)}ms covered=${covered.toFixed(0)}ms`).toBeLessThan(Math.max(plain, 150) * 3);
-});
 
 test("coveragePathIgnorePatterns - ignore all files", () => {
   using dir = tempDir("cov", {

@@ -409,9 +409,7 @@ impl PackageManager {
         path.append(original_path.as_slice())?;
         script_env.put(b"PATH", path.slice())?;
 
-        // npm_package_* describes the package whose script runs, not the root
-        // project. Read the on-disk manifest because the lockfile has no
-        // version for file:/git/tarball deps.
+        // npm_package_* from the on-disk manifest: lockfile has no version for file:/git deps.
         {
             let package_json_path = join_abs_string_z::<platform::Auto>(cwd, &[b"package.json"]);
             script_env.put(b"npm_package_json", package_json_path.as_bytes())?;

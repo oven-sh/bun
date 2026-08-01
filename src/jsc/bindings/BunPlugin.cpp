@@ -707,13 +707,13 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     RETURN_IF_EXCEPTION(scope, {});
 
     bool hasESMEntry = globalObject->moduleLoader()->registryEntry(specifierIdent) != nullptr;
-    JSValue cjsEntry = globalObject->requireMap()->get(globalObject, specifierString);
+    bool hasCJSEntry = globalObject->requireMap()->has(globalObject, specifierString);
     RETURN_IF_EXCEPTION(scope, {});
 
-    globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock);
-
-    if (!hasESMEntry && !cjsEntry)
+    if (!hasESMEntry && !hasCJSEntry) {
+        globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock);
         return JSValue::encode(jsUndefined());
+    }
 
     JSValue result = mock->executeOnce(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -729,6 +729,8 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
             continue;
         }
         case JSC::JSPromise::Status::Pending: {
+            globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock);
+
             JSValue capability = JSC::JSPromise::createNewPromiseCapability(globalObject, globalObject->promiseConstructor());
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -755,6 +757,8 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     applyModuleMockOverrides(globalObject, mock, result);
     RETURN_IF_EXCEPTION(scope, {});
+
+    globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock);
 
     return JSValue::encode(jsUndefined());
 }

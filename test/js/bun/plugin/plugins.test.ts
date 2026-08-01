@@ -460,6 +460,47 @@ describe("module", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/5044
+  it.concurrent("pass-through onLoad preserves CJS interop for named imports from node_modules", async () => {
+    using dir = tempDir("plugin-onload-passthrough-cjs", {
+      "preload.ts": `
+        import { readFileSync } from "node:fs";
+        Bun.plugin({
+          name: "noop",
+          setup(b) {
+            b.onLoad({ filter: /\\.[mc]?js$/ }, (args) => ({
+              contents: readFileSync(args.path, "utf8"),
+              loader: "js",
+            }));
+          },
+        });
+      `,
+      "node_modules/fake-cjs-pkg/package.json": JSON.stringify({ name: "fake-cjs-pkg", main: "./lib/index.js" }),
+      "node_modules/fake-cjs-pkg/lib/index.js": `
+        "use strict";
+        Object.defineProperty(exports, "__esModule", { value: true });
+        exports.readProjectManifest = function () { return { name: "hello" }; };
+      `,
+      "entry.ts": `
+        import { readProjectManifest } from "fake-cjs-pkg";
+        const r = require("fake-cjs-pkg");
+        console.log(JSON.stringify({ esm: readProjectManifest(), cjs: r.readProjectManifest() }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./preload.ts", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+      esm: { name: "hello" },
+      cjs: { name: "hello" },
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("dynamic import", () => {

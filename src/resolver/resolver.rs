@@ -565,7 +565,7 @@ pub struct Resolver<'a> {
     pub(crate) dir_cache: *mut DirInfo::HashMap,
 
     /// This is set to false for the runtime. The runtime should choose "main"
-    /// over "module" in package.json
+    /// over "module" in package.json unless "module" is .mjs/.mts (#8238 vs #3434).
     pub prefer_module_field: bool,
 
     /// This is an array of paths to resolve against. Used for passing an
@@ -5505,10 +5505,8 @@ impl<'a> Resolver<'a> {
                             // both the "module" file and the "main" file in the bundle at the
                             // same time.
                             //
-                            // Additionally, if this is for the runtime, use the "main" field
-                            // unless "module" resolved to .mjs/.mts: a .mjs target is real
-                            // Node-loadable ESM (#8238), whereas a .js target is typically a
-                            // browser bundler build the runtime must avoid (#3434).
+                            // Additionally, if this is for the runtime, use the "main" field.
+                            // If it doesn't exist, the "module" field will be used.
                             let module_is_explicit_esm = matches!(
                                 module_type_from_ext(bun_paths::extension(
                                     out.path_pair.primary.text(),

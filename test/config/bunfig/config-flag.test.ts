@@ -89,3 +89,47 @@ describe.concurrent("bun <script> --config path binding", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// Space-separated values of the global flags (`-c`/`--config`, `--cwd`,
+// `--env-file`) must not be mistaken for the subcommand name.
+describe.concurrent("global flag value before a subcommand", () => {
+  const files = {
+    "app.ts": `console.log(JSON.stringify({ fromCfg: process.env.FROM_CFG ?? "no", argv: process.argv.slice(2) }));`,
+    "cfg.toml": `[define]\n"process.env.FROM_CFG" = '"yes"'\n`,
+    "sub/.env.local": `FROM_CFG=env\n`,
+    "sub/app.ts": `console.log(JSON.stringify({ fromCfg: process.env.FROM_CFG ?? "no" }));`,
+  };
+
+  test.each(spellings)("bun %p run app.ts dispatches RunCommand with the config applied", async (...flag) => {
+    using dir = tempDir("config-flag-run-sub", files);
+    const { stdout, stderr, exitCode } = await run(String(dir), [...flag, "run", "app.ts", "pass-through"]);
+    expect(stderr).not.toContain("cfg.toml");
+    expect(JSON.parse(stdout.trim())).toEqual({ fromCfg: "yes", argv: ["pass-through"] });
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun --cwd <dir> run app.ts dispatches RunCommand", async () => {
+    using dir = tempDir("cwd-flag-run-sub", files);
+    const { stdout, exitCode } = await run(String(dir), ["--cwd", join(String(dir), "sub"), "run", "app.ts"]);
+    expect(JSON.parse(stdout.trim())).toEqual({ fromCfg: "env" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun --env-file <file> run app.ts dispatches RunCommand", async () => {
+    using dir = tempDir("envfile-flag-run-sub", files);
+    const { stdout, exitCode } = await run(String(dir), ["--env-file", "sub/.env.local", "run", "app.ts"]);
+    expect(JSON.parse(stdout.trim())).toEqual({ fromCfg: "env", argv: [] });
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun --config <path> test <file> dispatches TestCommand", async () => {
+    using dir = tempDir("config-flag-test-sub", {
+      "cfg.toml": `[define]\n"process.env.FROM_CFG" = '"yes"'\n`,
+      "t.test.ts": `import { test, expect } from "bun:test"; test("cfg", () => expect(process.env.FROM_CFG).toBe("yes"));`,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--config", "cfg.toml", "test", "t.test.ts"]);
+    expect(stderr).toContain("1 pass");
+    expect(stdout + stderr).not.toContain("Script not found");
+    expect(exitCode).toBe(0);
+  });
+});

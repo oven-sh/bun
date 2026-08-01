@@ -544,12 +544,18 @@ mod tests {
         let params: [clap::Param<u8>; 3] = [
             clap::Param {
                 id: 0,
-                names: clap::Names::short(b'a'),
+                names: clap::Names {
+                    short: Some(b'a'),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             clap::Param {
                 id: 1,
-                names: clap::Names::short(b'c'),
+                names: clap::Names {
+                    short: Some(b'c'),
+                    ..Default::default()
+                },
                 takes_value: clap::Values::OneOptional,
                 ..Default::default()
             },

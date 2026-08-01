@@ -937,6 +937,17 @@ pub mod command {
             && first_arg_name[0] == b'-'
             && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
         {
+            // The value-taking global flags in `BASE_PARAMS_` may precede a
+            // subcommand (`bun --config ./x.toml run …`, `bun --cwd dir test …`).
+            // When spelled as a separate token, step past the value so it isn't
+            // misread as the subcommand name.
+            if matches!(
+                first_arg_name,
+                b"-c" | b"--config" | b"--cwd" | b"--env-file"
+            ) && iter.next().is_none()
+            {
+                return Tag::AutoCommand;
+            }
             match iter.next() {
                 Some(n) => first_arg_name = n,
                 None => return Tag::AutoCommand,

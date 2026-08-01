@@ -5,7 +5,7 @@
 // module scope) keeps the real value. When the target had already been loaded
 // by an earlier test file, mock.module() must evict cached dependents so a
 // subsequent import/require re-evaluates them against the mock.
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 function fakeStoragePkg(): Record<string, string> {

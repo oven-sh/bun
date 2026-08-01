@@ -37,6 +37,7 @@ pub struct Capture {
     // The shell keeps the buffer alive for the lifetime
     // of the spawned process; this struct never frees it.
     #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg_attr(target_env = "ohos", allow(dead_code))]
     pub(crate) buf: *mut Vec<u8>,
 }
 
@@ -103,6 +104,7 @@ impl ToSpawnOptsError {
 
 impl Stdio {
     #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg_attr(target_env = "ohos", allow(dead_code))]
     pub(crate) fn byte_slice(&self) -> &[u8] {
         match self {
             // SAFETY: `buf` is a live backref owned by the caller (shell); the

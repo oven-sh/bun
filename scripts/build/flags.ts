@@ -998,8 +998,8 @@ export const linkerFlags: Flag[] = [
     // unsigned binaries fine, an ad-hoc signature buys nothing there, and
     // the CodeDirectory costs 32 bytes per 4 KB page ≈ 0.8% of the binary).
     flag: "-Wl,-adhoc_codesign",
-    when: c => c.darwin && c.crossTarget !== undefined && c.arm64,
-    desc: "macOS arm64 cross-link: emit an ad-hoc LC_CODE_SIGNATURE for macho-postlink to replace",
+    when: c => c.darwinLld && c.arm64,
+    desc: "macOS arm64 ld64.lld link: emit an ad-hoc LC_CODE_SIGNATURE for macho-postlink to replace",
   },
   {
     // `bun build --compile` grows the __BUN placeholder segment in place and
@@ -1014,8 +1014,8 @@ export const linkerFlags: Flag[] = [
     // holds a single 8-byte JSC::SourceProfiler hook and is only meaningful
     // as a dyld-shared-cache page-grouping hint, which executables don't use.
     flag: "-Wl,-rename_segment,__DATA_DIRTY,__DATA",
-    when: c => c.darwin && c.crossTarget !== undefined,
-    desc: "macOS cross-link: keep __BUN as the last content segment so `bun build --compile` can grow it",
+    when: c => c.darwinLld,
+    desc: "macOS ld64.lld link: keep __BUN as the last content segment so `bun build --compile` can grow it",
   },
   {
     // Identical-code folding, on top of -dead_strip: dead_strip removes
@@ -1035,10 +1035,21 @@ export const linkerFlags: Flag[] = [
   {
     // -ld_new selects Apple's new linker — only meaningful (and only
     // understood) when Apple's ld driver does the link. ld64.lld (the
-    // cross-link path) parses it as `-l d_new` and fails.
+    // cross-link path, and native ASAN below) parses it as `-l d_new` and
+    // fails.
     flag: "-Wl,-ld_new",
-    when: c => c.darwin && c.crossTarget === undefined,
-    desc: "Use new Apple linker (native darwin links only)",
+    when: c => c.darwin && !c.darwinLld,
+    desc: "Use new Apple linker (native darwin non-ASAN links only)",
+  },
+  {
+    // Native darwin ASAN: Apple's -ld_new rejects rustc's
+    // `-Zsanitizer=address` relocations as `invalid r_symbolnum=<N>`, so
+    // link with ld64.lld instead (cfg.ld is swapped in resolveConfig). The
+    // cross-link entry below already passes --ld-path for non-native hosts.
+    // Tracked in workarounds.ts ("darwin-asan-ld-new").
+    flag: c => `--ld-path=${c.ld}`,
+    when: c => c.darwinLld && c.crossTarget === undefined,
+    desc: "Native darwin ASAN link: ld64.lld (Apple's ld_new rejects rustc's ASAN relocations)",
   },
   {
     // Cross-link from a non-darwin host: same pattern as Android/FreeBSD —

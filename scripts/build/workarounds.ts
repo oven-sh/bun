@@ -155,14 +155,37 @@ export const workarounds: Workaround[] = [
       `scripts/build/shims.ts, and this entry.`,
   },
   {
+    id: "darwin-asan-ld-new",
+    issue: "Apple ld-prime vs rustc -Zsanitizer=address (no upstream tracker yet)",
+    description:
+      "Apple's new linker (`-ld_new` / ld-prime) rejects relocations in rustc's ASAN sections " +
+      "(`__asan_globals`, `__asan_liveness`, `asan.module_ctor/dtor`) as `invalid r_symbolnum=<N>`, " +
+      "so the native darwin debug link fails. Native darwin ASAN links go through ld64.lld instead " +
+      "(cfg.darwinLld) — the same linker the cross-compile path already uses.",
+    applies: cfg => cfg.darwin && cfg.asan && cfg.crossTarget === undefined,
+    expectedToBeFixed: cfg => {
+      // The offending relocation comes from rustc's LLVM codegen; re-test
+      // when the pinned rustc moves to its next LLVM major. If `bun bd`
+      // (default asan on arm64 macOS) links cleanly with `-Wl,-ld_new`
+      // restored, delete the workaround; otherwise bump the threshold.
+      const RECHECK_AT_RUST_LLVM = "23.0.0";
+      return cfg.rustLlvmVersion !== undefined && satisfiesRange(cfg.rustLlvmVersion, `>=${RECHECK_AT_RUST_LLVM}`);
+    },
+    cleanup:
+      `In scripts/build/config.ts drop the native-darwin-ASAN ld64.lld swap and the darwinLld field; ` +
+      `in flags.ts restore the plain \`-Wl,-ld_new\` entry and revert the darwinLld predicates to ` +
+      `crossTarget checks; in tools.ts re-gate ld64.lld resolution to non-darwin hosts; in shims.ts ` +
+      `restore needsMachoPostlink to the crossTarget check; and delete this entry.`,
+  },
+  {
     id: "darwin-cross-stack-size",
     issue:
       "https://github.com/llvm/llvm-project/blob/main/lld/MachO/Driver.cpp (OPT_stack_size in unimplemented warnings)",
     description:
       "ld64.lld parses `-stack_size` but doesn't implement it (\"is not yet implemented. Stay " +
-      'tuned..."), so darwin cross links keep the 8 MB default main-thread stack instead of the ' +
+      'tuned..."), so darwin ld64.lld links keep the 8 MB default main-thread stack instead of the ' +
       "18 MB JSC needs. shims/macho-postlink.c patches LC_MAIN.stacksize after the link instead.",
-    applies: cfg => cfg.darwin && cfg.crossTarget !== undefined,
+    applies: cfg => cfg.darwinLld,
     expectedToBeFixed: cfg => {
       // Not implemented as of LLVM 21 (lld/MachO/Driver.cpp keeps
       // OPT_stack_size in the "unimplemented, warn and ignore" list).

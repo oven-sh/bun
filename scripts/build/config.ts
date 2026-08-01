@@ -139,6 +139,15 @@ export interface Config {
   /** IR PGO: .profdata file path (optimized build). Mutually exclusive with pgoGenerate. */
   pgoUse: string | undefined;
   asan: boolean;
+  /**
+   * The darwin link uses lld's Mach-O port (`ld64.lld`) instead of Apple's
+   * ld. True for darwin cross-compiles (always) and for native darwin ASAN
+   * builds (Apple's `-ld_new` rejects rustc's `-Zsanitizer=address`
+   * relocations; see workarounds.ts "darwin-asan-ld-new"). Link flags that
+   * key on linker behavior (segment ordering, the macho-postlink stack-size
+   * patch) check this, not `crossTarget`.
+   */
+  darwinLld: boolean;
   assertions: boolean;
   logs: boolean;
   /** x64-only: target nehalem (no AVX). Default true on x64 — the only x64 build we ship. */
@@ -1166,6 +1175,34 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     }
   }
 
+  // ─── Native darwin ASAN → ld64.lld ───
+  // rustc's `-Zsanitizer=address` emits objects whose ASAN sections
+  // (`__asan_globals`, `__asan_liveness`, the `asan.module_ctor/dtor` in
+  // `__mod_init_func`) carry relocations Apple's new linker (`-ld_new` /
+  // ld-prime) rejects as `invalid r_symbolnum=<N>`. The cross-compile path
+  // already links with ld64.lld and is unaffected, so route native darwin
+  // ASAN links through it too. Tracked in workarounds.ts
+  // ("darwin-asan-ld-new") so this self-obsoletes once Apple's linker (or
+  // rustc's codegen) stops tripping on these objects.
+  let darwinNativeLld: string | undefined;
+  if (darwin && !darwinCross && asan) {
+    if (toolchain.ld64Lld === undefined) {
+      throw new BuildError(
+        "Native darwin ASAN builds link with ld64.lld (Apple's ld rejects rustc's ASAN relocations)",
+        {
+          hint:
+            "ld64.lld ships with the same Homebrew llvm install as clang. " +
+            "Reinstall `brew install llvm@21` (or set --asan=off to link with Apple's ld).",
+        },
+      );
+    }
+    darwinNativeLld = toolchain.ld64Lld;
+  }
+  // True whenever a darwin link goes through ld64.lld instead of Apple's ld
+  // (cross-compile, or the native-ASAN swap above). rust-only cross builds
+  // skip the link entirely, so leaving them false is harmless.
+  const darwinLld = ld64StripSwap !== undefined || darwinNativeLld !== undefined;
+
   return {
     os,
     arch,
@@ -1193,6 +1230,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     pgoGenerate,
     pgoUse,
     asan,
+    darwinLld,
     assertions,
     logs,
     baseline,
@@ -1223,7 +1261,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     clangResourceDir: toolchain.clangResourceDir,
     ar: toolchain.ar,
     ranlib: toolchain.ranlib,
-    ld: ld64StripSwap?.ld ?? ld,
+    ld: ld64StripSwap?.ld ?? darwinNativeLld ?? ld,
     rustLld: toolchain.rustLld,
     rustLlvmVersion: toolchain.rustLlvmVersion,
     rustSysroot: toolchain.rustSysroot,

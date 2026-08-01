@@ -488,12 +488,14 @@ export function resolveLlvmToolchain(
     ld = ""; // darwin: unused
   }
 
-  // ld64.lld: lld's Mach-O port. Only used when a non-darwin host
-  // cross-compiles FOR darwin (resolveConfig swaps it in as cfg.ld); the
-  // target isn't known here, so resolve it opportunistically — it ships in
-  // the same LLVM install as ld.lld, and the lookup is a handful of stats.
+  // ld64.lld: lld's Mach-O port. Swapped in as cfg.ld when a non-darwin
+  // host cross-compiles FOR darwin, and for native darwin ASAN builds
+  // (Apple's ld_new rejects rustc's ASAN relocations — see workarounds.ts
+  // "darwin-asan-ld-new"). Ships in the same LLVM install as clang, so the
+  // lookup is a handful of stats; resolved opportunistically on every unix
+  // host since the target isn't known yet.
   let ld64Lld: string | undefined;
-  if (os !== "darwin" && os !== "windows") {
+  if (os !== "windows") {
     ld64Lld = findLlvmTool("ld64.lld", paths, os, { checkVersion: false, required: false })?.path;
   }
 

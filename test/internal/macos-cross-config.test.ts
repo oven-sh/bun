@@ -22,6 +22,7 @@ import {
   elfDebugCompressPostlinkCommand,
   machoEntitlementsPlist,
   machoPostlinkCommand,
+  needsMachoPostlink,
 } from "../../scripts/build/shims.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
@@ -71,6 +72,7 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     expect(cfg.osxDeploymentTarget).toBe("13.0");
     expect(cfg.osxSysroot).toBeDefined();
     expect(cfg.ld).toBe("/fake/llvm/bin/ld64.lld");
+    expect(cfg.darwinLld).toBe(true);
     expect(cfg.strip).toBe("/fake/llvm/bin/llvm-strip");
 
     const x64 = resolveDarwin({ arch: "x64" });
@@ -254,6 +256,87 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     expect(flags.cxxflags.some(f => f.includes("apple-macosx"))).toBe(false);
     expect(flags.cxxflags).not.toContain("-isysroot");
     expect(flags.cxxflags).not.toContain("-nostdinc");
+  });
+});
+
+describe("native darwin ASAN → ld64.lld (workarounds.ts 'darwin-asan-ld-new')", () => {
+  // resolveConfig() detects the real host, so a Linux machine can't resolve a
+  // "native darwin" config directly. Build one by taking the darwin cross
+  // resolution (which populates every darwin field) and overriding just the
+  // linker-selection fields — computeFlags/needsMachoPostlink read Config as
+  // a plain record, so the rest is inert.
+  function nativeDarwinAsan(): Config {
+    return {
+      ...resolveDarwin({ buildType: "Debug", assertions: true }),
+      crossTarget: undefined,
+      asan: true,
+      darwinLld: true,
+      ld: "/fake/llvm/bin/ld64.lld",
+    };
+  }
+  function nativeDarwinNoAsan(): Config {
+    return {
+      ...resolveDarwin({ buildType: "Debug", assertions: true }),
+      crossTarget: undefined,
+      asan: false,
+      darwinLld: false,
+      ld: "",
+    };
+  }
+
+  test("native ASAN links through --ld-path=ld64.lld instead of Apple's -ld_new", () => {
+    const flags = computeFlags(nativeDarwinAsan());
+    // The whole point: -ld_new is the Apple linker that rejects rustc's ASAN
+    // relocations with `invalid r_symbolnum`; ld64.lld handles them.
+    expect(flags.ldflags).not.toContain("-Wl,-ld_new");
+    expect(flags.ldflags).toContain("--ld-path=/fake/llvm/bin/ld64.lld");
+    // --ld-path is emitted exactly once (the cross-link entry is gated on
+    // crossTarget, so it doesn't double up).
+    expect(flags.ldflags.filter(f => f.startsWith("--ld-path="))).toHaveLength(1);
+  });
+
+  test("native ASAN picks up the ld64.lld-specific link flags", () => {
+    const flags = computeFlags(nativeDarwinAsan());
+    // Segment ordering quirk is about ld64.lld, not about cross-compiling.
+    expect(flags.ldflags).toContain("-Wl,-rename_segment,__DATA_DIRTY,__DATA");
+    // arm64 needs a signature for macho-postlink to regenerate after the
+    // stack-size patch.
+    expect(flags.ldflags).toContain("-Wl,-adhoc_codesign");
+    // Cross-only machinery must NOT leak into the native link: clang already
+    // knows its host target, and -mlinker-version is only needed to coax the
+    // driver into the modern -platform_version argument on a non-Apple host.
+    expect(flags.ldflags).not.toContain("-mlinker-version=705");
+    expect(flags.ldflags.some(f => f.startsWith("--target="))).toBe(false);
+  });
+
+  test("native ASAN runs macho-postlink (ld64.lld ignores -stack_size)", () => {
+    const cfg = nativeDarwinAsan();
+    expect(needsMachoPostlink(cfg)).toBe(true);
+    const cmd = machoPostlinkCommand(cfg);
+    expect(cmd).toContain(`macho-postlink $out --stack-size=${DARWIN_STACK_SIZE}`);
+    // arm64: the stack-size patch invalidates the ad-hoc signature, so it's
+    // re-signed with the debug entitlements (get-task-allow for lldb).
+    expect(cmd).toContain("entitlements.debug.plist");
+  });
+
+  test("native non-ASAN keeps Apple's -ld_new and skips every ld64.lld extra", () => {
+    const cfg = nativeDarwinNoAsan();
+    const flags = computeFlags(cfg);
+    expect(flags.ldflags).toContain("-Wl,-ld_new");
+    expect(flags.ldflags.some(f => f.startsWith("--ld-path="))).toBe(false);
+    expect(flags.ldflags).not.toContain("-Wl,-rename_segment,__DATA_DIRTY,__DATA");
+    expect(flags.ldflags).not.toContain("-Wl,-adhoc_codesign");
+    expect(needsMachoPostlink(cfg)).toBe(false);
+    expect(machoPostlinkCommand(cfg)).toBe("");
+  });
+
+  test("non-darwin configs never set darwinLld", () => {
+    const linux = resolveConfig(
+      { os: "linux", arch: "x64", abi: "gnu", buildType: "Debug", asan: true, linuxSysroot: "/fake" },
+      mockToolchain({ ld64Lld: undefined, llvmStrip: undefined, dsymutil: undefined }),
+    );
+    expect(linux.darwinLld).toBe(false);
+    expect(needsMachoPostlink(linux)).toBe(false);
   });
 });
 

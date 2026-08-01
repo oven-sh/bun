@@ -42,7 +42,6 @@ private:
     BUN_EXPORT static Local<String> NewFromUtf8Literal(Isolate* isolate, const char* literal, NewStringType type, int length);
 
 public:
-
     // length:     number of bytes in buffer (if negative, assume it is large enough)
     // nchars_ref: store number of code units written here
     // return:     number of bytes copied including null terminator

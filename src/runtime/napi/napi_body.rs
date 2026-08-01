@@ -3261,8 +3261,7 @@ mod v8_api {
         -> *mut c_void;
         pub(super) fn _ZN4node13EmitAsyncInitEPN2v87IsolateENS0_5LocalINS0_6ObjectEEENS3_INS0_6StringEEEd()
         -> *mut c_void;
-        pub(super) fn _ZN4node16EmitAsyncDestroyEPN2v87IsolateENS_13async_contextE()
-        -> *mut c_void;
+        pub(super) fn _ZN4node16EmitAsyncDestroyEPN2v87IsolateENS_13async_contextE() -> *mut c_void;
         pub(super) fn _ZN4node12MakeCallbackEPN2v87IsolateENS0_5LocalINS0_6ObjectEEENS3_INS0_8FunctionEEEiPNS3_INS0_5ValueEEENS_13async_contextE()
         -> *mut c_void;
         pub(super) fn _ZN2v84base9TimeTicks3NowEv() -> *mut c_void;
@@ -3866,8 +3865,7 @@ mod posix_platform_specific_v8_apis {
     unsafe extern "C" {
         pub(super) fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmSt8functionIFNS_10MaybeLocalINS_5ValueEEEvEE()
         -> *mut c_void;
-        pub(super) fn _ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateESt8optionalImE()
-        -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateESt8optionalImE() -> *mut c_void;
         pub(super) fn _ZN2v86BigInt3NewEPNS_7IsolateEl() -> *mut c_void;
         pub(super) fn _ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE()
         -> *mut c_void;

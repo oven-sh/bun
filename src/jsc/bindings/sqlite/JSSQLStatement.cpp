@@ -200,16 +200,6 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
         return {};                                                                                                 \
     }
 
-#define CHECK_PREPARED_JIT                                                                                         \
-    if (castedThis->stmt == nullptr || castedThis->version_db == nullptr) [[unlikely]] {                           \
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s)); \
-        return {};                                                                                                 \
-    }                                                                                                              \
-    if (castedThis->version_db->finalizedStatementsOnClose) [[unlikely]] {                                         \
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));     \
-        return {};                                                                                                 \
-    }
-
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(VersionSqlite3);
 
 class VersionSqlite3 {

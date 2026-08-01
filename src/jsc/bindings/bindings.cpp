@@ -5434,12 +5434,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
             return;
         }
 
-        // DOM wrappers (URL, Event subclasses, etc.) expose their state through accessors
-        // defined on the prototype and have no own data properties, so the own-property scan
-        // above yields an empty `{}` in jest diffs/snapshots and
-        // `Bun.inspect(..., { sorted: true })`. Walk the prototype chain for those types the
-        // way forEachProperty does so their accessors are enumerated. Other objects keep the
-        // own-properties-only behaviour pretty-format expects.
+        // DOM wrappers (URL, Event, ...) hold state only in prototype accessors; walk the
+        // chain like forEachProperty so they don't render as `{}`.
         if (object->type() == JSC::JSType(JSDOMWrapperType) || object->type() == JSC::JSType(JSEventType)) {
             size_t prototypeCount = 1;
             JSObject* iterating = object->getPrototype(globalObject).getObject();

@@ -138,32 +138,49 @@ describe.skipIf(isWindows)("shell completions: `bun <path>` and runtime flags (#
     },
   );
 
-  test.concurrent.skipIf(bashMajor < 4)("bash: `--flag=value` token triples are skipped", async () => {
-    // With default COMP_WORDBREAKS, readline splits `--inspect=127.0.0.1` into
-    // three tokens. A bare `=` must also consume the value after it so
-    // `first_word` lands on `run`, not the address.
+  test.concurrent.skipIf(bashMajor < 4)("bash: `=`/`:` word-break tokens in flag values are skipped", async () => {
+    // Default COMP_WORDBREAKS contains `=` and `:`, so readline splits
+    // `--inspect=127.0.0.1:9229` into five tokens and `--define K:V` into
+    // three. Bare `=`/`:` tokens must also consume the value after them so
+    // `first_word` lands on `run`, not on an address or the colon.
     const script = await embeddedCompletions("bash");
     using dir = tempDir("bun-bash-completion-7805c", { "bun.bash": script, ...fixtureFiles });
-    const probe =
-      "source ./bun.bash\n" +
-      "COMP_WORDS=(bun --inspect = 127.0.0.1 run src/)\n" +
-      "COMP_CWORD=5\n" +
-      'COMP_LINE="bun --inspect=127.0.0.1 run src/"\n' +
-      "COMP_POINT=${#COMP_LINE}\n" +
-      "COMPREPLY=()\n" +
-      "_bun_completions\n" +
-      'for w in "${COMPREPLY[@]}"; do printf \'%s\\n\' "$w"; done\n';
-    await using proc = Bun.spawn({
-      cmd: ["bash", "-c", probe],
-      cwd: String(dir),
-      env: { ...bunEnv, PATH: process.env.PATH },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout.split("\n").filter(Boolean)).toContain("src/index.ts");
-    expect(exitCode).toBe(0);
+
+    async function probe(words: string[], line: string): Promise<string[]> {
+      const src =
+        "source ./bun.bash\n" +
+        `COMP_WORDS=(${words.map(w => JSON.stringify(w)).join(" ")})\n` +
+        `COMP_CWORD=${words.length - 1}\n` +
+        `COMP_LINE=${JSON.stringify(line)}\n` +
+        "COMP_POINT=${#COMP_LINE}\n" +
+        "COMPREPLY=()\n" +
+        "_bun_completions\n" +
+        'for w in "${COMPREPLY[@]}"; do printf \'%s\\n\' "$w"; done\n';
+      await using proc = Bun.spawn({
+        cmd: ["bash", "-c", src],
+        cwd: String(dir),
+        env: { ...bunEnv, PATH: process.env.PATH },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return stdout.split("\n").filter(Boolean);
+    }
+
+    expect(
+      await probe(["bun", "--inspect", "=", "127.0.0.1", "run", "src/"], "bun --inspect=127.0.0.1 run src/"),
+    ).toContain("src/index.ts");
+    expect(
+      await probe(
+        ["bun", "--inspect", "=", "127.0.0.1", ":", "9229", "run", "src/"],
+        "bun --inspect=127.0.0.1:9229 run src/",
+      ),
+    ).toContain("src/index.ts");
+    expect(await probe(["bun", "--define", "K", ":", "V", "run", "src/"], "bun --define K:V run src/")).toContain(
+      "src/index.ts",
+    );
   });
 
   test.concurrent.skipIf(bashMajor < 1)("bash: script passes bash -n", async () => {

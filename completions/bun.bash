@@ -104,9 +104,9 @@ _bun_completions() {
     local first_word="" i;
     for (( i=1; i < COMP_CWORD; i++ )); do
         case "${COMP_WORDS[i]}" in
-            =) ((i++));;
+            =|:) ((i++));;
             --conditions|--config|--console-depth|--cwd|--define|--dns-result-order|--elide-lines|--env-file|--eval|--extension-order|--fetch-preconnect|--filter|--import|--install|--jsx-factory|--jsx-fragment|--jsx-import-source|--jsx-runtime|--loader|--main-fields|--max-http-header-size|--origin|--port|--preload|--print|--public-dir|--require|--shell|--target|--title|--tsconfig-override|--unhandled-rejections|-F|-c|-d|-e|-l|-p|-r|-u)
-                ((i++)); [[ "${COMP_WORDS[i]}" == "=" ]] && ((i++));;
+                ((i++)); [[ "${COMP_WORDS[i]}" == "=" || "${COMP_WORDS[i]}" == ":" ]] && ((i++));;
             -*) ;;
             *) first_word="${COMP_WORDS[i]}"; break;;
         esac

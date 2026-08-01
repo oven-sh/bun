@@ -2181,7 +2181,10 @@ fn get_or_put_resolved_package(
     install_peer: bool,
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
-    if install_peer && behavior.is_peer() && !should_update_dependency(this, dependency, dependency_id) {
+    if install_peer
+        && behavior.is_peer()
+        && !should_update_dependency(this, dependency, dependency_id)
+    {
         if let Some(index) = this.lockfile.package_index.get(&name_hash) {
             let resolutions = this.lockfile.packages.items_resolution();
             match index {

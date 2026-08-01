@@ -106,6 +106,11 @@ pub enum Tag {
     Bun,
     /// A builtin module, such as `node:fs` or `bun:sqlite`
     Builtin,
+    /// The bundler rewrote `require('bindings')('<name>')`; `path.text` holds
+    /// the addon name. `resolve_import_records` probes the enclosing package's
+    /// `build/Release/<name>` (etc.) and rewrites `path` to the matching
+    /// `.node` file so the Napi loader embeds it.
+    NativeBindings,
     /// An import to the internal runtime
     Runtime,
     /// A 'macro:' import namespace or 'with { type: "macro" }'

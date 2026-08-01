@@ -2007,6 +2007,62 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // Rewrite `require('bindings')('<name>')` to a tagged require() of the
+        // addon name so the bundler can locate and embed the `.node` file.
+        // The `bindings` npm package walks the filesystem at runtime to find a
+        // native addon relative to the caller's package root, which breaks once
+        // the caller is bundled (and cannot work in a `--compile` binary).
+        if p.options.bundle && e_.args.len_u32() == 1 {
+            if let Data::ERequireString(req) = e_.target.data {
+                let target_loc = e_.target.loc;
+                let record =
+                    &mut p.import_records.items_mut()[req.import_record_index as usize];
+                if record.path.text == b"bindings"
+                    && record.tag == js_ast::ImportRecordTag::None
+                {
+                    let arg = e_.args.slice()[0];
+                    let addon_name = match arg.data {
+                        Data::EString(mut s) => {
+                            s.resolve_rope_if_needed(p.arena);
+                            s.string(p.arena).ok()
+                        }
+                        _ => None,
+                    };
+                    if let Some(addon_name) = addon_name {
+                        record
+                            .flags
+                            .insert(js_ast::ImportRecordFlags::IS_UNUSED);
+                        let handles_import_errors =
+                            p.fn_or_arrow_data_visit.try_body_count != 0;
+                        let range = p.source.range_of_string(arg.loc);
+                        let addon_record_index = p.add_import_record_by_range(
+                            js_ast::ImportKind::Require,
+                            range,
+                            addon_name,
+                        );
+                        {
+                            let addon_record = &mut p.import_records.items_mut()
+                                [addon_record_index as usize];
+                            addon_record.tag = js_ast::ImportRecordTag::NativeBindings;
+                            addon_record.flags.set(
+                                js_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS,
+                                handles_import_errors,
+                            );
+                        }
+                        p.import_records_for_current_part.push(addon_record_index);
+                        *e = p.new_expr(
+                            E::RequireString {
+                                import_record_index: addon_record_index,
+                                ..Default::default()
+                            },
+                            target_loc,
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+
         if matches!(e_.target.data, Data::ERequireCallTarget) {
             e_.can_be_unwrapped_if_unused = E::CallUnwrap::Never;
 

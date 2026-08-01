@@ -20,6 +20,7 @@ const kHighWaterMark = Symbol("highWaterMark");
 const kPendingRead = Symbol("pendingRead");
 const kHasResized = Symbol("hasResized");
 const kRemainingChunk = Symbol("remainingChunk");
+const kSourceOwnsChunks = Symbol("sourceOwnsChunks");
 
 const MIN_BUFFER_SIZE = 512;
 let dynamicallyAdjustChunkSize = (_?) => (
@@ -143,9 +144,8 @@ function read(this: NativeReadable, maxToRead: number) {
       this[kHasResized] = true;
       this[kHighWaterMark] = Math.min(this[kHighWaterMark], result);
     } else if (typeof result === "number" && result < 0) {
-      // Start::ReadyOwned: the pull view is unused.
       this[kHasResized] = true;
-      this[kHighWaterMark] = MIN_BUFFER_SIZE;
+      this[kSourceOwnsChunks] = true;
     }
     if ($isTypedArrayView(result) && result.byteLength > 0) {
       pushAndCheck(this, result);
@@ -157,7 +157,7 @@ function read(this: NativeReadable, maxToRead: number) {
       pushAndCheck(this, drainResult);
     }
   }
-  const chunk = getRemainingChunk(this, maxToRead);
+  const chunk = this[kSourceOwnsChunks] ? undefined : getRemainingChunk(this, maxToRead);
   var result = ptr.pull(chunk, this[kCloseState]);
   $assert(result !== undefined);
   $debug(

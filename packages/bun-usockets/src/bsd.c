@@ -173,7 +173,7 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
             if (ret < 0) {
                 if (errno == EINTR) continue;
                 if (errno == EAGAIN || errno == EWOULDBLOCK) return i;
-                return ret;
+                return i > 0 ? i : (int) ret;
             }
             recvbuf->msgvec[i].msg_len = ret;
             break;

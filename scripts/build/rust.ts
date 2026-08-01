@@ -313,8 +313,10 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
       // (installed via --target); Tier 3 has no prebuilt std, so check the
       // rust-src component it builds std from with -Zbuild-std.
       const checkDir = rustTargetIsTier3(rustTarget(cfg)) ? "src/rust" : rustTarget(cfg);
+      // `\$\$` in the TS string = `$$` in build.ninja = a literal `$` to the
+      // shell (ninja requires `$$` for a literal `$`).
       const check =
-        `[ -d "\${RUSTUP_HOME:-\$HOME/.rustup}/toolchains/${cfg.rustToolchain}-"*/lib/rustlib/${checkDir} ]`;
+        `[ -d "\$\${RUSTUP_HOME:-\$\$HOME/.rustup}/toolchains/${cfg.rustToolchain}-"*/lib/rustlib/${checkDir} ]`;
       chain =
         `if ! ${check}; then ${install}; fi && ` +
         `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`;

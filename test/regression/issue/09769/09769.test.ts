@@ -15,29 +15,31 @@ import { join } from "node:path";
 // `oldProgram`), chaining every Program ever created. Under tsserver this
 // leaked several MB of JS heap per file save.
 
-describe.concurrent("issue #9769 / #15857: shorthand property in arrow should not force the enclosing function to capture `arguments`", () => {
-  test("closure returned from a function with `(x) => ({ x })` does not retain the call arguments", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--smol", join(import.meta.dir, "fixture.cjs")],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+describe.concurrent(
+  "issue #9769 / #15857: shorthand property in arrow should not force the enclosing function to capture `arguments`",
+  () => {
+    test("closure returned from a function with `(x) => ({ x })` does not retain the call arguments", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--smol", join(import.meta.dir, "fixture.cjs")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("PASS");
+      expect(exitCode).toBe(0);
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("PASS");
-    expect(exitCode).toBe(0);
-  });
 
-  test("`arguments` still reflects the real call when the shorthand is literally `eval`", async () => {
-    // Removing the unconditional setInnerArrowFunctionUsesEval() must not change
-    // observable semantics: a shorthand `{ eval }` in an arrow still works, and
-    // `arguments` inside a nested arrow still resolves to the enclosing function's.
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+    test("`arguments` still reflects the real call when the shorthand is literally `eval`", async () => {
+      // Removing the unconditional setInnerArrowFunctionUsesEval() must not change
+      // observable semantics: a shorthand `{ eval }` in an arrow still works, and
+      // `arguments` inside a nested arrow still resolves to the enclosing function's.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
           function outer(a, b) {
             const g = () => ({ eval, args: arguments.length });
             return g();
@@ -47,14 +49,15 @@ describe.concurrent("issue #9769 / #15857: shorthand property in arrow should no
           if (r.args !== 3) throw new Error("arguments in arrow broken: " + r.args);
           console.log("PASS");
         `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("PASS");
+      expect(exitCode).toBe(0);
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("PASS");
-    expect(exitCode).toBe(0);
-  });
-});
+  },
+);

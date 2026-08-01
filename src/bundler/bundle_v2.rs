@@ -5758,9 +5758,7 @@ pub mod bv2_impl {
         }
     }
 
-    /// Resolve `addon_name` like the `bindings` npm package would: probe below
-    /// the enclosing `package.json` of `source_dir`. Skips node-ABI-specific
-    /// paths (`compiled/<version>/...`, `lib/binding/node-v<abi>-...`).
+    /// Probe the `bindings` npm package's default search paths for `addon_name`.
     fn resolve_native_bindings(
         resolver: &mut _resolver::Resolver,
         source_dir: &[u8],

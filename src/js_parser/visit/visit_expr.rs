@@ -2007,8 +2007,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // `require('bindings')('<name>')` -> tagged require of the addon name so
-        // the bundler can locate and embed the `.node` file.
+        // `require('bindings')('<name>')` -> tagged require of the `.node` addon.
         if p.options.bundle && e_.args.len_u32() == 1 {
             if let Data::ERequireString(req) = e_.target.data {
                 let target_loc = e_.target.loc;

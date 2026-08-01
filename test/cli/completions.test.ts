@@ -65,7 +65,7 @@ describe.skipIf(isWindows)("shell completions: `bun <path>` and runtime flags (#
       "COMP_POINT=${#COMP_LINE}\n" +
       "COMPREPLY=()\n" +
       "_bun_completions\n" +
-      "for w in \"${COMPREPLY[@]}\"; do printf '%s\\n' \"$w\"; done\n";
+      'for w in "${COMPREPLY[@]}"; do printf \'%s\\n\' "$w"; done\n';
     await using proc = Bun.spawn({
       cmd: ["bash", "-c", probe],
       cwd: dir,
@@ -79,31 +79,34 @@ describe.skipIf(isWindows)("shell completions: `bun <path>` and runtime flags (#
     return stdout.split("\n").filter(Boolean);
   }
 
-  test.concurrent.skipIf(bashMajor < 4)("bash: completes files for `bun <path>` with and without runtime flags", async () => {
-    const script = await embeddedCompletions("bash");
-    using dir = tempDir("bun-bash-completion-7805", { "bun.bash": script, ...fixtureFiles });
+  test.concurrent.skipIf(bashMajor < 4)(
+    "bash: completes files for `bun <path>` with and without runtime flags",
+    async () => {
+      const script = await embeddedCompletions("bash");
+      using dir = tempDir("bun-bash-completion-7805", { "bun.bash": script, ...fixtureFiles });
 
-    for (const line of [
-      "bun run src/",
-      "bun src/",
-      "bun --hot run src/",
-      "bun run --watch src/",
-      "bun --hot src/",
-      "bun --watch src/",
-      "bun --smol --hot src/",
-      "bun --inspect src/",
-    ]) {
-      const reply = await bashComplete(String(dir), line);
-      expect(reply, `line: ${JSON.stringify(line)}`).toContain("src/index.ts");
-      expect(reply, `line: ${JSON.stringify(line)}`).toContain("src/other.ts");
-    }
+      for (const line of [
+        "bun run src/",
+        "bun src/",
+        "bun --hot run src/",
+        "bun run --watch src/",
+        "bun --hot src/",
+        "bun --watch src/",
+        "bun --smol --hot src/",
+        "bun --inspect src/",
+      ]) {
+        const reply = await bashComplete(String(dir), line);
+        expect(reply, `line: ${JSON.stringify(line)}`).toContain("src/index.ts");
+        expect(reply, `line: ${JSON.stringify(line)}`).toContain("src/other.ts");
+      }
 
-    // After a flag the subcommand list and `run` should still be offered.
-    const afterFlag = await bashComplete(String(dir), "bun --hot ");
-    expect(afterFlag).toContain("run");
-    expect(afterFlag).toContain("install");
-    expect(afterFlag).toContain("--watch");
-  });
+      // After a flag the subcommand list and `run` should still be offered.
+      const afterFlag = await bashComplete(String(dir), "bun --hot ");
+      expect(afterFlag).toContain("run");
+      expect(afterFlag).toContain("install");
+      expect(afterFlag).toContain("--watch");
+    },
+  );
 
   test.concurrent.skipIf(bashMajor < 4)("bash: flag-taking options don't swallow the subcommand", async () => {
     const script = await embeddedCompletions("bash");
@@ -129,48 +132,51 @@ describe.skipIf(isWindows)("shell completions: `bun <path>` and runtime flags (#
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent.skipIf(!fishBin)("fish: completes files for `bun <path>` with and without runtime flags", async () => {
-    const script = await embeddedCompletions("fish");
-    using dir = tempDir("bun-fish-completion-7805", { "bun.fish": script, ...fixtureFiles });
+  test.concurrent.skipIf(!fishBin)(
+    "fish: completes files for `bun <path>` with and without runtime flags",
+    async () => {
+      const script = await embeddedCompletions("fish");
+      using dir = tempDir("bun-fish-completion-7805", { "bun.fish": script, ...fixtureFiles });
 
-    async function complete(line: string): Promise<string[]> {
-      await using proc = Bun.spawn({
-        cmd: [fishBin!, "--no-config", "-c", `source ./bun.fish; complete -C ${JSON.stringify(line)}`],
-        cwd: String(dir),
-        env: { ...bunEnv, PATH: process.env.PATH, HOME: String(dir) },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(exitCode).toBe(0);
-      return stdout
-        .split("\n")
-        .filter(Boolean)
-        .map(l => l.split("\t")[0]);
-    }
+      async function complete(line: string): Promise<string[]> {
+        await using proc = Bun.spawn({
+          cmd: [fishBin!, "--no-config", "-c", `source ./bun.fish; complete -C ${JSON.stringify(line)}`],
+          cwd: String(dir),
+          env: { ...bunEnv, PATH: process.env.PATH, HOME: String(dir) },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(exitCode).toBe(0);
+        return stdout
+          .split("\n")
+          .filter(Boolean)
+          .map(l => l.split("\t")[0]);
+      }
 
-    for (const line of [
-      "bun run src/",
-      "bun src/",
-      "bun --hot run src/",
-      "bun run --watch src/",
-      "bun --hot src/",
-      "bun --watch src/",
-    ]) {
-      const reply = await complete(line);
-      expect(reply, `line: ${JSON.stringify(line)}`).toContain("src/index.ts");
-      expect(reply, `line: ${JSON.stringify(line)}`).toContain("src/other.ts");
-    }
+      for (const line of [
+        "bun run src/",
+        "bun src/",
+        "bun --hot run src/",
+        "bun run --watch src/",
+        "bun --hot src/",
+        "bun --watch src/",
+      ]) {
+        const reply = await complete(line);
+        expect(reply, `line: ${JSON.stringify(line)}`).toContain("src/index.ts");
+        expect(reply, `line: ${JSON.stringify(line)}`).toContain("src/other.ts");
+      }
 
-    // `bun --hot <TAB>` must still offer the subcommand position
-    // (previously `--hot` was declared with `-r` and ate the next token).
-    const afterHot = await complete("bun --hot ");
-    expect(afterHot).toContain("run");
+      // `bun --hot <TAB>` must still offer the subcommand position
+      // (previously `--hot` was declared with `-r` and ate the next token).
+      const afterHot = await complete("bun --hot ");
+      expect(afterHot).toContain("run");
 
-    // Subcommands other than `run` should not get entrypoint file completion.
-    const afterAdd = await complete("bun add src/");
-    expect(afterAdd).not.toContain("src/index.ts");
-  });
+      // Subcommands other than `run` should not get entrypoint file completion.
+      const afterAdd = await complete("bun add src/");
+      expect(afterAdd).not.toContain("src/index.ts");
+    },
+  );
 
   test.concurrent.skipIf(!fishBin)("fish: script is syntactically valid", async () => {
     const script = await embeddedCompletions("fish");
@@ -208,19 +214,22 @@ describe.skipIf(isWindows)("shell completions: `bun <path>` and runtime flags (#
   // coverage here is a structural assertion: the top-level `_arguments` call
   // must declare the boolean runtime flags so it skips over them when locating
   // the first positional word.
-  test.concurrent("zsh: top-level `_arguments` declares runtime flags and offers files at the subcommand position", async () => {
-    const script = await embeddedCompletions("zsh");
-    const bun = script.slice(script.indexOf("\n_bun() {"));
-    const topArguments = bun.slice(0, bun.indexOf("ret=0"));
-    for (const flag of ["--hot", "--watch", "--smol", "--bun", "--preload", "--cwd"]) {
-      expect(topArguments).toContain(`'${flag}[`);
-    }
-    // `bun <TAB>` (state=cmd) should offer real file completion, not just
-    // `bun getcompletes j` (which only lists the current directory).
-    expect(bun).toMatch(/"globbed-files:file:_files/);
-    // An unknown first positional (a file or script path) should fall back to
-    // `_files` rather than completing nothing.
-    const argsDispatch = bun.slice(bun.indexOf("args)"), bun.indexOf("\n}"));
-    expect(argsDispatch).toMatch(/\*\)\s*\n\s*_files\b/);
-  });
+  test.concurrent(
+    "zsh: top-level `_arguments` declares runtime flags and offers files at the subcommand position",
+    async () => {
+      const script = await embeddedCompletions("zsh");
+      const bun = script.slice(script.indexOf("\n_bun() {"));
+      const topArguments = bun.slice(0, bun.indexOf("ret=0"));
+      for (const flag of ["--hot", "--watch", "--smol", "--bun", "--preload", "--cwd"]) {
+        expect(topArguments).toContain(`'${flag}[`);
+      }
+      // `bun <TAB>` (state=cmd) should offer real file completion, not just
+      // `bun getcompletes j` (which only lists the current directory).
+      expect(bun).toMatch(/"globbed-files:file:_files/);
+      // An unknown first positional (a file or script path) should fall back to
+      // `_files` rather than completing nothing.
+      const argsDispatch = bun.slice(bun.indexOf("args)"), bun.indexOf("\n}"));
+      expect(argsDispatch).toMatch(/\*\)\s*\n\s*_files\b/);
+    },
+  );
 });

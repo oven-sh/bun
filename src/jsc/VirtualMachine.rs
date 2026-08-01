@@ -1422,6 +1422,57 @@ impl VirtualMachine {
         Some(self.rare_data().hot_map())
     }
 
+    /// True when the entry module's evaluation promise is still `Pending`, i.e.
+    /// (once the loop has drained) an unsettled top-level await that
+    /// `load_entry_point` returned without waiting on.
+    pub fn entry_promise_is_pending(&self) -> bool {
+        match self.pending_internal_promise {
+            Some(p) => crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending,
+            None => false,
+        }
+    }
+
+    /// Handle the entry module promise once the loop has fully drained (after
+    /// `on_before_exit`): still `Pending` is an unsettled top-level await (Node:
+    /// warn + exit 13, unless user code already set an exit code);
+    /// late-`Rejected` (the resumed body threw) is surfaced via
+    /// `uncaughtException` so a user handler can swallow it.
+    pub fn report_unsettled_entry_promise(&mut self) {
+        let Some(p) = self.pending_internal_promise else {
+            return;
+        };
+        match crate::JSPromise::status_ptr(p) {
+            crate::js_promise::Status::Pending => {
+                if self.exit_handler.exit_code == 0 {
+                    bun_core::pretty_errorln!(
+                        "<r><yellow>warn<r><d>:<r> Detected unsettled top-level await in <b>{}<r>",
+                        bstr::BStr::new(self.main()),
+                    );
+                    bun_core::Output::flush();
+                    self.exit_handler.exit_code = 13;
+                }
+            }
+            crate::js_promise::Status::Rejected => {
+                if self.pending_internal_promise_reported_at != self.hot_reload_counter {
+                    // SAFETY: `p` is a live GC cell tracked by the VM.
+                    let promise = unsafe { &mut *p };
+                    // SAFETY: `self.jsc_vm` set in `init`.
+                    let result = promise.result(unsafe { &*self.jsc_vm });
+                    let global = self.global;
+                    // `on_before_exit` armed this; clear it so a user
+                    // `uncaughtException` listener is consulted instead of
+                    // `uncaught_exception` hard-exiting.
+                    self.exit_on_uncaught_exception = false;
+                    // SAFETY: `global` valid for VM lifetime.
+                    let _ = self.uncaught_exception(unsafe { &*global }, result, true);
+                    promise.set_handled();
+                    self.pending_internal_promise_reported_at = self.hot_reload_counter;
+                }
+            }
+            crate::js_promise::Status::Fulfilled => {}
+        }
+    }
+
     pub fn on_before_exit(&mut self) {
         // Node only emits 'beforeExit' on a natural drain; a fatal uncaught
         // exception that brought us here is an implicit process.exit(1). Arm
@@ -2454,7 +2505,19 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
-            self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            // Not `wait_for_promise`: a never-settling TLA would busy-spin.
+            // Tick while work could settle it; on idle-with-pending, return
+            // so the caller fires beforeExit/exit and maps to exit code 13.
+            while crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Pending {
+                self.event_loop_mut().tick();
+                if crate::JSPromise::status_ptr(promise) != crate::js_promise::Status::Pending {
+                    break;
+                }
+                if !self.is_event_loop_alive() {
+                    break;
+                }
+                self.auto_tick();
+            }
         }
 
         Ok(self.pending_internal_promise.unwrap_or(promise))

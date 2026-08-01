@@ -150,7 +150,7 @@ impl Data {
 // Data-only; the parser-state predicates that depend on `P` stay in
 // `bun_js_parser::typescript`.
 
-#[derive(Clone, Default)]
+#[derive(Copy, Clone, Default)]
 pub enum Metadata {
     #[default]
     MNone,
@@ -171,9 +171,9 @@ pub enum Metadata {
     MSymbol,
     MPromise,
     MIdentifier(Ref),
-    // A heap `Vec` is used here because `Metadata` is lifetime-free.
-    // Decorator metadata is rare and the lists are tiny.
-    MDot(Vec<Ref>),
+    // Arena-backed so `Metadata` stays lifetime-free plain data; a heap `Vec`
+    // here leaks when the owning AST node is bulk-freed without `Drop`.
+    MDot(crate::nodes::StoreSlice<Ref>),
 }
 
 impl Metadata {

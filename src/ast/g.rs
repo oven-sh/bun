@@ -233,7 +233,7 @@ impl Property {
                 Some(value) => Some(value.deep_clone(bump)?),
                 None => None,
             },
-            ts_metadata: self.ts_metadata.clone(),
+            ts_metadata: self.ts_metadata,
         })
     }
 }
@@ -323,7 +323,7 @@ impl Fn {
             },
             arguments_ref: self.arguments_ref,
             flags: self.flags,
-            return_ts_metadata: self.return_ts_metadata.clone(),
+            return_ts_metadata: self.return_ts_metadata,
         })
     }
 }
@@ -367,7 +367,7 @@ impl Arg {
                 None => None,
             },
             is_typescript_ctor_field: self.is_typescript_ctor_field,
-            ts_metadata: self.ts_metadata.clone(),
+            ts_metadata: self.ts_metadata,
         })
     }
 }

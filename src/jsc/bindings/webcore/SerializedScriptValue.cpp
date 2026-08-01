@@ -4202,6 +4202,14 @@ SerializedScriptValue::SerializedScriptValue(WTF::FixedVector<SimpleCloneableVal
     m_memoryCost = computeMemoryCost();
 }
 
+SerializedScriptValue::SerializedScriptValue(JSC::JSValue fastPathPrimitive)
+    : m_fastPathPrimitive(fastPathPrimitive)
+    , m_fastPath(FastPath::Primitive)
+{
+    ASSERT(!fastPathPrimitive.isCell());
+    m_memoryCost = computeMemoryCost();
+}
+
 SerializedScriptValue::SerializedScriptValue(const String& fastPathString)
     : m_fastPathString(fastPathString)
     , m_fastPath(FastPath::String)
@@ -4254,6 +4262,8 @@ size_t SerializedScriptValue::computeMemoryCost() const
 
     // Account for fast path string memory usage
     switch (m_fastPath) {
+    case FastPath::Primitive:
+        break;
     case FastPath::String:
         ASSERT(m_simpleInMemoryPropertyTable.isEmpty());
         cost += m_fastPathString.sizeInBytes();
@@ -4446,6 +4456,15 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         && messagePorts.isEmpty();
 
     if (canUseFastPath) {
+        // A bare non-cell JSValue (int32/double/bool/null/undefined, plus BigInt32 when
+        // USE(BIGINT32)) has no heap identity and is safe to carry across threads as-is.
+        // Ordering is load-bearing: on JSVALUE64 the empty JSValue satisfies isCell()==true,
+        // so it continues to the cell branch below; this check must not be rewritten as
+        // isPrimitive() or hoisted above canUseFastPath (SerializationForStorage callers
+        // like bun:jsc serialize() depend on getting real wire bytes).
+        if (!value.isCell())
+            return SerializedScriptValue::createPrimitiveFastPath(value);
+
         bool canUseStringFastPath = false;
         bool canUseObjectFastPath = false;
         bool canUseArrayFastPath = false;
@@ -4760,6 +4779,11 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     return result;
 }
 
+Ref<SerializedScriptValue> SerializedScriptValue::createPrimitiveFastPath(JSC::JSValue value)
+{
+    return adoptRef(*new SerializedScriptValue(value));
+}
+
 Ref<SerializedScriptValue> SerializedScriptValue::createStringFastPath(const String& string)
 {
     return adoptRef(*new SerializedScriptValue(Bun::toCrossThreadShareable(string)));
@@ -4870,6 +4894,10 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     switch (m_fastPath) {
+    case FastPath::Primitive:
+        if (didFail)
+            *didFail = false;
+        return m_fastPathPrimitive;
     case FastPath::String:
         if (didFail)
             *didFail = false;

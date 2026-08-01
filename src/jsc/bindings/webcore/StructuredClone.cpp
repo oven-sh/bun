@@ -56,6 +56,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
     auto serializeOptions = convertDictionary<StructuredSerializeOptions>(*globalObject, options);
     RETURN_IF_EXCEPTION(throwScope, {});
 
+    // A non-cell JSValue (int32/double/bool/null/undefined) has no heap identity and structured
+    // clone is the identity function on it. With nothing to transfer, skip the round-trip.
+    if (serializeOptions.transfer.isEmpty() && !value.isCell())
+        return JSValue::encode(value);
+
     Vector<RefPtr<MessagePort>> ports;
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(serializeOptions.transfer), ports);
     if (serialized.hasException()) {

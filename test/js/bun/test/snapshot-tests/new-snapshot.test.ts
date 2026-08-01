@@ -37,52 +37,56 @@ test.concurrent("afterAll sees the written .snap file under --update-snapshots",
       const fs = require("node:fs");
       const path = require("node:path");
       test("make a snapshot", () => {
-        expect({ a: 1, b: "two" }).toMatchSnapshot();
+        expect(process.env.SNAP_VALUE).toMatchSnapshot();
       });
       afterAll(() => {
         const p = path.join(__dirname, "__snapshots__", "snap.test.js.snap");
         const body = fs.readFileSync(p, "utf8");
-        console.log("SNAPLEN:" + body.length);
-        console.log("HASKEY:" + body.includes("make a snapshot 1"));
+        console.log("AFTERALL:" + JSON.stringify({ len: body.length, body }));
       });
     `,
   });
-  const run = async (extra: string[] = []) => {
+  const run = async (value: string, extra: string[] = []) => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "snap.test.js", ...extra],
-      env: { ...bunEnv, CI: "false" },
+      env: { ...bunEnv, CI: "false", SNAP_VALUE: value },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
+    const seen = JSON.parse(stdout.match(/^AFTERALL:(.*)$/m)![1]);
+    return { stdout, stderr, exitCode, seen };
   };
+  const snapPath = path.join(String(dir), "__snapshots__", "snap.test.js.snap");
+
+  const longValue = "long-initial-value-" + Buffer.alloc(60, "x").toString();
+  const shortValue = "short";
 
   // First run creates the snapshot; afterAll must already see the entry on disk.
   {
-    const { stdout, stderr, exitCode } = await run();
+    const { stderr, exitCode, seen } = await run(longValue);
     expect(stderr).toContain("1 pass");
-    expect(stdout).toContain("HASKEY:true");
-    expect(stdout).not.toContain("SNAPLEN:0\n");
+    const onDisk = fs.readFileSync(snapPath, "utf8");
+    expect(onDisk).toContain(longValue);
+    expect(seen).toEqual({ len: onDisk.length, body: onDisk });
     expect(exitCode).toBe(0);
   }
 
-  const snapPath = path.join(String(dir), "__snapshots__", "snap.test.js.snap");
-  const onDisk = fs.readFileSync(snapPath, "utf8");
-  expect(onDisk).toContain("make a snapshot 1");
+  const longLen = fs.readFileSync(snapPath, "utf8").length;
 
-  // --update-snapshots must not leave the file empty while afterAll runs.
+  // --update-snapshots with a shorter value: afterAll must see the fully
+  // rewritten (shorter) file with no trailing bytes from the long version.
   {
-    const { stdout, stderr, exitCode } = await run(["--update-snapshots"]);
+    const { stderr, exitCode, seen } = await run(shortValue, ["--update-snapshots"]);
     expect(stderr).toContain("1 pass");
-    expect(stdout).toContain("SNAPLEN:" + onDisk.length);
-    expect(stdout).toContain("HASKEY:true");
+    const onDisk = fs.readFileSync(snapPath, "utf8");
+    expect(onDisk).toContain(shortValue);
+    expect(onDisk).not.toContain(longValue);
+    expect(onDisk.length).toBeLessThan(longLen);
+    expect(seen).toEqual({ len: onDisk.length, body: onDisk });
     expect(exitCode).toBe(0);
   }
-
-  // File on disk must be unchanged (no trailing old bytes, no truncation to 0).
-  expect(fs.readFileSync(snapPath, "utf8")).toBe(onDisk);
 });
 
 test.concurrent("afterAll sees the written .snap file across multiple test files", async () => {

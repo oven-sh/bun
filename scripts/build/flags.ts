@@ -1074,8 +1074,8 @@ export const linkerFlags: Flag[] = [
     // `bun build --compile` rewrites the segment at 16 KB alignment anyway
     // (exe_format/macho.rs). arm64 uses 16 KB pages, so it's unaffected.
     flag: ["-Wl,-sectalign,__BUN,__bun,0x1000"],
-    when: c => c.darwin && c.crossTarget !== undefined && c.x64,
-    desc: "macOS x64 cross-link: keep the __BUN segment's filesize ≤ vmsize under ld64.lld",
+    when: c => c.darwinLld && c.x64,
+    desc: "macOS x64 ld64.lld link: keep the __BUN segment's filesize ≤ vmsize",
   },
   {
     // Must also be passed at link: ld64 reads this to write LC_BUILD_VERSION.minos.

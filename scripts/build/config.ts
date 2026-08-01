@@ -224,9 +224,9 @@ export interface Config {
   /** llvm-ranlib. undefined on windows (llvm-lib indexes itself). */
   ranlib: string | undefined;
   /**
-   * ld.lld on linux, lld-link on windows, ld64.lld when cross-compiling for
-   * darwin from a non-darwin host. May be empty on native darwin (clang
-   * invokes the system linker).
+   * ld.lld on linux, lld-link on windows, ld64.lld for darwin cross-compiles
+   * and native darwin ASAN builds (see `darwinLld`). Empty on native darwin
+   * non-ASAN (clang invokes the system linker).
    */
   ld: string;
   /**
@@ -426,9 +426,10 @@ export interface Toolchain {
   ranlib: string | undefined;
   ld: string;
   /**
-   * lld's Mach-O port (`ld64.lld`), resolved on non-darwin unix hosts.
-   * Swapped in as `cfg.ld` when the target is darwin and the host isn't —
-   * there's no Apple `ld` to drive, and ld.lld only emits ELF.
+   * lld's Mach-O port (`ld64.lld`), resolved on every unix host. Swapped in
+   * as `cfg.ld` for darwin cross-compiles (no Apple `ld` to drive, and
+   * ld.lld only emits ELF) and for native darwin ASAN builds (see
+   * workarounds.ts "darwin-asan-ld-new").
    */
   ld64Lld: string | undefined;
   /**

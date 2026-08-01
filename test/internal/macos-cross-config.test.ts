@@ -307,6 +307,11 @@ describe("native darwin ASAN → ld64.lld (workarounds.ts 'darwin-asan-ld-new')"
     // driver into the modern -platform_version argument on a non-Apple host.
     expect(flags.ldflags).not.toContain("-mlinker-version=705");
     expect(flags.ldflags.some(f => f.startsWith("--target="))).toBe(false);
+    // x64's __BUN sectalign cap is an ld64.lld quirk too (not cross-specific);
+    // arm64 doesn't need it (16 KB pages).
+    expect(flags.ldflags).not.toContain("-Wl,-sectalign,__BUN,__bun,0x1000");
+    const x64 = computeFlags({ ...nativeDarwinAsan(), x64: true, arm64: false });
+    expect(x64.ldflags).toContain("-Wl,-sectalign,__BUN,__bun,0x1000");
   });
 
   test("native ASAN runs macho-postlink (ld64.lld ignores -stack_size)", () => {

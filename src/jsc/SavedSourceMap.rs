@@ -276,7 +276,7 @@ impl SavedSourceMap {
         self.mutex.lock();
         self.line_cache
             .entry(path_hash)
-            .or_insert_with(CodeFrameInner::default)
+            .or_default()
             .insert(CachedCodeFrame::inner_key(source_index, line), frame);
         self.mutex.unlock();
     }

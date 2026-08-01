@@ -5432,12 +5432,13 @@ impl VirtualMachine {
                     CachedCodeFrame::NO_SOURCE_INDEX
                 };
 
-                // SAFETY: `Holder` backs both arrays with `[_; SOURCE_LINES_COUNT]`.
                 if let Some(filled) = self.source_mappings.fill_code_frame_from_cache(
                     cache_path_hash,
                     cache_source_index,
                     last_line,
+                    // SAFETY: `Holder` backs the array with `[_; SOURCE_LINES_COUNT]`.
                     unsafe { bun_core::ffi::slice_mut(exception.stack.source_lines_ptr, N) },
+                    // SAFETY: `Holder` backs the array with `[i32; SOURCE_LINES_COUNT]`.
                     unsafe { bun_core::ffi::slice_mut(exception.stack.source_lines_numbers, N) },
                 ) {
                     drop(lookup);

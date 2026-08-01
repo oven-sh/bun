@@ -1,7 +1,7 @@
 import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExe, runBunInstall, shellExe, tempDir, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import { promisify } from "node:util";
@@ -495,6 +495,43 @@ describe("spawn()", () => {
       expect(stderr).toBe("");
       expect(stdout).toBe("OUT ERR");
       expect(exitCode).toBe(0);
+    });
+
+    // dup2 ordering hazard: stdio: [2, 0, 0] registers dup2(2,0) then
+    // dup2(0,1)/dup2(0,2), so fd 0 is clobbered before slots 1/2 read it
+    // unless the source fd is saved aside first (libuv does this via
+    // F_DUPFD in uv__process_child_init). Verify the grandchild's fds land
+    // on the ORIGINAL parent fds, not on an earlier slot's dup2 target.
+    it.skipIf(isWindows).each([
+      { stdio: [2, 0, 0], want: { fA: "ONE TWO ", fB: "", fC: "ZERO " } },
+      { stdio: [0, 2, 1], want: { fA: "ZERO ", fB: "TWO ", fC: "ONE " } },
+      { stdio: [1, 2, 0], want: { fA: "TWO ", fB: "ZERO ", fC: "ONE " } },
+    ] as const)("stdio: $stdio dups the original parent fds, not an earlier slot's target", ({ stdio, want }) => {
+      using dir = tempDir("spawn-stdio-dup-order", { fA: "", fB: "", fC: "" });
+      // Middle process has fds 0/1/2 bound to three distinct r+w files, then
+      // spawns the grandchild with the test's stdio mapping.
+      const middle = `
+        const { spawnSync } = require("child_process");
+        const r = spawnSync(process.execPath, ["-e",
+          'const fs = require("fs");' +
+          'fs.writeSync(0, "ZERO "); fs.writeSync(1, "ONE "); fs.writeSync(2, "TWO ");'
+        ], { stdio: ${JSON.stringify(stdio)} });
+        if (r.error) throw r.error;
+        process.exit(r.status);
+      `;
+      const fds = ["fA", "fB", "fC"].map(f => fs.openSync(path.join(String(dir), f), "r+"));
+      try {
+        const r = spawnSync(bunExe(), ["-e", middle], { env: bunEnv, stdio: fds });
+        expect(r.error).toBeUndefined();
+        expect(r.status).toBe(0);
+      } finally {
+        for (const fd of fds) fs.closeSync(fd);
+      }
+      expect({
+        fA: fs.readFileSync(path.join(String(dir), "fA"), "utf8"),
+        fB: fs.readFileSync(path.join(String(dir), "fB"), "utf8"),
+        fC: fs.readFileSync(path.join(String(dir), "fC"), "utf8"),
+      }).toEqual(want);
     });
   });
 

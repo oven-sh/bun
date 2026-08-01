@@ -749,6 +749,35 @@ pub unsafe fn spawn_process_posix(
     // index spawned.{stdin,stdout,stderr} via a helper closure.
     let mut dup_stdout_to_stderr: bool = false;
 
+    // A caller-supplied fd at one stdio slot may be the target of an
+    // earlier slot's dup2 (e.g. stdio: [2, 0, 0] → dup2(2,0) clobbers fd 0
+    // before slots 1/2 read it). Like libuv's uv__process_child_init,
+    // F_DUPFD any such source fd to a temporary >= 3 in the parent and
+    // register dup2(tmp, slot) instead.
+    let mut saved_stdio_src: [Option<Fd>; 3] = [None; 3];
+    for (i, stdio) in stdio_options.iter().enumerate() {
+        let PosixStdio::Pipe(fd) = *stdio else {
+            continue;
+        };
+        let src = fd.native();
+        if !(0..3).contains(&src) || usize::try_from(src).unwrap() == i {
+            continue;
+        }
+        // SAFETY: `fd` is a live descriptor; F_DUPFD_CLOEXEC takes an
+        // integer lower bound and no pointer arguments.
+        let tmp = unsafe { libc::fcntl(fd.native(), libc::F_DUPFD_CLOEXEC, 3_i32) };
+        if tmp < 0 {
+            return Ok(Err(bun_sys::Error::from_code_int(
+                bun_sys::last_errno(),
+                bun_sys::Tag::dup,
+            )
+            .with_fd(*fd)));
+        }
+        let tmp = Fd::from_native(tmp);
+        cleanup.to_close_at_end.push(tmp);
+        saved_stdio_src[i] = Some(tmp);
+    }
+
     // The label is only referenced from the Linux memfd fast-path below.
     #[cfg_attr(
         not(any(target_os = "linux", target_os = "android")),
@@ -895,7 +924,7 @@ pub unsafe fn spawn_process_posix(
                 set_spawned_stdio(&mut spawned, i, fds[0]);
             }
             PosixStdio::Pipe(fd) => {
-                actions.dup2(*fd, fileno)?;
+                actions.dup2(saved_stdio_src[i].unwrap_or(*fd), fileno)?;
                 set_spawned_stdio(&mut spawned, i, *fd);
             }
             PosixStdio::SocketFd => {

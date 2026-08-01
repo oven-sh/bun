@@ -1,9 +1,13 @@
 #include "V8Value.h"
 #include "V8Isolate.h"
+#include "V8String.h"
+#include "V8Integer.h"
+#include "V8HandleScope.h"
 #include "v8_compatibility_assertions.h"
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSBigInt.h>
+#include <JavaScriptCore/JSTypedArrays.h>
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Value)
 
@@ -112,6 +116,36 @@ bool Value::IsInt32() const
 bool Value::IsBigInt() const
 {
     return localToJSValue().isBigInt();
+}
+
+bool Value::IsUint8Array() const
+{
+    JSC::JSValue value = localToJSValue();
+    return value.isCell() && value.inherits<JSC::JSUint8Array>();
+}
+
+MaybeLocal<String> Value::ToString(Local<Context> context) const
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSString* jsString = localToJSValue().toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<String>());
+
+    return MaybeLocal<String>(context->currentHandleScope()->createLocal<String>(vm, jsString));
+}
+
+MaybeLocal<Integer> Value::ToInteger(Local<Context> context) const
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    double d = localToJSValue().toIntegerOrInfinity(globalObject);
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<Integer>());
+
+    return MaybeLocal<Integer>(context->currentHandleScope()->createLocal<Integer>(vm, JSC::jsNumber(d)));
 }
 
 Maybe<uint32_t> Value::Uint32Value(Local<Context> context) const

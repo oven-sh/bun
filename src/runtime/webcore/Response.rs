@@ -1425,7 +1425,8 @@ impl Init {
                 // SAFETY: `as_direct` returned a live `*mut Request` owned by the
                 // JS wrapper cell; the wrapper is rooted by `response_init` for
                 // the duration of this call, so no GC can finalize it here.
-                let req = unsafe { &mut *req };
+                // Everything touched is `&self`.
+                let req = unsafe { &*req };
                 if let Some(headers) = req.get_fetch_headers_unless_empty() {
                     result.headers = headers.clone_this(global_this)?;
                 }

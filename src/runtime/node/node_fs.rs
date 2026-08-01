@@ -1803,13 +1803,13 @@ mod _async_tasks {
 
             // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
             unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+            // `promise` is a GC-rooted JS heap cell, still valid after `destroy`
+            // dropped only the `Strong` wrapper; `opaque_mut` is the safe
+            // accessor for the opaque ZST handle.
             if success {
-                // SAFETY: `promise` points at a GC-rooted JS heap cell (see above),
-                // still valid after `destroy` dropped only the `Strong` wrapper.
-                unsafe { (*promise).resolve(global_object, result)? };
+                bun_jsc::JSPromise::opaque_mut(promise).resolve(global_object, result)?;
             } else {
-                // SAFETY: as the resolve arm above.
-                unsafe { (*promise).reject(global_object, Ok(result))? };
+                bun_jsc::JSPromise::opaque_mut(promise).reject(global_object, Ok(result))?;
             }
             Ok(())
         }
@@ -2664,12 +2664,12 @@ mod _async_tasks {
 
             // SAFETY: self was Box::leak'd in create(); destroyed exactly once here
             unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+            // GC-rooted JS heap cell, valid past `destroy`; `opaque_mut` is the
+            // safe accessor for the opaque ZST handle.
             if success {
-                // SAFETY: GC-rooted JS heap cell, valid past `destroy` (see above).
-                unsafe { (*promise).resolve(global_object, result)? };
+                bun_jsc::JSPromise::opaque_mut(promise).resolve(global_object, result)?;
             } else {
-                // SAFETY: as the resolve arm above.
-                unsafe { (*promise).reject(global_object, Ok(result))? };
+                bun_jsc::JSPromise::opaque_mut(promise).reject(global_object, Ok(result))?;
             }
             Ok(())
         }

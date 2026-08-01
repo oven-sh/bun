@@ -42,6 +42,7 @@ use bun_sys::windows::libuv::UvHandle as _;
 // BufferedReaderVTable
 // ──────────────────────────────────────────────────────────────────────────
 
+#[derive(Clone, Copy)]
 pub struct BufferedReaderVTable {
     pub(crate) parent: *mut c_void,
     pub(crate) kind: crate::BufferedReaderParentLinkKind,
@@ -481,57 +482,95 @@ impl PosixBufferedReader {
         }
     }
 
-    pub fn read(&mut self) {
+    /// # Safety
+    /// `this` is the live reader. Raw (not `&mut self`) because
+    /// `on_read_chunk` dispatched from the read loops re-enters JS, which can
+    /// reach this reader again through its parent — a protected `&mut`
+    /// spanning that re-entry is exactly the aliasing this API avoids.
+    pub unsafe fn read(this: *mut Self) {
+        // SAFETY: caller contract — `this` is live; borrows end at each `;`.
+        let (paused, fd, file_type) = unsafe {
+            (
+                (*this).flags.contains(PosixFlags::IS_PAUSED),
+                (*this).get_fd(),
+                (*this).get_file_type(),
+            )
+        };
         // Don't initiate new reads if paused
-        if self.flags.contains(PosixFlags::IS_PAUSED) {
+        if paused {
             return;
         }
 
-        let fd = self.get_fd();
-
-        match self.get_file_type() {
+        match file_type {
             FileType::NonblockingPipe => {
-                Self::read_pipe(self, fd, 0, false);
+                // SAFETY: caller contract.
+                unsafe { Self::read_pipe(this, fd, 0, false) };
             }
             FileType::File => {
-                Self::read_file(self, fd, 0, false);
+                // SAFETY: caller contract.
+                unsafe { Self::read_file(this, fd, 0, false) };
             }
             FileType::Socket => {
-                Self::read_socket(self, fd, 0, false);
+                // SAFETY: caller contract.
+                unsafe { Self::read_socket(this, fd, 0, false) };
             }
             FileType::Pipe => match bun_core::is_readable(fd) {
                 bun_core::Pollable::Ready => {
-                    Self::read_from_blocking_pipe_without_blocking(self, fd, 0, false);
+                    // SAFETY: caller contract.
+                    unsafe { Self::read_from_blocking_pipe_without_blocking(this, fd, 0, false) };
                 }
                 bun_core::Pollable::Hup => {
-                    Self::read_from_blocking_pipe_without_blocking(self, fd, 0, true);
+                    // SAFETY: caller contract.
+                    unsafe { Self::read_from_blocking_pipe_without_blocking(this, fd, 0, true) };
                 }
                 bun_core::Pollable::NotReady => {
-                    self.register_poll();
+                    // SAFETY: caller contract; borrow scoped to the call.
+                    unsafe { (*this).register_poll() };
                 }
             },
         }
     }
 
-    pub fn on_poll(parent: &mut PosixBufferedReader, size_hint: isize, received_hup: bool) {
-        if parent.flags.contains(PosixFlags::IS_PAUSED) {
+    /// # Safety
+    /// `this` is the live reader registered as the poll's user data; see
+    /// [`Self::read`] for why the entry is raw.
+    pub unsafe fn on_poll(this: *mut PosixBufferedReader, size_hint: isize, received_hup: bool) {
+        // SAFETY: caller contract — `this` is live; borrows end at each `;`.
+        let (paused, fd, file_type) = unsafe {
+            (
+                (*this).flags.contains(PosixFlags::IS_PAUSED),
+                (*this).get_fd(),
+                (*this).get_file_type(),
+            )
+        };
+        if paused {
             return;
         }
-        let fd = parent.get_fd();
         bun_sys::syslog!("onPoll({}) = {}", fd, size_hint);
 
-        match parent.get_file_type() {
+        match file_type {
             FileType::NonblockingPipe => {
-                Self::read_pipe(parent, fd, size_hint, received_hup);
+                // SAFETY: caller contract.
+                unsafe { Self::read_pipe(this, fd, size_hint, received_hup) };
             }
             FileType::File => {
-                Self::read_file(parent, fd, size_hint, received_hup);
+                // SAFETY: caller contract.
+                unsafe { Self::read_file(this, fd, size_hint, received_hup) };
             }
             FileType::Socket => {
-                Self::read_socket(parent, fd, size_hint, received_hup);
+                // SAFETY: caller contract.
+                unsafe { Self::read_socket(this, fd, size_hint, received_hup) };
             }
             FileType::Pipe => {
-                Self::read_from_blocking_pipe_without_blocking(parent, fd, size_hint, received_hup);
+                // SAFETY: caller contract.
+                unsafe {
+                    Self::read_from_blocking_pipe_without_blocking(
+                        this,
+                        fd,
+                        size_hint,
+                        received_hup,
+                    )
+                };
             }
         }
     }
@@ -570,113 +609,133 @@ impl PosixBufferedReader {
         }
     }
 
-    fn read_file(parent: &mut PosixBufferedReader, fd: Fd, size_hint: isize, received_hup: bool) {
+    /// # Safety
+    /// Same contract as [`Self::read`].
+    unsafe fn read_file(
+        this: *mut PosixBufferedReader,
+        fd: Fd,
+        size_hint: isize,
+        received_hup: bool,
+    ) {
         fn pread_fn(fd1: Fd, buf: &mut [u8], offset: usize) -> sys::Result<usize> {
             sys::pread(fd1, buf, i64::try_from(offset).expect("int cast"))
         }
-        if parent.flags.contains(PosixFlags::USE_PREAD) {
-            Self::read_with_fn(
-                parent,
-                FileType::File,
-                fd,
-                size_hint,
-                received_hup,
-                pread_fn,
-            );
+        // SAFETY: caller contract; borrow ends at `;`.
+        let use_pread = unsafe { (*this).flags.contains(PosixFlags::USE_PREAD) };
+        if use_pread {
+            // SAFETY: caller contract.
+            unsafe {
+                Self::read_with_fn(this, FileType::File, fd, size_hint, received_hup, pread_fn)
+            };
         } else {
-            Self::read_with_fn(
-                parent,
-                FileType::File,
-                fd,
-                size_hint,
-                received_hup,
-                |fd, buf, _| sys::read(fd, buf),
-            );
+            // SAFETY: caller contract.
+            unsafe {
+                Self::read_with_fn(
+                    this,
+                    FileType::File,
+                    fd,
+                    size_hint,
+                    received_hup,
+                    |fd, buf, _| sys::read(fd, buf),
+                )
+            };
         }
     }
 
-    fn read_socket(parent: &mut PosixBufferedReader, fd: Fd, size_hint: isize, received_hup: bool) {
-        Self::read_with_fn(
-            parent,
-            FileType::Socket,
-            fd,
-            size_hint,
-            received_hup,
-            |fd, buf, _| sys::recv_non_block(fd, buf),
-        );
+    /// # Safety
+    /// Same contract as [`Self::read`].
+    unsafe fn read_socket(
+        this: *mut PosixBufferedReader,
+        fd: Fd,
+        size_hint: isize,
+        received_hup: bool,
+    ) {
+        // SAFETY: caller contract.
+        unsafe {
+            Self::read_with_fn(
+                this,
+                FileType::Socket,
+                fd,
+                size_hint,
+                received_hup,
+                |fd, buf, _| sys::recv_non_block(fd, buf),
+            )
+        };
     }
 
-    fn read_pipe(parent: &mut PosixBufferedReader, fd: Fd, size_hint: isize, received_hup: bool) {
-        Self::read_with_fn(
-            parent,
-            FileType::NonblockingPipe,
-            fd,
-            size_hint,
-            received_hup,
-            |fd, buf, _| sys::read_nonblocking(fd, buf),
-        );
+    /// # Safety
+    /// Same contract as [`Self::read`].
+    unsafe fn read_pipe(
+        this: *mut PosixBufferedReader,
+        fd: Fd,
+        size_hint: isize,
+        received_hup: bool,
+    ) {
+        // SAFETY: caller contract.
+        unsafe {
+            Self::read_with_fn(
+                this,
+                FileType::NonblockingPipe,
+                fd,
+                size_hint,
+                received_hup,
+                |fd, buf, _| sys::read_nonblocking(fd, buf),
+            )
+        };
     }
 
-    fn read_blocking_pipe(
-        parent: &mut PosixBufferedReader,
+    /// # Safety
+    /// `this` is the live reader (an inline field of its parent).
+    /// `on_read_chunk` re-entry never frees it (`BufferedReaderParent`
+    /// contract) but may mutate it — no borrow of `*this` is held across any
+    /// dispatch below. `on_error()` / `done()` MAY free the parent, so both
+    /// are dispatched in tail position.
+    unsafe fn read_blocking_pipe(
+        this: *mut PosixBufferedReader,
         fd: Fd,
         _size_hint: isize,
         received_hup_initially: bool,
     ) {
-        // PORT_NOTES_PLAN R-2: `&mut parent` carries LLVM `noalias`, but
-        // `vtable.on_read_chunk` below re-enters JS (e.g.
-        // `FileReader::on_read_chunk` resolves a promise → drains microtasks)
-        // and user code can reach this reader via a fresh
-        // `&mut PosixBufferedReader` from the parent's intrusive `reader`
-        // field, writing `self.flags` / `self._buffer` / `self.handle`. Not
-        // currently ASM-cached (noalias-hunt SUSPECT), but one inlining change
-        // away from caching `flags`/`_buffer.{ptr,cap}` across the call so the
-        // next loop iteration's `_buffer.capacity()` / `IS_DONE` check / poll
-        // re-arm operate on stale state. Launder so `parent` is derived from
-        // an opaque pointer that LLVM must assume the vtable dispatch may
-        // write through; mirrors the cork fix at b818e70e1c57. Stacked-Borrows
-        // is still violated by the re-entrant `&mut` alias regardless — this
-        // addresses the codegen hazard only.
-        let this: *mut PosixBufferedReader = core::hint::black_box(core::ptr::from_mut(parent));
-        // SAFETY: `this` aliases the live `&mut parent`; single JS thread.
-        // Shadow-rebind so the local `parent` is no longer the `noalias` arg
-        // but a raw-ptr-derived borrow whose loads must reload after each
-        // opaque vtable call (precedent: `JSMySQLQuery::resolve`'s guard
-        // re-borrow). The reader struct is an inline field of its parent;
-        // `on_read_chunk` re-entry never frees it per `BufferedReaderParent`'s
-        // contract, so `*this` stays a valid place even if re-entry calls
-        // `done()`/`close()`. `on_reader_error` MAY free it, and every
-        // `register_poll()`/`on_error()` below is in tail position, so nothing
-        // touches `parent` after one can have dispatched it.
-        let parent = unsafe { &mut *this };
+        // The vtable is two Copy scalars set once at `start()`; copying it out
+        // lets every `on_read_chunk` dispatch run with no borrow of `*this`.
+        // SAFETY: caller contract — `this` is live.
+        let vtable = unsafe { (*this).vtable };
         let mut received_hup = received_hup_initially;
         loop {
-            let streaming = parent.vtable.is_streaming_enabled();
+            let streaming = vtable.is_streaming_enabled();
             let mut got_retry = false;
 
-            if parent._buffer.capacity() == 0 {
+            // SAFETY: caller contract; borrow ends at `;`.
+            let unbuffered = unsafe { (*this)._buffer.capacity() == 0 };
+            if unbuffered {
                 // Use stack buffer for streaming — per-loop scratch buffer;
                 // single-threaded event loop (see `EventLoopCtx::pipe_read_buffer_mut`).
-                let maxbuf = parent.maxbuf;
-                let stack_buffer = parent.vtable.event_loop().pipe_read_buffer_mut();
+                // SAFETY: caller contract; `maxbuf` is Copy.
+                let maxbuf = unsafe { (*this).maxbuf };
+                let stack_buffer = vtable.event_loop().pipe_read_buffer_mut();
                 let stack_buffer = MaxBuf::clamp_read_buf(maxbuf, stack_buffer);
 
                 match sys::read_nonblocking(fd, stack_buffer) {
                     sys::Result::Ok(bytes_read) => {
-                        let over_budget = Self::charge_max_buffer(parent, bytes_read);
+                        // SAFETY: caller contract; borrow scoped to the call.
+                        let over_budget =
+                            Self::charge_max_buffer(unsafe { &mut *this }, bytes_read);
 
                         if bytes_read == 0 {
                             // EOF - finished and closed pipe
-                            parent.close_without_reporting();
-                            if !parent.flags.contains(PosixFlags::IS_DONE) {
-                                parent.done();
+                            // SAFETY: caller contract; `done()` is the tail.
+                            unsafe {
+                                (*this).close_without_reporting();
+                                if !(*this).flags.contains(PosixFlags::IS_DONE) {
+                                    (*this).done();
+                                }
                             }
                             return;
                         }
 
                         if streaming {
                             // Stream this chunk and register for next cycle
-                            let keep_going = parent.vtable.on_read_chunk(
+                            let keep_going = vtable.on_read_chunk(
                                 &stack_buffer[..bytes_read],
                                 if received_hup && bytes_read < stack_buffer.len() {
                                     ReadState::Eof
@@ -687,26 +746,32 @@ impl PosixBufferedReader {
                             // Re-entrant JS inside on_read_chunk can close the
                             // reader (nested on_pull -> read -> EOF); the
                             // captured `fd` is then stale regardless of HUP.
-                            if parent.is_done() {
+                            // SAFETY: caller contract (re-entry never frees `*this`).
+                            if unsafe { (*this).is_done() } {
                                 return;
                             }
                             if !keep_going && !received_hup && !over_budget {
                                 return;
                             }
                         } else {
-                            parent
-                                ._buffer
-                                .extend_from_slice(&stack_buffer[..bytes_read]);
+                            // SAFETY: caller contract; borrow ends at `;`.
+                            unsafe {
+                                (*this)
+                                    ._buffer
+                                    .extend_from_slice(&stack_buffer[..bytes_read]);
+                            }
                         }
 
                         if over_budget {
-                            Self::stop_for_max_buffer(parent);
+                            // SAFETY: caller contract; tail position.
+                            Self::stop_for_max_buffer(unsafe { &mut *this });
                             return;
                         }
                     }
                     sys::Result::Err(err) => {
                         if !err.is_retry() {
-                            parent.on_error(err);
+                            // SAFETY: caller contract; `on_error` is the tail.
+                            unsafe { (*this).on_error(err) };
                             return;
                         }
                         // EAGAIN - fall through to register for next poll
@@ -714,73 +779,99 @@ impl PosixBufferedReader {
                     }
                 }
             } else {
-                let maxbuf = parent.maxbuf;
-                parent._buffer.reserve(16 * 1024);
-                let buf_len = {
-                    // SAFETY: sys::read_nonblocking writes only initialized bytes into
-                    // the prefix it reports; commit_spare exposes exactly that prefix.
-                    let buf = unsafe { bun_core::vec::spare_bytes_mut(&mut parent._buffer) };
+                // SAFETY: caller contract; `maxbuf` is Copy, borrow ends at `;`.
+                let maxbuf = unsafe { (*this).maxbuf };
+                // SAFETY: caller contract; borrow ends at `;`.
+                unsafe { (*this)._buffer.reserve(16 * 1024) };
+                // SAFETY: caller contract. `sys::read_nonblocking` writes only
+                // initialized bytes into the prefix it reports; `commit_spare`
+                // exposes exactly that prefix. The `_buffer` borrow ends before
+                // any dispatch.
+                let read_result = unsafe {
+                    let buf = bun_core::vec::spare_bytes_mut(&mut (*this)._buffer);
                     let buf = MaxBuf::clamp_read_buf(maxbuf, buf);
                     let buf_len = buf.len();
-                    match sys::read_nonblocking(fd, buf) {
-                        sys::Result::Ok(bytes_read) => {
-                            let over_budget = Self::charge_max_buffer(parent, bytes_read);
-                            parent._offset += bytes_read;
-                            // SAFETY: bytes_read bytes were just initialized by the syscall.
-                            unsafe { bun_core::vec::commit_spare(&mut parent._buffer, bytes_read) };
-
-                            if bytes_read == 0 {
-                                parent.close_without_reporting();
-                                if !parent.flags.contains(PosixFlags::IS_DONE) {
-                                    parent.done();
-                                }
-                                return;
-                            }
-
-                            if streaming {
-                                let new_len = parent._buffer.len();
-                                let chunk = &parent._buffer[new_len - bytes_read..new_len];
-                                let keep_going = parent.vtable.on_read_chunk(
-                                    chunk,
-                                    if received_hup && bytes_read < buf_len {
-                                        ReadState::Eof
-                                    } else {
-                                        ReadState::Progress
-                                    },
-                                );
-                                if parent.is_done() {
-                                    return;
-                                }
-                                // Closing for `over_budget` outranks the
-                                // consumer asking us to stop: it must still
-                                // happen, or nothing ever caps the pipe.
-                                if !keep_going && !over_budget {
-                                    return;
-                                }
-                            }
-
-                            if over_budget {
-                                Self::stop_for_max_buffer(parent);
-                                return;
-                            }
-                            buf_len
+                    (sys::read_nonblocking(fd, buf), buf_len)
+                };
+                match read_result {
+                    (sys::Result::Ok(bytes_read), buf_len) => {
+                        // SAFETY: caller contract; borrow scoped to the call.
+                        let over_budget =
+                            Self::charge_max_buffer(unsafe { &mut *this }, bytes_read);
+                        // SAFETY: caller contract; `bytes_read` bytes were just
+                        // initialized by the syscall; borrows end at each `;`.
+                        unsafe {
+                            (*this)._offset += bytes_read;
+                            bun_core::vec::commit_spare(&mut (*this)._buffer, bytes_read);
                         }
-                        sys::Result::Err(err) => {
-                            if !err.is_retry() {
-                                parent.on_error(err);
+
+                        if bytes_read == 0 {
+                            // SAFETY: caller contract; `done()` is the tail.
+                            unsafe {
+                                (*this).close_without_reporting();
+                                if !(*this).flags.contains(PosixFlags::IS_DONE) {
+                                    (*this).done();
+                                }
+                            }
+                            return;
+                        }
+
+                        if streaming {
+                            // Move the buffer out for the dispatch so re-entrant
+                            // access to the reader cannot alias or reallocate it
+                            // under the chunk slice.
+                            // SAFETY: caller contract; borrow ends at `;`.
+                            let buffer = unsafe { core::mem::take(&mut (*this)._buffer) };
+                            let new_len = buffer.len();
+                            let keep_going = vtable.on_read_chunk(
+                                &buffer[new_len - bytes_read..new_len],
+                                if received_hup && bytes_read < buf_len {
+                                    ReadState::Eof
+                                } else {
+                                    ReadState::Progress
+                                },
+                            );
+                            // Reinstall; anything re-entry buffered lands after
+                            // the bytes it was delivered.
+                            // SAFETY: caller contract; borrows end at the block.
+                            unsafe {
+                                let mut buffer = buffer;
+                                buffer.extend_from_slice(&(*this)._buffer);
+                                (*this)._buffer = buffer;
+                            }
+                            // SAFETY: caller contract.
+                            if unsafe { (*this).is_done() } {
                                 return;
                             }
-                            got_retry = true;
-                            buf_len
+                            // Closing for `over_budget` outranks the
+                            // consumer asking us to stop: it must still
+                            // happen, or nothing ever caps the pipe.
+                            if !keep_going && !over_budget {
+                                return;
+                            }
+                        }
+
+                        if over_budget {
+                            // SAFETY: caller contract; tail position.
+                            Self::stop_for_max_buffer(unsafe { &mut *this });
+                            return;
                         }
                     }
-                };
-                let _ = buf_len;
+                    (sys::Result::Err(err), _) => {
+                        if !err.is_retry() {
+                            // SAFETY: caller contract; `on_error` is the tail.
+                            unsafe { (*this).on_error(err) };
+                            return;
+                        }
+                        got_retry = true;
+                    }
+                }
             }
 
             // Register for next poll cycle unless we got HUP
             if !received_hup {
-                parent.register_poll();
+                // SAFETY: caller contract; borrow scoped to the call.
+                unsafe { (*this).register_poll() };
                 return;
             }
 
@@ -801,7 +892,8 @@ impl PosixBufferedReader {
             //
             // An explicit EAGAIN proves the HUP is stale, so re-arm.
             if got_retry {
-                parent.register_poll();
+                // SAFETY: caller contract; borrow scoped to the call.
+                unsafe { (*this).register_poll() };
                 return;
             }
             // Otherwise we just returned from user JS; re-poll the fd to see
@@ -821,7 +913,8 @@ impl PosixBufferedReader {
                 bun_core::Pollable::NotReady => {
                     // No data and no HUP: a writer exists. Go back to the
                     // event loop instead of blocking in read().
-                    parent.register_poll();
+                    // SAFETY: caller contract; borrow scoped to the call.
+                    unsafe { (*this).register_poll() };
                     return;
                 }
             }
@@ -830,70 +923,70 @@ impl PosixBufferedReader {
 
     // PERF: `file_type` is a runtime arg (adt_const_params is unstable); `sys_fn`
     // is generic so it still monomorphizes — profile if hot.
-    fn read_with_fn(
-        parent: &mut PosixBufferedReader,
+    /// # Safety
+    /// Same contract as [`Self::read_blocking_pipe`]: `this` is live, re-entry
+    /// through `on_read_chunk` may mutate but never frees `*this`, and no
+    /// borrow of `*this` is held across any dispatch; `on_error()` / `done()`
+    /// are tail-positioned because they may free the parent.
+    // PERF: `file_type` is a runtime arg (adt_const_params is unstable); `sys_fn`
+    // is generic so it still monomorphizes — profile if hot.
+    unsafe fn read_with_fn(
+        this: *mut PosixBufferedReader,
         file_type: FileType,
         fd: Fd,
         _size_hint: isize,
         received_hup: bool,
         sys_fn: impl Fn(Fd, &mut [u8], usize) -> sys::Result<usize>,
     ) {
-        // PORT_NOTES_PLAN R-2: `&mut parent` carries LLVM `noalias`, but
-        // `vtable.on_read_chunk` below re-enters JS (resolves the pending
-        // read, drains microtasks, fires `'data'`) and user code can reach
-        // this reader via a fresh `&mut PosixBufferedReader` from the parent's
-        // intrusive `reader` field, writing `self._buffer` / `self.flags` /
-        // `self.handle`. Not currently ASM-cached (noalias-hunt SUSPECT), but
-        // one inlining change away from caching `_buffer.{ptr,len,cap}` across
-        // the call so the post-call `_buffer.clear()` / `capacity()` / inner-
-        // loop `set_len` operate on a stale Vec header (UAF if re-entry
-        // reallocated). Launder so `parent` is derived from an opaque pointer
-        // that LLVM must assume the vtable dispatch may write through; mirrors
-        // the cork fix at b818e70e1c57. Stacked-Borrows is still violated by
-        // the re-entrant `&mut` alias regardless — this addresses the codegen
-        // hazard only.
-        let this: *mut PosixBufferedReader = core::hint::black_box(core::ptr::from_mut(parent));
-        // SAFETY: `this` aliases the live `&mut parent`; single JS thread.
-        // Shadow-rebind so the local `parent` is no longer the `noalias` arg
-        // but a raw-ptr-derived borrow (precedent: `JSMySQLQuery::resolve`).
-        // The reader struct is an inline field of its parent, which
-        // `on_read_chunk` re-entry never frees per `BufferedReaderParent`'s
-        // contract. `on_reader_error` MAY free it, so nothing below touches
-        // `parent` after dispatching an error (see the EAGAIN arm).
-        let parent = unsafe { &mut *this };
-        let streaming = parent.vtable.is_streaming_enabled();
+        // Copy scalars set once at `start()`; dispatching through the copy
+        // keeps `*this` unborrowed across every re-entry point.
+        // SAFETY: caller contract — `this` is live.
+        let vtable = unsafe { (*this).vtable };
+        let streaming = vtable.is_streaming_enabled();
 
         if streaming {
             // Per-loop scratch buffer; single-threaded event loop (see
             // `EventLoopCtx::pipe_read_buffer_mut`).
-            let event_loop = parent.vtable.event_loop();
+            let event_loop = vtable.event_loop();
             let stack_buffer_len = event_loop.pipe_read_buffer_mut().len();
-            while parent._buffer.capacity() == 0 {
+            // SAFETY: caller contract; borrow ends at the loop test.
+            while unsafe { (*this)._buffer.capacity() == 0 } {
                 let stack_buffer_cutoff = stack_buffer_len / 2;
                 let mut head_start = 0usize; // index into stack_buffer where the unwritten head begins
                 while stack_buffer_len - head_start > 16 * 1024 {
+                    // SAFETY: caller contract; the `maxbuf`/`_offset` reads end
+                    // before the syscall's buffer borrow (event-loop scratch,
+                    // not `*this`).
+                    let (maxbuf, offset) = unsafe { ((*this).maxbuf, (*this)._offset) };
                     let buf = &mut event_loop.pipe_read_buffer_mut()[head_start..];
-                    let buf = MaxBuf::clamp_read_buf(parent.maxbuf, buf);
+                    let buf = MaxBuf::clamp_read_buf(maxbuf, buf);
 
-                    match sys_fn(fd, buf, parent._offset) {
+                    match sys_fn(fd, buf, offset) {
                         sys::Result::Ok(bytes_read) => {
-                            let over_budget = Self::charge_max_buffer(parent, bytes_read);
-                            parent._offset += bytes_read;
+                            // SAFETY: caller contract; borrow scoped to the call.
+                            let over_budget =
+                                Self::charge_max_buffer(unsafe { &mut *this }, bytes_read);
+                            // SAFETY: caller contract; borrow ends at `;`.
+                            unsafe { (*this)._offset += bytes_read };
                             head_start += bytes_read;
 
                             // `over_budget` is terminal for the same reason EOF
                             // is: the child was killed and nothing past the cap
                             // may reach the consumer.
                             if bytes_read == 0 || over_budget {
-                                parent.close_without_reporting();
+                                // SAFETY: caller contract; borrow ends at `;`.
+                                unsafe { (*this).close_without_reporting() };
                                 if head_start > 0 {
-                                    let _ = parent.vtable.on_read_chunk(
+                                    let _ = vtable.on_read_chunk(
                                         &event_loop.pipe_read_buffer_mut()[..head_start],
                                         ReadState::Eof,
                                     );
                                 }
-                                if !parent.flags.contains(PosixFlags::IS_DONE) {
-                                    parent.done();
+                                // SAFETY: caller contract; `done()` is the tail.
+                                unsafe {
+                                    if !(*this).flags.contains(PosixFlags::IS_DONE) {
+                                        (*this).done();
+                                    }
                                 }
                                 return;
                             }
@@ -912,7 +1005,7 @@ impl PosixBufferedReader {
                                 // Once HUP is set the kernel
                                 // returns the remaining bytes then 0, so
                                 // draining to `bytes_read == 0` is bounded.
-                                let keep_going = parent.vtable.on_read_chunk(
+                                let keep_going = vtable.on_read_chunk(
                                     &event_loop.pipe_read_buffer_mut()[..head_start],
                                     if received_hup {
                                         ReadState::Eof
@@ -923,7 +1016,8 @@ impl PosixBufferedReader {
                                 // Re-entrant close (nested on_pull -> read ->
                                 // EOF) invalidates the captured `fd`; stop
                                 // before the next recv regardless of HUP.
-                                if parent.is_done() {
+                                // SAFETY: caller contract.
+                                if unsafe { (*this).is_done() } {
                                     return;
                                 }
                                 if !keep_going && !received_hup {
@@ -938,15 +1032,19 @@ impl PosixBufferedReader {
                                     bun_core::debug_warn!(
                                         "Received EAGAIN while reading from a file. This is a bug.",
                                     );
-                                } else if !parent.register_poll() {
-                                    // `on_reader_error` ran and may have freed
-                                    // the struct embedding `parent`; the
-                                    // drained head must not be delivered.
-                                    return;
+                                } else {
+                                    // SAFETY: caller contract; borrow scoped to
+                                    // the call. `on_reader_error` from a failed
+                                    // re-arm may have freed the struct embedding
+                                    // `*this`; the drained head must not be
+                                    // delivered.
+                                    if !unsafe { (*this).register_poll() } {
+                                        return;
+                                    }
                                 }
 
                                 if head_start > 0 {
-                                    let _ = parent.vtable.on_read_chunk(
+                                    let _ = vtable.on_read_chunk(
                                         &event_loop.pipe_read_buffer_mut()[..head_start],
                                         ReadState::Drained,
                                     );
@@ -955,19 +1053,20 @@ impl PosixBufferedReader {
                             }
 
                             if head_start > 0 {
-                                let _ = parent.vtable.on_read_chunk(
+                                let _ = vtable.on_read_chunk(
                                     &event_loop.pipe_read_buffer_mut()[..head_start],
                                     ReadState::Progress,
                                 );
                             }
-                            parent.on_error(err);
+                            // SAFETY: caller contract; `on_error` is the tail.
+                            unsafe { (*this).on_error(err) };
                             return;
                         }
                     }
                 }
 
                 if head_start > 0 {
-                    let keep_going = parent.vtable.on_read_chunk(
+                    let keep_going = vtable.on_read_chunk(
                         &event_loop.pipe_read_buffer_mut()[..head_start],
                         if received_hup {
                             ReadState::Eof
@@ -975,7 +1074,8 @@ impl PosixBufferedReader {
                             ReadState::Progress
                         },
                     );
-                    if parent.is_done() {
+                    // SAFETY: caller contract.
+                    if unsafe { (*this).is_done() } {
                         return;
                     }
                     if !keep_going && !received_hup {
@@ -983,106 +1083,170 @@ impl PosixBufferedReader {
                     }
                 }
 
-                if !parent.vtable.is_streaming_enabled() {
+                if !vtable.is_streaming_enabled() {
                     break;
                 }
             }
-        } else if parent._buffer.capacity() == 0 && parent._offset == 0 {
-            // Avoid a 16 KB dynamic memory allocation when the buffer might very well be empty.
-            // Per-loop scratch buffer; single-threaded event loop (see
-            // `EventLoopCtx::pipe_read_buffer_mut`).
-            let maxbuf = parent.maxbuf;
-            let stack_buffer = parent.vtable.event_loop().pipe_read_buffer_mut();
-            let stack_buffer = MaxBuf::clamp_read_buf(maxbuf, stack_buffer);
+        } else {
+            // SAFETY: caller contract; borrows end at `;`.
+            let take_stack_path =
+                unsafe { (*this)._buffer.capacity() == 0 && (*this)._offset == 0 };
+            if take_stack_path {
+                // Avoid a 16 KB dynamic memory allocation when the buffer might very well be empty.
+                // Per-loop scratch buffer; single-threaded event loop (see
+                // `EventLoopCtx::pipe_read_buffer_mut`).
+                // SAFETY: caller contract; `maxbuf` is Copy.
+                let maxbuf = unsafe { (*this).maxbuf };
+                let stack_buffer = vtable.event_loop().pipe_read_buffer_mut();
+                let stack_buffer = MaxBuf::clamp_read_buf(maxbuf, stack_buffer);
 
-            // Unlike the block of code following this one, only handle the non-streaming case.
-            debug_assert!(!streaming);
+                // Unlike the block of code following this one, only handle the non-streaming case.
+                debug_assert!(!streaming);
 
-            match sys_fn(fd, stack_buffer, 0) {
-                sys::Result::Ok(bytes_read) => {
-                    if bytes_read > 0 {
-                        parent
-                            ._buffer
-                            .extend_from_slice(&stack_buffer[..bytes_read]);
-                    }
-                    let over_budget = Self::charge_max_buffer(parent, bytes_read);
-                    parent._offset += bytes_read;
-
-                    // `over_budget` is terminal for the same reason EOF is: the
-                    // child was killed and nothing past the cap may be buffered.
-                    if bytes_read == 0 || over_budget {
-                        parent.close_without_reporting();
-                        let _ = Self::drain_chunk(&parent.vtable, &parent._buffer, ReadState::Eof);
-                        if !parent.flags.contains(PosixFlags::IS_DONE) {
-                            parent.done();
+                match sys_fn(fd, stack_buffer, 0) {
+                    sys::Result::Ok(bytes_read) => {
+                        if bytes_read > 0 {
+                            // SAFETY: caller contract; borrow ends at `;`.
+                            unsafe {
+                                (*this)
+                                    ._buffer
+                                    .extend_from_slice(&stack_buffer[..bytes_read]);
+                            }
                         }
+                        // SAFETY: caller contract; borrow scoped to the call.
+                        let over_budget =
+                            Self::charge_max_buffer(unsafe { &mut *this }, bytes_read);
+                        // SAFETY: caller contract; borrow ends at `;`.
+                        unsafe { (*this)._offset += bytes_read };
+
+                        // `over_budget` is terminal for the same reason EOF is: the
+                        // child was killed and nothing past the cap may be buffered.
+                        if bytes_read == 0 || over_budget {
+                            // Move the buffer out for the drain so re-entrant
+                            // access cannot alias it, then reinstall for the
+                            // consumers `done()` notifies.
+                            // SAFETY: caller contract; borrows end at each `;`.
+                            let buffer = unsafe {
+                                (*this).close_without_reporting();
+                                core::mem::take(&mut (*this)._buffer)
+                            };
+                            let _ = Self::drain_chunk(&vtable, &buffer, ReadState::Eof);
+                            // SAFETY: caller contract; `done()` is the tail.
+                            unsafe {
+                                let mut buffer = buffer;
+                                buffer.extend_from_slice(&(*this)._buffer);
+                                (*this)._buffer = buffer;
+                                if !(*this).flags.contains(PosixFlags::IS_DONE) {
+                                    (*this).done();
+                                }
+                            }
+                            return;
+                        }
+                    }
+                    sys::Result::Err(err) => {
+                        if err.is_retry() {
+                            if file_type == FileType::File {
+                                bun_core::debug_warn!(
+                                    "Received EAGAIN while reading from a file. This is a bug.",
+                                );
+                            } else {
+                                // SAFETY: caller contract; borrow scoped to the call.
+                                unsafe { (*this).register_poll() };
+                            }
+                            return;
+                        }
+                        // SAFETY: caller contract; `on_error` is the tail.
+                        unsafe { (*this).on_error(err) };
                         return;
                     }
                 }
-                sys::Result::Err(err) => {
-                    if err.is_retry() {
-                        if file_type == FileType::File {
-                            bun_core::debug_warn!(
-                                "Received EAGAIN while reading from a file. This is a bug.",
-                            );
-                        } else {
-                            parent.register_poll();
-                        }
-                        return;
-                    }
-                    parent.on_error(err);
-                    return;
-                }
+
+                // Allow falling through
             }
-
-            // Allow falling through
         }
 
         loop {
-            let maxbuf = parent.maxbuf;
-            parent._buffer.reserve(16 * 1024);
-            // SAFETY: writing into spare capacity; commit after syscall reports bytes written.
-            let buf = unsafe { bun_core::vec::spare_bytes_mut(&mut parent._buffer) };
-            let buf = MaxBuf::clamp_read_buf(maxbuf, buf);
+            // SAFETY: caller contract. The `_buffer` borrow (reserve + spare
+            // prefix) and the syscall both end inside this block, before any
+            // dispatch.
+            let read_result = unsafe {
+                let maxbuf = (*this).maxbuf;
+                (*this)._buffer.reserve(16 * 1024);
+                // Writing into spare capacity; committed after the syscall
+                // reports how many bytes it initialized.
+                let buf = bun_core::vec::spare_bytes_mut(&mut (*this)._buffer);
+                let buf = MaxBuf::clamp_read_buf(maxbuf, buf);
+                sys_fn(fd, buf, (*this)._offset)
+            };
 
-            match sys_fn(fd, buf, parent._offset) {
+            match read_result {
                 sys::Result::Ok(bytes_read) => {
-                    let over_budget = Self::charge_max_buffer(parent, bytes_read);
-                    parent._offset += bytes_read;
-                    // SAFETY: bytes_read bytes initialized by sys_fn.
-                    unsafe { bun_core::vec::commit_spare(&mut parent._buffer, bytes_read) };
+                    // SAFETY: caller contract; borrow scoped to the call.
+                    let over_budget = Self::charge_max_buffer(unsafe { &mut *this }, bytes_read);
+                    // SAFETY: caller contract; `bytes_read` bytes were just
+                    // initialized by `sys_fn`; borrows end at each `;`.
+                    unsafe {
+                        (*this)._offset += bytes_read;
+                        bun_core::vec::commit_spare(&mut (*this)._buffer, bytes_read);
+                    }
 
                     // `over_budget` is terminal for the same reason EOF is: the
                     // child was killed and nothing past the cap may be buffered.
                     if bytes_read == 0 || over_budget {
-                        parent.close_without_reporting();
-                        let _ = Self::drain_chunk(&parent.vtable, &parent._buffer, ReadState::Eof);
-                        if !parent.flags.contains(PosixFlags::IS_DONE) {
-                            parent.done();
+                        // SAFETY: caller contract; borrows end at each `;`.
+                        let buffer = unsafe {
+                            (*this).close_without_reporting();
+                            core::mem::take(&mut (*this)._buffer)
+                        };
+                        let _ = Self::drain_chunk(&vtable, &buffer, ReadState::Eof);
+                        // SAFETY: caller contract; `done()` is the tail.
+                        unsafe {
+                            let mut buffer = buffer;
+                            buffer.extend_from_slice(&(*this)._buffer);
+                            (*this)._buffer = buffer;
+                            if !(*this).flags.contains(PosixFlags::IS_DONE) {
+                                (*this).done();
+                            }
                         }
                         return;
                     }
 
-                    if parent.vtable.is_streaming_enabled() {
-                        if parent._buffer.len() > 128_000 {
-                            let keep_going = parent
-                                .vtable
-                                .on_read_chunk(&parent._buffer, ReadState::Progress);
-                            parent._buffer.clear();
-                            if parent.is_done() || !keep_going {
-                                return;
+                    if vtable.is_streaming_enabled() {
+                        // SAFETY: caller contract; borrow ends at `;`.
+                        let over_highwater = unsafe { (*this)._buffer.len() > 128_000 };
+                        if over_highwater {
+                            // Move the buffer out for the dispatch, then
+                            // reinstall it cleared (matching the pre-existing
+                            // clear-after-dispatch semantics).
+                            // SAFETY: caller contract; borrow ends at `;`.
+                            let mut buffer = unsafe { core::mem::take(&mut (*this)._buffer) };
+                            let keep_going = vtable.on_read_chunk(&buffer, ReadState::Progress);
+                            buffer.clear();
+                            // SAFETY: caller contract; borrows end at each `;`.
+                            unsafe {
+                                (*this)._buffer = buffer;
+                                if (*this).is_done() || !keep_going {
+                                    return;
+                                }
                             }
                             continue;
                         }
                     }
                 }
                 sys::Result::Err(err) => {
-                    if parent.vtable.is_streaming_enabled() {
-                        if !parent._buffer.is_empty() {
-                            let _ = parent
-                                .vtable
-                                .on_read_chunk(&parent._buffer, ReadState::Drained);
-                            parent._buffer.clear();
+                    if vtable.is_streaming_enabled() {
+                        // SAFETY: caller contract; borrow ends at `;`.
+                        let buffer = unsafe { core::mem::take(&mut (*this)._buffer) };
+                        if !buffer.is_empty() {
+                            let _ = vtable.on_read_chunk(&buffer, ReadState::Drained);
+                        }
+                        // Reinstall cleared (capacity reuse; pre-existing
+                        // clear-after-dispatch semantics).
+                        // SAFETY: caller contract; borrow ends at `;`.
+                        unsafe {
+                            let mut buffer = buffer;
+                            buffer.clear();
+                            (*this)._buffer = buffer;
                         }
                     }
 
@@ -1092,28 +1256,36 @@ impl PosixBufferedReader {
                                 "Received EAGAIN while reading from a file. This is a bug.",
                             );
                         } else {
-                            parent.register_poll();
+                            // SAFETY: caller contract; borrow scoped to the call.
+                            unsafe { (*this).register_poll() };
                         }
                         return;
                     }
-                    parent.on_error(err);
+                    // SAFETY: caller contract; `on_error` is the tail.
+                    unsafe { (*this).on_error(err) };
                     return;
                 }
             }
         }
     }
 
-    fn read_from_blocking_pipe_without_blocking(
-        parent: &mut PosixBufferedReader,
+    /// # Safety
+    /// Same contract as [`Self::read`].
+    unsafe fn read_from_blocking_pipe_without_blocking(
+        this: *mut PosixBufferedReader,
         fd: Fd,
         size_hint: isize,
         received_hup: bool,
     ) {
-        if parent.vtable.is_streaming_enabled() {
-            parent._buffer.clear();
+        // SAFETY: caller contract; borrow ends at `;`.
+        unsafe {
+            if (*this).vtable.is_streaming_enabled() {
+                (*this)._buffer.clear();
+            }
         }
 
-        Self::read_blocking_pipe(parent, fd, size_hint, received_hup);
+        // SAFETY: caller contract.
+        unsafe { Self::read_blocking_pipe(this, fd, size_hint, received_hup) };
     }
 }
 
@@ -1965,9 +2137,13 @@ impl WindowsBufferedReader {
         let _ = self.start_reading();
     }
 
-    pub fn read(&mut self) {
+    /// # Safety
+    /// `this` is the live reader. Raw for signature parity with the POSIX
+    /// entry (callers dispatch through a `*mut`); the body only unpauses.
+    pub unsafe fn read(this: *mut Self) {
         // we cannot sync read pipes on Windows so we just check if we are paused to resume the reading
-        self.unpause();
+        // SAFETY: caller contract; borrow scoped to the call.
+        unsafe { (*this).unpause() };
     }
 }
 

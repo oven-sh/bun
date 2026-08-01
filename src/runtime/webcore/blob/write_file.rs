@@ -1369,8 +1369,7 @@ impl WriteFileWaitFromLockedValueTask {
                 let _ = value.use_();
                 // drops the `promise`/`file_blob` Strongs
                 drop(this);
-                // SAFETY: GC-owned promise cell; exclusive borrow scoped to the call.
-                unsafe { (*promise).reject_with_async_stack(global_this, Ok(err))? };
+                JSPromise::opaque_mut(promise).reject_with_async_stack(global_this, Ok(err))?;
             }
             body::Value::Used => {
                 file_blob.detach();
@@ -1405,8 +1404,7 @@ impl WriteFileWaitFromLockedValueTask {
                     Err(err) => {
                         file_blob.detach();
                         drop(this);
-                        // SAFETY: GC-owned promise cell; exclusive borrow scoped to the call.
-                        unsafe { (*promise).reject(global_this, Err(err))? };
+                        JSPromise::opaque_mut(promise).reject(global_this, Err(err))?;
                         return Ok(());
                     }
                 };

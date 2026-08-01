@@ -274,29 +274,51 @@ impl ThreadPool {
         return false;
     }
 
-    fn schedule_with_options(&self, parse_task: &mut ParseTask, is_inside_thread_pool: bool) {
-        if matches!(parse_task.contents_or_fd, ContentsOrFd::Contents(_))
-            && matches!(parse_task.stage, ParseTaskStage::NeedsSourceCode)
-        {
-            let ContentsOrFd::Contents(contents) = parse_task.contents_or_fd else {
+    /// `parse_task` is raw, not `&mut`: `schedule_fn` publishes the embedded
+    /// `task`/`io_task` to the worker pool mid-body, and a worker can dequeue
+    /// and mutate `*parse_task` before this returns — a `&mut` parameter's
+    /// FnEntry protector would make that a foreign-write UB. All accesses are
+    /// scoped raw place expressions ending before the publish.
+    ///
+    /// # Safety
+    /// `parse_task` is a live, exclusively-owned `ParseTask` (heap- or
+    /// arena-allocated) until it is published to the pool below.
+    unsafe fn schedule_with_options(
+        &self,
+        parse_task: *mut ParseTask,
+        is_inside_thread_pool: bool,
+    ) {
+        // SAFETY: caller contract; each read ends at the statement.
+        let needs_source = unsafe {
+            matches!((*parse_task).contents_or_fd, ContentsOrFd::Contents(_))
+                && matches!((*parse_task).stage, ParseTaskStage::NeedsSourceCode)
+        };
+        if needs_source {
+            // SAFETY: caller contract; match by reference (ContentsOrFd is not Copy).
+            let ContentsOrFd::Contents(contents) = (unsafe { &(*parse_task).contents_or_fd })
+            else {
                 unreachable!()
             };
+            let contents = *contents;
             // `cache::Contents` has no borrowed-slice variant; the
             // contract (see ParseTask.rs `run_with_source_code` defer) is that
             // `entry.deinit()` is *skipped* when `contents_or_fd == .contents`,
             // so an `External` provenance tag (no-op deinit) is the correct
             // mapping for these unowned bytes.
-            parse_task.stage = ParseTaskStage::NeedsParse(CacheEntry {
-                contents: if contents.is_empty() {
-                    Contents::Empty
-                } else {
-                    Contents::External {
-                        ptr: contents.as_ptr(),
-                        len: contents.len(),
-                    }
-                },
-                fd: Fd::INVALID,
-            });
+            // SAFETY: caller contract; borrow ends at `;`.
+            unsafe {
+                (*parse_task).stage = ParseTaskStage::NeedsParse(CacheEntry {
+                    contents: if contents.is_empty() {
+                        Contents::Empty
+                    } else {
+                        Contents::External {
+                            ptr: contents.as_ptr(),
+                            len: contents.len(),
+                        }
+                    },
+                    fd: Fd::INVALID,
+                });
+            }
         }
 
         let schedule_fn: fn(&ThreadPoolLib::ThreadPool, ThreadPoolLib::Batch) =
@@ -306,25 +328,33 @@ impl ThreadPool {
                 ThreadPoolLib::ThreadPool::schedule
             };
 
-        if Self::uses_io_pool() {
-            match parse_task.stage {
-                ParseTaskStage::NeedsParse(_) => {
-                    schedule_fn(
-                        self.worker_pool(),
-                        ThreadPoolLib::Batch::from(&raw mut parse_task.task),
-                    );
+        // SAFETY: caller contract; `stage` read + the `&raw mut` field
+        // projections take no reference to `*parse_task`. After `schedule_fn`
+        // the task is owned by the pool — nothing below touches it.
+        unsafe {
+            if Self::uses_io_pool() {
+                match (*parse_task).stage {
+                    ParseTaskStage::NeedsParse(_) => {
+                        schedule_fn(
+                            self.worker_pool(),
+                            ThreadPoolLib::Batch::from(&raw mut (*parse_task).task),
+                        );
+                    }
+                    ParseTaskStage::NeedsSourceCode => {
+                        // io_pool is Some when uses_io_pool().
+                        let io = self.io_pool_ref().unwrap();
+                        schedule_fn(
+                            io,
+                            ThreadPoolLib::Batch::from(&raw mut (*parse_task).io_task),
+                        );
+                    }
                 }
-                ParseTaskStage::NeedsSourceCode => {
-                    // io_pool is Some when uses_io_pool().
-                    let io = self.io_pool_ref().unwrap();
-                    schedule_fn(io, ThreadPoolLib::Batch::from(&raw mut parse_task.io_task));
-                }
+            } else {
+                schedule_fn(
+                    self.worker_pool(),
+                    ThreadPoolLib::Batch::from(&raw mut (*parse_task).task),
+                );
             }
-        } else {
-            schedule_fn(
-                self.worker_pool(),
-                ThreadPoolLib::Batch::from(&raw mut parse_task.task),
-            );
         }
     }
 
@@ -333,12 +363,12 @@ impl ThreadPool {
     pub(crate) fn schedule(&self, parse_task: *mut ParseTask) {
         // SAFETY: callers pass a live, exclusively-owned ParseTask (heap- or
         // arena-allocated raw pointer); see call sites in bundle_v2.rs.
-        self.schedule_with_options(unsafe { &mut *parse_task }, false);
+        unsafe { self.schedule_with_options(parse_task, false) };
     }
 
     pub(crate) fn schedule_inside_thread_pool(&self, parse_task: *mut ParseTask) {
         // SAFETY: see `schedule`.
-        self.schedule_with_options(unsafe { &mut *parse_task }, true);
+        unsafe { self.schedule_with_options(parse_task, true) };
     }
 
     // returns `&'static mut` — the `Worker` is `heap::alloc`'d

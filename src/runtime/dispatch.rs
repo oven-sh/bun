@@ -781,8 +781,10 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
     match owner.tag() {
         poll_tag::BUFFERED_READER => poll_arm!(bun_io::BufferedReader, |h| {
             // SAFETY: tag matched, so `owner.ptr` is a live `*mut BufferedReader`
-            // set at `FilePoll::init`; exclusive for this dispatch.
-            unsafe { bun_io::BufferedReader::on_poll(&mut *h, size_or_offset as isize, hup) }
+            // set at `FilePoll::init`. Passed raw: `on_poll`'s read loops run
+            // user JS that can re-enter the reader, so no `&mut` may span the
+            // dispatch.
+            unsafe { bun_io::BufferedReader::on_poll(h, size_or_offset as isize, hup) }
         }),
         poll_tag::PROCESS => {
             // Bypass `owner_as!` (which yields `&mut`) — `Process` may be freed
@@ -845,8 +847,8 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
         poll_tag::LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER => {
             poll_arm!(bun_io::BufferedReader, |h| {
                 // SAFETY: tag matched, so `owner.ptr` is a live `*mut BufferedReader`
-                // set at `FilePoll::init`; exclusive for this dispatch.
-                unsafe { bun_io::BufferedReader::on_poll(&mut *h, size_or_offset as isize, hup) }
+                // set at `FilePoll::init`. Passed raw (see BUFFERED_READER above).
+                unsafe { bun_io::BufferedReader::on_poll(h, size_or_offset as isize, hup) }
             })
         }
 

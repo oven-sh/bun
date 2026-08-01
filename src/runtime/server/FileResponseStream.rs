@@ -248,7 +248,9 @@ impl FileResponseStream {
         this_ref.hold_read_ref();
         // SAFETY: `read()` dispatches `on_read_chunk`/`on_reader_done` back into
         // this object through the parent pointer, so no cell borrow spans it.
-        this_ref.reader_mut().read();
+        // SAFETY: `reader` is live for the stream's lifetime; `read` is the
+        // raw re-entrancy-safe entry (its dispatch runs user JS).
+        unsafe { BufferedReader::read(this_ref.reader.as_ptr()) };
     }
 
     #[inline]
@@ -394,7 +396,8 @@ impl FileResponseStream {
         // SAFETY: `read()` dispatches `on_read_chunk`/`on_reader_done` back
         // into this object through the parent pointer, so no cell borrow
         // spans it.
-        self.reader_mut().read();
+        // SAFETY: as the drive site above.
+        unsafe { BufferedReader::read(self.reader.as_ptr()) };
         true
     }
 

@@ -2282,8 +2282,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
 ) {
     // SAFETY: exclusive borrow of the live heap job is confined to
     // `spawn_cmd_prepare`; it ends before either freeing call below.
-    let prepared =
-        unsafe { spawn_cmd_prepare(&mut *this, this.cast(), argv, stdin_opt, stdout_opt) };
+    let prepared = unsafe { spawn_cmd_prepare(this, this.cast(), argv, stdin_opt, stdout_opt) };
     let Ok(process) = prepared else {
         // SAFETY: no borrows of `this` remain; `finish` consumes the live heap job.
         return unsafe { T::finish(this) };
@@ -2312,16 +2311,32 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
 /// via `set_err` (for the caller to `finish`). `this_ptr` is stored (never
 /// dereferenced) as the readers' parent pointer; it must be the raw pointer
 /// `s` was derived from.
-fn spawn_cmd_prepare<T: SpawnCmdTarget>(
-    s: &mut T,
+/// `s` is raw, not `&mut`: the `stdout_reader().start(..)` failure path
+/// synchronously re-enters this job (`on_reader_error` -> `note_reader_error`
+/// writes `remaining_fds`/`err_msg` through the parent backref), so a `&mut T`
+/// protector spanning that call would make the re-entrant sibling-field write
+/// foreign-write UB. Each access is a statement-scoped borrow of one field
+/// (disjoint from what the re-entry touches).
+///
+/// # Safety
+/// `s` is the live job (the same allocation `this_ptr` addresses).
+unsafe fn spawn_cmd_prepare<T: SpawnCmdTarget>(
+    s: *mut T,
     this_ptr: *mut core::ffi::c_void,
     argv: &mut [*const c_char],
     stdin_opt: spawn::Stdio,
     stdout_opt: spawn::Stdio,
 ) -> Result<*mut Process, ()> {
-    *s.has_called_process_exit_mut() = false;
-    *s.exit_status_mut() = None;
-    *s.remaining_fds() = 0;
+    macro_rules! s {
+        () => {{
+            // SAFETY: `s` is the live job (caller contract); the reborrow is
+            // scoped to the enclosing statement's expression.
+            unsafe { &mut *s }
+        }};
+    }
+    *s!().has_called_process_exit_mut() = false;
+    *s!().exit_status_mut() = None;
+    *s!().remaining_fds() = 0;
 
     #[cfg(not(windows))]
     let resolved_argv0: Option<*const c_char> = None;
@@ -2342,7 +2357,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         match bun_which::which(&mut path_buf, path_env, b"", argv0) {
             Some(p) => resolved_argv0 = Some(p.as_ptr().cast()),
             None => {
-                s.set_err(format_args!(
+                s!().set_err(format_args!(
                     "Could not find '{}' in PATH",
                     bstr::BStr::new(argv0)
                 ));
@@ -2369,7 +2384,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
                 envp_owned.as_ptr().cast()
             }
             Err(_) => {
-                s.set_err(format_args!("Failed to create environment block"));
+                s!().set_err(format_args!("Failed to create environment block"));
                 return Err(());
             }
         }
@@ -2429,7 +2444,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
                 // `Drop`. Reclaim it (uv_close + free if init'd) here.
                 #[cfg(windows)]
                 spawn_options.stderr.deinit();
-                s.set_err(format_args!(
+                s!().set_err(format_args!(
                     "Failed to spawn process: {}",
                     bstr::BStr::new(err.name())
                 ));
@@ -2438,7 +2453,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
             Err(e) => {
                 #[cfg(windows)]
                 spawn_options.stderr.deinit();
-                s.set_err(format_args!("Failed to spawn process: {}", e.name()));
+                s!().set_err(format_args!("Failed to spawn process: {}", e.name()));
                 return Err(());
             }
         };
@@ -2449,12 +2464,12 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     {
         if let Some(stdout) = spawned.stdout {
             if !spawned.memfds[1] {
-                s.stdout_reader().set_parent(this_ptr);
+                s!().stdout_reader().set_parent(this_ptr);
                 let _ = sys::set_nonblocking(stdout);
-                *s.remaining_fds() += 1;
+                *s!().remaining_fds() += 1;
                 {
                     use bun_io::pipe_reader::PosixFlags;
-                    let flags = &mut s.stdout_reader().flags;
+                    let flags = &mut s!().stdout_reader().flags;
                     flags.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
                     flags.remove(
                         PosixFlags::MEMFD
@@ -2462,16 +2477,16 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
                             | PosixFlags::CLOSED_WITHOUT_REPORTING,
                     );
                 }
-                if s.stdout_reader().start(stdout, true).is_err() {
-                    s.set_err(format_args!("Failed to start reading stdout"));
+                if s!().stdout_reader().start(stdout, true).is_err() {
+                    s!().set_err(format_args!("Failed to start reading stdout"));
                     return Err(());
                 }
-                if let Some(p) = s.stdout_reader().handle.get_poll() {
+                if let Some(p) = s!().stdout_reader().handle.get_poll() {
                     p.set_flag(bun_io::FilePollFlag::Socket);
                 }
             } else {
-                s.stdout_reader().set_parent(this_ptr);
-                s.stdout_reader().start_memfd(stdout);
+                s!().stdout_reader().set_parent(this_ptr);
+                s!().stdout_reader().start_memfd(stdout);
             }
         }
     }
@@ -2488,11 +2503,11 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         // callback + double-free on reader close).
         if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
             debug_assert!(core::ptr::eq(Box::as_ref(&pipe), stderr_pipe_ptr));
-            s.stderr_reader().source = Some(bun_io::Source::Pipe(pipe));
-            s.stderr_reader().set_parent(this_ptr);
-            *s.remaining_fds() += 1;
-            if s.stderr_reader().start_with_current_pipe().is_err() {
-                s.set_err(format_args!("Failed to start reading stderr"));
+            s!().stderr_reader().source = Some(bun_io::Source::Pipe(pipe));
+            s!().stderr_reader().set_parent(this_ptr);
+            *s!().remaining_fds() += 1;
+            if s!().stderr_reader().start_with_current_pipe().is_err() {
+                s!().set_err(format_args!("Failed to start reading stderr"));
                 return Err(());
             }
         }
@@ -2501,7 +2516,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     // SAFETY: `vm_mut().event_loop()` returns the live per-thread `jsc::EventLoop`.
     let ev_handle = EventLoopHandle::init(vm_mut().event_loop().cast::<()>());
     let process = spawned.to_process(ev_handle);
-    *s.process_slot() = Some(process);
+    *s!().process_slot() = Some(process);
     Ok(process)
 }
 

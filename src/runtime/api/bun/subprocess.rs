@@ -1035,17 +1035,24 @@ impl Subprocess<'_> {
         // is moot once the direct child has exited.
         if let Readable::Pipe(pipe) = self.stdout.get() {
             if !pipe.reader.is_done() {
-                let reader = &mut Readable::pipe_reader_mut(pipe).reader;
-                reader.unpause();
-                reader.read();
+                let reader = &raw mut Readable::pipe_reader_mut(pipe).reader;
+                // SAFETY: live pipe reader; `read` is the raw re-entrancy-safe
+                // entry (its dispatch runs user JS).
+                unsafe {
+                    (*reader).unpause();
+                    bun_io::BufferedReader::read(reader);
+                }
             }
         }
 
         if let Readable::Pipe(pipe) = self.stderr.get() {
             if !pipe.reader.is_done() {
-                let reader = &mut Readable::pipe_reader_mut(pipe).reader;
-                reader.unpause();
-                reader.read();
+                let reader = &raw mut Readable::pipe_reader_mut(pipe).reader;
+                // SAFETY: as the stdout arm above.
+                unsafe {
+                    (*reader).unpause();
+                    bun_io::BufferedReader::read(reader);
+                }
             }
         }
 

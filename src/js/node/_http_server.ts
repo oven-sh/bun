@@ -1206,8 +1206,11 @@ function onServerSNI(this: Server, servername, socketHandle) {
     }
     if (context == null) return;
     // Node's `sni_context = context.context || context`: accept both the
-    // wrapper and the raw native handle. decode_sni_result rejects the rest.
-    selected = (typeof context === "object" && context.context) || context;
+    // wrapper and the raw native handle (decode_sni_result rejects a
+    // non-SecureContext object). A primitive cannot be either.
+    const inner = typeof context === "object" ? context.context || context : undefined;
+    if (typeof inner === "object") selected = inner;
+    else failed = new Error("Invalid SNI context");
   };
   try {
     cb.$call(this, servername, done);
@@ -1219,7 +1222,10 @@ function onServerSNI(this: Server, servername, socketHandle) {
     if (!socketHandle) return undefined;
     return true;
   }
-  if (failed !== undefined) return failed;
+  if (failed !== undefined) {
+    this.emit("tlsClientError", failed);
+    return failed;
+  }
   return selected;
 }
 

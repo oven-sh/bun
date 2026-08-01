@@ -1,5 +1,6 @@
 import { expect, it } from "bun:test";
 import { tls as tlsCert } from "harness";
+import { once } from "node:events";
 import nodefs from "node:fs";
 import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
@@ -56,4 +57,32 @@ it("https.createServer rejects a non-function SNICallback", () => {
   expect(() => createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert, SNICallback: 1 as any })).toThrow(
     expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
   );
+});
+
+it("https.createServer SNICallback errors drop the connection and emit tlsClientError", async () => {
+  const cases: [string, (name: string, cb: (err: Error | null, ctx?: unknown) => void) => void, string][] = [
+    ["cb(error)", (_name, cb) => cb(new Error("sni rejected")), "sni rejected"],
+    ["invalid primitive", (_name, cb) => cb(null, true), "Invalid SNI context"],
+    [
+      "throw",
+      () => {
+        throw new Error("sni threw");
+      },
+      "sni threw",
+    ],
+  ];
+  for (const [, SNICallback, expectedMessage] of cases) {
+    const server = createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert, SNICallback }, (req, res) => res.end());
+    const tlsClientErrors: Error[] = [];
+    server.on("tlsClientError", err => tlsClientErrors.push(err));
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    const client = tlsConnect({ host: "127.0.0.1", port, servername: "a.example.com", rejectUnauthorized: false });
+    const [clientErr] = (await once(client, "error")) as [NodeJS.ErrnoException];
+    // The server dropped the connection before the handshake completed.
+    expect(String(clientErr.message)).toMatch(/disconnected before secure TLS connection was established|ECONNRESET/);
+    expect(tlsClientErrors.length).toBe(1);
+    expect(tlsClientErrors[0].message).toBe(expectedMessage);
+    server.close();
+  }
 });

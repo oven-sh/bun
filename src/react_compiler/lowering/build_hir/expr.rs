@@ -984,9 +984,7 @@ fn lower_unary(
     let loc = convert_loc(bun_loc);
     match unary.op {
         UnDelete => match &unary.value.data {
-            // The visitor can fold `delete (true ? a.b : c.d)` to an EDot operand
-            // with this flag unset; that form is a spec no-op and must fall through
-            // to the bailout (matching upstream on the unfolded conditional).
+            // A flagless EDot here is a visitor-folded no-op `delete`; bail like upstream.
             Data::EDot(d)
                 if d.optional_chain.is_none()
                     && unary.flags.contains(

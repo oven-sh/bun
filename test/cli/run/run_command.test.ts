@@ -45,19 +45,10 @@ describe("bun", () => {
 describe.concurrent("process.argv passthrough", () => {
   const argvJs = `process.stdout.write(JSON.stringify(process.argv.slice(2)));`;
 
-  async function runFile(args: string[], entry = "argv.js") {
-    using dir = tempDir("argv-passthrough", { "argv.js": argvJs });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args.map(a => (a === "<file>" ? entry : a))],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  async function spawnArgv(cmd: string[], cwd: string) {
+    await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    return JSON.parse(stdout);
+    return { stdout, stderr, exitCode };
   }
 
   test.each([
@@ -93,7 +84,13 @@ describe.concurrent("process.argv passthrough", () => {
       ["--", "rest"],
     ],
   ] as const)("bun %j -> %j", async (args, expected) => {
-    expect(await runFile([...args])).toEqual([...expected]);
+    using dir = tempDir("argv-passthrough", { "argv.js": argvJs });
+    const cmd = [bunExe(), ...args.map(a => (a === "<file>" ? "argv.js" : a))];
+    expect(await spawnArgv(cmd, String(dir))).toEqual({
+      stdout: JSON.stringify(expected),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test.each([
@@ -116,17 +113,26 @@ describe.concurrent("process.argv passthrough", () => {
         scripts: { go: `${JSON.stringify(bunExe())} argv.js` },
       }),
     });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--silent", "run", "go", ...extra],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
+    expect(await spawnArgv([bunExe(), "--silent", "run", "go", ...extra], String(dir))).toEqual({
+      stdout: JSON.stringify(expected),
+      stderr: "",
+      exitCode: 0,
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    expect(JSON.parse(stdout)).toEqual([...expected]);
+  });
+
+  test("bun-shell script: $N positionals are the stripped passthrough", async () => {
+    using dir = tempDir("argv-shell-positional", {
+      "package.json": JSON.stringify({ scripts: { go: "echo $1.$2" } }),
+    });
+    const { stdout, stderr, exitCode } = await spawnArgv(
+      [bunExe(), "--silent", "--shell=bun", "run", "go", "--", "foo", "bar"],
+      String(dir),
+    );
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "foo.bar foo bar",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("node_modules/.bin binary still strips one leading --", async () => {
@@ -142,17 +148,11 @@ describe.concurrent("process.argv passthrough", () => {
     if (!isWindows) {
       chmodSync(path.join(String(dir), "node_modules", ".bin", binName), 0o755);
     }
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--silent", "run", "mybin", "--", "a", "b"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
+    expect(await spawnArgv([bunExe(), "--silent", "run", "mybin", "--", "a", "b"], String(dir))).toEqual({
+      stdout: JSON.stringify(["a", "b"]),
+      stderr: "",
+      exitCode: 0,
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    expect(JSON.parse(stdout)).toEqual(["a", "b"]);
   });
 });
 

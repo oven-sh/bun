@@ -895,7 +895,9 @@ pub fn update_package_json_and_install_and_cli(
                             Global::crash();
                         }
                         _ => {
-                            attempt_to_create_package_json()?;
+                            if !cli.dry_run {
+                                attempt_to_create_package_json()?;
+                            }
                             break 'brk super::init(ctx, cli, subcommand)?;
                         }
                     }

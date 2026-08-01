@@ -1024,6 +1024,8 @@ pub fn compute_cache_dir_and_subpath<'a>(
 
 // ─────────────────────────── package.json / lockfile ──────────────────────────
 
+pub const DEFAULT_PACKAGE_JSON_CONTENTS: &[u8] = b"{\"dependencies\": {}}";
+
 pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
     let package_json_file = match Dir::cwd().create_file_z(
         z_static(b"package.json\0"),
@@ -1042,7 +1044,7 @@ pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
         }
     };
 
-    package_json_file.pwrite_all(b"{\"dependencies\": {}}", 0)?;
+    package_json_file.pwrite_all(DEFAULT_PACKAGE_JSON_CONTENTS, 0)?;
 
     Ok(package_json_file)
 }

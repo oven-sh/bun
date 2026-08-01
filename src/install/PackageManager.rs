@@ -1490,16 +1490,22 @@ pub fn init(
                 }
             }
 
-            if subcommand == Subcommand::Install {
-                if cli.positionals.len() > 1 {
-                    // this is `bun add <package>`.
-                    //
-                    // create the package.json instead of returning an error so that
-                    // `bun add <pkg>` works in an empty directory.
-                    this_cwd = original_cwd;
-                    created_package_json = true;
-                    break 'child attempt_to_create_package_json_and_open()?;
+            if (subcommand == Subcommand::Install && cli.positionals.len() > 1)
+                || subcommand == Subcommand::Add
+            {
+                // this is `bun add <package>`.
+                //
+                // create the package.json instead of returning an error so that
+                // `bun add <pkg>` works in an empty directory. For `--dry-run` we
+                // skip the write entirely and proceed with a synthetic in-memory
+                // file; `workspace_package_json_cache` is seeded below so later
+                // reads never hit disk.
+                this_cwd = original_cwd;
+                created_package_json = true;
+                if cli.dry_run {
+                    break 'child bun_sys::File::from_fd(Fd::invalid());
                 }
+                break 'child attempt_to_create_package_json_and_open()?;
             }
             return Err(crate::Error::MissingPackageJSON);
         };
@@ -1708,10 +1714,30 @@ pub fn init(
         // bun_sys exposes the non-Z `get_fd_path`;
         // append the NUL ourselves so the static `&ZStr` invariant holds.
         let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
-        let p = bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?;
-        let plen = p.len();
+        let plen = if root_package_json_file.handle.is_valid() {
+            bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?.len()
+        } else {
+            // `--dry-run` synthetic package.json: no fd to query. We just set
+            // `original_package_json_path` to `<cwd>/package.json` above; copy
+            // it here so `ROOT_PACKAGE_JSON_PATH` agrees.
+            let src = original_package_json_path.as_bytes();
+            root_buf[..src.len()].copy_from_slice(src);
+            src.len()
+        };
         root_buf[plen] = 0;
         ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
+    }
+
+    if !root_package_json_file.handle.is_valid() {
+        // Seed the cache so `get_with_path` on the root package.json returns
+        // the synthetic `{"dependencies": {}}` instead of failing to read the
+        // (nonexistent) file from disk.
+        workspace_package_json_cache.seed_with_contents(
+            // SAFETY: see `ctx.log` deref at the workspace walk above.
+            unsafe { &mut *ctx.log },
+            original_package_json_path.as_bytes(),
+            directories::DEFAULT_PACKAGE_JSON_CONTENTS,
+        )?;
     }
 
     // Returns the resolver's BSSMap-owned

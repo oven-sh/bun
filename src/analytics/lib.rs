@@ -462,6 +462,12 @@ pub mod generate_header {
 
         #[cfg(target_os = "macos")]
         fn detect_use_msgx_on_macos_15_6_or_later() -> bool {
+            if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SENDRECVMSG_X
+                .get()
+                .unwrap_or(false)
+            {
+                return false;
+            }
             let parsed = semver::Version::parse_utf8(for_os().version);
             let version = parsed.version.min();
             parsed.valid && (version.major, version.minor) >= (15, 6)

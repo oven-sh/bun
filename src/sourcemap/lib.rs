@@ -965,7 +965,12 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
             if source_root.is_empty() {
                 v.push(Box::<[u8]>::from(s));
             } else {
-                v.push([source_root, s].concat().into_boxed_slice());
+                let sep: &[u8] = if source_root.ends_with(b"/") || s.starts_with(b"/") {
+                    b""
+                } else {
+                    b"/"
+                };
+                v.push([source_root, sep, s].concat().into_boxed_slice());
             }
         }
         Some(v)
@@ -1199,6 +1204,8 @@ pub fn load_input_source_map(
     {
         return None;
     }
+
+    let url = url.strip_prefix(b"file://").unwrap_or(url);
 
     let mut load_buf = bun_paths::path_buffer_pool::get();
     let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(source_filename);

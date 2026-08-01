@@ -209,11 +209,11 @@ try { require("./index.js"); } catch (e) { console.log(e.stack); }
     expect(exitCode).toBe(1);
   });
 
-  test("sourceRoot is prepended to sources", async () => {
+  test.each(["../src/", "../src"])("sourceRoot %p is prepended to sources", async sourceRoot => {
     using dir = tempDir("input-sourcemap-sourceroot", {
       "src/index.ts": original,
       "dist/index.js": generated + "//# sourceMappingURL=index.js.map\n",
-      "dist/index.js.map": JSON.stringify({ ...mapJson, sourceRoot: "../src/" }),
+      "dist/index.js.map": JSON.stringify({ ...mapJson, sourceRoot }),
     });
 
     const { stderr, exitCode } = await run(String(dir), join("dist", "index.js"));
@@ -238,7 +238,7 @@ try { require("./index.js"); } catch (e) { console.log(e.stack); }
     const { stderr, exitCode } = await run(String(dir), "index.js");
     expect(stderr).toContain(`${join(String(dir), "index.js")}:1:`);
     expect(stderr).not.toContain("index.ts");
-    expect(stderr).toContain("on an unmapped line");
+    expect(stderr).toContain(`"use strict"; throw new Error`);
     expect(exitCode).toBe(1);
   });
 

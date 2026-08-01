@@ -160,9 +160,10 @@ impl GarbageCollectionController {
         if this.disabled {
             return;
         }
+        let jsc_vm = VirtualMachine::get().jsc_vm();
         let prev_heap_size = this.gc_last_heap_size;
-        this.perform_gc();
-        if heap_size_is_stable(prev_heap_size, this.gc_last_heap_size) {
+        let current = jsc_vm.block_bytes_allocated();
+        if heap_size_is_stable(prev_heap_size, current) {
             this.heap_size_didnt_change_for_repeating_timer_ticks_count = this
                 .heap_size_didnt_change_for_repeating_timer_ticks_count
                 .saturating_add(1);
@@ -170,21 +171,28 @@ impl GarbageCollectionController {
                 && this.heap_size_didnt_change_for_repeating_timer_ticks_count
                     >= STABLE_TICKS_BEFORE_REDUCTION
             {
-                if !this.idle_memory_reducer_disabled
-                    && this.gc_last_heap_size >= MIN_HEAP_FOR_IDLE_REDUCTION
-                    && !heap_size_is_stable(
-                        this.gc_last_reduction_heap_size,
-                        this.gc_last_heap_size,
-                    )
-                {
-                    this.perform_idle_memory_reduction();
-                }
                 this.gc_repeating_timer_fast = false;
+                if !this.idle_memory_reducer_disabled
+                    && current >= MIN_HEAP_FOR_IDLE_REDUCTION
+                    && !heap_size_is_stable(this.gc_last_reduction_heap_size, current)
+                {
+                    // collectNow(Sync, Full) inside the reducer subsumes this
+                    // tick's collectAsync; firing both would let the concurrent
+                    // collector set m_collectionScope between the two
+                    // JSLockHolders and short-circuit
+                    // deleteAllUnlinkedCodeBlocks(DeleteAllCodeIfNotCollecting).
+                    this.perform_idle_memory_reduction();
+                    let interval = this.repeat_interval();
+                    Self::arm(vm, &raw mut this.gc_repeating_timer, interval);
+                    return;
+                }
             }
         } else {
             this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
             this.gc_repeating_timer_fast = true;
         }
+        jsc_vm.collect_async();
+        this.gc_last_heap_size = jsc_vm.block_bytes_allocated();
         let interval = this.repeat_interval();
         Self::arm(vm, &raw mut this.gc_repeating_timer, interval);
     }

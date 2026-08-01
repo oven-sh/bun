@@ -2797,13 +2797,13 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
-// GarbageCollectionController idle reducer: JSC__VM__runGC(sync=true)'s body (so unlinked code blocks go, linked ones stay) minus PreventCollectionAndDeleteAllCode, plus releaseFastMallocFreeMemory; collectNow (not collectSync) so sweeping completes before the allocator decommits.
+// GarbageCollectionController idle reducer: JSC__VM__runGC(sync=true)'s body (so unlinked code blocks go, linked ones stay) plus releaseFastMallocFreeMemory; collectNow (not collectSync) so sweeping completes before the allocator decommits.
 extern "C" void JSC__VM__reduceMemoryFootprintOnIdle(JSC::VM* vm)
 {
     JSC::JSLockHolder lock(*vm);
     vm->finalizeSynchronousJSExecution();
     vm->clearSourceProviderCaches();
-    vm->heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
+    vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
     vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     WTF::releaseFastMallocFreeMemory();
     dataLogLnIf(JSC::Options::logGC(), "[IdleMemoryReducer fired, heap=", vm->heap.size() / 1024, "kb]");

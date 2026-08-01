@@ -37,7 +37,8 @@ type NativeReadable = typeof import("node:stream").Readable &
     [kPendingRead]: boolean;
     [kHighWaterMark]: number;
     [kHasResized]: boolean;
-    [kRemainingChunk]: Buffer;
+    [kRemainingChunk]: Buffer | undefined;
+    [kSourceOwnsChunks]: boolean;
     debugId: number;
   };
 
@@ -73,6 +74,8 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   stream[kPendingRead] = false;
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
+  stream[kRemainingChunk] = undefined;
+  stream[kSourceOwnsChunks] = false;
 
   const highWaterMark = options.highWaterMark;
   stream[kHighWaterMark] = typeof highWaterMark === "number" ? highWaterMark : 256 * 1024;

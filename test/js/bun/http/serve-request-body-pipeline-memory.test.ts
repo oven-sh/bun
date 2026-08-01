@@ -63,6 +63,10 @@ function checkRightSized(seen: Seen[], expectedTotal: number) {
   let total = 0;
   for (const { len } of seen) total += len;
   expect(total).toBe(expectedTotal);
+  // The writes are paced so on_data fires more than once; if the kernel
+  // coalesced them into a single recv this assertion surfaces it instead of
+  // silently dropping the multi-chunk coverage.
+  expect(seen.length).toBeGreaterThan(1);
   // Every chunk is its own allocation. On main each chunk was a subarray into
   // a single ~516 KiB (for await) / ~64 KiB (fromWeb) scratch view, so
   // `backing >> len` and `off` advanced per chunk.

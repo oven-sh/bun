@@ -6123,12 +6123,8 @@ impl VirtualMachine {
                 writer.write_all(b"\n")?;
             }
 
-            // "error", "suppressed" (SuppressedError), and "cause" are all
-            // non-enumerable own properties, so the loop above won't see them.
-            // Unlike `cause`, `.error`/`.suppressed` are filled by the runtime
-            // with whatever was thrown (not necessarily an Error), so print any
-            // non-undefined value; `print_error_instance_body` routes non-Error
-            // values through the generic formatter.
+            // "error"/"suppressed" (SuppressedError) and "cause" are
+            // non-enumerable own properties; the loop above skips those.
             if !saw_error {
                 let key = bun_core::String::static_(b"error");
                 if let Some(inner) = error_instance.get_own(global_ref, &key)? {
@@ -6195,11 +6191,8 @@ impl VirtualMachine {
                 formatter.map_node = Some(node);
             }
 
-            // Only Error instances recurse back into this loop (via their own
-            // .cause/.error/.suppressed), so only they need the circular guard.
-            // Non-Error values are rendered by the generic formatter, which
-            // shares `formatter.map` for its own cycle detection; seeding it
-            // here would make the value print as `[Circular]`.
+            // `formatter.map` is shared with the generic formatter's own cycle
+            // check, so only seed it for values that recurse here (Errors).
             let track = err.is_cell() && err.js_type() == JSType::ErrorInstance;
             if track {
                 let entry = formatter.map.get_or_put(err).expect("unreachable");

@@ -1172,10 +1172,34 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             let dep: Repository = *version.git();
             let res = Resolution::init(ResolutionTagged::Git(dep));
 
+            // `bun update` must re-resolve the committish against the remote.
+            // The query `res` built from the spec has an empty `resolved`,
+            // which `Repository::eql` treats as a committish match against the
+            // lockfile-loaded entry and would short-circuit to the stale SHA.
+            // Once the checkout writes `resolved` back into the dependency (see
+            // `runTasks::GitCheckout`), `eql` compares SHAs and binds to the
+            // freshly appended package.
+            let should_update = this.to_update && dep.resolved.is_empty() && {
+                // reshaped for borrowck — `is_root_dependency` reads
+                // `manager.root_package_id`, disjoint from `manager.lockfile`.
+                let this_ptr: *mut PackageManager = this;
+                // SAFETY: see the matching split in
+                // `get_or_put_resolved_package_with_find_result`.
+                unsafe { &*(*this_ptr).lockfile }.is_root_dependency(unsafe { &mut *this_ptr }, id)
+                    && (this.update_requests.is_empty()
+                        || this.updating_packages.contains(
+                            dependency
+                                .name
+                                .slice(this.lockfile.buffers.string_bytes.as_slice()),
+                        ))
+            };
+
             // First: see if we already loaded the git package in-memory
-            if let Some(pkg_id) = this.lockfile.get_package_id(name_hash, None, &res) {
-                success_fn(this, id, pkg_id);
-                return Ok(());
+            if !should_update {
+                if let Some(pkg_id) = this.lockfile.get_package_id(name_hash, None, &res) {
+                    success_fn(this, id, pkg_id);
+                    return Ok(());
+                }
             }
 
             // reshaped for borrowck — `alias`/`url` borrow

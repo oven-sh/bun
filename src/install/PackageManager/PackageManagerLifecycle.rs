@@ -423,16 +423,13 @@ impl PackageManager {
                     Source::init_path_string(package_json_path.as_bytes(), json_buf.as_slice());
                 let mut tmp_log = Log::init();
                 initialize_store();
-                if let Ok(parsed) = JSON::ParsedJson::parse_package_json(&json_src, &mut tmp_log) {
-                    if let Some(e) = parsed.root.get(b"name")
-                        && let Some(n) = e.as_utf8_string_literal()
-                    {
-                        name = Some(Box::from(n));
+                let mut checker = JSON::PackageJSONVersionChecker::init(&json_src, &mut tmp_log);
+                if checker.parse().is_ok() {
+                    if checker.has_found_name {
+                        name = Some(Box::from(checker.found_name()));
                     }
-                    if let Some(e) = parsed.root.get(b"version")
-                        && let Some(v) = e.as_utf8_string_literal()
-                    {
-                        version = Box::from(v);
+                    if checker.has_found_version {
+                        version = Box::from(checker.found_version());
                     }
                 }
             }

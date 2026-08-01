@@ -1394,8 +1394,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(());
         }
 
-        // Matches esbuild's mangleStmts gate; without it Bun.Transpiler drops
-        // bare JSX / @__PURE__ expression statements (#14789).
         if p.options.features.minify_syntax {
             let Some(simplified) = SideEffects::simplify_unused_expr(p, data.value) else {
                 restore_stmt_expr!();

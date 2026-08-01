@@ -279,14 +279,56 @@ test.concurrent(".env value expansion across files (issue #15099)", async () => 
   });
 });
 
-test.concurrent(".env value expansion resolves against process.env", async () => {
-  using dir = tempDir("dotenv-expand-process", {
-    ".env": "FROM_FILE=file\n",
-    ".env.local": "COMBINED=${FROM_PROCESS}-${FROM_FILE}\n",
-    "index.ts": "console.log(process.env.COMBINED);",
+test.concurrent(".env value expansion transitive across files", async () => {
+  // .env.local references a .env value that itself contains a reference.
+  // Expansion must recurse on looked-up file values so no raw $VAR text leaks.
+  using dir = tempDir("dotenv-expand-transitive", {
+    ".env": "X=1\nY=$X\nDB_HOST=db\nDB_PORT=5432\nDATABASE_URL=postgres://$DB_HOST:$DB_PORT/app\n",
+    ".env.local": "Z=$Y\nTEST_DB=$DATABASE_URL\n",
+    "index.ts":
+      "console.log(JSON.stringify({" +
+      "X:process.env.X,Y:process.env.Y,Z:process.env.Z," +
+      "DATABASE_URL:process.env.DATABASE_URL,TEST_DB:process.env.TEST_DB}));",
   });
-  const { stdout } = await bunRun(`${dir}/index.ts`, { FROM_PROCESS: "proc" });
-  expect(stdout).toBe("proc-file");
+  const { stdout } = await bunRun(`${dir}/index.ts`);
+  expect(JSON.parse(stdout)).toEqual({
+    X: "1",
+    Y: "1",
+    Z: "1",
+    DATABASE_URL: "postgres://db:5432/app",
+    TEST_DB: "postgres://db:5432/app",
+  });
+});
+
+test.concurrent(".env value expansion does not reinterpret process.env or escaped $", async () => {
+  using dir = tempDir("dotenv-expand-verbatim", {
+    ".env": "FROM_FILE=file\nESC=\\$FROM_FILE\nREF_ESC=$ESC\n",
+    ".env.local": "COMBINED=${FROM_PROCESS}-${FROM_FILE}\nREF_PROC=$FROM_PROCESS\n",
+    "index.ts":
+      "console.log(JSON.stringify({" +
+      "COMBINED:process.env.COMBINED,REF_PROC:process.env.REF_PROC," +
+      "ESC:process.env.ESC,REF_ESC:process.env.REF_ESC}));",
+  });
+  // FROM_PROCESS contains a literal $FROM_FILE that must NOT be expanded:
+  // process.env values are final, not dotenv syntax.
+  const { stdout } = await bunRun(`${dir}/index.ts`, { FROM_PROCESS: "p/$FROM_FILE" });
+  expect(JSON.parse(stdout)).toEqual({
+    COMBINED: "p/$FROM_FILE-file",
+    REF_PROC: "p/$FROM_FILE",
+    ESC: "$FROM_FILE",
+    REF_ESC: "$FROM_FILE",
+  });
+});
+
+test.concurrent(".env value expansion reference cycle terminates", async () => {
+  using dir = tempDir("dotenv-expand-cycle", {
+    ".env": "CYC_A=$CYC_B\n",
+    ".env.local": "CYC_B=$CYC_A\n",
+    "index.ts": "console.log(typeof process.env.CYC_A, typeof process.env.CYC_B);",
+  });
+  const { stdout, exitCode } = await bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("string string");
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent(".env value expansion across --env-file arguments", async () => {

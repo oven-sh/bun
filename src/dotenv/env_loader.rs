@@ -1152,35 +1152,67 @@ impl<'a> Parser<'a> {
     /// map (process env + all loaded files). Called once from `Loader::load`
     /// after every .env file has been parsed, and from `parse` for the
     /// single-source `load_from_string` path.
+    ///
+    /// Results are buffered and written back only after the whole range has
+    /// been processed, so `expand_into`'s recursive lookups always see the
+    /// raw (pre-expansion) file values regardless of iteration order.
     fn expand_range(
         map: &mut Map,
         start: usize,
         value_buffer: &mut Vec<u8>,
     ) -> Result<(), AllocError> {
         let total = map.map.count();
-        let mut idx = start;
-        while idx < total {
-            // borrowck — clone the value bytes so `expand_into` can take
-            // `&Map` while we later write back via `values_mut()`.
-            let current: Box<[u8]> = Box::from(&*map.map.values()[idx].value);
-            if current.len() >= 2 {
-                value_buffer.clear();
-                if Self::expand_into(map, &current, value_buffer, 0) {
-                    map.map.values_mut()[idx] = HashTableValue {
-                        value: Box::from(value_buffer.as_slice()),
-                    };
-                }
+        if start >= total {
+            return Ok(());
+        }
+        let mut results: Vec<Option<Box<[u8]>>> = Vec::with_capacity(total - start);
+        for idx in start..total {
+            let current = &map.map.values()[idx].value;
+            if current.len() < 2 {
+                results.push(None);
+                continue;
             }
-            idx += 1;
+            value_buffer.clear();
+            if Self::expand_into(map, current, value_buffer, start, 0) {
+                results.push(Some(Box::from(value_buffer.as_slice())));
+            } else {
+                results.push(None);
+            }
+        }
+        for (i, expanded) in results.into_iter().enumerate() {
+            if let Some(v) = expanded {
+                map.map.values_mut()[start + i] = HashTableValue { value: v };
+            }
         }
         Ok(())
     }
 
+    /// Append the expansion of `map[key]` to `out`. A hit at index `>= start`
+    /// (i.e. a value that came from a .env file in this load) is expanded
+    /// recursively under the depth guard so that transitive references resolve
+    /// regardless of file load order. Entries at index `< start` (process env
+    /// and anything present before this load) are copied verbatim; those are
+    /// final values and must not be reinterpreted as dotenv syntax.
+    #[inline]
+    fn expand_lookup(map: &Map, key: &[u8], out: &mut Vec<u8>, start: usize, depth: u8) -> bool {
+        let Some(idx) = map.map.get_index(key) else {
+            return false;
+        };
+        let v = &*map.map.values()[idx].value;
+        if idx >= start && depth < 200 {
+            Self::expand_into(map, v, out, start, depth + 1);
+        } else {
+            out.extend_from_slice(v);
+        }
+        true
+    }
+
     /// Left-to-right expansion of `$NAME` / `${NAME}` / `${NAME:-default}`.
     /// `${...}` locates its matching `}` by depth (`${` opens, `}` closes,
-    /// `\x` skipped); malformed forms fall through as literal text. The `:-`
-    /// default clause is expanded recursively.
-    fn expand_into(map: &Map, value: &[u8], out: &mut Vec<u8>, depth: u8) -> bool {
+    /// `\x` skipped); malformed forms fall through as literal text. Both the
+    /// `:-` default clause and looked-up file values are expanded recursively
+    /// (see `expand_lookup`).
+    fn expand_into(map: &Map, value: &[u8], out: &mut Vec<u8>, start: usize, depth: u8) -> bool {
         #[inline]
         fn is_ident(b: u8) -> bool {
             matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
@@ -1242,16 +1274,14 @@ impl<'a> Parser<'a> {
                 let key = &inner[..key_end];
                 let rest = &inner[key_end..];
                 if rest.is_empty() {
-                    if let Some(v) = map.get(key) {
-                        out.extend_from_slice(v);
-                    }
+                    Self::expand_lookup(map, key, out, start, depth);
                 } else if let Some(default) = rest.strip_prefix(b":-") {
-                    if let Some(v) = map.get(key) {
-                        out.extend_from_slice(v);
-                    } else if depth < 200 {
-                        Self::expand_into(map, default, out, depth + 1);
-                    } else {
-                        out.extend_from_slice(default);
+                    if !Self::expand_lookup(map, key, out, start, depth) {
+                        if depth < 200 {
+                            Self::expand_into(map, default, out, start, depth + 1);
+                        } else {
+                            out.extend_from_slice(default);
+                        }
                     }
                 } else {
                     out.extend_from_slice(&value[pos..=close]);
@@ -1266,9 +1296,7 @@ impl<'a> Parser<'a> {
                 while k < value.len() && is_ident(value[k]) {
                     k += 1;
                 }
-                if let Some(v) = map.get(&value[key_start..k]) {
-                    out.extend_from_slice(v);
-                }
+                Self::expand_lookup(map, &value[key_start..k], out, start, depth);
                 pos = k;
                 continue;
             }

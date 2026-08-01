@@ -308,9 +308,8 @@ public:
                 return true;
             }
 
-            // V8/Node format for frames without a function name:
-            //     at /path/to/file.js:1:2
-            //     at async /path/to/file.js:1:2
+            // /path/to/file.js:1:2
+            // async /path/to/file.js:1:2
             lineInner = line;
             if (lineInner.startsWith("async "_s)) {
                 frame.isAsync = true;

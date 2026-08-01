@@ -2636,8 +2636,7 @@ fn get_or_put_resolved_package(
                 match this.lockfile.workspace_paths.get(&name_hash).copied() {
                     Some(p) => p,
                     None => {
-                        // No member has this name; fall back to the root package
-                        // (which is not in `workspace_paths`) when the names match.
+                        // No member has this name; fall back to the root package.
                         if name_hash != 0 {
                             if let Some(root) = this.lockfile.root_package() {
                                 if root.name_hash == name_hash {

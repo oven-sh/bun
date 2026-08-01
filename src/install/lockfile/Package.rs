@@ -1798,9 +1798,7 @@ impl Package<u64> {
                     && root_name_hash != 0
                     && name_hash == root_name_hash
                 {
-                    // `workspace:` dep naming the root package: the root is
-                    // not in `workspace_paths`; `get_or_put_resolved_package`
-                    // resolves it to package id 0.
+                    // `workspace:` dep naming the root package; resolved to id 0 later.
                     break 'workspace;
                 }
                 if let Some(path) = workspace_path {

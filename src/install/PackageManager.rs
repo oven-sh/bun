@@ -322,8 +322,7 @@ pub struct PackageManager {
     /// could be any of the workspaces.
     pub root_package_id: RootPackageId,
 
-    /// Name hash of the workspace root's package.json, for resolving
-    /// `workspace:` deps that name the root (which is not in `workspace_paths`).
+    /// Name hash of the workspace root's package.json (not in `workspace_paths`).
     pub(crate) workspace_root_name_hash: PackageNameHash,
 
     pub(crate) thread_pool: ThreadPool,

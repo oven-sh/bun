@@ -752,8 +752,7 @@ pub enum InstructionValue {
     UnaryExpression {
         operator: UnaryOperator,
         value: Place,
-        /// Bun's parse-time `E::UnaryFlags` (carries WAS_ORIGINALLY_TYPEOF_IDENTIFIER),
-        /// threaded through so codegen can restore it on the rebuilt `E::Unary`.
+        /// Parse-time flags from the visited `E::Unary`, restored at codegen.
         bun_flags: bun_ast::E::UnaryFlags,
         loc: Option<SourceLocation>,
     },

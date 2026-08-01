@@ -984,13 +984,9 @@ fn lower_unary(
     let loc = convert_loc(bun_loc);
     match unary.op {
         UnDelete => match &unary.value.data {
-            // The parser sets WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS
-            // only when the source operand is syntactically an identifier or member
-            // expression. The visitor can fold `delete (true ? a.b : c.d)` to an EDot
-            // operand with the flag unset; that form has no-op semantics (operand is a
-            // value, not a Reference) and must not become a PropertyDelete. Gating on
-            // the flag matches upstream, which sees the unfolded ConditionalExpression
-            // and takes the "Only object properties can be deleted" bailout.
+            // The visitor can fold `delete (true ? a.b : c.d)` to an EDot operand
+            // with this flag unset; that form is a spec no-op and must fall through
+            // to the bailout (matching upstream on the unfolded conditional).
             Data::EDot(d)
                 if d.optional_chain.is_none()
                     && unary.flags.contains(

@@ -1863,9 +1863,6 @@ fn codegen_base_instruction_value(
                 E::Unary {
                     op: convert_unary_operator(*operator),
                     value: arg,
-                    // Threaded from the visited `E::Unary` so the printer's
-                    // `typeof (0, x)` re-wrap sees the same flag it would
-                    // without the react-compiler pass.
                     flags: *bun_flags,
                 },
                 loc,
@@ -2001,10 +1998,7 @@ fn codegen_base_instruction_value(
                 E::Unary {
                     op: OpCode::UnDelete,
                     value: property_access_expr(obj, property, loc, None),
-                    // `lower_unary` only creates PropertyDelete when this flag was set on
-                    // the visited `delete` node. Without it the printer wraps the operand
-                    // as `delete (0, obj.prop)`, which evaluates the property to a value
-                    // and returns true without deleting.
+                    // `lower_unary` only creates PropertyDelete when this flag was set.
                     flags: E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
                 },
                 loc,
@@ -2065,8 +2059,6 @@ fn codegen_base_instruction_value(
                         },
                         loc,
                     ),
-                    // See PropertyDelete above; lowering only creates
-                    // ComputedDelete from `delete <EIndex>`.
                     flags: E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
                 },
                 loc,

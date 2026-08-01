@@ -580,13 +580,35 @@ where
     }
 
     pub(crate) fn set_signal_aborted(&mut self, reason: jsc::CommonAbortReason) {
-        if let Some(signal) = &self.signal {
+        if let Some(signal) = self.signal {
             if let Some(server) = self.server {
                 // server is a BACKREF — valid while this RequestContext is alive
                 let global = server.global_this();
-                shim::signal_fire(*signal, global, reason);
+                shim::signal_fire(signal, global, reason);
             }
+        } else if let Some(request) = self.request_weakref.get() {
+            // Signal not yet materialized (lazy); record the abort on the
+            // Request so a later `request.signal` read observes it.
+            request.server_abort.set(Some(reason));
         }
+    }
+
+    /// Lazily create this context's `AbortSignal`. Signals used to be created
+    /// eagerly for every request; now they materialize on the first
+    /// `request.signal` access or on WebSocket upgrade. Idempotent.
+    pub(crate) fn ensure_ctx_signal(
+        &mut self,
+        global: &JSGlobalObject,
+    ) -> Option<NonNull<AbortSignal>> {
+        if let Some(signal) = self.signal {
+            return Some(signal);
+        }
+        let signal = NonNull::new(AbortSignal::new(global))?;
+        // GC-visibility count; released together with the intrusive `+1` from
+        // `new()` via `shim::signal_release` (see the `signal` field docs).
+        bun_ptr::BackRef::from(signal).pending_activity_ref();
+        self.signal = Some(signal);
+        Some(signal)
     }
 
     fn drain_microtasks(&self) {
@@ -1392,7 +1414,13 @@ where
             }
         }
 
+        let had_signal = this.signal.is_some();
         if let Some(request) = this.request_weakref.get() {
+            if !had_signal {
+                request
+                    .server_abort
+                    .set(Some(jsc::CommonAbortReason::ConnectionClosed));
+            }
             request.request_context = AnyRequestContext::NULL;
             if shim::iec_trigger(
                 &request.internal_event_callback,
@@ -1489,7 +1517,13 @@ where
         // Releases the ref taken in `set_cookies` (via `CookieMapRef::drop`).
         drop(self.cookies.take());
 
+        let record_abort = self.signal.is_none() && self.flags.aborted();
         if let Some(request) = self.request_weakref.get() {
+            if record_abort {
+                request
+                    .server_abort
+                    .set(Some(jsc::CommonAbortReason::ConnectionClosed));
+            }
             request.request_context = AnyRequestContext::NULL;
             // we can already clean this strong refs
             shim::iec_deinit(&request.internal_event_callback);

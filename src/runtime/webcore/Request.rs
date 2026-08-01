@@ -100,6 +100,9 @@ pub struct Request {
     js_ref: JsCell<JsRef>,
     pub method: Method,
     pub(crate) flags: Flags,
+    /// Set when the server aborts before `request.signal` is materialized; a
+    /// later `get_signal` creates an already-aborted signal with this reason.
+    pub(crate) server_abort: Cell<Option<jsc::CommonAbortReason>>,
     pub(crate) request_context: AnyRequestContext,
     pub(crate) weak_ptr_data: WeakPtrData,
     // We must report a consistent value for this
@@ -469,6 +472,7 @@ impl Request {
             js_ref: JsCell::new(JsRef::empty()),
             method,
             flags: Flags::default(),
+            server_abort: Cell::new(None),
             request_context: AnyRequestContext::NULL,
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
@@ -721,7 +725,36 @@ impl Request {
         ZigString::EMPTY.to_js(global_this)
     }
 
+    /// Server requests create their `AbortSignal` lazily. Materialize the
+    /// context-wired signal (abort fires on client disconnect) and mirror a
+    /// `+1` into this Request. If the context is gone and the server recorded
+    /// an abort, create an already-aborted signal instead. No-op otherwise.
+    fn materialize_server_signal(&self, global_this: &JSGlobalObject) {
+        if self.signal.get().is_some() {
+            return;
+        }
+        if let Some(signal) = self.request_context.ensure_ctx_signal(global_this) {
+            // SAFETY: the ctx holds a live `+1`; `ref_()` bumps once more for
+            // the Request's RAII handle (paired with `AbortSignalRef::Drop`).
+            let owned = unsafe { AbortSignalRef::adopt((*signal.as_ptr()).ref_()) };
+            self.signal.set(Some(owned));
+            return;
+        }
+        if let Some(reason) = self.server_abort.get() {
+            let Some(signal) = NonNull::new(AbortSignal::new(global_this)) else {
+                return;
+            };
+            // SAFETY: `new()` returned a live `+1`; fire then adopt into the
+            // Request's RAII handle. No pending-activity count: it can never
+            // fire again, so the JS wrapper needs no native keep-alive.
+            unsafe { (*signal.as_ptr()).signal(global_this, reason) };
+            self.signal
+                .set(Some(unsafe { AbortSignalRef::adopt(signal.as_ptr()) }));
+        }
+    }
+
     pub(crate) fn get_signal(&self, global_this: &JSGlobalObject) -> JSValue {
+        self.materialize_server_signal(global_this);
         // Already have a C++ instance
         if let Some(signal) = self.signal.get() {
             return signal.to_js(global_this);
@@ -1035,6 +1068,7 @@ impl Request {
             js_ref: JsCell::new(JsRef::init_weak(this_value)),
             method: Method::GET,
             flags: Flags::default(),
+            server_abort: Cell::new(None),
             request_context: AnyRequestContext::NULL,
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
@@ -1594,6 +1628,7 @@ impl Request {
                     js_ref: JsCell::new(JsRef::empty()),
                     method: self.method,
                     flags: self.flags,
+                    server_abort: Cell::new(None),
                     request_context: AnyRequestContext::NULL,
                     weak_ptr_data: WeakPtrData::EMPTY,
                     reported_estimated_size: Cell::new(0),
@@ -1602,6 +1637,10 @@ impl Request {
             );
         }
 
+        // Materialize the server-wired signal first so the clone shares it
+        // (aborts propagate to clones of in-flight server requests, matching
+        // the old eager-creation behavior).
+        self.materialize_server_signal(global_this);
         if let Some(signal) = self.signal.get() {
             // `AbortSignalRef::clone` → C++ `ref()`.
             req.signal.set(Some(signal.clone()));
@@ -1627,6 +1666,7 @@ impl Request {
             js_ref: JsCell::new(JsRef::empty()),
             method: Method::GET,
             flags: Flags::default(),
+            server_abort: Cell::new(None),
             request_context: AnyRequestContext::NULL,
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
@@ -1685,13 +1725,12 @@ impl Request {
         method: Method,
         request_context: AnyRequestContext,
         https: bool,
-        signal: Option<AbortSignalRef>,
         body: BodyHiveHandle,
     ) -> Request {
         Request {
             url: OwnedStringCell::new(BunString::empty()),
             headers: JsCell::new(None),
-            signal: JsCell::new(signal),
+            signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::empty()),
             method,
@@ -1699,6 +1738,7 @@ impl Request {
                 https,
                 ..Flags::default()
             },
+            server_abort: Cell::new(None),
             request_context,
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),

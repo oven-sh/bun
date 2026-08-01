@@ -676,10 +676,8 @@ impl Value {
         }
     }
 
-    /// `Content-Type` value the fetch spec's "extract a body" assigns to this
-    /// body, for appending to the header list when none was explicitly set.
-    /// `None` for body kinds that carry no implicit type (ArrayBuffer,
-    /// ReadableStream, null).
+    /// `Content-Type` the fetch spec's "extract a body" assigns to this body;
+    /// `None` for kinds with no implicit type (ArrayBuffer, ReadableStream, null).
     pub fn content_type(&self) -> Option<&[u8]> {
         match self {
             Value::Blob(blob) => {
@@ -1592,10 +1590,7 @@ impl Value {
         self.to_blob_if_possible();
 
         if let Value::InternalBlob(internal_blob) = self {
-            // String bodies stay `InternalBlob` so `was_string` survives on
-            // both the original and the clone; converting to `Blob` here would
-            // either lose `Value::content_type()`'s `text/plain` or (if
-            // stamped on the Blob) shadow an explicit header in `.blob().type`.
+            // Keep `was_string` on both sides so `content_type()` still resolves.
             if internal_blob.was_string {
                 return Ok(Value::InternalBlob(InternalBlob {
                     bytes: internal_blob.bytes.clone(),

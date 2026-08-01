@@ -6425,9 +6425,7 @@ impl Any {
     pub(crate) fn has_content_type_from_user(&self) -> bool {
         match self {
             Any::Blob(b) => b.has_content_type_from_user(),
-            // fetch spec: a USVString body extracts with type
-            // `text/plain;charset=UTF-8`, the same as URLSearchParams/FormData
-            // extract with their types; treat it as present for header emission.
+            // fetch "extract a body": a string body extracts with text/plain.
             Any::WTFStringImpl(_) => true,
             Any::InternalBlob(ib) => ib.was_string,
         }

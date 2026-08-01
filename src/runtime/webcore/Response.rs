@@ -1066,9 +1066,7 @@ impl Response {
             }
         }
 
-        // `get_or_create_headers` would copy the string body's `text/plain`
-        // into a fresh header list, so materialize the headers here and set
-        // the JSON type before that path sees the body.
+        // Set the JSON type before `get_or_create_headers` sees the string body.
         let init = response.init_mut();
         if init.headers.is_none() {
             init.headers = Some(HeadersRef::create_empty());

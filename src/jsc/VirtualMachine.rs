@@ -6064,13 +6064,13 @@ impl VirtualMachine {
 
             // `.errors` is DontEnum, so it was not seen by the loop above.
             if error_instance.is_aggregate_error(global_ref) {
+                const MAX_AGGREGATE_ERRORS_PRINTED: u64 = 100;
                 let errors = error_instance.get_errors_property(global_ref);
                 if errors.is_cell() && errors.js_type().is_array() && errors != error_instance {
                     match errors.get_length(global_ref) {
                         Ok(len) => {
-                            let n = len.min(u64::from(u32::MAX));
-                            let mut i: u32 = 0;
-                            while u64::from(i) < n {
+                            let n = len.min(MAX_AGGREGATE_ERRORS_PRINTED) as u32;
+                            for i in 0..n {
                                 match errors.get_index(global_ref, i) {
                                     Ok(member) => {
                                         member.protect();
@@ -6082,7 +6082,6 @@ impl VirtualMachine {
                                         break;
                                     }
                                 }
-                                i += 1;
                             }
                         }
                         Err(_) => global_ref.clear_exception(),

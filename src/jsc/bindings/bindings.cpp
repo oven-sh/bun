@@ -1745,9 +1745,6 @@ bool Bun__deepMatch(
     // - two "simple" arrays
     // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
 
-    // When replacePropsWithAsymmetricMatchers is set, the caller wants the
-    // diff formatter to see every property where an asymmetric matcher passed,
-    // so keep iterating after the first mismatch instead of short-circuiting.
     bool matched = true;
 
     // arrays should match exactly

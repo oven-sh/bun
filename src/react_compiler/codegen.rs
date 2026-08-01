@@ -1853,14 +1853,17 @@ fn codegen_base_instruction_value(
             ))
         }
         InstructionValue::UnaryExpression {
-            operator, value, ..
+            operator,
+            value,
+            bun_flags,
+            ..
         } => {
             let arg = codegen_place_to_expression(cx, value)?;
             Ok(Expr::init(
                 E::Unary {
                     op: convert_unary_operator(*operator),
                     value: arg,
-                    flags: E::UnaryFlags::empty(),
+                    flags: *bun_flags,
                 },
                 loc,
             ))
@@ -1995,7 +1998,8 @@ fn codegen_base_instruction_value(
                 E::Unary {
                     op: OpCode::UnDelete,
                     value: property_access_expr(obj, property, loc, None),
-                    flags: E::UnaryFlags::empty(),
+                    // `lower_unary` only creates PropertyDelete when this flag was set.
+                    flags: E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
                 },
                 loc,
             ))
@@ -2055,7 +2059,7 @@ fn codegen_base_instruction_value(
                         },
                         loc,
                     ),
-                    flags: E::UnaryFlags::empty(),
+                    flags: E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
                 },
                 loc,
             ))

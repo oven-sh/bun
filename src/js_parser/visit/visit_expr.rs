@@ -1057,7 +1057,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let target = e_.target.unwrap_inlined();
         let index = e_.index.unwrap_inlined();
 
-        if p.options.features.minify_syntax {
+        // These folds replace an index expression (a Reference into a temporary
+        // string/array) with a plain value. That is only sound when the parent
+        // uses the value, not the Reference: `delete [x][0]` and `[x][0] = v`
+        // act on the temporary, and inlining would redirect them at `x`.
+        if p.options.features.minify_syntax
+            && !is_delete_target
+            && in_.assign_target == js_ast::AssignTarget::None
+        {
             if let Some(number) = index.data.as_e_number() {
                 if number.value() >= 0.0
                     && number.value() < (usize::MAX as f64)
@@ -1085,28 +1092,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
                     } else if let Some(array) = target.data.as_e_array() {
-                        // [x][0] -> x
-                        if array.items.len_u32() == 1 && number.value() == 0.0 {
-                            let inlined = *array.items.at(0);
-                            if inlined.can_be_inlined_from_property_access() {
-                                *e = inlined;
-                                return;
-                            }
-                        }
-
-                        // ['a', 'b', 'c'][1] -> 'b'
                         let int: usize = number.value() as usize;
-                        if int < array.items.len_u32() as usize
+                        // [x][0] -> x
+                        // ['a', 'b', 'c'][1] -> 'b'
+                        let inlined = if array.items.len_u32() == 1 && int == 0 {
+                            Some(*array.items.at(0))
+                        } else if int < array.items.len_u32() as usize
                             && p.expr_can_be_removed_if_unused(&target)
                         {
-                            let inlined = *array.items.at(int);
+                            Some(*array.items.at(int))
+                        } else {
+                            None
+                        };
+                        if let Some(inlined) = inlined {
                             // ['a', , 'c'][1] -> undefined
                             if matches!(inlined.data, Data::EMissing(..)) {
                                 *e = p.new_expr(E::Undefined {}, inlined.loc);
                                 return;
                             }
                             if inlined.can_be_inlined_from_property_access() {
-                                *e = inlined;
+                                // "[obj.m][0]()" => "(0, obj.m)()"
+                                *e = if is_call_target && inlined.has_value_for_this_in_call() {
+                                    p.new_expr(E::Number::new(0.0), expr.loc)
+                                        .join_with_comma(inlined)
+                                } else {
+                                    inlined
+                                };
                                 return;
                             }
                         }

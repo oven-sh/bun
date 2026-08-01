@@ -151,6 +151,14 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_("x = ({ f: [a?.b] }).f?.[0].c", "x = [a?.b]?.[0].c");
       ts.expectPrintedMin_("x = [[a?.[b]]][0]?.[0].c", "x = [a?.[b]]?.[0].c");
       ts.expectPrintedMin_("x = [[a?.()]][0]?.[0].c", "x = [a?.()]?.[0].c");
+      // Continuation (not Start) on the inlined item's outermost node:
+      ts.expectPrintedMin_("x = [[a?.b.c]][0]?.[0].d", "x = [a?.b.c]?.[0].d");
+      ts.expectPrintedMin_("x = [[a?.b[c]]][0]?.[0].d", "x = [a?.b[c]]?.[0].d");
+      ts.expectPrintedMin_("x = [[a?.b()]][0]?.[0].d", "x = [a?.b()]?.[0].d");
+      // Multi-item path (expr_can_be_removed_if_unused): a @__PURE__ optional
+      // call is removable, so the second fold arm sees it.
+      ts.expectPrintedMin_("x = [[0, /* @__PURE__ */ a?.()]][0]?.[1].c", "x = [0, a?.()]?.[1].c");
+      ts.expectPrintedMin_("x = [0, /* @__PURE__ */ a?.()][1]", "x = [0, a?.()][1]");
 
       // The outer `?.` on an array literal is dropped at parse time, so these
       // reach the fold with `optional_chain == None` on the index and the
@@ -162,31 +170,78 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_("x = [a?.b]?.[0].c", "x = [a?.b][0].c");
       ts.expectPrintedMin_("x = [a?.b][0]()", "x = [a?.b][0]()");
 
+      // Same bailout protects LHS / delete / new / tagged-template positions
+      // from becoming `a?.b = v` / `delete a?.b` / `new a?.b()`.
+      ts.expectPrintedMin_("[a?.b][0] = v", "[a?.b][0] = v");
+      ts.expectPrintedMin_("delete [a?.b][0]", "delete [a?.b][0]");
+      ts.expectPrintedMin_("x = new [a?.b][0]()", "x = new [a?.b][0]");
+      ts.expectPrintedMin_("[a?.b][0]`x`", "[a?.b][0]`x`");
+
       // Non-chain items are still inlined.
       ts.expectPrintedMin_("x = [[y]][0]?.[0].c", "x = y.c");
       ts.expectPrintedMin_("x = [a.b][0].c", "x = a.b.c");
       ts.expectPrintedMin_("x = [(a?.b)][0]", "x = [a?.b][0]");
     });
-    it("preserves the TypeError when an inlined optional chain is followed by a non-optional access", async () => {
-      const cases = [
-        "[[a?.b]][0]?.[0].c",
-        "[[a?.b]][0]?.[0]()",
-        "[[a?.b]][0]?.[0][0]",
-        "({ f: [a?.b] }).f?.[0].c",
-        "[a?.b][0].c",
-        "[a?.b]?.[0].c",
-      ];
-      const src = cases
-        .map(e => `try { void (${e}); console.log("no throw"); } catch (e) { console.log(e.constructor.name); }`)
-        .join("\n");
+    it("bails out or strips `this` when the index is a call/assignment target", () => {
+      // `[obj.m][0]()` calls through a Reference into the temporary array,
+      // so `this` is the array; inlining to `obj.m()` would bind `this` to
+      // `obj`. Match the sibling folds and emit `(0, obj.m)()`.
+      ts.expectPrintedMin_("x = [obj.m][0]()", "x = (0, obj.m)()");
+      ts.expectPrintedMin_("x = [obj[m]][0]()", "x = (0, obj[m])()");
+      ts.expectPrintedMin_("x = [obj.m][0]", "x = obj.m");
+      ts.expectPrintedMin_("x = [y][0]()", "x = y()");
+      ts.expectPrintedMin_("x = [() => y][0]()", "x = (() => y)()");
+
+      // `[x][0] = v` writes into the temporary, not `x`. Same for `"s"[n]`.
+      ts.expectPrintedMin_("[obj.p][0] = 5", "[obj.p][0] = 5");
+      ts.expectPrintedMin_("[obj.p][0] += 5", "[obj.p][0] += 5");
+      ts.expectPrintedMin_("[obj.p][0]++", "[obj.p][0]++");
+      ts.expectPrintedMin_("[x][0] = 1", "[x][0] = 1");
+      ts.expectPrintedMin_("[,][0] = 1", "[,][0] = 1");
+      ts.expectPrintedMin_('"foo"[2] = 1', '"foo"[2] = 1');
+      ts.expectPrintedMin_('["a", "b"][1] = 1', '["a", "b"][1] = 1');
+      ts.expectPrintedMin_("({ a: [obj.p][0] } = {})", "({ a: [obj.p][0] } = {})");
+    });
+    it("preserves runtime semantics when inlining from a literal index", async () => {
+      const src = `
+        var a = null;
+        function check(label, fn, expected) {
+          var got;
+          try { got = "=> " + fn(); } catch (e) { got = e.constructor.name; }
+          console.log(label + ": " + (got === expected ? "ok" : got + " (want " + expected + ")"));
+        }
+        check("chain .c",   () => [[a?.b]][0]?.[0].c, "TypeError");
+        check("chain ()",   () => [[a?.b]][0]?.[0](), "TypeError");
+        check("chain [0]",  () => [[a?.b]][0]?.[0][0], "TypeError");
+        check("chain obj",  () => ({ f: [a?.b] }).f?.[0].c, "TypeError");
+        check("chain flat", () => [a?.b][0].c, "TypeError");
+        check("chain ?.[", () => [a?.b]?.[0].c, "TypeError");
+        check("chain cont", () => [[a?.b.c]][0]?.[0].d, "TypeError");
+        check("chain pure", () => [[0, /* @__PURE__ */ a?.()]][0]?.[1].c, "TypeError");
+        var obj = { n: "obj", m() { return this === obj; } };
+        check("this",       () => [obj.m][0](), "=> false");
+        var o2 = { p: 1 };
+        check("assign",     () => ([o2.p][0] = 5, o2.p), "=> 1");
+      `;
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", `var a = null;\n${src}`],
+        cmd: [bunExe(), "-e", src],
         env: bunEnv,
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(stdout.trim().split("\n")).toEqual(cases.map(() => "TypeError"));
+      expect(stdout.trim().split("\n")).toEqual([
+        "chain .c: ok",
+        "chain (): ok",
+        "chain [0]: ok",
+        "chain obj: ok",
+        "chain flat: ok",
+        "chain ?.[: ok",
+        "chain cont: ok",
+        "chain pure: ok",
+        "this: ok",
+        "assign: ok",
+      ]);
       expect(exitCode).toBe(0);
     });
     it("bails out on optional-chain index into enum", () => {

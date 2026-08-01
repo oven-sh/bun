@@ -216,6 +216,45 @@ describe("bun create honors the project-local bunfig.toml [install.scopes]", () 
     expect(exitCode).toBe(0);
   });
 
+  // https://github.com/oven-sh/bun/issues/31149
+  // Forwarding the bunfig (or, without a local one, the child reading the
+  // global bunfig) brings [install.security] scanner along; the bunx cache
+  // dir's `{}` package.json cannot list the scanner as a dependency, so the
+  // install would abort with SecurityScannerNotInDependencies. The
+  // bunx-spawned install skips the scanner.
+  it("does not abort on a global [install.security] scanner", async () => {
+    const pkgName = "@bun13247test/create-package";
+    const binName = "create-package";
+    const hits: string[] = [];
+    await using srv = scopedRegistry(pkgName, binName, await makeCreateTarball(pkgName, binName), hits);
+
+    const home = tmpdirSync();
+    const tmp = tmpdirSync();
+    await writeFile(
+      join(home, ".bunfig.toml"),
+      `[install]\nregistry = "http://127.0.0.1:${srv.port}/"\n` +
+        `[install.security]\nscanner = "@not-installed/bun-security-scanner"\n`,
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "create", "@bun13247test/package"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: isolatedEnv(home, tmp),
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).not.toContain("SecurityScannerNotInDependencies");
+    expect(err).not.toContain("is configured in bunfig.toml but is not installed");
+    expect({ out: out.trim(), hits }).toEqual({
+      out: "CREATE-RAN-FROM-SCOPED-REGISTRY",
+      hits: [`/${pkgName}`, "/pkg.tgz"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // On Unix the candidate is rejected unless it is (or resolves to) a regular
   // file owned by the current user, so a bunfig.toml planted in a
   // world-writable ancestor cannot redirect the install. chown to another uid

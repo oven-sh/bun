@@ -5224,11 +5224,8 @@ restart:
             if (!propertyValue)
                 return true;
 
-            // Inherited entries are only useful when they surface state
-            // (accessor getters on DOM/native prototypes). The fast path only
-            // runs on structures with no accessors at all, so any prototype
-            // slot seen here is a plain data property: a shared method or a
-            // class-level constant that Node's formatter never lists.
+            // Fast path never sees accessors, so every inherited slot here is
+            // a shared data member (method/constant) Node's formatter omits.
             if (objectToUse != object)
                 return true;
 
@@ -5308,10 +5305,8 @@ restart:
                         continue;
                 }
 
-                // From a prototype, only native custom accessors expose
-                // per-instance state worth printing (URL.href, Event.type).
-                // User-defined accessors and plain value slots are shared
-                // class members that Node's default formatter omits.
+                // Inherited slots: keep only native custom accessors (URL.href,
+                // Event.type); class methods/getters/constants are not own state.
                 if (iterating != object && !slot.isCustom())
                     continue;
 

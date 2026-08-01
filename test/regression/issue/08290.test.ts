@@ -151,3 +151,47 @@ test("coverage text reporter prints a trailing single-line uncovered range", asy
   expect(row).toMatch(/\|\s*4\s*$/);
   expect(exitCode).toBe(0);
 });
+
+test("coverage no-sourcemap path reports execution counts and clears uncalled functions", async () => {
+  using dir = tempDir("cov-8290-nosm", {
+    "bunfig.toml": "[test]\ncoverageIgnoreSourcemaps = true\n",
+    "spin.mjs":
+      "export function spin() {\n" +
+      "    let n = 0;\n" +
+      "    for (let i = 0; i < 5; i++) {\n" +
+      "        n++;\n" +
+      "    }\n" +
+      "    return n;\n" +
+      "}\n" +
+      "export function miss() { return 2 }\n",
+    "spin.test.mjs":
+      `import { test, expect } from "bun:test";\n` +
+      `import { spin } from "./spin.mjs";\n` +
+      `test("x", () => { expect(spin()).toBe(5); });\n`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", "--coverage-dir=./coverage", "spin.test.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  const rec = lcov.split("end_of_record").find(r => r.includes("spin.mjs"))!;
+  const da = [...rec.matchAll(/^DA:(\d+),(\d+)$/gm)].map(m => [Number(m[1]), Number(m[2])] as const);
+
+  // Loop body ran 5x; at least one line must carry the block execution_count.
+  expect(da.some(([, hits]) => hits === 5)).toBe(true);
+  // `miss()` never ran; its lines must be cleared to 0 through the inclusive
+  // max_line bound.
+  const zeroLines = da.filter(([, hits]) => hits === 0).map(([line]) => line);
+  expect(zeroLines.length).toBeGreaterThanOrEqual(2);
+  // Every hit count is an execution count, not a byte count.
+  for (const [, hits] of da) expect(hits).toBeLessThan(10);
+
+  expect(stderr).toContain("1 pass");
+  expect(exitCode).toBe(0);
+});

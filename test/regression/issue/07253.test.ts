@@ -16,7 +16,7 @@ async function runFailingTest(source: string) {
   return { stdout, stderr, exitCode };
 }
 
-test("toStrictEqual failure diff for URL shows the differing fields", async () => {
+test.concurrent("toStrictEqual failure diff for URL shows the differing fields", async () => {
   const { stderr, exitCode } = await runFailingTest(`
     import { expect, test } from "bun:test";
     test("url", () => {
@@ -32,7 +32,7 @@ test("toStrictEqual failure diff for URL shows the differing fields", async () =
   expect(exitCode).toBe(1);
 });
 
-test("toEqual failure diff for URL shows the differing fields", async () => {
+test.concurrent("toEqual failure diff for URL shows the differing fields", async () => {
   const { stderr, exitCode } = await runFailingTest(`
     import { expect, test } from "bun:test";
     test("url", () => {
@@ -48,7 +48,7 @@ test("toEqual failure diff for URL shows the differing fields", async () => {
   expect(exitCode).toBe(1);
 });
 
-test("toStrictEqual failure diff for Headers shows entries, not prototype methods", async () => {
+test.concurrent("toStrictEqual failure diff for Headers shows entries, not prototype methods", async () => {
   const { stderr, exitCode } = await runFailingTest(`
     import { expect, test } from "bun:test";
     test("headers", () => {

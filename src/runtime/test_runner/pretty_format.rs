@@ -1598,7 +1598,8 @@ impl<'a> Formatter<'a> {
                         if let Some(to_json_function) = value.get(self.global_this, "toJSON")? {
                             self.add_for_new_line(b"Headers ".len());
                             writer.write_all(
-                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>Headers ").as_bytes(),
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>Headers<r> ")
+                                    .as_bytes(),
                             );
 
                             return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(

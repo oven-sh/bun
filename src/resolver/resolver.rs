@@ -5053,9 +5053,8 @@ impl<'a> Resolver<'a> {
                             dec_ret!(MatchStatus::Success);
                         }
 
-                        field_abs_path = self
-                            .fs_ref()
-                            .abs_buf(&[path, remap], bufs!(field_abs_path));
+                        field_abs_path =
+                            self.fs_ref().abs_buf(&[path, remap], bufs!(field_abs_path));
                     }
                 }
             }

@@ -1,23 +1,10 @@
 // https://github.com/oven-sh/bun/issues/11453
-//
-// @edgedb/generate under Bun would sometimes exit 0 silently mid-connect.
-// Root cause: edgedb's RawConnection does sock.ref()/await/sock.unref() around
-// reads, and in between runs SCRAM via crypto.subtle (Bun exposes a global
-// `crypto`, so the edgedb client picks its browserCrypto adapter). When the
-// small-input digest fast path (or the completion leg of a work-queue crypto
-// op) posts its result via ScriptExecutionContext::postTaskTo, the task lands
-// in EventLoop.concurrent_tasks with no accompanying event-loop ref, and
-// is_event_loop_alive() did not look at concurrent_tasks. With the socket
-// unref'd, the liveness check saw zero and the process exited with the crypto
-// result still queued.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 
 describe("issue #11453: crypto.subtle keeps the event loop alive after a yield", () => {
-  // Deterministic: the <64-byte SHA digest fast path computes synchronously
-  // and posts the callback via postTaskTo with no work-queue ref.
   test.concurrent("crypto.subtle.digest (small input) awaited after setImmediate", async () => {
     const script = `
       (async () => {
@@ -56,9 +43,6 @@ describe("issue #11453: crypto.subtle keeps the event loop alive after a yield",
     expect(exitCode).toBe(0);
   });
 
-  // The exact shape from edgedb's rawConn._waitForMessage: with the socket
-  // unref'd between reads, an awaited crypto.subtle op must keep the process
-  // alive until it resolves and the next sock.ref() runs.
   test.concurrent("crypto.subtle between sock.unref() and sock.ref() on a net.Socket", async () => {
     const server = net.createServer(socket => {
       socket.setNoDelay();
@@ -91,8 +75,6 @@ describe("issue #11453: crypto.subtle keeps the event loop alive after a yield",
         await new Promise(r => (dataR = r));
         sock.unref();
 
-        // Socket is now unref'd. Nothing else is ref'd. The awaited digest
-        // must keep the loop alive on its own.
         await crypto.subtle.digest("SHA-256", new Uint8Array(32));
 
         sock.write("y");

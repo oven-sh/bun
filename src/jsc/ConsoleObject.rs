@@ -348,16 +348,12 @@ impl Drop for FlushOnDrop<'_> {
     }
 }
 
-/// Re-applies a base colour after every SGR reset the inner formatter emits,
-/// so the `console.error` red survives the per-token `<r>` resets the value
-/// formatter sprinkles through inspected objects/arrays.
-///
-/// `after_reset` is empty for `console.log` and friends, which makes this a
-/// transparent passthrough. `matched` tracks a partial `\x1b[0m` tail across
-/// `write_all` calls so a reset split over two writes is still recognised.
+/// Re-emits `after_reset` after every `\x1b[0m` so `console.error` stays red
+/// across the value formatter's per-token resets. Empty `after_reset` = passthrough.
 struct LevelColorWriter<'a> {
     inner: &'a mut (dyn bun_io::Write + 'a),
     after_reset: &'static [u8],
+    /// Bytes of `RESET` matched at the tail of the previous write.
     matched: u8,
 }
 

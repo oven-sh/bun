@@ -1798,12 +1798,9 @@ impl Package<u64> {
                     && root_name_hash != 0
                     && name_hash == root_name_hash
                 {
-                    // A `workspace:` dep on the workspace root package. The
-                    // root is not in `workspace_paths` (only members are), and
-                    // the literal after `workspace:` is a version spec, not a
-                    // path. Leave the dependency as-is;
-                    // `get_or_put_resolved_package` resolves it to package
-                    // id 0.
+                    // `workspace:` dep naming the root package: the root is
+                    // not in `workspace_paths`; `get_or_put_resolved_package`
+                    // resolves it to package id 0.
                     break 'workspace;
                 }
                 if let Some(path) = workspace_path {

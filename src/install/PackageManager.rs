@@ -322,9 +322,8 @@ pub struct PackageManager {
     /// could be any of the workspaces.
     pub root_package_id: RootPackageId,
 
-    /// Name hash of the workspace root's package.json, set the first time it
-    /// is parsed. Used to resolve `workspace:` dependencies that name the
-    /// root package (the root is never in `workspace_paths`).
+    /// Name hash of the workspace root's package.json, for resolving
+    /// `workspace:` deps that name the root (which is not in `workspace_paths`).
     pub(crate) workspace_root_name_hash: PackageNameHash,
 
     pub(crate) thread_pool: ThreadPool,

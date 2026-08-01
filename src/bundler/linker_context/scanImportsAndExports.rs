@@ -1090,14 +1090,10 @@ pub(crate) fn scan_imports_and_exports(
                             record
                                 .flags
                                 .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
-                            // convertStmtsForChunk rewrites this external "export * from" into
-                            // "import * as ns from ..." so that __reExport can reference the
-                            // namespace object. The printer emits the "* as ns" clause based on
-                            // CONTAINS_IMPORT_STAR, which the parser never sets for a bare
-                            // "export * from", so set it here to keep the binding.
                             if rec_source_index.is_invalid()
                                 && output_format.keep_es6_import_export_syntax()
                             {
+                                // convertStmtsForChunk prints this as "import * as ns" for __reExport.
                                 record.flags.insert(ImportRecordFlags::CONTAINS_IMPORT_STAR);
                             }
                         }

@@ -709,7 +709,7 @@ impl ErrorDeferred {
         }
         impl Context {
             // `bun_event_loop::ManagedTask::new` expects
-            // `fn(*mut T) -> bun_event_loop::JsResult<()>` (low-tier `ErasedJsError`).
+            // `fn(*mut T) -> bun_event_loop::JsResult<()>` (tier-0 `bun_core::JsError`).
             fn callback(this: *mut Context) -> bun_event_loop::JsResult<()> {
                 // SAFETY: `this` is the heap-allocated pointer passed to ManagedTask::new
                 // below; ManagedTask::run calls us exactly once with that pointer.

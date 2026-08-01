@@ -4196,73 +4196,115 @@ pub(super) enum EventState {
 
 impl DuplexUpgradeContext {
     #[inline(always)]
-    fn duplex_socket(&mut self) -> SocketHandler<true> {
+    // The `on_*` callbacks take `*mut Self`, not `&mut self`: they are
+    // dispatched from `UpgradedDuplex`'s engine (`start_tls` fires `on_open`
+    // synchronously), and `start_tls`'s `&(*this).upgrade` receiver is live
+    // across that call. A `&mut DuplexUpgradeContext` here would cover the
+    // `upgrade` field and pop that protected borrow (Stacked Borrows); scoped
+    // raw writes touch only the disjoint `is_open`/`tls` fields instead.
+    //
+    // # Safety (shared by all `on_*` / `duplex_socket`)
+    // `this` is the live heap `DuplexUpgradeContext` registered as the
+    // engine's `ctx`; each field access is scoped to its own statement.
+    unsafe fn duplex_socket(this: *mut Self) -> SocketHandler<true> {
         SocketHandler::<true>::from_any(uws::InternalSocket::UpgradedDuplex(
-            (&raw mut self.upgrade).cast(),
+            // SAFETY: fn contract; a raw field projection, no borrow of `*this`.
+            unsafe { (&raw mut (*this).upgrade).cast() },
         ))
     }
 
-    fn on_open(&mut self) {
-        self.is_open = true;
-        let socket = self.duplex_socket();
+    /// Copy out the TLS socket's `this_ptr` before any re-entrant dispatch, so
+    /// no borrow of `*this` spans the JS callback.
+    #[inline]
+    unsafe fn tls_this_ptr(this: *mut Self) -> Option<bun_ptr::ThisPtr<TLSSocket>> {
+        // SAFETY: fn contract; borrow ends at `;`.
+        unsafe { (*this).tls.as_ref().map(|t| t.this_ptr()) }
+    }
 
-        if let Some(tls) = &mut self.tls {
-            TLSSocket::on_open(tls.this_ptr(), socket);
+    unsafe fn on_open(this: *mut Self) {
+        // SAFETY: fn contract — `this` is the live ctx; all accesses are
+        // scoped raw place reads/writes to disjoint fields.
+        unsafe {
+            (*this).is_open = true;
+            let socket = Self::duplex_socket(this);
+            if let Some(tls) = Self::tls_this_ptr(this) {
+                TLSSocket::on_open(tls, socket);
+            }
         }
     }
 
-    fn on_data(&mut self, decoded_data: &[u8]) {
-        let socket = self.duplex_socket();
-
-        if let Some(tls) = &mut self.tls {
-            TLSSocket::on_data(tls.this_ptr(), socket, decoded_data);
+    unsafe fn on_data(this: *mut Self, decoded_data: &[u8]) {
+        // SAFETY: fn contract — `this` is the live ctx; all accesses are
+        // scoped raw place reads/writes to disjoint fields.
+        unsafe {
+            let socket = Self::duplex_socket(this);
+            if let Some(tls) = Self::tls_this_ptr(this) {
+                TLSSocket::on_data(tls, socket, decoded_data);
+            }
         }
     }
 
-    fn on_session(&mut self, session: &[u8]) {
-        if let Some(tls) = &mut self.tls {
-            let _ = TLSSocket::on_session(tls.this_ptr(), session);
+    unsafe fn on_session(this: *mut Self, session: &[u8]) {
+        // SAFETY: fn contract — `this` is the live ctx; all accesses are
+        // scoped raw place reads/writes to disjoint fields.
+        if let Some(tls) = unsafe { Self::tls_this_ptr(this) } {
+            let _ = TLSSocket::on_session(tls, session);
         }
     }
 
-    fn on_keylog(&mut self, line: &[u8]) {
-        if let Some(tls) = &mut self.tls {
-            let _ = TLSSocket::on_keylog(tls.this_ptr(), line);
+    unsafe fn on_keylog(this: *mut Self, line: &[u8]) {
+        // SAFETY: fn contract — `this` is the live ctx; all accesses are
+        // scoped raw place reads/writes to disjoint fields.
+        if let Some(tls) = unsafe { Self::tls_this_ptr(this) } {
+            let _ = TLSSocket::on_keylog(tls, line);
         }
     }
 
-    fn on_handshake(&mut self, success: bool, ssl_error: uws::us_bun_verify_error_t) {
-        let socket = self.duplex_socket();
-
-        if let Some(tls) = &mut self.tls {
-            let tls = tls.this_ptr();
-            let _ = TLSSocket::on_handshake(tls, socket, success as i32, ssl_error);
+    unsafe fn on_handshake(this: *mut Self, success: bool, ssl_error: uws::us_bun_verify_error_t) {
+        // SAFETY: fn contract — `this` is the live ctx; all accesses are
+        // scoped raw place reads/writes to disjoint fields.
+        unsafe {
+            let socket = Self::duplex_socket(this);
+            if let Some(tls) = Self::tls_this_ptr(this) {
+                let _ = TLSSocket::on_handshake(tls, socket, success as i32, ssl_error);
+            }
         }
     }
 
-    fn on_end(&mut self) {
-        let socket = self.duplex_socket();
-        if let Some(tls) = &mut self.tls {
-            TLSSocket::on_end(tls.this_ptr(), socket);
+    unsafe fn on_end(this: *mut Self) {
+        // SAFETY: fn contract — `this` is the live ctx; all accesses are
+        // scoped raw place reads/writes to disjoint fields.
+        unsafe {
+            let socket = Self::duplex_socket(this);
+            if let Some(tls) = Self::tls_this_ptr(this) {
+                TLSSocket::on_end(tls, socket);
+            }
         }
     }
 
-    fn on_writable(&mut self) {
-        let socket = self.duplex_socket();
-
-        if let Some(tls) = &mut self.tls {
-            TLSSocket::on_writable(tls.this_ptr(), socket);
+    unsafe fn on_writable(this: *mut Self) {
+        // SAFETY: fn contract — `this` is the live ctx; all accesses are
+        // scoped raw place reads/writes to disjoint fields.
+        unsafe {
+            let socket = Self::duplex_socket(this);
+            if let Some(tls) = Self::tls_this_ptr(this) {
+                TLSSocket::on_writable(tls, socket);
+            }
         }
     }
 
-    fn on_error(&mut self, err_value: JSValue) {
-        if self.is_open {
-            if let Some(tls) = &self.tls {
-                // `RefPtr: Deref<Target = TLSSocket>`; `handle_error(&self)`.
+    unsafe fn on_error(this: *mut Self, err_value: JSValue) {
+        // SAFETY: fn contract; borrow ends at `;`.
+        if unsafe { (*this).is_open } {
+            // SAFETY: fn contract; `handle_error(&self)` takes `this_ptr` copied
+            // out, so no borrow of `*this` spans the JS call.
+            if let Some(tls) = unsafe { Self::tls_this_ptr(this) } {
+                // `ThisPtr: Deref<Target = TLSSocket>`; `handle_error(&self)`.
                 tls.handle_error(err_value);
             }
         } else {
-            if let Some(tls) = self.tls.take() {
+            // SAFETY: fn contract; take the tls out (disjoint field).
+            if let Some(tls) = unsafe { (*this).tls.take() } {
                 // Pre-open error (e.g. the duplex emitted non-Buffer data
                 // before the queued `.StartTLS` task ran). `handleConnectError`
                 // → `markInactive` releases `tls.handlers`; null `tls` so the
@@ -4283,7 +4325,9 @@ impl DuplexUpgradeContext {
                 // strongly held, so the later `StartTLS` → `deinit` → `Drop`
                 // teardown (after `handle_connect_error` downgrades it) is a
                 // no-op on already-cleared shadows.
-                self.upgrade.teardown();
+                // SAFETY: fn contract; `teardown(&self)` on the disjoint
+                // `upgrade` field, borrow ends at `;`.
+                unsafe { (*this).upgrade.teardown() };
                 let p = tls.into_this_ptr();
                 let _ =
                     TLSSocket::handle_connect_error(p, sys::SystemErrno::ECONNREFUSED as c_int, 0);
@@ -4291,18 +4335,22 @@ impl DuplexUpgradeContext {
         }
     }
 
-    fn on_timeout(&mut self) {
-        let socket = self.duplex_socket();
-
-        if let Some(tls) = &mut self.tls {
-            TLSSocket::on_timeout(tls.this_ptr(), socket);
+    unsafe fn on_timeout(this: *mut Self) {
+        // SAFETY: fn contract — `this` is the live ctx; all accesses are
+        // scoped raw place reads/writes to disjoint fields.
+        unsafe {
+            let socket = Self::duplex_socket(this);
+            if let Some(tls) = Self::tls_this_ptr(this) {
+                TLSSocket::on_timeout(tls, socket);
+            }
         }
     }
 
-    fn on_close(&mut self) {
-        let socket = self.duplex_socket();
-
-        if let Some(tls) = self.tls.take() {
+    unsafe fn on_close(this: *mut Self) {
+        // SAFETY: fn contract; raw field projection, no borrow of `*this`.
+        let socket = unsafe { Self::duplex_socket(this) };
+        // SAFETY: fn contract; take the tls out (disjoint field).
+        if let Some(tls) = unsafe { (*this).tls.take() } {
             // `tls.onClose` consumes the +1 we hold (its scope-exit deref
             // is the ext-slot/owner pin). Null our pointer first so the
             // `deinitInNextTick` → `deinit` path doesn't deref it a second
@@ -4316,7 +4364,8 @@ impl DuplexUpgradeContext {
             let _ = TLSSocket::on_close(p, socket, 0, None);
         }
 
-        self.deinit_in_next_tick();
+        // SAFETY: fn contract; may enqueue this ctx for deinit.
+        unsafe { Self::deinit_in_next_tick(this) };
     }
 
     /// # Safety
@@ -4344,9 +4393,12 @@ impl DuplexUpgradeContext {
                     unsafe { Self::deinit(this) };
                     return;
                 }
-                // SAFETY: `this` is live; each access below is scoped, so no
-                // `&`/`&mut Self` spans the re-entrant `start_tls*` calls or
-                // any `Self::deinit` call below.
+                // SAFETY: `this` is live. Each access is a scoped raw place
+                // expression, and the `on_*` callbacks the re-entrant
+                // `start_tls*` calls dispatch are themselves `*mut Self` with
+                // scoped disjoint-field writes — so no `&`/`&mut Self` (nor a
+                // `&(*this).upgrade` receiver) is popped by the re-entry, and
+                // nothing spans the `Self::deinit` call below.
                 let started: crate::Result<()> = unsafe {
                     log!(
                         "DuplexUpgradeContext.startTLS mode={}",
@@ -4423,19 +4475,34 @@ impl DuplexUpgradeContext {
     /// for the VM-owned event-loop self-pointer. The dispatch arm calls
     /// [`Self::run_event`] with this raw pointer.
     #[inline]
-    fn enqueue_self_task(&mut self) {
-        let this = std::ptr::from_mut::<Self>(self);
-        self.vm.event_loop_mut().enqueue_task(jsc::Task::init(this));
+    /// # Safety
+    /// `this` is the live heap `DuplexUpgradeContext`.
+    unsafe fn enqueue_self_task(this: *mut Self) {
+        // SAFETY: fn contract; `vm` is process-lifetime, borrow ends at `;`.
+        unsafe {
+            (*this)
+                .vm
+                .event_loop_mut()
+                .enqueue_task(jsc::Task::init(this))
+        };
     }
 
-    fn deinit_in_next_tick(&mut self) {
-        self.task_event = EventState::Close;
-        self.enqueue_self_task();
+    /// # Safety
+    /// `this` is the live heap `DuplexUpgradeContext`.
+    unsafe fn deinit_in_next_tick(this: *mut Self) {
+        // SAFETY: fn contract; disjoint field write.
+        unsafe { (*this).task_event = EventState::Close };
+        // SAFETY: fn contract.
+        unsafe { Self::enqueue_self_task(this) };
     }
 
-    fn start_tls(&mut self) {
-        self.task_event = EventState::StartTLS;
-        self.enqueue_self_task();
+    /// # Safety
+    /// `this` is the live heap `DuplexUpgradeContext`.
+    unsafe fn start_tls(this: *mut Self) {
+        // SAFETY: fn contract; disjoint field write.
+        unsafe { (*this).task_event = EventState::StartTLS };
+        // SAFETY: fn contract.
+        unsafe { Self::enqueue_self_task(this) };
     }
 
     /// # Safety
@@ -4688,43 +4755,41 @@ pub fn js_upgrade_duplex_to_tls(
             UpgradedDuplexHandlers {
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_open: |c: *mut ()| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_open()
+                    DuplexUpgradeContext::on_open(c.cast::<DuplexUpgradeContext>())
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_data: |c: *mut (), d| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_data(d)
+                    DuplexUpgradeContext::on_data(c.cast::<DuplexUpgradeContext>(), d)
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_handshake: |c: *mut (), ok, err| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_handshake(ok, err)
+                    DuplexUpgradeContext::on_handshake(c.cast::<DuplexUpgradeContext>(), ok, err)
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_close: |c: *mut ()| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_close()
+                    DuplexUpgradeContext::on_close(c.cast::<DuplexUpgradeContext>())
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
-                on_end: |c: *mut ()| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_end()
-                },
+                on_end: |c: *mut ()| DuplexUpgradeContext::on_end(c.cast::<DuplexUpgradeContext>()),
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_writable: |c: *mut ()| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_writable()
+                    DuplexUpgradeContext::on_writable(c.cast::<DuplexUpgradeContext>())
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_error: |c: *mut (), e| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_error(e)
+                    DuplexUpgradeContext::on_error(c.cast::<DuplexUpgradeContext>(), e)
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_timeout: |c: *mut ()| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_timeout()
+                    DuplexUpgradeContext::on_timeout(c.cast::<DuplexUpgradeContext>())
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_session: |c: *mut (), s| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_session(s)
+                    DuplexUpgradeContext::on_session(c.cast::<DuplexUpgradeContext>(), s)
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_keylog: |c: *mut (), l| {
-                    bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_keylog(l)
+                    DuplexUpgradeContext::on_keylog(c.cast::<DuplexUpgradeContext>(), l)
                 },
                 ctx: duplex_context.cast::<()>(),
             },
@@ -4755,7 +4820,8 @@ pub fn js_upgrade_duplex_to_tls(
     // socket's own handle keeps the loop alive.
 
     // SAFETY: `duplex_context` is live; `&mut` scoped to this call.
-    unsafe { (*duplex_context).start_tls() };
+    // SAFETY: `duplex_context` is the freshly built live allocation.
+    unsafe { DuplexUpgradeContext::start_tls(duplex_context) };
 
     let array = JSValue::create_empty_array(global, 2)?;
     array.put_index(global, 0, tls_js_value)?;

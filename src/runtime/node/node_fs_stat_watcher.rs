@@ -833,7 +833,7 @@ impl StatWatcher {
         // the next queued task re-enters JS under a
         // `scope.assertNoException()` RELEASE_ASSERT.
         let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
-            .map_err(Into::<bun_event_loop::ErasedJsError>::into)?;
+            .map_err(Into::<bun_core::JsError>::into)?;
         js::gc::prev_stat::set(js_this, global_this, jsvalue);
 
         // SAFETY: scheduler is live (`RefPtr`); `this` is live (ref'd, guard above).
@@ -859,7 +859,7 @@ impl StatWatcher {
         };
         let global_this = this_ref.global_this();
         let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
-            .map_err(Into::<bun_event_loop::ErasedJsError>::into)?;
+            .map_err(Into::<bun_core::JsError>::into)?;
         js::gc::prev_stat::set(js_this, global_this, jsvalue);
 
         let result = js::listener_get_cached(js_this).unwrap().call(
@@ -948,7 +948,7 @@ impl StatWatcher {
         let prev_jsvalue = js::gc::prev_stat::get(js_this).unwrap_or(JSValue::UNDEFINED);
         let current_jsvalue =
             stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
-                .map_err(Into::<bun_event_loop::ErasedJsError>::into)?;
+                .map_err(Into::<bun_core::JsError>::into)?;
         js::gc::prev_stat::set(js_this, global_this, current_jsvalue);
 
         // Propagate to the dispatcher: `report_error_or_terminate` reports a

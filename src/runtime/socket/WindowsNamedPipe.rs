@@ -316,10 +316,6 @@ impl WindowsNamedPipe {
         }
     }
 
-    /// Close the streaming writer. `close()` synchronously fires
-    /// `Parent::on_close`; that runs deferred (via [`Flags::WRITER_BUSY`])
-    /// so `release_resources` never re-borrows the `writer` cell while this
-    /// exclusive borrow is live.
     /// The recorded allocation root; see [`Self::root`].
     #[inline]
     fn root_ptr(&self) -> *mut WindowsNamedPipe {

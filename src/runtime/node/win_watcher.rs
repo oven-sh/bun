@@ -273,8 +273,13 @@ impl PathWatcher {
             // UV_CHANGE), or libuv could not convert the name to UTF-8.
             // Forward `(event, null)` to every handler like node, unsuppressed.
             me.emit_in_progress.set(true);
-            for i in 0..me.handlers.get().len() {
-                let ctx = me.handlers.get().keys()[i];
+            // Snapshot the keys: the JS callbacks below can `close()` and
+            // `swap_remove` a handler mid-loop; a removed key is skipped.
+            let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
+            for ctx in keys {
+                if !me.handlers.get().contains_key(&ctx) {
+                    continue;
+                }
                 on_path_update_fn(Some(ctx), Event::NoFilename(event_type), false);
                 on_update_end_fn(Some(ctx));
             }

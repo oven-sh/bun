@@ -28,13 +28,9 @@ pub mod any_event_loop;
 
 // ─── public surface ─────────────────────────────────────────────────────────
 
-/// Historical low-tier alias for `bun_jsc::JsError`. The canonical enum now lives in
-/// `bun_core` (tier-0), so this is a straight re-export.
-pub use bun_core::JsError as ErasedJsError;
-
-/// Result alias for tier-3 callbacks. Same type as `bun_jsc::JsResult<T>`; kept as a
-/// local alias so `ManagedTask` signatures don't take an upward dep.
-pub type JsResult<T> = core::result::Result<T, ErasedJsError>;
+/// Result alias for tier-3 callbacks. Carries `bun_core::JsError` (tier-0) so
+/// `ManagedTask` signatures don't take an upward dep.
+pub type JsResult<T> = core::result::Result<T, bun_core::JsError>;
 pub use ConcurrentTask::{Task, TaskTag, Taskable, task_tag};
 
 // snake_case alias for the file-level-struct module so higher tiers avoid

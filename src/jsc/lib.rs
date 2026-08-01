@@ -610,10 +610,10 @@ pub type JsResult<T> = core::result::Result<T, JsError>;
 
 bun_core::oom_from_alloc!(JsError);
 
-impl From<bun_event_loop::ErasedJsError> for JsError {
+impl From<bun_core::JsError> for JsError {
     #[inline]
-    fn from(e: bun_event_loop::ErasedJsError) -> Self {
-        use bun_event_loop::ErasedJsError as E;
+    fn from(e: bun_core::JsError) -> Self {
+        use bun_core::JsError as E;
         match e {
             E::Thrown => JsError::Thrown,
             E::OutOfMemory => JsError::OutOfMemory,
@@ -622,17 +622,17 @@ impl From<bun_event_loop::ErasedJsError> for JsError {
     }
 }
 
-impl From<JsTerminated> for bun_event_loop::ErasedJsError {
+impl From<JsTerminated> for bun_core::JsError {
     #[inline]
     fn from(_: JsTerminated) -> Self {
-        bun_event_loop::ErasedJsError::Terminated
+        bun_core::JsError::Terminated
     }
 }
 
-impl From<JsError> for bun_event_loop::ErasedJsError {
+impl From<JsError> for bun_core::JsError {
     #[inline]
     fn from(e: JsError) -> Self {
-        use bun_event_loop::ErasedJsError as E;
+        use bun_core::JsError as E;
         match e {
             JsError::Thrown => E::Thrown,
             JsError::OutOfMemory => E::OutOfMemory,

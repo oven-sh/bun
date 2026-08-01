@@ -2796,7 +2796,12 @@ impl RunCommand {
             &mut out_buf.0,
             &[target],
         );
-        while joined.len() > 1 && joined[joined.len() - 1] == paths::SEP {
+        let root_len = if cfg!(windows) {
+            paths::resolve_path::windows_filesystem_root(joined).len() + 1
+        } else {
+            1
+        };
+        while joined.len() > root_len && joined[joined.len() - 1] == paths::SEP {
             joined = &joined[..joined.len() - 1];
         }
         if joined.is_empty() {

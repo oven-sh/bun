@@ -54,6 +54,18 @@ pub struct Conditions {
     pub style: crate::package_json::ConditionsMap,
 }
 
+impl Conditions {
+    #[inline]
+    pub(crate) fn kind(&self, kind: bun_ast::ImportKind) -> &crate::package_json::ConditionsMap {
+        use bun_ast::ImportKind as K;
+        match kind {
+            K::Require | K::RequireResolve => &self.require,
+            K::At | K::AtConditional => &self.style,
+            _ => &self.import,
+        }
+    }
+}
+
 /// `Copy` tag selecting one of the extension-order lists owned by
 /// [`BundleOptions`]. Replaces the previous `*const [Box<[u8]>]`
 /// self-reference (`Resolver.extension_order` pointing into

@@ -2654,21 +2654,17 @@ impl<'a> Resolver<'a> {
                                     // want problems due to Windows paths, which are very unlike URL
                                     // paths. We also want to avoid any "%" characters in the absolute
                                     // directory path accidentally being interpreted as URL escapes.
+                                    let has_bun_condition = self
+                                        .opts
+                                        .conditions
+                                        .kind(kind)
+                                        .contains_key(b"bun".as_slice());
                                     {
                                         let esm_resolution = ESModule {
-                                            conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
-                                                    &self.opts.conditions.require
-                                                }
-                                                ast::ImportKind::At
-                                                | ast::ImportKind::AtConditional => {
-                                                    &self.opts.conditions.style
-                                                }
-                                                _ => &self.opts.conditions.import,
-                                            },
+                                            conditions: self.opts.conditions.kind(kind),
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
+                                            skip_bun_condition: false,
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
                                         // ESModule temporary dropped here; `self` is unborrowed.
@@ -2692,6 +2688,47 @@ impl<'a> Resolver<'a> {
                                             }
                                             return MatchStatus::Success;
                                         }
+                                    }
+
+                                    // The matched export target does not exist on disk. If the
+                                    // "bun" condition is active, retry with it skipped so we
+                                    // fall through to the next matching condition (typically
+                                    // "node" or "default"). This recovers traced/pruned
+                                    // node_modules trees (e.g. Nitro/Nuxt `.output`) where
+                                    // only the "node" variant was copied. When "bun" was not
+                                    // the key that matched, the retry resolves to the same path
+                                    // and the (cached) existence check fails again.
+                                    if has_bun_condition {
+                                        let prev_module_type = module_type;
+                                        module_type = package_json.module_type;
+                                        let esm_resolution = ESModule {
+                                            conditions: self.opts.conditions.kind(kind),
+                                            debug_logs: self.debug_logs.as_mut(),
+                                            module_type: &mut module_type,
+                                            skip_bun_condition: true,
+                                        }
+                                        .resolve(b"/", esm.subpath, &exports_map.root);
+
+                                        if self
+                                            .handle_esm_resolution(
+                                                esm_resolution,
+                                                abs_package_path,
+                                                kind,
+                                                package_json,
+                                                esm.subpath,
+                                                out,
+                                            )
+                                            .is_success()
+                                        {
+                                            out.is_node_module = true;
+                                            out.module_type = module_type;
+                                            self.extension_order = prev_extension_order;
+                                            if let Some(d) = self.debug_logs.as_mut() {
+                                                d.decrease_indent();
+                                            }
+                                            return MatchStatus::Success;
+                                        }
+                                        module_type = prev_module_type;
                                     }
 
                                     // Some popular packages forget to include the extension in their
@@ -2726,6 +2763,7 @@ impl<'a> Resolver<'a> {
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
+                                            skip_bun_condition: false,
                                         }
                                         .resolve(
                                             b"/",
@@ -3153,6 +3191,14 @@ impl<'a> Resolver<'a> {
                                     // want problems due to Windows paths, which are very unlike URL
                                     // paths. We also want to avoid any "%" characters in the absolute
                                     // directory path accidentally being interpreted as URL escapes.
+                                    let has_bun_condition = match kind {
+                                        ast::ImportKind::Require
+                                        | ast::ImportKind::RequireResolve => {
+                                            &self.opts.conditions.require
+                                        }
+                                        _ => &self.opts.conditions.import,
+                                    }
+                                    .contains_key(b"bun".as_slice());
                                     {
                                         let esm_resolution = ESModule {
                                             conditions: match kind {
@@ -3164,6 +3210,7 @@ impl<'a> Resolver<'a> {
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
+                                            skip_bun_condition: false,
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
 
@@ -3186,6 +3233,46 @@ impl<'a> Resolver<'a> {
                                         }
                                     }
 
+                                    // See the comment on the identical retry in the non-global-cache
+                                    // branch above: fall through when the "bun" condition's target
+                                    // file is missing on disk.
+                                    if has_bun_condition {
+                                        let prev_module_type = module_type;
+                                        module_type = options::ModuleType::Unknown;
+                                        let esm_resolution = ESModule {
+                                            conditions: match kind {
+                                                ast::ImportKind::Require
+                                                | ast::ImportKind::RequireResolve => {
+                                                    &self.opts.conditions.require
+                                                }
+                                                _ => &self.opts.conditions.import,
+                                            },
+                                            debug_logs: self.debug_logs.as_mut(),
+                                            module_type: &mut module_type,
+                                            skip_bun_condition: true,
+                                        }
+                                        .resolve(b"/", esm.subpath, &exports_map.root);
+
+                                        if self
+                                            .handle_esm_resolution(
+                                                esm_resolution,
+                                                abs_package_path,
+                                                kind,
+                                                package_json,
+                                                esm.subpath,
+                                                out,
+                                            )
+                                            .is_success()
+                                        {
+                                            out.is_node_module = true;
+                                            if let Some(d) = self.debug_logs.as_mut() {
+                                                d.decrease_indent();
+                                            }
+                                            return MatchStatus::Success;
+                                        }
+                                        module_type = prev_module_type;
+                                    }
+
                                     // Some popular packages forget to include the extension in their
                                     // exports map, so we try again without the extension.
                                     // (same comment as above)
@@ -3203,6 +3290,7 @@ impl<'a> Resolver<'a> {
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
+                                            skip_bun_condition: false,
                                         }
                                         .resolve(
                                             b"/",
@@ -4840,6 +4928,7 @@ impl<'a> Resolver<'a> {
             },
             debug_logs: self.debug_logs.as_mut(),
             module_type: &mut module_type,
+            skip_bun_condition: false,
         }
         .resolve_imports(import_path, &imports_map.root);
         let _ = module_type;

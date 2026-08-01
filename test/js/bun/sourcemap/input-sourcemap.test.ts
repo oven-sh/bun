@@ -5,7 +5,7 @@
 //
 // https://github.com/oven-sh/bun/issues/2125
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 // Original source: the positions the stack trace should report.
@@ -239,6 +239,26 @@ try { require("./index.js"); } catch (e) { console.log(e.stack); }
     expect(stderr).toContain(`${join(String(dir), "index.js")}:1:`);
     expect(stderr).not.toContain("index.ts");
     expect(stderr).toContain(`"use strict"; throw new Error`);
+    expect(exitCode).toBe(1);
+  });
+
+  test.skipIf(isWindows)("file:// sourceMappingURL", async () => {
+    using dir = tempDir("input-sourcemap-fileurl", {
+      "src/index.ts": original,
+      "maps/index.js.map": JSON.stringify({ ...mapJson, sources: ["../src/index.ts"] }),
+      "dist/placeholder": "",
+    });
+    const mapPath = join(String(dir), "maps", "index.js.map");
+    await Bun.write(
+      join(String(dir), "dist", "index.js"),
+      generated + `//# sourceMappingURL=file://${mapPath}\n`,
+    );
+
+    const { stderr, exitCode } = await run(String(dir), join("dist", "index.js"));
+    expect(stderr).toContain(`at boom (${join(String(dir), "src", "index.ts")}:6:`);
+    // The code frame reaching disk proves sources_anchor_dir resolved the
+    // file:// URL's directory, not a garbage join.
+    expect(stderr).toContain(`function boom(): never {`);
     expect(exitCode).toBe(1);
   });
 

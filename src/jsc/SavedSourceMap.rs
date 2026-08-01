@@ -268,6 +268,9 @@ impl SavedSourceMap {
         let blob_ptr: *mut [u8] = bun_core::heap::into_raw(blob);
 
         if let Some(url) = SourceMap::find_input_source_mapping_url(source.contents()) {
+            // Normalize once so `load_input_source_map` and
+            // `sources_anchor_dir` both see a plain path.
+            let url = url.strip_prefix(b"file://").unwrap_or(url);
             let boxed = bun_core::heap::into_raw(Box::new(InternalWithInputUrl {
                 blob: InternalSourceMap {
                     data: blob_ptr.cast::<u8>().cast_const(),

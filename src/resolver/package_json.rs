@@ -1278,8 +1278,7 @@ pub(crate) struct ESModule<'a> {
     pub(crate) conditions: &'a ConditionsMap,
     // allocator dropped — global mimalloc
     pub(crate) module_type: &'a mut ModuleType,
-    /// Ignore the "bun" export condition; one-shot retry when its target file is absent on
-    /// disk so resolution falls through to "node"/"default" (#7142).
+    /// Ignore the "bun" condition; retry when its target file is absent on disk (#7142).
     pub(crate) skip_bun_condition: bool,
 }
 

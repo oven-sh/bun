@@ -2698,11 +2698,8 @@ impl<'a> Resolver<'a> {
                                         }
                                     }
 
-                                    // Target missing on disk: retry once without the "bun"
-                                    // condition so traced node_modules (Nitro/nft) that only
-                                    // shipped the "node" variant still resolve (#7142).
-                                    // `"bun": null` resolves to Null/PackagePathDisabled and is
-                                    // excluded above, so an explicit disable is still honored.
+                                    // #7142: retry once without the "bun" condition so traced
+                                    // node_modules that only shipped the "node" variant resolve.
                                     if retry_without_bun {
                                         let prev_module_type = module_type;
                                         module_type = package_json.module_type;

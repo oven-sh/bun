@@ -113,9 +113,8 @@ enum class SourceKind : uint8_t {
     ByteTeeBranch, // a ReadableByteStreamTee branch     (context = the JSStreamTeeState)
     FromIterable, // ReadableStream.from(asyncIterable)  (context = JSStreamFromIterableContext)
     CrossRealm, // receiving end of a postMessage transfer (context = JSCrossRealmTransformState)
-    Native, // Bun: lazily-materialized native source — a BYTE controller for binary streams
-            // (so Blob/File/Bytes streams accept BYOB readers), a DEFAULT controller for
-            // text-mode (Body.textStream()) (context = JSNativeStreamSourceAdapter)
+    Native, // Bun: lazily-materialized native source (byte controller; default in text mode)
+            // (context = JSNativeStreamSourceAdapter)
     TextDecode, // Body.textStream() reading from an existing byte stream
                 // (algorithmContext = source JSReadableStreamDefaultReader;
                 // decode state inline on m_algorithms.textDecodeState)

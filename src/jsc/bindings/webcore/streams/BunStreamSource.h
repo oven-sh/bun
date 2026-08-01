@@ -68,9 +68,7 @@ public:
     JSC::JSObject* pendingView() const { return internalField(Field::PendingView).get().getObject(); }
     JSC::JSObject* closer() const { return internalField(Field::Closer).get().getObject(); }
     JSC::JSValue drainValue() const { return internalField(Field::DrainValue).get(); }
-    // Exactly one of these is non-null once set: a text-mode adapter installs a default
-    // controller (it enqueues JSStrings), a binary adapter installs a byte controller so
-    // BYOB readers can attach.
+    // Exactly one is non-null once set: default for text-mode, byte for binary.
     JSC::JSObject* controller() const { return internalField(Field::Controller).get().getObject(); }
     JSReadableStreamDefaultController* defaultController() const { return dynamicDowncast<JSReadableStreamDefaultController>(internalField(Field::Controller).get()); }
     JSReadableByteStreamController* byteController() const { return dynamicDowncast<JSReadableByteStreamController>(internalField(Field::Controller).get()); }
@@ -94,8 +92,7 @@ public:
     bool m_closed : 1 { false };
     // Body.textStream(): each pulled byte span is UTF-8-decoded before enqueue.
     bool m_textMode : 1 { false };
-    // the in-flight async pull's PendingView is the head pull-into descriptor's buffer
-    // (respond(n) on fulfilment) rather than an adapter-owned scratch buffer (enqueue()).
+    // the in-flight async pull's PendingView is the BYOB pull-into buffer (respond on fulfil).
     bool m_pendingIsBYOB : 1 { false };
     Bun::WebStreams::StreamingUTF8DecodeState m_textState;
 

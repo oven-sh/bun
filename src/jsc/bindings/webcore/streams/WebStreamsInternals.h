@@ -508,15 +508,12 @@ void pipeToReadRequestErrorSteps(JSC::JSGlobalObject*, JSStreamPipeToOperation*,
 
 // BunStreamSource.cpp — the lazy native source and the native-sink pumps.
 
-// lazyLoadStream: installs the Native controller (a byte controller, or a default controller
-// for text-mode native streams) or the empty fast path.
+// lazyLoadStream: installs the Native controller (byte, or default in text mode) or the empty fast path.
 void materializeNativeSource(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamSource.cpp
 
-// The SourceKind::Native algorithm ARMS. A binary Native source installs a BYTE controller
-// (so Blob/File/Bytes streams accept BYOB readers); a text-mode Native source (Body.textStream())
-// installs a DEFAULT controller. Both controllers' total `switch (m_algorithms.kind)` dispatch
-// into the matching overload here. The controller's algorithmContext is the
-// JSNativeStreamSourceAdapter for all of these.
+// The SourceKind::Native algorithm ARMS. Binary sources install a byte controller and text-mode
+// sources a default controller; both controllers dispatch into the matching overload here.
+// controller->m_algorithms.algorithmContext is the JSNativeStreamSourceAdapter.
 JSC::JSValue nativeSourceStart(JSC::JSGlobalObject*, JSNativeStreamSourceAdapter*); // userJS: no (native handle.start; enqueues the drain value) — BunStreamSource.cpp
 JSC::JSPromise* nativeSourcePull(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: no (native handle.pull; its promise's reactions are onNativePull*) — BunStreamSource.cpp
 JSC::JSPromise* nativeSourcePull(JSC::JSGlobalObject*, JSReadableByteStreamController*); // userJS: no — BunStreamSource.cpp

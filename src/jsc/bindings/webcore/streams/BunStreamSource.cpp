@@ -380,8 +380,6 @@ static inline bool nativeByteControllerCanCloseOrEnqueue(JSReadableByteStreamCon
     return !controller->m_closeRequested && controller->m_stream->m_state == ReadableStreamState::Readable;
 }
 
-// Enqueue a native-owned chunk on the byte controller. The native side hands over a fresh
-// buffer that nothing else aliases, so the byte-controller transfer/detach is harmless.
 static void nativeByteControllerEnqueue(JSGlobalObject* globalObject, JSReadableByteStreamController* controller, JSValue chunk)
 {
     auto& vm = getVM(globalObject);
@@ -391,6 +389,19 @@ static void nativeByteControllerEnqueue(JSGlobalObject* globalObject, JSReadable
         return;
     if (!nativeByteControllerCanCloseOrEnqueue(controller))
         return;
+    // Default-reader fast path: the adapter owns this buffer (no user aliasing), so skip the
+    // spec transfer + fresh-view allocation and fulfil the pending read with the view as-is.
+    JSReadableStream* stream = controller->m_stream.get();
+    if (controller->m_pendingPullIntos.isEmpty() && readableStreamHasDefaultReader(stream)) {
+        if (readableStreamGetNumReadRequests(stream)) {
+            readableStreamFulfillReadRequest(globalObject, stream, view, false);
+            RETURN_IF_EXCEPTION(scope, void());
+        } else {
+            RefPtr<JSC::ArrayBuffer> buffer = view->possiblySharedBuffer();
+            readableByteStreamControllerEnqueueChunkToQueue(controller, WTF::move(buffer), view->byteOffset(), view->byteLength());
+        }
+        RELEASE_AND_RETURN(scope, readableByteStreamControllerCallPullIfNeeded(globalObject, controller));
+    }
     RELEASE_AND_RETURN(scope, readableByteStreamControllerEnqueue(globalObject, controller, view));
 }
 
@@ -422,10 +433,7 @@ static void nativeSourceCallClose(JSC::VM& vm, JSGlobalObject* globalObject, JSN
             JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
             if (thrown.isEmpty())
                 return;
-            // readableByteStreamControllerClose throws by spec when the head pull-into's
-            // bytesFilled is not a multiple of its element size; it has already errored the
-            // stream and rejected the pending read, so swallow that throw rather than
-            // surfacing a spurious uncaught exception.
+            // close() throws AND errors the stream on a partial-element pull-into (spec step 1.b).
             if (byteCtrl->m_stream->m_state != ReadableStreamState::Errored)
                 Bun__reportError(globalObject, JSValue::encode(thrown));
         }
@@ -463,11 +471,8 @@ static JSC::JSUint8Array* nativeGetInternalBuffer(JSC::VM& vm, JSGlobalObject* g
     return fresh;
 }
 
-// Decodes one pull result. When `hasBYOBRequest` the native side wrote into the head
-// pull-into descriptor's view and a Respond(N) commits it; otherwise the adapter owns its
-// own scratch buffer and the filled prefix is enqueued (or decoded, in text mode). Returns
-// the value to store as the pending view (a view or undefined); always undefined on the
-// BYOB path.
+// Decodes one pull result (respond(n) under hasBYOBRequest, else enqueue the filled prefix).
+// Returns the value to store as the pending view.
 static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSValue result, JSC::JSUint8Array* view, bool isClosed, bool hasBYOBRequest)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -491,8 +496,7 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
             return view ? JSValue(view) : jsUndefined();
         }
         if (hasBYOBRequest) {
-            // The pull-into can be gone by the time an async pull settles (cancel / release
-            // cleared it); skip respond() rather than tripping its non-empty precondition.
+            // The pull-into can be gone by the time an async pull settles: skip respond().
             if (written > 0 && byteCtrl && view && !byteCtrl->m_pendingPullIntos.isEmpty()) {
                 uint64_t count = static_cast<uint64_t>(std::min(static_cast<size_t>(written), static_cast<size_t>(view->length())));
                 if (count > 0) {
@@ -508,10 +512,7 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
         if (written > 0 && view) {
             size_t count = std::min(static_cast<size_t>(written), static_cast<size_t>(view->length()));
             JSC::JSArrayBufferView* toEnqueue = view;
-            // readableByteStreamControllerEnqueue detaches the chunk's backing buffer; a
-            // subarray of the scratch buffer would detach the scratch buffer too and defeat
-            // its reuse. Copy the filled prefix into a fresh Uint8Array and keep the scratch
-            // buffer (rewound to offset 0) as the pending view for the next pull.
+            // Copy (byte-controller enqueue detaches, which would kill scratch-buffer reuse).
             if (view->length() - count > 0) {
                 auto* copy = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), count);
                 RETURN_IF_EXCEPTION(scope, {});
@@ -653,10 +654,7 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
         auto* controller = WebCore::JSReadableByteStreamController::create(vm, WebCore::getDOMStructure<WebCore::JSReadableByteStreamController>(vm, *domGlobalObject));
         controller->m_algorithms.kind = SourceKind::Native;
         controller->m_algorithms.algorithmContext.set(vm, controller, adapter);
-        // HWM > 0 keeps one pull outstanding once the queue drains (desiredSize > 0), matching
-        // the prior default-controller HWM=1. ByteStream/FileReader only surface close/error via
-        // the pending pull's promise, so without a proactive pull an abort after a satisfied
-        // read() would never reach the controller.
+        // HWM=1 keeps one pull outstanding so the native side's close/error propagates.
         setUpReadableByteStreamController(globalObject, stream, controller, jsUndefined(), 1, std::nullopt);
         RETURN_IF_EXCEPTION(scope, );
         adapter->setController(vm, controller);
@@ -683,10 +681,8 @@ JSValue nativeSourceStart(JSGlobalObject* globalObject, JSNativeStreamSourceAdap
     return jsUndefined();
 }
 
-// A BYOB reader supplies the buffer to write into: if the head pending pull-into exists,
-// return a Uint8Array over its unfilled tail (what controller.byobRequest.view would expose).
-// With no pull-into pending (default reader, autoAllocateChunkSize unset), return nullptr and
-// the caller falls back to its own scratch buffer.
+// A Uint8Array over the head pull-into's unfilled tail (controller.byobRequest.view equivalent),
+// or nullptr when no pull-into is pending and the caller uses its own scratch buffer.
 static JSC::JSUint8Array* nativePendingPullIntoView(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableByteStreamController* controller)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -694,6 +690,8 @@ static JSC::JSUint8Array* nativePendingPullIntoView(JSC::VM& vm, JSGlobalObject*
         return nullptr;
     const JSPullIntoDescriptor* firstDescriptor = controller->m_pendingPullIntos.first().get();
     const size_t bytesFilled = firstDescriptor->m_bytesFilled;
+    if (bytesFilled >= firstDescriptor->m_byteLength)
+        return nullptr;
     RefPtr<JSC::ArrayBuffer> buffer = firstDescriptor->m_buffer;
     auto* view = JSC::JSUint8Array::create(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), WTF::move(buffer), firstDescriptor->m_byteOffset + bytesFilled, firstDescriptor->m_byteLength - bytesFilled);
     RETURN_IF_EXCEPTION(scope, nullptr);

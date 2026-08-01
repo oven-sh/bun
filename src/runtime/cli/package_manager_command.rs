@@ -499,12 +499,16 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 Output::flush();
                 Output::disable_buffering();
                 let mut cwd_buf = PathBuffer::uninit();
-                if let Ok(len) = bun_sys::getcwd(&mut cwd_buf[..]) {
-                    Output::println(format_args!(
-                        "{} node_modules (0)",
-                        bstr::BStr::new(&cwd_buf[..len]),
-                    ));
-                }
+                let path = match bun_sys::getcwd(&mut cwd_buf[..]) {
+                    Ok(len) => &cwd_buf[..len],
+                    Err(_) => {
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r>: Could not get current working directory",
+                        );
+                        Global::exit(1);
+                    }
+                };
+                Output::println(format_args!("{} node_modules (0)", bstr::BStr::new(path)));
                 Global::exit(0);
             }
 

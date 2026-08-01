@@ -4080,13 +4080,51 @@ describe("hoisting", async () => {
   });
 
   // https://github.com/oven-sh/bun/issues/7869
-  test("dependency listed in both dependencies and peerDependencies installs when root does not provide it", async () => {
+  for (const pkg of ["fallback-peer-deps", "fallback-optional-peer-deps"]) {
+    test(`dependency listed in both dependencies and peerDependencies installs when root does not provide it (${pkg})`, async () => {
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            [pkg]: "1.0.0",
+          },
+        }),
+      );
+
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      const err = await stderr.text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+
+      expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+        name: "no-deps",
+        version: "2.0.0",
+      });
+      expect(await exists(join(packageDir, "node_modules", pkg, "node_modules"))).toBeFalse();
+    });
+  }
+
+  // https://github.com/oven-sh/bun/issues/7869
+  test("dependency listed in both dependencies and an optional peerDependency dedupes to the root copy", async () => {
     await writeFile(
       packageJson,
       JSON.stringify({
         name: "foo",
         dependencies: {
-          "fallback-peer-deps": "1.0.0",
+          "fallback-optional-peer-deps": "1.0.0",
+          "no-deps": "1.0.0",
         },
       }),
     );
@@ -4094,7 +4132,7 @@ describe("hoisting", async () => {
     const { stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: "pipe",
+      stdout: "ignore",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -4103,15 +4141,16 @@ describe("hoisting", async () => {
     const err = await stderr.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
+    expect(err).not.toContain("incorrect peer dependency");
 
     expect(await exited).toBe(0);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
       name: "no-deps",
-      version: "2.0.0",
-    });
-    expect(await exists(join(packageDir, "node_modules", "fallback-peer-deps", "node_modules"))).toBeFalse();
+      version: "1.0.0",
+    } as any);
+    expect(await exists(join(packageDir, "node_modules", "fallback-optional-peer-deps", "node_modules"))).toBeFalse();
   });
 
   describe("devDependencies", () => {

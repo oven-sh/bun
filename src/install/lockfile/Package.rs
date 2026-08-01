@@ -788,7 +788,7 @@ impl Package<u64> {
                     let sliced = dep_version.sliced(string_builder.string_bytes.as_slice());
 
                     let mut behavior = group.behavior;
-                    if is_peer {
+                    if is_peer && duplicate_at.is_none() {
                         behavior.set(
                             Behavior::OPTIONAL,
                             (i as u32) < package_version.non_optional_peer_dependencies_start,

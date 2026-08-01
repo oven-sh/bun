@@ -637,9 +637,8 @@ impl InternalSourceMap {
     }
 }
 
-/// Stateful forward cursor. Each `move_to` is bounded by one `locate_window`
-/// plus <= `SYNC_INTERVAL` deltas (reseeks on a backward jump or a forward
-/// jump past the next sync entry).
+/// Stateful forward cursor over the mapping stream. Each seek is bounded by
+/// one `locate_window` plus <= `SYNC_INTERVAL` delta decodes.
 ///
 /// Invariant: when `has_state`, `reader` is positioned such that calling
 /// `advance_one()` produces the mapping immediately after `peek orelse state`.
@@ -675,37 +674,6 @@ impl Cursor {
                 .map
                 .sync_entry(next)
                 .less_or_equal(target_line, target_col)
-    }
-
-    pub fn move_to(&mut self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
-        let target_line = line.zero_based();
-        let target_col = column.zero_based();
-
-        if self.should_reseek(target_line, target_col) && !self.reseek(target_line, target_col) {
-            return None;
-        }
-
-        loop {
-            if let Some(p) = self.peek {
-                if !p.less_or_equal(target_line, target_col) {
-                    break;
-                }
-                self.state = p;
-                self.peek = None;
-            }
-            let Some(nxt) = self.advance_one() else { break };
-            if nxt.less_or_equal(target_line, target_col) {
-                self.state = nxt;
-            } else {
-                self.peek = Some(nxt);
-                break;
-            }
-        }
-
-        if self.state.generated_line != target_line {
-            return None;
-        }
-        Some(self.state.to_mapping())
     }
 
     /// Call `each(original_line, width)` for every mapping segment on

@@ -24,6 +24,8 @@ unsafe extern "C" {
 
     fn highway_index_of_newline_or_non_ascii(haystack: *const u8, haystack_len: usize) -> usize;
 
+    fn highway_classify_utf8_width(bytes: *const u8, len: usize) -> usize;
+
     fn highway_index_of_newline_or_non_ascii_or_hash_or_at(
         haystack: *const u8,
         haystack_len: usize,
@@ -327,6 +329,50 @@ pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     }
 
     Some(result)
+}
+
+/// One-pass classifier for `bun_core::strings::to_latin1_or_utf16_alloc`.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum Utf8Width {
+    /// Every byte `< 0x80`.
+    Ascii,
+    /// Some byte `>= 0x80` but all `< 0xC4`: when the input is well-formed
+    /// UTF-8 every code point is `<= U+00FF`. Invalid sequences (overlongs,
+    /// strays, truncated tails) can still land here, so callers must validate.
+    /// Carries the index of the first byte `>= 0x80`.
+    Latin1Candidate(usize),
+    /// Some byte `>= 0xC4`. Carries the index of the first byte `>= 0x80`.
+    HasWide(usize),
+}
+
+/// One-pass classifier for [`Utf8Width`]. SIMD-wide; the ASCII prefix is
+/// scanned at one compare per block, then the tail at one compare per block
+/// with an early exit on the first byte `>= 0xC4`.
+#[inline(always)]
+pub fn classify_utf8_width(bytes: &[u8]) -> Utf8Width {
+    if bytes.is_empty() {
+        return Utf8Width::Ascii;
+    }
+    // SAFETY: bytes.ptr/len describe a valid readable range.
+    let packed = unsafe { highway_classify_utf8_width(bytes.as_ptr(), bytes.len()) };
+    let first = packed >> 2;
+    match packed & 3 {
+        0 => Utf8Width::Ascii,
+        1 => Utf8Width::Latin1Candidate(first),
+        _ => Utf8Width::HasWide(first),
+    }
+}
+
+/// Raw-pointer variant of [`copy_u16_to_u8`] for writing into uninitialised
+/// storage.
+///
+/// # Safety
+/// `input` must be valid for `count` reads and `output` for `count` writes,
+/// non-overlapping.
+#[inline(always)]
+pub unsafe fn copy_u16_to_u8_raw(input: *const u16, count: usize, output: *mut u8) {
+    // SAFETY: caller contract.
+    unsafe { highway_copy_u16_to_u8(input, count, output) }
 }
 
 // `&[u16]` requires

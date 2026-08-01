@@ -144,6 +144,41 @@ describe("tsconfig compilerOptions.useDefineForClassFields", () => {
     });
   }
 
+  test.concurrent("false: standard-decorated field keeps its initializer for the decorator", async () => {
+    using dir = tempDir("udfcf-std-dec", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
+      "index.ts": `
+        function dec(_v: any, _ctx: any) { return (v: any) => v * 10; }
+        class C {
+          @dec a = 1;
+          constructor(public x: number) {}
+        }
+        process.stdout.write(JSON.stringify({ a: new C(5).a }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ a: 10 });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("false: static method named 'constructor' is not treated as the constructor", async () => {
+    using dir = tempDir("udfcf-static-ctor", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
+      "index.ts": `
+        class C {
+          x = 1;
+          static constructor() { return "static"; }
+        }
+        process.stdout.write(JSON.stringify({ x: new C().x, s: C.constructor() }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ x: 1, s: "static" });
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("false: decorated field initializers also see parameter properties", async () => {
     using dir = tempDir("udfcf-decorated", {
       "tsconfig.json": JSON.stringify({

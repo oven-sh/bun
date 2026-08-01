@@ -939,7 +939,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                 } else if property.flags.contains(flags::Property::IsMethod) {
-                    if Self::IS_TYPESCRIPT_ENABLED {
+                    if Self::IS_TYPESCRIPT_ENABLED
+                        && !property.flags.contains(flags::Property::IsStatic)
+                        && !property.flags.contains(flags::Property::IsComputed)
+                    {
                         if let (Some(value), Some(key)) = (property.value, property.key) {
                             if let (ExprData::EFunction(e_func), ExprData::EString(e_str)) =
                                 (value.data, key.data)
@@ -1016,7 +1019,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if Self::IS_TYPESCRIPT_ENABLED {
-                let use_define = self.options.use_define_for_class_fields;
+                // `lower_standard_decorators_stmt` owns field placement for such classes.
+                let use_define = self.options.use_define_for_class_fields
+                    || class.should_lower_standard_decorators;
 
                 let (func_args, param_props): (bun_ast::StoreSlice<G::Arg>, usize) =
                     match constructor_function {

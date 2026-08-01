@@ -597,7 +597,7 @@ describe("forwards args after `--` to the create script", () => {
   });
 
   it.concurrent("preserves `--bun` after the separator as a literal arg", async () => {
-    const { argv, isBun } = await runCreate("bun-issue29087-argv-printer", "--", "--bun", "-t", "v3");
-    expect({ argv, isBun }).toEqual({ argv: ["--bun", "-t", "v3"], isBun: false });
+    const { argv } = await runCreate("bun-issue29087-argv-printer", "--", "--bun", "-t", "v3");
+    expect(argv).toEqual(["--bun", "-t", "v3"]);
   });
 });

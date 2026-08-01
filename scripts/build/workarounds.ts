@@ -172,10 +172,11 @@ export const workarounds: Workaround[] = [
       return cfg.rustLlvmVersion !== undefined && satisfiesRange(cfg.rustLlvmVersion, `>=${RECHECK_AT_RUST_LLVM}`);
     },
     cleanup:
-      `In scripts/build/config.ts drop the native-darwin-ASAN ld64.lld swap and the darwinLld field; ` +
-      `in flags.ts restore the plain \`-Wl,-ld_new\` entry and revert the darwinLld predicates to ` +
-      `crossTarget checks; in tools.ts re-gate ld64.lld resolution to non-darwin hosts; in shims.ts ` +
-      `restore needsMachoPostlink to the crossTarget check; and delete this entry.`,
+      `In scripts/build/config.ts drop the native-darwin-ASAN \`darwinNativeLld\` swap (darwinLld ` +
+      `then reduces to \`ld64StripSwap !== undefined\`); in flags.ts delete the native \`--ld-path\` ` +
+      `entry and drop \`!c.darwinLld\` from the -Wl,-ld_new predicate; and delete this entry. Keep ` +
+      `cfg.darwinLld itself and the predicates that read it (flags.ts, shims.ts, workarounds.ts): ` +
+      `they key on "which Mach-O linker", not on this workaround.`,
   },
   {
     id: "darwin-cross-stack-size",

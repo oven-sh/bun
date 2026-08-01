@@ -259,7 +259,11 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
   });
 });
 
-describe("native darwin ASAN → ld64.lld (workarounds.ts 'darwin-asan-ld-new')", () => {
+// Skipped on macOS for the same reason as the block above: resolveDarwin() on
+// a darwin host enters the native branch and spawns xcode-select/xcrun against
+// the real SDK. The tests only exercise computeFlags/needsMachoPostlink over a
+// hand-overridden Config record, so running them on a real mac gains nothing.
+describe.skipIf(isMacOS)("native darwin ASAN → ld64.lld (workarounds.ts 'darwin-asan-ld-new')", () => {
   // resolveConfig() detects the real host, so a Linux machine can't resolve a
   // "native darwin" config directly. Build one by taking the darwin cross
   // resolution (which populates every darwin field) and overriding just the

@@ -1192,8 +1192,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         "Native darwin ASAN builds link with ld64.lld (Apple's ld rejects rustc's ASAN relocations)",
         {
           hint:
-            "ld64.lld ships with the same Homebrew llvm install as clang. " +
-            "Reinstall `brew install llvm@21` (or set --asan=off to link with Apple's ld).",
+            "Homebrew ships lld as a separate keg-only formula: `brew install lld@21`. " +
+            "Or set --asan=off to link with Apple's ld instead.",
         },
       );
     }

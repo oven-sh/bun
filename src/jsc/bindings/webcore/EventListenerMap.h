@@ -53,7 +53,6 @@ public:
 
     bool isEmpty() const { return m_entries.isEmpty(); }
     bool contains(const AtomString& eventType) const { return find(eventType); }
-    bool containsCapturing(const AtomString& eventType) const;
     bool containsActive(const AtomString& eventType) const;
 
     void clear();

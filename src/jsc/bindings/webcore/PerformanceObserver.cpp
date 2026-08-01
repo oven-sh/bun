@@ -88,7 +88,7 @@ ExceptionOr<void> PerformanceObserver::observe(Init&& init)
         if (init.buffered) {
             isBuffered = true;
             auto oldSize = m_entriesToDeliver.size();
-            m_performance->appendBufferedEntriesByType(*init.type, m_entriesToDeliver, *this);
+            m_performance->appendBufferedEntriesByType(*init.type, m_entriesToDeliver);
             auto begin = m_entriesToDeliver.begin();
             auto oldEnd = begin + oldSize;
             auto end = m_entriesToDeliver.end();

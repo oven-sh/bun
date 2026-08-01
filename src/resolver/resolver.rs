@@ -1582,11 +1582,9 @@ impl<'a> Resolver<'a> {
                         PJSideEffects::Unspecified => SideEffects::HasSideEffects,
                         PJSideEffects::False => SideEffects::NoSideEffectsPackageJson,
                         PJSideEffects::Map(map) => {
-                            if map
-                                .contains_key(&crate::package_json::StringHashMapUnownedKey::init(
-                                    path.text(),
-                                ))
-                            {
+                            if map.contains_key(
+                                &crate::package_json::StringHashMapUnownedKey::init(path.text()),
+                            ) {
                                 SideEffects::HasSideEffects
                             } else {
                                 SideEffects::NoSideEffectsPackageJson

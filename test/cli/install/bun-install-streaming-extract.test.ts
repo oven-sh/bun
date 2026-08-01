@@ -1041,9 +1041,8 @@ test.concurrent.each([
 // Buffered extract: a tarball whose ustar header declares a size far
 // larger than the body that follows must fail to extract without
 // leaving its temporary extraction directory behind, and without
-// allocating the declared size on disk. The body of a tar entry is
-// stored inline in the (already-decompressed) archive stream, so the
-// declared size is attacker-controlled and unbounded.
+// allocating the declared size on disk. The declared size is
+// attacker-controlled and unbounded relative to the input.
 // -------------------------------------------------------------------
 describe("buffered extract: malformed tarball cleanup", () => {
   function treeSize(root: string): number {
@@ -1136,7 +1135,7 @@ describe("buffered extract: malformed tarball cleanup", () => {
 
   test("a tarball that fails to decompress does not leak its temp directory", async () => {
     // Not a gzip stream at all: the buffered extractor creates its temp
-    // directory, then the zlib reader fails immediately.
+    // directory, then libarchive fails to open the input as an archive.
     using dir = tempDir("tar-bad-gzip", {
       "package.json": JSON.stringify({
         name: "app",

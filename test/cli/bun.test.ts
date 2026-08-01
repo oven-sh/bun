@@ -240,11 +240,12 @@ describe.concurrent("global flag before subcommand", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("bun --cwd . init -y -m dispatches InitCommand", async () => {
-    using dir = tempDir("which-init", { "keep/.gitkeep": "" });
-    const { stderr, exitCode } = await run(String(dir), ["--cwd", ".", "init", "-y", "-m"]);
+  test("bun --cwd target init -y -m dispatches InitCommand in target", async () => {
+    using dir = tempDir("which-init", { "target/.gitkeep": "" });
+    const { stderr, exitCode } = await run(String(dir), ["--cwd", "target", "init", "-y", "-m"]);
     expect(stderr).not.toContain("Script not found");
-    expect(fs.existsSync(`${dir}/package.json`)).toBe(true);
+    expect(fs.existsSync(`${dir}/target/package.json`)).toBe(true);
+    expect(fs.existsSync(`${dir}/package.json`)).toBe(false);
     expect(exitCode).toBe(0);
   });
 
@@ -267,9 +268,11 @@ describe.concurrent("global flag before subcommand", () => {
   test("bun --cwd sub add --dry-run does not misread 'sub' as a package", async () => {
     using dir = tempDir("which-add", files);
     const { stdout, stderr } = await run(String(dir), ["--cwd", "sub", "add", "--dry-run"]);
-    // `bun add` with no package prints usage; the point is `sub` / `add` never
-    // reach the resolver.
     expect(stdout + stderr).not.toMatch(/GET .*\/(sub|add)\b/);
     expect(stderr).not.toContain("Script not found");
+    // Dispatching AddCommand with zero positionals prints this diagnostic;
+    // any other route (AutoCommand, or 'sub'/'add' leaking as a package name)
+    // would not.
+    expect(stderr).toContain("no package specified to add");
   });
 });

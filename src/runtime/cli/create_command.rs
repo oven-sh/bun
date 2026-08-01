@@ -232,10 +232,6 @@ impl CreateOptions {
             ..Default::default()
         };
 
-        // Drop everything up to and including the `c`/`create` keyword so the
-        // template name is `positionals[0]`. A leading global flag's value
-        // (`bun --cwd dir create foo`) falls through as a positional because
-        // `params()` doesn't declare it; scanning by name keeps that harmless.
         if let Some(i) = opts
             .positionals
             .iter()

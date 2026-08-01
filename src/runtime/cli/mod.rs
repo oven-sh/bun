@@ -492,14 +492,8 @@ pub use bun_install::PRETEND_TO_BE_NODE;
 /// This is set `true` during `Command.which()` if argv0 is "bunx"
 static IS_BUNX_EXE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-/// argv index of the subcommand keyword (`run`, `test`, `install`, …) as
-/// located by `Command::which()`. Defaults to 1 (argv[1]). Larger when a
-/// value-taking global flag precedes the subcommand, e.g.
-/// `bun --cwd ./dir test …` → 3.
-///
-/// Handlers that re-scan raw `bun::argv()` for their own positionals read
-/// this instead of hard-coding `2` / `argv[2..]`, so the same code path
-/// handles both `bun test …` and `bun --cwd d test …`.
+/// argv index of the subcommand keyword as located by `Command::which()`.
+/// `bun test …` → 1; `bun --cwd ./dir test …` → 3.
 static SUBCOMMAND_ARGV_INDEX: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(1);
 
@@ -784,11 +778,34 @@ pub mod command {
         (0..a.len()).map(|i| a.get(i).unwrap()).collect()
     }
 
-    /// argv index of the subcommand keyword as found by [`which()`].
-    /// `bun test …` → 1; `bun --cwd ./dir test …` → 3.
+    /// See [`SUBCOMMAND_ARGV_INDEX`](super::SUBCOMMAND_ARGV_INDEX).
     #[inline]
     pub(crate) fn subcommand_argv_index() -> usize {
         super::SUBCOMMAND_ARGV_INDEX.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Apply a `--cwd <dir>` that preceded the subcommand keyword, for handlers
+    /// that don't route through `arguments::parse` / `CommandLineArguments::parse`.
+    #[cold]
+    pub(crate) fn apply_leading_cwd() {
+        let argv = bun::argv();
+        let end = subcommand_argv_index().min(argv.len());
+        let mut i = 1;
+        while i + 1 < end {
+            if argv.get(i).is_some_and(|a| a.as_bytes() == b"--cwd") {
+                let dir = argv.get(i + 1).unwrap();
+                if let bun_sys::Result::Err(err) = bun_sys::chdir(dir) {
+                    Output::err(
+                        err,
+                        "Could not change directory to \"{}\"\n",
+                        format_args!("{}", bstr::BStr::new(dir)),
+                    );
+                    Global::exit(1);
+                }
+                return;
+            }
+            i += 1;
+        }
     }
 
     pub use bun_options_types::command_tag::Tag;
@@ -944,11 +961,9 @@ pub mod command {
             && first_arg_name[0] == b'-'
             && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
         {
-            // Step past the value of the required-value global flags in
-            // `BASE_PARAMS_` so it isn't misread as the subcommand keyword
-            // (`bun --cwd ./dir test …`, `bun --env-file .env run …`).
-            // `-c, --config` is `Values::OneOptional` and intentionally not
-            // listed: clap never consumes a separate token for it.
+            // Step past the value of the required-value `BASE_PARAMS_` flags.
+            // `-c, --config` is `Values::OneOptional`: clap never consumes a
+            // separate token for it, so it's intentionally not listed.
             if matches!(first_arg_name, b"--cwd" | b"--env-file") {
                 if iter.next().is_none() {
                     return Tag::AutoCommand;
@@ -1509,6 +1524,7 @@ pub mod command {
     #[inline(never)]
     fn exec_init() -> CmdResult {
         // InitCommand parses its own argv (no Context).
+        apply_leading_cwd();
         let argv = argv_zslice();
         let start = (subcommand_argv_index() + 1).min(argv.len());
         super::init_command::InitCommand::exec(&argv[start..])
@@ -1541,6 +1557,7 @@ pub mod command {
     #[cold]
     #[inline(never)]
     fn exec_bunx(log: &mut bun_ast::Log) -> CmdResult {
+        apply_leading_cwd();
         let ctx = init(Tag::BunxCommand, log)?;
         let start_idx = if IS_BUNX_EXE.load(core::sync::atomic::Ordering::Relaxed) {
             0
@@ -1791,6 +1808,7 @@ pub mod command {
         }
 
         // Create command wraps bunx
+        apply_leading_cwd();
         let ctx = init(Tag::CreateCommand, log)?;
         let args = argv_zslice();
         let cmd_idx = subcommand_argv_index();
@@ -1942,29 +1960,15 @@ To create a project with the official Next.js scaffolding tool, run\n\
         // Parse arguments manually since the standard flow doesn't work for standalone commands
         let cli = CommandLineArguments::parse(PmSubcommand::Info)?;
         let json_output = cli.json_output;
+        // `positionals[0]` is the `info` keyword itself.
+        let positionals = match cli.positionals {
+            [b"info", rest @ ..] => rest,
+            rest => rest,
+        };
+        let package_name: &[u8] = positionals.first().copied().unwrap_or(b"");
+        let property_path: Option<&[u8]> = positionals.get(1).copied();
         let ctx = init(Tag::InfoCommand, log)?;
         let (pm, _) = PackageManager::init(ctx, cli, Subcommand::Info)?;
-
-        // Handle arguments correctly for standalone info command
-        let mut package_name: &[u8] = b"";
-        let mut property_path: Option<&[u8]> = None;
-
-        // Find non-flag arguments after the `info` keyword.
-        let mut found_package = false;
-        let argv = bun::argv();
-        for arg in argv.iter().skip(subcommand_argv_index() + 1) {
-            // Skip flags
-            if !arg.is_empty() && arg[0] == b'-' {
-                continue;
-            }
-            if !found_package {
-                package_name = arg;
-                found_package = true;
-            } else {
-                property_path = Some(arg);
-                break;
-            }
-        }
 
         super::pm_view_command::view(pm, package_name, property_path, json_output)
     }

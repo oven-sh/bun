@@ -1384,12 +1384,7 @@ impl JSTranspiler {
         )
     }
 
-    /// `Bun.Transpiler.prototype.unstable_parse` — parse and return Bun's
-    /// internal AST as a plain JS object tree.
-    ///
-    /// This is an explicitly unstable API: the output shape is Bun's own AST
-    /// (not ESTree) and may change or be removed between patch releases. See
-    /// `js_transpiler_ast.rs` for the serialization format.
+    /// `Bun.Transpiler.prototype.unstable_parse` — see `js_transpiler_ast.rs`.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn unstable_parse(
         &self,
@@ -1431,9 +1426,7 @@ impl JSTranspiler {
 
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
-        // SAFETY: same contract as `scan()` — `arena`/`log` outlive every use
-        // through `self.transpiler`; `_restore` (declared after them) puts the
-        // previous arena/log back before either drops.
+        // SAFETY: same lifetime contract as `scan()` above.
         let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
         let prev_arena = self.transpiler.with_mut(|t| {
             let prev = t.arena;
@@ -1469,16 +1462,10 @@ impl JSTranspiler {
             return Err(global.throw_stack_overflow());
         }
 
-        // One `JSON.parse` over the serialized buffer; see module doc in
-        // `js_transpiler_ast.rs` for why this is faster than per-node
-        // `putDirect` calls. The buffer is ASCII-only (non-ASCII escaped as
-        // `\uNNNN`), so `ZigString` stays untagged and `Zig::toString` wraps it
-        // with `StringImpl::createWithoutCopying` rather than re-allocating.
+        // Buffer is pure ASCII, so `to_json_object` wraps it zero-copy.
         let out = JscZigString::init(&json);
         let result = out.to_json_object(global);
-        // `ZigString__toJSONObject` clears any thrown exception and returns the
-        // error value; surface it as a throw so callers do not receive an
-        // `Error` object in place of the AST.
+        // `ZigString__toJSONObject` returns the error value, not a throw.
         if result.is_empty() || result.is_any_error() {
             return Err(global.throw_value(result));
         }

@@ -1,19 +1,8 @@
 //! `Bun.Transpiler.prototype.unstable_parse` — serialize the parser's AST to a
-//! JSON byte buffer.
-//!
-//! The host fn in `JSTranspiler.rs` feeds the buffer through `JSON.parse`
-//! (JSC's `JSONParseWithException`) so the JS side receives a plain object
-//! tree. Building one JSON string and parsing it in a single native call is
-//! measurably faster than `create_empty_object` + `putDirect` per field from
-//! Rust: the latter crosses the FFI boundary once per property and pays for a
-//! `Structure` transition each time, while `JSON.parse` reuses property names
-//! and runs in a tight C++ loop.
-//!
-//! The output shape is Bun's internal AST, not ESTree. The `kind` strings are
-//! the snake_case tags that `bun_ast`'s `strum::IntoStaticStr` derives already
-//! emit, so no extra mapping table is maintained here. The API is explicitly
-//! unstable: any field may be renamed, reshaped, or removed between patch
-//! releases.
+//! single ASCII JSON buffer that the host fn hands to `JSON.parse` (one FFI
+//! crossing vs. a `putDirect` per field). Output is Bun's internal AST, not
+//! ESTree; `kind` strings come from `bun_ast`'s `strum::IntoStaticStr` tags.
+//! The API is explicitly unstable.
 
 use bun_ast::{
     self as ast, ArrayBinding, Binding, Case, Catch, ClauseItem, E, EnumValue, Expr, ExprData,
@@ -82,8 +71,7 @@ pub(crate) fn ast_to_json(ast: &ast::Ast<'_>, buf: &mut Vec<u8>) -> Result<(), S
     }
     w.raw(b"]");
 
-    // Flatten all parts' statements into one top-level list. The bundler's Part
-    // boundaries are a tree-shaking concern; they are not useful to JS callers.
+    // Part boundaries are a bundler tree-shaking concern; flatten.
     w.key("stmts");
     w.raw(b"[");
     let mut first = true;
@@ -137,13 +125,9 @@ impl<'a> Writer<'a> {
         self.raw(b"}");
     }
 
-    /// Emit a JSON string literal. Output is pure ASCII (every code point
-    /// outside 0x20..=0x7E escaped as `\uNNNN`), so the resulting buffer can be
-    /// handed to `ZigString.to_json_object` untagged and `Zig::toString` wraps
-    /// it with `StringImpl::createWithoutCopying` instead of re-allocating.
-    ///
-    /// `bun_js_printer::write_json_string` is not used here: its `json=true`
-    /// mode still emits `\v` / `\x07` (JavaScript escapes, invalid JSON).
+    /// JSON string literal, ASCII-only (non-ASCII → `\uNNNN`) so
+    /// `to_json_object` takes the zero-copy `createWithoutCopying` path.
+    /// `write_json_string` is not reused: it emits `\v` / `\x07` (invalid JSON).
     fn str(&mut self, s: &[u8]) {
         self.raw(b"\"");
         let mut i = 0;
@@ -203,9 +187,7 @@ impl<'a> Writer<'a> {
                 0x09 => self.raw(b"\\t"),
                 0x08 => self.raw(b"\\b"),
                 0x0C => self.raw(b"\\f"),
-                // Emit each UTF-16 code unit as-is (surrogate halves included):
-                // `JSON.parse` re-pairs them, and unpaired surrogates in the
-                // source round-trip as WTF-16.
+                // One `\uNNNN` per code unit; surrogate halves round-trip.
                 _ => self.uescape(u as u32),
             }
         }

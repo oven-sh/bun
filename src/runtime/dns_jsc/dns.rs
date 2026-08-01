@@ -379,6 +379,14 @@ pub(crate) mod dns_sd {
                     }
                 }
             }
+            if rc != ERR_NO_ERROR {
+                // The primary is defunct (daemon died or socket went bad).
+                // Tear it down so the next lookup reconnects cleanly; keep the
+                // process-alive bump balanced by routing through the normal
+                // teardown rather than leaving a stale poll registered.
+                Self::close_for_terminate();
+                return;
+            }
             if shared.inflight.is_empty() {
                 // SAFETY: `file_poll` is the hive slot set in `get()`.
                 unsafe { (*shared.file_poll.as_ptr()).disable_keeping_process_alive(shared.ctx) };

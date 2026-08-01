@@ -350,3 +350,25 @@ test("mock.module: captured require() result does not track a subsequent re-mock
   expect(cjs.wow()).toBe(42);
   expect(require("mock-module-cjs-capture").wow()).toBe(43);
 });
+
+test("mock.module: re-mock does not mutate the previous factory object", async () => {
+  mock.module("mock-module-no-mutate", () => {
+    let v = 1;
+    return {
+      get x() {
+        return v;
+      },
+      bump: () => v++,
+    };
+  });
+  const cjs = require("mock-module-no-mutate");
+  const ns = await import("mock-module-no-mutate");
+  expect(cjs.x).toBe(1);
+  expect(ns.x).toBe(1);
+
+  mock.module("mock-module-no-mutate", () => ({ x: 100 }));
+  expect(cjs.x).toBe(1);
+  cjs.bump();
+  expect(cjs.x).toBe(2);
+  expect(ns.x).toBe(100);
+});

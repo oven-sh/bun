@@ -660,6 +660,16 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                             JSObject::getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
                             RETURN_IF_EXCEPTION(scope, {});
 
+                            // overrideExportValue writes through to the record's current
+                            // live-exports source, which is the previous factory object (and
+                            // possibly a user-captured require() result). Clear it first so
+                            // the loop only touches the env slot, then install the new
+                            // source after.
+                            auto* synthetic = dynamicDowncast<JSC::SyntheticModuleRecord>(mod);
+                            bool hadLiveSource = synthetic && synthetic->liveExportsSource();
+                            if (hadLiveSource)
+                                synthetic->setLiveExportsSource(vm, nullptr);
+
                             bool hasAccessor = false;
                             for (auto& name : names) {
                                 // consistent with regular esm handling code
@@ -683,10 +693,8 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                                 RETURN_IF_EXCEPTION(scope, {});
                             }
 
-                            if (auto* synthetic = dynamicDowncast<JSC::SyntheticModuleRecord>(mod)) {
-                                if (hasAccessor || synthetic->liveExportsSource())
-                                    synthetic->setLiveExportsSource(vm, object);
-                            }
+                            if (synthetic && (hasAccessor || hadLiveSource))
+                                synthetic->setLiveExportsSource(vm, object);
 
                         } else {
                             // if it's not an object, I guess we just set the default export?

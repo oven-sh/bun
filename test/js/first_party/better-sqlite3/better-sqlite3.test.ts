@@ -235,15 +235,19 @@ describe("better-sqlite3 shim", () => {
   test("verbose option receives the expanded SQL", () => {
     const seen: string[] = [];
     const db = new Database(":memory:", { verbose: (sql: string) => seen.push(sql) });
-    db.exec("CREATE TABLE t (x INTEGER)");
+    db.exec("CREATE TABLE t (x INTEGER UNIQUE)");
     db.prepare("INSERT INTO t VALUES (?)").run(1);
     db.prepare("SELECT x FROM t WHERE x = ?").all(1);
+    [...db.prepare("SELECT x FROM t WHERE x = ?").iterate(1)];
     db.pragma("journal_mode");
+    expect(() => db.prepare("INSERT INTO t VALUES (?)").run(1)).toThrow(SqliteError);
     expect(seen).toEqual([
-      "CREATE TABLE t (x INTEGER)",
+      "CREATE TABLE t (x INTEGER UNIQUE)",
       "INSERT INTO t VALUES (1)",
       "SELECT x FROM t WHERE x = 1",
+      "SELECT x FROM t WHERE x = 1",
       "PRAGMA journal_mode",
+      "INSERT INTO t VALUES (1)",
     ]);
     db.close();
   });

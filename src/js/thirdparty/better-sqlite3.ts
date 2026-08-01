@@ -22,6 +22,7 @@ class Statement {
   #db;
   #source;
   #verbose;
+  #names;
   #raw = false;
   #pluck = false;
   #expand = false;
@@ -77,43 +78,44 @@ class Statement {
   }
 
   run(...args) {
-    const result = this.#stmt.run.$apply(this.#stmt, this.#params(args));
-    this.#trace();
-    return result;
+    const params = this.#params(args);
+    try {
+      return this.#stmt.run.$apply(this.#stmt, params);
+    } finally {
+      this.#trace();
+    }
   }
 
   get(...args) {
     this.#requireReader();
     const params = this.#params(args);
-    let result;
-    if (this.#raw || this.#pluck || this.#expand) {
-      const rows = this.#stmt.values.$apply(this.#stmt, params);
-      result = rows.length > 0 ? this.#mapRow(rows[0]) : undefined;
-    } else {
+    try {
+      if (this.#raw || this.#pluck || this.#expand) {
+        const rows = this.#stmt.values.$apply(this.#stmt, params);
+        return rows.length > 0 ? this.#mapRow(rows[0]) : undefined;
+      }
       const row = this.#stmt.get.$apply(this.#stmt, params);
-      result = row === null ? undefined : row;
+      return row === null ? undefined : row;
+    } finally {
+      this.#trace();
     }
-    this.#trace();
-    return result;
   }
 
   all(...args) {
     this.#requireReader();
     const params = this.#params(args);
-    let result;
-    if (this.#raw || this.#pluck || this.#expand) {
-      const rows = this.#stmt.values.$apply(this.#stmt, params);
-      if (this.#raw) result = rows;
-      else {
+    try {
+      if (this.#raw || this.#pluck || this.#expand) {
+        const rows = this.#stmt.values.$apply(this.#stmt, params);
+        if (this.#raw) return rows;
         const out = $newArrayWithSize(rows.length);
         for (let i = 0; i < rows.length; i++) out[i] = this.#mapRow(rows[i]);
-        result = out;
+        return out;
       }
-    } else {
-      result = this.#stmt.all.$apply(this.#stmt, params);
+      return this.#stmt.all.$apply(this.#stmt, params);
+    } finally {
+      this.#trace();
     }
-    this.#trace();
-    return result;
   }
 
   iterate(...args) {
@@ -123,19 +125,31 @@ class Statement {
 
   *#iterate(params) {
     if (this.#raw || this.#pluck || this.#expand) {
-      const rows = this.#stmt.values.$apply(this.#stmt, params);
-      this.#trace();
+      let rows;
+      try {
+        rows = this.#stmt.values.$apply(this.#stmt, params);
+      } finally {
+        this.#trace();
+      }
       for (let i = 0; i < rows.length; i++) yield this.#mapRow(rows[i]);
       return;
     }
     const iter = this.#stmt.iterate.$apply(this.#stmt, params);
-    this.#trace();
-    yield* iter;
+    let first;
+    try {
+      first = iter.next();
+    } finally {
+      this.#trace();
+    }
+    if (!first.done) {
+      yield first.value;
+      yield* iter;
+    }
   }
 
   #expandRow(row) {
     // sqlite3_column_table_name isn't exposed; group everything under "$" (better-sqlite3's no-table bucket).
-    const names = this.#stmt.columnNames;
+    const names = (this.#names ??= this.#stmt.columnNames);
     const obj = { $: {} };
     for (let i = 0; i < names.length; i++) obj.$[names[i]] = row[i];
     return obj;

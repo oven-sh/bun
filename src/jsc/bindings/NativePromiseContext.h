@@ -42,7 +42,6 @@ public:
         HTTPSServerRequestContext,
         DebugHTTPServerRequestContext,
         DebugHTTPSServerRequestContext,
-        BodyValueBufferer,
         HTTPSServerH3RequestContext,
         DebugHTTPSServerH3RequestContext,
     };

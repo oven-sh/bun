@@ -2687,6 +2687,16 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
+    m_JSHTMLRewriterInputSinkClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::HTMLRewriterInputSink);
+            auto* structure = JSHTMLRewriterInputSink::createStructure(init.vm, init.global, prototype);
+            auto* constructor = JSHTMLRewriterInputSinkConstructor::create(init.vm, init.global, JSHTMLRewriterInputSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
     m_JSBufferClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = WebCore::createBufferPrototype(init.vm, init.global);
@@ -4053,10 +4063,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestThen;
     } else if (handler == Bun__TestScope__Describe2__bunTestCatch) {
         return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestCatch;
-    } else if (handler == Bun__BodyValueBufferer__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onResolveStream;
-    } else if (handler == Bun__BodyValueBufferer__onRejectStream) {
-        return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onRejectStream;
+    } else if (handler == Bun__HTMLRewriterInput__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTMLRewriterInput__onResolveStream;
+    } else if (handler == Bun__HTMLRewriterInput__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTMLRewriterInput__onRejectStream;
     } else if (handler == Bun__onResolveEntryPointResult) {
         return GlobalObject::PromiseFunctions::Bun__onResolveEntryPointResult;
     } else if (handler == Bun__onRejectEntryPointResult) {

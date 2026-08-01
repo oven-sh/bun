@@ -1,3 +1,4 @@
+import { heapStats } from "bun:jsc";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import fs from "fs";
@@ -201,20 +202,23 @@ describe("HTMLRewriter", () => {
       });
     });
 
-    it(".body on the transformed response is unusable after a failed read", async () => {
+    it(".body on the transformed response is an errored stream", async () => {
+      // The rewrite streams, so bytes that arrive before the failure are
+      // delivered; read to completion and assert the stream ends in an error
+      // instead of closing cleanly as a truncated "successful" document.
+      async function readAll(reader) {
+        while (true) {
+          const r = await settle(reader.read());
+          if (r.rejected) return r;
+          if (r.value.done) return r;
+        }
+      }
       await withPartialBodyServer(async (url, release) => {
         const res = await fetch(url);
         const transformed = rewriter().transform(res);
-        const text = settle(transformed.text());
+        const reader = transformed.body.getReader();
         release();
-        // Barrier: once this has rejected, the body has been consumed.
-        expect(await text).toEqual(rejectedWithConnectionError);
-        // `.body` must surface the consumed state, not close cleanly as an
-        // empty "successful" document. The pending-reader-before-failure case
-        // is covered by the test below.
-        expect(() => transformed.body.getReader()).toThrow(
-          expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_STATE" }),
-        );
+        expect(await readAll(reader)).toEqual(rejectedWithConnectionError);
       });
     });
 
@@ -222,12 +226,15 @@ describe("HTMLRewriter", () => {
       await withPartialBodyServer(async (url, release) => {
         const res = await fetch(url);
         const transformed = rewriter().transform(res);
-        // Start the read BEFORE the upstream fails. This is the one shape
-        // (readable attached, no pending promise) where the error must reach
-        // the attached stream; discarding it would strand this read forever.
-        const read = settle(transformed.body.getReader().read());
+        const reader = transformed.body.getReader();
+        // Start the read BEFORE the upstream fails so it is pending when the
+        // error arrives. The first read may resolve with the chunk that was
+        // rewritten before the failure; the stream must eventually reject.
+        let read = settle(reader.read());
         release();
-        expect(await read).toEqual(rejectedWithConnectionError);
+        let r = await read;
+        while (!r.rejected && !r.value.done) r = await settle(reader.read());
+        expect(r).toEqual(rejectedWithConnectionError);
       });
     });
 
@@ -310,6 +317,356 @@ describe("HTMLRewriter", () => {
           threw: true,
         });
       });
+    });
+  });
+
+  describe("transform() accepts a JavaScript-backed ReadableStream body", () => {
+    // https://github.com/oven-sh/bun/issues/14216
+    // https://github.com/oven-sh/bun/issues/11758
+    const encode = s => new TextEncoder().encode(s);
+
+    function rewriter() {
+      return new HTMLRewriter().on("p", {
+        element(element) {
+          element.setInnerContent("bye");
+        },
+      });
+    }
+
+    function streamOf(...chunks) {
+      return new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks) controller.enqueue(chunk);
+          controller.close();
+        },
+      });
+    }
+
+    it("single Uint8Array chunk", async () => {
+      const transformed = rewriter().transform(new Response(streamOf(encode("<p>hi</p>"))));
+      expect(await transformed.text()).toBe("<p>bye</p>");
+    });
+
+    it("single string chunk", async () => {
+      const transformed = rewriter().transform(new Response(streamOf("<p>hi</p>")));
+      expect(await transformed.text()).toBe("<p>bye</p>");
+    });
+
+    it("an element split across chunk boundaries", async () => {
+      const transformed = rewriter().transform(
+        new Response(streamOf(encode("<p>h"), encode("i</"), encode("p><p>two</p>"))),
+      );
+      expect(await transformed.text()).toBe("<p>bye</p><p>bye</p>");
+    });
+
+    it("mixed string and binary chunks", async () => {
+      const transformed = rewriter().transform(new Response(streamOf("<p>a</p>", encode("<p>b</p>"))));
+      expect(await transformed.text()).toBe("<p>bye</p><p>bye</p>");
+    });
+
+    it("empty stream", async () => {
+      let endCalls = 0;
+      const transformed = new HTMLRewriter()
+        .onDocument({
+          end() {
+            endCalls++;
+          },
+        })
+        .transform(new Response(streamOf()));
+      expect(await transformed.text()).toBe("");
+      expect(endCalls).toBe(1);
+    });
+
+    it("a direct stream", async () => {
+      const body = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          controller.write("<p>hi</p>");
+          controller.close();
+        },
+      });
+      expect(await rewriter().transform(new Response(body)).text()).toBe("<p>bye</p>");
+    });
+
+    it("a stream that only produces chunks after transform() returns", async () => {
+      // start() stays pending across transform(), so the rewriter has to take
+      // the asynchronous path instead of buffering everything up front.
+      const { promise: gate, resolve: openGate } = Promise.withResolvers();
+      const body = new ReadableStream({
+        async start(controller) {
+          await gate;
+          controller.enqueue(encode("<p>hi</p>"));
+          controller.close();
+        },
+      });
+      const text = rewriter().transform(new Response(body)).text();
+      openGate();
+      expect(await text).toBe("<p>bye</p>");
+    });
+
+    it("every way of reading the transformed response", async () => {
+      const read = {
+        text: response => response.text(),
+        arrayBuffer: async response => new TextDecoder().decode(await response.arrayBuffer()),
+        bytes: async response => new TextDecoder().decode(await response.bytes()),
+        blob: response => response.blob().then(blob => blob.text()),
+        json: response => response.json().then(value => JSON.stringify(value)),
+        getReader: async response => {
+          const reader = response.body.getReader();
+          const parts = [];
+          for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+            parts.push(new TextDecoder().decode(chunk.value));
+          }
+          return parts.join("");
+        },
+        readableStreamToText: response => Bun.readableStreamToText(response.body),
+      };
+
+      const html = '<p>hi</p><p data-x="1">there</p>';
+      const expected = '<p>bye</p><p data-x="1">bye</p>';
+      for (const [name, consume] of Object.entries(read)) {
+        const transformed = rewriter().transform(new Response(streamOf(encode(html))));
+        if (name === "json") {
+          // Not valid JSON, but it must fail as a JSON parse error, which
+          // still proves the transformed bytes reached the parser.
+          await expect(consume(transformed)).rejects.toThrow(/JSON/i);
+          continue;
+        }
+        expect({ [name]: await consume(transformed) }).toEqual({ [name]: expected });
+      }
+    });
+
+    it("element handlers observe the streamed document", async () => {
+      const tags = [];
+      const transformed = new HTMLRewriter()
+        .on("*", {
+          element(element) {
+            tags.push(element.tagName);
+          },
+        })
+        .transform(new Response(streamOf(encode("<div><p>hi</p></div>"))));
+      expect(await transformed.text()).toBe("<div><p>hi</p></div>");
+      expect(tags).toEqual(["div", "p"]);
+    });
+
+    it("a stream that is already errored at transform() time throws synchronously", async () => {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encode("<p>hi</p>"));
+          controller.error(new Error("upstream boom"));
+        },
+      });
+      // The body is already failed before transform() reads it, so throw
+      // synchronously (matching "transform() of a body that already failed"
+      // above) rather than deferring the error to the returned Response.
+      expect(() => rewriter().transform(new Response(body))).toThrow("upstream boom");
+    });
+
+    it("a stream that errors after transform() returns rejects the transformed body", async () => {
+      const { promise: gate, resolve: openGate } = Promise.withResolvers();
+      const body = new ReadableStream({
+        async start(controller) {
+          await gate;
+          controller.error(new Error("late boom"));
+        },
+      });
+      const text = rewriter().transform(new Response(body)).text();
+      openGate();
+      await expect(text).rejects.toThrow("late boom");
+    });
+
+    it("a chunk that is neither a string nor a view surfaces its TypeError", async () => {
+      // The bad chunk is queued synchronously in start(), so transform()
+      // itself throws the underlying TypeError (not the opaque
+      // "Failed to pipe stream" it used to throw).
+      expect(() => rewriter().transform(new Response(streamOf(42)))).toThrow(TypeError);
+      // And when the bad chunk only arrives after transform() returns:
+      const { promise: gate, resolve: openGate } = Promise.withResolvers();
+      const body = new ReadableStream({
+        async start(controller) {
+          await gate;
+          controller.enqueue(42);
+          controller.close();
+        },
+      });
+      const text = rewriter().transform(new Response(body)).text();
+      openGate();
+      await expect(text).rejects.toThrow(TypeError);
+    });
+
+    it("stops reading the source stream once a handler throws", async () => {
+      let pulls = 0;
+      const body = new ReadableStream({
+        pull(c) {
+          pulls++;
+          c.enqueue(encode("<p>x</p>"));
+        },
+      });
+      const rw = new HTMLRewriter().on("p", {
+        element() {
+          throw new Error("boom");
+        },
+      });
+      await expect(rw.transform(new Response(body)).text()).rejects.toThrow("boom");
+      // The pump must stop instead of reading the never-closing source
+      // forever; a couple of extra pulls queued before the abort lands is
+      // fine.
+      expect(pulls).toBeLessThan(5);
+    });
+
+    it("does not leak a handler's thrown error", async () => {
+      const once = async () => {
+        const rw = new HTMLRewriter().on("p", {
+          element() {
+            throw new Error("boom");
+          },
+        });
+        try {
+          await rw.transform(new Response(streamOf(encode("<p>x</p>")))).text();
+        } catch {}
+      };
+      const settle = async () => {
+        for (let i = 0; i < 3; i++) {
+          Bun.gc(true);
+          await Bun.sleep(1);
+        }
+      };
+      for (let i = 0; i < 10; i++) await once();
+      await settle();
+      const before = heapStats().objectTypeCounts.Error ?? 0;
+      for (let i = 0; i < 200; i++) await once();
+      await settle();
+      // Pre-fix: the Exception cell was gcProtect()ed in handler_callback and
+      // never unprotected, pinning one Error per transform (grew by ~400).
+      expect((heapStats().objectTypeCounts.Error ?? 0) - before).toBeLessThan(20);
+    });
+
+    it("reusing the transformed response's source stream throws", async () => {
+      const response = new Response(streamOf(encode("<p>hi</p>")));
+      expect(await rewriter().transform(response).text()).toBe("<p>bye</p>");
+      expect(() => rewriter().transform(response)).toThrow("Response body already used");
+    });
+
+    it("does not rewrite out of the source buffer a handler can detach", async () => {
+      // Each chunk is copied before `HtmlRewriter::write`, so a handler that
+      // mutates (or transfers, then frees) the user's buffer mid-scan must not
+      // corrupt bytes lol-html has yet to tokenize.
+      let chunk;
+      const body = new ReadableStream({
+        start(controller) {
+          chunk = encode("<a>x</a><zzz>y</zzz>");
+          controller.enqueue(chunk);
+          controller.close();
+        },
+      });
+      const transformed = new HTMLRewriter()
+        .on("a", {
+          element() {
+            // overwrite "<zzz>" (not yet tokenized) with "<qqq>"
+            chunk.set(encode("qqq"), 9);
+            // and drop the backing store the rewriter would be reading
+            chunk.buffer.transfer();
+            Bun.gc(true);
+          },
+        })
+        .transform(new Response(body));
+      expect(await transformed.text()).toBe("<a>x</a><zzz>y</zzz>");
+    });
+
+    // A live transform is kept alive only by whatever can still settle the
+    // stream. That holds because settling needs the controller, and the
+    // controller holds the stream. Each case hides the stream from userland and
+    // collects hard before letting it finish.
+    describe("a source the rewriter no longer roots still completes", () => {
+      const cases = {
+        "controller held only by a timer": () =>
+          new ReadableStream({
+            start(controller) {
+              setTimeout(() => {
+                controller.enqueue(encode("<p>hi</p>"));
+                controller.close();
+              }, 1);
+            },
+          }),
+        "controller escaping to an outer scope": () => {
+          let escaped;
+          const stream = new ReadableStream({
+            start(controller) {
+              escaped = controller;
+            },
+          });
+          queueMicrotask(() => {
+            escaped.enqueue(encode("<p>hi</p>"));
+            escaped.close();
+          });
+          return stream;
+        },
+        "controller reachable only from a pending pull": () =>
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              await Bun.sleep(1);
+              controller.write("<p>hi</p>");
+              controller.close();
+            },
+          }),
+      };
+
+      for (const [name, makeStream] of Object.entries(cases)) {
+        it(name, async () => {
+          const transformed = rewriter().transform(new Response(makeStream()));
+          // Collect aggressively while the source is still in flight.
+          for (let i = 0; i < 3; i++) {
+            Bun.gc(true);
+            await Bun.sleep(1);
+          }
+          expect(await transformed.text()).toBe("<p>bye</p>");
+        });
+      }
+    });
+
+    it(".body of a transform whose source is still pending", async () => {
+      const { promise: gate, resolve: openGate } = Promise.withResolvers();
+      const body = new ReadableStream({
+        async start(controller) {
+          await gate;
+          controller.enqueue(encode("<p>hi</p>"));
+          controller.close();
+        },
+      });
+      const transformed = rewriter().transform(new Response(body));
+      const reader = transformed.body.getReader();
+      openGate();
+      const parts = [];
+      for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+        parts.push(new TextDecoder().decode(chunk.value));
+      }
+      expect(parts.join("")).toBe("<p>bye</p>");
+    });
+
+    it("served over Bun.serve", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch() {
+          const body = new ReadableStream({
+            start(controller) {
+              controller.enqueue(encode("<b>hello world</b>"));
+              controller.close();
+            },
+          });
+          return new HTMLRewriter()
+            .on("b", {
+              element(element) {
+                element.before("<h1>", { html: true });
+                element.after("</h1>", { html: true });
+                element.removeAndKeepContent();
+              },
+            })
+            .transform(new Response(body, { headers: { "content-type": "text/html" } }));
+        },
+      });
+      const response = await fetch(server.url);
+      expect(await response.text()).toBe("<h1>hello world</h1>");
     });
   });
 
@@ -956,12 +1313,12 @@ const payloads = [
   {
     name: "direct",
     data: getStream("direct", "none"),
-    test: it.todo,
+    test: it,
   },
   {
     name: "default",
     data: getStream("default", "none"),
-    test: it.todo,
+    test: it,
   },
   {
     name: "file",

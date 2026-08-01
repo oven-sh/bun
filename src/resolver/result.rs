@@ -135,7 +135,6 @@ bitflags::bitflags! {
         const EMIT_DECORATOR_METADATA = 1 << 5;
         const EXPERIMENTAL_DECORATORS = 1 << 6;
         /// tsconfig `"useDefineForClassFields": false` was set explicitly.
-        /// Unset/`true` both keep native class-field semantics (the default).
         const SET_SEMANTICS_FOR_CLASS_FIELDS = 1 << 7;
     }
 }

@@ -161,9 +161,7 @@ pub struct TSConfigJSON {
 
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
-    /// `None` = unset (Bun keeps native class-field / [[Define]] semantics).
-    /// `Some(false)` lowers instance fields to `this.x = init` in the
-    /// constructor, after parameter-property assignments (tsc/esbuild parity).
+    /// `None` = unset (keeps native [[Define]] class-field semantics).
     pub use_define_for_class_fields: Option<bool>,
 }
 

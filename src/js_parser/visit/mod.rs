@@ -1018,7 +1018,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if Self::IS_TYPESCRIPT_ENABLED {
                 let use_define = self.options.use_define_for_class_fields;
 
-                // Count constructor parameter properties.
                 let (func_args, param_props): (bun_ast::StoreSlice<G::Arg>, usize) =
                     match constructor_function {
                         Some(cf) => {
@@ -1035,13 +1034,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         None => (bun_ast::StoreSlice::EMPTY, 0),
                     };
 
-                // When `useDefineForClassFields: false`, instance fields are lowered to
-                // `this.x = init` in the constructor, after parameter-property
-                // assignments (matching tsc/esbuild). Decorated fields have their
-                // initializer lowered here as well, and the now-initializer-less
-                // property is kept so `lower_class` still emits the decorator call.
-                // Computed non-literal keys are left as native class fields so the
-                // key expression is not re-evaluated per instance.
+                // useDefineForClassFields: false lowers instance fields to
+                // `this.x = init` in the constructor after parameter properties.
                 let is_lowerable_field = |prop: &G::Property| -> bool {
                     if use_define
                         || prop.kind != PropertyKind::Normal
@@ -1077,21 +1071,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
 
                 if param_props > 0 || fields_to_lower > 0 {
-                    // Build the list of statements to inject (parameter-property
-                    // assignments first, then lowered field initializers).
                     let mut injected = BumpVec::<Stmt>::with_capacity_in(
                         param_props + fields_to_lower,
                         self.arena,
                     );
-                    // Declaration-only class fields for parameter properties (emitted
-                    // only when use_define is true, matching tsc).
                     let mut param_prop_decls = BumpVec::<G::Property>::new_in(self.arena);
 
                     let args_len = func_args.len();
                     for arg_idx in 0..args_len {
-                        // reshaped for borrowck — copy the scalars we need
-                        // (id_ref, bind_loc) out of the arg before calling `&mut self`
-                        // helpers, so no live `&Arg` overlaps `self.new_expr`/`declare_symbol`.
+                        // borrowck: copy the scalars out before `&mut self` calls.
                         let (id_ref, bind_loc) = {
                             let arg = &func_args[arg_idx];
                             if !arg.is_typescript_ctor_field {
@@ -1127,8 +1115,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         injected.push(Stmt::assign(dot, arg_ident));
 
                         if use_define {
-                            // Copy the argument name symbol to prevent the class field
-                            // declaration from being renamed but not the constructor argument.
+                            // New symbol so renaming can't desync the field from the arg.
                             let field_symbol_ref = self
                                 .declare_symbol(SymbolKind::Other, bind_loc, name)
                                 .unwrap_or(id_ref);
@@ -1148,9 +1135,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
-                    // Rebuild the class body: prepended param-prop declarations (if any),
-                    // then the original properties minus lowered fields. While walking,
-                    // emit each lowered field's `this.x = init` into `injected`.
                     let old_props: bun_ast::StoreSlice<G::Property> = class.properties;
                     let old_props_len = old_props.len();
                     let mut class_body = BumpVec::<G::Property>::with_capacity_in(
@@ -1161,9 +1145,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         class_body.push(decl);
                     }
                     for i in 0..old_props_len {
-                        // BumpVec can't adopt a foreign arena slice, so move each element
-                        // out by `ptr::read` (G::Property has no Drop; old slice becomes dead
-                        // arena bytes).
                         // SAFETY: in-bounds; arena-owned; no Drop on Property.
                         let prop: G::Property =
                             unsafe { core::ptr::read(old_props.as_ptr().add(i)) };
@@ -1201,8 +1182,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             };
                             injected.push(Stmt::assign(target, init));
                         }
-                        // Private names must stay declared for the brand check; decorated
-                        // fields stay so `lower_class` can emit their decorator call.
+                        // Keep `#x;` for brand; keep decorated props for `lower_class`.
                         if is_private || prop.ts_decorators.len_u32() > 0 {
                             class_body.push(G::Property {
                                 initializer: None,
@@ -1211,12 +1191,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
-                    // Splice `injected` into the constructor body, synthesizing one
-                    // (with `super(...arguments)` when extending) if none exists.
-                    // `constructor_function` is a `StoreRef<E::Function>` arena slot
-                    // captured from `class.properties[i].value.data` above. It points to
-                    // a separate Store allocation, not into the Property slice itself,
-                    // so the `ptr::read` moves above do not invalidate it.
+                    // `constructor_function` is a `StoreRef` into a separate Store
+                    // allocation, not the Property slice `ptr::read` moved from.
                     if let Some(mut cf) = constructor_function {
                         let old_body: &[Stmt] = cf.func.body.stmts.slice();
                         let mut super_end: usize = 0;

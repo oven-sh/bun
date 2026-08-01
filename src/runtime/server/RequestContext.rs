@@ -3554,8 +3554,7 @@ where
         // `ServerLike::vm()` is the process-static VM `BackRef`; `as_mut()` is
         // the single audited `&mut VirtualMachine` accessor.
         let vm = server.vm().as_mut();
-        // 404/403 reaching here are expected outcomes (missing/unreadable
-        // Bun.file), not faults: no unhandled-rejection report, no dev page.
+        // 404/403 are expected outcomes (missing/unreadable Bun.file): no report, no dev page.
         if matches!(status, 403 | 404) {
             self.render_production_error(status);
             vm.log_mut().unwrap().reset();

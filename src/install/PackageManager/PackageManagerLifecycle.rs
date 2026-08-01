@@ -4,6 +4,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
+use bun_ast::{Log, Source};
 use bun_collections::ArrayHashMap;
 use bun_core::fmt::PathSep;
 use bun_core::{Output, ZBox, fmt as bun_fmt, handle_oom};
@@ -12,9 +13,12 @@ use bun_paths::resolve_path::{join_abs_string_z, platform};
 use bun_paths::{AutoAbsPath, EnvPath};
 use bun_semver::string::Builder as SemverStringBuilder;
 use bun_sys as Syscall;
+use bun_sys::Fd;
 use bun_threading::Mutex;
 
 use crate::bun_fs::FileSystem;
+use crate::bun_json as JSON;
+use crate::initialize_store;
 
 use super::directories;
 use crate::lifecycle_script_runner::{
@@ -404,6 +408,42 @@ impl PackageManager {
 
         path.append(original_path.as_slice())?;
         script_env.put(b"PATH", path.slice())?;
+
+        // npm_package_* must describe the package whose lifecycle script is
+        // running (https://github.com/npm/rfcs/blob/main/implemented/0021-reduce-lifecycle-script-environment.md),
+        // not the root project. Read the installed package.json at `cwd` so
+        // every resolution type (npm, file:, git, tarball, workspace, root)
+        // yields the package's own name/version.
+        {
+            let package_json_path = join_abs_string_z::<platform::Auto>(cwd, &[b"package.json"]);
+            script_env.put(b"npm_package_json", package_json_path.as_bytes())?;
+
+            let mut name: Box<[u8]> = list.package_name.clone();
+            let mut version: Box<[u8]> = Box::default();
+
+            if let Ok(json_buf) = Syscall::File::read_from(Fd::cwd(), package_json_path.as_bytes())
+            {
+                let json_src =
+                    Source::init_path_string(package_json_path.as_bytes(), json_buf.as_slice());
+                let mut tmp_log = Log::init();
+                initialize_store();
+                if let Ok(parsed) = JSON::ParsedJson::parse_package_json(&json_src, &mut tmp_log) {
+                    if let Some(e) = parsed.root.get(b"name")
+                        && let Some(n) = e.as_utf8_string_literal()
+                    {
+                        name = Box::from(n);
+                    }
+                    if let Some(e) = parsed.root.get(b"version")
+                        && let Some(v) = e.as_utf8_string_literal()
+                    {
+                        version = Box::from(v);
+                    }
+                }
+            }
+
+            script_env.put(b"npm_package_name", &name)?;
+            script_env.put(b"npm_package_version", &version)?;
+        }
 
         // Ownership transfers to `LifecycleScriptSubprocess`, which
         // re-uses it across every `spawn_next_script` in the chain. Move the

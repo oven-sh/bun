@@ -1465,6 +1465,70 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await file(join(packageDir, "node_modules/another-init-cwd/test.txt")).text()).toBe(packageDir);
     });
 
+    // https://github.com/oven-sh/bun/issues/12752
+    test("npm_package_name/version/json are set to the dependency's own manifest values", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      const captureScript = `${bunExe()} -e ${JSON.stringify(
+        `require("fs").writeFileSync("env.json", JSON.stringify({` +
+          `name: process.env.npm_package_name,` +
+          `version: process.env.npm_package_version,` +
+          `json: process.env.npm_package_json,` +
+          `}))`,
+      )}`;
+
+      await mkdir(join(packageDir, "dep"), { recursive: true });
+      await Promise.all([
+        writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "root-project",
+            version: "1.0.2",
+            scripts: { postinstall: captureScript },
+            dependencies: { "my-dep": "file:./dep" },
+            trustedDependencies: ["my-dep"],
+          }),
+        ),
+        writeFile(
+          join(packageDir, "dep", "package.json"),
+          JSON.stringify({
+            name: "my-dep",
+            version: "7.2.0",
+            scripts: { postinstall: captureScript },
+          }),
+        ),
+      ]);
+
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await stderr.text();
+      expect(err).not.toContain("error:");
+      expect(await exited).toBe(0);
+
+      const depEnv = await file(join(packageDir, "node_modules", "my-dep", "env.json")).json();
+      expect(depEnv).toEqual({
+        name: "my-dep",
+        version: "7.2.0",
+        json: join(packageDir, "node_modules", "my-dep", "package.json"),
+      });
+
+      const rootEnv = await file(join(packageDir, "env.json")).json();
+      expect(rootEnv).toEqual({
+        name: "root-project",
+        version: "1.0.2",
+        json: join(packageDir, "package.json"),
+      });
+    });
+
     test("failing lifecycle script should print output", async () => {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;

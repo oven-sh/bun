@@ -2913,6 +2913,41 @@ describe("bundler", () => {
     },
     run: { stdout: "true 1" },
   });
+  // The bundler rewrites bare `require`/`require.main`/`require.resolve` to an
+  // ERequireCallTarget / ERequireMain / ERequireResolveCallTarget that prints
+  // as `__require` / `__require.main` / `__require.resolve`.
+  itBundled("edgecase/DeleteFoldedRequireRefs", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(delete (null ?? require));
+        console.log(delete (null ?? require.main));
+        console.log(delete (null ?? require.resolve));
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).not.toMatch(/delete\s+__require\b/);
+      expect(code).not.toMatch(/delete\s+require\b/);
+    },
+    run: { stdout: "true\ntrue\ntrue" },
+  });
+  // A same-file `const enum` member is inlined to an EInlinedEnum wrapping an
+  // ENumber during the visit pass, so the NaN/Infinity check has to look
+  // through the wrapper.
+  itBundled("edgecase/DeleteFoldedInlinedConstEnumNaN", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const enum E { N = 0/0, I = 1/0, V = 1 }
+        console.log(delete (null ?? E.N), delete (null ?? E.I), delete (null ?? E.V));
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).not.toMatch(/delete\s+NaN\b/);
+      expect(code).not.toMatch(/delete\s+Infinity\b/);
+    },
+    run: { stdout: "true true true" },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

@@ -423,6 +423,24 @@ describe("bundler", () => {
     },
     run: { stdout: "true 1\n1" },
   });
+  // `module.exports` under cjs2esm rewrites to ESpecial::ModuleExports, which
+  // prints as the `exports_*` namespace symbol. Output-shape check only: a bare
+  // `module.exports` value-read under cjs2esm currently emits a reference that
+  // has no declaration (a separate pre-existing issue), so the bundle cannot be
+  // executed here.
+  itBundled("cjs2esm/DeleteFoldedModuleExportsRef", {
+    files: {
+      "/entry.js": /* js */ `
+        exports.a = 1;
+        globalThis.r = delete (null ?? module.exports);
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).toMatch(/delete\s+\(0,\s*exports_\w+\)/);
+      expect(code).not.toMatch(/delete\s+exports_\w+\b/);
+    },
+  });
   // https://github.com/oven-sh/bun/issues/4565
   // `exports.x = ...` as the unbraced body of if/while/do/else must not be
   // converted to `var $x = ...; export { $x as x };` because `export` is only

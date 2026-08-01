@@ -4840,74 +4840,6 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) {
-        // Note: the post-print stack/exception_list block is handled at the
-        // tail instead of via a drop guard (the body has no early-`?` returns
-        // once the AggregateError branch is taken).
-        let global_ref = self.global();
-
-        if value.is_aggregate_error(global_ref) {
-            // Note: `JSValue::for_each` takes a C-ABI fn
-            // pointer + erased ctx, so thread the captures through a struct.
-            // The C trampoline erases lifetimes via `*mut c_void`; round-trip
-            // the caller's `&mut ExceptionList` as a raw pointer so child
-            // errors append to the same list.
-            struct AggCtx<'a> {
-                formatter: *mut crate::console_object::Formatter<'a>,
-                writer: *mut bun_core::io::Writer,
-                exception_list: *mut ExceptionList,
-                allow_ansi_color: bool,
-                allow_side_effects: bool,
-            }
-            extern "C" fn agg_iter(
-                _vm: *mut crate::VM,
-                _global: &JSGlobalObject,
-                ctx: *mut c_void,
-                next_value: JSValue,
-            ) {
-                // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
-                let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_>>(ctx) };
-                // SAFETY: per-thread VM.
-                let vm = VirtualMachine::get().as_mut();
-                let exception_list = if ctx.exception_list.is_null() {
-                    None
-                } else {
-                    // SAFETY: non-null branch; borrows the caller's stack
-                    // `ExceptionList`, live for the synchronous `for_each`.
-                    Some(unsafe { &mut *ctx.exception_list })
-                };
-                // SAFETY: `ctx.formatter` borrows the caller's stack local,
-                // live across the synchronous `for_each` call.
-                let formatter = unsafe { &mut *ctx.formatter };
-                // SAFETY: `ctx.writer` borrows the caller's stack local,
-                // live across the synchronous `for_each` call.
-                let writer = unsafe { &mut *ctx.writer };
-                vm.print_errorlike_object(
-                    next_value,
-                    None,
-                    exception_list,
-                    formatter,
-                    writer,
-                    ctx.allow_ansi_color,
-                    ctx.allow_side_effects,
-                );
-            }
-            let mut ctx = AggCtx {
-                formatter: std::ptr::from_mut(formatter),
-                writer: std::ptr::from_mut(writer),
-                exception_list: exception_list
-                    .map(std::ptr::from_mut::<ExceptionList>)
-                    .unwrap_or(core::ptr::null_mut()),
-                allow_ansi_color,
-                allow_side_effects,
-            };
-            // `getErrorsProperty` is
-            // `getDirect` (own data prop, nothrow); `for_each` may throw, in
-            // which case the error is swallowed.
-            let errors = value.get_errors_property(global_ref);
-            let _ = errors.for_each(global_ref, (&raw mut ctx).cast(), agg_iter);
-            return;
-        }
-
         // Note: reborrow so the add-to-error-list tail can still see it after
         // `print_error_from_maybe_private_data`.
         let mut exception_list = exception_list;
@@ -4927,7 +4859,7 @@ impl VirtualMachine {
                 // — semantics unchanged because
                 // `need_to_clear_parser_arena_on_deinit` is false here.
                 let zig_exception: &mut ZigException = holder.zig_exception();
-                exception_.get_stack_trace(global_ref, &mut zig_exception.stack);
+                exception_.get_stack_trace(self.global(), &mut zig_exception.stack);
                 if zig_exception.stack.frames_len > 0 {
                     let _ = Self::print_stack_trace(writer, &zig_exception.stack, allow_ansi_color);
                 }
@@ -5505,7 +5437,7 @@ impl VirtualMachine {
 
         if frames.len() > 1 {
             for i in 0..frames.len() {
-                if i == top || frames[i].position.is_invalid() {
+                if i == top || frames[i].position.is_invalid() || frames[i].remapped {
                     continue;
                 }
                 let source_url = frames[i].source_url.to_utf8();
@@ -5976,17 +5908,18 @@ impl VirtualMachine {
         }
 
         // This is usually unsafe to do, but we are protecting them each time first.
-        let mut errors_to_append: Vec<JSValue> = Vec::new();
+        let mut errors_to_append: Vec<(JSValue, bun_core::String)> = Vec::new();
         // Each appended error is unprotected at scope exit.
         // `BackRef` (constructed from `&raw mut` via `NonNull` so the tag is
         // not popped by later `errors_to_append.push` reborrows) lets the drop
         // body read the Vec safely.
-        struct UnprotectAll(bun_ptr::BackRef<Vec<JSValue>>);
+        struct UnprotectAll(bun_ptr::BackRef<Vec<(JSValue, bun_core::String)>>);
         impl Drop for UnprotectAll {
             fn drop(&mut self) {
                 // BackRef invariant: borrows the caller's stack `Vec`, live for this scope.
-                for v in self.0.iter() {
+                for (v, label) in self.0.iter() {
                     v.unprotect();
+                    label.deref();
                 }
             }
         }
@@ -6029,7 +5962,8 @@ impl VirtualMachine {
                         saw_cause = true;
                     }
                     value.protect();
-                    errors_to_append.push(value);
+                    let label = field.dupe_ref();
+                    errors_to_append.push((value, label));
                 } else if kind.is_object()
                     || kind.is_array()
                     || value.is_primitive()
@@ -6123,7 +6057,36 @@ impl VirtualMachine {
                 if let Some(cause) = error_instance.get_own(global_ref, &key)? {
                     if cause.is_cell() && cause.js_type() == JSType::ErrorInstance {
                         cause.protect();
-                        errors_to_append.push(cause);
+                        errors_to_append.push((cause, bun_core::String::static_(b"cause")));
+                    }
+                }
+            }
+
+            // AggregateError's `.errors` is `DontEnum` so the own-property loop
+            // above skips it; iterate and append each member here so the
+            // aggregate prints its own header first (just above) and then each
+            // member, labeled `[errors]:`, reached uniformly whether the
+            // aggregate is top-level or reached via a cause chain.
+            if error_instance.is_aggregate_error(global_ref) {
+                let errors = error_instance.get_errors_property(global_ref);
+                if errors.is_cell() && errors.js_type().is_array() && errors != error_instance {
+                    if let Ok(len) = errors.get_length(global_ref) {
+                        let n = len.min(u64::from(u32::MAX));
+                        let mut i: u32 = 0;
+                        while u64::from(i) < n {
+                            let Ok(member) = errors.get_index(global_ref, i) else {
+                                if allow_side_effects {
+                                    global_ref.clear_exception();
+                                }
+                                break;
+                            };
+                            i += 1;
+                            member.protect();
+                            errors_to_append
+                                .push((member, bun_core::String::static_(b"errors")));
+                        }
+                    } else if allow_side_effects {
+                        global_ref.clear_exception();
                     }
                 }
             }
@@ -6155,7 +6118,7 @@ impl VirtualMachine {
         }
 
         let mut exception_list = exception_list;
-        for &err in &errors_to_append {
+        for &(err, ref label) in &errors_to_append {
             // Circular-ref guard for cause chains.
             if formatter.map_node.is_none() {
                 let mut node = NonNull::new(console_object::formatter::visited::Pool::get_node())
@@ -6169,19 +6132,29 @@ impl VirtualMachine {
             let entry = formatter.map.get_or_put(err).expect("unreachable");
             if entry.found_existing {
                 writer.write_all(b"\n")?;
+                if !label.is_empty() {
+                    pretty_write!(writer, "<r><d>[{}]:<r> ", label)?;
+                }
                 pretty_write!(writer, "<r><cyan>[Circular]<r>")?;
                 continue;
             }
 
             writer.write_all(b"\n")?;
-            self.print_error_instance_js(
+            if !label.is_empty() {
+                pretty_write!(writer, "<r><d>[{}]:<r>\n", label)?;
+            }
+            // Route through the top-level printer so BuildMessage /
+            // ResolveMessage members of an AggregateError keep their own
+            // formatter rather than the generic ErrorInstance body.
+            self.print_errorlike_object(
                 err,
+                None,
                 exception_list.as_deref_mut(),
                 formatter,
                 writer,
                 allow_ansi_color,
                 allow_side_effects,
-            )?;
+            );
             let _ = formatter.map.remove(&err);
         }
 

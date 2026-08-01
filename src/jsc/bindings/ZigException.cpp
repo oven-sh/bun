@@ -296,7 +296,9 @@ public:
         if (openingParentheses > closingParentheses)
             openingParentheses = WTF::notFound;
 
-        if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
+        bool hasParens = openingParentheses != WTF::notFound && closingParentheses != WTF::notFound;
+
+        if (!hasParens) {
             // Special case: "unknown" frames don't have parentheses but are valid
             // These appear in stack traces from certain error paths
             if (line == "unknown"_s) {
@@ -305,12 +307,13 @@ public:
                 return true;
             }
 
-            // For any other frame without parentheses, terminate parsing as before
-            offset = stack.length();
-            return false;
+            // `at /path/file.js:1:2` (no function name). V8 and Bun both emit
+            // this shape for top-level / anonymous frames, so parse the whole
+            // line as the source location with an empty function name rather
+            // than terminating iteration.
         }
 
-        auto lineInner = StringView_slice(line, openingParentheses + 1, closingParentheses);
+        auto lineInner = hasParens ? StringView_slice(line, openingParentheses + 1, closingParentheses) : line;
 
         {
             auto marker1 = 0;
@@ -382,6 +385,11 @@ public:
             }
         }
     done_block:
+
+        if (!hasParens) {
+            frame.functionName = StringView();
+            return true;
+        }
 
         StringView functionName = line.substring(0, openingParentheses - 1);
 

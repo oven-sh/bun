@@ -305,9 +305,11 @@ impl<'a> CopyFile<'a> {
         let mut remain: usize = self.max_length as usize;
         let unknown_size = remain == MAX_SIZE as usize || remain == 0;
         if unknown_size {
-            // sometimes stat lies
-            // let's give it 4096 and see how it goes
-            remain = 4096;
+            // fstat on a FIFO / char device / socket legitimately reports
+            // st_size == 0. In that case `remain` is only the per-call chunk
+            // size; the loop below keeps going until the kernel reports EOF
+            // (written == 0). 64 KiB matches the read/write-loop fallback.
+            remain = 64 * 1024;
         }
 
         let mut total_written: u64 = 0;
@@ -511,10 +513,15 @@ impl<'a> CopyFile<'a> {
             }
 
             // wrote zero bytes means EOF
-            remain = remain.saturating_sub(usize::try_from(written).expect("int cast"));
             total_written += u64::try_from(written).expect("int cast");
-            if written == 0 || remain == 0 {
+            if written == 0 {
                 break;
+            }
+            if !unknown_size {
+                remain = remain.saturating_sub(usize::try_from(written).expect("int cast"));
+                if remain == 0 {
+                    break;
+                }
             }
         }
         Ok(())

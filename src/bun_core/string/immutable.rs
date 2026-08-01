@@ -1725,10 +1725,21 @@ pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         current_line += 1;
     }
 
-    if ranges.len() == LINE_RANGE_COUNT && current_line <= target_line {
-        let mut new_ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::default();
-        let _ = new_ranges.extend_from_slice(&ranges.as_slice()[1..]); // OOM/capacity: fire-and-forget
-        ranges = new_ranges;
+    // The loop exits here when no more newlines/non-ASCII remain, so the tail
+    // `text[prev_end+1..]` is the unterminated final line (index `current_line`,
+    // which is always `<= target_line` at this point). Push it so callers that
+    // assume the last returned range is `target_line` label the right content.
+    if (prev_end as usize) + 1 < text.len() {
+        if ranges.len() == LINE_RANGE_COUNT {
+            let mut new_ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::default();
+            let _ = new_ranges.extend_from_slice(&ranges.as_slice()[1..]); // OOM/capacity: fire-and-forget
+            ranges = new_ranges;
+        }
+        let _ = ranges.push(LineRange {
+            start: prev_end,
+            // Wrapping cast.
+            end: text.len() as u32,
+        }); // OOM/capacity: fire-and-forget
     }
 
     ranges

@@ -1,7 +1,7 @@
 import { SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
 
@@ -42,6 +42,23 @@ for (const flag of ["-e", "--print"]) {
       });
       expect(stderr.toString("utf8")).toInclude('"hi" as 2');
       expect(stderr.toString("utf8")).toInclude("Unexpected throw");
+    });
+
+    test("error code frame when last line throws and input has no trailing newline", async () => {
+      const code = 'const a = 1;\nconst b = 2;\nthrow new Error("x");';
+      expect(code.endsWith("\n")).toBe(false);
+
+      const { stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), flag, code],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const text = stderr.toString("utf8");
+      expect(text).toContain("1 | const a = 1;");
+      expect(text).toContain("2 | const b = 2;");
+      expect(text).toContain('3 | throw new Error("x");');
+      expect(text).toContain("[eval]:3:");
+      expect(exitCode).toBe(1);
     });
 
     test("process.argv", async () => {
@@ -107,6 +124,47 @@ for (const flag of ["-e", "--print"]) {
     });
   });
 }
+
+describe("error code frame when source has no trailing newline", () => {
+  test.concurrent("uncaught error from a file", async () => {
+    using dir = tempDir("no-trailing-nl", {
+      "entry.js": 'const a = 1;\nconst b = 2;\nthrow new Error("x");',
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 | const a = 1;");
+    expect(stderr).toContain("2 | const b = 2;");
+    expect(stderr).toContain('3 | throw new Error("x");');
+    expect(stderr).toContain("entry.js:3:");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("Bun.inspect(new Error(...)) on the last line", async () => {
+    using dir = tempDir("no-trailing-nl-inspect", {
+      "entry.js": 'const a = 1;\nconst b = 2;\nconsole.log(Bun.inspect(new Error("x")));',
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("1 | const a = 1;");
+    expect(stdout).toContain("2 | const b = 2;");
+    expect(stdout).toContain('3 | console.log(Bun.inspect(new Error("x")));');
+    expect(stdout).toContain("entry.js:3:");
+    expect(exitCode).toBe(0);
+  });
+});
 
 describe("--print for cjs/esm", () => {
   test("eval result between esm imports", async () => {

@@ -1348,8 +1348,7 @@ pub fn index_of_char_usize(slice: &[u8], char: u8) -> Option<usize> {
     highway::index_of_char(slice, char)
 }
 
-/// Index of the `?` that begins a query-string suffix in a module specifier.
-/// Skips `?/`, which is a POSIX directory-name byte (`./dir?/file.js`). #7928
+/// Index of the query-string `?` in a module specifier; skips `?/` (POSIX dir-name byte, #7928).
 pub fn index_of_import_query(specifier: &[u8]) -> Option<usize> {
     let mut from = 0usize;
     loop {

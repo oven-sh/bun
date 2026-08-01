@@ -130,7 +130,7 @@ describe.skipIf(isWindows)("shell completions: `bun <path>` and runtime flags (#
       "COMP_POINT=${#COMP_LINE}\n" +
       "COMPREPLY=()\n" +
       "_bun_completions\n" +
-      "for w in \"${COMPREPLY[@]}\"; do printf '%s\\n' \"$w\"; done\n";
+      'for w in "${COMPREPLY[@]}"; do printf \'%s\\n\' "$w"; done\n';
     await using proc = Bun.spawn({
       cmd: ["bash", "-c", probe],
       cwd: String(dir),

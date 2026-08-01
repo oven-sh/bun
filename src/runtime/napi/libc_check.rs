@@ -139,8 +139,7 @@ fn elf_glibc_needed(path: &[u8]) -> Option<Vec<u8>> {
     }
     let strtab_vaddr = strtab_vaddr?;
     let strtab_off = vaddr_to_offset(&loads[..load_count], strtab_vaddr)?;
-    // The DT_NEEDED names sit at the front of .dynstr; cap the read so a huge
-    // mangled-symbol table doesn't cost a multi-megabyte syscall.
+    // DT_NEEDED names sit at the front of .dynstr; cap the read.
     let strsz = (strsz.min(64 * 1024) as usize).max(256);
     let mut strtab = vec![0u8; strsz];
     let n = file.pread_all(&mut strtab, strtab_off).ok()?;
@@ -184,8 +183,7 @@ fn vaddr_to_offset(loads: &[(u64, u64, u64)], vaddr: u64) -> Option<u64> {
             return Some(off + (vaddr - base));
         }
     }
-    // ET_DYN objects are normally linked at base 0 so DT_STRTAB's value is
-    // already a file offset; fall back to that when no PT_LOAD matched.
+    // ET_DYN base is normally 0: vaddr == file offset when no PT_LOAD matched.
     Some(vaddr)
 }
 

@@ -128,6 +128,25 @@ JSTransformStream* createTransformStream(JSGlobalObject* globalObject, Transform
     return stream;
 }
 
+void setUpNativeTransformStream(JSGlobalObject* globalObject, JSTransformStream* stream, TransformerKind kind)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* domGlobalObject = defaultGlobalObject(globalObject);
+
+    auto* startPromise = JSPromise::create(vm, globalObject->promiseStructure());
+    initializeTransformStream(globalObject, stream, startPromise, 1, nullptr, 0, nullptr);
+    RETURN_IF_EXCEPTION(scope, void());
+
+    auto* controller = JSTransformStreamDefaultController::create(vm, WebCore::getDOMStructure<JSTransformStreamDefaultController>(vm, *domGlobalObject));
+    controller->m_transformerKind = kind;
+    controller->m_algorithmContext.set(vm, controller, stream);
+    setUpTransformStreamDefaultController(vm, stream, controller);
+
+    resolvePromise(globalObject, startPromise, jsUndefined());
+    scope.assertNoException();
+}
+
 void initializeTransformStream(JSGlobalObject* globalObject, JSTransformStream* stream, JSPromise* startPromise, double writableHighWaterMark, JSObject* writableSizeAlgorithm, double readableHighWaterMark, JSObject* readableSizeAlgorithm)
 {
     auto& vm = getVM(globalObject);

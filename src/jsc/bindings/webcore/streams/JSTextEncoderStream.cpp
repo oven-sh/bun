@@ -13,7 +13,6 @@
 #include "JSTransformStreamDefaultController.h"
 #include "JSWritableStream.h"
 #include "WebCoreJSClientData.h"
-#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
@@ -22,7 +21,6 @@
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 
@@ -138,9 +136,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextEncoderStreamConst
     auto* stream = JSTextEncoderStream::create(vm, structure);
     stream->m_encoder = TextEncoderStreamEncoder__createForStream();
 
-    auto* transform = createTransformStream(lexicalGlobalObject, TransformerKind::TextEncoder, stream, 1, nullptr, 0, nullptr);
+    setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::TextEncoder);
     RETURN_IF_EXCEPTION(scope, {});
-    stream->m_transform.set(vm, stream, transform);
 
     return JSValue::encode(stream);
 }
@@ -169,9 +166,8 @@ JSC_DEFINE_HOST_FUNCTION(jsTextEncoderStreamPrototype_inspectCustom, (JSGlobalOb
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextEncoderStream"_s);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
     data->putDirect(vm, Identifier::fromString(vm, "encoding"_s), jsNontrivialString(vm, "utf-8"_s), 0);
-    auto* transform = thisObject->m_transform.get();
-    data->putDirect(vm, Identifier::fromString(vm, "readable"_s), transform && transform->m_readable.get() ? JSValue(transform->m_readable.get()) : jsUndefined(), 0);
-    data->putDirect(vm, Identifier::fromString(vm, "writable"_s), transform && transform->m_writable.get() ? JSValue(transform->m_writable.get()) : jsUndefined(), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "readable"_s), thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined(), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "writable"_s), thisObject->m_writable.get() ? JSValue(thisObject->m_writable.get()) : jsUndefined(), 0);
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "TextEncoderStream"_s, data));
 }
 
@@ -201,12 +197,6 @@ JSTextEncoderStream::~JSTextEncoderStream()
 void JSTextEncoderStream::destroy(JSCell* cell)
 {
     static_cast<JSTextEncoderStream*>(cell)->~JSTextEncoderStream();
-}
-
-void JSTextEncoderStream::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
 }
 
 JSTextEncoderStream* JSTextEncoderStream::create(VM& vm, Structure* structure)
@@ -248,25 +238,6 @@ GCClient::IsoSubspace* JSTextEncoderStream::subspaceForImpl(VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_subspaceForTextEncoderStream = std::forward<decltype(space)>(space); });
 }
 
-DEFINE_VISIT_CHILDREN(JSTextEncoderStream);
-
-template<typename Visitor>
-void JSTextEncoderStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSTextEncoderStream>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.appendHidden(thisObject->m_transform);
-}
-
-void JSTextEncoderStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSTextEncoderStream>(cell);
-    auto& vm = cell->vm();
-    Base::analyzeHeap(cell, analyzer);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_transform, "transform"_s);
-}
-
 // Prototype accessors
 
 JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderStreamPrototypeGetter_constructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
@@ -296,7 +267,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderStreamPrototypeGetter_readable, (JSGlobalO
     auto* stream = dynamicDowncast<JSTextEncoderStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextEncoderStream"_s);
-    return JSValue::encode(stream->m_transform->m_readable.get());
+    return JSValue::encode(stream->m_readable.get());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderStreamPrototypeGetter_writable, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
@@ -306,7 +277,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderStreamPrototypeGetter_writable, (JSGlobalO
     auto* stream = dynamicDowncast<JSTextEncoderStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextEncoderStream"_s);
-    return JSValue::encode(stream->m_transform->m_writable.get());
+    return JSValue::encode(stream->m_writable.get());
 }
 
 } // namespace WebCore

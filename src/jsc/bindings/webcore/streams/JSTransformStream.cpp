@@ -224,6 +224,11 @@ JSTransformStream::JSTransformStream(VM& vm, Structure* structure)
 {
 }
 
+void JSTransformStream::destroy(JSCell* cell)
+{
+    static_cast<JSTransformStream*>(cell)->~JSTransformStream();
+}
+
 void JSTransformStream::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);

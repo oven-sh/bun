@@ -1,4 +1,7 @@
-// JSTransformStream — the TransformStream instance cell. Non-destructible.
+// JSTransformStream — the TransformStream instance cell, and the C++ base of the
+// native TransformerKind specializations (JSCompressionStream, JSDecompressionStream,
+// JSTextEncoderStream, JSTextDecoderStream). Destructible so those subclasses can
+// free their Rust state; this base's destructor is trivial.
 #pragma once
 
 #include "root.h"
@@ -6,19 +9,20 @@
 
 #include "JSDOMGlobalObject.h"
 #include "StreamConstructor.h"
-#include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/JSPromise.h>
 
 namespace WebCore {
 
-class JSTransformStream final : public JSC::JSNonFinalObject {
+class JSTransformStream : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
 
-    // Internal (non-user) allocation entry point (createTransformStream).
+    // Internal (non-user) allocation entry point (setUpNativeTransformStream).
     static JSTransformStream* create(JSC::VM&, JSC::Structure*);
+    static void destroy(JSC::JSCell*);
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
@@ -56,7 +60,7 @@ public:
     // [[Detached]] (transferable streams are not implemented; the slot exists)
     bool m_detached : 1 { false };
 
-private:
+protected:
     JSTransformStream(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&);
 };

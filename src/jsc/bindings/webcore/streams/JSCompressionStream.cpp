@@ -13,7 +13,6 @@
 #include "JSTransformStreamDefaultController.h"
 #include "JSWritableStream.h"
 #include "WebCoreJSClientData.h"
-#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
@@ -22,7 +21,6 @@
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 
@@ -114,9 +112,8 @@ JSC_DEFINE_HOST_FUNCTION(jsCompressionStreamPrototype_inspectCustom, (JSGlobalOb
     if (!thisObject) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "CompressionStream"_s);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    auto* transform = thisObject->m_transform.get();
-    data->putDirect(vm, Identifier::fromString(vm, "readable"_s), transform && transform->m_readable.get() ? JSValue(transform->m_readable.get()) : jsUndefined(), 0);
-    data->putDirect(vm, Identifier::fromString(vm, "writable"_s), transform && transform->m_writable.get() ? JSValue(transform->m_writable.get()) : jsUndefined(), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "readable"_s), thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined(), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "writable"_s), thisObject->m_writable.get() ? JSValue(thisObject->m_writable.get()) : jsUndefined(), 0);
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "CompressionStream"_s, data));
 }
 
@@ -205,9 +202,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCompressionStreamConst
     stream->m_coder = coder;
     stream->m_format = *format;
 
-    auto* transform = createTransformStream(lexicalGlobalObject, TransformerKind::Compression, stream, 1, nullptr, 0, nullptr);
+    setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::Compression);
     RETURN_IF_EXCEPTION(scope, {});
-    stream->m_transform.set(vm, stream, transform);
 
     return JSValue::encode(stream);
 }
@@ -231,12 +227,6 @@ JSCompressionStream::~JSCompressionStream()
 void JSCompressionStream::destroy(JSCell* cell)
 {
     static_cast<JSCompressionStream*>(cell)->~JSCompressionStream();
-}
-
-void JSCompressionStream::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
 }
 
 JSCompressionStream* JSCompressionStream::create(VM& vm, Structure* structure)
@@ -278,25 +268,6 @@ GCClient::IsoSubspace* JSCompressionStream::subspaceForImpl(VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_subspaceForCompressionStream = std::forward<decltype(space)>(space); });
 }
 
-DEFINE_VISIT_CHILDREN(JSCompressionStream);
-
-template<typename Visitor>
-void JSCompressionStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSCompressionStream>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.appendHidden(thisObject->m_transform);
-}
-
-void JSCompressionStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSCompressionStream>(cell);
-    auto& vm = cell->vm();
-    Base::analyzeHeap(cell, analyzer);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_transform, "transform"_s);
-}
-
 JSC_DEFINE_CUSTOM_GETTER(jsCompressionStreamPrototypeGetter_constructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -314,7 +285,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCompressionStreamPrototypeGetter_readable, (JSGlobalO
     auto* stream = dynamicDowncast<JSCompressionStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "CompressionStream"_s);
-    return JSValue::encode(stream->m_transform->m_readable.get());
+    return JSValue::encode(stream->m_readable.get());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsCompressionStreamPrototypeGetter_writable, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
@@ -324,7 +295,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCompressionStreamPrototypeGetter_writable, (JSGlobalO
     auto* stream = dynamicDowncast<JSCompressionStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "CompressionStream"_s);
-    return JSValue::encode(stream->m_transform->m_writable.get());
+    return JSValue::encode(stream->m_writable.get());
 }
 
 // ─── JSDecompressionStreamPrototype ─────────────────────────────────────────
@@ -383,9 +354,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDecompressionStreamPrototype_inspectCustom, (JSGlobal
     if (!thisObject) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "DecompressionStream"_s);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    auto* transform = thisObject->m_transform.get();
-    data->putDirect(vm, Identifier::fromString(vm, "readable"_s), transform && transform->m_readable.get() ? JSValue(transform->m_readable.get()) : jsUndefined(), 0);
-    data->putDirect(vm, Identifier::fromString(vm, "writable"_s), transform && transform->m_writable.get() ? JSValue(transform->m_writable.get()) : jsUndefined(), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "readable"_s), thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined(), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "writable"_s), thisObject->m_writable.get() ? JSValue(thisObject->m_writable.get()) : jsUndefined(), 0);
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "DecompressionStream"_s, data));
 }
 
@@ -474,9 +444,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDecompressionStreamCon
     stream->m_coder = coder;
     stream->m_format = *format;
 
-    auto* transform = createTransformStream(lexicalGlobalObject, TransformerKind::Decompression, stream, 1, nullptr, 0, nullptr);
+    setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::Decompression);
     RETURN_IF_EXCEPTION(scope, {});
-    stream->m_transform.set(vm, stream, transform);
 
     return JSValue::encode(stream);
 }
@@ -500,12 +469,6 @@ JSDecompressionStream::~JSDecompressionStream()
 void JSDecompressionStream::destroy(JSCell* cell)
 {
     static_cast<JSDecompressionStream*>(cell)->~JSDecompressionStream();
-}
-
-void JSDecompressionStream::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
 }
 
 JSDecompressionStream* JSDecompressionStream::create(VM& vm, Structure* structure)
@@ -547,25 +510,6 @@ GCClient::IsoSubspace* JSDecompressionStream::subspaceForImpl(VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_subspaceForDecompressionStream = std::forward<decltype(space)>(space); });
 }
 
-DEFINE_VISIT_CHILDREN(JSDecompressionStream);
-
-template<typename Visitor>
-void JSDecompressionStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSDecompressionStream>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.appendHidden(thisObject->m_transform);
-}
-
-void JSDecompressionStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSDecompressionStream>(cell);
-    auto& vm = cell->vm();
-    Base::analyzeHeap(cell, analyzer);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_transform, "transform"_s);
-}
-
 JSC_DEFINE_CUSTOM_GETTER(jsDecompressionStreamPrototypeGetter_constructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -583,7 +527,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsDecompressionStreamPrototypeGetter_readable, (JSGloba
     auto* stream = dynamicDowncast<JSDecompressionStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "DecompressionStream"_s);
-    return JSValue::encode(stream->m_transform->m_readable.get());
+    return JSValue::encode(stream->m_readable.get());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDecompressionStreamPrototypeGetter_writable, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
@@ -593,7 +537,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsDecompressionStreamPrototypeGetter_writable, (JSGloba
     auto* stream = dynamicDowncast<JSDecompressionStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "DecompressionStream"_s);
-    return JSValue::encode(stream->m_transform->m_writable.get());
+    return JSValue::encode(stream->m_writable.get());
 }
 
 } // namespace WebCore

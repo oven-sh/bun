@@ -61,6 +61,12 @@ const tracked: Set<string> | null = (() => {
 const BANNED =
   /let\s+(?:mut\s+)?\w+\s*(?::[^=;{}]*)?=\s*unsafe\s*\{\s*&mut\s+\*(?:this|ctx|p|ptr|self_ptr|this_ptr|raw|task|handle|data|context|user_data|parent|client|ws|req|resp|socket)\b\s*\}\s*;/g;
 
+// Documented, ratcheted exceptions: files allowed to keep exactly N of the
+// shape, with a stated reason. Empty by design — the whole tree is at zero.
+// Prefer converting over adding an entry here.
+const ALLOW: Record<string, number> = {};
+
+const counts: Record<string, number> = {};
 const offenders: string[] = [];
 let scanned = 0;
 for (const abs of rustSources) {
@@ -75,7 +81,10 @@ for (const abs of rustSources) {
   const stripped = content.replace(/^\s*\/\/.*$/gm, "");
   for (const m of stripped.matchAll(BANNED)) {
     const line = stripped.slice(0, m.index).split("\n").length;
-    offenders.push(`${source}:${line}: ${m[0].replace(/\s+/g, " ")}`);
+    counts[source] = (counts[source] ?? 0) + 1;
+    if ((counts[source] ?? 0) > (ALLOW[source] ?? 0)) {
+      offenders.push(`${source}:${line}: ${m[0].replace(/\s+/g, " ")}`);
+    }
   }
 }
 
@@ -87,4 +96,12 @@ test("scans a non-empty set of tracked Rust sources", () => {
 
 test("fn-long `&mut *<callback param>` reborrow is banned", () => {
   expect(offenders).toEqual([]);
+});
+
+test("allowlisted files still carry exactly their documented count", () => {
+  // Ratchet: if an allowlisted file drops below its budget (the shape was
+  // finally converted), lower the ALLOW entry so no new one can slip back in.
+  for (const [f, n] of Object.entries(ALLOW)) {
+    expect(counts[f] ?? 0).toBe(n);
+  }
 });

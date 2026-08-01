@@ -1122,20 +1122,28 @@ impl PosixBufferedReader {
                         // `over_budget` is terminal for the same reason EOF is: the
                         // child was killed and nothing past the cap may be buffered.
                         if bytes_read == 0 || over_budget {
-                            // Move the buffer out for the drain so re-entrant
-                            // access cannot alias it, then reinstall for the
-                            // consumers `done()` notifies.
+                            // Move the buffer out so a re-entrant read cannot
+                            // alias it across the drain dispatch.
                             // SAFETY: caller contract; borrows end at each `;`.
                             let buffer = unsafe {
                                 (*this).close_without_reporting();
                                 core::mem::take(&mut (*this)._buffer)
                             };
+                            // `drain_chunk` delivers `buffer` iff streaming; when
+                            // it does, the bytes are consumed and must NOT be
+                            // reinstalled — `on_reader_done`'s
+                            // `consume_reader_buffer` would otherwise re-deliver
+                            // them (double output). Non-streaming: keep them for
+                            // the buffered consumer.
+                            let delivered = vtable.is_streaming_enabled() && !buffer.is_empty();
                             let _ = Self::drain_chunk(&vtable, &buffer, ReadState::Eof);
                             // SAFETY: caller contract; `done()` is the tail.
                             unsafe {
-                                let mut buffer = buffer;
-                                buffer.extend_from_slice(&(*this)._buffer);
-                                (*this)._buffer = buffer;
+                                if !delivered {
+                                    let mut buffer = buffer;
+                                    buffer.extend_from_slice(&(*this)._buffer);
+                                    (*this)._buffer = buffer;
+                                }
                                 if !(*this).flags.contains(PosixFlags::IS_DONE) {
                                     (*this).done();
                                 }
@@ -1198,12 +1206,18 @@ impl PosixBufferedReader {
                             (*this).close_without_reporting();
                             core::mem::take(&mut (*this)._buffer)
                         };
+                        // See the stack-path EOF above: only reinstall when the
+                        // drain did NOT deliver (non-streaming), else
+                        // `consume_reader_buffer` re-delivers the same bytes.
+                        let delivered = vtable.is_streaming_enabled() && !buffer.is_empty();
                         let _ = Self::drain_chunk(&vtable, &buffer, ReadState::Eof);
                         // SAFETY: caller contract; `done()` is the tail.
                         unsafe {
-                            let mut buffer = buffer;
-                            buffer.extend_from_slice(&(*this)._buffer);
-                            (*this)._buffer = buffer;
+                            if !delivered {
+                                let mut buffer = buffer;
+                                buffer.extend_from_slice(&(*this)._buffer);
+                                (*this)._buffer = buffer;
+                            }
                             if !(*this).flags.contains(PosixFlags::IS_DONE) {
                                 (*this).done();
                             }

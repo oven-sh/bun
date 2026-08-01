@@ -1417,6 +1417,16 @@ impl JSValue {
     pub fn put<K: PutKey>(self, global: &JSGlobalObject, key: K, value: JSValue) {
         key.put(self, global, value)
     }
+    /// [`put`] with `PropertyAttribute::DontEnum`.
+    pub fn put_non_enumerable(
+        self,
+        global: &JSGlobalObject,
+        key: impl AsRef<[u8]>,
+        value: JSValue,
+    ) {
+        let zs = bun_core::ZigString::init(key.as_ref());
+        JSC__JSValue__putNonEnumerable(self, global, &zs, value)
+    }
     /// [`put`] only when `val` is `Some`; the property is *omitted* (not set to
     /// `undefined`) when `None`. Collapses the open-coded
     /// `if let Some(v) = field { obj.put(g, key, v.into()) }` used when
@@ -2028,6 +2038,12 @@ unsafe extern "C" {
         args_len: usize,
     ) -> JSValue;
     safe fn JSC__JSValue__put(
+        this: JSValue,
+        global: &JSGlobalObject,
+        key: &bun_core::ZigString,
+        value: JSValue,
+    );
+    safe fn JSC__JSValue__putNonEnumerable(
         this: JSValue,
         global: &JSGlobalObject,
         key: &bun_core::ZigString,

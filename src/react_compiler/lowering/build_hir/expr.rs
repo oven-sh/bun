@@ -984,13 +984,7 @@ fn lower_unary(
     let loc = convert_loc(bun_loc);
     match unary.op {
         UnDelete => match &unary.value.data {
-            // A flagless EDot here is a visitor-folded no-op `delete`; bail like upstream.
-            Data::EDot(d)
-                if d.optional_chain.is_none()
-                    && unary.flags.contains(
-                        E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
-                    ) =>
-            {
+            Data::EDot(d) if d.optional_chain.is_none() => {
                 let object = lower_expression_to_temporary(builder, &d.target)?;
                 Ok(InstructionValue::PropertyDelete {
                     object,
@@ -998,12 +992,7 @@ fn lower_unary(
                     loc,
                 })
             }
-            Data::EIndex(i)
-                if i.optional_chain.is_none()
-                    && unary.flags.contains(
-                        E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
-                    ) =>
-            {
+            Data::EIndex(i) if i.optional_chain.is_none() => {
                 let object = lower_expression_to_temporary(builder, &i.target)?;
                 let property = lower_expression_to_temporary(builder, &i.index)?;
                 Ok(InstructionValue::ComputedDelete {
@@ -1032,7 +1021,6 @@ fn lower_unary(
             Ok(InstructionValue::UnaryExpression {
                 operator,
                 value,
-                bun_flags: unary.flags,
                 loc,
             })
         }

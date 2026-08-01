@@ -135,7 +135,7 @@ pub struct Unary {
 }
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
     #[repr(transparent)]
     pub struct UnaryFlags: u8 {
         /// The expression "typeof (0, x)" must not become "typeof x" if "x"

@@ -672,7 +672,10 @@ impl Cursor {
         }
         let next = self.sync_idx as usize + 1;
         next < self.map.sync_count() as usize
-            && self.map.sync_entry(next).less_or_equal(target_line, target_col)
+            && self
+                .map
+                .sync_entry(next)
+                .less_or_equal(target_line, target_col)
     }
 
     pub fn move_to(&mut self, line: Ordinal, column: Ordinal) -> Option<Mapping> {

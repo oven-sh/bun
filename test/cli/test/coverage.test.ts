@@ -569,10 +569,11 @@ for (const ignoreSourcemaps of [false, true]) {
       ].join("\n"),
     });
 
-    const result = Bun.spawnSync(
-      [bunExe(), "test", "--coverage", "--coverage-reporter", "lcov", "./shapes.test.ts"],
-      { cwd: dir, env: bunEnv, stdio: ["inherit", "pipe", "pipe"] },
-    );
+    const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "lcov", "./shapes.test.ts"], {
+      cwd: dir,
+      env: bunEnv,
+      stdio: ["inherit", "pipe", "pipe"],
+    });
     expect(result.exitCode).toBe(0);
     const lcov = normalizeBunSnapshot(readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8"), dir);
     expect(lcov).toMatchSnapshot();

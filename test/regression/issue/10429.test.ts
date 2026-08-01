@@ -3,10 +3,10 @@
 // extension, not the target's.
 import { describe, expect, test } from "bun:test";
 import { symlinkSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
-describe("symlink import picks loader from the symlink's extension", () => {
+describe.concurrent("symlink import picks loader from the symlink's extension", () => {
   test(".txt symlink -> .html target loads as text", async () => {
     using dir = tempDir("issue-10429-txt-to-html", {
       "template.html": "<html></html>\n",
@@ -56,9 +56,7 @@ describe("symlink import picks loader from the symlink's extension", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Unprivileged file symlinks on Windows require Developer Mode; the behaviour
-  // is covered on the other platforms.
-  test.skipIf(isWindows)(".txt symlink -> .ts target loads as text, not transpiled", async () => {
+  test(".txt symlink -> .ts target loads as text, not transpiled", async () => {
     using dir = tempDir("issue-10429-txt-to-ts", {
       "mod.ts": `export const x: number = 1;\n`,
       "index.ts": /* ts */ `
@@ -129,6 +127,31 @@ describe("symlink import picks loader from the symlink's extension", () => {
 
     expect(stderr).toBe("");
     expect(JSON.parse(stdout.trim())).toEqual({ value: 42 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("dotfile symlink -> .json target keeps the target's loader", async () => {
+    // A leading-dot-only basename (.babelrc) has no extension, so the guard
+    // falls back to the realpath and the .json loader applies.
+    using dir = tempDir("issue-10429-dotfile", {
+      "babelrc.json": `{"presets":["env"]}`,
+      "index.ts": /* ts */ `
+        const cfg = require("./.babelrc");
+        console.log(JSON.stringify({ type: typeof cfg, presets: cfg.presets }));
+      `,
+    });
+    symlinkSync(join(String(dir), "babelrc.json"), join(String(dir), ".babelrc"), "file");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ type: "object", presets: ["env"] });
     expect(exitCode).toBe(0);
   });
 });

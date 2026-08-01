@@ -860,11 +860,21 @@ pub mod fs {
         /// imported), so return `pretty`. Directory-level symlinks preserve the
         /// filename and therefore the extension, so they fall through to `text`
         /// and keep realpath-based module dedup.
+        ///
+        /// The guard uses [`crate::extension`] (dotfiles report no extension)
+        /// and compares case-insensitively so `.babelrc -> x.json` and
+        /// `link.js -> real.JS` both keep the realpath.
         #[inline]
         pub fn text_for_loader(&self) -> &'a [u8] {
             if self.is_symlink && self.is_file() {
-                let pretty_ext = PathName::init(self.pretty).ext;
-                if !pretty_ext.is_empty() && pretty_ext != PathName::init(self.text).ext {
+                let pretty_ext = crate::extension(self.pretty);
+                if !pretty_ext.is_empty()
+                    && !crate::strings::eql_case_insensitive_ascii(
+                        pretty_ext,
+                        crate::extension(self.text),
+                        true,
+                    )
+                {
                     return self.pretty;
                 }
             }

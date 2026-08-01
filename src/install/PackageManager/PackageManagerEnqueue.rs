@@ -2610,6 +2610,62 @@ fn get_or_put_resolved_package(
                 break 'res FolderResolutionValue::NewPackageId(package.meta.id);
             };
 
+            // If the file: path does not exist but the dependency name matches a
+            // workspace member, link to the workspace package instead of failing.
+            // npm tolerates a nonexistent file: path (it creates a dangling link) and
+            // the workspace link at the root makes resolution work regardless; users
+            // that wrote e.g. "file: *" for a sibling package expect this to succeed.
+            // https://github.com/oven-sh/bun/issues/13195
+            if let FolderResolutionValue::Err(crate::Error::MissingPackageJSON) = res {
+                'resolve_workspace_from_folder: {
+                    if !this.options.link_workspace_packages {
+                        break 'resolve_workspace_from_folder;
+                    }
+                    if this.lockfile.workspace_paths.count() == 0
+                        || this.lockfile.workspace_paths.get(&name_hash).is_none()
+                    {
+                        break 'resolve_workspace_from_folder;
+                    }
+                    let Some(root_package) = this.lockfile.root_package() else {
+                        break 'resolve_workspace_from_folder;
+                    };
+                    let root_dependencies = root_package
+                        .dependencies
+                        .get(this.lockfile.buffers.dependencies.as_slice());
+                    let root_resolutions = root_package
+                        .resolutions
+                        .get(this.lockfile.buffers.resolutions.as_slice());
+
+                    debug_assert_eq!(root_dependencies.len(), root_resolutions.len());
+                    for (root_dep, &workspace_package_id) in
+                        root_dependencies.iter().zip(root_resolutions)
+                    {
+                        if workspace_package_id != invalid_package_id
+                            && root_dep.version.tag == dependency::version::Tag::Workspace
+                            && root_dep.name_hash == name_hash
+                        {
+                            bun_ast::add_warning_pretty!(
+                                this.log_mut(),
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                "file dependency \"{}\" has an invalid path \"{}\"<r> <d>(using workspace package instead)<r>",
+                                bstr::BStr::new(this.lockfile.str(&name)),
+                                bstr::BStr::new(this.lockfile.str(&version.literal)),
+                            );
+                            success_fn(this, dependency_id, workspace_package_id);
+                            return Ok(Some(ResolvedPackageResult {
+                                package: *this
+                                    .lockfile
+                                    .packages
+                                    .get(workspace_package_id as usize),
+                                is_first_time: false,
+                                task: None,
+                            }));
+                        }
+                    }
+                }
+            }
+
             match res {
                 FolderResolutionValue::Err(err) => Err(err),
                 FolderResolutionValue::PackageId(package_id) => {

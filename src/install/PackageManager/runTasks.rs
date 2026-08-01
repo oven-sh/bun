@@ -1159,11 +1159,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     task.data_extract(),
                     log_level,
                 ) {
-                    // The callback queue below is drained exactly once; record
-                    // the appended package so a dependency enqueued after this
-                    // drain (e.g. the same tarball reached transitively) can
-                    // resolve instead of queueing a callback that nothing will
-                    // ever process.
+                    // Record the appended package so a later-enqueued dependency
+                    // on this same tarball can resolve; see `AppendedTaskPackageMap`.
                     manager.appended_task_packages.insert(task.id, pkg.meta.id);
                     'handle_pkg: {
                         // In the middle of an install, you could end up needing to downlaod the github tarball for a dependency
@@ -1338,12 +1335,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 manager.git_repositories.insert(task.id, repo_fd);
 
                 if C::HAS_ON_EXTRACT && C::IS_PACKAGE_INSTALLER {
-                    // Installing!
-                    // The clone task is shared by every dependency on this repo
-                    // URL (one queue entry per dependency, typically different
-                    // committishes). Enqueue a checkout for each of them, not
-                    // just the dependency stored on the task, or the rest are
-                    // silently never installed.
+                    // Installing! The clone task is shared by every dependency on
+                    // this repo URL; enqueue a checkout per waiter, not just one.
                     let Some(waiters) = manager.task_queue.remove(&task.id) else {
                         continue;
                     };
@@ -1353,16 +1346,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             bun_install::TaskCallbackContext::Dependency(id) => *id,
                             _ => continue,
                         };
-                        // this dependency might be something other than a git
-                        // dependency! only need the name and behavior from it,
-                        // use the resolution from the lockfile.
-                        // reshaped for borrowck — copy the small `String`
-                        // handles + behavior bit so the `&manager.lockfile`
-                        // borrow doesn't extend across the `&mut manager` calls
-                        // (`has_created_network_task`, `enqueue_git_checkout`)
-                        // below; detach the slice backing through
-                        // `string_buf_ptr` (matching the `PackageManifest`-arm
-                        // `name` detach pattern above).
+                        // reshaped for borrowck — copy the small `String` handles
+                        // so the `&manager.lockfile` borrow doesn't extend across
+                        // the `&mut manager` calls below.
                         let (dep_name_handle, is_required) = {
                             let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
                             (dep.name, dep.behavior.is_required())
@@ -1512,11 +1498,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     task.data_git_checkout(),
                     log_level,
                 ) {
-                    // The callback queue below is drained exactly once; record
-                    // the appended package so a dependency enqueued after this
-                    // drain (e.g. the same repo+commit reached transitively)
-                    // can resolve instead of queueing a callback that nothing
-                    // will ever process.
+                    // Record the appended package so a later-enqueued dependency
+                    // on this same repo+commit can resolve; see `AppendedTaskPackageMap`.
                     manager.appended_task_packages.insert(task.id, pkg.meta.id);
                     'handle_pkg: {
                         let any_root = Cell::new(false);

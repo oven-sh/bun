@@ -302,15 +302,7 @@ pub fn enqueue_git_for_checkout(
         }
 
         let dep = this.lockfile.buffers.dependencies[dependency_id as usize].clone();
-        let task = enqueue_git_clone(
-            this,
-            clone_id,
-            alias,
-            &repository,
-            &dep,
-            resolution,
-            None,
-        );
+        let task = enqueue_git_clone(this, clone_id, alias, &repository, &dep, resolution, None);
         this.task_batch.push(ThreadPool::Batch::from(task));
     }
 }
@@ -1309,8 +1301,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     return Ok(());
                 }
 
-                let task =
-                    enqueue_git_clone(this, clone_id, alias, &dep, dependency, &res, None);
+                let task = enqueue_git_clone(this, clone_id, alias, &dep, dependency, &res, None);
                 this.task_batch.push(ThreadPool::Batch::from(task));
             }
             Ok(())

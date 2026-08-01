@@ -461,13 +461,9 @@ impl<'a> Task<'a> {
                                     }
                                 }
                             } else if this.status != Status::Fail {
-                                // Neither matcher recognized the URL
-                                // (`file://`, `git://`, ...) and no clone was
-                                // attempted yet; git supports these schemes
-                                // directly, so clone with the URL as written.
-                                // Without this the task would finish with
-                                // `Status::Waiting` and zeroed data, which the
-                                // main thread treats as a successful clone.
+                                // Neither matcher recognized the URL (`file://`,
+                                // `git://`, ...); clone with the URL as written
+                                // instead of finishing with zeroed task data.
                                 match Repository::download(
                                     req.env,
                                     &mut this.log,

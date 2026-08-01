@@ -951,9 +951,10 @@ impl EventLoop {
             self.tick();
             if promise.status() == PromiseStatus::Pending {
                 // auto_tick() does not block once the I/O loop is idle, so an
-                // unsettleable promise would spin at 100% CPU; bail like
-                // wait_for_promise_with_termination().
-                if !self.vm_ref().is_event_loop_alive() {
+                // unsettleable promise would spin at 100% CPU. has_pending_work
+                // rather than is_event_loop_alive: a prior unhandled error must
+                // not abort a wait that live I/O can still settle.
+                if !self.vm_ref().has_pending_work() {
                     break;
                 }
                 self.auto_tick();

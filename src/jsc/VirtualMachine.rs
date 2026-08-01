@@ -1028,18 +1028,32 @@ impl VirtualMachine {
         }
     }
 
-    pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
+    fn has_pending_work_excluding_immediates(&self) -> bool {
         let el = self.event_loop_shared();
         let active = self
             .platform_loop_opt()
             .map(|h| h.is_active())
             .unwrap_or(false);
-        self.unhandled_error_counter == 0
-            && ((active as usize)
-                + self.active_tasks
-                + el.tasks.readable_length()
-                + (el.has_pending_refs() as usize)
-                > 0)
+        (active as usize)
+            + self.active_tasks
+            + el.tasks.readable_length()
+            + (el.has_pending_refs() as usize)
+            > 0
+    }
+
+    /// Whether anything outstanding (active I/O, queued tasks, pending refs,
+    /// immediates) could still settle a promise. Unlike
+    /// [`Self::is_event_loop_alive`], a prior unhandled error does not count
+    /// as "nothing left"; that counter encodes exit semantics.
+    pub fn has_pending_work(&self) -> bool {
+        let el = self.event_loop_shared();
+        self.has_pending_work_excluding_immediates()
+            || !el.immediate_tasks.is_empty()
+            || !el.next_immediate_tasks.is_empty()
+    }
+
+    pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
+        self.unhandled_error_counter == 0 && self.has_pending_work_excluding_immediates()
     }
 
     pub fn is_event_loop_alive(&self) -> bool {

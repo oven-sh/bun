@@ -1299,11 +1299,20 @@ where
 
         if let Some(promise) = result.as_any_promise() {
             vm().wait_for_promise(promise);
-            let fail = promise.status() == jsc::js_promise::Status::Rejected;
-            if fail {
-                vm().unhandled_rejection(global, promise.result(global.vm()), promise.as_value());
+            match promise.status() {
+                jsc::js_promise::Status::Fulfilled => return false,
+                jsc::js_promise::Status::Rejected => {
+                    vm().unhandled_rejection(
+                        global,
+                        promise.result(global.vm()),
+                        promise.as_value(),
+                    );
+                    return true;
+                }
+                // Unsettleable handler promise: fail the write rather than
+                // continue with a half-applied rewrite.
+                jsc::js_promise::Status::Pending => return true,
             }
-            return fail;
         }
     }
     false

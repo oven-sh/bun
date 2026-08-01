@@ -358,7 +358,11 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let mut options = match jsc::JSInternalPromise::opaque_mut(config_promise_ptr)
         .unwrap(jsc_vm, UnwrapMode::MarkHandled)
     {
-        Unwrapped::Pending => unreachable!(),
+        Unwrapped::Pending => {
+            return Err(js_err(global.throw(format_args!(
+                "Config file never finished evaluating: the event loop drained with a top-level await still pending"
+            ))));
+        }
         Unwrapped::Fulfilled(_) => {
             let default = BakeGetDefaultExportFromModule(
                 global,
@@ -1208,7 +1212,11 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     vm.wait_for_promise(AnyPromise::Normal(render_promise));
     let jsc_vm = vm.jsc_vm_mut();
     match render_promise.unwrap(jsc_vm, UnwrapMode::MarkHandled) {
-        Unwrapped::Pending => unreachable!(),
+        Unwrapped::Pending => {
+            return Err(js_err(global.throw(format_args!(
+                "Render never finished: the event loop drained with the render promise still pending"
+            ))));
+        }
         Unwrapped::Fulfilled(_) => {
             bun_core::prettyln!("done");
             Output::flush();
@@ -1253,7 +1261,9 @@ fn load_module(
     }
     let jsc_vm = vm_ref.as_mut().jsc_vm_mut();
     match jsc::JSInternalPromise::opaque_mut(promise).unwrap(jsc_vm, UnwrapMode::MarkHandled) {
-        Unwrapped::Pending => unreachable!(),
+        Unwrapped::Pending => Err(js_err(vm_ref.global().throw(format_args!(
+            "Module never finished evaluating: the event loop drained with a top-level await still pending"
+        )))),
         Unwrapped::Fulfilled(_) => Ok(BakeGetModuleNamespace(global, key)),
         Unwrapped::Rejected(err) => Err(js_err(vm_ref.global().throw_value(err))),
     }

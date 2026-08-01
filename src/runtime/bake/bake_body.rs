@@ -377,7 +377,11 @@ impl SplitBundlerOptions {
                 // live for the lifetime of the global object.
                 global.bun_vm().as_mut().wait_for_promise(promise);
                 match promise.unwrap(global.vm(), bun_jsc::PromiseUnwrapMode::MarkHandled) {
-                    bun_jsc::PromiseResult::Pending => unreachable!(),
+                    bun_jsc::PromiseResult::Pending => {
+                        return Err(global.throw(format_args!(
+                            "Plugin setup() returned a promise that never settled"
+                        )));
+                    }
                     bun_jsc::PromiseResult::Fulfilled(_val) => {}
                     bun_jsc::PromiseResult::Rejected(err) => {
                         return Err(global.throw_value(err));

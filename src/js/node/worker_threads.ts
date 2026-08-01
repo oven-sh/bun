@@ -755,29 +755,26 @@ function receiveMessageOnPort(port: MessagePort) {
 // TODO: parent port emulation is not complete
 function fakeParentPort() {
   const fake = Object.create(MessagePort.prototype);
-  let onmessageHandler: any = null;
-  Object.defineProperty(fake, "onmessage", {
-    get() {
-      return onmessageHandler;
-    },
-    set(value) {
-      if (onmessageHandler !== null) self.removeEventListener("message", onmessageHandler);
-      onmessageHandler = $isCallable(value) || (value !== null && typeof value === "object") ? value : null;
-      if (onmessageHandler !== null) self.addEventListener("message", onmessageHandler);
-    },
-  });
-
-  let onmessageerrorHandler: any = null;
-  Object.defineProperty(fake, "onmessageerror", {
-    get() {
-      return onmessageerrorHandler;
-    },
-    set(value) {
-      if (onmessageerrorHandler !== null) self.removeEventListener("messageerror", onmessageerrorHandler);
-      onmessageerrorHandler = $isCallable(value) || (value !== null && typeof value === "object") ? value : null;
-      if (onmessageerrorHandler !== null) self.addEventListener("messageerror", onmessageerrorHandler);
-    },
-  });
+  function defineHandlerAttribute(name: string, event: string) {
+    let handler: any = null;
+    const wrapper = (e: Event) => {
+      if ($isCallable(handler)) handler.$call(fake, e);
+      else if ($isCallable(handler?.handleEvent)) handler.handleEvent.$call(handler, e);
+    };
+    Object.defineProperty(fake, name, {
+      get() {
+        return handler;
+      },
+      set(value) {
+        const next = $isCallable(value) || (value !== null && typeof value === "object") ? value : null;
+        if (handler === null && next !== null) self.addEventListener(event, wrapper);
+        else if (handler !== null && next === null) self.removeEventListener(event, wrapper);
+        handler = next;
+      },
+    });
+  }
+  defineHandlerAttribute("onmessage", "message");
+  defineHandlerAttribute("onmessageerror", "messageerror");
 
   const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
   Object.defineProperty(fake, "postMessage", {

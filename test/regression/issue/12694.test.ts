@@ -4,10 +4,12 @@
 // the never-settling top-level await at 100% CPU.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows } from "harness";
 
 // Bun.Terminal provides a PTY so process.stdin.isTTY is true and readline
 // enables raw mode; on Windows raw-mode ^C is delivered differently.
+const timeout = isDebug ? 30_000 : 10_000;
+
 test.skipIf(isWindows)(
   "Ctrl+C at a raw-mode readline prompt exits instead of spinning on an unsettled TLA",
   async () => {
@@ -31,7 +33,6 @@ test.skipIf(isWindows)(
 
     let output = "";
     const prompt = Promise.withResolvers<void>();
-    const closed = Promise.withResolvers<void>();
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", source],
@@ -40,25 +41,28 @@ test.skipIf(isWindows)(
         data(_t, chunk) {
           output += new TextDecoder().decode(chunk);
           if (output.includes("? prompt:")) prompt.resolve();
-          if (output.includes("rl-closed")) closed.resolve();
         },
       },
     });
     const terminal = proc.terminal!;
+    // Surface the PTY output if the child dies before printing the prompt.
+    proc.exited.then(code => {
+      prompt.reject(new Error(`child exited ${code} before prompt:\n${output}`));
+    });
 
     await prompt.promise;
     // Ctrl+C as a raw byte on the PTY.
     terminal.write("\x03");
-    // readline must observe ^C and close (fails fast if the keypress path broke).
-    await closed.promise;
 
     const exitCode = await proc.exited;
 
+    expect(output).toContain("rl-closed");
     expect(output).not.toContain("unreachable");
     expect(output).toContain("unsettled top-level await");
     // 13 = Node's "unsettled top-level await" exit code.
     expect(exitCode).toBe(13);
   },
+  timeout,
 );
 
 test.skipIf(isWindows)(
@@ -104,6 +108,9 @@ test.skipIf(isWindows)(
       },
     });
     const terminal = proc.terminal!;
+    proc.exited.then(code => {
+      prompt.reject(new Error(`child exited ${code} before expected output:\n${output}`));
+    });
 
     await prompt.promise;
     terminal.write("\x03");
@@ -113,4 +120,5 @@ test.skipIf(isWindows)(
     expect(output).toContain("CAUGHT force closed 13");
     expect(exitCode).toBe(0);
   },
+  timeout,
 );

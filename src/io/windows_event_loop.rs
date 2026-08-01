@@ -12,9 +12,6 @@ use crate::posix_event_loop as posix;
 // that name them via this module.
 pub use crate::posix_event_loop::{EventLoopCtx, OpaqueCallback, js_vm_ctx};
 
-bun_core::declare_scope!(KeepAlive, visible);
-bun_core::declare_scope!(FilePoll, visible);
-
 // `Loop` here is the raw
 // `uv_loop_t`. (`WindowsLoop` is the uws wrapper that *owns* a `*mut uv::Loop`
 // in its `.uv_loop` field; callers that hold a `WindowsLoop*` project that
@@ -57,7 +54,7 @@ impl FilePoll {
             || self.flags.contains(Flags::PollMachport)
     }
 
-    /// Make calling ref() on this poll into a no-op.
+    /// Decrements the active counter if it was previously incremented.
     pub(crate) fn disable_keeping_process_alive(&mut self, vm: EventLoopCtx) {
         if self.flags.contains(Flags::Closed) {
             return;

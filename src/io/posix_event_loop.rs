@@ -558,15 +558,6 @@ impl FilePoll {
         poll
     }
 
-    /// Allow a poll to keep the process alive.
-    pub fn ref_(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.flags.contains(Flags::Closed) {
-            return;
-        }
-        syslog!("ref");
-        self.enable_keeping_process_alive(event_loop_ctx);
-    }
-
     pub fn register(&mut self, loop_: &mut Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {
         self.register_with_fd(
             loop_,

@@ -648,11 +648,6 @@ private:
 extern "C" void napi_internal_cleanup_env_cpp(napi_env);
 extern "C" void napi_internal_remove_finalizer(napi_env, napi_finalize callback, void* hint, void* data);
 
-namespace JSC {
-class JSGlobalObject;
-class JSSourceCode;
-}
-
 namespace Napi {
 
 class NapiRefWeakHandleOwner final : public JSC::WeakHandleOwner {

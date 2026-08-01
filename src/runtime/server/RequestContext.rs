@@ -1768,8 +1768,10 @@ where
                 sys.message =
                     BunString::static_("Cannot stream a directory as a response body").into();
                 let status = self.sendfile_errno_status(bun_sys::E::EISDIR);
-                return self
-                    .run_error_handler_with_status_code(sys.to_error_instance(global_this), status);
+                return self.run_error_handler_with_status_code(
+                    sys.to_error_instance(global_this),
+                    status,
+                );
             }
             (bun_io::FileType::File, false)
         };

@@ -249,18 +249,18 @@ describe("ResolveMessage", () => {
       expect(exitCode).toBe(1);
     });
 
-    it("covers every hook name `bun pm trust` unblocks (prepare included)", async () => {
+    it("does not fire for a prepare-only package (prepare is never blocked for registry deps)", async () => {
       const { stderr, exitCode } = await run({
         "node_modules/has-postinstall/package.json": JSON.stringify({
           name: "has-postinstall",
           version: "1.0.0",
           main: "index.js",
-          scripts: { prepare: "tsc" },
+          scripts: { prepare: "husky install" },
         }),
-        "node_modules/has-postinstall/index.js": `module.exports = require("./dist/impl.js");`,
+        "node_modules/has-postinstall/index.js": `module.exports = require("missing-inner-dep");`,
       });
-      expect(stderr).toContain(`The "prepare" script for "has-postinstall" may have been blocked`);
-      expect(stderr).toContain(`run \`bun pm trust has-postinstall\``);
+      expect(stderr).toContain(`Cannot find package 'missing-inner-dep'`);
+      expect(stderr).not.toContain("bun pm trust");
       expect(exitCode).toBe(1);
     });
 

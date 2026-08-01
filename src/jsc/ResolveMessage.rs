@@ -443,7 +443,11 @@ fn first_lifecycle_script(pkg_dir: &[u8]) -> Option<&'static str> {
         // Bound to the `"scripts"` object so a sibling key like
         // `"dependencies": { "install": "..." }` cannot match.
         let scripts = &after[..end_of_flat_json_object(after)];
-        for hook in bun_install::lockfile::Scripts::NAMES {
+        // Only the install-family: `Scripts::get_script_entries` gates
+        // `NAMES[3..]` (preprepare/prepare/postprepare) on `ResolutionTag`
+        // and never enqueues them for registry packages, so including them
+        // would false-positive on the ubiquitous `"prepare":"husky install"`.
+        for hook in &bun_install::lockfile::Scripts::NAMES[..3] {
             if find_json_key(scripts, format!("\"{hook}\"").as_bytes()).is_some() {
                 return Some(hook);
             }

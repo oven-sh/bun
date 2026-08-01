@@ -1394,12 +1394,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(());
         }
 
-        // simplify unused
-        let Some(simplified) = SideEffects::simplify_unused_expr(p, data.value) else {
-            restore_stmt_expr!();
-            return Ok(());
-        };
-        data.value = simplified;
+        // esbuild only trims side-effect-free expression statements in
+        // mangleStmts (gated on minifySyntax). Running it unconditionally here
+        // drops bare JSX / `@__PURE__`-annotated calls from `Bun.Transpiler`
+        // output even though that API defaults to no minification (#14789).
+        if p.options.features.minify_syntax {
+            let Some(simplified) = SideEffects::simplify_unused_expr(p, data.value) else {
+                restore_stmt_expr!();
+                return Ok(());
+            };
+            data.value = simplified;
+        }
 
         if p.should_unwrap_common_js_to_esm() {
             if is_top_level {

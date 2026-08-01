@@ -652,9 +652,8 @@ impl ByteRangeMapping {
 
                     let gen_line =
                         Ordinal::from_zero_based(i32::try_from(new_line_index).expect("int cast"));
-                    let gen_col = Ordinal::from_zero_based(
-                        i32::try_from(column_position).expect("int cast"),
-                    );
+                    let gen_col =
+                        Ordinal::from_zero_based(i32::try_from(column_position).expect("int cast"));
                     let found: Option<bun_sourcemap::Mapping> = if let Some(c) = cur_.as_mut() {
                         c.move_to(gen_line, gen_col)
                     } else {
@@ -745,9 +744,8 @@ impl ByteRangeMapping {
 
                     let gen_line =
                         Ordinal::from_zero_based(i32::try_from(new_line_index).expect("int cast"));
-                    let gen_col = Ordinal::from_zero_based(
-                        i32::try_from(column_position).expect("int cast"),
-                    );
+                    let gen_col =
+                        Ordinal::from_zero_based(i32::try_from(column_position).expect("int cast"));
                     let found: Option<bun_sourcemap::Mapping> = if let Some(c) = cur_.as_mut() {
                         c.move_to(gen_line, gen_col)
                     } else {

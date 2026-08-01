@@ -91,11 +91,14 @@ test("get", () => {
 });
 `,
   });
-  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "--coverage-dir=."], {
-    cwd: String(dir),
-    env: bunEnv,
-    stdio: [null, null, "pipe"],
-  });
+  const result = Bun.spawnSync(
+    [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "--coverage-dir=."],
+    {
+      cwd: String(dir),
+      env: bunEnv,
+      stdio: [null, null, "pipe"],
+    },
+  );
   const stderr = result.stderr.toString("utf-8");
 
   const tableRow = stderr.split("\n").find(l => l.includes("table.ts") && l.includes(" | "));

@@ -1960,8 +1960,8 @@ impl PackageManifest {
         exclusions: Option<&[&[u8]]>,
         extra_ok: impl Fn(Semver::Version) -> bool,
     ) -> Option<FindResult<'_>> {
-        let min_age_ms = minimum_release_age_ms
-            .filter(|_| !self.should_exclude_from_age_filter(exclusions));
+        let min_age_ms =
+            minimum_release_age_ms.filter(|_| !self.should_exclude_from_age_filter(exclusions));
         let age_ok = |pkg: &PackageVersion| match min_age_ms {
             Some(min) => !Self::is_package_version_too_recent(pkg, min),
             None => true,

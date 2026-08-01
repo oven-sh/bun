@@ -622,7 +622,7 @@ console.log('Loaded HTML!', badDefaultImport);`,
     },
     entryPointsRaw: ["in/template.html", "in/entry.js"],
     bundleErrors: {
-      "/in/entry.js": ['No matching export in "in/template.html" for import "default"'],
+      "/in/entry.js": ['No matching export in "template.html" for import "default"'],
     },
     onAfterBundle(api) {
       const templateBundle = api.readFile("out/template.html");

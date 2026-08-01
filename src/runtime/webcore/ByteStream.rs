@@ -434,11 +434,17 @@ impl ByteStream {
             if has_remaining {
                 self.append(stream, to_copy_len)
                     .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
+            } else {
+                // Only resume the producer when the whole chunk fit the pull
+                // view. When the tail spilled into `buffer` the next `on_pull`
+                // signals once it drains, so resuming now would let another
+                // producer chunk land with no reader to take it (it would go
+                // straight to `append` below), inflating `buffer` and the
+                // producer's own staging buffer by an extra recv each cycle.
+                self.signal_drained();
             }
 
             bun_output::scoped_log!(ByteStream, "ByteStream.onData pending.run()");
-
-            self.signal_drained();
 
             // R-2: `Pending::run` resolves a JS promise (re-enters JS); the
             // `with_mut` borrow is `UnsafeCell`-backed so `noalias` is

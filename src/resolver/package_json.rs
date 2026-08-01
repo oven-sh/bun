@@ -679,7 +679,10 @@ impl PackageJSON {
         }
 
         if let Some(exports_prop) = json.as_property(b"exports") {
-            if let Some(exports_map) = ExportsMap::parse(json_source, r_log, exports_prop.expr) {
+            if let Some(mut exports_map) = ExportsMap::parse(json_source, r_log, exports_prop.expr) {
+                if should_skip_bun_condition(&package_json.name) {
+                    remove_condition(&mut exports_map.root, b"bun");
+                }
                 package_json.exports = Some(exports_map);
             }
         }
@@ -1248,6 +1251,58 @@ pub struct MapEntry {
     pub(crate) key: Box<[u8]>, // owned copy
     pub(crate) key_range: bun_ast::Range,
     pub(crate) value: Entry,
+}
+
+/// Packages whose `"bun"` export condition is dropped during resolution.
+///
+/// Normally the `"bun"` condition lets a package ship a Bun-optimized entry
+/// point and Bun honors it. The packages listed here instead point `"bun"` at
+/// their browser build (pure WebCrypto, no `node:*`), which breaks Node.js
+/// consumers that `require()` them expecting `KeyObject`-based APIs. Dropping
+/// the `"bun"` key makes Bun fall through to `"import"` / `"require"` (the
+/// Node build), which Bun fully supports.
+///
+/// `jose` v4.11+ and v5 set `"bun": "./dist/browser/index.js"`; `jwks-rsa` 3.1
+/// (pulled in by `firebase-admin` 13) then fails with "The JWKS endpoint did
+/// not contain any signing keys" because every imported JWK becomes a
+/// non-extractable `CryptoKey` that `jose.exportSPKI` rejects. `jose` v6 and
+/// `jwks-rsa` 3.2+ fixed this upstream, so dropping the condition here only
+/// changes behavior for the affected range while being a no-op otherwise.
+/// See https://github.com/oven-sh/bun/issues/15932 and #10511.
+const PACKAGES_SKIP_BUN_CONDITION: &[&[u8]] = &[b"jose"];
+
+fn should_skip_bun_condition(name: &[u8]) -> bool {
+    PACKAGES_SKIP_BUN_CONDITION
+        .iter()
+        .any(|pkg| strings::eql(name, pkg))
+}
+
+/// Recursively remove `condition` from every conditional-sugar map in the
+/// exports/imports tree (maps whose keys do not start with `.`).
+fn remove_condition(entry: &mut Entry, condition: &[u8]) {
+    match &mut entry.data {
+        EntryData::Map(map) => {
+            let is_subpath_map = map
+                .list
+                .first()
+                .is_some_and(|e| strings::starts_with_char(&e.key, b'.'));
+            if !is_subpath_map {
+                map.list.retain(|e| !strings::eql(&e.key, condition));
+            }
+            for e in map.list.iter_mut() {
+                remove_condition(&mut e.value, condition);
+            }
+            for e in map.expansion_keys.iter_mut() {
+                remove_condition(&mut e.value, condition);
+            }
+        }
+        EntryData::Array(items) => {
+            for e in items.iter_mut() {
+                remove_condition(e, condition);
+            }
+        }
+        EntryData::String(_) | EntryData::Null | EntryData::Invalid => {}
+    }
 }
 
 impl Entry {

@@ -51,8 +51,9 @@ impl LifecycleScriptTimeLog {
     /// Print the single slowest entry as a warning. Safe to call when no
     /// entries were recorded.
     pub(crate) fn print(&mut self) {
-        if bun_core::env::IS_DEBUG {
-            debug_assert!(
+        #[cfg(debug_assertions)]
+        {
+            assert!(
                 self.mutex.try_lock(),
                 "LifecycleScriptTimeLog.print is not intended to be thread-safe"
             );

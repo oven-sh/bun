@@ -56,13 +56,16 @@ test("auto-install resolves transitive deps through a nested package.json (#6988
     "package.json": JSON.stringify({ name: "inner", version: "2.0.0", main: "index.js" }),
     "index.js": `module.exports = "inner@2.0.0";\n`,
   });
-  // `outer`'s entry point requires `inner` from a file that sits under a
-  // nested package.json whose `dependencies` disagree with the package root.
+  // `outer`'s entry point requires `inner` from a file that sits one level
+  // *below* a nested package.json whose `dependencies` disagree with the
+  // package root, matching the hive-js layout (ecc/src/address.js under
+  // ecc/package.json). The extra `src/` level exercises the parent
+  // propagation in `dir_info_uncached` as well as the own-package.json gate.
   const outer = buildTarball({
     "package.json": JSON.stringify({
       name: "outer",
       version: "1.0.0",
-      main: "lib/sub/entry.js",
+      main: "lib/sub/src/entry.js",
       dependencies: { inner: "^2.0.0" },
     }),
     "lib/sub/package.json": JSON.stringify({
@@ -70,7 +73,7 @@ test("auto-install resolves transitive deps through a nested package.json (#6988
       version: "1.0.0",
       dependencies: { inner: "^1.0.0" },
     }),
-    "lib/sub/entry.js": `module.exports = require("inner");\n`,
+    "lib/sub/src/entry.js": `module.exports = require("inner");\n`,
   });
 
   await using server = Bun.serve({

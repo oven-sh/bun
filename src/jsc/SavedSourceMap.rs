@@ -4,7 +4,7 @@ use core::ffi::c_void;
 use core::ptr;
 use std::sync::Arc;
 
-use bun_collections::{HashMap, IdentityContext, TaggedPtrUnion};
+use bun_collections::{HashMap, IdentityContext, SmallList, TaggedPtrUnion};
 use bun_core::MutableString;
 use bun_core::Ordinal;
 use bun_ptr::tagged_pointer::TagType;
@@ -13,10 +13,46 @@ use bun_sourcemap::{self as SourceMap, InternalSourceMap, ParsedSourceMap};
 use bun_threading::Mutex;
 use bun_wyhash::hash;
 
+/// Resolved source-preview lines for an error's code frame, cached so that
+/// repeated `Bun.inspect(err)` / `console.error(err)` on the same site
+/// does not re-read and re-parse the source (or its external `.map`) per
+/// print. Lines are owned, length-capped copies; a `None` entry memoizes a
+/// miss so the expensive path is not retried.
+pub(crate) struct CachedCodeFrame {
+    pub(crate) lines: SmallList<Box<[u8]>, { CachedCodeFrame::LINES }>,
+    /// Zero-based line number of `lines[0]`; subsequent entries count down.
+    pub(crate) start_line: i32,
+}
+
+impl CachedCodeFrame {
+    /// Matches `zig_exception::Holder::SOURCE_LINES_COUNT`.
+    pub(crate) const LINES: usize = 6;
+    /// Minified or generated lines longer than this are truncated so a single
+    /// bundled line cannot pin megabytes. Strictly wider than the code-frame
+    /// printer's own `MAX_LINE_LENGTH` (1024) so a cached hit still trips its
+    /// `clamped != trimmed` check and keeps the "... truncated" suffix.
+    pub(crate) const MAX_LINE_LEN: usize = 1280;
+    /// Sentinel for the non-external (runtime-transpiled) branch where
+    /// `source_index` is not meaningful.
+    pub(crate) const NO_SOURCE_INDEX: u32 = u32::MAX;
+
+    #[inline]
+    pub(crate) fn inner_key(source_index: u32, line: i32) -> u64 {
+        ((source_index as u64) << 32) | (line as u32 as u64)
+    }
+}
+
+type CodeFrameInner = HashMap<u64, Option<CachedCodeFrame>, IdentityContext<u64>>;
+/// Outer key: `wyhash(generated_source_url)`. Inner key: packed
+/// `(source_index, original_line)`. One generated file may fan out to several
+/// originals via `sourcesContent`, so `source_index` is part of the key.
+type CodeFrameCache = HashMap<u64, CodeFrameInner, IdentityContext<u64>>;
+
 pub struct SavedSourceMap {
     /// This is a pointer to the map located on the VirtualMachine struct
     pub map: *mut HashTable,
     pub(crate) mutex: Mutex,
+    line_cache: CodeFrameCache,
 }
 
 impl Default for SavedSourceMap {
@@ -24,6 +60,7 @@ impl Default for SavedSourceMap {
         Self {
             map: ptr::null_mut(),
             mutex: Mutex::default(),
+            line_cache: CodeFrameCache::default(),
         }
     }
 }
@@ -129,6 +166,7 @@ impl SavedSourceMap {
     /// while the box holding the erased pair is owned by the table and freed
     /// by [`Self::release_value`] on replace / remove / drop.
     pub fn put_source_provider(&mut self, provider: AnySourceProvider, path: &[u8]) {
+        self.invalidate_code_frames_for(path);
         let boxed = bun_core::heap::into_raw(Box::new(provider));
         // bun.handleOom → drop wrapper; Rust HashMap insert aborts on OOM.
         if self.put_value(path, Value::init(boxed)).is_err() {
@@ -169,8 +207,67 @@ impl SavedSourceMap {
             // SAFETY: `old_value` was stored by us; the table's ownership of
             // it ends here.
             unsafe { Self::release_value(old_value) };
+            self.line_cache.remove(&key);
         }
         self.unlock();
+    }
+
+    /// Looks up a cached code frame for `(path_hash, source_index, line)` and,
+    /// on a positive hit, clones its lines into the caller's
+    /// `source_lines` / `source_line_numbers` slots. Returns `Some(n)` (lines
+    /// filled, `0` for a memoized miss) when an entry exists, `None` when
+    /// nothing is recorded.
+    pub(crate) fn fill_code_frame_from_cache(
+        &mut self,
+        path_hash: u64,
+        source_index: u32,
+        line: i32,
+        source_lines: &mut [bun_core::String],
+        source_line_numbers: &mut [i32],
+    ) -> Option<u8> {
+        self.mutex.lock();
+        let result = self
+            .line_cache
+            .get(&path_hash)
+            .and_then(|inner| inner.get(&CachedCodeFrame::inner_key(source_index, line)))
+            .map(|entry| match entry {
+                None => 0u8,
+                Some(frame) => {
+                    let take = (frame.lines.len() as usize).min(source_lines.len());
+                    let mut n = frame.start_line;
+                    for (i, body) in frame.lines[..take].iter().enumerate() {
+                        source_lines[i] = bun_core::String::clone_utf8(body);
+                        source_line_numbers[i] = n;
+                        n -= 1;
+                    }
+                    take as u8
+                }
+            });
+        self.mutex.unlock();
+        result
+    }
+
+    /// Records a resolved (or unresolvable: `frame = None`) code frame.
+    pub(crate) fn put_cached_code_frame(
+        &mut self,
+        path_hash: u64,
+        source_index: u32,
+        line: i32,
+        frame: Option<CachedCodeFrame>,
+    ) {
+        self.mutex.lock();
+        self.line_cache
+            .entry(path_hash)
+            .or_insert_with(CodeFrameInner::default)
+            .insert(CachedCodeFrame::inner_key(source_index, line), frame);
+        self.mutex.unlock();
+    }
+
+    fn invalidate_code_frames_for(&mut self, path: &[u8]) {
+        let key = hash(path);
+        self.mutex.lock();
+        self.line_cache.remove(&key);
+        self.mutex.unlock();
     }
 }
 
@@ -218,6 +315,7 @@ impl SavedSourceMap {
         source: &bun_ast::Source,
         mut mappings: MutableString,
     ) -> bun_js_printer::Result<()> {
+        self.invalidate_code_frames_for(source.path.text);
         // --hot can re-read a file mid-rewrite (truncate + write) and transpile
         // a comment-only prefix into a 0-mapping map. Overwriting a real map
         // with that would make any still-unreported error from the previous

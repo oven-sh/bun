@@ -39,6 +39,8 @@ pub mod lshpack;
 pub mod proxy_tunnel;
 #[path = "SendFile.rs"]
 pub mod send_file;
+#[path = "session_cache.rs"]
+pub mod session_cache;
 #[path = "Signals.rs"]
 pub mod signals;
 #[path = "ThreadSafeStreamBuffer.rs"]
@@ -1851,6 +1853,48 @@ impl<'a> HTTPClient<'a> {
                     host_z,
                     self.alpn_offer(),
                 );
+
+                // Offer any cached TLS session for this origin and install a
+                // sink for the ticket(s) this handshake will yield. Skipped
+                // for `rejectUnauthorized:false` (a resumed handshake would
+                // launder the unverified cert's stored verify_result into a
+                // later strict caller), for the JS `checkServerIdentity`
+                // callback path (verification happens off-thread after
+                // `on_handshake`, so the sink can't be armed safely), and for
+                // unix sockets (no `(host, port)` key). The sink stays
+                // unarmed until `on_handshake` confirms `checkServerIdentity`
+                // passed.
+                if self.flags.reject_unauthorized
+                    && !self.signals.get(signals::Field::CertErrors)
+                    && self.unix_socket_path.slice().is_empty()
+                    && crate::session_cache::enabled()
+                {
+                    let hostname: &[u8] = self.connected_url.hostname;
+                    let port = self.connected_url.get_port_auto();
+                    // Same discriminator the keep-alive pool uses for direct
+                    // TLS (`HTTPContext::connect` and `release_socket`): the
+                    // Host-header SNI override / proxy-header hash.
+                    let want_tunnel = self.http_proxy.is_some() && self.url.is_https();
+                    let proxy_auth_hash = if want_tunnel || self.http_proxy.is_none() {
+                        self.proxy_auth_hash()
+                    } else {
+                        0
+                    };
+                    // SAFETY: `ssl_ptr` is live and pre-handshake (guarded by
+                    // `SSL_is_init_finished == 0` above); `get_ssl_ctx` returns
+                    // either the static `https_context` or the heap context
+                    // this client holds a strong ref on, both of which outlive
+                    // every SSL attached to their socket group.
+                    unsafe {
+                        crate::session_cache::install(
+                            ssl_ptr,
+                            self.get_ssl_ctx::<true>(),
+                            hostname,
+                            port,
+                            proxy_auth_hash,
+                        );
+                    }
+                }
             }
         } else {
             self.first_call::<IS_SSL>(socket);

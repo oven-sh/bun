@@ -195,6 +195,42 @@ describe.concurrent("fetch-tls", () => {
     });
   });
 
+  // A second fetch to the same origin after `Connection: close` has to open a
+  // fresh TLS connection (no keep-alive socket to reuse). With a client-side
+  // session cache, that connect offers the ticket from the first handshake and
+  // the server observes a resumed session; without one, it's a full handshake.
+  describe("client-side TLS session resumption", () => {
+    const fixture = join(import.meta.dir, "fetch.tls.session-resumption-fixture.ts");
+    async function run(env: Record<string, string>) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), fixture],
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect(stderr).not.toMatch(/AddressSanitizer|ERROR: (Leak|Thread)Sanitizer/);
+      expect(stdout.trim()).toMatch(/^\[(true|false),(true|false)\]$/);
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout.trim()) as boolean[];
+    }
+
+    it("resumes on the second fresh connect to an origin", async () => {
+      expect(await run({})).toEqual([false, true]);
+    });
+
+    it("is disabled by BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE", async () => {
+      expect(await run({ BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE: "1" })).toEqual([
+        false,
+        false,
+      ]);
+    });
+  });
+
   // Covers a family of HTTP-thread crashes (sentry BUN-2WC6 and siblings) where
   // a certificate identity failure during a handshake completed from the
   // SSL_read path, racing aborts, idle timeouts, and keepalive churn, caused a

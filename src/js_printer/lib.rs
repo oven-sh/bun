@@ -1216,8 +1216,7 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
     use js_ast::ExprData;
     match &expr.data {
         ExprData::EIdentifier(_) | ExprData::EDot(_) | ExprData::EIndex(_) => true,
-        // Visit-pass rewrites that print as an identifier or property access in at
-        // least one output mode; over-wrapping the literal-printing modes is a no-op.
+        // Visit-pass rewrites that print as an identifier or property access.
         ExprData::EImportIdentifier(_)
         | ExprData::ECommonjsExportIdentifier(_)
         | ExprData::ESpecial(_)

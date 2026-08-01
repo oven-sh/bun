@@ -130,11 +130,18 @@ describe.skipIf(isWindows)("shell completions: `bun <path>` and runtime flags (#
       using dir = tempDir("bun-bash-completion-7805d", {
         "bun.bash": script,
         "package.json": JSON.stringify({ name: "fixture", scripts: { test: "echo t", build: "echo b" } }),
+        "test/.keep": "",
+        "build/.keep": "",
       });
       expect(await bashComplete(String(dir), "bun t")).toContain("test");
       const bu = await bashComplete(String(dir), "bun b");
       expect(bu).toContain("build");
       expect(bu).toContain("bun");
+      // The `run)` arm has the same ordering constraint: a `test/` dir in a
+      // project with a `"test"` script must still be offered.
+      const runEmpty = await bashComplete(String(dir), "bun run ");
+      expect(runEmpty).toContain("test");
+      expect(runEmpty).toContain("build");
     },
   );
 
@@ -296,6 +303,12 @@ describe.skipIf(isWindows)("shell completions: `bun <path>` and runtime flags (#
       // after `bun add` is left for `_bun_add_completion` (where it means
       // `--dev`) instead of being claimed here as `--define`.
       expect(topArguments).toMatch(/_arguments\b[^\\\n]* -A ['"]-\*['"]/);
+      // `--inspect`/`--config` accept an optional argument. The `=-` name
+      // suffix restricts it to the `--flag=value` form so `bun --inspect run`
+      // doesn't have `run` consumed as the optional argument.
+      for (const flag of ["--inspect", "--inspect-wait", "--inspect-brk", "--config"]) {
+        expect(topArguments).toContain(`'${flag}=-[`);
+      }
       // `bun <TAB>` (state=cmd) should offer real file completion, not just
       // `bun getcompletes j` (which only lists the current directory).
       expect(bun).toMatch(/"globbed-files:file:_files/);

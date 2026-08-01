@@ -745,16 +745,15 @@ _bun() {
         '-b[Force a script or package to use Bun'"'"'s runtime instead of Node.js (via symlinking node)]' \
         '-i[Automatically install dependencies and use global cache in Bun'"'"'s runtime, equivalent to --install=fallback]' \
         '--silent[Don'"'"'t print the script command]' \
-        '--inspect[Activate Bun'"'"'s debugger]::_inspect' \
-        '--inspect-wait[Activate Bun'"'"'s debugger, wait for a connection before executing]::_inspect' \
-        '--inspect-brk[Activate Bun'"'"'s debugger, set breakpoint on first line of code and wait]::_inspect' \
+        '--inspect=-[Activate Bun'"'"'s debugger]::addr' \
+        '--inspect-wait=-[Activate Bun'"'"'s debugger, wait for a connection before executing]::addr' \
+        '--inspect-brk=-[Activate Bun'"'"'s debugger, set breakpoint on first line of code and wait]::addr' \
         '--preload[Import a module before other modules are loaded]:preload:_files' \
         '-r[Import a module before other modules are loaded]:preload:_files' \
         '--require[Import a module before other modules are loaded]:preload:_files' \
         '--import[Import a module before other modules are loaded]:preload:_files' \
         '--cwd[Absolute path to resolve files & entry points from]:cwd:_files -/' \
-        '--config[Specify path to Bun config file]::config:_files' \
-        '-c[Specify path to Bun config file]::config:_files' \
+        '--config=-[Specify path to Bun config file]::config:_files' \
         '--env-file[Load environment variables from the specified file(s)]:env-file:_files' \
         '--port[Set the default port for Bun.serve]:port' \
         '-p[Evaluate argument as a script and print the result]:script' \

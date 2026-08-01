@@ -3936,12 +3936,19 @@ console.log(foo, array);
       // but simplifies away entirely: the fold must still keep `(0, obj.m)`.
       expectPrinted("(typeof x ? obj.m : 0)`x`", "(0, obj.m)`x`");
       expectPrinted("(typeof x ? obj.m : 0)()", "(0, obj.m)()");
+      expectPrinted("(typeof x && 0 ? 0 : obj.m)`x`", "(0, obj.m)`x`");
+      expectPrinted("(typeof x && 0 ? 0 : obj.m)()", "(0, obj.m)()");
       // When the test leaves a real side effect behind, the resulting comma
       // already strips `this`; no extra `0,` is needed.
       expectPrinted("(f() || 1 ? obj.m : 0)`x`", "(f(), obj.m)`x`");
       expectPrinted("(null ?? obj.m)`x`", "(0, obj.m)`x`");
       expectPrinted("(1 && obj.m)`x`", "(0, obj.m)`x`");
       expectPrinted("(0 || obj.m)`x`", "(0, obj.m)`x`");
+      // A call/tagged-template nested inside the comma's left operand must not
+      // clobber the outer binary's call/tag-position capture.
+      expectPrinted("((() => f`a`), obj.m)`x`", "(0, obj.m)`x`");
+      expectPrinted("((true ? 0 : f`a`), obj.m)`x`", "(0, obj.m)`x`");
+      expectPrinted("((() => f()), obj.m)()", "(0, obj.m)()");
       // Property-access folds that replace a reference with its value bail
       // out entirely in tag position.
       expectPrinted("[obj.m][0]`x`", "[obj.m][0]`x`");
@@ -3964,16 +3971,19 @@ console.log(foo, array);
     it("tagged-template tag `this` matches node at runtime", async () => {
       const src = `
         var obj = { m() { return this === obj; } };
-        var x = 1;
+        var x = 1, f = () => 0;
         console.log(JSON.stringify([
           (0, obj.m)\`x\`,
           (1 ? obj.m : 0)\`x\`,
           (0 ? 0 : obj.m)\`x\`,
           (typeof x ? obj.m : 0)\`x\`,
           (typeof x ? obj.m : 0)(),
+          (typeof x && 0 ? 0 : obj.m)\`x\`,
           (null ?? obj.m)\`x\`,
           (true && obj.m)\`x\`,
           (false || obj.m)\`x\`,
+          ((() => f\`a\`), obj.m)\`x\`,
+          ((() => f()), obj.m)(),
           [obj.m][0]\`x\`,
           ({ m: obj.m }).m\`x\`,
           ({ m: obj.m })["m"]\`x\`,
@@ -3983,7 +3993,7 @@ console.log(foo, array);
       await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(stdout).toBe("[false,false,false,false,false,false,false,false,false,false,false,true]\n");
+      expect(stdout).toBe("[false,false,false,false,false,false,false,false,false,false,false,false,false,false,true]\n");
       expect(exitCode).toBe(0);
     });
 

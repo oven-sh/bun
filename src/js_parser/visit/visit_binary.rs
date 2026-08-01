@@ -99,6 +99,11 @@ pub struct BinaryExpressionVisitor {
 
     /// Input for visiting the left child
     pub(crate) left_in: ExprIn,
+
+    /// Captured in `check_and_prepare` (before visiting `left`) so a nested
+    /// call/tagged-template inside `left` can't clobber the pointer match.
+    pub(crate) is_call_target: bool,
+    pub(crate) is_template_tag: bool,
 }
 
 impl BinaryExpressionVisitor {
@@ -112,13 +117,10 @@ impl BinaryExpressionVisitor {
         // invariant is encapsulated there. The borrow is on the `v.e` field
         // only, so `v.loc` reads below split-borrow cleanly.
         let e_handle: StoreRef<E::Binary> = v.e;
-        let e_ptr: *mut E::Binary = e_handle.as_ptr();
+        let is_call_target = v.is_call_target;
+        let is_template_tag = v.is_template_tag;
         let e_ = &mut *v.e;
 
-        let is_call_target =
-            matches!(p.call_target, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
-        let is_template_tag =
-            matches!(p.template_tag, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
         let was_anonymous_named_expr = e_.right.is_anonymous_named();
         let prev_decorator_class_name = p.decorator_class_name;
 
@@ -788,6 +790,12 @@ impl BinaryExpressionVisitor {
             }
             _ => {}
         }
+
+        let e_ptr: *mut E::Binary = e_handle.as_ptr();
+        v.is_call_target =
+            matches!(p.call_target, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
+        v.is_template_tag =
+            matches!(p.template_tag, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
 
         v.left_in = ExprIn {
             assign_target: Op::Code::binary_assign_target(e_.op),

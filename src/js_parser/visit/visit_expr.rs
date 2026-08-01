@@ -821,6 +821,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             e: e_,
             loc: expr.loc,
             left_in: ExprIn::default(),
+            is_call_target: false,
+            is_template_tag: false,
         };
 
         // Everything uses a single stack to reduce allocation overhead. This stack
@@ -868,6 +870,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 e: left_binary.unwrap(),
                 loc: left.loc,
                 left_in: ExprIn::default(),
+                is_call_target: false,
+                is_template_tag: false,
             };
         }
 

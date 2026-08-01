@@ -565,7 +565,9 @@ impl<'a> CopyFile<'a> {
                                 self.system_error = Some(err.to_system_error());
                                 return Err(bun_errno::from_errno(err.errno as i32).into());
                             }
-                            bun_sys::Result::Ok(()) => {}
+                            bun_sys::Result::Ok(()) => {
+                                self.read_len = total_written as SizeType;
+                            }
                         }
                     }
                     _ => {

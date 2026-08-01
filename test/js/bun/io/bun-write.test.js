@@ -450,10 +450,6 @@ const IS_UV_FS_COPYFILE_DISABLED =
   });
 
   // https://github.com/oven-sh/bun/issues/14054
-  // Bun.write(Bun.file(path), Bun.stdin) when stdin is a pipe. On Linux this
-  // used to fall through every fast-path branch (splice was gated on the
-  // destination also being a FIFO) and fail with
-  // "Non-regular files aren't supported yet".
   // Bun.spawn({stdin: <buffer>}) hands the child a regular-file fd, so use sh
   // to get a real kernel pipe on fd 0.
   it.skipIf(isWindows)("Bun.write(Bun.file(path), Bun.stdin) drains a pipe into a file", async () => {
@@ -476,6 +472,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
       resolved: String(size),
       written: size,
     });
+    expect(await Bun.file(out).bytes()).toEqual(new Uint8Array(size));
     expect(exitCode).toBe(0);
   });
 

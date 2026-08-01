@@ -1152,10 +1152,8 @@ pub mod pattern {
     }
 
     impl Pattern {
-        /// Match a filesystem route pattern to a URL path.
-        ///
-        /// `params` is shared across every candidate in `match_dynamic`, so a failed
-        /// match truncates it back to its entry length.
+        /// Match a filesystem route pattern to a URL path. On `false`, `params` is
+        /// truncated to its entry length so the next candidate starts clean.
         pub(crate) fn match_<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
             // `path` must be lowercased and have no leading slash
             path: &'a [u8],

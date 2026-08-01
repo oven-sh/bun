@@ -173,6 +173,26 @@ describe("bundler", () => {
       expect(exitCode).toBe(1);
     });
   }
+  // A CSS chunk created from a JS entry point has a JS-like loader. Bytecode
+  // must be skipped for it, not attempted and reported as a failure.
+  test("bytecode/OutdirBytecodeSkipsCssChunk", async () => {
+    using dir = tempDir("bytecode-css", {
+      "entry.ts": `import "./styles.css"; console.log(1);`,
+      "styles.css": `.foo { color: red }`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.ts", "--bytecode", "--target=bun", "--format=cjs", "--outdir", "./out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error");
+    expect(stdout).toContain("entry.js.jsc");
+    expect(stdout).toContain("entry.css");
+    expect(exitCode).toBe(0);
+  });
 
   // `import defer * as ns from "..."` must not break bytecode generation.
   // The bundler inlines the deferred module into the entry chunk (documented

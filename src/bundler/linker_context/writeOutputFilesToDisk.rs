@@ -398,7 +398,7 @@ pub(crate) fn write_output_files_to_disk(
                     Loader::Js
                 };
 
-                if loader.is_javascript_like() {
+                if matches!(chunk.content, Content::Javascript(_)) && loader.is_javascript_like() {
                     let mut fdpath = PathBuffer::uninit();
                     let source_provider_url = BunString::create_format(format_args!(
                         "{}{}",

@@ -534,25 +534,30 @@ impl SharedConnection {
         self.early_out_armed_for.set(deadline);
     }
 
-    /// Timer fire (via dispatch.rs): complete queries whose early-out deadline has passed.
-    pub(crate) fn on_early_out(&mut self) {
-        // See `on_readable`: keep one scope open across `finish()`.
+    /// Timer fire (via dispatch.rs): complete overdue queries. SAFETY: `this` is the live connection whose timer fired.
+    pub(crate) unsafe fn on_early_out(this: *mut Self) {
+        // Raw receiver like `on_readable`: `finish()` may re-derive `&mut Self`, so no borrow of `*this` outlives it.
         let _exit = event_loop_scope();
-        // The heap pops without updating state; mark FIRED so a re-arm inserts instead of removing.
-        self.early_out_timer
-            .with_mut(|t| t.state = EventLoopTimerState::FIRED);
-        self.early_out_armed_for.set(0);
-        let now = now_ms();
-        let ready = self.take_ready(|q| {
-            let due = q
-                .early_out_deadline_ms()
-                .is_some_and(|d| d <= now && !q.results.is_empty());
-            if due {
-                q.gave_up_on_pending = true;
-            }
-            due
-        });
-        self.arm_early_out();
+        let ready = {
+            // SAFETY: `this` is the live connection whose timer fired; this borrow ends before `finish()`.
+            let conn = unsafe { &mut *this };
+            // The heap pops without updating state; mark FIRED so a re-arm inserts instead of removing.
+            conn.early_out_timer
+                .with_mut(|t| t.state = EventLoopTimerState::FIRED);
+            conn.early_out_armed_for.set(0);
+            let now = now_ms();
+            let ready = conn.take_ready(|q| {
+                let due = q
+                    .early_out_deadline_ms()
+                    .is_some_and(|d| d <= now && !q.results.is_empty());
+                if due {
+                    q.gave_up_on_pending = true;
+                }
+                due
+            });
+            conn.arm_early_out();
+            ready
+        };
         for inf in ready {
             Self::finish(inf, None);
         }

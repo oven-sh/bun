@@ -154,18 +154,48 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t start
 
             if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
                 auto providerAndId = frame.sourceProviderAndID();
-                if (auto* provider = std::get<0>(providerAndId)) {
+                auto* provider = std::get<0>(providerAndId);
+                if (provider) {
                     url = provider->sourceURL();
                     scriptId = static_cast<int>(provider->asID());
                 }
                 int rawLine = frame.functionStartLine();
                 unsigned rawColumn = frame.functionStartColumn();
-                if (rawLine > 0)
-                    line = rawLine;
-                if (rawColumn != std::numeric_limits<unsigned>::max())
-                    column = static_cast<int>(rawColumn);
-                if (frame.hasExpressionInfo())
-                    sampleLine = static_cast<int>(frame.semanticLocation.lineColumn.line);
+                if (rawLine > 0 && rawColumn != std::numeric_limits<unsigned>::max()) {
+                    JSC::LineColumn lc { static_cast<unsigned>(rawLine), rawColumn };
+#if USE(BUN_JSC_ADDITIONS)
+                    if (provider) {
+                        auto& remap = vm.computeLineColumnWithSourcemap();
+                        if (remap)
+                            remap(vm, provider, lc, url);
+                    }
+#endif
+                    line = lc.line > 0 ? static_cast<int>(lc.line) : CpuProfileNode::kNoLineNumberInfo;
+                    column = lc.column != std::numeric_limits<unsigned>::max()
+                        ? static_cast<int>(lc.column)
+                        : CpuProfileNode::kNoColumnNumberInfo;
+                } else {
+                    if (rawLine > 0)
+                        line = rawLine;
+                    if (rawColumn != std::numeric_limits<unsigned>::max())
+                        column = static_cast<int>(rawColumn);
+                }
+                if (frame.hasExpressionInfo()) {
+                    JSC::LineColumn sampleLc = frame.semanticLocation.lineColumn;
+#if USE(BUN_JSC_ADDITIONS)
+                    if (provider) {
+                        auto& remap = vm.computeLineColumnWithSourcemap();
+                        WTF::String sampleUrl = provider->sourceURL();
+                        if (remap)
+                            remap(vm, provider, sampleLc, sampleUrl);
+                        // Drop the tick if it maps to a different source file
+                        // than the function definition (cross-module inlining).
+                        if (sampleUrl != url)
+                            sampleLc.line = 0;
+                    }
+#endif
+                    sampleLine = static_cast<int>(sampleLc.line);
+                }
             }
 
             WTF::StringBuilder keyBuilder;

@@ -1542,7 +1542,7 @@ pub mod bv2_impl {
                 unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
 
             let this_transpiler: &Transpiler<'a> = &*self.transpiler;
-            let this_compile = this_transpiler.options.compile;
+            let this_compile = this_transpiler.options.compile_mode.is_executable();
             let this_env = this_transpiler.env;
 
             // SAFETY: `self.transpiler` (and the data its `&'a` fields borrow)
@@ -2800,8 +2800,6 @@ pub mod bv2_impl {
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
             this.linker.options.footer = unsafe { interned_slice(&this.transpiler.options.footer) };
             this.linker.options.css_chunking = this.transpiler.options.css_chunking;
-            this.linker.options.compile_to_standalone_html =
-                this.transpiler.options.compile_to_standalone_html;
             this.linker.options.source_maps = this.transpiler.options.source_map;
             this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
@@ -2810,7 +2808,7 @@ pub mod bv2_impl {
             this.linker.options.target = this.transpiler.options.target;
             this.linker.options.output_format = this.transpiler.options.output_format;
             this.linker.options.generate_bytecode_cache = this.transpiler.options.bytecode;
-            this.linker.options.compile = this.transpiler.options.compile;
+            this.linker.options.compile_mode = this.transpiler.options.compile_mode;
             this.linker.options.metafile = this.transpiler.options.metafile;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
             this.linker.options.metafile_json_path =
@@ -4127,7 +4125,7 @@ pub mod bv2_impl {
                             }
                             let mut v = Vec::new();
                             template
-                                .print(&mut v, !self.transpiler.options.compile)
+                                .print(&mut v, !self.transpiler.options.compile_mode.is_executable())
                                 .expect("oom");
                             v.into_boxed_slice()
                         };

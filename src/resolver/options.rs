@@ -59,6 +59,35 @@ pub struct Conditions {
     pub require_types: crate::package_json::ConditionsMap,
 }
 
+impl Conditions {
+    /// The condition set for an exports/imports-map walk. A free-standing
+    /// method on the field (not `Resolver`) so call sites can keep a disjoint
+    /// `&mut` borrow of `Resolver::debug_logs` live in the same expression.
+    pub fn for_kind(
+        &self,
+        importer_is_type_script_declaration_file: bool,
+        kind: bun_ast::ImportKind,
+    ) -> &crate::package_json::ConditionsMap {
+        match kind {
+            bun_ast::ImportKind::Require | bun_ast::ImportKind::RequireResolve => {
+                if importer_is_type_script_declaration_file {
+                    &self.require_types
+                } else {
+                    &self.require
+                }
+            }
+            bun_ast::ImportKind::At | bun_ast::ImportKind::AtConditional => &self.style,
+            _ => {
+                if importer_is_type_script_declaration_file {
+                    &self.import_types
+                } else {
+                    &self.import
+                }
+            }
+        }
+    }
+}
+
 /// `Copy` tag selecting one of the extension-order lists owned by
 /// [`BundleOptions`]. Replaces the previous `*const [Box<[u8]>]`
 /// self-reference (`Resolver.extension_order` pointing into

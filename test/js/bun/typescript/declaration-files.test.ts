@@ -34,7 +34,7 @@ console.log("OK:", JSON.stringify(BUEvents));
 `,
   });
   const { stdout, stderr, exitCode } = await run(dir, "index.ts");
-  expect(stderr).not.toContain("SyntaxError");
+  expect(stderr).toBe("");
   expect(stdout).toBe(`OK: {"A":"a"}\n`);
   expect(exitCode).toBe(0);
 });
@@ -62,7 +62,7 @@ console.log(JSON.stringify(Object.values(api).map(v => typeof v)));
 `,
   });
   const { stdout, stderr, exitCode } = await run(dir, "index.ts");
-  expect(stderr).not.toContain("SyntaxError");
+  expect(stderr).toBe("");
   expect(JSON.parse(stdout.split("\n")[0])).toEqual([
     "Alias",
     "Client",
@@ -93,7 +93,7 @@ console.log(JSON.stringify(Object.keys(m).sort()));
 `,
   });
   const { stdout, stderr, exitCode } = await run(dir, "main.ts");
-  expect(stderr).not.toContain("SyntaxError");
+  expect(stderr).toBe("");
   expect(JSON.parse(stdout.trim())).toEqual(["A", "B"]);
   expect(exitCode).toBe(0);
 });
@@ -115,9 +115,32 @@ console.log(JSON.stringify(Object.keys(m).sort()));
 `,
   });
   const { stdout, stderr, exitCode } = await run(dir, "main.ts");
-  expect(stderr).not.toContain("Cannot find module");
-  expect(stderr).not.toContain("SyntaxError");
+  expect(stderr).toBe("");
   expect(JSON.parse(stdout.trim())).toEqual(["Options", "Prettify"]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("declaration sibling resolution covers .js, .mjs and .cjs specifiers", async () => {
+  using dir = tempDir("dts-sibling-exts", {
+    "a.d.ts": `export type AType = 1;
+`,
+    "b.d.mts": `export interface BType {}
+`,
+    "c.d.cts": `export type CType = 2;
+`,
+    // ".js" maps to a ".d.ts" sibling, or falls back to ".d.mts" when no
+    // ".d.ts" exists; ".cjs" maps to ".d.cts".
+    "wrapper.d.ts": `export { AType } from "./a.js";
+export { BType } from "./b.js";
+export { CType } from "./c.cjs";
+`,
+    "main.ts": `import * as m from "./wrapper.d.ts";
+console.log(JSON.stringify(Object.keys(m).sort()));
+`,
+  });
+  const { stdout, stderr, exitCode } = await run(dir, "main.ts");
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual(["AType", "BType", "CType"]);
   expect(exitCode).toBe(0);
 });
 
@@ -147,7 +170,7 @@ console.log(JSON.stringify(Object.keys(m)));
 `,
   });
   const { stdout, stderr, exitCode } = await run(dir, "main.ts");
-  expect(stderr).not.toContain("SyntaxError");
+  expect(stderr).toBe("");
   expect(JSON.parse(stdout.trim())).toEqual(["LibOptions"]);
   expect(exitCode).toBe(0);
 });
@@ -162,7 +185,7 @@ console.log(value);
 `,
   });
   const { stdout, stderr, exitCode } = await run(dir, "index.ts");
-  expect(stderr).not.toContain("SyntaxError");
+  expect(stderr).toBe("");
   expect(stdout).toBe("42\n");
   expect(exitCode).toBe(0);
 });
@@ -179,6 +202,7 @@ console.log(JSON.stringify(Object.keys(m)));
 `,
   });
   const { stdout, stderr, exitCode } = await run(dir, "index.ts");
+  expect(stderr).toBe("");
   expect(stdout).toBe(`["real"]\n`);
   expect(exitCode).toBe(0);
 });

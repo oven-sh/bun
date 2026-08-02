@@ -2687,29 +2687,10 @@ impl<'a> Resolver<'a> {
                                     // directory path accidentally being interpreted as URL escapes.
                                     {
                                         let esm_resolution = ESModule {
-                                            conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
-                                                    if self.importer_is_type_script_declaration_file
-                                                    {
-                                                        &self.opts.conditions.require_types
-                                                    } else {
-                                                        &self.opts.conditions.require
-                                                    }
-                                                }
-                                                ast::ImportKind::At
-                                                | ast::ImportKind::AtConditional => {
-                                                    &self.opts.conditions.style
-                                                }
-                                                _ => {
-                                                    if self.importer_is_type_script_declaration_file
-                                                    {
-                                                        &self.opts.conditions.import_types
-                                                    } else {
-                                                        &self.opts.conditions.import
-                                                    }
-                                                }
-                                            },
+                                            conditions: self.opts.conditions.for_kind(
+                                                self.importer_is_type_script_declaration_file,
+                                                kind,
+                                            ),
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
                                         }
@@ -2756,29 +2737,10 @@ impl<'a> Resolver<'a> {
                                     let extname = bun_paths::extension(esm.subpath);
                                     if extname == b".js" && esm.subpath.len() > 3 {
                                         let esm_resolution = ESModule {
-                                            conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
-                                                    if self.importer_is_type_script_declaration_file
-                                                    {
-                                                        &self.opts.conditions.require_types
-                                                    } else {
-                                                        &self.opts.conditions.require
-                                                    }
-                                                }
-                                                ast::ImportKind::At
-                                                | ast::ImportKind::AtConditional => {
-                                                    &self.opts.conditions.style
-                                                }
-                                                _ => {
-                                                    if self.importer_is_type_script_declaration_file
-                                                    {
-                                                        &self.opts.conditions.import_types
-                                                    } else {
-                                                        &self.opts.conditions.import
-                                                    }
-                                                }
-                                            },
+                                            conditions: self.opts.conditions.for_kind(
+                                                self.importer_is_type_script_declaration_file,
+                                                kind,
+                                            ),
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
                                         }
@@ -3210,25 +3172,10 @@ impl<'a> Resolver<'a> {
                                     // directory path accidentally being interpreted as URL escapes.
                                     {
                                         let esm_resolution = ESModule {
-                                            conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
-                                                    if self.importer_is_type_script_declaration_file
-                                                    {
-                                                        &self.opts.conditions.require_types
-                                                    } else {
-                                                        &self.opts.conditions.require
-                                                    }
-                                                }
-                                                _ => {
-                                                    if self.importer_is_type_script_declaration_file
-                                                    {
-                                                        &self.opts.conditions.import_types
-                                                    } else {
-                                                        &self.opts.conditions.import
-                                                    }
-                                                }
-                                            },
+                                            conditions: self.opts.conditions.for_kind(
+                                                self.importer_is_type_script_declaration_file,
+                                                kind,
+                                            ),
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
                                         }
@@ -3261,25 +3208,10 @@ impl<'a> Resolver<'a> {
                                     let extname = bun_paths::extension(esm.subpath);
                                     if extname == b".js" && esm.subpath.len() > 3 {
                                         let esm_resolution = ESModule {
-                                            conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
-                                                    if self.importer_is_type_script_declaration_file
-                                                    {
-                                                        &self.opts.conditions.require_types
-                                                    } else {
-                                                        &self.opts.conditions.require
-                                                    }
-                                                }
-                                                _ => {
-                                                    if self.importer_is_type_script_declaration_file
-                                                    {
-                                                        &self.opts.conditions.import_types
-                                                    } else {
-                                                        &self.opts.conditions.import
-                                                    }
-                                                }
-                                            },
+                                            conditions: self.opts.conditions.for_kind(
+                                                self.importer_is_type_script_declaration_file,
+                                                kind,
+                                            ),
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
                                         }
@@ -4911,22 +4843,10 @@ impl<'a> Resolver<'a> {
         // the `ESModule` is constructed as a temporary whose
         // borrow of `self.debug_logs` ends as soon as `resolve_imports` returns.
         let esm_resolution = ESModule {
-            conditions: match kind {
-                ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
-                    if self.importer_is_type_script_declaration_file {
-                        &self.opts.conditions.require_types
-                    } else {
-                        &self.opts.conditions.require
-                    }
-                }
-                _ => {
-                    if self.importer_is_type_script_declaration_file {
-                        &self.opts.conditions.import_types
-                    } else {
-                        &self.opts.conditions.import
-                    }
-                }
-            },
+            conditions: self
+                .opts
+                .conditions
+                .for_kind(self.importer_is_type_script_declaration_file, kind),
             debug_logs: self.debug_logs.as_mut(),
             module_type: &mut module_type,
         }

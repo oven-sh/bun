@@ -65,7 +65,7 @@ extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObje
 
 extern "C" void JSC_JSModuleRecord__addIndirectExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t exportName, uint32_t importName, uint32_t moduleName)
 {
-    moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createIndirect(getFromIdentifierArray(moduleRecord->vm(), identifierArray, exportName), getFromIdentifierArray(moduleRecord->vm(), identifierArray, importName), getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName)));
+    moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createIndirect(getFromIdentifierArray(moduleRecord->vm(), identifierArray, exportName), getFromIdentifierArray(moduleRecord->vm(), identifierArray, importName), getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), JSC::ScriptFetchParameters::Type::JavaScript));
 }
 extern "C" void JSC_JSModuleRecord__addLocalExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t exportName, uint32_t localName)
 {
@@ -73,11 +73,11 @@ extern "C" void JSC_JSModuleRecord__addLocalExport(JSModuleRecord* moduleRecord,
 }
 extern "C" void JSC_JSModuleRecord__addNamespaceExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t exportName, uint32_t moduleName)
 {
-    moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createNamespace(getFromIdentifierArray(moduleRecord->vm(), identifierArray, exportName), getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName)));
+    moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createNamespace(getFromIdentifierArray(moduleRecord->vm(), identifierArray, exportName), getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), JSC::ScriptFetchParameters::Type::JavaScript));
 }
 extern "C" void JSC_JSModuleRecord__addStarExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName)
 {
-    moduleRecord->addStarExportEntry(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName));
+    moduleRecord->addStarExportEntry(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), JSC::ScriptFetchParameters::Type::JavaScript);
 }
 static inline AbstractModuleRecord::ModulePhase toModulePhase(bool phaseDefer)
 {
@@ -309,7 +309,7 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
 
     {
         Vector<String> sortedStarExports;
-        for (const auto& moduleName : moduleRecord->starExportEntries()) {
+        for (const auto& [moduleName, moduleRequestType] : moduleRecord->starExportEntries()) {
             WTF::StringPrintStream line;
             line.print("      [Star] module(", moduleName.get(), ")\n");
             sortedStarExports.append(line.toString());

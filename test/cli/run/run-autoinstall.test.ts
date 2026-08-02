@@ -233,7 +233,9 @@ test("--prefer-offline resolves latest to the newest stable cached version", asy
 
   // Keep only the extracted packages and their version index.
   online = false;
-  for (const entry of readdirSync(cacheDir).filter(e => e.endsWith(".npm"))) {
+  const manifests = readdirSync(cacheDir).filter(e => e.endsWith(".npm"));
+  expect(manifests.length).toBeGreaterThan(0);
+  for (const entry of manifests) {
     rmSync(join(cacheDir, entry), { force: true });
   }
   requests.length = 0;

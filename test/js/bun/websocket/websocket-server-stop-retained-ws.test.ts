@@ -1,12 +1,9 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// https://github.com/oven-sh/bun/issues/36788
-// A ServerWebSocket retained in JS after its connection closed holds a raw
-// pointer into the server's native allocation. Once the server was stopped
-// and its JS wrapper collected, the native server was freed while the
-// retained socket wrapper was still alive, so ws.publish()/ws.send() read
-// freed memory (heap-use-after-free under ASAN).
+// A closed ServerWebSocket retained in JS points into the server's native
+// allocation; stopping and collecting the server freed it, so ws.publish()
+// and ws.send() read freed memory. Found investigating #36788.
 test("retained ServerWebSocket stays usable after server.stop() and GC", async () => {
   using dir = tempDir("ws-stop-retained", {
     "repro.js": `
@@ -73,6 +70,7 @@ test("retained ServerWebSocket stays usable after server.stop() and GC", async (
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).toBe("");
   expect(stdout.trim()).toBe("[3,0,0,false]");
   expect(exitCode).toBe(0);
 });

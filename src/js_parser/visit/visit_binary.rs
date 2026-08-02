@@ -99,6 +99,11 @@ pub struct BinaryExpressionVisitor {
 
     /// Input for visiting the left child
     pub(crate) left_in: ExprIn,
+
+    /// Captured in `check_and_prepare` (before visiting `left`) so a nested
+    /// call/tagged-template inside `left` can't clobber the pointer match.
+    pub(crate) is_call_target: bool,
+    pub(crate) is_template_tag: bool,
 }
 
 impl BinaryExpressionVisitor {
@@ -112,11 +117,10 @@ impl BinaryExpressionVisitor {
         // invariant is encapsulated there. The borrow is on the `v.e` field
         // only, so `v.loc` reads below split-borrow cleanly.
         let e_handle: StoreRef<E::Binary> = v.e;
-        let e_ptr: *mut E::Binary = e_handle.as_ptr();
+        let is_call_target = v.is_call_target;
+        let is_template_tag = v.is_template_tag;
         let e_ = &mut *v.e;
 
-        let is_call_target =
-            matches!(p.call_target, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
         let was_anonymous_named_expr = e_.right.is_anonymous_named();
         let prev_decorator_class_name = p.decorator_class_name;
 
@@ -225,7 +229,9 @@ impl BinaryExpressionVisitor {
                     } else {
                         // The left operand has no side effects, but we need to preserve
                         // the comma operator semantics when used as a call target
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
+                        if (is_call_target || is_template_tag)
+                            && e_.right.has_value_for_this_in_call()
+                        {
                             // Keep the comma expression to strip "this" binding
                             e_.left = Expr {
                                 data: prefill::data::ZERO,
@@ -369,7 +375,10 @@ impl BinaryExpressionVisitor {
                         // "(null ?? fn)()" => "fn()"
                         // "(null ?? this.fn)" => "this.fn"
                         // "(null ?? this.fn)()" => "(0, this.fn)()"
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
+                        // "(null ?? this.fn)`x`" => "(0, this.fn)`x`"
+                        if (is_call_target || is_template_tag)
+                            && e_.right.has_value_for_this_in_call()
+                        {
                             return Expr::join_with_comma(
                                 Expr {
                                     data: ExprData::ENumber(E::Number::new(0.0)),
@@ -392,7 +401,9 @@ impl BinaryExpressionVisitor {
                     // "(0 || fn)()" => "fn()"
                     // "(0 || this.fn)" => "this.fn"
                     // "(0 || this.fn)()" => "(0, this.fn)()"
-                    if is_call_target && e_.right.has_value_for_this_in_call() {
+                    // "(0 || this.fn)`x`" => "(0, this.fn)`x`"
+                    if (is_call_target || is_template_tag) && e_.right.has_value_for_this_in_call()
+                    {
                         return Expr::join_with_comma(
                             Expr {
                                 data: prefill::data::ZERO,
@@ -414,7 +425,10 @@ impl BinaryExpressionVisitor {
                         // "(1 && fn)()" => "fn()"
                         // "(1 && this.fn)" => "this.fn"
                         // "(1 && this.fn)()" => "(0, this.fn)()"
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
+                        // "(1 && this.fn)`x`" => "(0, this.fn)`x`"
+                        if (is_call_target || is_template_tag)
+                            && e_.right.has_value_for_this_in_call()
+                        {
                             return Expr::join_with_comma(
                                 Expr {
                                     data: prefill::data::ZERO,
@@ -711,6 +725,17 @@ impl BinaryExpressionVisitor {
                     if let Some(obj) = dot.target.data.e_object() {
                         if obj.properties.len_u32() == 0 {
                             if dot.name != b"__proto__" {
+                                if (is_call_target || is_template_tag)
+                                    && e_.right.has_value_for_this_in_call()
+                                {
+                                    return Expr::join_with_comma(
+                                        Expr {
+                                            data: prefill::data::ZERO,
+                                            loc: e_.left.loc,
+                                        },
+                                        e_.right,
+                                    );
+                                }
                                 return e_.right;
                             }
                         }
@@ -776,6 +801,12 @@ impl BinaryExpressionVisitor {
             }
             _ => {}
         }
+
+        let e_ptr: *mut E::Binary = e_handle.as_ptr();
+        v.is_call_target =
+            matches!(p.call_target, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
+        v.is_template_tag =
+            matches!(p.template_tag, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
 
         v.left_in = ExprIn {
             assign_target: Op::Code::binary_assign_target(e_.op),

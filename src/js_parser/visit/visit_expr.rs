@@ -692,8 +692,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
-        if e_.tag.is_some() {
-            p.visit_expr(e_.tag.as_mut().unwrap());
+        if let Some(tag) = e_.tag.as_mut() {
+            p.template_tag = tag.data;
+            p.visit_expr(tag);
         }
 
         // Visit the interpolation values before the macro dispatch below: its
@@ -820,6 +821,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             e: e_,
             loc: expr.loc,
             left_in: ExprIn::default(),
+            is_call_target: false,
+            is_template_tag: false,
         };
 
         // Everything uses a single stack to reduce allocation overhead. This stack
@@ -867,6 +870,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 e: left_binary.unwrap(),
                 loc: left.loc,
                 left_in: ExprIn::default(),
+                is_call_target: false,
+                is_template_tag: false,
             };
         }
 
@@ -885,6 +890,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let expr = *e;
         let mut e_ = expr.data.e_index().expect("infallible: variant checked");
         let is_call_target = matches!(p.call_target, Data::EIndex(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
+        let is_template_tag = matches!(p.template_tag, Data::EIndex(tt) if core::ptr::eq(&raw const *e_, &raw const *tt));
         let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
 
         // "a['b']" => "a.b"
@@ -904,6 +910,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     if is_call_target {
                         p.call_target = dot.data;
+                    }
+                    if is_template_tag {
+                        p.template_tag = dot.data;
                     }
                     if is_delete_target {
                         p.delete_target = dot.data;
@@ -1020,6 +1029,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if is_call_target {
                                 p.call_target = dot.data;
                             }
+                            if is_template_tag {
+                                p.template_tag = dot.data;
+                            }
                             if is_delete_target {
                                 p.delete_target = dot.data;
                             }
@@ -1041,7 +1053,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 unwrapped.loc,
                                 IdentifierOpts::default()
                                     .with_is_call_target(is_call_target)
-                                    // .is_template_tag = is_template_tag,
+                                    .with_is_template_tag(is_template_tag)
                                     .with_is_delete_target(is_delete_target)
                                     .with_assign_target(in_.assign_target),
                             ) {
@@ -1057,7 +1069,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let target = e_.target.unwrap_inlined();
         let index = e_.index.unwrap_inlined();
 
-        if p.options.features.minify_syntax {
+        // `[obj.m][0]` / `"s"[n]` are property references into a temporary;
+        // folding them to a value in tag position would rebind `this`.
+        if p.options.features.minify_syntax && !is_template_tag {
             if let Some(number) = index.data.as_e_number() {
                 if number.value() >= 0.0
                     && number.value() < (usize::MAX as f64)
@@ -1335,6 +1349,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = expr.data.e_dot().expect("infallible: variant checked");
         let is_delete_target = matches!(p.delete_target, Data::EDot(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
         let is_call_target = matches!(p.call_target, Data::EDot(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
+        let is_template_tag = matches!(p.template_tag, Data::EDot(tt) if core::ptr::eq(&raw const *e_, &raw const *tt));
 
         // `p.define: &'a Define` is `Copy`; hoist so the `dots.get` borrow is
         // tied to `'a`, not `&*p`, and `&mut self` helpers below can be called
@@ -1427,9 +1442,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 e_.name_loc,
                 IdentifierOpts::default()
                     .with_is_call_target(is_call_target)
+                    .with_is_template_tag(is_template_tag)
                     .with_assign_target(in_.assign_target)
                     .with_is_delete_target(is_delete_target),
-                // .is_template_tag = p.template_tag != null,
             ) {
                 *e = _expr;
                 return;
@@ -1460,6 +1475,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = e.data.e_if().expect("infallible: variant checked");
         let is_call_target =
             matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
+        let is_template_tag = matches!(p.template_tag, Data::EIf(tt) if core::ptr::eq(&raw const *e_, &raw const *tt));
 
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;
@@ -1483,24 +1499,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.visit_expr(&mut e_.no);
                 p.is_control_flow_dead = old;
 
-                if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                    *e = SideEffects::simplify_unused_expr(p, e_.test)
-                        .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
-                        .join_with_comma(e_.yes);
-                    return;
-                }
-
                 // "(1 ? fn : 2)()" => "fn()"
                 // "(1 ? this.fn : 2)" => "this.fn"
                 // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-                if is_call_target && e_.yes.has_value_for_this_in_call() {
-                    *e = p
-                        .new_expr(E::Number::new(0.0), e_.test.loc)
-                        .join_with_comma(e_.yes);
-                    return;
+                // "(1 ? this.fn : 2)`x`" => "(0, this.fn)`x`"
+                let mut left = if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
+                    SideEffects::simplify_unused_expr(p, e_.test)
+                        .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
+                } else {
+                    p.new_expr(E::Missing {}, e_.test.loc)
+                };
+                if left.is_missing()
+                    && (is_call_target || is_template_tag)
+                    && e_.yes.has_value_for_this_in_call()
+                {
+                    left = p.new_expr(E::Number::new(0.0), e_.test.loc);
                 }
-
-                *e = e_.yes;
+                *e = left.join_with_comma(e_.yes);
                 return;
             } else {
                 // "false ? dead : live"
@@ -1511,23 +1526,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.visit_expr(&mut e_.no);
 
                 // "(a, false) ? b : c" => "a, c"
-                if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                    *e = SideEffects::simplify_unused_expr(p, e_.test)
+                // "(0 ? 1 : fn)()" => "fn()"
+                // "(0 ? 1 : this.fn)" => "this.fn"
+                // "(0 ? 1 : this.fn)()" => "(0, this.fn)()"
+                // "(0 ? 1 : this.fn)`x`" => "(0, this.fn)`x`"
+                let mut left = if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
+                    SideEffects::simplify_unused_expr(p, e_.test)
                         .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
-                        .join_with_comma(e_.no);
-                    return;
+                } else {
+                    p.new_expr(E::Missing {}, e_.test.loc)
+                };
+                if left.is_missing()
+                    && (is_call_target || is_template_tag)
+                    && e_.no.has_value_for_this_in_call()
+                {
+                    left = p.new_expr(E::Number::new(0.0), e_.test.loc);
                 }
-
-                // "(1 ? fn : 2)()" => "fn()"
-                // "(1 ? this.fn : 2)" => "this.fn"
-                // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-                if is_call_target && e_.no.has_value_for_this_in_call() {
-                    *e = p
-                        .new_expr(E::Number::new(0.0), e_.test.loc)
-                        .join_with_comma(e_.no);
-                    return;
-                }
-                *e = e_.no;
+                *e = left.join_with_comma(e_.no);
                 return;
             }
         }

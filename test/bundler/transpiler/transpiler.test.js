@@ -3919,6 +3919,104 @@ console.log(foo, array);
       expectPrinted("(0, func())", "func()");
     });
 
+    it("tagged-template tag folds preserve `this`", () => {
+      const expectPrinted = (code, out) => {
+        expect(parsed(code, true, true, transpilerMinifySyntax)).toBe(out);
+      };
+
+      // A tagged template binds `this` the same way a call does: folding a
+      // wrapper away so that a member expression lands directly in tag
+      // position would change the receiver. These match the call-target
+      // cases above, emitting `(0, obj.m)` to strip `this`.
+      expectPrinted("(0, obj.m)`x`", "(0, obj.m)`x`");
+      expectPrinted("(0, obj[k])`x`", "(0, obj[k])`x`");
+      expectPrinted("(1 ? obj.m : 0)`x`", "(0, obj.m)`x`");
+      expectPrinted("(0 ? 0 : obj.m)`x`", "(0, obj.m)`x`");
+      // Statically-known test whose side-effect class is `CouldHaveSideEffects`
+      // but simplifies away entirely: the fold must still keep `(0, obj.m)`.
+      expectPrinted("(typeof x ? obj.m : 0)`x`", "(0, obj.m)`x`");
+      expectPrinted("(typeof x ? obj.m : 0)()", "(0, obj.m)()");
+      expectPrinted("(typeof x && 0 ? 0 : obj.m)`x`", "(0, obj.m)`x`");
+      expectPrinted("(typeof x && 0 ? 0 : obj.m)()", "(0, obj.m)()");
+      // When the test leaves a real side effect behind, the resulting comma
+      // already strips `this`; no extra `0,` is needed.
+      expectPrinted("(f() || 1 ? obj.m : 0)`x`", "(f(), obj.m)`x`");
+      expectPrinted("(null ?? obj.m)`x`", "(0, obj.m)`x`");
+      expectPrinted("(1 && obj.m)`x`", "(0, obj.m)`x`");
+      expectPrinted("(0 || obj.m)`x`", "(0, obj.m)`x`");
+      // A call/tagged-template nested inside the comma's left operand must not
+      // clobber the outer binary's call/tag-position capture.
+      expectPrinted("((() => f`a`), obj.m)`x`", "(0, obj.m)`x`");
+      expectPrinted("((true ? 0 : f`a`), obj.m)`x`", "(0, obj.m)`x`");
+      expectPrinted("((() => f()), obj.m)()", "(0, obj.m)()");
+      // The `{}.x ??= v` / `{}.x ||= v` HMR fold also needs the guard.
+      expectPrinted("({}.x ??= obj.m)`x`", "(0, obj.m)`x`");
+      expectPrinted("({}.x ??= obj.m)()", "(0, obj.m)()");
+      expectPrinted("({}.x ||= obj.m)`x`", "(0, obj.m)`x`");
+      expectPrinted("({}.x ??= fn)`x`", "fn`x`");
+      // Single-use-symbol inlining must not move a member expression into
+      // identifier tag position (mirrors the existing call-target guard).
+      const subst = src => parsed(src, true, false, transpilerMinifySyntax);
+      expect(subst("function f(obj) { let x = obj.m; return x`t`; }")).toBe(
+        "function f(obj) {\n  let x = obj.m;\n  return x`t`;\n}",
+      );
+      expect(subst("function f(obj) { let x = obj[k]; return x`t`; }")).toBe(
+        "function f(obj) {\n  let x = obj[k];\n  return x`t`;\n}",
+      );
+      expect(subst("function f(obj) { let x = obj.m; return x; }")).toBe("function f(obj) {\n  return obj.m;\n}");
+      // Property-access folds that replace a reference with its value bail
+      // out entirely in tag position.
+      expectPrinted("[obj.m][0]`x`", "[obj.m][0]`x`");
+      expectPrinted("({ m: obj.m }).m`x`", "{ m: obj.m }.m`x`");
+      expectPrinted('({ m: obj.m })["m"]`x`', "{ m: obj.m }.m`x`");
+
+      // Still folded when the wrapped value carries no `this`.
+      expectPrinted("(0, fn)`x`", "fn`x`");
+      expectPrinted("(1 ? fn : 0)`x`", "fn`x`");
+      expectPrinted("(null ?? fn)`x`", "fn`x`");
+      expectPrinted("(1 && fn)`x`", "fn`x`");
+      expectPrinted("(0 || fn)`x`", "fn`x`");
+
+      // Still folded outside call/tag position.
+      expectPrinted("(0, obj.m)", "obj.m");
+      expectPrinted("[obj.m][0]", "obj.m");
+      expectPrinted("({ m: obj.m }).m", "obj.m");
+    });
+
+    it("tagged-template tag `this` matches node at runtime", async () => {
+      const src = `
+        var obj = { m() { return this === obj; } };
+        var x = 1, f = () => 0;
+        console.log(JSON.stringify([
+          (0, obj.m)\`x\`,
+          (1 ? obj.m : 0)\`x\`,
+          (0 ? 0 : obj.m)\`x\`,
+          (typeof x ? obj.m : 0)\`x\`,
+          (typeof x ? obj.m : 0)(),
+          (typeof x && 0 ? 0 : obj.m)\`x\`,
+          (null ?? obj.m)\`x\`,
+          (true && obj.m)\`x\`,
+          (false || obj.m)\`x\`,
+          ((() => f\`a\`), obj.m)\`x\`,
+          ((() => f()), obj.m)(),
+          ({}.x ??= obj.m)\`x\`,
+          ({}.x ??= obj.m)(),
+          (function(){ let y = obj.m; return y\`t\`; })(),
+          [obj.m][0]\`x\`,
+          ({ m: obj.m }).m\`x\`,
+          ({ m: obj.m })["m"]\`x\`,
+          obj.m\`x\`,
+        ]));
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        "[false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,true]\n",
+      );
+      expect(exitCode).toBe(0);
+    });
+
     it("constant folding", () => {
       const expectPrinted = (code, out) => {
         expect(parsed(code, true, true, transpilerMinifySyntax)).toBe(out);

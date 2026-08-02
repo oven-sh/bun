@@ -444,6 +444,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // syntactic constructs as appropriate.
     pub(crate) stmt_expr_value: js_ast::ExprData,
     pub(crate) call_target: js_ast::ExprData,
+    pub(crate) template_tag: js_ast::ExprData,
     pub(crate) delete_target: js_ast::ExprData,
     pub(crate) loop_body: js_ast::StmtData,
     pub(crate) module_scope: js_ast::StoreRef<js_ast::Scope>,
@@ -2646,6 +2647,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::ExprData::ETemplate(mut e) => {
                     if let Some(tag) = e.tag.as_mut() {
+                        // Don't substitute something into a template tag that could change "this"
+                        match replacement.data {
+                            js_ast::ExprData::EDot(_) | js_ast::ExprData::EIndex(_) => {
+                                if matches!(tag.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref))
+                                {
+                                    break 'outer;
+                                }
+                            }
+                            _ => {}
+                        }
                         match self.substitute_single_use_symbol_in_expr(
                             *tag,
                             r#ref,
@@ -8712,6 +8723,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             allow_in: true,
 
             call_target: null_expr_data(),
+            template_tag: null_expr_data(),
             delete_target: null_expr_data(),
             stmt_expr_value: null_expr_data(),
             loop_body: null_stmt_data(),

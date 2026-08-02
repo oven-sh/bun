@@ -699,13 +699,9 @@ it("unref should exit when no more work pending", async () => {
   expect(await process.exited).toBe(0);
 });
 
-// autoSelectFamily retries reinitialize the native handle (kReinitializeHandle);
-// an unref() applied while the lookup was still pending must carry over to the
-// handle that finally connects, or the connected socket keeps the process alive.
+// An unref() applied while lookup is pending must survive the autoSelectFamily handle reinit.
 it("unref survives an autoSelectFamily retry", async () => {
-  // Server bound to IPv4 loopback only; the injected async lookup lists ::1
-  // first so that attempt is refused and the connection retries on 127.0.0.1.
-  // unref() runs while the lookup is pending (handle still detached).
+  // IPv4-only server + injected lookup listing ::1 first forces a refused attempt then a retry; unref() runs mid-lookup.
   const server = createServer(() => {});
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   try {
@@ -730,8 +726,7 @@ it("unref survives an autoSelectFamily retry", async () => {
       stdout: "pipe",
       stderr: "inherit",
     });
-    // Once the sentinel timer fires nothing but the unref'd (connected,
-    // reading) socket remains, so the process must exit.
+    // After the sentinel timer only the unref'd socket remains, so the process must exit.
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout.trim().split("\n").sort()).toEqual(["connected 127.0.0.1", "timer"]);
     expect(exitCode).toBe(0);

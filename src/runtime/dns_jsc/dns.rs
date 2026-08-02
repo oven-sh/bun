@@ -119,8 +119,7 @@ bun_output::declare_scope!(DNSResolver, visible);
 const IANA_DNS_PORT: i32 = 53;
 
 // ──────────────────────────────────────────────────────────────────────────
-// dns_sd (macOS): DNSServiceGetAddrInfo over one shared mDNSResponder
-// connection — no per-lookup threads (unlike libinfo's async wrapper).
+// dns_sd (macOS): DNSServiceGetAddrInfo over one shared mDNSResponder connection, no per-lookup threads.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
@@ -1189,13 +1188,9 @@ impl GetAddrInfoRequest {
         request
     }
 
-    /// Reply callback (fires inside `DNSServiceProcessResult`); only records
-    /// state — completion happens after the drain in `on_readable`.
-    ///
+    /// Reply callback (inside `DNSServiceProcessResult`): records state; completion happens in `on_readable`.
     /// # Safety
-    /// `context` must be the `*mut GetAddrInfoRequest` registered via
-    /// `SharedConnection::start`; `address` (if non-null) must point at a
-    /// valid `sockaddr` of the family it declares.
+    /// `context` is the registered `*mut GetAddrInfoRequest`; `address`, if non-null, is a valid sockaddr.
     #[cfg(target_os = "macos")]
     pub(crate) unsafe extern "C" fn dns_sd_reply(
         _sd_ref: dns_sd::DNSServiceRef,
@@ -1210,8 +1205,7 @@ impl GetAddrInfoRequest {
         dns_sd::SharedConnection::note_reply(context);
         // SAFETY: context is the *mut GetAddrInfoRequest passed to start().
         let this: *mut Self = context.cast();
-        // SAFETY: `this` is the heap-allocated request; exclusive on the JS
-        // thread. `address` (if non-null) is a valid sockaddr per dns_sd.h.
+        // SAFETY: `this` is the live heap request (JS thread); `address` is valid per dns_sd.h.
         unsafe {
             (*this)
                 .backend
@@ -1221,10 +1215,7 @@ impl GetAddrInfoRequest {
         }
     }
 
-    /// Complete a dns_sd-backed request once its query is ready.
-    ///
-    /// # Safety
-    /// `this` must be the live heap `GetAddrInfoRequest`; consumed on every path.
+    /// Complete a dns_sd-backed request; `this` is the live heap request, consumed on every path.
     #[cfg(target_os = "macos")]
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn complete_dns_sd(this: *mut Self) {
@@ -1243,8 +1234,7 @@ impl GetAddrInfoRequest {
                 status,
                 results.len()
             );
-            // `drain_pending_host_native` routes on `result_any_to_js` returning
-            // `None` for the error path, which only `Addrinfo(null)` produces.
+            // Error path must be `Addrinfo(null)`: `drain_pending_host_native` keys on `result_any_to_js` == None.
             let any = if status == 0 {
                 GetAddrInfoResultAny::List(results)
             } else {
@@ -2595,8 +2585,7 @@ pub mod internal {
     fn lookup_dns_sd(req: *mut Request, loop_: jsc::EventLoopHandle) -> bool {
         // SAFETY: `req` is the live heap-allocated request owned by the caller.
         let Some(host) = (unsafe { (*req).key.host.as_ref() }) else {
-            // dns_sd requires a hostname; null-host falls through to blocking
-            // getaddrinfo(NULL, service, ...) on the work pool.
+            // Null host: fall through to getaddrinfo(NULL, service) on the work pool.
             return false;
         };
         if dns_sd::getaddrinfo_only_name(host.as_bytes()) {
@@ -2642,9 +2631,7 @@ pub mod internal {
     ) {
         dns_sd::SharedConnection::note_reply(context);
         let req: *mut Request = context.cast();
-        // SAFETY: `context` is the `req` pointer registered via
-        // `SharedConnection::start`; exclusive on the event-loop thread.
-        // `address` (if non-null) is a valid sockaddr per dns_sd.h.
+        // SAFETY: `context` is the registered `req` (event-loop thread); `address` is valid per dns_sd.h.
         unsafe {
             (*req)
                 .dns_sd
@@ -2653,9 +2640,7 @@ pub mod internal {
         };
     }
 
-    /// Complete a dns_sd-backed internal request: synthesize an `addrinfo`
-    /// chain from the accumulated sockaddrs and feed it through the existing
-    /// `process_results` interleave so happy-eyeballs ordering is preserved.
+    /// Complete an internal request: build an addrinfo chain and reuse `process_results` (happy-eyeballs order).
     #[cfg(target_os = "macos")]
     pub(super) fn dns_sd_complete(req: *mut Request) {
         // SAFETY: `req` is live and exclusively owned on the event-loop thread.
@@ -2680,9 +2665,7 @@ pub mod internal {
                 } else {
                     core::mem::size_of::<netc::sockaddr_in>()
                 };
-                // SAFETY: `Address` holds a family-consistent sockaddr in a
-                // sockaddr_storage; both buffers are at least `len` bytes and
-                // cannot overlap.
+                // SAFETY: both are sockaddr_storage-sized, `len` fits the family, no overlap.
                 unsafe {
                     core::ptr::copy_nonoverlapping(
                         r.address.as_sockaddr().cast::<u8>(),

@@ -1,7 +1,4 @@
-//! macOS `DNSServiceGetAddrInfo` backend: every lookup on an event loop is a
-//! `kDNSServiceFlagsShareConnection` subordinate multiplexed over one Unix
-//! domain socket to mDNSResponder (one fd, one kqueue registration, no
-//! per-lookup threads). See the banner in `dns.rs`.
+//! macOS DNSServiceGetAddrInfo backend: all lookups share one mDNSResponder connection (see dns.rs banner).
 
 use super::*;
 
@@ -60,8 +57,7 @@ unsafe extern "C" {
     ) -> DNSServiceErrorType;
 }
 
-/// Map a DNSServiceErrorType to an EAI_* code so existing error paths
-/// (`c_ares::Error::init_eai`, `after_result`) see what they expect.
+/// Map a DNSServiceErrorType to the EAI_* code the existing error paths expect.
 pub(crate) fn to_eai(err: DNSServiceErrorType) -> c_int {
     match err {
         ERR_NO_ERROR => 0,
@@ -79,8 +75,7 @@ pub(crate) fn protocol_for_family(family: bun_dns::Family) -> DNSServiceProtocol
     match family {
         bun_dns::Family::Inet => PROTOCOL_IPV4,
         bun_dns::Family::Inet6 => PROTOCOL_IPV6,
-        // Both explicitly (not 0): completion tracks per-family replies, so
-        // the requested set must be known up front.
+        // Both explicitly (not 0): completion tracks per-family replies.
         _ => PROTOCOL_IPV4 | PROTOCOL_IPV6,
     }
 }
@@ -93,29 +88,23 @@ pub(crate) fn protocol_for_hints(hints: &AddrInfo) -> DNSServiceProtocol {
     }
 }
 
-/// Literals getaddrinfo handles itself (`::1`, `127.1`, `0x7f000001`,
-/// `fe80::1%en0`); the daemon would query them as hostnames.
+/// Literals getaddrinfo handles itself (`::1`, `127.1`, `0x7f000001`, `fe80::1%en0`); the daemon would query them as names.
 pub(crate) fn getaddrinfo_only_name(name: &[u8]) -> bool {
     strings::is_ip_address(name)
         || strings::contains_char(name, b'%')
-        // inet_aton forms getaddrinfo accepts: `127.1`, `2130706433`,
-        // `0x7f000001`, `0177.0.0.1`.
+        // inet_aton forms: `127.1`, `2130706433`, `0x7f000001`, `0177.0.0.1`.
         || (name.first().is_some_and(|b| b.is_ascii_digit())
             && name
                 .iter()
                 .all(|b| b.is_ascii_hexdigit() || matches!(*b, b'.' | b'x' | b'X')))
 }
 
-/// `hints` bits dns_sd has no equivalent for (AI_V4MAPPED/AI_ALL/…);
-/// `AI_ADDRCONFIG` maps to `kDNSServiceFlagsSuppressUnusable` and is
-/// handled here.
+/// `hints` bits dns_sd can't express (AI_V4MAPPED/AI_ALL/...); AI_ADDRCONFIG maps to SuppressUnusable.
 pub(crate) fn getaddrinfo_only_flags(flags: c_int) -> bool {
     flags & !netc::AI_ADDRCONFIG != 0
 }
 
-/// `kDNSServiceFlagsSuppressUnusable` = daemon-side `AI_ADDRCONFIG`: a
-/// family with no routable address gets a local `NoSuchRecord` (localhost
-/// exempt). libinfo's getaddrinfo sets it too (mdns_module.c).
+/// SuppressUnusable = daemon-side AI_ADDRCONFIG (localhost exempt); libinfo's getaddrinfo sets it too.
 fn addrconfig_flags(protocol: DNSServiceProtocol) -> DNSServiceFlags {
     if protocol != (PROTOCOL_IPV4 | PROTOCOL_IPV6)
         || env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG
@@ -127,8 +116,7 @@ fn addrconfig_flags(protocol: DNSServiceProtocol) -> DNSServiceFlags {
     FLAGS_SUPPRESS_UNUSABLE
 }
 
-/// libinfo-style bound on waiting for the second family once the first
-/// has answered, instead of sitting out the daemon's full query timeout.
+/// libinfo-style bound on waiting for the second family once the first has answered.
 const SECOND_FAMILY_EXTRA_MS: i64 = 2000;
 
 /// The suppressed query always asked for both families.
@@ -140,35 +128,22 @@ fn now_ms() -> i64 {
     bun::timespec::now(bun::TimespecMockMode::AllowMockedTime).ms()
 }
 
-/// Per-query state for one `DNSServiceGetAddrInfo` subordinate, shared
-/// by the JS `dns.lookup` request and the internal connect-path request
-/// so both apply identical completion rules.
+/// Per-query state shared by the JS `dns.lookup` path and the internal connect path.
 pub(crate) struct QueryState {
     pub(crate) sd_ref: DNSServiceRef,
     pub(crate) results: bun_dns::ResultList,
-    /// First hard `DNSServiceErrorType` (NoSuchRecord/Timeout are
-    /// per-family negatives, not errors).
+    /// First hard error (NoSuchRecord/Timeout are per-family negatives, not errors).
     pub(crate) sd_error: DNSServiceErrorType,
-    /// A family reported `kDNSServiceErr_Timeout`; with no results this
-    /// is a transient EAI_AGAIN, not a definitive EAI_NONAME.
+    /// A family timed out: with no results this is EAI_AGAIN, not EAI_NONAME.
     saw_timeout: bool,
-    /// Last reply carried `MoreComing` and no other request's reply has
-    /// followed: more of this answer set is queued daemon-side. (If it never
-    /// comes, `kDNSServiceFlagsTimeout` still completes the request.)
+    /// Last reply had `MoreComing` and no other request's reply followed: more is queued daemon-side.
     awaiting_more: bool,
-    /// `kDNSServiceProtocol_*` bits with no reply yet; any family-tagged
-    /// callback (Add, NoSuchRecord, Timeout) clears its bit.
+    /// Protocol bits with no reply yet; any family-tagged callback clears its bit.
     pub(crate) pending_proto: DNSServiceProtocol,
-    /// Answers are in hand but something is outstanding (a silent family, or
-    /// a `MoreComing` continuation): the timestamp starts the
-    /// `SECOND_FAMILY_EXTRA_MS` early-out. A stale reply for a deallocated
-    /// subordinate is dropped by the client stub without a callback, so this
-    /// timer is also what clears an orphaned `awaiting_more`.
+    /// Answers arrived while something was outstanding; starts the early-out (also clears an orphaned `awaiting_more`).
     partial_at_ms: Option<i64>,
     gave_up_on_pending: bool,
-    /// Set when the query was issued with `SuppressUnusable`; an all-empty
-    /// answer under it is retried once without the flag before reporting
-    /// EAI_NONAME, in case the daemon's usability check false-negatived.
+    /// Issued with SuppressUnusable: an all-empty answer is retried once without it.
     used_suppress: bool,
     retried: bool,
     /// Kept so `finish()` can reissue the query for the retry.
@@ -194,8 +169,7 @@ impl QueryState {
         }
     }
 
-    /// A suppressed dual-family query that came back with nothing at all
-    /// gets one more try without the suppression.
+    /// A suppressed query that returned nothing at all gets one unsuppressed retry.
     fn should_retry_unsuppressed(&self) -> bool {
         self.used_suppress
             && !self.retried
@@ -204,9 +178,7 @@ impl QueryState {
             && !self.saw_timeout
     }
 
-    /// Absorb one callback from `DNSServiceGetAddrInfo`.
-    /// SAFETY: `address`, if non-null, points at a valid sockaddr of the
-    /// family it declares (guaranteed by dnssd_clientstub for the callback).
+    /// Absorb one callback. SAFETY: `address`, if non-null, is a valid sockaddr (dnssd_clientstub guarantees it).
     pub(crate) unsafe fn record_reply(
         &mut self,
         flags: DNSServiceFlags,
@@ -215,8 +187,7 @@ impl QueryState {
         ttl: u32,
     ) {
         self.awaiting_more = flags & FLAGS_MORE_COMING != 0;
-        // dnssd_clientstub always passes a family-tagged sockaddr for A/AAAA
-        // replies (including NoSuchRecord/Timeout); only PolicyDenied is null.
+        // Only PolicyDenied passes a null sockaddr; A/AAAA replies (incl. negatives) are family-tagged.
         if address.is_null() {
             if self.sd_error == 0 {
                 self.sd_error = error_code;
@@ -225,8 +196,7 @@ impl QueryState {
         }
         // SAFETY: caller contract.
         let fam = unsafe { (*address).sa_family } as i32;
-        // Any reply for a family retires its pending bit; whether the
-        // whole answer set has arrived is tracked by `awaiting_more`.
+        // Any reply retires the family's bit; completeness is tracked by `awaiting_more`.
         self.pending_proto &= !if fam == netc::AF_INET6 {
             PROTOCOL_IPV6
         } else {
@@ -260,8 +230,7 @@ impl QueryState {
             || (self.pending_proto == 0 && !self.awaiting_more)
     }
 
-    /// Deadline for giving up on whatever is still outstanding (a silent
-    /// family, or an unanswered `MoreComing`) once answers are in hand.
+    /// Deadline for giving up on whatever is still outstanding once answers are in hand.
     pub(crate) fn early_out_deadline_ms(&self) -> Option<i64> {
         if self.gave_up_on_pending || self.results.is_empty() {
             return None;
@@ -285,9 +254,7 @@ impl QueryState {
 
     pub(crate) fn take_results(&mut self) -> bun_dns::ResultList {
         let mut results = core::mem::take(&mut self.results);
-        // Arrival order across families races (each family is a separate
-        // A/AAAA question upstream); getaddrinfo sorted with the RFC 6724
-        // default policy, which puts IPv6 first when both are configured.
+        // Family arrival order races upstream; match getaddrinfo's RFC 6724 default (IPv6 first).
         results.sort_by_key(|r| r.address.family() != netc::AF_INET6);
         results
     }
@@ -319,49 +286,37 @@ impl Inflight {
     }
 }
 
-/// One per event loop. Owns the primary `DNSServiceRef` and its `FilePoll`;
-/// every lookup is a `kDNSServiceFlagsShareConnection` subordinate on it.
+/// One per event loop: owns the primary `DNSServiceRef` + `FilePoll`; lookups are ShareConnection subordinates.
 pub(crate) struct SharedConnection {
     main_ref: DNSServiceRef,
     file_poll: NonNull<FilePoll>,
     ctx: Async::EventLoopCtx,
     inflight: Vec<Inflight>,
-    /// `context` of the previous reply: a request's contiguous run of
-    /// replies has ended once a different request's reply follows it.
+    /// `context` of the previous reply (a different one ends the prior request's contiguous run).
     last_ctx: *mut c_void,
-    /// Runtime-heap timer for `SECOND_FAMILY_EXTRA_MS` early-outs (armed
-    /// only on JS threads; the daemon's own timeout is the backstop on the
-    /// HTTP-thread loop).
+    /// Early-out timer (JS threads only; the daemon timeout backstops other loops).
     pub(crate) early_out_timer: JsCell<EventLoopTimer>,
     /// Deadline the timer is currently armed for (0 = disarmed).
     early_out_armed_for: Cell<i64>,
 }
-
-bun_event_loop::impl_timer_owner!(SharedConnection; from_early_out_timer_ptr => early_out_timer);
 
 thread_local! {
     static SHARED: Cell<*mut SharedConnection> = const { Cell::new(ptr::null_mut()) };
 }
 
 impl SharedConnection {
-    /// The connection registered for this thread, if any. Callers must not
-    /// hold the returned borrow across a call that can re-enter here
-    /// (`DNSServiceProcessResult`, `finish`).
+    /// This thread's connection; don't hold the borrow across `DNSServiceProcessResult`/`finish`.
     fn current<'a>() -> Option<&'a mut Self> {
-        // SAFETY: SHARED holds either null or the live heap connection for
-        // this thread; access is event-loop-thread-only.
+        // SAFETY: SHARED is null or this thread's live heap connection.
         unsafe { SHARED.get().as_mut() }
     }
 
     fn file_poll(&mut self) -> &mut FilePoll {
-        // SAFETY: `file_poll` is the live hive slot set in `get()` and owned
-        // by this connection until `destroy`.
+        // SAFETY: `file_poll` is the live hive slot owned by this connection until `destroy`.
         unsafe { self.file_poll.as_mut() }
     }
 
-    /// Lazily create the shared connection for this event loop. Returns
-    /// `None` if mDNSResponder is unreachable; the caller falls back to
-    /// blocking `getaddrinfo` on the work pool.
+    /// Lazily connect; `None` (caller falls back to getaddrinfo) if mDNSResponder is unreachable.
     pub(crate) fn get<'a>(ctx: Async::EventLoopCtx) -> Option<&'a mut Self> {
         if let Some(existing) = Self::current() {
             return Some(existing);
@@ -374,7 +329,14 @@ impl SharedConnection {
             return None;
         }
         // SAFETY: FFI; `main_ref` is the live ref just returned above.
-        let fd = sys::Fd::from_native(unsafe { DNSServiceRefSockFD(main_ref) });
+        let raw_fd = unsafe { DNSServiceRefSockFD(main_ref) };
+        if raw_fd < 0 {
+            bun_output::scoped_log!(dns, "DNSServiceRefSockFD returned {}", raw_fd);
+            // SAFETY: FFI; releasing the ref we just created.
+            unsafe { DNSServiceRefDeallocate(main_ref) };
+            return None;
+        }
+        let fd = sys::Fd::from_native(raw_fd);
         let mut this = Box::new(Self {
             main_ref,
             file_poll: NonNull::dangling(),
@@ -416,8 +378,7 @@ impl SharedConnection {
         Self::current()
     }
 
-    /// Start a subordinate query and register it in-flight (keeping the
-    /// process alive while any is pending). `None` if the daemon rejected it.
+    /// Start a subordinate query and track it (keeps the process alive); `None` if the daemon refused.
     pub(crate) fn start(
         &mut self,
         owner: Inflight,
@@ -432,8 +393,7 @@ impl SharedConnection {
             let ctx = self.ctx;
             self.file_poll().enable_keeping_process_alive(ctx);
         }
-        // SAFETY: `owner` is the caller's live request; the connection now
-        // tracks it until `finish()`.
+        // SAFETY: `owner` is the caller's live request, tracked here until `finish()`.
         let q = unsafe { owner.query() };
         q.sd_ref = sub;
         q.used_suppress = suppress != 0;
@@ -451,12 +411,9 @@ impl SharedConnection {
         callback: GetAddrInfoReply,
         context: *mut c_void,
     ) -> Option<DNSServiceRef> {
-        // `sub` starts as a copy of the primary ref, as ShareConnection
-        // requires.
+        // ShareConnection requires `sub` to start as a copy of the primary ref.
         let mut sub: DNSServiceRef = self.main_ref;
-        // SAFETY: FFI; `hostname` is NUL-terminated and copied by dns_sd
-        // before returning. `context` is stored, not dereferenced, until
-        // a reply arrives inside `on_readable`.
+        // SAFETY: FFI; `hostname` is NUL-terminated (copied by dns_sd); `context` is only stored.
         let err = unsafe {
             DNSServiceGetAddrInfo(
                 &raw mut sub,
@@ -475,10 +432,7 @@ impl SharedConnection {
         Some(sub)
     }
 
-    /// Called first from every reply callback (inside `on_readable`, where no
-    /// connection borrow is held): when the wire moves to a different
-    /// request, the previous one's contiguous run — and its `MoreComing` —
-    /// is over.
+    /// Called first from every reply callback: a different `context` ends the previous request's `MoreComing` run.
     pub(crate) fn note_reply(context: *mut c_void) {
         let Some(this) = Self::current() else {
             return;
@@ -495,35 +449,27 @@ impl SharedConnection {
         this.last_ctx = context;
     }
 
-    /// Socket readable: `DNSServiceProcessResult` drains every buffered
-    /// reply (firing callbacks inline), then complete queries are finished.
+    /// Socket readable: drain every buffered reply (callbacks fire inline), then finish complete queries.
     pub(crate) fn on_readable(this: *mut Self) {
-        // SAFETY: `this` is the live connection the FilePoll was registered
-        // with; only the primary ref is read here.
+        // SAFETY: `this` is the live connection registered with the FilePoll.
         let main_ref = unsafe { (*this).main_ref };
-        // One scope across `finish()` so the microtask drain (which may
-        // re-enter `start()` or teardown) runs after we let go of `this`.
+        // One scope across `finish()` so the microtask drain runs after we let go of `this`.
         let _exit = event_loop_scope();
 
-        // Callbacks reach per-request state via `context`; no `&mut Self`
-        // is live across this call.
-        // SAFETY: FFI; `main_ref` is the live primary connection.
+        // SAFETY: FFI; `main_ref` is live and no `&mut Self` is held (callbacks use `context`).
         let rc = unsafe { DNSServiceProcessResult(main_ref) };
         let Some(this) = Self::current() else {
             return;
         };
         if rc != ERR_NO_ERROR {
             bun_output::scoped_log!(dns, "DNSServiceProcessResult: {}", rc);
-            // Primary is defunct: detach so re-entrant lookups reconnect, fail
-            // subordinates *before* freeing the parent (dns_sd.h: freeing a
-            // parent frees its subordinates), then destroy it.
+            // Defunct primary: detach, fail subordinates before freeing the parent (dns_sd.h), destroy.
             let ready = core::mem::take(&mut this.inflight);
             let detached = SHARED.replace(ptr::null_mut());
             for inf in ready {
                 Self::finish(inf, Some(rc));
             }
-            // SAFETY: `detached` is the connection just removed from
-            // `SHARED`, with `inflight` drained above.
+            // SAFETY: `detached` was just removed from SHARED and drained.
             unsafe { Self::destroy(detached) };
             return;
         }
@@ -534,8 +480,7 @@ impl SharedConnection {
         }
     }
 
-    /// Remove every in-flight query matching `pred` (dropping the
-    /// keep-alive if none remain) and return them for completion.
+    /// Remove every in-flight query matching `pred` (dropping the keep-alive if none remain).
     fn take_ready(&mut self, mut pred: impl FnMut(&mut QueryState) -> bool) -> Vec<Inflight> {
         let mut ready = Vec::new();
         let mut i = 0;
@@ -554,9 +499,7 @@ impl SharedConnection {
         ready
     }
 
-    /// Arm the runtime timer for the nearest second-family early-out
-    /// deadline among in-flight queries, if any. No-op off the JS thread
-    /// (no timer heap there); the daemon timeout still bounds the wait.
+    /// Arm the timer for the nearest early-out deadline (JS thread only; daemon timeout otherwise).
     fn arm_early_out(&mut self) {
         if VirtualMachine::get_or_null().is_none() {
             return;
@@ -578,8 +521,7 @@ impl SharedConnection {
         let now = bun::timespec::now(bun::TimespecMockMode::AllowMockedTime);
         let next = now.add_ms((deadline - now.ms()).max(1));
         let state = crate::jsc_hooks::runtime_state();
-        // SAFETY: `state` is this thread's live RuntimeState; the timer slot
-        // stays valid until `destroy` unlinks it.
+        // SAFETY: this thread's live RuntimeState; the timer slot is valid until `destroy`.
         unsafe {
             (*state).timer.update(
                 self.early_out_timer.as_ptr(),
@@ -592,15 +534,11 @@ impl SharedConnection {
         self.early_out_armed_for.set(deadline);
     }
 
-    /// Runtime-timer fire (via `dispatch.rs`): complete queries that have
-    /// had one family's answers for `SECOND_FAMILY_EXTRA_MS` while the
-    /// other family stayed silent.
+    /// Timer fire (via dispatch.rs): complete queries whose early-out deadline has passed.
     pub(crate) fn on_early_out(&mut self) {
         // See `on_readable`: keep one scope open across `finish()`.
         let _exit = event_loop_scope();
-        // The heap popped this timer to fire it but leaves the state for the
-        // owner to update; mark it so a re-arm below inserts rather than
-        // trying to remove an entry that is no longer in the heap.
+        // The heap pops without updating state; mark FIRED so a re-arm inserts instead of removing.
         self.early_out_timer
             .with_mut(|t| t.state = EventLoopTimerState::FIRED);
         self.early_out_armed_for.set(0);
@@ -620,9 +558,7 @@ impl SharedConnection {
         }
     }
 
-    /// Free a detached connection with no in-flight sub-refs.
-    /// SAFETY: `this` must be the live heap connection, already removed
-    /// from `SHARED`, with `inflight` empty; it is freed by this call.
+    /// Free a detached connection. SAFETY: `this` is live, removed from SHARED, `inflight` empty.
     unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller contract.
         let conn = unsafe { bun_core::heap::take(this) };
@@ -639,17 +575,14 @@ impl SharedConnection {
         }
         // SAFETY: `file_poll` is the live hive slot; `deinit` returns it.
         unsafe { (*conn.file_poll.as_ptr()).deinit() };
-        // SAFETY: FFI; the primary ref (and any remaining subordinates)
-        // are released here.
+        // SAFETY: FFI; releases the primary ref (and any remaining subordinates).
         unsafe { DNSServiceRefDeallocate(conn.main_ref) };
         drop(conn);
     }
 
-    /// `force_err` (defunct connection / teardown) drops partial results
-    /// so completion rejects rather than resolving mid-teardown.
+    /// `force_err` drops partial results so teardown rejects instead of resolving.
     fn finish(inf: Inflight, force_err: Option<DNSServiceErrorType>) {
-        // SAFETY: `inf` is a live heap request just removed from
-        // `inflight`.
+        // SAFETY: `inf` is a live heap request just removed from `inflight`.
         let q = unsafe { inf.query() };
         // SAFETY: FFI; `sd_ref` is this request's live subordinate.
         unsafe { DNSServiceRefDeallocate(q.sd_ref) };
@@ -665,14 +598,12 @@ impl SharedConnection {
         }
     }
 
-    /// Reissue `inf`'s query without `SuppressUnusable` and put it back
-    /// in-flight. `false` if it could not be reissued.
+    /// Reissue `inf`'s query without SuppressUnusable; `false` if it couldn't be reissued.
     fn retry_unsuppressed(inf: Inflight) -> bool {
         let Some(this) = Self::current() else {
             return false;
         };
-        // SAFETY: `inf` is a live heap request (removed from `inflight` by
-        // the caller); its state is not otherwise borrowed.
+        // SAFETY: `inf` is a live heap request removed from `inflight` by the caller.
         let q = unsafe { inf.query() };
         let (protocol, hostname) = (protocol_for_pending(q), q.hostname.clone());
         let Some(callback) = q.callback else {
@@ -699,8 +630,7 @@ impl SharedConnection {
         true
     }
 
-    /// VM-teardown hook: fail in-flight requests (like c-ares'
-    /// `EDESTRUCTION`) and release the fd/FilePoll while the loop is live.
+    /// VM teardown: fail in-flight requests (like c-ares' EDESTRUCTION) and release the fd/FilePoll.
     pub(crate) fn close_for_terminate() {
         let this = SHARED.replace(ptr::null_mut());
         // SAFETY: SHARED held null or the live heap connection.
@@ -746,9 +676,7 @@ pub(crate) fn lookup(
     let Some(shared) = SharedConnection::get(js_event_loop_ctx()) else {
         if let CacheHit::New(new) = cache {
             this.pending_host_cache_native.with_mut(|c| {
-                // SAFETY: `new` is the freshly-allocated HiveArray slot
-                // returned by `get_or_put_into_pending_cache`; no other
-                // token for it is outstanding.
+                // SAFETY: `new` is the fresh HiveArray slot; no other token for it exists.
                 unsafe { c.put(new) };
             });
         }

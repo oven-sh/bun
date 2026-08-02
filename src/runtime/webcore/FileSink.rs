@@ -961,8 +961,16 @@ impl FileSink {
         // `ref_()` there. Callers that allocate via `init`/`create` and then
         // `to_js()` must `deref()` once to release init's +1 (see
         // `Blob::get_writer`).
-        self.readable_stream.set(readable_stream::Strong::default());
-        self.pending.set(streams::WritablePending::default());
+        //
+        // `finalize` is reachable from the prototype `.close()` as well as the
+        // C++ destructor (see `${name}__doClose` in generate-jssink.ts), so it
+        // must not tear down state that in-flight IO still needs: `pending`
+        // may hold a backpressured `write()` promise that `run_pending` will
+        // settle once the writer drains, and `readable_stream` may still be
+        // driving this sink as a spawn stdin. Both are released by `deinit`
+        // (Box drop) once `must_be_kept_alive_until_eof` and the
+        // assignToStream ref are gone. `js_sink_ref` roots the wrapper itself,
+        // so it is safe (and necessary) to release here.
         self.js_sink_ref.with_mut(|r| r.deinit());
         // SAFETY: `&mut self` carries write provenance over the whole
         // allocation; this is the last use of `self` in `finalize`.

@@ -526,8 +526,18 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
     }
 
     sink->detach();
-    RETURN_IF_EXCEPTION(scope, {});
     ${name}__close(lexicalGlobalObject, ptr);
+    // detach() nulled m_sinkPtr, so ~${className} will not run __finalize for
+    // this ptr. Release the wrapper's ownership here (unconditionally: even if
+    // __close set an exception) so the native backing is freed rather than
+    // leaked. Fire the destroy callback first, same as the destructor does:
+    // Subprocess holds a weak back-pointer that must be cleared before
+    // __finalize can drop the last ref on the sink.
+    if (auto destroy = std::exchange(sink->m_onDestroy, 0)) {
+        Bun__onSinkDestroyed(destroy, ptr);
+    }
+    ${name}__finalize(ptr);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

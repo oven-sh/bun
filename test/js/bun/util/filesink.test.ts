@@ -323,12 +323,6 @@ it.skipIf(!isPosix)(
 // run_pending, so a backpressured write()'s promise was left pending forever
 // while close() threw. Now close() routes the error to that promise and
 // returns undefined.
-//
-// Runs in a subprocess because sink.close() on a Blob-created FileSink
-// currently leaks the native FileSink (doClose detaches m_sinkPtr so the
-// wrapper's +1 never reaches finalize); running it in-process would abort the
-// whole file under detect_leaks=1. That leak is pre-existing on main and
-// tracked separately.
 it.skipIf(!isPosix)(
   "close() after a backpressured write() with the reader gone rejects the write's promise with EPIPE",
   async () => {
@@ -348,12 +342,7 @@ it.skipIf(!isPosix)(
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", src],
-      env: {
-        ...bunEnv,
-        // Pre-existing leak in sink.close() (see comment above); don't let the
-        // child's LSAN abort hide the actual assertion we're testing.
-        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
-      },
+      env: bunEnv,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -522,6 +511,49 @@ it.skipIf(!isPosix)("does not leak native FileSink when a pending write fails (E
   // One straggler whose JS wrapper has not yet been finalized is acceptable;
   // more than that indicates a native leak.
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
+});
+
+// The generated ${name}__doClose detached m_sinkPtr and then called __close,
+// so the wrapper's destructor skipped __finalize and the wrapper's +1 on the
+// native FileSink was never released.
+it("close() does not leak the native FileSink", async () => {
+  const dir = tmpdirSync();
+  const baseline = fileSinkInternals.liveCount();
+  const iterations = 8;
+  for (let i = 0; i < iterations; i++) {
+    const writer = Bun.file(join(dir, `close-leak-${i}.txt`)).writer();
+    writer.write("hi");
+    writer.close();
+  }
+  for (let i = 0; i < 50; i++) {
+    Bun.gc(true);
+    if (fileSinkInternals.liveCount() <= baseline) break;
+    await Bun.sleep(10);
+  }
+  expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
+});
+
+// Now that __doClose runs finalize(), finalize() must not tear down state an
+// in-flight write still needs: clearing `pending` here would drop the
+// backpressure promise's Strong before on_write can settle it.
+it.skipIf(isWindows)("close() while a write() promise is pending still settles it", async () => {
+  await using child = Bun.spawn({
+    cmd: [bunExe(), "-e", "for await (const _ of process.stdin) {}"],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const writer = child.stdin;
+  // 4 MiB overflows the default pipe capacity on Linux/macOS so write()
+  // returns a promise.
+  const p = writer.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
+  expect(p).toBeInstanceOf(Promise);
+  writer.close();
+  await expect(p).resolves.toBeGreaterThanOrEqual(0);
+  const [stderr, exitCode] = await Promise.all([child.stderr.text(), child.exited]);
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 it("start() without path/fd on an already-open writer does not crash", async () => {

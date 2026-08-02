@@ -1047,8 +1047,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && p.value.is_none()
                         && p.key.is_some()
                 };
-                // Partial lowering would reorder a native `[K] = init` before its
-                // lowered siblings, so keep native semantics when one is present.
+                // Partial lowering would reorder a native `[K] = init` before lowered siblings.
                 let lower_fields = !use_define
                     && !class.properties.slice().iter().any(|p| {
                         is_instance_field(p)

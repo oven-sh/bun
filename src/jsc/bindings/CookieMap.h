@@ -32,7 +32,7 @@ public:
 
     std::optional<String> get(const String& name) const;
     Vector<KeyValuePair<String, String>> getAll() const;
-    Vector<Ref<Cookie>> getAllChanges() const { return m_modifiedCookies; }
+    Vector<Ref<Cookie>> getAllChanges() const;
 
     bool has(const String& name) const;
 
@@ -54,7 +54,9 @@ public:
 
     private:
         Ref<CookieMap> m_target;
-        size_t m_index { 0 };
+        size_t m_modifiedIndex { 0 };
+        size_t m_originalIndex { 0 };
+        bool m_inOriginals { false };
     };
 
     Iterator createIterator() { return Iterator { *this }; }
@@ -62,13 +64,25 @@ public:
 
 private:
     CookieMap();
-    CookieMap(Vector<Ref<Cookie>>&& cookies);
     CookieMap(Vector<KeyValuePair<String, String>>&& cookies);
 
+    void buildOriginalIndex();
     void removeInternal(const String& name);
+    void appendModified(Ref<Cookie>&&);
+    void compactModified();
 
+    // Holes are marked with key.isNull().
     Vector<KeyValuePair<String, String>> m_originalCookies;
-    Vector<Ref<Cookie>> m_modifiedCookies;
+    // Holes are marked with nullptr.
+    Vector<RefPtr<Cookie>> m_modifiedCookies;
+
+    // name -> first index; duplicates chained via m_originalNext (empty when none).
+    HashMap<String, size_t> m_originalIndex;
+    Vector<size_t> m_originalNext;
+    size_t m_originalHoles { 0 };
+
+    // name -> index; unique because set()/remove() clear the prior entry first.
+    HashMap<String, size_t> m_modifiedIndex;
 };
 
 } // namespace WebCore

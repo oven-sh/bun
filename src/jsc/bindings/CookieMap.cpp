@@ -54,14 +54,36 @@ CookieMap::CookieMap()
 {
 }
 
-CookieMap::CookieMap(Vector<Ref<Cookie>>&& cookies)
-    : m_modifiedCookies(WTF::move(cookies))
-{
-}
-
 CookieMap::CookieMap(Vector<KeyValuePair<String, String>>&& cookies)
     : m_originalCookies(WTF::move(cookies))
 {
+    buildOriginalIndex();
+}
+
+void CookieMap::buildOriginalIndex()
+{
+    const size_t n = m_originalCookies.size();
+    if (n == 0)
+        return;
+    m_originalIndex.reserveInitialCapacity(n);
+    HashMap<String, size_t> tails;
+    for (size_t i = 0; i < n; ++i) {
+        const auto& key = m_originalCookies[i].key;
+        if (key.isNull())
+            continue;
+        auto result = m_originalIndex.add(key, i);
+        if (result.isNewEntry) [[likely]]
+            continue;
+        if (m_originalNext.isEmpty()) {
+            m_originalNext.grow(n);
+            for (auto& slot : m_originalNext)
+                slot = notFound;
+        }
+        auto tail = tails.find(key);
+        size_t prev = (tail == tails.end()) ? result.iterator->value : tail->value;
+        m_originalNext[prev] = i;
+        tails.set(key, i);
+    }
 }
 
 ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& variant, bool throwOnInvalidCookieString)
@@ -132,22 +154,22 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
 
 std::optional<String> CookieMap::get(const String& name) const
 {
-    auto modifiedCookieIndex = m_modifiedCookies.findIf([&](auto& cookie) {
-        return cookie->name() == name;
-    });
-    if (modifiedCookieIndex != notFound) {
+    if (name.isNull())
+        return std::nullopt;
+
+    auto modified = m_modifiedIndex.find(name);
+    if (modified != m_modifiedIndex.end()) {
+        const auto& cookie = m_modifiedCookies[modified->value];
         // a set cookie with an empty value is treated as not existing, because that is what delete() sets
-        if (m_modifiedCookies[modifiedCookieIndex]->value().isEmpty()) {
+        if (cookie->value().isEmpty())
             return std::nullopt;
-        }
-        return std::optional<String>(m_modifiedCookies[modifiedCookieIndex]->value());
+        return std::optional<String>(cookie->value());
     }
-    auto originalCookieIndex = m_originalCookies.findIf([&](auto& cookie) {
-        return cookie.key == name;
-    });
-    if (originalCookieIndex != notFound) {
-        return std::optional<String>(m_originalCookies[originalCookieIndex].value);
-    }
+
+    auto original = m_originalIndex.find(name);
+    if (original != m_originalIndex.end())
+        return std::optional<String>(m_originalCookies[original->value].value);
+
     return std::nullopt;
 }
 
@@ -155,13 +177,25 @@ Vector<KeyValuePair<String, String>> CookieMap::getAll() const
 {
     Vector<KeyValuePair<String, String>> all;
     for (const auto& cookie : m_modifiedCookies) {
-        if (cookie->value().isEmpty()) continue;
+        if (!cookie || cookie->value().isEmpty()) continue;
         all.append(KeyValuePair<String, String>(cookie->name(), cookie->value()));
     }
     for (const auto& cookie : m_originalCookies) {
+        if (cookie.key.isNull()) continue;
         all.append(KeyValuePair<String, String>(cookie.key, cookie.value));
     }
     return all;
+}
+
+Vector<Ref<Cookie>> CookieMap::getAllChanges() const
+{
+    Vector<Ref<Cookie>> changes;
+    changes.reserveInitialCapacity(m_modifiedIndex.size());
+    for (const auto& cookie : m_modifiedCookies) {
+        if (!cookie) continue;
+        changes.append(*cookie);
+    }
+    return changes;
 }
 
 bool CookieMap::has(const String& name) const
@@ -171,20 +205,69 @@ bool CookieMap::has(const String& name) const
 
 void CookieMap::removeInternal(const String& name)
 {
-    // Remove any existing matching cookies
-    m_originalCookies.removeAllMatching([&](auto& cookie) {
-        return cookie.key == name;
-    });
-    m_modifiedCookies.removeAllMatching([&](auto& cookie) {
-        return cookie->name() == name;
-    });
+    if (name.isNull())
+        return;
+
+    auto original = m_originalIndex.find(name);
+    if (original != m_originalIndex.end()) {
+        size_t i = original->value;
+        m_originalIndex.remove(original);
+        do {
+            m_originalCookies[i].key = String();
+            m_originalCookies[i].value = String();
+            ++m_originalHoles;
+            i = m_originalNext.isEmpty() ? notFound : m_originalNext[i];
+        } while (i != notFound);
+    }
+
+    auto modified = m_modifiedIndex.find(name);
+    if (modified != m_modifiedIndex.end()) {
+        m_modifiedCookies[modified->value] = nullptr;
+        m_modifiedIndex.remove(modified);
+        while (!m_modifiedCookies.isEmpty() && !m_modifiedCookies.last())
+            m_modifiedCookies.removeLast();
+    }
+}
+
+void CookieMap::compactModified()
+{
+    size_t write = 0;
+    for (size_t read = 0; read < m_modifiedCookies.size(); ++read) {
+        if (!m_modifiedCookies[read])
+            continue;
+        if (read != write)
+            m_modifiedCookies[write] = WTF::move(m_modifiedCookies[read]);
+        const auto& name = m_modifiedCookies[write]->name();
+        if (!name.isNull())
+            m_modifiedIndex.set(name, write);
+        ++write;
+    }
+    m_modifiedCookies.shrink(write);
+}
+
+void CookieMap::appendModified(Ref<Cookie>&& cookie)
+{
+    String name = cookie->name();
+    m_modifiedCookies.append(WTF::move(cookie));
+    if (!name.isNull())
+        m_modifiedIndex.set(WTF::move(name), m_modifiedCookies.size() - 1);
+
+    if (m_modifiedCookies.size() >= 16 && m_modifiedCookies.size() >= 2 * m_modifiedIndex.size())
+        compactModified();
 }
 
 void CookieMap::set(Ref<Cookie> cookie)
 {
-    removeInternal(cookie->name());
-    // Add the new cookie
-    m_modifiedCookies.append(WTF::move(cookie));
+    const String& name = cookie->name();
+    if (!name.isNull()) {
+        auto it = m_modifiedIndex.find(name);
+        if (it != m_modifiedIndex.end()) {
+            m_modifiedCookies[it->value] = WTF::move(cookie);
+            return;
+        }
+    }
+    removeInternal(name);
+    appendModified(WTF::move(cookie));
 }
 
 ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
@@ -201,8 +284,7 @@ ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
     if (cookie_exception.hasException()) {
         return cookie_exception.releaseException();
     }
-    auto cookie = cookie_exception.releaseReturnValue();
-    m_modifiedCookies.append(WTF::move(cookie));
+    appendModified(cookie_exception.releaseReturnValue());
     return {};
 }
 
@@ -210,7 +292,11 @@ Ref<CookieMap> CookieMap::clone()
 {
     auto clone = adoptRef(*new CookieMap());
     clone->m_originalCookies = m_originalCookies;
+    clone->m_originalIndex = m_originalIndex;
+    clone->m_originalNext = m_originalNext;
+    clone->m_originalHoles = m_originalHoles;
     clone->m_modifiedCookies = m_modifiedCookies;
+    clone->m_modifiedIndex = m_modifiedIndex;
     return clone;
 }
 
@@ -219,10 +305,10 @@ CookieMap::size() const
 {
     size_t size = 0;
     for (const auto& cookie : m_modifiedCookies) {
-        if (cookie->value().isEmpty()) continue;
+        if (!cookie || cookie->value().isEmpty()) continue;
         size += 1;
     }
-    size += m_originalCookies.size();
+    size += m_originalCookies.size() - m_originalHoles;
     return size;
 }
 
@@ -239,7 +325,7 @@ JSC::JSValue CookieMap::toJSON(JSC::JSGlobalObject* globalObject) const
 
     // Add modified cookies to the object
     for (const auto& cookie : m_modifiedCookies) {
-        if (!cookie->value().isEmpty()) {
+        if (cookie && !cookie->value().isEmpty()) {
             seenKeys.add(cookie->name());
             object->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, cookie->name()), JSC::jsString(vm, cookie->value()));
             RETURN_IF_EXCEPTION(scope, {});
@@ -248,6 +334,8 @@ JSC::JSValue CookieMap::toJSON(JSC::JSGlobalObject* globalObject) const
 
     // Add original cookies to the object
     for (const auto& cookie : m_originalCookies) {
+        if (cookie.key.isNull())
+            continue;
         // Skip if this cookie name was already added from modified cookies
         if (seenKeys.add(cookie.key).isNewEntry) {
             object->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, cookie.key), JSC::jsString(vm, cookie.value));
@@ -261,11 +349,15 @@ JSC::JSValue CookieMap::toJSON(JSC::JSGlobalObject* globalObject) const
 size_t CookieMap::memoryCost() const
 {
     size_t cost = sizeof(CookieMap);
+    cost += m_originalIndex.capacity() * (sizeof(String) + sizeof(size_t));
+    cost += m_originalNext.capacity() * sizeof(size_t);
+    cost += m_modifiedIndex.capacity() * (sizeof(String) + sizeof(size_t));
     for (auto& cookie : m_originalCookies) {
         cost += cookie.key.sizeInBytes();
         cost += cookie.value.sizeInBytes();
     }
     for (auto& cookie : m_modifiedCookies) {
+        if (!cookie) continue;
         cost += cookie->name().sizeInBytes();
         cost += cookie->value().sizeInBytes();
     }
@@ -274,17 +366,20 @@ size_t CookieMap::memoryCost() const
 
 std::optional<KeyValuePair<String, String>> CookieMap::Iterator::next()
 {
-    while (m_index < m_target->m_modifiedCookies.size() + m_target->m_originalCookies.size()) {
-        if (m_index >= m_target->m_modifiedCookies.size()) {
-            return m_target->m_originalCookies[(m_index++) - m_target->m_modifiedCookies.size()];
+    if (!m_inOriginals) {
+        while (m_modifiedIndex < m_target->m_modifiedCookies.size()) {
+            const auto& cookie = m_target->m_modifiedCookies[m_modifiedIndex++];
+            if (!cookie || cookie->value().isEmpty())
+                continue;
+            return KeyValuePair<String, String>(cookie->name(), cookie->value());
         }
-
-        auto result = m_target->m_modifiedCookies[m_index++];
-        if (result->value().isEmpty()) {
-            continue; // deleted; skip
-        }
-
-        return KeyValuePair<String, String>(result->name(), result->value());
+        m_inOriginals = true;
+    }
+    while (m_originalIndex < m_target->m_originalCookies.size()) {
+        const auto& cookie = m_target->m_originalCookies[m_originalIndex++];
+        if (cookie.key.isNull())
+            continue;
+        return cookie;
     }
     return std::nullopt;
 }

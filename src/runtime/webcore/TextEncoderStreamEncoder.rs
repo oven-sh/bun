@@ -324,28 +324,30 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     // SAFETY: `this` is the live encoder owned by the calling JS cell; taken
     // after the coercion so no user JS runs while the borrow is live.
     let this = unsafe { &*this };
-    let mut scratch = this.scratch.borrow_mut();
-    scratch.clear();
+    // Move the Vec out of the RefCell for the duration of the sink write so a
+    // (theoretical) re-entrant encode-into-sink call cannot BorrowMut-panic.
+    let mut buf = this.scratch.take();
+    buf.clear();
     if str.is_16bit() {
         if this
-            .encode_utf16_into(str.utf16_slice_aligned(), &mut scratch)
+            .encode_utf16_into(str.utf16_slice_aligned(), &mut buf)
             .is_err()
         {
             return global.throw_out_of_memory_value();
         }
     } else {
-        this.encode_latin1_into(str.slice(), &mut scratch);
+        this.encode_latin1_into(str.slice(), &mut buf);
     }
-    if scratch.is_empty() {
+    if buf.is_empty() {
+        this.scratch.replace(buf);
         return JSValue::UNDEFINED;
     }
     // SAFETY: `sink_ptr` is a live JSSink of type `sink_id` (the C++ caller
     // null-checks it before attaching); the sink copies what it needs.
-    let wrote = unsafe {
-        Bun__JSSink__writeBytesById(sink_id, sink_ptr, global, scratch.as_ptr(), scratch.len())
-    };
-    if scratch.capacity() > SCRATCH_CAP {
-        *scratch = Vec::new();
+    let wrote =
+        unsafe { Bun__JSSink__writeBytesById(sink_id, sink_ptr, global, buf.as_ptr(), buf.len()) };
+    if buf.capacity() <= SCRATCH_CAP {
+        this.scratch.replace(buf);
     }
     wrote
 }

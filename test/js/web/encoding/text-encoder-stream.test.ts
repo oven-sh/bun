@@ -186,3 +186,21 @@ test("TextEncoderStream -> native HTTP response sink round-trips (incl. split su
   const text = await (await fetch(server.url)).text();
   expect(text).toBe("I \u{1F499} \u{1F499} streams");
 });
+
+test("TextEncoderStream -> native HTTP response sink: flush emits FFFD for a dangling lead surrogate", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      const body = new ReadableStream({
+        start(c) {
+          c.enqueue("a");
+          c.enqueue(leading);
+          c.close();
+        },
+      });
+      return new Response(body.pipeThrough(new TextEncoderStream()));
+    },
+  });
+  const text = await (await fetch(server.url)).text();
+  expect(text).toBe("a\uFFFD");
+});

@@ -233,6 +233,23 @@ test("utf-8 fast path: a split BOM across chunks is stripped", async () => {
   expect(out.join("")).toBe("B");
 });
 
+// fatal:true takes the Rust TextDecoder path (not the fast path).
+test("utf-8 fatal: split valid sequence across chunks decodes", async () => {
+  const out = await Bun.readableStreamToArray(
+    readableStreamFromArray([new Uint8Array([0xf0, 0x9f]), new Uint8Array([0x92, 0x99])]).pipeThrough(
+      new TextDecoderStream("utf-8", { fatal: true }),
+    ),
+  );
+  expect(out.join("")).toBe("\u{1F499}");
+});
+
+test("utf-8 fatal: truncated sequence rejects at flush", async () => {
+  const out = readableStreamFromArray([new Uint8Array([0xf0, 0x9f, 0x92])]).pipeThrough(
+    new TextDecoderStream("utf-8", { fatal: true }),
+  );
+  await expect(Bun.readableStreamToArray(out)).rejects.toBeInstanceOf(TypeError);
+});
+
 // The transform/flush arm runs the native decoder directly, so monkeypatching
 // TextDecoder.prototype.decode no longer reaches it.
 test("TextDecoderStream does not call a patched TextDecoder.prototype.decode", async () => {

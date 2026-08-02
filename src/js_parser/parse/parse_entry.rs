@@ -894,8 +894,7 @@ impl<'a> Parser<'a> {
                                 let _local = S::Local {
                                     kind: local.kind,
                                     is_export: local.is_export,
-                                    was_ts_import_equals: local.was_ts_import_equals,
-                                    was_commonjs_export: local.was_commonjs_export,
+                                    origin: local.origin,
                                     decls: G::DeclList::init_one(G::Decl {
                                         binding: decl.binding,
                                         value: decl.value,

@@ -32,7 +32,7 @@ use bun_jsc::module_loader::{
 };
 use bun_jsc::resolved_source::OwnedResolvedSource;
 use bun_jsc::virtual_machine::{
-    InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, VirtualMachine,
+    InitOptions, ResolveMode, RuntimeHooks, RuntimeState as OpaqueRuntimeState, VirtualMachine,
 };
 use bun_jsc::{
     AnyPromise, ErrorCode, ErrorableResolvedSource, ErrorableString, JSGlobalObject,
@@ -5083,9 +5083,8 @@ unsafe fn resolve_hook(
     specifier: bun_core::String,
     source: bun_core::String,
     query_string: *mut bun_core::String,
-    is_esm: bool,
+    mode: ResolveMode,
     is_a_file_path: bool,
-    is_user_require_resolve: bool,
 ) -> bool {
     use bun_ast::Target;
     use bun_jsc::ResolveMessage;
@@ -5107,13 +5106,7 @@ unsafe fn resolve_hook(
     if is_a_file_path && specifier.length() > MAX_SPECIFIER_LEN {
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
-        let import_kind = if is_esm {
-            ImportKind::Stmt
-        } else if is_user_require_resolve {
-            ImportKind::RequireResolve
-        } else {
-            ImportKind::Require
-        };
+        let import_kind = mode.import_kind();
         let printed = ResolveMessage::fmt(
             specifier_utf8.slice(),
             source_utf8.slice(),
@@ -5168,10 +5161,10 @@ unsafe fn resolve_hook(
     }
 
     // Hardcoded builtin alias fast path. For
-    // `require.resolve("fs")` (`is_user_require_resolve && node_builtin`) Node
-    // returns the bare specifier as-is, not the canonical `node:fs`.
+    // `require.resolve("fs")` (`RequireResolve && node_builtin`) Node returns
+    // the bare specifier as-is, not the canonical `node:fs`.
     if let Some(hardcoded) = Alias::get(specifier_utf8.slice(), Target::Bun, AliasCfg::default()) {
-        let path = if is_user_require_resolve && hardcoded.node_builtin {
+        let path = if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
             specifier.dupe_ref()
         } else {
             bun_core::String::init(hardcoded.path.as_bytes())
@@ -5234,7 +5227,7 @@ unsafe fn resolve_hook(
             vm,
             specifier_utf8.slice(),
             normalize_source(source_utf8.slice()),
-            is_esm,
+            mode.is_esm(),
             is_a_file_path,
             &mut result_path,
             &mut result_query,
@@ -5249,13 +5242,7 @@ unsafe fn resolve_hook(
                 }
             }
 
-            let import_kind = if is_esm {
-                ImportKind::Stmt
-            } else if is_user_require_resolve {
-                ImportKind::RequireResolve
-            } else {
-                ImportKind::Require
-            };
+            let import_kind = mode.import_kind();
 
             let printed = ResolveMessage::fmt(
                 specifier_utf8.slice(),

@@ -2184,9 +2184,7 @@ impl FetchTasklet {
         );
         let http_client = fetch_tasklet.http.as_mut().unwrap();
         http_client.client.flags.is_streaming_request_body = is_stream;
-        http_client.client.flags.force_http2 = fetch_options.force_http2;
-        http_client.client.flags.force_http3 = fetch_options.force_http3;
-        http_client.client.flags.force_http1 = fetch_options.force_http1;
+        http_client.client.flags.forced_protocol = fetch_options.forced_protocol;
         http_client.client.flags.is_node_http_client = fetch_options.is_node_http_client;
         fetch_tasklet.is_waiting_request_stream_start = is_stream;
         if is_stream {
@@ -2834,9 +2832,7 @@ pub struct FetchOptions {
     pub(crate) unix_socket_path: ZigStringSlice,
     pub(crate) ssl_config: Option<http::ssl_config::SharedPtr>,
     pub(crate) upgraded_connection: bool,
-    pub(crate) force_http2: bool,
-    pub(crate) force_http3: bool,
-    pub(crate) force_http1: bool,
+    pub(crate) forced_protocol: Option<http::Protocol>,
     pub(crate) is_node_http_client: bool,
     pub(crate) compress: Option<http::compress_body::CompressOption>,
 }
@@ -2870,9 +2866,7 @@ impl Default for FetchOptions {
             unix_socket_path: ZigStringSlice::EMPTY,
             ssl_config: None,
             upgraded_connection: false,
-            force_http2: false,
-            force_http3: false,
-            force_http1: false,
+            forced_protocol: None,
             is_node_http_client: false,
             compress: None,
         }

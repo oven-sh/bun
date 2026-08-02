@@ -18,20 +18,6 @@ pub(crate) struct PBKDF2 {
     pub algorithm: Algorithm,
 }
 
-impl Default for PBKDF2 {
-    fn default() -> Self {
-        Self {
-            password: StringOrBuffer::default(),
-            salt: StringOrBuffer::default(),
-            iteration_count: 1,
-            length: 0,
-            // Callers always set `algorithm`; Sha256 is an arbitrary placeholder
-            // so `Default` compiles.
-            algorithm: Algorithm::Sha256,
-        }
-    }
-}
-
 impl PBKDF2 {
     pub(crate) fn run(&mut self, output: &mut [u8]) -> bool {
         let password = self.password.slice();

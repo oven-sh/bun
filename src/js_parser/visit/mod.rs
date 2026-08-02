@@ -1523,7 +1523,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if local.kind.is_using() {
                                 continue;
                             }
-                            if !local.is_export && !local.was_commonjs_export {
+                            if !local.is_export && !local.origin.is_commonjs_export() {
                                 let mut any_decl_in_const_values = local.kind == LocalKind::KConst;
                                 let decls: &mut [Decl] = local.decls.slice_mut();
                                 let mut end: usize = 0;

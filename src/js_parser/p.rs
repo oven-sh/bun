@@ -8562,7 +8562,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                     js_ast::StmtData::SLocal(local) => {
-                        if local.was_commonjs_export || self.commonjs_named_exports.count() == 0 {
+                        if local.origin.is_commonjs_export()
+                            || self.commonjs_named_exports.count() == 0
+                        {
                             for decl in local.decls.slice() {
                                 if let Some(value) = &decl.value {
                                     if !matches!(value.data, js_ast::ExprData::EMissing(_))

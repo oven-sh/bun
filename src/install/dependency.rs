@@ -610,7 +610,6 @@ pub trait VersionExt {
         buf: &[u8],
         builder: &mut SB,
     ) -> Result<Version, crate::Error>;
-    fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
     fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
     fn to_version(
         alias: String,
@@ -639,15 +638,6 @@ impl VersionExt for Version {
             literal: builder.append_string(self.literal.slice(buf)),
             value: self.value.clone_in(self.tag, buf, builder)?,
         })
-    }
-
-    fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
-        debug_assert!(lhs.tag == rhs.tag);
-        strings::cmp_strings_asc(
-            (),
-            lhs.literal.slice(string_buf),
-            rhs.literal.slice(string_buf),
-        )
     }
 
     fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {

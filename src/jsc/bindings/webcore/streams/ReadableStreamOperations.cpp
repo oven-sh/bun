@@ -529,6 +529,7 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
     }
     markPromiseAsHandled(vm, reader->m_closedPromise.get());
 
+    WebCore::JSNativeStreamSourceAdapter* nativeAdapter = nullptr;
     switch (stream->m_controllerKind) {
     case ControllerKind::None:
     case ControllerKind::NativeSink:
@@ -549,30 +550,26 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
     case ControllerKind::Default: {
         auto* controller = defaultControllerOf(stream);
         controller->releaseSteps();
-        // Bun: drop the native handle's event-loop ref when its consumer releases the lock.
-        if (stream->m_nativePtr && controller->m_algorithms.kind == SourceKind::Native) {
-            const auto* adapter = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
-            if (auto* handle = adapter->handle()) {
-                JSValue updateRef = handle->getIfPropertyExists(globalObject, builtinNames(vm).updateRefPublicName());
-                RETURN_IF_EXCEPTION(scope, void());
-                if (updateRef && updateRef.isCallable()) {
-                    auto callData = JSC::getCallData(updateRef);
-                    MarkedArgumentBuffer args;
-                    args.append(jsBoolean(false));
-                    ASSERT(!args.hasOverflowed());
-                    JSC::call(globalObject, updateRef, callData, handle, args);
-                    RETURN_IF_EXCEPTION(scope, void());
-                }
-            }
-        }
+        if (stream->m_nativePtr && controller->m_algorithms.kind == SourceKind::Native)
+            nativeAdapter = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
         break;
     }
-    case ControllerKind::Byte:
-        byteControllerOf(stream)->releaseSteps();
+    case ControllerKind::Byte: {
+        auto* controller = byteControllerOf(stream);
+        controller->releaseSteps();
+        if (stream->m_nativePtr && controller->m_algorithms.kind == SourceKind::Native)
+            nativeAdapter = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
         break;
+    }
     }
     stream->m_reader.clear();
     reader->m_stream.clear();
+    // Bun: drop the native handle's event-loop ref after the reader is unlinked so an
+    // exception inside updateRef cannot leave the stream locked.
+    if (nativeAdapter) {
+        nativeSourceDropEventLoopRef(globalObject, nativeAdapter);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 }
 
 // ReadableStreamReaderGenericCancel(reader, reason)

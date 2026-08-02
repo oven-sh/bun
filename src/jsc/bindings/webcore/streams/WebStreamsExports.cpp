@@ -212,7 +212,8 @@ extern "C" JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalOb
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* stream = createReadableStream(globalObject, SourceKind::Nothing, nullptr, jsUndefined());
+    // A closed byte stream so a BYOB reader attaches (every caller is an empty byte source).
+    auto* stream = createReadableByteStream(globalObject, SourceKind::Nothing, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
     readableStreamClose(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});

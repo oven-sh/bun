@@ -513,17 +513,19 @@ void pipeToReadRequestErrorSteps(JSC::JSGlobalObject*, JSStreamPipeToOperation*,
 
 // BunStreamSource.cpp — the lazy native source and the native-sink pumps.
 
-// lazyLoadStream: installs the Native default controller (or the empty fast path).
+// lazyLoadStream: installs the Native controller (byte, or default in text mode) or the empty fast path.
 void materializeNativeSource(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamSource.cpp
 
-// The SourceKind::Native algorithm ARMS. The pull/cancel dispatch is a TOTAL
-// `switch (m_algorithms.kind)` in JSReadableStreamDefaultController.cpp (a Native source is
-// ALWAYS a default controller); these bodies live HERE per BunStreamSource.h's owner rule,
-// so this is the declared bridge between the two files. The controller's algorithmContext is
-// the JSNativeStreamSourceAdapter for all three.
-JSC::JSValue nativeSourceStart(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: no (native handle.start; enqueues the drain value) — BunStreamSource.cpp
+// The SourceKind::Native algorithm ARMS. Binary sources install a byte controller and text-mode
+// sources a default controller; both controllers dispatch into the matching overload here.
+// controller->m_algorithms.algorithmContext is the JSNativeStreamSourceAdapter.
+JSC::JSValue nativeSourceStart(JSC::JSGlobalObject*, JSNativeStreamSourceAdapter*); // userJS: no (native handle.start; enqueues the drain value) — BunStreamSource.cpp
 JSC::JSPromise* nativeSourcePull(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: no (native handle.pull; its promise's reactions are onNativePull*) — BunStreamSource.cpp
+JSC::JSPromise* nativeSourcePull(JSC::JSGlobalObject*, JSReadableByteStreamController*); // userJS: no — BunStreamSource.cpp
 JSC::JSPromise* nativeSourceCancel(JSC::JSGlobalObject*, JSReadableStreamDefaultController*, JSC::JSValue reason); // userJS: no (native handle.cancel + teardown) — BunStreamSource.cpp
+JSC::JSPromise* nativeSourceCancel(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSC::JSValue reason); // userJS: no — BunStreamSource.cpp
+// Bun: drop the native handle's event-loop ref when its consumer releases the lock.
+void nativeSourceDropEventLoopRef(JSC::JSGlobalObject*, const JSNativeStreamSourceAdapter*); // userJS: no — BunStreamSource.cpp
 // readableStreamCancel's ControllerKind::None arm for a still-NativePending stream: calls
 // handle.updateRef(false) + handle.cancel(reason) on m_nativePtr directly, no materialize.
 JSC::JSPromise* cancelPendingNativeSource(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue reason); // userJS: no — BunStreamSource.cpp

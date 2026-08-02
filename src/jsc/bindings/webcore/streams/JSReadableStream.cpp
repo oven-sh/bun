@@ -599,7 +599,8 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_getReader, (JSGlobalO
     }
 
     if (isBYOB) {
-        // A BYOB reader never materializes Bun's lazy modes.
+        stream->materializeForBYOBIfNeeded(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         auto* reader = acquireReadableStreamBYOBReader(lexicalGlobalObject, stream);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(reader);

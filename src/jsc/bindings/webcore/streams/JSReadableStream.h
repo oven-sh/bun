@@ -104,6 +104,14 @@ public:
     // does. userJS: YES (direct pull setup / native handle.start()).
     void materializeIfNeeded(JSC::JSGlobalObject*);
 
+    // Materialize a lazy binary native stream (a byte stream) so a BYOB reader attaches.
+    // Text-mode / DirectPending are left alone so the reader set-up rejects without user code.
+    void materializeForBYOBIfNeeded(JSC::JSGlobalObject* globalObject)
+    {
+        if (m_bunMode == BunStreamMode::NativePending && !m_nativeTextMode)
+            materializeIfNeeded(globalObject);
+    }
+
     // The value the old `$bunNativePtr` DOMAttribute getter returned.
     JSC::JSValue nativePtrForJS() const
     {

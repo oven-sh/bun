@@ -24,7 +24,6 @@ test("db.close(true) works after db.transaction() with actual work", () => {
 test("using declaration works with db.transaction()", () => {
   using db = new Database(":memory:");
   db.transaction(() => {})();
-  // Symbol.dispose calls close(true), should not throw
 });
 
 test("db.close(true) works after multiple transaction types", () => {

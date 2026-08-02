@@ -1637,28 +1637,3 @@ bun_core::comptime_string_map! {
     b"zmm" => t!("application/vnd.handheld-entertainment+xml"),
     };
 }
-
-const IMAGES_HEADERS: &[(&[u8], Table)] = &[
-    (&[0x42, 0x4d], t!("image/bmp")),
-    (&[0xff, 0xd8, 0xff], t!("image/jpeg")),
-    (&[0x49, 0x49, 0x2a, 0x00], t!("image/tiff")),
-    (&[0x4d, 0x4d, 0x00, 0x2a], t!("image/tiff")),
-    (&[0x47, 0x49, 0x46, 0x38, 0x39, 0x61], t!("image/gif")),
-    (
-        &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
-        t!("image/png"),
-    ),
-];
-
-pub fn sniff(bytes: &[u8]) -> Option<MimeType> {
-    if bytes.len() < 2 {
-        return None;
-    }
-
-    for (header, table) in IMAGES_HEADERS {
-        if bytes.len() >= header.len() && &bytes[0..header.len()] == *header {
-            return Some(Compact::from(*table).to_mime_type());
-        }
-    }
-    None
-}

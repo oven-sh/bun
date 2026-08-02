@@ -2135,6 +2135,57 @@ it("does propagate type for Blob", async () => {
   expect(res.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
 });
 
+describe("response Content-Type is only sent when the body contributes one", () => {
+  // Fetch "extract a body" assigns no type to BufferSource or a Blob whose
+  // own type is empty. Node/undici send no Content-Type for these; Bun.serve
+  // should not fabricate one either so the wire header matches `response.headers`.
+  const bin = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff, 0xfe, 0, 1]);
+  const cases: Record<string, [() => Response, string | null]> = {
+    arraybuffer: [() => new Response(bin.buffer.slice(0)), null],
+    uint8array: [() => new Response(bin.slice()), null],
+    dataview: [() => new Response(new DataView(bin.buffer.slice(0))), null],
+    "typeless-blob-bytes": [() => new Response(new Blob([bin])), null],
+    "typeless-blob-string": [() => new Response(new Blob(["<html><b>x</b></html>"])), null],
+    "typeless-file": [() => new Response(new File([bin], "upload")), null],
+    "typeless-blob-empty": [() => new Response(new Blob([])), null],
+    // Text whose leading bytes collide with an image magic number must not be
+    // content-sniffed into an image/* type (previously: image/bmp, image/gif, image/png).
+    "typeless-blob-bmp-prefix-prose": [() => new Response(new Blob(["BMW rocks, and other prose"])), null],
+    "typeless-blob-gif-prefix-prose": [() => new Response(new Blob(["GIF89a; not an image, just text"])), null],
+    "typeless-file-png-magic-as-txt": [
+      () =>
+        new Response(new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9, 9])], "readme.txt")),
+      null,
+    ],
+    // body kinds that do carry a type must keep sending it:
+    string: [() => new Response("<html><b>x</b></html>"), "text/plain;charset=utf-8"],
+    "typed-blob": [() => new Response(new Blob([bin], { type: "image/png" })), "image/png"],
+    "typed-blob-empty": [
+      () => new Response(new Blob([], { type: "application/octet-stream" })),
+      "application/octet-stream",
+    ],
+    "explicit-header": [
+      () => new Response(bin.slice(), { headers: { "content-type": "application/custom" } }),
+      "application/custom",
+    ],
+  };
+
+  it.each(Object.keys(cases))("%s", async name => {
+    const [make, expected] = cases[name];
+    using server = Bun.serve({ port: 0, development: false, fetch: () => make() });
+    const res = await fetch(server.url);
+    await res.arrayBuffer();
+    if (expected === null) {
+      expect({
+        object: make().headers.get("Content-Type"),
+        wire: res.headers.get("Content-Type"),
+      }).toEqual({ object: null, wire: null });
+    } else {
+      expect(res.headers.get("Content-Type")).toBe(expected);
+    }
+  });
+});
+
 it("unix socket connection in Bun.serve", async () => {
   const unix = join(tmpdir(), "bun." + Date.now() + ((Math.random() * 32) | 0).toString(16) + ".sock");
   using server = Bun.serve({

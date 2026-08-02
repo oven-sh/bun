@@ -71,6 +71,10 @@ public:
     // sink backpressure; the sink's onReady resolves it.
     JSC::WriteBarrier<JSC::JSObject> m_nativeSinkCell;
     JSC::WriteBarrier<JSC::JSPromise> m_nativeSinkReadyPromise;
+    // Pending transform-algorithm promise for the off-thread codec step; the
+    // WorkTask's single `Strong` roots this cell and this barrier keeps the
+    // promise alive until deliverAsync settles it.
+    JSC::WriteBarrier<JSC::JSPromise> m_asyncCodecPromise;
     void* m_nativeSinkPtr { nullptr };
     uint8_t m_nativeSinkId { 0 };
 

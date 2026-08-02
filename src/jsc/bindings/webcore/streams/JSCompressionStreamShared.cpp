@@ -100,10 +100,12 @@ static JSPromise* codeAndEnqueue(JSGlobalObject* globalObject, JSTransformStream
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (inputLen > kAsyncCodecThreshold && coder) {
-        JSValue p = JSValue::decode(CompressionStreamCoder__transformAsync(coder, globalObject, JSValue::encode(stream), JSValue::encode(chunk), input, inputLen, finish));
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+        stream->m_asyncCodecPromise.set(vm, stream, promise);
         stream->m_asyncCodecInFlight = true;
-        return dynamicDowncast<JSPromise>(p);
+        CompressionStreamCoder__transformAsync(coder, globalObject, JSValue::encode(stream), JSValue::encode(chunk), input, inputLen, finish);
+        scope.assertNoException();
+        return promise;
     }
 
     JSValue thrown;
@@ -178,33 +180,24 @@ JSPromise* decompressionStreamFlush(JSGlobalObject* globalObject, JSDecompressio
     return codeAndEnqueue(globalObject, stream, stream->m_coder, controller, jsUndefined(), nullptr, 0, true);
 }
 
-// JS-thread completion for the off-thread codec dispatched by codeAndEnqueue. Delivers the
-// output exactly as the synchronous path would (sink-write or controller-enqueue), settles
-// the transform-algorithm promise, and runs any coder release deferred while the task held it.
-// `out[..outLen]` is owned by the Rust caller and remains valid only for the duration of this
-// synchronous call — copy it before returning if it must outlive us.
-extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue streamCell, JSC::EncodedJSValue pendingPromise, const uint8_t* out, size_t outLen, JSC::EncodedJSValue error)
+// JS-thread completion for the off-thread codec dispatched by codeAndEnqueue. `out[..outLen]`
+// borrows the coder's reusable output buffer, so the bytes are consumed (sink-write or
+// controller-enqueue) BEFORE `m_asyncCodecInFlight` is cleared and any deferred coder release
+// runs. The transform-algorithm promise to settle is read from `m_asyncCodecPromise`.
+extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue streamCell, const uint8_t* out, size_t outLen, JSC::EncodedJSValue error)
 {
     auto& vm = getVM(globalObject);
     auto* stream = dynamicDowncast<JSTransformStream>(JSValue::decode(streamCell));
-    auto* promise = dynamicDowncast<JSPromise>(JSValue::decode(pendingPromise));
     ASSERT(stream);
+    if (!stream) [[unlikely]]
+        return;
+    auto* promise = stream->m_asyncCodecPromise.get();
+    stream->m_asyncCodecPromise.clear();
     ASSERT(promise);
-    if (!stream || !promise) [[unlikely]]
-        return;
-
-    stream->m_asyncCodecInFlight = false;
-    if (stream->m_nativeStateReleasePending && !stream->m_nativeStateInUse) [[unlikely]]
-        nativeTransformReleaseState(stream);
-
-    if (error) {
-        rejectPromise(globalObject, promise, JSValue::decode(error));
-        return;
-    }
 
     JSValue thrown;
     bool sinkBackpressure = false;
-    {
+    if (!error) {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         if (void* sinkPtr = stream->m_nativeSinkPtr) {
             if (outLen) {
@@ -224,6 +217,17 @@ extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* global
         }
         if (catchScope.exception()) [[unlikely]]
             thrown = takeAbruptCompletion(globalObject, catchScope);
+    }
+
+    stream->m_asyncCodecInFlight = false;
+    if (stream->m_nativeStateReleasePending && !stream->m_nativeStateInUse) [[unlikely]]
+        nativeTransformReleaseState(stream);
+
+    if (!promise) [[unlikely]]
+        return;
+    if (error) {
+        rejectPromise(globalObject, promise, JSValue::decode(error));
+        return;
     }
     if (!thrown.isEmpty()) {
         rejectPromise(globalObject, promise, thrown);

@@ -7,8 +7,8 @@ use bun_simdutf_sys::simdutf;
 
 bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; the single
-// mutable field is `Cell<Option<u16>>` (Copy).
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. `scratch`
+// is moved out via `.take()` before any call that could re-enter.
 #[derive(Default)]
 #[bun_jsc::JsClass]
 pub struct TextEncoderStreamEncoder {

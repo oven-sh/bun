@@ -464,7 +464,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     expect(re.code).toBe("ERR_INVALID_ARG_TYPE");
   });
 
-  test("brotli decoder errors surface as TypeError", async () => {
+  test("brotli decoder errors surface as TypeError with the original code as own property", async () => {
     const ds = new DecompressionStream("brotli");
     const writer = ds.writable.getWriter();
     const reader = ds.readable.getReader();
@@ -472,7 +472,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     writer.write(new Uint8Array([0xff, 0xff, 0xff, 0xff, 0xff, 0xff])).catch(() => {});
     writer.close().catch(() => {});
 
-    expect.assertions(1);
+    expect.assertions(4);
     try {
       while (true) {
         const { done } = await reader.read();
@@ -480,6 +480,12 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
       }
     } catch (e: any) {
       expect(e).toBeInstanceOf(TypeError);
+      expect(Object.hasOwn(e, "code")).toBe(true);
+      // Node builds these as "ERR_" + BrotliDecoderErrorString(), and brotli
+      // returns the macro PREFIX+NAME ("_ERROR_FORMAT_" + "PADDING_2"), so the
+      // double underscore is what node:zlib emits.
+      expect(e.code).toBe("ERR__ERROR_FORMAT_PADDING_2");
+      expect(e.cause.code).toBe(e.code);
     }
   });
 

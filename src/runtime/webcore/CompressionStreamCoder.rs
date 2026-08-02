@@ -12,10 +12,10 @@
 use core::ffi::c_int;
 use core::ptr::{self, NonNull};
 
-use bun_jsc::{
-    AnyTaskJob, AnyTaskJobCtx, ErrorCode, JSGlobalObject, JSPromiseStrong, JSUint8Array, JSValue,
-    JsResult, Strong,
-};
+use bun_jsc::ZigStringJsc as _;
+use bun_jsc::work_task::{WorkTask, WorkTaskContext};
+use bun_jsc::zig_string::ZigString as JscZigString;
+use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, JsTerminated, Strong};
 
 use bun_brotli::c as brotli;
 use bun_zlib as zlib;
@@ -83,6 +83,9 @@ pub struct CompressionStreamCoder {
     /// ends with <4 bytes after frame-complete we cannot tell which yet.
     zstd_head: [u8; 4],
     zstd_head_len: u8,
+    /// Output buffer for `transform`. Reused across chunks; `transform` clears
+    /// it on entry.
+    out: Vec<u8>,
 }
 
 // SAFETY: the z_stream / Brotli*Instance / ZSTD_*Ctx handles are single-owner
@@ -120,6 +123,9 @@ impl Drop for CompressionStreamCoder {
 enum CodecError {
     TrailingJunk,
     Message(&'static str),
+    /// Brotli decoder error; `BrotliDecoderErrorString` (static C string).
+    /// Surfaced as TypeError with `.code = "ERR_" + <this>` for node:zlib compat.
+    Brotli(&'static str),
 }
 
 impl CompressionStreamCoder {
@@ -198,6 +204,7 @@ impl CompressionStreamCoder {
             ended: false,
             zstd_head: [0; 4],
             zstd_head_len: 0,
+            out: Vec::new(),
         }))
     }
 
@@ -216,11 +223,12 @@ impl CompressionStreamCoder {
     }
 
     /// Feed one chunk (or the final empty flush) and collect every byte the
-    /// codec produces into a fresh `Vec`. `finish` drives the codec to
-    /// completion and performs the "unexpected end of file" / "trailing junk"
-    /// checks.
-    fn transform(&mut self, input: &[u8], finish: bool) -> Result<Vec<u8>, CodecError> {
-        let mut out = Vec::<u8>::new();
+    /// codec produces into `self.out` (cleared on entry). `finish` drives the
+    /// codec to completion and performs the "unexpected end of file" /
+    /// "trailing junk" checks.
+    fn transform(&mut self, input: &[u8], finish: bool) -> Result<(), CodecError> {
+        let out = &mut self.out;
+        out.clear();
         match &mut self.backend {
             Backend::Deflate(s) => {
                 // `avail_in` is `uInt`; clamp and refill so a ≥4 GiB chunk
@@ -276,7 +284,7 @@ impl CompressionStreamCoder {
                     self.ended = false;
                 }
                 if input.is_empty() && (self.ended || !finish) {
-                    return Ok(out);
+                    return Ok(());
                 }
                 let mut remaining = input;
                 loop {
@@ -382,7 +390,7 @@ impl CompressionStreamCoder {
                     if !input.is_empty() {
                         return Err(CodecError::TrailingJunk);
                     }
-                    return Ok(out);
+                    return Ok(());
                 }
                 let mut next_in: *const u8 = input.as_ptr();
                 let mut avail_in: usize = input.len();
@@ -422,7 +430,15 @@ impl CompressionStreamCoder {
                         }
                         brotli::BrotliDecoderResult::needs_more_output => continue,
                         brotli::BrotliDecoderResult::err => {
-                            return Err(CodecError::Message("brotli decode failed"));
+                            // SAFETY: `p` is a live decoder; the error string is a
+                            // static C string owned by the brotli library.
+                            let code = unsafe {
+                                let ec = brotli::BrotliDecoderGetErrorCode(&*p.as_ptr());
+                                core::ffi::CStr::from_ptr(brotli::BrotliDecoderErrorString(ec))
+                            };
+                            return Err(CodecError::Brotli(
+                                code.to_str().unwrap_or("brotli decode failed"),
+                            ));
                         }
                     }
                 }
@@ -544,7 +560,7 @@ impl CompressionStreamCoder {
                 }
             }
         }
-        Ok(out)
+        Ok(())
     }
 }
 
@@ -552,8 +568,7 @@ impl CompressionStreamCoder {
 /// `ArrayBuffer`/view, the backing store is pinned (cannot be detached) and
 /// the `JSValue` is `protect()`ed (cannot be collected) so the worker thread
 /// reads the bytes in place; otherwise the bytes are copied. `Drop` releases
-/// both — it runs on the JS thread because `AnyTaskJob` reclaims its ctx box
-/// there.
+/// both on the JS thread (the ctx box is reclaimed in `then`).
 pub(crate) enum AsyncInput {
     Pinned {
         value: JSValue,
@@ -665,7 +680,8 @@ pub extern "C" fn CompressionStreamCoder__transform(
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
     match this.transform(slice, finish) {
-        Ok(out) => {
+        Ok(()) => {
+            let out = core::mem::take(&mut this.out);
             if out.is_empty() {
                 JSUint8Array::create_empty(global)
             } else {
@@ -679,9 +695,6 @@ pub extern "C" fn CompressionStreamCoder__transform(
     }
 }
 
-/// Build (do not throw) the JS error value for a `CodecError`. The async
-/// threadpool path hands this value to C++ for promise rejection; the sync
-/// path throws it via `throw_codec_error` below.
 fn codec_error_to_js(global: &JSGlobalObject, e: &CodecError) -> JSValue {
     match *e {
         CodecError::TrailingJunk => global
@@ -691,6 +704,16 @@ fn codec_error_to_js(global: &JSGlobalObject, e: &CodecError) -> JSValue {
             )
             .to_js(),
         CodecError::Message(msg) => global.create_type_error_instance(format_args!("{msg}")),
+        CodecError::Brotli(detail) => {
+            let code = format!("ERR_{detail}");
+            let err = global.create_type_error_instance(format_args!("brotli decode failed"));
+            let code_js = JscZigString::init(code.as_bytes()).to_js(global);
+            err.put(global, b"code", code_js);
+            let cause = global.create_error_instance(format_args!("{detail}"));
+            cause.put(global, b"code", code_js);
+            err.put(global, b"cause", cause);
+            err
+        }
     }
 }
 
@@ -733,13 +756,18 @@ pub extern "C" fn CompressionStreamCoder__transformInto(
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
     match this.transform(slice, finish) {
-        Ok(out) if out.is_empty() => JSValue::UNDEFINED,
-        Ok(out) => {
-            // SAFETY: `sink_ptr` is a live JSSink of type `sink_id` (the C++
-            // caller null-checks it before attaching). `out` is owned here and
-            // drops on return; the sink copies what it needs.
+        Ok(()) if this.out.is_empty() => JSValue::UNDEFINED,
+        Ok(()) => {
+            // SAFETY: `sink_ptr` is a live JSSink of type `sink_id`; the sink
+            // copies what it needs before returning.
             unsafe {
-                Bun__JSSink__writeBytesById(sink_id, sink_ptr, global, out.as_ptr(), out.len())
+                Bun__JSSink__writeBytesById(
+                    sink_id,
+                    sink_ptr,
+                    global,
+                    this.out.as_ptr(),
+                    this.out.len(),
+                )
             }
         }
         Err(e) => {
@@ -752,85 +780,72 @@ pub extern "C" fn CompressionStreamCoder__transformInto(
 // ─── off-thread path (chunks > kAsyncCodecThreshold) ───────────────────────
 
 unsafe extern "C" {
-    /// JS-thread completion hook implemented in `JSCompressionStream.cpp`.
-    /// On success (`error == JSValue::ZERO`) the C++ side copies
-    /// `out[..out_len]` into the sink / a fresh Uint8Array before returning;
-    /// on error the span is ignored and the promise is rejected with `error`.
+    /// JS-thread completion hook in `JSCompressionStreamShared.cpp`. Copies
+    /// `out[..out_len]` into the sink / a fresh Uint8Array before it clears
+    /// `m_asyncCodecInFlight` (so a deferred coder release cannot free the
+    /// bytes under it), then settles the stream's `m_asyncCodecPromise`.
     fn Bun__CompressionStream__deliverAsync(
         global: &JSGlobalObject,
         stream_cell: JSValue,
-        promise: JSValue,
         out: *const u8,
         out_len: usize,
         error: JSValue,
     );
 }
 
-struct CompressionAsyncCtx {
+pub struct CompressionAsyncCtx {
     coder: *mut CompressionStreamCoder,
     input: AsyncInput,
     finish: bool,
-    /// GC root for the `JSTransformStream` cell that owns `coder`;
-    /// `m_asyncCodecInFlight` on that cell defers `m_coder` teardown until
-    /// `Bun__CompressionStream__deliverAsync` clears it.
+    /// GC root for the `JSTransformStream` cell that owns `coder`; its
+    /// `m_asyncCodecInFlight` flag defers `m_coder` teardown while this task
+    /// holds it, and its `m_asyncCodecPromise` WriteBarrier keeps the pending
+    /// transform-algorithm promise alive.
     stream: Strong,
-    promise: JSPromiseStrong,
-    result: Result<Vec<u8>, CodecError>,
+    error: Option<CodecError>,
 }
 
-impl AnyTaskJobCtx for CompressionAsyncCtx {
-    fn run(&mut self, _global: *mut JSGlobalObject) {
-        // SAFETY: `coder` is the live heap state owned by the rooted
-        // `JSTransformStream` cell; `m_asyncCodecInFlight` guarantees
-        // `nativeTransformReleaseState` cannot free it while this task is
-        // outstanding, and TransformStream serializes writes so no other
-        // transform step aliases it.
-        let coder = unsafe { &mut *self.coder };
-        self.result = coder.transform(self.input.slice(), self.finish);
+pub type CompressionStreamCoderTask = WorkTask<CompressionAsyncCtx>;
+
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+impl WorkTaskContext for CompressionAsyncCtx {
+    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::CompressionStreamCoderTask;
+
+    fn run(this: *mut Self, task: *mut WorkTask<Self>) {
+        // SAFETY: work-pool hand-off; `this`/`task` are live and exclusive.
+        // `coder` is kept alive by `m_asyncCodecInFlight` on the rooted stream
+        // cell, and TransformStream serializes writes so nothing else aliases it.
+        let ctx = unsafe { &mut *this };
+        let coder = unsafe { &mut *ctx.coder };
+        ctx.error = coder.transform(ctx.input.slice(), ctx.finish).err();
+        WorkTask::on_finish(unsafe { &mut *task });
     }
 
-    fn then(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        let stream = self.stream.get();
-        let promise = self.promise.value();
-        match &self.result {
-            Ok(out) => {
-                // SAFETY: FFI call into `JSCompressionStream.cpp`; `out` is
-                // owned by `self` and outlives this synchronous call — the C++
-                // side copies the bytes before returning.
-                unsafe {
-                    Bun__CompressionStream__deliverAsync(
-                        global,
-                        stream,
-                        promise,
-                        out.as_ptr(),
-                        out.len(),
-                        JSValue::ZERO,
-                    );
-                }
+    fn then(this: *mut Self, global: &JSGlobalObject) -> Result<(), JsTerminated> {
+        // SAFETY: heap-allocated in `__transformAsync`; consumed here so
+        // `input` (unpin/unprotect) and `stream` drop on the JS thread.
+        let ctx = unsafe { bun_core::heap::take(this) };
+        let stream = ctx.stream.get();
+        let (out, out_len, err) = match ctx.error {
+            // SAFETY: `m_asyncCodecInFlight` still holds; `coder` (and its
+            // `out` buffer) stay live until `deliverAsync` copies and clears it.
+            None => {
+                let coder = unsafe { &*ctx.coder };
+                (coder.out.as_ptr(), coder.out.len(), JSValue::ZERO)
             }
-            Err(e) => {
-                let err = codec_error_to_js(global, e);
-                // SAFETY: as above; the output span is ignored on the error path.
-                unsafe {
-                    Bun__CompressionStream__deliverAsync(
-                        global,
-                        stream,
-                        promise,
-                        core::ptr::null(),
-                        0,
-                        err,
-                    );
-                }
-            }
-        }
+            Some(e) => (core::ptr::null(), 0, codec_error_to_js(global, &e)),
+        };
+        // SAFETY: FFI into `JSCompressionStreamShared.cpp`; the callee copies
+        // `out[..out_len]` before releasing the coder.
+        unsafe { Bun__CompressionStream__deliverAsync(global, stream, out, out_len, err) };
         Ok(())
     }
 }
 
-/// Runs one transform step on the WorkPool and returns a pending `JSPromise`
-/// that the C++ `Bun__CompressionStream__deliverAsync` settles on the JS
-/// thread once the codec finishes (enqueue / sink-write+backpressure /
-/// reject). Called from `codeAndEnqueue` for `input_len > kAsyncCodecThreshold`.
+/// Schedules one transform step on the WorkPool. The caller
+/// (`codeAndEnqueue`) has already created the pending `JSPromise`, stored it
+/// on `stream_cell->m_asyncCodecPromise`, and set `m_asyncCodecInFlight`;
+/// `Bun__CompressionStream__deliverAsync` settles that promise.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn CompressionStreamCoder__transformAsync(
@@ -841,30 +856,22 @@ pub extern "C" fn CompressionStreamCoder__transformAsync(
     input: *const u8,
     input_len: usize,
     finish: bool,
-) -> JSValue {
+) {
     let fallback = if input.is_null() {
         &[][..]
     } else {
-        // SAFETY: the caller passes a BufferSource's bytes; `fallback` does
-        // not outlive this call (either pinned and ignored, or copied).
+        // SAFETY: the caller passes a BufferSource's bytes; either pinned (and
+        // `fallback` is ignored) or copied into an owned Vec.
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
-    let job = AnyTaskJob::create(
-        global,
-        CompressionAsyncCtx {
-            coder: this,
-            input: AsyncInput::new(global, chunk, fallback),
-            finish,
-            stream: Strong::create(stream_cell, global),
-            promise: JSPromiseStrong::init(global),
-            result: Ok(Vec::new()),
-        },
-    )
-    .expect("CompressionAsyncCtx::init is infallible");
-    // SAFETY: `job` is exclusively owned until `schedule` hands it to the
-    // WorkPool; reading `ctx.promise` before scheduling has no aliasing.
-    let promise = unsafe { (*job).ctx.promise.value() };
-    // SAFETY: `job` is a freshly-created live pointer.
-    unsafe { AnyTaskJob::schedule(job) };
-    promise
+    let ctx = bun_core::heap::into_raw(Box::new(CompressionAsyncCtx {
+        coder: this,
+        input: AsyncInput::new(global, chunk, fallback),
+        finish,
+        stream: Strong::create(stream_cell, global),
+        error: None,
+    }));
+    let task = WorkTask::<CompressionAsyncCtx>::create_on_js_thread(global, ctx);
+    // SAFETY: `task` is a freshly-allocated WorkTask; sole owner until scheduled.
+    WorkTask::schedule(unsafe { &mut *task });
 }

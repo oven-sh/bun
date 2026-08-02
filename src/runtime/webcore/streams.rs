@@ -2604,10 +2604,6 @@ impl BufferAction {
         self.promise.value()
     }
 
-    pub fn get(&self) -> *mut JSPromise {
-        std::ptr::from_mut(self.promise.get())
-    }
-
     pub(crate) fn swap(&mut self) -> *mut JSPromise {
         std::ptr::from_mut(self.promise.swap())
     }

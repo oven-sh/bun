@@ -41,9 +41,7 @@
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
 #include "JSMessagePort.h"
-#include "JSServiceWorker.h"
 #include <JavaScriptCore/IteratorOperations.h>
-#include "JSWindowProxy.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 

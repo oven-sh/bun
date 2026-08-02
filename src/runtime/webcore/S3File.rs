@@ -884,31 +884,14 @@ fn construct(global: &JSGlobalObject, callframe: &CallFrame) -> *mut Blob {
     }
 }
 
-fn has_instance(_: JSValue, _global: &JSGlobalObject, value: JSValue) -> bool {
-    bun_jsc::mark_binding();
-    let Some(blob) = value.as_class_ref::<Blob>() else {
-        return false;
-    };
-    blob.is_s3()
-}
-
 // Symbols exported with C linkage and JSC calling convention.
 // JSS3File__presign     -> raw shim wrapping get_presign_url (method-with-context)
 // JSS3File__construct   -> construct
-// JSS3File__hasInstance -> has_instance
 // JSS3File__bucket      -> get_bucket
 // JSS3File__stat        -> raw shim wrapping get_stat (method-with-context)
 
 pub(crate) mod exports {
     use super::*;
-
-    /// `customHasInstance` hook (JSC calling convention, `(EncodedJSValue,
-    /// *JSGlobalObject, EncodedJSValue) -> bool`).
-    #[unsafe(no_mangle)]
-    #[bun_jsc::host_call]
-    fn JSS3File__hasInstance(this: JSValue, global: &JSGlobalObject, value: JSValue) -> bool {
-        super::has_instance(this, global, value)
-    }
 
     /// Bare ctor, not routed through `toJSHostFn` (returns a nullable
     /// `*mut Blob`, not `JSValue`).

@@ -3121,7 +3121,6 @@ where
                 this.run_error_handler(js_err);
                 return;
             }
-            // .InlineBlob,
             Body::Value::WTFStringImpl(_) | Body::Value::InternalBlob(_) | Body::Value::Blob(_) => {
                 // toBlobIfPossible checks for WTFString needing a conversion.
                 this.blob = value.use_as_any_blob_allow_non_utf8_string();

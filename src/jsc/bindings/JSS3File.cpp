@@ -26,7 +26,6 @@ SYSV_ABI void* JSS3File__construct(JSC::JSGlobalObject*, JSC::CallFrame* callfra
 SYSV_ABI EncodedJSValue JSS3File__presign(void* ptr, JSC::JSGlobalObject*, JSC::CallFrame* callframe);
 SYSV_ABI EncodedJSValue JSS3File__stat(void* ptr, JSC::JSGlobalObject*, JSC::CallFrame* callframe);
 SYSV_ABI EncodedJSValue JSS3File__bucket(void* ptr, JSC::JSGlobalObject*);
-SYSV_ABI bool JSS3File__hasInstance(EncodedJSValue, JSC::JSGlobalObject*, EncodedJSValue);
 }
 
 // Forward declarations
@@ -148,14 +147,6 @@ JSC::Structure* JSS3File::createStructure(JSC::JSGlobalObject* globalObject)
     auto* protoStructure = JSS3FilePrototype::createStructure(vm, globalObject, superPrototype);
     auto* prototype = JSS3FilePrototype::create(vm, globalObject, protoStructure);
     return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info(), NonArray);
-}
-
-static bool customHasInstance(JSObject* object, JSGlobalObject* globalObject, JSValue value)
-{
-    if (!value.isObject())
-        return false;
-
-    return JSS3File__hasInstance(JSValue::encode(object), globalObject, JSValue::encode(value));
 }
 
 Structure* createJSS3FileStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

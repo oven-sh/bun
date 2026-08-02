@@ -149,25 +149,6 @@ ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const std::var
 
 ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const String& mark) const
 {
-    // if (!isMainThread()) {
-    //     if (restrictedMarkFunctions.contains(mark))
-    //         return Exception { TypeError };
-    // } else {
-    //     if (auto function = restrictedMarkFunctions.tryGet(mark)) {
-    //         if (*function == &PerformanceTiming::navigationStart)
-    //             return 0.0;
-
-    //         // PerformanceTiming should always be non-null for the Document ScriptExecutionContext.
-    //         ASSERT(m_performance.timing());
-    //         auto timing = m_performance.timing();
-    //         auto startTime = timing->navigationStart();
-    //         auto endTime = ((*timing).*(*function))();
-    //         if (!endTime)
-    //             return Exception { InvalidAccessError };
-    //         return endTime - startTime;
-    //     }
-    // }
-
     auto iterator = m_marksMap.find(mark);
     if (iterator != m_marksMap.end())
         return iterator->value.last()->startTime();

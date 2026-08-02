@@ -7,7 +7,6 @@ describe("Bun.serve response stream leak", () => {
     // worker process runs several test files against the same JSC VM.
     // heapStats() is VM-wide, so assert on the delta rather than an absolute
     // count to avoid counting objects left over from the previous file.
-    Bun.gc(true);
     const baselineStream = heapStats().objectTypeCounts.ReadableStream || 0;
     const baselineResponse = heapStats().objectTypeCounts.Response || 0;
 

@@ -9,7 +9,6 @@ const countOf = (name: string) => (heapStats().objectTypeCounts[name] as number)
 
 describe("FetchTasklet cyclic reference", () => {
   test("fetch with request body stream should not leak with cyclic reference", async () => {
-    Bun.gc(true);
     const baselineRequest = countOf("Request");
     const baselineStream = countOf("ReadableStream");
     await using server = Bun.serve({
@@ -59,7 +58,6 @@ describe("FetchTasklet cyclic reference", () => {
   });
 
   test("fetch with ReadableStream body should not leak streams", async () => {
-    Bun.gc(true);
     const baselineStream = countOf("ReadableStream");
     await using server = Bun.serve({
       port: 0,

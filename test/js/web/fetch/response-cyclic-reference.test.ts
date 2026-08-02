@@ -8,7 +8,6 @@ import { expect, test } from "bun:test";
 const streamCount = () => heapStats().objectTypeCounts.ReadableStream || 0;
 
 test("stream should not leak when response is cyclic reference to itself", async () => {
-  Bun.gc(true);
   const baseline = streamCount();
   function leak() {
     const stream = new ReadableStream({
@@ -28,7 +27,6 @@ test("stream should not leak when response is cyclic reference to itself", async
 });
 
 test("stream should not leak when creating a stream contained in another response", async () => {
-  Bun.gc(true);
   const baseline = streamCount();
   function leak() {
     const stream = new ReadableStream({

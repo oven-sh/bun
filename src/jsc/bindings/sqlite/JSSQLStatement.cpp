@@ -2922,8 +2922,6 @@ JSC::JSValue JSSQLStatement::rebind(JSC::JSGlobalObject* lexicalGlobalObject, JS
         return {};
     }
 
-
-
     if (val.isNumber()) {
         RELEASE_AND_RETURN(scope, val);
     } else {

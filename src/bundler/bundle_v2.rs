@@ -6258,7 +6258,8 @@ pub mod bv2_impl {
                 };
 
                 if resolve_result.flags.is_external() {
-                    if resolve_result.flags.is_external_and_rewrite_import_path()
+                    if resolve_result.flags.external_kind()
+                        == bun_resolver::ExternalKind::ExternalRewritePath
                         && !strings::eql_long(
                             resolve_result.path_pair.primary.text,
                             import_record.path.text,

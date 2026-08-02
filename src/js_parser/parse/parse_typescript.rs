@@ -376,7 +376,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         for stmt in stmts.iter() {
             match &stmt.data {
                 StmtData::SLocal(local) => {
-                    if local.was_ts_import_equals && !local.is_export {
+                    if local.origin.is_ts_import_equals() && !local.is_export {
                         import_equal_count += 1;
                     }
                 }
@@ -564,8 +564,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 kind,
                 decls,
                 is_export: opts.is_export,
-                was_ts_import_equals: true,
-                ..Default::default()
+                origin: S::LocalOrigin::TsImportEquals,
             },
             loc,
         ))

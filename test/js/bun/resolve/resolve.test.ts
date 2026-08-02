@@ -1212,7 +1212,7 @@ describe("--preserve-symlinks", () => {
     // Without -main the entry is still realpathed (Node behavior), so its
     // relative import resolves from shared/ and fails.
     const withoutMain = await run(join(dir, "app"), ["--preserve-symlinks", "main-sym.mjs"]);
-    expect(withoutMain.stderr).toContain("Cannot find module");
+    expect(withoutMain.stderr).toContain("Cannot find module './gen/dep.mjs'");
     expect(withoutMain.exitCode).not.toBe(0);
   });
 

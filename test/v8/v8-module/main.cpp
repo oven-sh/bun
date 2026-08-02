@@ -1292,10 +1292,10 @@ void test_v8_value_type_checks(const FunctionCallbackInfo<Value> &info) {
 void test_v8_integer(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
 
-  Local<Integer> small = Integer::New(isolate, 42);
-  LOG_EXPR(small->Value());
-  LOG_EXPR(small->IsNumber());
-  LOG_EXPR(small->IsInt32());
+  Local<Integer> small_int = Integer::New(isolate, 42);
+  LOG_EXPR(small_int->Value());
+  LOG_EXPR(small_int->IsNumber());
+  LOG_EXPR(small_int->IsInt32());
 
   Local<Integer> neg = Integer::New(isolate, -7);
   LOG_EXPR(neg->Value());
@@ -1308,7 +1308,7 @@ void test_v8_integer(const FunctionCallbackInfo<Value> &info) {
 
   // Round-trip through Value -> ToInteger
   Local<Context> context = isolate->GetCurrentContext();
-  Local<Value> as_value = small;
+  Local<Value> as_value = small_int;
   Local<Integer> back = as_value->ToInteger(context).ToLocalChecked();
   LOG_EXPR(back->Value());
 

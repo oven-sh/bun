@@ -200,9 +200,10 @@ Maybe<bool> Object::DefineOwnProperty(Local<Context> context, Local<Name> key, L
     if (attributes & DontEnum) jscAttrs |= JSC::PropertyAttribute::DontEnum;
     if (attributes & DontDelete) jscAttrs |= JSC::PropertyAttribute::DontDelete;
 
-    object->putDirect(vm, identifier, v, jscAttrs);
+    JSC::PropertyDescriptor descriptor(v, jscAttrs);
+    bool success = object->methodTable()->defineOwnProperty(object, globalObject, identifier, descriptor, false);
     RETURN_IF_EXCEPTION(scope, Nothing<bool>());
-    return Just(true);
+    return Just(success);
 }
 
 internal::ExternalPointerTag ToExternalPointerTag(uint16_t api_tag)

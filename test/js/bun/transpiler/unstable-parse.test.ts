@@ -266,11 +266,19 @@ describe("Bun.Transpiler.unstable_parse", () => {
     expect(ast.stmts[0].decls[0].value.value).toBe(7);
   });
 
-  test("malformed UTF-8 in Uint8Array input becomes U+FFFD", () => {
-    // "#!" + truncated 4-byte lead [F0 9F] + stray continuation [9F] + "\n1"
+  test("malformed UTF-8 in Uint8Array input becomes U+FFFD (WHATWG maximal-subpart)", () => {
+    // "#!" + truncated 4-byte sequence [F0 9F 9F] + "\n1"
+    // WHATWG consumes [F0 9F 9F] as one maximal subpart → one U+FFFD.
     const src = Uint8Array.of(0x23, 0x21, 0xf0, 0x9f, 0x9f, 0x0a, 0x31);
     const ast = js.unstable_parse(src);
-    expect(ast.hashbang).toBe("#!\uFFFD\uFFFD\uFFFD");
+    expect(ast.hashbang).toBe("#!\uFFFD");
+    const raw = js.unstable_parse(src, { format: "raw" });
+    expect(raw.root.hashbang).toBe("#!\uFFFD");
+    // Stray continuation after a 4-byte lead that accepts only 90..BF: F0 alone
+    // is the subpart; each 80 is a separate stray continuation.
+    const src2 = Uint8Array.of(0x23, 0x21, 0xf0, 0x80, 0x80, 0x0a, 0x31);
+    expect(js.unstable_parse(src2).hashbang).toBe("#!\uFFFD\uFFFD\uFFFD");
+    expect(js.unstable_parse(src2, { format: "raw" }).root.hashbang).toBe("#!\uFFFD\uFFFD\uFFFD");
   });
 
   test("options getters cannot detach the input buffer mid-parse", () => {

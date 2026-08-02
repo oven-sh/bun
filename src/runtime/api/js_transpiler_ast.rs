@@ -93,6 +93,30 @@ pub(crate) fn ast_to_json(ast: &ast::Ast<'_>, buf: &mut Vec<u8>) -> Result<(), S
     Ok(())
 }
 
+/// WHATWG "maximal subpart of an ill-formed subsequence" length at a
+/// multi-byte lead, so `str()`'s FFFD count matches `TextDecoder` (raw mode).
+fn utf8_maximal_subpart(s: &[u8]) -> usize {
+    let (lo2, hi2, width) = match s[0] {
+        0xC2..=0xDF => (0x80, 0xBF, 2),
+        0xE0 => (0xA0, 0xBF, 3),
+        0xED => (0x80, 0x9F, 3),
+        0xE1..=0xEC | 0xEE..=0xEF => (0x80, 0xBF, 3),
+        0xF0 => (0x90, 0xBF, 4),
+        0xF4 => (0x80, 0x8F, 4),
+        0xF1..=0xF3 => (0x80, 0xBF, 4),
+        _ => return 1,
+    };
+    if !matches!(s.get(1), Some(&b) if (lo2..=hi2).contains(&b)) {
+        return 1;
+    }
+    for k in 2..width {
+        if !matches!(s.get(k), Some(&b) if (0x80..=0xBF).contains(&b)) {
+            return k;
+        }
+    }
+    width
+}
+
 struct Writer<'a> {
     buf: &'a mut Vec<u8>,
     symbols: &'a [Symbol],
@@ -169,7 +193,7 @@ impl<'a> Writer<'a> {
                     let cp = strings::decode_wtf8_rune_t::<i32>(bytes, width, -1);
                     if cp < 0 {
                         self.uescape(0xFFFD);
-                        i += 1;
+                        i += utf8_maximal_subpart(&s[i..]);
                     } else {
                         self.codepoint(cp as u32);
                         i += take;

@@ -2194,10 +2194,8 @@ pub mod bv2_impl {
 
             let mut had_busted_dir_cache = false;
             let resolve_result: _resolver::Result = loop {
-                // Declaration-file importers resolve like tsc does (see
-                // `Resolver::importer_is_type_script_declaration_file`). Set
-                // only for the duration of the call; the flag is per-resolve
-                // state.
+                // Per-resolve flag; see
+                // `Resolver::importer_is_type_script_declaration_file`.
                 let resolved = {
                     // SAFETY: see `transpiler` note above.
                     unsafe { &mut *transpiler }
@@ -6082,10 +6080,8 @@ pub mod bv2_impl {
 
                 let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result = 'inner: loop {
-                    // Declaration-file importers resolve like tsc does (see
-                    // `Resolver::importer_is_type_script_declaration_file`).
-                    // Set only for the duration of the call; the flag is
-                    // per-resolve state.
+                    // Per-resolve flag; see
+                    // `Resolver::importer_is_type_script_declaration_file`.
                     let resolved = {
                         transpiler.resolver.importer_is_type_script_declaration_file =
                             bun_ast::loader::is_type_script_declaration_file(source.path.text);

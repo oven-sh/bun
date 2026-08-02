@@ -820,9 +820,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         result
     }
 
-    /// `export * from "path"` / `export * as ns from "path"`. Split out of
-    /// `t_export` so declaration-file mode can route `export type * from`
-    /// here as well.
+    /// `export * [as ns] from "path"`; split out of `t_export` so
+    /// declaration-file mode can route `export type * from` here too.
     #[inline(never)]
     fn t_export_star(
         p: &mut Self,
@@ -908,9 +907,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    /// `export { ... }` / `export { ... } from "path"`. Split out of
-    /// `t_export` so declaration-file mode can route `export type { ... }`
-    /// here as well.
+    /// `export { ... } [from "path"]`; split out of `t_export` so
+    /// declaration-file mode can route `export type { ... }` here too.
     #[inline(never)]
     fn t_export_clause_stmt(
         p: &mut Self,
@@ -1121,10 +1119,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     );
                                     return Err(crate::Error::SyntaxError);
                                 }
-                                // Declaration files keep `export type { ... }`
-                                // and `export type * from` as runtime exports;
-                                // the target names resolve against synthesized
-                                // bindings.
+                                // Declaration files keep `export type { }` /
+                                // `export type * from` as runtime exports.
                                 if p.options.typescript_declaration_file
                                     && !p.dts_suppress_type_name_recording
                                 {
@@ -2012,9 +2008,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // of the declared bindings. That "export var" statement will later
                 // cause identifiers to be transformed into property accesses.
                 //
-                // Declaration files reuse the same conversion at module scope so
-                // `declare const x` leaves a real (undefined) binding that
-                // export clauses and re-export chains can link against.
+                // Declaration files reuse the conversion at module scope so
+                // `declare const x` leaves a real (undefined) binding.
                 if (opts.is_namespace_scope && opts.is_export)
                     || (Self::IS_TYPESCRIPT_ENABLED
                         && p.options.typescript_declaration_file

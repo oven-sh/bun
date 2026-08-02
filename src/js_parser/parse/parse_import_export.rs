@@ -209,8 +209,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "import { type 'xx' as yy } from 'mod'"
                     if p.options.typescript_declaration_file {
                         // Declaration files keep type-only specifiers as
-                        // runtime imports so local export clauses that
-                        // reference them still resolve.
+                        // runtime imports.
                         let inner_alias_loc = p.lexer.loc();
                         let inner_alias = p.parse_clause_alias(b"import")?;
                         let mut name = LocRef {
@@ -432,8 +431,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // "export { type 'xx' } from 'mod'"
                         if p.options.typescript_declaration_file {
                             // Declaration files keep type-only specifiers as
-                            // runtime exports; the names resolve against
-                            // synthesized bindings.
+                            // runtime exports.
                             let inner_loc = p.lexer.loc();
                             let inner_name = p.parse_clause_alias(b"export")?;
                             let name = LocRef {

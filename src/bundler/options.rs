@@ -713,9 +713,8 @@ pub struct ESMConditions {
     pub(crate) import: ConditionsMap,
     pub(crate) require: ConditionsMap,
     pub(crate) style: ConditionsMap,
-    /// `import` / `require` plus the "types" condition, used when the
-    /// importer is a TypeScript declaration file so bare specifiers resolve
-    /// to a package's declaration entry the way tsc resolves them.
+    /// `import` / `require` plus the "types" condition, for declaration-file
+    /// importers.
     pub(crate) import_types: ConditionsMap,
     pub(crate) require_types: ConditionsMap,
 }

@@ -66,9 +66,8 @@ pub struct Parser<'a> {
 pub struct Options<'a> {
     pub jsx: options::JSX::Pragma,
     pub ts: bool,
-    /// The file is a TypeScript declaration file (`.d.ts`/`.d.mts`/`.d.cts`).
-    /// Type-only exports synthesize runtime bindings (undefined `var`s) so
-    /// import/re-export chains through declaration files still link.
+    /// `.d.ts`/`.d.mts`/`.d.cts`: type-only exports synthesize undefined
+    /// `var` bindings so re-export chains through declaration files link.
     pub typescript_declaration_file: bool,
     pub keep_names: bool,
     pub ignore_dce_annotations: bool,

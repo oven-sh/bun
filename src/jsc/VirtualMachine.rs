@@ -4082,8 +4082,7 @@ impl VirtualMachine {
             top_level_dir
         };
 
-        // Declaration-file importers resolve like tsc does (see
-        // `Resolver::importer_is_type_script_declaration_file`).
+        // See `Resolver::importer_is_type_script_declaration_file`.
         let importer_is_declaration_file = !is_special_source
             && is_a_file_path
             && bun_ast::loader::is_type_script_declaration_file(source);
@@ -4099,8 +4098,7 @@ impl VirtualMachine {
                 bun_ast::ImportKind::Require
             };
             let global_cache = self.transpiler.resolver.opts.global_cache;
-            // Set only for the duration of the call; the flag is per-resolve
-            // state.
+            // The flag is per-resolve state.
             let resolved = {
                 self.transpiler
                     .resolver

@@ -575,12 +575,10 @@ pub struct Resolver<'a> {
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
 
-    /// Per-resolve state set by callers (same contract as `custom_dir_paths`):
-    /// the importer is a TypeScript declaration file (`.d.ts`/`.d.mts`/
-    /// `.d.cts`). Declaration files resolve like tsc resolves them: bare
-    /// specifiers match the "types" exports condition and relative runtime
-    /// specifiers prefer their declaration-file siblings, so a declaration
-    /// graph stays within declaration files and always links.
+    /// Per-resolve state set by callers (same contract as `custom_dir_paths`).
+    /// Declaration-file importers resolve like tsc: bare specifiers match the
+    /// "types" exports condition and relative runtime specifiers prefer their
+    /// declaration-file siblings.
     pub importer_is_type_script_declaration_file: bool,
 }
 
@@ -5590,11 +5588,8 @@ impl<'a> Resolver<'a> {
         dec_ret!(MatchStatus::NotFound);
     }
 
-    /// Declaration-file importers resolve relative runtime specifiers to
-    /// their declaration siblings first, the way tsc does ("./foo.mjs" from a
-    /// ".d.mts" file means "./foo.d.mts"). This keeps a declaration graph
-    /// inside declaration files, whose type-only exports are synthesized, so
-    /// every re-export chain links.
+    /// tsc resolution inside declaration files: "./foo.mjs" from a ".d.mts"
+    /// file means "./foo.d.mts".
     fn load_declaration_file_sibling(
         &mut self,
         path: &[u8],
@@ -5617,8 +5612,7 @@ impl<'a> Resolver<'a> {
             let mut candidate = Vec::with_capacity(stem.len() + declaration_ext.len());
             candidate.extend_from_slice(stem);
             candidate.extend_from_slice(declaration_ext);
-            // No further recursion: the candidate's last extension (".ts"/
-            // ".mts"/".cts") never matches the rewrite list above.
+            // No further recursion: ".ts"/".mts"/".cts" never match above.
             if let Some(result) = self.load_as_file(&candidate, extension_order) {
                 return Some(result);
             }
@@ -5803,11 +5797,8 @@ impl<'a> Resolver<'a> {
                 &[]
             };
 
-            // Declaration-file part of the tsc behavior quoted above. These
-            // transpile to modules whose type-only exports become synthesized
-            // (undefined) bindings, so declaration files importing ".mjs"
-            // siblings that only ship as ".d.mts" resolve. Tried after every
-            // runtime candidate, including inside node_modules.
+            // Declaration-file part of the tsc behavior quoted above. Tried
+            // after every runtime candidate, including inside node_modules.
             let declaration_exts: &[&[u8]] = if ext == b".js" || ext == b".jsx" {
                 &[b".d.ts", b".d.mts"]
             } else if ext == b".mjs" {

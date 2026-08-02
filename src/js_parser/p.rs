@@ -345,15 +345,13 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) is_exported_inside_namespace: RefRefMap,
     pub(crate) local_type_names: StringBoolMap,
 
-    /// Declaration-file mode (`options.typescript_declaration_file`): names of
-    /// module-scope type-only declarations (type aliases, interfaces,
-    /// `declare` statements) in source order, so the end of the parse pass can
-    /// synthesize `var` bindings for them. The map value records whether the
-    /// declaration was exported.
+    /// Declaration-file mode: module-scope type-only declaration names, in
+    /// source order, to synthesize `var` bindings for at the end of the parse
+    /// pass. The map value is whether the declaration was exported.
     pub(crate) dts_type_names: StringBoolMap,
     pub(crate) dts_type_name_order: Vec<&'a [u8]>,
-    /// True while parsing a `declare global { ... }` body, which shares the
-    /// module-scope `ParseStatementOptions` but must not synthesize bindings.
+    /// True inside a `declare global { ... }` body, which shares the
+    /// module-scope parse options but must not synthesize bindings.
     pub(crate) dts_suppress_type_name_recording: bool,
 
     // This is the reference to the generated function argument for the namespace,
@@ -4540,9 +4538,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ref_
     }
 
-    /// Declaration-file mode: remember a module-scope type-only declaration's
-    /// name so `synthesize_declaration_file_bindings` can emit a `var` for it
-    /// at the end of the parse pass.
+    /// Declaration-file mode: queue a type-only declaration's name for
+    /// `synthesize_declaration_file_bindings`.
     pub(crate) fn record_declaration_file_type_name(
         &mut self,
         name: &'a [u8],
@@ -4569,11 +4566,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// Declaration-file mode: synthesize `var` bindings (bound to undefined)
-    /// for the type-only declarations recorded during the parse pass, so the
-    /// module record exposes every name the declaration file declares and
-    /// re-export chains through declaration files link. Names that already
-    /// have a real binding (declaration merging, imports) are skipped.
+    /// Declaration-file mode: synthesize `var` bindings (undefined) for the
+    /// recorded type-only declarations so re-export chains link. Names with a
+    /// real binding (declaration merging, imports) are skipped.
     pub(crate) fn synthesize_declaration_file_bindings(
         &mut self,
         stmts: &mut BumpVec<'a, Stmt>,
@@ -4749,9 +4744,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match &mut binding.data {
             js_ast::b::B::BMissing(_) => {}
             js_ast::b::B::BIdentifier(bind) => {
-                // Declaration files keep module-scope `declare var/let/const`
-                // bindings as real symbols; the statement is converted to a
-                // `var` in `parse_stmt_fallthrough_ts_keyword`.
+                // Declaration files keep module-scope `declare` bindings as
+                // real symbols; the statement becomes a `var` in parse_stmt.
                 if !opts.is_typescript_declare
                     || (opts.is_namespace_scope && opts.is_export)
                     || (Self::IS_TYPESCRIPT_ENABLED

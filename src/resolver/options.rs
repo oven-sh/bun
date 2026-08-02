@@ -52,17 +52,15 @@ pub struct Conditions {
     pub import: crate::package_json::ConditionsMap,
     pub require: crate::package_json::ConditionsMap,
     pub style: crate::package_json::ConditionsMap,
-    /// `import` / `require` plus the "types" condition, used when the
-    /// importer is a TypeScript declaration file (see
-    /// `Resolver::importer_is_type_script_declaration_file`).
+    /// `import` / `require` plus the "types" condition, for declaration-file
+    /// importers (see `Resolver::importer_is_type_script_declaration_file`).
     pub import_types: crate::package_json::ConditionsMap,
     pub require_types: crate::package_json::ConditionsMap,
 }
 
 impl Conditions {
-    /// The condition set for an exports/imports-map walk. A free-standing
-    /// method on the field (not `Resolver`) so call sites can keep a disjoint
-    /// `&mut` borrow of `Resolver::debug_logs` live in the same expression.
+    /// Condition set for an exports/imports-map walk. On the field, not
+    /// `Resolver`, so call sites can keep `debug_logs` mutably borrowed.
     pub fn for_kind(
         &self,
         importer_is_type_script_declaration_file: bool,

@@ -4979,8 +4979,7 @@ unsafe fn resolve<'a>(
         ImportKind::Require
     };
 
-    // Declaration-file importers resolve like tsc does (see
-    // `Resolver::importer_is_type_script_declaration_file`).
+    // See `Resolver::importer_is_type_script_declaration_file`.
     let importer_is_declaration_file = !is_special_source
         && is_a_file_path
         && bun_ast::loader::is_type_script_declaration_file(source);
@@ -4993,8 +4992,7 @@ unsafe fn resolve<'a>(
                 .importer_is_type_script_declaration_file = true;
         }
     }
-    // `vm` is a Copy raw pointer; `guard` takes it by value so the closure
-    // doesn't borrow the local.
+    // `guard` takes the Copy pointer by value; the closure borrows nothing.
     let _declaration_file_flag_guard = scopeguard::guard(vm, |vm| {
         // SAFETY: see above.
         unsafe {

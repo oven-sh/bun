@@ -210,8 +210,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // "namespace foo {}";
         let name_loc = p.lexer.loc();
         let name_text = p.lexer.identifier;
-        // `declare module "foo"` has a string-literal name; `lexer.identifier`
-        // is stale text in that case.
+        // `declare module "foo"`: `lexer.identifier` is stale for the
+        // string-literal form.
         let name_is_identifier = p.lexer.token == T::TIdentifier;
         p.lexer.next()?;
 

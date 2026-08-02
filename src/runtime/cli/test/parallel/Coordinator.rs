@@ -522,15 +522,12 @@ impl<'a> Coordinator<'a> {
     /// Runs from `drive()` between event-loop ticks — never inside a channel
     /// or process callback — so `reap_worker` may drop and rebuild `w.ipc`.
     fn run_pending_reaps(&mut self) {
-        // Iterate via raw pointers: `reap_worker` needs `&mut self` while the
-        // slot borrow is live (same shape as the on_frame callback paths).
-        let base: *mut Worker = self.workers.as_mut_ptr();
         let n = self.spawned_count as usize;
         for i in 0..n {
-            // SAFETY: `i < spawned_count <= workers.len()`. Keep the slot as a
-            // raw pointer: `reap_worker` reborrows `self`, so no protected
-            // `&mut Worker` may span that call (see `find_steal_victim`).
-            let w: *mut Worker = unsafe { base.add(i) };
+            // SAFETY: `i < spawned_count <= workers.len()`. `base` is re-derived
+            // each iteration: `reap_worker`'s slot walks (`as_mut_ptr` in the
+            // abort paths) retag the buffer, popping any earlier derivation.
+            let w: *mut Worker = unsafe { self.workers.as_mut_ptr().add(i) };
             // SAFETY: `w` is a live slot; short place accesses only.
             let status = unsafe {
                 if !core::mem::take(&mut (*w).reap_pending) {
@@ -542,15 +539,13 @@ impl<'a> Coordinator<'a> {
                     .take()
                     .expect("reap_pending set only after exit_status")
             };
-            self.reap_worker(w, &status);
+            self.reap_worker(i, &status);
         }
     }
 
-    fn reap_worker(&mut self, w_ptr: *mut Worker, status: &SpawnStatus) {
-        // SAFETY: `w_ptr` is a live slot in `self.workers`' heap buffer, an
-        // allocation disjoint from `*self`; re-derived here rather than
-        // passed as a protected `&mut` across the `&mut self` call boundary.
-        let w = unsafe { &mut *w_ptr };
+    fn reap_worker(&mut self, slot: usize, status: &SpawnStatus) {
+        // SAFETY: `slot < spawned_count <= workers.len()`; fresh root derivation, like each reborrow below.
+        let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
         // Decrement here (not in onProcessExit) so drive() keeps pumping until
         // the IPC pipe has been drained and this reap actually runs.
         self.live_workers -= 1;
@@ -581,8 +576,8 @@ impl<'a> Coordinator<'a> {
             }
         }
 
-        // SAFETY: fresh reborrow — `abort_on_worker_panic` above walks the slots.
-        let w = unsafe { &mut *w_ptr };
+        // SAFETY: fresh derivation — `abort_on_worker_panic` above retags the slots.
+        let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
         if let Some(p) = w.process.take() {
             // SAFETY: `p` is the live `*mut Process` from `to_process`; sole owner now.
             unsafe {
@@ -593,8 +588,8 @@ impl<'a> Coordinator<'a> {
 
         let mut respawned = false;
         if !self.bailed && self.has_undispatched_files() {
-            // SAFETY: fresh reborrow — `has_undispatched_files` read the slots.
-            let w = unsafe { &mut *w_ptr };
+            // SAFETY: fresh derivation — `has_undispatched_files` read the slots.
+            let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
             w.ipc = Default::default();
             // from_mut: keep write provenance on the stored backref (see spawn_worker).
             let w_ptr = std::ptr::from_mut::<Worker>(w).cast_const();
@@ -617,8 +612,8 @@ impl<'a> Coordinator<'a> {
             // Explicit early release: `w` is a borrowed slot in self.workers, so
             // Drop won't fire until Coordinator teardown. Assigning defaults
             // drops the old values now (pipe FDs, capture buffer).
-            // SAFETY: fresh reborrow — `abort_queued_files` may walk the slots.
-            let w = unsafe { &mut *w_ptr };
+            // SAFETY: fresh derivation — `abort_queued_files` may retag the slots.
+            let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
             w.ipc = Default::default();
             w.out = WorkerPipe::new(core::ptr::null());
             w.err = WorkerPipe::new(core::ptr::null());

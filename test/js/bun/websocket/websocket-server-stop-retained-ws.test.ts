@@ -36,7 +36,7 @@ test("retained ServerWebSocket stays usable after server.stop() and GC", async (
         client.close();
         await closed;
         await serverClosed.promise;
-        server.stop(true);
+        await server.stop(true);
       }
 
       await connectAndClose();

@@ -841,6 +841,38 @@ extern "C"
     }
   }
 
+  void uws_ws_pause(int ssl, uws_websocket_t *ws)
+  {
+    if (ssl)
+    {
+      TLSWebSocket *uws =
+          (TLSWebSocket *)ws;
+      uws->pause();
+    }
+    else
+    {
+      TCPWebSocket *uws =
+          (TCPWebSocket *)ws;
+      uws->pause();
+    }
+  }
+
+  void uws_ws_resume(int ssl, uws_websocket_t *ws)
+  {
+    if (ssl)
+    {
+      TLSWebSocket *uws =
+          (TLSWebSocket *)ws;
+      uws->resume();
+    }
+    else
+    {
+      TCPWebSocket *uws =
+          (TCPWebSocket *)ws;
+      uws->resume();
+    }
+  }
+
   uws_sendstatus_t uws_ws_send(int ssl, uws_websocket_t *ws, const char *message,
                                size_t length, uws_opcode_t opcode)
   {

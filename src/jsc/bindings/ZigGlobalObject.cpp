@@ -4144,6 +4144,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseResolve;
     } else if (handler == Bun__CronJob__onPromiseReject) {
         return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseReject;
+    } else if (handler == Bun__ServerWebSocket__onMessagePromiseResolve) {
+        return GlobalObject::PromiseFunctions::Bun__ServerWebSocket__onMessagePromiseResolve;
+    } else if (handler == Bun__ServerWebSocket__onMessagePromiseReject) {
+        return GlobalObject::PromiseFunctions::Bun__ServerWebSocket__onMessagePromiseReject;
     } else if (handler == Bun__HTTPRequestContextH3__onReject) {
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextH3__onReject;
     } else if (handler == Bun__HTTPRequestContextH3__onRejectStream) {

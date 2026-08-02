@@ -2792,9 +2792,7 @@ impl RunCommand {
         let mut out = PathBuffer::uninit();
         let resolved = bun_sys::get_fd_path(fd, &mut out);
         let _ = bun_sys::close(fd);
-        resolved
-            .ok()
-            .map(|p| p.to_vec().into_boxed_slice())
+        resolved.ok().map(|p| p.to_vec().into_boxed_slice())
     }
 
     /// Fast-path file probe: if `target` resolves to an existing regular file,

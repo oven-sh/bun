@@ -133,8 +133,10 @@ db.close(true);
 Using a statement that was finalized by `close()` throws `Database has closed`, except `toString()`, which returns an empty string, and `finalize()`, which stays safe to call.
 
 <Note>
-  `close(false)` is called automatically when the database is garbage collected. It is safe to call multiple times but
-  has no effect after the first. The `using` statement calls `close(true)`.
+  `close()` is safe to call multiple times but has no effect after the first (except that `close(true)` after
+  `close(false)` still finalizes any remaining `.prepare()` statements). If a `Database` is garbage collected without
+  being closed, the connection is released once every statement created from it has also been finalized or collected.
+  The `using` statement calls `close(true)`.
 </Note>
 
 ### `using` statement

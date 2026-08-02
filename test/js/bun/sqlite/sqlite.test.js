@@ -1626,15 +1626,38 @@ it("WAL is checkpointed at exit for a database closed with close(false) while a 
        const db = new Database(process.argv[1]);
        db.exec("PRAGMA journal_mode=WAL; CREATE TABLE t (a); INSERT INTO t VALUES (1)");
        const sel = db.prepare("SELECT * FROM t");
-       sel.get();
-       db.close();`,
+       console.log(JSON.stringify(sel.get()));
+       db.close();
+       console.log(JSON.stringify(sel.get()));`,
       file,
     ],
     env: bunEnv,
-    stderr: "inherit",
+    stderr: "pipe",
   });
-  expect(await proc.exited).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: '{"a":1}\n{"a":1}\n', stderr: "", exitCode: 0 });
   expect(existsSync(file + "-wal") ? statSync(file + "-wal").size : 0).toBe(0);
+  {
+    using db = new Database(file, { readonly: true });
+    expect(db.query("SELECT * FROM t").all()).toEqual([{ a: 1 }]);
+  }
+});
+
+it("Statement.isFinalized reflects native state, including statements finalized by close()", () => {
+  const db = new Database(":memory:");
+  const prev = Database.MAX_QUERY_CACHE_SIZE;
+  Database.MAX_QUERY_CACHE_SIZE = 0;
+  try {
+    const uncached = db.query("SELECT 1");
+    const prepared = db.prepare("SELECT 2");
+    expect([uncached.isFinalized, prepared.isFinalized]).toEqual([false, false]);
+    db.close();
+    expect([uncached.isFinalized, prepared.isFinalized]).toEqual([true, false]);
+    prepared.finalize();
+    expect(prepared.isFinalized).toBe(true);
+  } finally {
+    Database.MAX_QUERY_CACHE_SIZE = prev;
+  }
 });
 
 it("`using` releases the connection even after an explicit close(false) left a prepare() statement live", () => {

@@ -290,8 +290,9 @@ declare module "bun:sqlite" {
      * ```ts
      * db.close();
      * ```
-     * `close(false)` is called automatically when the database instance is
-     * garbage collected; `using db = ...` calls `close(true)`.
+     * If a `Database` is garbage collected without being closed, the
+     * connection is released once every statement created from it has also
+     * been finalized or collected. `using db = ...` calls `close(true)`.
      */
     close(
       /**

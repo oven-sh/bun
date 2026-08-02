@@ -107,6 +107,7 @@ interface CppSQLStatement {
   raw: (...args: TODO[]) => TODO;
   finalize: (...args: TODO[]) => TODO;
   toString: (...args: TODO[]) => TODO;
+  isFinalized: boolean;
   columns: string[];
   columnsCount: number;
   paramsCount: number;
@@ -163,7 +164,9 @@ class Statement {
   values: SqliteTypes.Statement["values"];
   raw: SqliteTypes.Statement["raw"];
   run: SqliteTypes.Statement["run"];
-  isFinalized = false;
+  get isFinalized() {
+    return this.#raw.isFinalized;
+  }
 
   toJSON() {
     return {
@@ -327,7 +330,6 @@ class Statement {
   }
 
   finalize(...args) {
-    this.isFinalized = true;
     return this.#raw.finalize(...args);
   }
 
@@ -496,16 +498,13 @@ class Database implements SqliteTypes.Database {
 
   close(throwOnError = false) {
     // native close finalizes every kOwnedByDatabaseFlag statement (query cache + transaction controller)
-    for (const stmt of this.#queryCache.values()) stmt.isFinalized = true;
-    this.#queryCache.clear();
+    this.#queryCache.$clear();
     controllers?.delete(this);
     return SQL.close(this.#handle, throwOnError);
   }
   clearQueryCache() {
-    for (const stmt of this.#queryCache.values()) {
-      stmt?.finalize?.();
-    }
-    this.#queryCache.clear();
+    this.#queryCache.$forEach(stmt => stmt.finalize());
+    this.#queryCache.$clear();
   }
 
   run(query, ...params) {
@@ -537,7 +536,7 @@ class Database implements SqliteTypes.Database {
   static MAX_QUERY_CACHE_SIZE = 20;
 
   get [cachedCount]() {
-    return this.#queryCache.size;
+    return this.#queryCache.$size;
   }
 
   query(query) {
@@ -550,12 +549,12 @@ class Database implements SqliteTypes.Database {
     }
 
     const cache = this.#queryCache;
-    let stmt = cache.get(query);
+    let stmt = cache.$get(query);
     if (stmt !== undefined) {
       // LRU: re-insert so the most recently used key is last
-      cache.delete(query);
+      cache.$delete(query);
       if (stmt.isFinalized) stmt = this[kPrepareOwned](query, constants.SQLITE_PREPARE_PERSISTENT);
-      cache.set(query, stmt);
+      cache.$set(query, stmt);
       return stmt;
     }
 
@@ -563,8 +562,14 @@ class Database implements SqliteTypes.Database {
     const max = Database.MAX_QUERY_CACHE_SIZE;
     if (max > 0) {
       // evicted statements stay usable; close() still finalizes them via kOwnedByDatabaseFlag
-      if (cache.size >= max) cache.delete(cache.keys().next().value);
-      cache.set(query, stmt);
+      if (cache.$size >= max) {
+        let oldest;
+        cache.$forEach((_, key) => {
+          if (oldest === undefined) oldest = key;
+        });
+        cache.$delete(oldest);
+      }
+      cache.$set(query, stmt);
     }
     return stmt;
   }

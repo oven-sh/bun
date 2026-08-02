@@ -4,12 +4,11 @@ use std::io::Write as _;
 
 use bun_core::ZigString;
 use bun_io::KeepAlive;
+use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult,
     WorkPoolTask,
 };
-// `bun_event_loop`); pull the concrete types out by name.
-use bun_jsc::event_loop::EventLoop;
 // JSC-side ZigString carries `to_js` (the `bun_core::ZigString` repr-twin
 // lives in `bun_jsc::zig_string`); used for ASCII→JS conversions only.
 use bun_jsc::ConcurrentTask::ConcurrentTask;

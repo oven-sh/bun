@@ -84,6 +84,11 @@ impl<T: ?Sized> ParentRef<T, crate::Shared> {
 
 impl<T: ?Sized> ParentRef<T, crate::Mut> {
     #[inline]
+    pub const fn as_mut_ptr(self) -> *mut T {
+        self.ptr.as_ptr()
+    }
+
+    #[inline]
     pub fn from_ref_mut(parent: &mut T) -> Self {
         Self {
             ptr: NonNull::from(parent),
@@ -165,11 +170,6 @@ impl<T: ?Sized, P> ParentRef<T, P> {
 
     #[inline]
     pub fn as_const_ptr(self) -> *const T {
-        self.ptr.as_ptr()
-    }
-
-    #[inline]
-    pub const fn as_mut_ptr(self) -> *mut T {
         self.ptr.as_ptr()
     }
 }

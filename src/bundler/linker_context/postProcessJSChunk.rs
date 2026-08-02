@@ -98,7 +98,7 @@ pub(crate) fn post_process_js_chunk(
     // Create ModuleInfo for ESM bytecode in --compile builds
     let generate_module_info = c.options.generate_bytecode_cache
         && c.options.output_format == options::OutputFormat::Esm
-        && c.options.compile;
+        && c.options.compile_mode.is_executable();
     let loader =
         c.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize];
     let is_typescript = loader.is_type_script();

@@ -140,23 +140,13 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         b.options.install = install_ptr;
         b.resolver.opts.install = install_ptr;
         b.resolver.opts.global_cache = ctx.debug.global_cache;
-        b.resolver.opts.prefer_offline_install = ctx
+        let offline = ctx
             .debug
             .offline_mode_setting
-            .unwrap_or(OfflineMode::Online)
-            == OfflineMode::Offline;
-        // Note: `bun_resolver::options::BundleOptions` has no
-        // `prefer_latest_install` field; compute the value once
-        // and assign only to `b.options` (which does carry it). The resolver
-        // never reads it.
-        let prefer_latest = ctx
-            .debug
-            .offline_mode_setting
-            .unwrap_or(OfflineMode::Online)
-            == OfflineMode::Latest;
+            .unwrap_or(OfflineMode::Online);
+        b.resolver.opts.install_preference = offline;
         b.options.global_cache = b.resolver.opts.global_cache;
-        b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
-        b.options.prefer_latest_install = prefer_latest;
+        b.options.install_preference = offline;
         // SAFETY: `b.env` is the Transpiler-owned `*mut Loader`; store it
         // as `NonNull` (not `&Loader`) because `configure_defines()` below
         // reborrows the same allocation as `&mut Loader` via `run_env_loader()`,

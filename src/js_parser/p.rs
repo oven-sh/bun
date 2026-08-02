@@ -4657,7 +4657,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match &mut binding.data {
             js_ast::b::B::BMissing(_) => {}
             js_ast::b::B::BIdentifier(bind) => {
-                if !opts.is_typescript_declare || (opts.is_namespace_scope && opts.is_export) {
+                if !opts.is_typescript_declare || (opts.scope.is_namespace() && opts.is_export) {
                     bind.r#ref = self.declare_symbol(
                         kind,
                         binding.loc,

@@ -2547,6 +2547,10 @@ fn transpile_source_code_inner(
                     experimental_decorators: unsafe {
                         (*jsc_vm).transpiler.options.experimental_decorators
                     },
+                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                    use_define_for_class_fields: unsafe {
+                        (*jsc_vm).transpiler.options.use_define_for_class_fields
+                    },
                     virtual_source,
                     dont_bundle_twice: true,
                     allow_commonjs: true,

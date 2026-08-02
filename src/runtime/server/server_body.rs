@@ -2817,14 +2817,15 @@ where
         // there would be Stacked-Borrows UB. JSC-handle Drops are no-ops past
         // `is_shutting_down()`; `TERMINATED` means `app.close()` already ran,
         // so `NewApp::destroy` can't orphan a keep-alive socket.
-        let this = unsafe { &mut *this_ptr };
-        this.js_value.finalize();
-        this.deinit_if_we_can();
-        if this.flags.contains(ServerFlags::DEINIT_SCHEDULED)
-            && this.flags.contains(ServerFlags::TERMINATED)
-            && this.vm().is_shutting_down()
-        {
-            Self::deinit(this_ptr);
+        unsafe {
+            (*this_ptr).js_value.finalize();
+            (*this_ptr).deinit_if_we_can();
+            if (*this_ptr).flags.contains(ServerFlags::DEINIT_SCHEDULED)
+                && (*this_ptr).flags.contains(ServerFlags::TERMINATED)
+                && (*this_ptr).vm().is_shutting_down()
+            {
+                Self::deinit(this_ptr);
+            }
         }
     }
 

@@ -315,6 +315,15 @@ impl<'a> CopyFile<'a> {
         let mut total_written: u64 = 0;
         let src_fd = self.source_fd;
         let dest_fd = self.destination_fd;
+        let bun_opened_dest = matches!(
+            self.destination_file_store.pathlike,
+            PathOrFileDescriptor::Path(_)
+        );
+        let fallback_cap = if unknown_size {
+            MAX_SIZE
+        } else {
+            remain as SizeType
+        };
 
         // defer { this.read_len = @truncate(total_written); }
         let read_len_slot: *mut SizeType = &raw mut self.read_len;
@@ -330,28 +339,18 @@ impl<'a> CopyFile<'a> {
         // If they can't use copy_file_range, they probably also can't
         // use sendfile() or splice()
         if !bun_sys::copy_file::can_use_copy_file_range_syscall() {
-            match node_fs::NodeFS::copy_file_using_read_write_loop(
-                bun_core::ZStr::EMPTY,
-                bun_core::ZStr::EMPTY,
+            match read_write_fallback(
                 src_fd,
                 dest_fd,
-                if unknown_size { 0 } else { remain },
+                bun_opened_dest,
+                fallback_cap,
                 &mut total_written,
             ) {
                 bun_sys::Result::Err(err) => {
                     self.system_error = Some(err.to_system_error());
                     return Err(bun_errno::from_errno(err.errno as i32).into());
                 }
-                bun_sys::Result::Ok(()) => {
-                    // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
-                    let _ = unsafe {
-                        libc::ftruncate(
-                            dest_fd.native(),
-                            i64::try_from(total_written).expect("int cast"),
-                        )
-                    };
-                    return Ok(());
-                }
+                bun_sys::Result::Ok(()) => return Ok(()),
             }
         }
 
@@ -405,28 +404,18 @@ impl<'a> CopyFile<'a> {
                 // OPNOTSUPP: filesystem doesn't support this operation
                 bun_sys::E::ENOSYS | bun_sys::E::EXDEV | bun_sys::E::ENOTSUP => {
                     // TODO: this should use non-blocking I/O.
-                    match node_fs::NodeFS::copy_file_using_read_write_loop(
-                        bun_core::ZStr::EMPTY,
-                        bun_core::ZStr::EMPTY,
+                    match read_write_fallback(
                         src_fd,
                         dest_fd,
-                        if unknown_size { 0 } else { remain },
+                        bun_opened_dest,
+                        fallback_cap,
                         &mut total_written,
                     ) {
                         bun_sys::Result::Err(err) => {
                             self.system_error = Some(err.to_system_error());
                             return Err(bun_errno::from_errno(err.errno as i32).into());
                         }
-                        bun_sys::Result::Ok(()) => {
-                            // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
-                            let _ = unsafe {
-                                libc::ftruncate(
-                                    dest_fd.native(),
-                                    i64::try_from(total_written).expect("int cast"),
-                                )
-                            };
-                            return Ok(());
-                        }
+                        bun_sys::Result::Ok(()) => return Ok(()),
                     }
                 }
 
@@ -462,28 +451,18 @@ impl<'a> CopyFile<'a> {
                     // to a read/write loop
                     if total_written == 0 {
                         // TODO: this should use non-blocking I/O.
-                        match node_fs::NodeFS::copy_file_using_read_write_loop(
-                            bun_core::ZStr::EMPTY,
-                            bun_core::ZStr::EMPTY,
+                        match read_write_fallback(
                             src_fd,
                             dest_fd,
-                            if unknown_size { 0 } else { remain },
+                            bun_opened_dest,
+                            fallback_cap,
                             &mut total_written,
                         ) {
                             bun_sys::Result::Err(err) => {
                                 self.system_error = Some(err.to_system_error());
                                 return Err(bun_errno::from_errno(err.errno as i32).into());
                             }
-                            bun_sys::Result::Ok(()) => {
-                                // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
-                                let _ = unsafe {
-                                    libc::ftruncate(
-                                        dest_fd.native(),
-                                        i64::try_from(total_written).expect("int cast"),
-                                    )
-                                };
-                                return Ok(());
-                            }
+                            bun_sys::Result::Ok(()) => return Ok(()),
                         }
                     }
 
@@ -527,51 +506,20 @@ impl<'a> CopyFile<'a> {
         Ok(())
     }
 
-    /// read() from `source_fd`, write() to `destination_fd`, stopping after
-    /// `cap` bytes have been read (or EOF). Unlike
-    /// `copy_file_using_read_write_loop`, this never reads past `cap` and
-    /// never touches the destination's length, so it is safe for a
-    /// caller-supplied fd (Bun.stdout redirected to a file, Bun.file(fd)).
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     fn do_read_write_loop_capped(&mut self, cap: SizeType) -> Result<(), crate::Error> {
-        let mut buf = [0u8; 64 * 1024];
-        let mut remaining = cap;
         let mut total: u64 = 0;
-        while remaining > 0 {
-            let want = (buf.len() as SizeType).min(remaining) as usize;
-            let amt = match bun_sys::read(self.source_fd, &mut buf[..want]) {
-                bun_sys::Result::Ok(n) => n,
-                bun_sys::Result::Err(err) => {
-                    self.read_len = total as SizeType;
-                    self.system_error = Some(err.to_system_error());
-                    return Err(bun_errno::from_errno(err.errno as i32).into());
-                }
-            };
-            if amt == 0 {
-                break;
+        match read_write_loop_capped(self.source_fd, self.destination_fd, cap, &mut total) {
+            bun_sys::Result::Ok(()) => {
+                self.read_len = total as SizeType;
+                Ok(())
             }
-            remaining -= amt as SizeType;
-            let mut slice = &buf[..amt];
-            while !slice.is_empty() {
-                match bun_sys::write(self.destination_fd, slice) {
-                    bun_sys::Result::Ok(0) => {
-                        self.read_len = total as SizeType;
-                        return Ok(());
-                    }
-                    bun_sys::Result::Ok(n) => {
-                        total += n as u64;
-                        slice = &slice[n..];
-                    }
-                    bun_sys::Result::Err(err) => {
-                        self.read_len = total as SizeType;
-                        self.system_error = Some(err.to_system_error());
-                        return Err(bun_errno::from_errno(err.errno as i32).into());
-                    }
-                }
+            bun_sys::Result::Err(err) => {
+                self.read_len = total as SizeType;
+                self.system_error = Some(err.to_system_error());
+                Err(bun_errno::from_errno(err.errno as i32).into())
             }
         }
-        self.read_len = total as SizeType;
-        Ok(())
     }
 
     #[cfg(target_os = "macos")]
@@ -1000,6 +948,66 @@ impl<'a> CopyFile<'a> {
             }
         }
     }
+}
+
+/// The read/write fallback used when Linux's kernel copy syscalls are
+/// unavailable for this fd pair. For a destination Bun opened itself with
+/// `O_TRUNC`, copy the whole source and then `ftruncate` (cheap, matches the
+/// historical behaviour). For a caller-supplied fd, copy exactly `cap` bytes
+/// so nothing outside the requested window is touched.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn read_write_fallback(
+    src_fd: Fd,
+    dest_fd: Fd,
+    bun_opened_dest: bool,
+    cap: SizeType,
+    total: &mut u64,
+) -> bun_sys::Result<()> {
+    if bun_opened_dest {
+        let stat_size = if cap == MAX_SIZE { 0 } else { cap as usize };
+        node_fs::NodeFS::copy_file_using_read_write_loop(
+            bun_core::ZStr::EMPTY,
+            bun_core::ZStr::EMPTY,
+            src_fd,
+            dest_fd,
+            stat_size,
+            total,
+        )?;
+        let _ = bun_sys::ftruncate(dest_fd, i64::try_from(*total).expect("int cast"));
+        Ok(())
+    } else {
+        read_write_loop_capped(src_fd, dest_fd, cap, total)
+    }
+}
+
+#[cfg(not(windows))]
+fn read_write_loop_capped(
+    src_fd: Fd,
+    dest_fd: Fd,
+    cap: SizeType,
+    total: &mut u64,
+) -> bun_sys::Result<()> {
+    let mut buf = [0u8; 64 * 1024];
+    let mut remaining = cap;
+    while remaining > 0 {
+        let want = (buf.len() as SizeType).min(remaining) as usize;
+        let amt = bun_sys::read(src_fd, &mut buf[..want])?;
+        if amt == 0 {
+            break;
+        }
+        remaining -= amt as SizeType;
+        let mut slice = &buf[..amt];
+        while !slice.is_empty() {
+            match bun_sys::write(dest_fd, slice)? {
+                0 => return Ok(()),
+                n => {
+                    *total += n as u64;
+                    slice = &slice[n..];
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 // Ownership is encoded in the types, so cleanup is all field `Drop`:

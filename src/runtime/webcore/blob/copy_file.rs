@@ -348,13 +348,10 @@ impl<'a> CopyFile<'a> {
                 }
                 bun_sys::Result::Ok(()) => {
                     if bun_opened_dest {
-                        // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
-                        let _ = unsafe {
-                            libc::ftruncate(
-                                dest_fd.native(),
-                                i64::try_from(total_written).expect("int cast"),
-                            )
-                        };
+                        let _ = bun_sys::ftruncate(
+                            dest_fd,
+                            i64::try_from(total_written).expect("int cast"),
+                        );
                     }
                     return Ok(());
                 }
@@ -425,13 +422,10 @@ impl<'a> CopyFile<'a> {
                         }
                         bun_sys::Result::Ok(()) => {
                             if bun_opened_dest {
-                                // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
-                                let _ = unsafe {
-                                    libc::ftruncate(
-                                        dest_fd.native(),
-                                        i64::try_from(total_written).expect("int cast"),
-                                    )
-                                };
+                                let _ = bun_sys::ftruncate(
+                                    dest_fd,
+                                    i64::try_from(total_written).expect("int cast"),
+                                );
                             }
                             return Ok(());
                         }
@@ -484,13 +478,10 @@ impl<'a> CopyFile<'a> {
                             }
                             bun_sys::Result::Ok(()) => {
                                 if bun_opened_dest {
-                                    // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
-                                    let _ = unsafe {
-                                        libc::ftruncate(
-                                            dest_fd.native(),
-                                            i64::try_from(total_written).expect("int cast"),
-                                        )
-                                    };
+                                    let _ = bun_sys::ftruncate(
+                                        dest_fd,
+                                        i64::try_from(total_written).expect("int cast"),
+                                    );
                                 }
                                 return Ok(());
                             }
@@ -888,13 +879,10 @@ impl<'a> CopyFile<'a> {
                 if stat.st_size != 0 {
                     let stat_size = SizeType::try_from(stat.st_size).expect("int cast");
                     if stat_size > self.max_length {
-                        // SAFETY: `destination_fd` is open; libc ftruncate(2).
-                        let _ = unsafe {
-                            bun_sys::darwin::ftruncate(
-                                self.destination_fd.native(),
-                                i64::try_from(self.max_length).expect("int cast"),
-                            )
-                        };
+                        let _ = bun_sys::ftruncate(
+                            self.destination_fd,
+                            i64::try_from(self.max_length).expect("int cast"),
+                        );
                     }
                     if self.read_len == 0 {
                         self.read_len = stat_size.min(self.max_length);

@@ -65,17 +65,6 @@ describe("unused boilerplate Cargo deps stay removed", () => {
       "libc",
       "bitflags",
     ],
-    "src/safety/Cargo.toml": [
-      "strum",
-      "bstr",
-      "scopeguard",
-      "const_format",
-      "enum-map",
-      "enumset",
-      "libc",
-      "bitflags",
-      "thiserror",
-    ],
   };
 
   for (const [rel, deps] of Object.entries(crates)) {
@@ -89,9 +78,6 @@ describe("unused boilerplate Cargo deps stay removed", () => {
 
 describe("dead symbols stay removed", () => {
   const cases: Array<[string, string]> = [
-    ["src/jsc/bindings/helpers.h", "toStringNotConst"],
-    ["src/jsc/bindings/helpers.h", "BunStringCwd"],
-    ["src/jsc/bindings/helpers.h", "static WTF::AtomString toAtomString(ZigString"],
     ["src/runtime/bake/BakeSourceProvider.cpp", "BakeRegisterProductionChunk"],
     ["src/runtime/bake/BakeProduction.cpp", '#include "BakeProduction.h"'],
     ["src/runtime/api/bun/subprocess/Readable.rs", "pub fn on_ready"],

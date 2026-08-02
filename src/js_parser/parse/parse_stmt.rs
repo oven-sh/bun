@@ -829,6 +829,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         default_loc: bun_ast::Loc,
     ) -> Result<Stmt> {
+        if p.dts_emitted_default_export {
+            return Ok(p.s(S::TypeScript {}, loc));
+        }
+        p.dts_emitted_default_export = true;
         p.has_es_module_syntax = true;
         let default_name = p.create_default_name(default_loc);
         let value = js_ast::StmtOrExpr::Expr(p.new_expr(js_ast::E::Undefined {}, default_loc));

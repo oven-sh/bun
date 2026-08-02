@@ -353,6 +353,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// True inside a `declare global { ... }` body, which shares the
     /// module-scope parse options but must not synthesize bindings.
     pub(crate) dts_suppress_type_name_recording: bool,
+    /// Overloaded `export default function f(): void;` signatures must
+    /// produce only one synthesized default export.
+    pub(crate) dts_emitted_default_export: bool,
 
     // This is the reference to the generated function argument for the namespace,
     // which is different than the reference to the namespace itself:
@@ -8887,6 +8890,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             dts_type_names: StringBoolMap::default(),
             dts_type_name_order: Vec::new(),
             dts_suppress_type_name_recording: false,
+            dts_emitted_default_export: false,
             enclosing_namespace_arg_ref: None,
             jsx_imports: crate::JSXImportSymbols::default(),
             react_refresh: ReactRefresh::default(),

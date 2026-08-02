@@ -214,8 +214,10 @@ console.log(JSON.stringify(Object.keys(m)));
 
 test.concurrent("type-only default exports synthesize a default binding", async () => {
   using dir = tempDir("dts-default", {
-    // tsc's emit for a default-exported function is a body-less declaration.
+    // tsc's emit for a default-exported function is a body-less declaration,
+    // one per overload signature; only one default export may be synthesized.
     "fn.d.ts": `export default function pLimit(concurrency: number): void;
+export default function pLimit(): void;
 `,
     "iface.d.ts": `export default interface Props {
   x: number;

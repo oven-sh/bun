@@ -501,11 +501,13 @@ impl ServerWebSocket {
 
         let _loop_guard = vm.enter_event_loop_scope();
 
+        let js_this = self
+            .this_value
+            .get()
+            .try_get()
+            .unwrap_or(JSValue::UNDEFINED);
         let arguments = [
-            self.this_value
-                .get()
-                .try_get()
-                .unwrap_or(JSValue::UNDEFINED),
+            js_this,
             match opcode {
                 Opcode::Text => jsc::bun_string_jsc::create_utf8_for_js(global_object, message)
                     .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
@@ -539,6 +541,19 @@ impl ServerWebSocket {
 
         if let Some(promise) = result.as_any_promise() {
             match promise.status() {
+                jsc::js_promise::Status::Pending => {
+                    if js_this.is_empty_or_undefined_or_null() {
+                        return;
+                    }
+                    ws.pause();
+                    result.then_with_value(
+                        global_object,
+                        js_this,
+                        Bun__ServerWebSocket__onMessagePromiseResolve,
+                        Bun__ServerWebSocket__onMessagePromiseReject,
+                    );
+                    return;
+                }
                 jsc::js_promise::Status::Rejected => {
                     // Value discarded; the side
                     // effect (JSC__JSPromise__result) conditionally sets
@@ -1612,6 +1627,62 @@ impl WebSocketHandler for ServerWebSocket {
         // SAFETY: per trait contract.
         unsafe { &*this }.on_close(ws, code, message)
     }
+}
+
+fn server_websocket_from_promise_context(frame: &CallFrame) -> Option<&'static ServerWebSocket> {
+    frame
+        .arguments()
+        .last()
+        .and_then(|js_this| js_this.as_class_ref::<ServerWebSocket>())
+}
+
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn Bun__ServerWebSocket__onMessagePromiseResolve(
+        global: *mut JSGlobalObject,
+        frame: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC passes valid non-null pointers for the host call's duration.
+        let (global, frame) = unsafe { (&*global, &*frame) };
+        jsc::host_fn::to_js_host_fn_result(global, on_message_promise_resolve(global, frame))
+    }
+}
+
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn Bun__ServerWebSocket__onMessagePromiseReject(
+        global: *mut JSGlobalObject,
+        frame: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC passes valid non-null pointers for the host call's duration.
+        let (global, frame) = unsafe { (&*global, &*frame) };
+        jsc::host_fn::to_js_host_fn_result(global, on_message_promise_reject(global, frame))
+    }
+}
+
+fn on_message_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    if let Some(this) = server_websocket_from_promise_context(frame)
+        && !this.is_closed()
+    {
+        this.websocket().resume();
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
+fn on_message_promise_reject(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let args = frame.arguments();
+    let error_value = args.first().copied().unwrap_or(JSValue::UNDEFINED);
+    let Some(this) = server_websocket_from_promise_context(frame) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    if this.is_closed() {
+        return Ok(JSValue::UNDEFINED);
+    }
+
+    this.websocket().resume();
+    let handler = this.handler();
+    handler.run_error_callback(handler.on_error, handler.vm(), global, error_value);
+    Ok(JSValue::UNDEFINED)
 }
 
 struct Corker<'a> {

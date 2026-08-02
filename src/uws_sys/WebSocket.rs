@@ -86,6 +86,16 @@ impl AnyWebSocket {
         c::uws_ws_close(ssl, ws)
     }
 
+    pub fn pause(self) {
+        let (ssl, ws) = self.split();
+        c::uws_ws_pause(ssl, ws)
+    }
+
+    pub fn resume(self) {
+        let (ssl, ws) = self.split();
+        c::uws_ws_resume(ssl, ws)
+    }
+
     pub fn send(self, message: &[u8], opcode: Opcode, compress: bool, fin: bool) -> SendStatus {
         let (ssl, ws) = self.split();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
@@ -530,6 +540,8 @@ pub mod c {
         );
         pub(crate) safe fn uws_ws_get_user_data(ssl: i32, ws: &mut RawWebSocket) -> *mut c_void;
         pub(crate) safe fn uws_ws_close(ssl: i32, ws: &mut RawWebSocket);
+        pub(crate) safe fn uws_ws_pause(ssl: i32, ws: &mut RawWebSocket);
+        pub(crate) safe fn uws_ws_resume(ssl: i32, ws: &mut RawWebSocket);
         pub(crate) fn uws_ws_send_with_options(
             ssl: i32,
             ws: *mut RawWebSocket,

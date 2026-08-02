@@ -127,8 +127,7 @@ impl Default for Result {
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
     pub struct ResultFlags: u8 {
-        // `IS_EXTERNAL` / `REWRITE_IMPORT_PATH` together encode [`ExternalKind`];
-        // `REWRITE_IMPORT_PATH` is never set without `IS_EXTERNAL`.
+        // Bits 0..=1 encode [`ExternalKind`]; write via `set_external_kind`.
         const IS_EXTERNAL = 1 << 0;
         const REWRITE_IMPORT_PATH = 1 << 1;
         const IS_STANDALONE_MODULE = 1 << 2;
@@ -140,19 +139,15 @@ bitflags::bitflags! {
     }
 }
 
-/// Whether a resolved path is external to the bundle, and if so whether the
-/// import specifier should be rewritten to the resolved path. Stored in
-/// [`ResultFlags`]; `ExternalRewritePath` implies `External`, so the pair of
-/// bits is written via [`ResultFlags::set_external_kind`] only.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExternalKind {
     #[default]
     NotExternal,
     External,
+    /// External, and the import specifier should be rewritten to the resolved path.
     ExternalRewritePath,
 }
 
-// Convenience accessors with field-style names.
 impl ResultFlags {
     #[inline]
     pub fn is_external(self) -> bool {
@@ -160,13 +155,15 @@ impl ResultFlags {
     }
     #[inline]
     pub fn external_kind(self) -> ExternalKind {
-        if self.contains(Self::REWRITE_IMPORT_PATH) {
-            debug_assert!(self.contains(Self::IS_EXTERNAL));
-            ExternalKind::ExternalRewritePath
-        } else if self.contains(Self::IS_EXTERNAL) {
-            ExternalKind::External
-        } else {
+        debug_assert!(
+            !self.contains(Self::REWRITE_IMPORT_PATH) || self.contains(Self::IS_EXTERNAL)
+        );
+        if !self.contains(Self::IS_EXTERNAL) {
             ExternalKind::NotExternal
+        } else if self.contains(Self::REWRITE_IMPORT_PATH) {
+            ExternalKind::ExternalRewritePath
+        } else {
+            ExternalKind::External
         }
     }
     #[inline]

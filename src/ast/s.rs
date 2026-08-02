@@ -270,16 +270,13 @@ impl Local {
     }
 }
 
-/// Where an `S::Local` originated. `TsImportEquals` (from `import x = ...` in
-/// TS) and `CommonJsExport` (from rewritten `exports.x = ...`) are set on
-/// disjoint parse/visit paths, so a single local is never both.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum LocalOrigin {
     #[default]
     Normal,
-    /// The TypeScript compiler doesn't generate code for "import foo = bar"
-    /// statements where the import is never used.
+    /// From TS `import x = ...`; dropped if unused (matches tsc).
     TsImportEquals,
+    /// From rewritten `exports.x = ...`.
     CommonJsExport,
 }
 

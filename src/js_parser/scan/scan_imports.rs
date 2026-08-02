@@ -265,17 +265,19 @@ impl<'a> ImportScanner<'a> {
                         // e.g. `import 'fancy-stylesheet-thing/style.css';`
                         // This is a breaking change though. We can make it an option with some guardrail
                         // so maybe if it errors, it shows a suggestion "retry without trimming unused imports"
+                        let all_bindings_culled = found_imports
+                            && st.star_name_loc.is_empty()
+                            && st.items.slice().is_empty()
+                            && st.default_name.is_none();
+                        // replace_exports (Bun.Transpiler-only) opts TS into dropping orphaned value imports (#12892).
+                        let has_replace_exports = p.options.features.replace_exports.count() > 0;
                         if (is_typescript_enabled
                             && found_imports
                             && is_unused_in_typescript
                             && !p.options.preserve_unused_imports_ts)
-                            || (!is_typescript_enabled
-                                && p.options.features.trim_unused_imports
-                                && found_imports
-                                && st.star_name_loc.is_empty()
-                                // SAFETY: arena-owned slice; see above.
-                                && st.items.slice().is_empty()
-                                && st.default_name.is_none())
+                            || (p.options.features.trim_unused_imports
+                                && all_bindings_culled
+                                && (!is_typescript_enabled || has_replace_exports))
                         {
                             // internal imports are presumed to be always used
                             // require statements cannot be stripped

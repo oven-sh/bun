@@ -252,3 +252,29 @@ describe("unterminated string literals in large files", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/12892
+test("TS import whose only binding is used in dead code still loads for side effects", async () => {
+  using dir = tempDir("ts-dead-import-side-effect", {
+    "entry.ts": `
+      import { setup } from './side';
+      if (false) { setup(); }
+      console.log('entry');
+    `,
+    "side.ts": `
+      console.log('side effect');
+      export function setup() {}
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("side effect\nentry\n");
+  expect(exitCode).toBe(0);
+});

@@ -2466,7 +2466,27 @@ declare module "bun" {
     allowBunRuntime?: boolean;
     exports?: {
       eliminate?: string[];
-      replace?: Record<string, string>;
+      /**
+       * Replace exported declarations with a literal value, or rename+replace
+       * them by passing a `[newName, value]` tuple.
+       *
+       * @example
+       * ```js
+       * // export var foo = ... -> export var foo = "bar";
+       * foo: "bar",
+       * // export function getStaticProps() { ... } -> export var __N_SSG = true;
+       * getStaticProps: ["__N_SSG", true],
+       * ```
+       */
+      replace?: Record<
+        string,
+        | string
+        | number
+        | boolean
+        | null
+        | undefined
+        | readonly [name: string, value: string | number | boolean | null | undefined]
+      >;
     };
     treeShaking?: boolean;
     trimUnusedImports?: boolean;

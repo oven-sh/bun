@@ -2858,6 +2858,29 @@ describe("bundler", () => {
       expect(out).not.toContain("require_foo\u2014bar");
     },
   });
+  // https://github.com/oven-sh/bun/issues/12892
+  // Bun.Transpiler drops an import whose only binding is used in dead code, but
+  // the bundler must still resolve it so the module's side effects are kept.
+  itBundled("edgecase/TSImportUsedOnlyInDeadCodeKeepsSideEffect", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { devOnly } from './setup';
+        if (process.env.NODE_ENV !== 'production') {
+          devOnly();
+        }
+        console.log('entry');
+      `,
+      "/setup.ts": /* ts */ `
+        console.log('setup side effect');
+        export function devOnly() {}
+      `,
+    },
+    define: { "process.env.NODE_ENV": '"production"' },
+    run: { stdout: "setup side effect\nentry" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("setup side effect");
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

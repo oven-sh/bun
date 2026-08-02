@@ -14,8 +14,11 @@
 #include "JSReadRequest.h"
 #include "JSReadStreamIntoSinkOperation.h"
 #include "JSReadableStream.h"
+#include "JSReadableStreamDefaultController.h"
 #include "JSReadableStreamDefaultReader.h"
 #include "JSSink.h"
+#include "JSTransformStream.h"
+#include "JSTransformStreamDefaultController.h"
 #include "JSStreamsRuntime.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
@@ -196,6 +199,7 @@ void JSReadStreamIntoSinkOperation::visitChildrenImpl(JSCell* cell, Visitor& vis
     visitor.appendHidden(thisObject->m_sink);
     visitor.appendHidden(thisObject->m_result);
     visitor.appendHidden(thisObject->m_pendingBatch);
+    visitor.appendHidden(thisObject->m_nativeTransform);
 }
 
 DEFINE_VISIT_CHILDREN(JSReadStreamIntoSinkOperation);
@@ -210,6 +214,7 @@ void JSReadStreamIntoSinkOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& anal
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_sink, "sink"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_result, "result"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pendingBatch, "pendingBatch"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_nativeTransform, "nativeTransform"_s);
 }
 
 } // namespace WebCore
@@ -1014,6 +1019,15 @@ static void rsisFinally(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamI
         reader->m_pipeOperation.clear();
         op->m_reader.clear();
     }
+    if (auto* ts = op->m_nativeTransform.get()) {
+        ts->m_nativeSinkPtr = nullptr;
+        ts->m_nativeSinkCell.clear();
+        if (auto* ready = ts->m_nativeSinkReadyPromise.get()) {
+            ts->m_nativeSinkReadyPromise.clear();
+            resolvePromise(globalObject, ready, jsUndefined());
+        }
+        op->m_nativeTransform.clear();
+    }
     op->m_sink.clear();
     op->m_pendingBatch.clear();
     op->m_waitingOnSink = false;
@@ -1139,6 +1153,13 @@ static void rsisContinueAfterReady(JSC::VM& vm, JSGlobalObject* globalObject, JS
         op->m_pendingBatch.clear();
         RELEASE_AND_RETURN(scope, rsisFinish(globalObject, op));
     }
+    if (auto* ts = op->m_nativeTransform.get()) {
+        if (auto* ready = ts->m_nativeSinkReadyPromise.get()) {
+            ts->m_nativeSinkReadyPromise.clear();
+            resolvePromise(globalObject, ready, jsUndefined());
+            scope.assertNoException();
+        }
+    }
     auto* tail = dynamicDowncast<JSArray>(op->m_pendingBatch.get());
     op->m_pendingBatch.clear();
     if (!tail) {
@@ -1238,12 +1259,47 @@ static void rsisHandleChunk(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStr
     RELEASE_AND_RETURN(scope, rsisAfterBatch(globalObject, op));
 }
 
+// `stream` is the readable half of a byte-producing native JSTransformStream subclass
+// (Compression/Decompression/TextEncoder) → that transform; otherwise null.
+static JSTransformStream* nativeByteTransformBehind(JSReadableStream* stream)
+{
+    if (stream->m_controllerKind != ControllerKind::Default)
+        return nullptr;
+    auto* defCtrl = uncheckedDowncast<JSReadableStreamDefaultController>(stream->m_controller.get());
+    if (!defCtrl || defCtrl->m_algorithms.kind != SourceKind::Transform)
+        return nullptr;
+    auto* ts = dynamicDowncast<JSTransformStream>(defCtrl->m_algorithms.algorithmContext.get());
+    if (!ts || !ts->m_controller)
+        return nullptr;
+    switch (ts->m_controller->m_transformerKind) {
+    case TransformerKind::Compression:
+    case TransformerKind::Decompression:
+    case TransformerKind::TextEncoder:
+        return ts;
+    default:
+        return nullptr;
+    }
+}
+
 static void rsisBegin(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = op->m_stream.get();
     stream->materializeIfNeeded(globalObject);
     RETURN_IF_EXCEPTION(scope, );
+    // Byte-producing native transform + native JSSink: attach the sink to the transform so its
+    // transform arms write coder output straight to the sink (no JSUint8Array per chunk). The
+    // pump below still runs to drain any already-queued chunk, wait for done, and call end().
+    if (auto* ts = nativeByteTransformBehind(stream)) {
+        if (auto* sinkCtrl = dynamicDowncast<WebCore::JSReadableSinkControllerBase>(op->m_sink.get())) {
+            if (void* sinkPtr = sinkCtrl->wrapped()) {
+                ts->m_nativeSinkPtr = sinkPtr;
+                ts->m_nativeSinkId = static_cast<uint8_t>(sinkCtrl->sinkId());
+                ts->m_nativeSinkCell.set(vm, ts, sinkCtrl);
+                op->m_nativeTransform.set(vm, op, ts);
+            }
+        }
+    }
     auto* reader = acquireReadableStreamDefaultReader(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, );
     op->m_reader.set(vm, op, reader);

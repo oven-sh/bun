@@ -318,6 +318,11 @@ ${classes.map(name => `    case SinkID::${name}: return ${name}__writeBytes(sink
     }
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
+
+extern "C" JSC::EncodedJSValue Bun__JSSink__writeBytesById(uint8_t sinkId, void* sinkPtr, JSC::JSGlobalObject* global, const uint8_t* ptr, size_t len)
+{
+    return JSSink__writeBytes(static_cast<SinkID>(sinkId), sinkPtr, global, ptr, len);
+}
 `;
   var templ = head;
 

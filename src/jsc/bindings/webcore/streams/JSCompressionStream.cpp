@@ -28,6 +28,7 @@
 extern "C" void* CompressionStreamCoder__create(uint8_t format, bool decompress);
 extern "C" void CompressionStreamCoder__destroy(void* coder);
 extern "C" JSC::EncodedJSValue CompressionStreamCoder__transform(void* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish);
+extern "C" JSC::EncodedJSValue CompressionStreamCoder__transformInto(void* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish, uint8_t sinkId, void* sinkPtr);
 
 namespace WebCore {
 
@@ -594,22 +595,31 @@ static std::optional<std::span<const uint8_t>> bufferSourceBytes(JSGlobalObject*
     return std::nullopt;
 }
 
-// Runs the Rust coder and enqueues the non-empty result. Abrupt completions (from
-// the coder's TypeError OR the enqueue) become a rejected promise — a transform
-// algorithm must never throw synchronously into ProcessWrite/ProcessClose.
-static JSPromise* codeAndEnqueue(JSGlobalObject* globalObject, void* coder, JSTransformStreamDefaultController* controller, const uint8_t* input, size_t inputLen, bool finish)
+// Runs the Rust coder and delivers the output. When a native JSSink is attached
+// (m_nativeSinkPtr), the coder writes straight to it (no JSUint8Array); otherwise
+// the result is enqueued on the readable. Abrupt completions become a rejected
+// promise — a transform algorithm must never throw synchronously into
+// ProcessWrite/ProcessClose.
+static JSPromise* codeAndEnqueue(JSGlobalObject* globalObject, JSTransformStream* stream, void* coder, JSTransformStreamDefaultController* controller, const uint8_t* input, size_t inputLen, bool finish)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thrown;
+    bool sinkBackpressure = false;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        JSValue out = JSValue::decode(CompressionStreamCoder__transform(coder, globalObject, input, inputLen, finish));
-        if (!catchScope.exception()) {
-            auto* view = dynamicDowncast<JSArrayBufferView>(out);
-            if (view && view->length())
-                transformStreamDefaultControllerEnqueue(globalObject, controller, out);
+        if (void* sinkPtr = stream->m_nativeSinkPtr) {
+            JSValue wrote = JSValue::decode(CompressionStreamCoder__transformInto(coder, globalObject, input, inputLen, finish, stream->m_nativeSinkId, sinkPtr));
+            if (!catchScope.exception() && wrote.isNumber() && wrote.asNumber() < 0)
+                sinkBackpressure = true;
+        } else {
+            JSValue out = JSValue::decode(CompressionStreamCoder__transform(coder, globalObject, input, inputLen, finish));
+            if (!catchScope.exception()) {
+                auto* view = dynamicDowncast<JSArrayBufferView>(out);
+                if (view && view->length())
+                    transformStreamDefaultControllerEnqueue(globalObject, controller, out);
+            }
         }
         if (catchScope.exception()) [[unlikely]]
             thrown = takeAbruptCompletion(globalObject, catchScope);
@@ -617,6 +627,11 @@ static JSPromise* codeAndEnqueue(JSGlobalObject* globalObject, void* coder, JSTr
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!thrown.isEmpty())
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
+    if (sinkBackpressure) {
+        auto* ready = JSPromise::create(vm, globalObject->promiseStructure());
+        stream->m_nativeSinkReadyPromise.set(vm, stream, ready);
+        return ready;
+    }
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 
@@ -637,7 +652,9 @@ static JSPromise* compressionStreamTransformImpl(JSGlobalObject* globalObject, J
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!thrown.isEmpty())
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    RELEASE_AND_RETURN(scope, codeAndEnqueue(globalObject, stream->m_coder, controller, bytes->data(), bytes->size(), false));
+    if (!bytes) [[unlikely]]
+        return nullptr;
+    RELEASE_AND_RETURN(scope, codeAndEnqueue(globalObject, stream, stream->m_coder, controller, bytes->data(), bytes->size(), false));
 }
 
 JSPromise* compressionStreamTransform(JSGlobalObject* globalObject, JSCompressionStream* stream, JSTransformStreamDefaultController* controller, JSValue chunk)
@@ -647,7 +664,7 @@ JSPromise* compressionStreamTransform(JSGlobalObject* globalObject, JSCompressio
 
 JSPromise* compressionStreamFlush(JSGlobalObject* globalObject, JSCompressionStream* stream, JSTransformStreamDefaultController* controller)
 {
-    return codeAndEnqueue(globalObject, stream->m_coder, controller, nullptr, 0, true);
+    return codeAndEnqueue(globalObject, stream, stream->m_coder, controller, nullptr, 0, true);
 }
 
 JSPromise* decompressionStreamTransform(JSGlobalObject* globalObject, JSDecompressionStream* stream, JSTransformStreamDefaultController* controller, JSValue chunk)
@@ -657,7 +674,7 @@ JSPromise* decompressionStreamTransform(JSGlobalObject* globalObject, JSDecompre
 
 JSPromise* decompressionStreamFlush(JSGlobalObject* globalObject, JSDecompressionStream* stream, JSTransformStreamDefaultController* controller)
 {
-    return codeAndEnqueue(globalObject, stream->m_coder, controller, nullptr, 0, true);
+    return codeAndEnqueue(globalObject, stream, stream->m_coder, controller, nullptr, 0, true);
 }
 
 } // namespace WebStreams

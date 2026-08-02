@@ -60,6 +60,17 @@ public:
     // [[Detached]] (transferable streams are not implemented; the slot exists)
     bool m_detached : 1 { false };
 
+    // Native byte-producing subclasses only: when `readStreamIntoSink` attaches a
+    // native JSSink controller to this transform, the transform arms write coder
+    // output straight to `m_nativeSinkPtr` via `JSSink__writeBytes` instead of
+    // wrapping it in a JSUint8Array and enqueueing on the readable.
+    // `m_nativeSinkReadyPromise` is the transform-algorithm result returned on
+    // sink backpressure; the sink's onReady resolves it.
+    JSC::WriteBarrier<JSC::JSObject> m_nativeSinkCell;
+    JSC::WriteBarrier<JSC::JSPromise> m_nativeSinkReadyPromise;
+    void* m_nativeSinkPtr { nullptr };
+    uint8_t m_nativeSinkId { 0 };
+
 protected:
     JSTransformStream(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&);

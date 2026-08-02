@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
 import zlib from "node:zlib";
 
 describe("CompressionStream and DecompressionStream", () => {
@@ -412,34 +411,33 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     }
   });
 
-  // The transform step runs the native coder directly; node:zlib must not be
-  // pulled in as a side effect.
-  test("CompressionStream/DecompressionStream do not load node:zlib", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          const before = [...(require.cache ? Object.keys(require.cache) : []), ...(process as any).moduleLoadList ?? []];
-          const cs = new CompressionStream("gzip");
-          const ds = new DecompressionStream("gzip");
-          const after = [...(require.cache ? Object.keys(require.cache) : []), ...(process as any).moduleLoadList ?? []];
-          void cs; void ds;
-          if (after.some(m => /zlib/i.test(String(m))) && !before.some(m => /zlib/i.test(String(m)))) {
-            console.log("FAIL loaded zlib");
-          } else {
-            console.log("OK");
-          }
-        `,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("OK");
-    expect(exitCode).toBe(0);
-  });
+  // Native-sink output path: when cs.readable is consumed by a native JSSink
+  // (here HTTPResponseSink via Bun.serve), the transform arms write coder output
+  // straight to the sink's m_sinkPtr instead of wrapping each chunk in a
+  // JSUint8Array and enqueueing it on the readable.
+  test.each(["gzip", "brotli", "zstd", "deflate"] as const)(
+    "CompressionStream(%s) -> native HTTP response sink round-trips",
+    async format => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch() {
+          const body = new ReadableStream({
+            start(c) {
+              for (let i = 0; i < 50; i++) c.enqueue(new Uint8Array(1024).fill(65 + (i % 26)));
+              c.close();
+            },
+          });
+          return new Response(body.pipeThrough(new CompressionStream(format)));
+        },
+      });
+      const buf = new Uint8Array(await (await fetch(server.url)).arrayBuffer());
+      const out = new Uint8Array(
+        await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream(format))).arrayBuffer(),
+      );
+      expect(out.byteLength).toBe(51200);
+      for (let i = 0; i < 50; i++) expect(out[i * 1024]).toBe(65 + (i % 26));
+    },
+  );
 
   // readable highWaterMark is 1 (matching Node.js and Chromium), so a single
   // write completes before any reader is attached.

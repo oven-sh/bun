@@ -237,6 +237,7 @@ pub extern "C" fn TextEncoderStreamEncoder__createForStream() -> *mut TextEncode
 }
 
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn TextEncoderStreamEncoder__destroyForStream(this: *mut TextEncoderStreamEncoder) {
     if !this.is_null() {
         // SAFETY: `this` was returned by `__createForStream` and has not been
@@ -249,17 +250,19 @@ pub extern "C" fn TextEncoderStreamEncoder__destroyForStream(this: *mut TextEnco
 /// `chunk` (user JS — may throw), then encode. Returns a fresh `Uint8Array`
 /// on success, or `JSValue::zero` with the exception pending on `global`.
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn TextEncoderStreamEncoder__encodeForStream(
     this: *mut TextEncoderStreamEncoder,
     global: &JSGlobalObject,
     chunk: JSValue,
 ) -> JSValue {
-    // SAFETY: `this` is the live encoder owned by the calling JS cell; driven
-    // only from the JS thread, so `&*this` has no mutable alias.
-    let this = unsafe { &*this };
     let Ok(str) = chunk.get_zig_string(global) else {
         return JSValue::ZERO;
     };
+    // SAFETY: `this` is the live encoder owned by the calling JS cell; driven
+    // only from the JS thread, so `&*this` has no mutable alias. Taken after
+    // the coercion so no user JS runs while the borrow is live.
+    let this = unsafe { &*this };
     if str.is_16bit() {
         this.encode_utf16(global, str.utf16_slice_aligned())
     } else {
@@ -268,6 +271,7 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeForStream(
 }
 
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn TextEncoderStreamEncoder__flushForStream(
     this: *mut TextEncoderStreamEncoder,
     global: &JSGlobalObject,

@@ -697,6 +697,7 @@ pub extern "C" fn TextDecoder__createForStream(
 }
 
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn TextDecoder__destroyForStream(this: *mut TextDecoder) {
     if !this.is_null() {
         // SAFETY: `this` was returned by `__createForStream` and has not been
@@ -708,6 +709,7 @@ pub extern "C" fn TextDecoder__destroyForStream(this: *mut TextDecoder) {
 /// The canonical encoding name for the `encoding` prototype getter. The
 /// return borrows a `'static` label, so the C++ side holds no refcount.
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn TextDecoder__encodingLabelForStream(
     this: *const TextDecoder,
 ) -> bun_core::String {
@@ -720,6 +722,7 @@ pub extern "C" fn TextDecoder__encodingLabelForStream(
 /// `input_len == 0`. Returns a JSString on success, or `JSValue::zero` with
 /// the exception pending on `global`.
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn TextDecoder__decodeForStream(
     this: *mut TextDecoder,
     global: &JSGlobalObject,

@@ -437,8 +437,8 @@ void writableStreamDefaultControllerWrite(JSC::JSGlobalObject*, JSWritableStream
 // The internal-creation parallel of createReadableStream.
 JSTransformStream* createTransformStream(JSC::JSGlobalObject*, TransformerKind, JSC::JSCell* algorithmContext, double writableHighWaterMark = 1, JSC::JSObject* writableSizeAlgorithm = nullptr, double readableHighWaterMark = 0, JSC::JSObject* readableSizeAlgorithm = nullptr); // userJS: yes — TransformStreamOperations.cpp
 // Initializes an already-allocated JSTransformStream SUBCLASS as a TransformStream with the
-// given native transformer kind (HWM = 1/0, no size algorithms, trivial start). The
-// controller's algorithmContext is `stream` itself.
+// given native transformer kind (writable/readable HWM = 1/1, no size algorithms, trivial
+// start). The controller's algorithmContext is `stream` itself.
 void setUpNativeTransformStream(JSC::JSGlobalObject*, JSTransformStream*, TransformerKind); // userJS: yes — TransformStreamOperations.cpp
 void initializeTransformStream(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSPromise* startPromise, double writableHighWaterMark, JSC::JSObject* writableSizeAlgorithm, double readableHighWaterMark, JSC::JSObject* readableSizeAlgorithm); // userJS: yes — TransformStreamOperations.cpp
 void transformStreamError(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSValue error); // userJS: yes — TransformStreamOperations.cpp

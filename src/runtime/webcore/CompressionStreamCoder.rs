@@ -9,6 +9,8 @@
 //! bottom of this file; the TransformStream machinery already handles
 //! backpressure, so this layer is a pure `bytes in → bytes out` pump.
 
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 use core::ffi::c_int;
 use core::ptr::{self, NonNull};
 
@@ -108,9 +110,11 @@ impl Drop for CompressionStreamCoder {
     }
 }
 
-struct CodecError(&'static str);
-
-const TRAILING_JUNK: CodecError = CodecError("TRAILING_JUNK");
+#[derive(Clone, Copy)]
+enum CodecError {
+    TrailingJunk,
+    Message(&'static str),
+}
 
 impl CompressionStreamCoder {
     fn new(format: Format, decompress: bool) -> Result<Box<Self>, CodecError> {
@@ -133,7 +137,7 @@ impl CompressionStreamCoder {
                     )
                 };
                 if rc != zlib::ReturnCode::Ok {
-                    return Err(CodecError("failed to initialize deflate"));
+                    return Err(CodecError::Message("failed to initialize deflate"));
                 }
                 Backend::Deflate(s)
             }
@@ -149,7 +153,7 @@ impl CompressionStreamCoder {
                     )
                 };
                 if rc != zlib::ReturnCode::Ok {
-                    return Err(CodecError("failed to initialize inflate"));
+                    return Err(CodecError::Message("failed to initialize inflate"));
                 }
                 Backend::Inflate {
                     state: s,
@@ -161,7 +165,7 @@ impl CompressionStreamCoder {
                 let p = NonNull::new(unsafe {
                     brotli::BrotliEncoderCreateInstance(None, None, ptr::null_mut())
                 })
-                .ok_or(CodecError("failed to initialize brotli encoder"))?;
+                .ok_or(CodecError::Message("failed to initialize brotli encoder"))?;
                 Backend::BrotliEncode(p)
             }
             (Format::Brotli, true) => {
@@ -169,17 +173,17 @@ impl CompressionStreamCoder {
                 let p = NonNull::new(unsafe {
                     brotli::BrotliDecoderCreateInstance(None, None, ptr::null_mut())
                 })
-                .ok_or(CodecError("failed to initialize brotli decoder"))?;
+                .ok_or(CodecError::Message("failed to initialize brotli decoder"))?;
                 Backend::BrotliDecode(p)
             }
             (Format::Zstd, false) => {
                 let p = NonNull::new(zstd::ZSTD_createCCtx())
-                    .ok_or(CodecError("failed to initialize zstd encoder"))?;
+                    .ok_or(CodecError::Message("failed to initialize zstd encoder"))?;
                 Backend::ZstdEncode(p)
             }
             (Format::Zstd, true) => {
                 let p = NonNull::new(zstd::ZSTD_createDCtx())
-                    .ok_or(CodecError("failed to initialize zstd decoder"))?;
+                    .ok_or(CodecError::Message("failed to initialize zstd decoder"))?;
                 Backend::ZstdDecode(p)
             }
         };
@@ -236,7 +240,7 @@ impl CompressionStreamCoder {
                     match rc {
                         zlib::ReturnCode::Ok | zlib::ReturnCode::BufError => {}
                         zlib::ReturnCode::StreamEnd => break,
-                        _ => return Err(CodecError("deflate failed")),
+                        _ => return Err(CodecError::Message("deflate failed")),
                     }
                     if s.avail_out != 0 {
                         // All input consumed and the codec has no more output
@@ -253,11 +257,11 @@ impl CompressionStreamCoder {
                 // member; for deflate/deflate-raw it is trailing junk.
                 if self.ended && !input.is_empty() {
                     if !gzip {
-                        return Err(TRAILING_JUNK);
+                        return Err(CodecError::TrailingJunk);
                     }
                     // SAFETY: `s` is an initialized inflate stream.
                     if unsafe { zlib::inflateReset(&raw mut **s) } != zlib::ReturnCode::Ok {
-                        return Err(CodecError("inflate failed"));
+                        return Err(CodecError::Message("inflate failed"));
                     }
                     self.ended = false;
                 }
@@ -287,7 +291,7 @@ impl CompressionStreamCoder {
                         zlib::ReturnCode::Ok => {}
                         zlib::ReturnCode::BufError => {
                             if finish {
-                                return Err(CodecError("unexpected end of file"));
+                                return Err(CodecError::Message("unexpected end of file"));
                             }
                         }
                         zlib::ReturnCode::StreamEnd => {
@@ -298,24 +302,24 @@ impl CompressionStreamCoder {
                                     if unsafe { zlib::inflateReset(&raw mut **s) }
                                         != zlib::ReturnCode::Ok
                                     {
-                                        return Err(CodecError("inflate failed"));
+                                        return Err(CodecError::Message("inflate failed"));
                                     }
                                     self.ended = false;
                                     continue;
                                 }
-                                return Err(TRAILING_JUNK);
+                                return Err(CodecError::TrailingJunk);
                             }
                             break;
                         }
                         zlib::ReturnCode::NeedDict => {
-                            return Err(CodecError("Missing dictionary"));
+                            return Err(CodecError::Message("Missing dictionary"));
                         }
-                        _ => return Err(CodecError("inflate failed")),
+                        _ => return Err(CodecError::Message("inflate failed")),
                     }
                     if s.avail_out != 0 {
                         debug_assert_eq!(s.avail_in, 0);
                         if finish && !self.ended {
-                            return Err(CodecError("unexpected end of file"));
+                            return Err(CodecError::Message("unexpected end of file"));
                         }
                         break;
                     }
@@ -352,7 +356,7 @@ impl CompressionStreamCoder {
                     // SAFETY: the encoder wrote exactly `written` bytes.
                     unsafe { out.set_len(out.len() + written) };
                     if ok == 0 {
-                        return Err(CodecError("brotli encode failed"));
+                        return Err(CodecError::Message("brotli encode failed"));
                     }
                     if avail_in == 0 && avail_out != 0 {
                         break;
@@ -362,7 +366,7 @@ impl CompressionStreamCoder {
             Backend::BrotliDecode(p) => {
                 if self.ended {
                     if !input.is_empty() {
-                        return Err(TRAILING_JUNK);
+                        return Err(CodecError::TrailingJunk);
                     }
                     return Ok(out);
                 }
@@ -392,19 +396,19 @@ impl CompressionStreamCoder {
                         brotli::BrotliDecoderResult::success => {
                             self.ended = true;
                             if avail_in != 0 {
-                                return Err(TRAILING_JUNK);
+                                return Err(CodecError::TrailingJunk);
                             }
                             break;
                         }
                         brotli::BrotliDecoderResult::needs_more_input => {
                             if finish {
-                                return Err(CodecError("unexpected end of file"));
+                                return Err(CodecError::Message("unexpected end of file"));
                             }
                             break;
                         }
                         brotli::BrotliDecoderResult::needs_more_output => continue,
                         brotli::BrotliDecoderResult::err => {
-                            return Err(CodecError("brotli decode failed"));
+                            return Err(CodecError::Message("brotli decode failed"));
                         }
                     }
                 }
@@ -439,7 +443,7 @@ impl CompressionStreamCoder {
                     // bytes.
                     unsafe { out.set_len(out.len() + output_buf.pos) };
                     if zstd::ZSTD_isError(remaining) != 0 {
-                        return Err(CodecError("zstd encode failed"));
+                        return Err(CodecError::Message("zstd encode failed"));
                     }
                     if input_buf.pos == input_buf.size && (!finish || remaining == 0) {
                         break;
@@ -472,11 +476,11 @@ impl CompressionStreamCoder {
                         }
                         let head = &rest[..rest.len().min(4)];
                         if !Self::is_zstd_frame_prefix(head) {
-                            return Err(TRAILING_JUNK);
+                            return Err(CodecError::TrailingJunk);
                         }
                         if head.len() < 4 {
                             if finish {
-                                return Err(TRAILING_JUNK);
+                                return Err(CodecError::TrailingJunk);
                             }
                             self.zstd_head[..head.len()].copy_from_slice(head);
                             self.zstd_head_len = head.len() as u8;
@@ -511,7 +515,7 @@ impl CompressionStreamCoder {
                     // bytes.
                     unsafe { out.set_len(out.len() + output_buf.pos) };
                     if zstd::ZSTD_isError(remaining) != 0 {
-                        return Err(CodecError("zstd decode failed"));
+                        return Err(CodecError::Message("zstd decode failed"));
                     }
                     if remaining == 0 {
                         self.ended = true;
@@ -519,7 +523,7 @@ impl CompressionStreamCoder {
                     }
                     if input_buf.pos == input_buf.size && output_buf.pos < output_buf.size {
                         if finish {
-                            return Err(CodecError("unexpected end of file"));
+                            return Err(CodecError::Message("unexpected end of file"));
                         }
                         break;
                     }
@@ -584,17 +588,74 @@ pub extern "C" fn CompressionStreamCoder__transform(
                 JSUint8Array::from_bytes(global, out.into())
             }
         }
-        Err(CodecError(msg)) if core::ptr::eq(msg, TRAILING_JUNK.0) => {
+        Err(e) => {
+            throw_codec_error(global, e);
+            JSValue::ZERO
+        }
+    }
+}
+
+fn throw_codec_error(global: &JSGlobalObject, e: CodecError) {
+    match e {
+        CodecError::TrailingJunk => {
             let _ = global
                 .err(
                     ErrorCode::ERR_TRAILING_JUNK_AFTER_STREAM_END,
                     format_args!("Trailing junk found after the end of the compressed stream"),
                 )
                 .throw();
-            JSValue::ZERO
         }
-        Err(CodecError(msg)) => {
+        CodecError::Message(msg) => {
             let _ = global.throw_type_error(format_args!("{msg}"));
+        }
+    }
+}
+
+unsafe extern "C" {
+    fn Bun__JSSink__writeBytesById(
+        sink_id: u8,
+        sink_ptr: *mut core::ffi::c_void,
+        global: &JSGlobalObject,
+        ptr: *const u8,
+        len: usize,
+    ) -> JSValue;
+}
+
+/// Runs one transform step and writes the output straight to a native JSSink
+/// (`m_sinkPtr`), so the chunk never becomes a `JSUint8Array`. Returns the
+/// sink's `write_bytes` result (a number; negative means backpressure),
+/// `undefined` for an empty output, or `JSValue::zero` with an exception
+/// pending on `global` on codec failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn CompressionStreamCoder__transformInto(
+    this: *mut CompressionStreamCoder,
+    global: &JSGlobalObject,
+    input: *const u8,
+    input_len: usize,
+    finish: bool,
+    sink_id: u8,
+    sink_ptr: *mut core::ffi::c_void,
+) -> JSValue {
+    // SAFETY: as in `__transform`.
+    let this = unsafe { &mut *this };
+    let slice = if input.is_null() {
+        &[][..]
+    } else {
+        // SAFETY: as in `__transform`.
+        unsafe { core::slice::from_raw_parts(input, input_len) }
+    };
+    match this.transform(slice, finish) {
+        Ok(out) if out.is_empty() => JSValue::UNDEFINED,
+        Ok(out) => {
+            // SAFETY: `sink_ptr` is a live JSSink of type `sink_id` (the C++
+            // caller null-checks it before attaching). `out` is owned here and
+            // drops on return; the sink copies what it needs.
+            unsafe {
+                Bun__JSSink__writeBytesById(sink_id, sink_ptr, global, out.as_ptr(), out.len())
+            }
+        }
+        Err(e) => {
+            throw_codec_error(global, e);
             JSValue::ZERO
         }
     }

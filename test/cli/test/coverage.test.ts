@@ -34,8 +34,8 @@ test("coverage report generation scales with ranges, not bytes", () => {
     return ms;
   };
 
-  // Covered first (so an O(bytes) report path times the test out), plain second
-  // as the warm baseline.
+  // warm: first process spawn can carry ~1s cold-start on darwin
+  Bun.spawnSync([bunExe(), "--revision"], { env: bunEnv, stdio: ["ignore", "ignore", "ignore"] });
   const covered = run(true);
   const plain = run(false);
   // The per-byte path adds ~2s on release / ~4.5s on debug+ASAN; the per-range

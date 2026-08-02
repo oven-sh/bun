@@ -7,7 +7,6 @@ import {
   exampleSite,
   gcTick,
   isASAN,
-  isLinux,
   isWindows,
   tempDir,
   withoutAggressiveGC,

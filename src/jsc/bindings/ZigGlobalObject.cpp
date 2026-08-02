@@ -85,6 +85,7 @@
 #include "JSAbortController.h"
 #include "JSAbortSignal.h"
 #include "streams/JSCompressionStream.h"
+#include "streams/JSDecompressionStream.h"
 #include "JSBroadcastChannel.h"
 #include "JSBuffer.h"
 #include "JSBufferList.h"

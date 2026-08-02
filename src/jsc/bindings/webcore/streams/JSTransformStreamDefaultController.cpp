@@ -7,6 +7,7 @@
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMWrapperCache.h"
 #include "JSCompressionStream.h"
+#include "JSDecompressionStream.h"
 #include "JSReadableStream.h"
 #include "JSReadableStreamDefaultController.h"
 #include "JSStreamsRuntime.h"

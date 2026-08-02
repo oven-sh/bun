@@ -1,4 +1,4 @@
-// JSCompressionStream — the CompressionStream instance cell. A JSTransformStream
+// JSDecompressionStream — the DecompressionStream instance cell. A JSTransformStream
 // subclass whose controller's transformerKind drives the Rust CompressionStreamCoder
 // (m_coder) directly.
 #pragma once
@@ -12,12 +12,12 @@
 
 namespace WebCore {
 
-class JSCompressionStream final : public JSTransformStream {
+class JSDecompressionStream final : public JSTransformStream {
 public:
     using Base = JSTransformStream;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSCompressionStream* create(JSC::VM&, JSC::Structure*);
+    static JSDecompressionStream* create(JSC::VM&, JSC::Structure*);
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
@@ -35,16 +35,13 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
-    // the Rust CompressionStreamCoder. Freed eagerly at ClearAlgorithms (post-flush /
-    // error / cancel); a vm.heap.addFinalizer registered in the constructor is the
-    // idempotent fallback for an abandoned stream.
     void* m_coder { nullptr };
     Bun::WebStreams::CompressionFormat m_format { Bun::WebStreams::CompressionFormat::Deflate };
 
 private:
-    JSCompressionStream(JSC::VM&, JSC::Structure*);
+    JSDecompressionStream(JSC::VM&, JSC::Structure*);
 };
 
-using JSCompressionStreamConstructor = JSStreamConstructor<JSCompressionStream>;
+using JSDecompressionStreamConstructor = JSStreamConstructor<JSDecompressionStream>;
 
 } // namespace WebCore

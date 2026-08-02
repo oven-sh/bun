@@ -9,5 +9,5 @@ export default [
   ["TransformStream", "streams/JSTransformStream.h"],
   ["ArrayBuffer"],
   ["CompressionStream", "streams/JSCompressionStream.h"],
-  ["DecompressionStream", "streams/JSCompressionStream.h"],
+  ["DecompressionStream", "streams/JSDecompressionStream.h"],
 ];

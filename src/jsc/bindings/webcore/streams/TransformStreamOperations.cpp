@@ -2,6 +2,7 @@
 #include "WebStreamsInternals.h"
 
 #include "JSCompressionStream.h"
+#include "JSDecompressionStream.h"
 #include "JSDOMBinding.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"

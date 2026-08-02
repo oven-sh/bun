@@ -169,6 +169,11 @@ void* Object::SlowGetAlignedPointerFromInternalField(int index, uint16_t tag)
     return nullptr;
 }
 
+void* Object::GetAlignedPointerFromInternalField(int index, uint16_t tag)
+{
+    return SlowGetAlignedPointerFromInternalField(index, tag);
+}
+
 int Object::InternalFieldCount() const
 {
     auto* fields = getInternalFieldsContainer(const_cast<Object*>(this));

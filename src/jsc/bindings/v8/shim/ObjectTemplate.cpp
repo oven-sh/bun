@@ -50,6 +50,8 @@ void ObjectTemplate::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(tmp, visitor);
 
     tmp->m_objectStructure.visit(visitor);
+
+    WTF::Locker locker { tmp->cellLock() };
     for (auto& prop : tmp->m_properties) {
         visitor.append(prop.name);
         visitor.append(prop.value);
@@ -86,6 +88,7 @@ void ObjectTemplate::addProperty(JSC::VM& vm, JSC::JSValue name, JSC::JSValue va
     prop.name.set(vm, this, name);
     prop.value.set(vm, this, value);
     prop.attributes = attributes;
+    WTF::Locker locker { cellLock() };
     m_properties.append(WTF::move(prop));
 }
 
@@ -97,6 +100,7 @@ void ObjectTemplate::addAccessor(JSC::VM& vm, JSC::JSValue name, AccessorNameGet
     acc.getter = getter;
     acc.setter = setter;
     acc.attributes = attributes;
+    WTF::Locker locker { cellLock() };
     m_accessors.append(WTF::move(acc));
 }
 

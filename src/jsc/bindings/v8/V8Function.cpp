@@ -54,6 +54,11 @@ MaybeLocal<Object> Function::NewInstance(Local<Context> context, int argc, Local
     return context->currentHandleScope()->createLocal<Object>(vm, result);
 }
 
+MaybeLocal<Object> Function::NewInstance(Local<Context> context) const
+{
+    return NewInstance(context, 0, nullptr);
+}
+
 void Function::SetName(Local<String> name)
 {
     if (auto* jsFunction = localToObjectPointer<JSC::JSFunction>()) {

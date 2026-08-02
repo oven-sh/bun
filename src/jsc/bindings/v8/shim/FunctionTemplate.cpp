@@ -58,6 +58,8 @@ void FunctionTemplate::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(fn->m_className);
     visitor.append(fn->m_instanceTemplate);
     visitor.append(fn->m_prototypeTemplate);
+
+    WTF::Locker locker { fn->cellLock() };
     for (auto& prop : fn->m_properties) {
         visitor.append(prop.name);
         visitor.append(prop.value);
@@ -115,6 +117,7 @@ void FunctionTemplate::addProperty(JSC::VM& vm, JSC::JSValue name, JSC::JSValue 
     prop.name.set(vm, this, name);
     prop.value.set(vm, this, value);
     prop.attributes = attributes;
+    WTF::Locker locker { cellLock() };
     m_properties.append(WTF::move(prop));
 }
 
@@ -126,6 +129,7 @@ void FunctionTemplate::addAccessor(JSC::VM& vm, JSC::JSValue name, AccessorNameG
     acc.getter = getter;
     acc.setter = setter;
     acc.attributes = attributes;
+    WTF::Locker locker { cellLock() };
     m_accessors.append(WTF::move(acc));
 }
 

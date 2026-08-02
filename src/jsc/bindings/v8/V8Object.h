@@ -45,6 +45,10 @@ public:
 
     BUN_EXPORT void SetAlignedPointerInInternalField(int index, void* value, uint16_t tag);
 
+    // Inline in v8-object.h, but under dllimport MSVC emits a call to it instead
+    // of inlining, so addons built with MSVC (debug) reference it as an import.
+    BUN_EXPORT void* GetAlignedPointerFromInternalField(int index, uint16_t tag);
+
     BUN_EXPORT int InternalFieldCount() const;
 
     BUN_EXPORT int GetIdentityHash();

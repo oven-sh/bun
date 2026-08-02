@@ -3619,6 +3619,10 @@ mod v8_api {
         pub(super) fn v8_Function_Call() -> *mut c_void;
         #[link_name = "?NewInstance@Function@v8@@QEBA?AV?$MaybeLocal@VObject@v8@@@2@V?$Local@VContext@v8@@@2@HQEAV?$Local@VValue@v8@@@2@@Z"]
         pub(super) fn v8_Function_NewInstance() -> *mut c_void;
+        #[link_name = "?NewInstance@Function@v8@@QEBA?AV?$MaybeLocal@VObject@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Function_NewInstance_noargs() -> *mut c_void;
+        #[link_name = "?GetAlignedPointerFromInternalField@Object@v8@@QEAAPEAXHG@Z"]
+        pub(super) fn v8_Object_GetAlignedPointerFromInternalField() -> *mut c_void;
         #[link_name = "?IsBoolean@Value@v8@@QEBA_NXZ"]
         pub(super) fn v8_Value_IsBoolean() -> *mut c_void;
         #[link_name = "?Value@Boolean@v8@@QEBA_NXZ"]
@@ -4932,6 +4936,8 @@ pub(crate) fn fix_dead_code_elimination() {
             v8_Function_SetName,
             v8_Function_Call,
             v8_Function_NewInstance,
+            v8_Function_NewInstance_noargs,
+            v8_Object_GetAlignedPointerFromInternalField,
             v8_Value_IsBoolean,
             v8_Boolean_Value,
             v8_Value_FullIsTrue,

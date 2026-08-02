@@ -74,10 +74,6 @@ impl TerminalCreateResult {
     }
 }
 
-// ── IPC owner trait impl for Subprocess ─────────────────────────────────────
-// Mirrors the `IPCInstance` impl in `bun_jsc::VirtualMachine`; lives here
-// because `Subprocess` is a `bun_runtime` type and `bun_jsc::ipc` (tier-5)
-// sees only the `dyn SendQueueOwner` trait object.
 // `SendQueue.owner` — the `Subprocess` arm of `SendQueueOwner`. The SendQueue
 // lives in `bun_jsc` and cannot name `Subprocess`, so these hooks (declared
 // `extern "Rust"` in `bun_jsc::ipc`) supply the dispatch. `subprocess` is the

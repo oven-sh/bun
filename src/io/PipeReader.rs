@@ -836,8 +836,7 @@ impl PosixBufferedReader {
                         }
 
                         if over_budget {
-                            // SAFETY: caller contract; tail position.
-                            // SAFETY: caller contract; the raw entry keeps the dispatch protector-free.
+                            // SAFETY: caller contract; tail position, raw entry.
                             unsafe { Self::stop_for_max_buffer(this) };
                             return;
                         }
@@ -926,8 +925,7 @@ impl PosixBufferedReader {
                         }
 
                         if over_budget {
-                            // SAFETY: caller contract; tail position.
-                            // SAFETY: caller contract; the raw entry keeps the dispatch protector-free.
+                            // SAFETY: caller contract; tail position, raw entry.
                             unsafe { Self::stop_for_max_buffer(this) };
                             return;
                         }
@@ -2170,8 +2168,9 @@ impl WindowsBufferedReader {
 
     fn on_read(&mut self, amount: sys::Result<usize>, slice: &mut [u8], has_more: ReadState) {
         if let sys::Result::Err(err) = amount {
-            // SAFETY: live reader; the raw entry keeps the (maybe-freeing) error
-            // dispatch under no receiver protector.
+            // SAFETY: live reader. Note: this `&mut self` receiver still carries
+            // a protector across the (maybe-freeing) error dispatch — pre-existing
+            // on the parent chain, tracked with the raw-dispatch follow-up.
             unsafe { Self::on_error(std::ptr::from_mut(self), err) };
             return;
         }

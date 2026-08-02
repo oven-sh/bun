@@ -116,8 +116,8 @@ pub struct ParseTask {
     /// in the `default()` placeholder.
     pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>>>,
     /// Completion-facing handle to the same bundle, carried to the main
-    /// thread in [`Result::ctx`]; the only place a `&mut BundleV2` is formed
-    /// (`on_complete`), never from a worker.
+    /// thread in [`Result::ctx`] for `on_complete`; `Load::on_defer` also
+    /// forms `&mut BundleV2` from it on the plugin-host thread. Never a worker.
     pub completion_ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
     // Borrows package_json (resolver arena); valid for the bundle pass.
     pub(crate) package_version: ast::StoreStr,

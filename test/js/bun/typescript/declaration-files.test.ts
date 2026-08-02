@@ -258,6 +258,13 @@ export default class Merged {
   constructor();
 }
 `,
+    // A clause alias for "default" also wins over the stub.
+    "clause-default.d.ts": `declare const impl: number;
+export { impl as default };
+export default interface Props {
+  x: number;
+}
+`,
     "index.ts": `import fn from "./fn.d.ts";
 import iface from "./iface.d.ts";
 import c from "./const.d.ts";
@@ -265,7 +272,8 @@ import alias from "./alias.d.ts";
 import Klass from "./klass.d.ts";
 import M1 from "./merge1.d.ts";
 import M2 from "./merge2.d.ts";
-console.log(JSON.stringify([typeof fn, typeof iface, typeof c, typeof alias, typeof Klass, typeof M1, typeof M2]));
+import CD from "./clause-default.d.ts";
+console.log(JSON.stringify([typeof fn, typeof iface, typeof c, typeof alias, typeof Klass, typeof M1, typeof M2, typeof CD]));
 `,
   });
   const { stdout, stderr, exitCode } = await run(dir, "index.ts");
@@ -278,6 +286,7 @@ console.log(JSON.stringify([typeof fn, typeof iface, typeof c, typeof alias, typ
     "function",
     "function",
     "function",
+    "undefined",
   ]);
   expect(exitCode).toBe(0);
 });

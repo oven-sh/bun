@@ -4579,10 +4579,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         stmts: &mut BumpVec<'a, Stmt>,
     ) -> Result<(), crate::Error> {
-        // A type-only default export produces a stub only when no real
-        // default export exists (class/interface declaration merging on the
-        // default export keeps the real one).
+        // A type-only default export produces a stub only when nothing else
+        // exports "default": a real default export (class/interface
+        // declaration merging) or a clause alias (`export { X as default }`,
+        // `export { default } from`) wins.
         if self.dts_needs_default_export_stub
+            && !self
+                .dts_export_clause_aliases
+                .contains_key(b"default".as_slice())
             && !stmts
                 .iter()
                 .any(|s| matches!(s.data, js_ast::StmtData::SExportDefault(_)))

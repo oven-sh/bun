@@ -562,6 +562,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if opts.is_typescript_declare {
             // "import type foo = require('bar');"
             // "import type foo = bar.baz;"
+            //
+            // Declaration files synthesize an undefined binding for the name
+            // (not the require result: the `bar.baz` form would evaluate a
+            // synthesized undefined) so `export { foo }` clauses still link.
+            if opts.is_module_scope {
+                p.record_declaration_file_type_name(default_name, opts.is_export)?;
+            }
             return Ok(p.s(S::TypeScript {}, loc));
         }
 

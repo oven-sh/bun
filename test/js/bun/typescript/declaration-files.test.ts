@@ -91,14 +91,18 @@ export interface B {}
 `,
     "index.d.mts": `export type { A } from "./types.d.mts";
 export type * from "./types.d.mts";
+export interface Star {}
+export * as Star from "./types.d.mts";
 `,
     "main.ts": `import * as m from "./index.d.mts";
-console.log(JSON.stringify(Object.keys(m).sort()));
+console.log(JSON.stringify(Object.keys(m).sort()), typeof m.Star);
 `,
   });
   const { stdout, stderr, exitCode } = await run(dir, "main.ts");
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual(["A", "B"]);
+  const [keys, starType] = stdout.trim().split(" ");
+  expect(JSON.parse(keys)).toEqual(["A", "B", "Star"]);
+  expect(starType).toBe("object");
   expect(exitCode).toBe(0);
 });
 
@@ -296,18 +300,25 @@ export interface Bar {}
     "wrapper.d.cts": `import helper = require("./helper.cjs");
 export { HelperType } from "./helper.cjs";
 `,
+    // `import type x = require(...)` synthesizes an undefined binding so the
+    // export clause links.
+    "typeonly.d.cts": `import type h = require("./helper.cjs");
+export { h };
+`,
     "index.ts": `const lib = require("./lib.d.cts");
 const esm = require("./esm-ish.d.cts");
 const wrapper = require("./wrapper.d.cts");
-console.log(JSON.stringify([typeof lib, Object.keys(esm).sort(), Object.keys(wrapper)]));
+const typeonly = require("./typeonly.d.cts");
+console.log(JSON.stringify([typeof lib, Object.keys(esm).sort(), Object.keys(wrapper), Object.keys(typeonly)]));
 `,
   });
   const { stdout, stderr, exitCode } = await run(dir, "index.ts");
   expect(stderr).toBe("");
-  const [libType, esmKeys, wrapperKeys] = JSON.parse(stdout.trim());
+  const [libType, esmKeys, wrapperKeys, typeonlyKeys] = JSON.parse(stdout.trim());
   expect(libType).toBe("undefined");
   expect(esmKeys).toEqual(["Bar", "Foo"]);
   expect(wrapperKeys).toEqual(["HelperType"]);
+  expect(typeonlyKeys).toEqual(["h"]);
   expect(exitCode).toBe(0);
 });
 

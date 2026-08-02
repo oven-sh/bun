@@ -859,6 +859,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
             let name = p.parse_clause_alias(b"export")?;
             namespace_ref = p.store_name_in_ref(name);
+            if Self::IS_TYPESCRIPT_ENABLED
+                && p.options.typescript_declaration_file
+                && opts.is_module_scope
+                && !p.dts_suppress_type_name_recording
+            {
+                // The star alias wins over a synthesized export for the same
+                // name (see `dts_export_clause_aliases`).
+                p.dts_export_clause_aliases.put(name, true)?;
+            }
             alias = Some(G::ExportStarAlias {
                 loc: p.lexer.loc(),
                 original_name: bun_ast::StoreStr::new(name),

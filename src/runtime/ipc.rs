@@ -38,10 +38,6 @@ use bun_uws;
 /// Queue for messages sent between parent and child processes in an IPC environment. node:cluster sends json serialized messages
 /// to describe different events it performs. It will send a message with an incrementing sequence number and then call a callback
 /// when a message is received with an 'ack' property of the same sequence number.
-///
-/// Note: moved down from `bun_runtime::node::node_cluster_binding` (cycle-break per
-/// docs/PORTING.md) — `SendQueue` stores one inline so the struct must live at this tier.
-/// All field accesses + dispatch methods need only `bun_jsc`/`bun_collections` symbols.
 pub struct InternalMsgHolder {
     pub seq: i32,
 

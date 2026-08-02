@@ -10,6 +10,15 @@ extern "C" void Bun__ensureSignalHandler();
 
 namespace Bun {
 
+// Separate from m_installed so onDidChangeListeners can ask "does SigintWatcher
+// own the SIGINT sigaction right now?" without constructing the singleton.
+static std::atomic<bool> s_sigintWatcherActive { false };
+
+bool SigintWatcher::isActive()
+{
+    return s_sigintWatcherActive.load(std::memory_order_acquire);
+}
+
 #if OS(WINDOWS)
 static BOOL WindowsCtrlHandler(DWORD signal)
 {
@@ -35,6 +44,7 @@ SigintWatcher::~SigintWatcher()
 
 void SigintWatcher::install()
 {
+    s_sigintWatcherActive.store(true, std::memory_order_release);
 #if OS(WINDOWS)
     SetConsoleCtrlHandler(WindowsCtrlHandler, true);
 #else
@@ -99,6 +109,7 @@ void SigintWatcher::uninstall()
         sigaction(SIGINT, &action, nullptr);
 #endif
 
+        s_sigintWatcherActive.store(false, std::memory_order_release);
         m_semaphore.signal();
         m_thread->waitForCompletion();
     }

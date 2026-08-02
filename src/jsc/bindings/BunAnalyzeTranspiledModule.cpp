@@ -268,7 +268,7 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
         for (const auto& pair : moduleRecord->importEntries()) {
             WTF::StringPrintStream line;
             auto& importEntry = pair.value;
-            line.print("      import(", importEntry.importName, "), local(", importEntry.localName, "), module(", importEntry.moduleRequest, ")");
+            line.print("      import(", importEntry.importName, "), local(", importEntry.localName, "), module(", importEntry.moduleRequest, "), type(", (uint8_t)importEntry.moduleRequestType, ")");
             if (importEntry.phase == AbstractModuleRecord::ModulePhase::Defer)
                 line.print(", phase(defer)");
             line.print("\n");
@@ -292,11 +292,11 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
             break;
 
         case AbstractModuleRecord::ExportEntry::Type::Indirect:
-            line.print("      [Indirect] ", "export(", exportEntry.exportName, "), import(", exportEntry.importName, "), module(", exportEntry.moduleName, ")\n");
+            line.print("      [Indirect] ", "export(", exportEntry.exportName, "), import(", exportEntry.importName, "), module(", exportEntry.moduleName, "), type(", (uint8_t)exportEntry.moduleRequestType, ")\n");
             break;
 
         case AbstractModuleRecord::ExportEntry::Type::Namespace:
-            line.print("      [Namespace] ", "export(", exportEntry.exportName, "), module(", exportEntry.moduleName, ")\n");
+            line.print("      [Namespace] ", "export(", exportEntry.exportName, "), module(", exportEntry.moduleName, "), type(", (uint8_t)exportEntry.moduleRequestType, ")\n");
             break;
         }
         sortedEntries.append(line.toString());
@@ -311,7 +311,7 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
         Vector<String> sortedStarExports;
         for (const auto& [moduleName, moduleRequestType] : moduleRecord->starExportEntries()) {
             WTF::StringPrintStream line;
-            line.print("      [Star] module(", moduleName.get(), ")\n");
+            line.print("      [Star] module(", moduleName.get(), "), type(", (uint8_t)moduleRequestType, ")\n");
             sortedStarExports.append(line.toString());
         }
         std::sort(sortedStarExports.begin(), sortedStarExports.end(), [](const String& a, const String& b) {

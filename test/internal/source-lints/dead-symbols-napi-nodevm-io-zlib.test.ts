@@ -82,6 +82,8 @@ test("zlib / io / install / net.ts dead items do not reappear", () => {
     ["src/io/windows_event_loop.rs", /pub fn ref_\(&mut self, event_loop_ctx: EventLoopCtx\)/],
     ["src/io/windows_event_loop.rs", /pub fn activate\(&mut self, loop_: &mut WindowsLoop\)/],
     ["src/io/windows_event_loop.rs", /pub fn can_ref\(&self\) -> bool/],
+    ["src/io/posix_event_loop.rs", /pub fn ref_\(&mut self, event_loop_ctx: EventLoopCtx\)/],
+    ["src/io/posix_event_loop.rs", /declare_scope!\(KeepAlive/],
     ["src/install/lockfile/bun.lock.rs", /\/\/ pub fn save\(this: &Lockfile\)/],
     ["src/js/node/net.ts", /const kpendingRead = Symbol\("kpendingRead"\);/],
   ];

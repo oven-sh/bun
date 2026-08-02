@@ -1095,8 +1095,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let name: &'a [u8] = self.symbols[id_ref.inner_index() as usize]
                             .original_name
                             .slice();
-                        let arg_ident =
-                            self.new_expr(E::Identifier::init(id_ref), bind_loc);
+                        let arg_ident = self.new_expr(E::Identifier::init(id_ref), bind_loc);
                         let this_target = self.new_expr(E::This {}, bind_loc);
                         let dot = self.new_expr(
                             E::Dot {

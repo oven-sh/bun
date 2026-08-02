@@ -558,8 +558,7 @@ impl ByteStream {
         bun_jsc::mark_binding!();
         debug_assert!(self.buffer_action.get().is_none());
 
-        // No pull view (C++ adapter, `m_sourceOwnsChunks`): Owned handoff.
-        // With a view (native-readable.ts): metered copy-into-view below.
+        // No pull view = C++ adapter Owned handoff; view = native-readable's metered copy below.
         if buffer.is_empty() {
             if !self.buffer.get().is_empty() {
                 debug_assert!(self.value().is_empty());

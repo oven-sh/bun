@@ -409,11 +409,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || opts.is_typescript_declare
         {
             p.pop_and_discard_scope(scope_index);
-            if opts.is_module_scope {
+            if opts.is_module_scope && name_is_identifier {
                 p.local_type_names.put(name_text, true)?;
-                if name_is_identifier {
-                    p.record_declaration_file_type_name(name_text, opts.is_export)?;
-                }
+                p.record_declaration_file_type_name(name_text, opts.is_export)?;
             }
             return Ok(p.s(S::TypeScript {}, loc));
         }

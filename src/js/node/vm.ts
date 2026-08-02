@@ -48,6 +48,7 @@ const {
   compileFunction,
   isModuleNamespaceObject,
   kLinked,
+  kEvaluating,
   kEvaluated,
   kErrored,
   DONT_CONTEXTIFY,
@@ -305,18 +306,18 @@ class Module {
       const { breakOnSigint = false } = options;
       validateBoolean(breakOnSigint, "options.breakOnSigint");
       const status = this[kNative].getStatusCode();
-      if (status !== kLinked && status !== kEvaluated && status !== kErrored) {
+      // kEvaluating passes through: native returns the cached capability
+      // promise for TLA in flight, or throws ERR_VM_MODULE_STATUS for a
+      // synchronous re-entrant call from inside the module body.
+      if (status !== kLinked && status !== kEvaluating && status !== kEvaluated && status !== kErrored) {
         throw $ERR_VM_MODULE_STATUS("must be one of linked, evaluated, or errored");
       }
       // Always call into native, even when already evaluated: Node re-enters
       // ModuleWrap::Evaluate, which performs the afterEvaluate microtask
-      // checkpoint for contexts with their own microtask queue.
+      // checkpoint for contexts with their own microtask queue. The cached
+      // capability promise is returned as-is so repeated evaluate() calls
+      // observe the SAME promise object (ES2024 Evaluate() step 2/4).
       const result = this[kNative].evaluate(timeout, breakOnSigint);
-      if (status === kEvaluated) {
-        // Re-evaluating a settled module resolves synchronously with
-        // undefined (a then-chain on the cached promise would be pending).
-        return PromiseResolve(undefined);
-      }
       if ($isPromise(result)) {
         // Spec-style module evaluation capability: already settled (with
         // undefined) for synchronous modules, pending for top-level await.

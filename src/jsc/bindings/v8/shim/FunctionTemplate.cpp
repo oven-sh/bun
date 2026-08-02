@@ -229,9 +229,6 @@ JSC::JSValue FunctionTemplate::invokeCallback(JSC::JSGlobalObject* globalObject,
         return frame[viewOffset + index];
     };
 
-    // v8::internal::Internals::kFrameTypeApiConstructExit (v8-internal.h).
-    constexpr int kFrameTypeApiConstructExit = 19;
-
     // For construct calls V8 reads this slot via NewTarget(); for plain calls
     // IsConstructCall() short-circuits on kFrameTypeIndex and never reads it.
     slot(Info::kNewTargetIndex) = isConstruct ? target.tagged() : TaggedPointer();
@@ -240,7 +237,7 @@ JSC::JSValue FunctionTemplate::invokeCallback(JSC::JSGlobalObject* globalObject,
     // SP/FP/PC are only used by V8's stack walker, which never sees this frame
     slot(Info::kFrameSPIndex) = TaggedPointer::fromRaw(0);
     // IsConstructCall() compares this Smi against kFrameTypeApiConstructExit
-    slot(Info::kFrameTypeIndex) = TaggedPointer(isConstruct ? kFrameTypeApiConstructExit : Info::kFrameTypeApiCallExit);
+    slot(Info::kFrameTypeIndex) = TaggedPointer(isConstruct ? Info::kFrameTypeApiConstructExit : Info::kFrameTypeApiCallExit);
     slot(Info::kFrameFPIndex) = TaggedPointer::fromRaw(0);
     slot(Info::kFramePCIndex) = TaggedPointer::fromRaw(0);
     // GetIsolate() reads this slot as a raw, untagged pointer

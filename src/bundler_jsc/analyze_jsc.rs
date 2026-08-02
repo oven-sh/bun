@@ -199,8 +199,8 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
                         analyze::FetchParameters(buffer[i + 3].0).to_script_fetch_parameters_type(),
                     ),
                 RecordKind::ExportInfoIndirect => {
-                    let ty = analyze::FetchParameters(buffer[i + 3].0)
-                        .to_script_fetch_parameters_type();
+                    let ty =
+                        analyze::FetchParameters(buffer[i + 3].0).to_script_fetch_parameters_type();
                     if buffer[i + 1] == StringID::STAR_NAMESPACE {
                         module_record.add_namespace_export(
                             identifiers,

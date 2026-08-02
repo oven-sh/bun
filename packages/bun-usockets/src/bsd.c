@@ -1910,6 +1910,12 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
 
     if (rc != 0) {
         bsd_close_socket(fd);
+#ifdef _WIN32
+        /* bsd_do_connect_raw returned the WSA error; re-arm it so the Rust
+         * caller's WSAGetLastError() observes the connect failure rather than
+         * whatever closesocket() left behind. */
+        WSASetLastError(rc);
+#endif
         return LIBUS_SOCKET_ERROR;
     }
     return fd;
@@ -1924,8 +1930,12 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const cha
 
     win32_set_nonblocking(fd);
 
-    if (bsd_do_connect_raw(fd, (struct sockaddr *)server_address, addrlen) != 0) {
+    int rc = bsd_do_connect_raw(fd, (struct sockaddr *)server_address, addrlen);
+    if (rc != 0) {
         bsd_close_socket(fd);
+#ifdef _WIN32
+        WSASetLastError(rc);
+#endif
         return LIBUS_SOCKET_ERROR;
     }
 

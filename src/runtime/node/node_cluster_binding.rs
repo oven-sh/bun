@@ -95,8 +95,8 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
     }
 
     let ipc_instance = crate::ipc_host::get_ipc_instance(vm).unwrap();
-    // SAFETY: `get_ipc_instance` returns a live owned IPCInstance pointer; sole &mut on JS thread.
-    let ipc_instance = unsafe { &mut *ipc_instance };
+    // SAFETY: `get_ipc_instance` returns a live owned IPCInstance pointer.
+    let ipc_instance = unsafe { &*ipc_instance };
 
     #[bun_jsc::host_fn]
     fn impl_(global_: &JSGlobalObject, frame_: &CallFrame) -> JsResult<JSValue> {

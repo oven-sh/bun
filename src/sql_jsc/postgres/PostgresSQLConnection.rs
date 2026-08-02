@@ -393,8 +393,16 @@ impl PostgresSQLConnection {
                 bun_core::TimespecMockMode::AllowMockedTime,
                 i64::from(interval),
             );
-            self.vm_mut().timer().insert(t);
         });
+        if interval != 0 {
+            // SAFETY: place projection through `self` keeps whole-struct provenance; the fire path recovers the container from this pointer.
+            let t = unsafe {
+                &mut *core::ptr::addr_of!(self.timer)
+                    .cast::<EventLoopTimer>()
+                    .cast_mut()
+            };
+            self.vm_mut().timer().insert(t);
+        }
     }
 
     bun_jsc::cached_prop_hostfns! {
@@ -489,16 +497,22 @@ impl PostgresSQLConnection {
         if self.max_lifetime_interval_ms == 0 {
             return;
         }
+        if self.max_lifetime_timer.get().state == EventLoopTimerState::ACTIVE {
+            return;
+        }
         self.max_lifetime_timer.with_mut(|t| {
-            if t.state == EventLoopTimerState::ACTIVE {
-                return;
-            }
             t.next = bun_core::Timespec::ms_from_now(
                 bun_core::TimespecMockMode::AllowMockedTime,
                 i64::from(self.max_lifetime_interval_ms),
             );
-            self.vm_mut().timer().insert(t);
         });
+        // SAFETY: place projection through `self` keeps whole-struct provenance; the fire path recovers the container from this pointer.
+        let t = unsafe {
+            &mut *core::ptr::addr_of!(self.max_lifetime_timer)
+                .cast::<EventLoopTimer>()
+                .cast_mut()
+        };
+        self.vm_mut().timer().insert(t);
     }
 
     pub fn on_connection_timeout(&self) {

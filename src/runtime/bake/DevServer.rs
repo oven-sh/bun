@@ -5774,6 +5774,7 @@ impl DevServer {
         // is deref'd per-access below (no long-lived `&mut`).
         let ev_ptr = unsafe { WatcherAtomics::watcher_acquire_event(atomics) };
         // Note: erase `self` to a raw ptr in the deferred closures so the
+        // loop body can keep using `self.bun_watcher`.
         let self_ptr: *mut Self = self;
         let ev_ptr_defer: *mut HotReloadEvent = ev_ptr;
         scopeguard::defer! {

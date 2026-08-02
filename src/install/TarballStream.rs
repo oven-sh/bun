@@ -202,6 +202,7 @@ impl TarballStream {
         // the union read goes through the centralised tag-checked
         // `request_extract()` accessor; `extract` is the active `Request`
         // variant for streaming tarballs (set by `enqueueExtractNPMPackage`,
+        // `tag == Tag::Extract`).
         let extract_task =
             core::ptr::NonNull::new(extract_task).expect("extract_task non-null (Zig *Task)");
         // SAFETY: `extract_task` is the caller's live task pointer.

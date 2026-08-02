@@ -134,6 +134,7 @@ describe("tsconfig compilerOptions.useDefineForClassFields", () => {
         const key = () => (called++, "k");
         class D { [key()]: any; a = 1; }
         new D();
+        new D();
         process.stdout.write(JSON.stringify({ order, K: c[K], called }));
       `,
     });

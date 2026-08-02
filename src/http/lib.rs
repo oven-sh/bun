@@ -207,15 +207,7 @@ pub struct Flags {
     pub(crate) defer_fail_until_connecting_is_complete: bool,
     pub(crate) upgrade_state: HTTPUpgradeState,
     pub(crate) protocol: Protocol,
-    /// Set by `fetch(url, { protocol: "..." })`. `Some(Http2)` makes ALPN
-    /// advertise only h2 and fail if the server selects anything else;
-    /// `Some(Http1_1)` opts out of h2 even when the experimental flag would
-    /// otherwise advertise it; `Some(Http3)` skips TCP entirely and opens a
-    /// QUIC connection (HTTPS-only, no proxy/unix-socket support). `None`
-    /// leaves protocol selection to ALPN and the experimental flags.
     pub forced_protocol: Option<Protocol>,
-    /// Set after the first H3 retry so a stale-session/GOAWAY race retries
-    /// once on a fresh connection but never loops.
     pub(crate) h3_retried: bool,
     pub is_node_http_client: bool,
 }

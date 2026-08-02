@@ -2164,12 +2164,14 @@ describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
   });
 });
 
-test("non-200 CONNECT response from proxy is surfaced and its Location header is not followed", async () => {
+test("non-2xx CONNECT response from proxy rejects the fetch and its Location header is not followed", async () => {
   // RFC 9110 §9.3.6: a non-2xx response to CONNECT means the tunnel was not
-  // established. The proxy's response must be returned to the caller, but a
-  // Location header on it must never be followed — otherwise the original
-  // method, body, and custom headers would be re-sent to whatever plaintext
-  // origin the proxy names.
+  // established. The proxy's reply travelled over the plaintext client→proxy
+  // hop with no TLS handshake to the https origin, so it must never surface
+  // as an https-origin Response; the fetch rejects. A Location header on it
+  // is never followed either — otherwise the original method, body, and
+  // custom headers would be re-sent to whatever plaintext origin the proxy
+  // names.
 
   // Records anything that reaches the address named in the proxy's Location
   // header. Nothing should ever arrive here.
@@ -2209,20 +2211,23 @@ test("non-200 CONNECT response from proxy is surfaced and its Location header is
   const proxyPort = (proxy.address() as net.AddressInfo).port;
 
   try {
-    const response = await fetch(httpsServer.url, {
-      method: "POST",
-      body: "secret request body",
-      headers: { "X-Api-Key": "super-secret" },
-      proxy: `http://localhost:${proxyPort}`,
-      keepalive: false,
-      tls: { ca: tlsCert.cert, rejectUnauthorized: false },
+    await expect(
+      fetch(httpsServer.url, {
+        method: "POST",
+        body: "secret request body",
+        headers: { "X-Api-Key": "super-secret" },
+        proxy: `http://localhost:${proxyPort}`,
+        keepalive: false,
+        tls: { ca: tlsCert.cert, rejectUnauthorized: false },
+      }),
+    ).rejects.toMatchObject({
+      code: "ProxyConnectFailed",
+      message: expect.stringContaining("307"),
     });
 
     // The request did go through the proxy as a CONNECT...
     expect(sawConnect.length).toBe(1);
     expect(sawConnect[0]!.startsWith("CONNECT ")).toBe(true);
-    // ...the proxy's refusal is surfaced to the caller as-is...
-    expect(response.status).toBe(307);
     // ...and the Location header on the failed CONNECT is never followed:
     // the body and the X-Api-Key header must not reach the plaintext server
     // it points at.
@@ -2232,6 +2237,122 @@ test("non-200 CONNECT response from proxy is surfaced and its Location header is
     proxy.close();
     await once(proxy, "close");
   }
+});
+
+describe("CONNECT response is never attributed to the https origin", () => {
+  // The CONNECT leg of an HTTP proxy is plaintext. A hostile proxy (or any
+  // MITM on the client→proxy hop) can answer CONNECT with arbitrary status,
+  // headers, and body without a single verified TLS byte from the origin.
+  // Surfacing that reply as a Response with res.url === "https://origin/..."
+  // hands JS attacker-controlled Set-Cookie / Location / body under the
+  // https origin's identity (the CVE-2009-2062 class). Bun must reject.
+  // curl (exit 56), Node/undici (TypeError: fetch failed), and browsers
+  // (ERR_TUNNEL_CONNECTION_FAILED) all reject here.
+  const replies = {
+    403:
+      "HTTP/1.1 403 Forbidden\r\n" +
+      "Content-Type: text/html\r\n" +
+      "Set-Cookie: sess=INJECTED-BY-PROXY; Path=/\r\n" +
+      "Content-Length: 28\r\n\r\n" +
+      "<h1>PROXY BODY UNDER TLS</h1>",
+    302: "HTTP/1.1 302 Found\r\nLocation: http://attacker.invalid/pwned\r\nContent-Length: 0\r\n\r\n",
+    407: 'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="p"\r\nContent-Length: 0\r\n\r\n',
+    500: "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 4\r\n\r\nboom",
+  } as const;
+
+  for (const [status, raw] of Object.entries(replies)) {
+    test.concurrent(`CONNECT → ${status} rejects; proxy headers/body never surface`, async () => {
+      const sockets = new Set<net.Socket>();
+      const proxy = net.createServer(c => {
+        sockets.add(c);
+        c.on("close", () => sockets.delete(c));
+        c.on("error", () => {});
+        let buf = "";
+        c.on("data", d => {
+          buf += d.toString("latin1");
+          if (buf.includes("\r\n\r\n")) c.end(raw);
+        });
+      });
+      proxy.listen(0, "127.0.0.1");
+      await once(proxy, "listening");
+      const port = (proxy.address() as net.AddressInfo).port;
+      try {
+        // The https origin does not exist; nothing is ever fetched over TLS.
+        let err: any;
+        try {
+          const res = await fetch("https://origin.invalid/never-fetched-over-tls", {
+            proxy: `http://127.0.0.1:${port}`,
+            keepalive: false,
+            signal: AbortSignal.timeout(15_000),
+          });
+          err = {
+            resolved: true,
+            status: res.status,
+            ok: res.ok,
+            url: res.url,
+            setCookie: res.headers.get("set-cookie"),
+            location: res.headers.get("location"),
+            body: await res.text(),
+          };
+        } catch (e) {
+          err = e;
+        }
+        // Must reject — there is no Response for JS to see.
+        expect(err?.resolved).toBeUndefined();
+        expect(err).toMatchObject({
+          code: "ProxyConnectFailed",
+          message: expect.stringContaining(status),
+          path: "https://origin.invalid/never-fetched-over-tls",
+        });
+      } finally {
+        for (const s of sockets) s.destroy();
+        proxy.close();
+        await once(proxy, "close");
+      }
+    });
+  }
+
+  // RFC 9110 §9.3.6: "Any 2xx (Successful) response indicates that the
+  // sender ... will switch to tunnel mode". A proxy answering CONNECT with
+  // 201 + body is non-conforming; the client must start TLS over the
+  // post-header bytes (which then fails). Before the fix this resolved to
+  // { status: 201, ok: true, body: "BODY201x" } under the https URL.
+  test.concurrent("CONNECT → 201 with body is treated as tunnel-established, never as res.ok content", async () => {
+    const sockets = new Set<net.Socket>();
+    const proxy = net.createServer(c => {
+      sockets.add(c);
+      c.on("close", () => sockets.delete(c));
+      c.on("error", () => {});
+      let buf = "";
+      c.on("data", d => {
+        buf += d.toString("latin1");
+        if (buf.includes("\r\n\r\n")) c.end("HTTP/1.1 201 Created\r\nContent-Length: 8\r\n\r\nBODY201x");
+      });
+    });
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    const port = (proxy.address() as net.AddressInfo).port;
+    try {
+      let outcome: unknown;
+      try {
+        const res = await fetch("https://origin.invalid/never-fetched-over-tls", {
+          proxy: `http://127.0.0.1:${port}`,
+          keepalive: false,
+          signal: AbortSignal.timeout(15_000),
+        });
+        outcome = { resolved: true, status: res.status, ok: res.ok, body: await res.text() };
+      } catch (e) {
+        outcome = { code: (e as any)?.code, name: (e as any)?.name };
+      }
+      expect(outcome).not.toEqual({ resolved: true, status: 201, ok: true, body: "BODY201x" });
+      expect((outcome as any).resolved).toBeUndefined();
+      expect((outcome as any).name).not.toBe("TimeoutError");
+    } finally {
+      for (const s of sockets) s.destroy();
+      proxy.close();
+      await once(proxy, "close");
+    }
+  });
 });
 
 // RFC 3986 §3.1: the URL scheme is case-insensitive. The explicit

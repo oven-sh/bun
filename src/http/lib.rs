@@ -4756,23 +4756,29 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         response: &mut picohttp::Response,
     ) -> crate::Result<ShouldContinue> {
+        if self.verbose != HTTPVerboseLevel::None {
+            print_response(response);
+        }
+
+        // RFC 9110 §9.3.6: any 2xx to CONNECT establishes the tunnel; a
+        // non-2xx CONNECT reply travelled over the plaintext client→proxy
+        // hop so it must reject the fetch, never surface as an https-origin
+        // Response (CVE-2009-2062). Dispatched before the header loop so no
+        // CONNECT-leg header or status writes `self.state` — ProxyTunnel
+        // does not reset it between the CONNECT leg and the origin leg.
+        if self.flags.proxy_tunneling && self.proxy_tunnel.is_none() {
+            if response.status_code >= 200 && response.status_code < 300 {
+                return Ok(ShouldContinue::ContinueStreaming);
+            }
+            return Err(crate::Error::ProxyConnectFailed(response.status_code));
+        }
+
         let mut location: &[u8] = b"";
         let mut pretend_304 = false;
         let mut is_server_sent_events = false;
         for (header_i, header) in response.headers.list.iter().enumerate() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
-                    // RFC 9110 section 9.3.6: a client MUST ignore
-                    // Content-Length in a successful response to CONNECT —
-                    // the connection becomes an opaque tunnel and is never
-                    // pooled, so the framing-desync concern below does not
-                    // apply.
-                    if self.flags.proxy_tunneling
-                        && self.proxy_tunnel.is_none()
-                        && response.status_code == 200
-                    {
-                        continue;
-                    }
                     // byte-level parse — header.value() is network bytes, not &str
                     //
                     // RFC 9112 section 6.3: an invalid or conflicting
@@ -4830,15 +4836,6 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Transfer-Encoding") => {
-                    // RFC 9110 section 9.3.6: as with Content-Length above, a
-                    // client MUST ignore Transfer-Encoding in a successful
-                    // response to CONNECT.
-                    if self.flags.proxy_tunneling
-                        && self.proxy_tunnel.is_none()
-                        && response.status_code == 200
-                    {
-                        continue;
-                    }
                     // RFC 9112 §7: transfer-coding names are case-insensitive.
                     let value = header.value();
                     if strings::eql_case_insensitive_ascii_check_length(value, b"gzip")
@@ -4914,10 +4911,6 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
-        if self.verbose != HTTPVerboseLevel::None {
-            print_response(response);
-        }
-
         if pretend_304 {
             response.status_code = 304;
         }
@@ -4928,8 +4921,6 @@ impl<'a> HTTPClient<'a> {
         //      [...] cannot contain a message body or trailer section.
         // Therefore in these cases set content-length to 0, so the response body is always ignored
         // and is not waited for (which could cause a timeout).
-        // This applies regardless of whether we're using a proxy tunnel or not,
-        // since these status codes NEVER have a body per the HTTP spec.
         if (response.status_code >= 100 && response.status_code < 200)
             || response.status_code == 204
             || response.status_code == 304
@@ -4955,24 +4946,6 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
-        // RFC 9110 §9.3.6: a non-200 response to CONNECT means the tunnel was
-        // not established. Surface the proxy's response to the caller, but
-        // never follow a Location header from it — a malicious proxy could
-        // otherwise redirect the request (body and custom headers included)
-        // to an attacker-chosen plaintext origin.
-        let mut is_proxy_connect_failure = false;
-        if self.flags.proxy_tunneling && self.proxy_tunnel.is_none() {
-            if response.status_code == 200 {
-                // signal to continue the proxing
-                return Ok(ShouldContinue::ContinueStreaming);
-            }
-
-            // proxy denied connection so return proxy result (407, 403 etc)
-            self.flags.proxy_tunneling = false;
-            self.flags.disable_keepalive = true;
-            is_proxy_connect_failure = true;
-        }
-
         let status_code = response.status_code;
 
         if status_code == 407 {
@@ -4984,8 +4957,7 @@ impl<'a> HTTPClient<'a> {
         // https://fetch.spec.whatwg.org/#redirect-status
         let is_redirect = matches!(status_code, 301 | 302 | 303 | 307 | 308);
         if is_redirect {
-            if !is_proxy_connect_failure
-                && self.redirect_type == FetchRedirect::Follow
+            if self.redirect_type == FetchRedirect::Follow
                 && !location.is_empty()
                 && self.remaining_redirect_count > 0
             {
@@ -5218,7 +5190,7 @@ impl<'a> HTTPClient<'a> {
                 if self.method.has_request_body() {
                     self.state.flags.resend_request_body_on_redirect = true;
                 }
-            } else if !is_proxy_connect_failure && self.redirect_type == FetchRedirect::Error {
+            } else if self.redirect_type == FetchRedirect::Error {
                 // error out if redirect is not allowed
                 return Err(crate::Error::UnexpectedRedirect);
             }

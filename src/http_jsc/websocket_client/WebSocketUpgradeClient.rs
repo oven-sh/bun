@@ -1015,19 +1015,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
             body = &me.body;
         }
 
-        // Check for HTTP 200 response from proxy
-        let is_first = me.body.is_empty();
-        const HTTP_200: &[u8] = b"HTTP/1.1 200 ";
-        const HTTP_200_ALT: &[u8] = b"HTTP/1.0 200 ";
-        if is_first && body.len() > HTTP_200.len() {
-            if !body.starts_with(HTTP_200) && !body.starts_with(HTTP_200_ALT) {
-                // Proxy connection failed
-                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                unsafe { Self::terminate(this.as_ptr(), ErrorCode::ProxyConnectFailed) };
-                return;
-            }
-        }
-
         // Parse the response to find the end of headers
         let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
             Ok(r) => r,
@@ -1051,15 +1038,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
         };
 
-        // Proxy returned non-200 status
-        if response.status_code != 200 {
-            if response.status_code == 407 {
-                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                unsafe { Self::terminate(this.as_ptr(), ErrorCode::ProxyAuthenticationRequired) };
+        // RFC 9110 §9.3.6: any 2xx to CONNECT establishes the tunnel.
+        if !(200..300).contains(&response.status_code) {
+            let code = if response.status_code == 407 {
+                ErrorCode::ProxyAuthenticationRequired
             } else {
-                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                unsafe { Self::terminate(this.as_ptr(), ErrorCode::ProxyConnectFailed) };
-            }
+                ErrorCode::ProxyConnectFailed
+            };
+            // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
+            unsafe { Self::terminate(this.as_ptr(), code) };
             return;
         }
 

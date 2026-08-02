@@ -1490,6 +1490,9 @@ impl FetchTasklet {
             http::Error::RedirectURLInvalid => {
                 BunString::static_("Redirect URL in Location header is invalid.")
             }
+            http::Error::ProxyConnectFailed(status) => BunString::create_format(format_args!(
+                "CONNECT tunnel failed, proxy responded with status {status}",
+            )),
 
             http::Error::Cert(http::CertError::UNABLE_TO_GET_ISSUER_CERT) => {
                 BunString::static_("unable to get issuer certificate")

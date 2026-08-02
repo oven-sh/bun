@@ -97,6 +97,8 @@ pub enum Error {
     InvalidCRL,
     #[error("UnsupportedProxyProtocol")]
     UnsupportedProxyProtocol,
+    #[error("CONNECT tunnel failed, response {0}")]
+    ProxyConnectFailed(u32),
     #[error(transparent)]
     Cert(#[from] CertError),
     #[error(transparent)]
@@ -308,6 +310,7 @@ impl Error {
             Self::FailedToOpenSocket => "FailedToOpenSocket",
             Self::InvalidCRL => "InvalidCRL",
             Self::UnsupportedProxyProtocol => "UnsupportedProxyProtocol",
+            Self::ProxyConnectFailed(_) => "ProxyConnectFailed",
             Self::Cert(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Hpack(e) => <&'static str>::from(e),

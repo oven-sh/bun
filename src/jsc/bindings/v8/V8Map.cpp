@@ -13,7 +13,7 @@ MaybeLocal<Map> Map::Set(Local<Context> context, Local<Value> key, Local<Value> 
 {
     Zig::GlobalObject* globalObject = context->globalObject();
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSMap* jsMap = localToObjectPointer<JSC::JSMap>();
     RELEASE_ASSERT(jsMap, "v8::Map::Set called on non-Map value");
@@ -28,7 +28,7 @@ Maybe<bool> Map::Delete(Local<Context> context, Local<Value> key)
 {
     Zig::GlobalObject* globalObject = context->globalObject();
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSMap* jsMap = localToObjectPointer<JSC::JSMap>();
     RELEASE_ASSERT(jsMap, "v8::Map::Delete called on non-Map value");

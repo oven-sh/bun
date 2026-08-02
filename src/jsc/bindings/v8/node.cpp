@@ -90,7 +90,7 @@ v8::MaybeLocal<v8::Value> MakeCallback(v8::Isolate* isolate,
 
     auto* globalObject = isolate->globalObject();
     auto& vm = isolate->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSValue callee = callback->localToJSValue();
     JSC::JSValue thisValue = recv.IsEmpty() ? JSC::jsUndefined() : recv->localToJSValue();
@@ -124,7 +124,7 @@ void node_module_register(void* opaque_mod)
     JSObject* object = (pendingNapiModule && pendingNapiModule.isObject()) ? pendingNapiModule.getObject()
                                                                            : nullptr;
 
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::Strong<JSC::JSObject> strongExportsObject;
 
     if (mod->nm_version != REPORTED_NODEJS_ABI_VERSION) {

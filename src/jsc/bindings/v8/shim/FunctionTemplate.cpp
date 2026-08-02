@@ -174,6 +174,7 @@ JSC::EncodedJSValue FunctionTemplate::functionConstruct(JSC::JSGlobalObject* glo
 
     auto* instanceTemplate = functionTemplate->ensureInstanceTemplate(globalObject);
     JSC::JSObject* receiver = instanceTemplate->newInstance();
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSC::JSValue prototype = callee->get(globalObject, vm.propertyNames->prototype);
     RETURN_IF_EXCEPTION(scope, {});

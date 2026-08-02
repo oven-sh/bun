@@ -128,7 +128,7 @@ MaybeLocal<String> Value::ToString(Local<Context> context) const
 {
     Zig::GlobalObject* globalObject = context->globalObject();
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSString* jsString = localToJSValue().toString(globalObject);
     RETURN_IF_EXCEPTION(scope, MaybeLocal<String>());
@@ -140,7 +140,7 @@ MaybeLocal<Integer> Value::ToInteger(Local<Context> context) const
 {
     Zig::GlobalObject* globalObject = context->globalObject();
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     double d = localToJSValue().toIntegerOrInfinity(globalObject);
     RETURN_IF_EXCEPTION(scope, MaybeLocal<Integer>());
@@ -164,7 +164,7 @@ bool Value::StrictEquals(Local<Value> that) const
     JSC::JSValue thatValue = that->localToJSValue();
     auto* globalObject = v8::Isolate::GetCurrent()->globalObject();
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     bool result = JSC::JSValue::strictEqual(globalObject, thisValue, thatValue);
     RETURN_IF_EXCEPTION(scope, false);

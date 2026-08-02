@@ -20,7 +20,7 @@ MaybeLocal<Value> Function::Call(Local<Context> context, Local<Value> recv, int 
 {
     auto* globalObject = context->globalObject();
     auto& vm = context->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSValue callee = localToJSValue();
     JSC::JSValue thisValue = recv.IsEmpty() ? JSC::jsUndefined() : recv->localToJSValue();
@@ -41,7 +41,7 @@ MaybeLocal<Object> Function::NewInstance(Local<Context> context, int argc, Local
 {
     auto* globalObject = context->globalObject();
     auto& vm = context->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::MarkedArgumentBuffer argBuffer;
     argBuffer.ensureCapacity(argc);
@@ -54,6 +54,7 @@ MaybeLocal<Object> Function::NewInstance(Local<Context> context, int argc, Local
         if (auto* functionTemplate = v8Function->functionTemplate()) {
             auto* instanceTemplate = functionTemplate->ensureInstanceTemplate(globalObject);
             auto* receiver = instanceTemplate->newInstance();
+            RETURN_IF_EXCEPTION(scope, MaybeLocal<Object>());
 
             JSC::JSValue prototype = v8Function->get(globalObject, vm.propertyNames->prototype);
             RETURN_IF_EXCEPTION(scope, MaybeLocal<Object>());

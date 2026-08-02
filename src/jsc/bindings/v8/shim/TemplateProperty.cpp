@@ -60,12 +60,12 @@ static JSC::JSValue invokeAccessor(
     auto& vm = JSC::getVM(globalObject);
 
     HandleScope hs(isolate);
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSObject* jscThis = globalObject->globalThis();
     if (!thisObject.isUndefinedOrNull()) {
         jscThis = thisObject.toObject(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSC::jsUndefined());
+        if (!jscThis) [[unlikely]]
+            return JSC::jsUndefined();
     }
     Local<v8::Object> holder = hs.createLocal<v8::Object>(vm, jscThis);
     Local<v8::Name> property = hs.createLocal<v8::Name>(vm, name);
@@ -123,7 +123,7 @@ void applyTemplateProperties(
     const WTF::Vector<TemplateAccessor>& accessors)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     for (const auto& prop : properties) {
         JSC::Identifier identifier = prop.name.get().toPropertyKey(globalObject);
@@ -171,6 +171,7 @@ void applyTemplateProperties(
         auto* getterSetter = JSC::GetterSetter::create(vm, globalObject, getterFn, setterFn);
         target->putDirectAccessor(globalObject, identifier, getterSetter,
             toJSCAttributes(acc.attributes) | JSC::PropertyAttribute::Accessor);
+        RETURN_IF_EXCEPTION(scope, void());
     }
 }
 

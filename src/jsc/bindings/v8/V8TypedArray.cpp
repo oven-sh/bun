@@ -21,7 +21,7 @@ static Local<ResultType> newTypedArray(Local<ArrayBuffer> array_buffer, size_t b
     RELEASE_ASSERT(jsBuffer, "v8::TypedArray::New: not an ArrayBuffer");
     auto* globalObject = dynamicDowncast<Zig::GlobalObject>(jsBuffer->globalObject());
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     RefPtr<JSC::ArrayBuffer> backing = jsBuffer->impl();
     JSC::Structure* structure = globalObject->typedArrayStructure(typedArrayType, backing->isResizableOrGrowableShared());

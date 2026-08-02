@@ -1,11 +1,12 @@
 use core::cell::Cell;
 
 use bun_collections::VecExt;
+use bun_jsc::strong::Optional as StrongOptional;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell};
 use bun_sys::Error as SysError;
 
 use crate::webcore::SinkHandle;
-use crate::webcore::streams::{self, BufferAction};
+use crate::webcore::streams::{self, BufferAction, IntoArray};
 use crate::webcore::{blob, readable_stream};
 
 bun_output::declare_scope!(ByteStream, visible);
@@ -23,6 +24,12 @@ pub struct ByteStream {
     pub(crate) has_received_last_chunk: Cell<bool>,
     pub(crate) pending: JsCell<streams::Pending>,
     pub(crate) done: Cell<bool>,
+    /// Borrowed view into a JS `Uint8Array` passed from `on_pull`; kept alive by `pending_value`.
+    // Raw fat slice ptr because the backing store is JS-heap-owned and rooted via
+    // `pending_value: Strong`. Never freed by Rust.
+    pub(crate) pending_buffer: Cell<*mut [u8]>,
+    pub(crate) pending_value: JsCell<StrongOptional>, // jsc.Strong.Optional
+    pub offset: Cell<usize>,
     /// Native sink this stream is piped into; `on_data` dispatches and honors `Writable`.
     pub(crate) sink: JsCell<SinkHandle>,
     /// Set on `Writable::Backpressure` (buffer instead of write); cleared by [`Self::resume`].
@@ -41,6 +48,9 @@ impl Default for ByteStream {
                 ..Default::default()
             }),
             done: Cell::new(false),
+            pending_buffer: Cell::new(Self::empty_pending_buffer()),
+            pending_value: JsCell::new(StrongOptional::empty()),
+            offset: Cell::new(0),
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
             size_hint: Cell::new(0),
@@ -95,6 +105,11 @@ impl readable_stream::SourceContext for ByteStream {
 bun_core::impl_field_parent! { ByteStream => Source.context; pub fn parent_const; pub fn parent; }
 
 impl ByteStream {
+    #[inline]
+    const fn empty_pending_buffer() -> *mut [u8] {
+        core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0)
+    }
+
     /// Init-time reset. Runs before the JS
     /// wrapper exists, so `&mut self` is sound here (R-2 exemption).
     pub(crate) fn setup(&mut self) {
@@ -117,6 +132,16 @@ impl ByteStream {
         streams::Start::ReadyOwned
     }
 
+    fn value(&self) -> JSValue {
+        self.pending_value.with_mut(|pv| {
+            let Some(result) = pv.get() else {
+                return JSValue::ZERO;
+            };
+            pv.clear_without_deallocation();
+            result
+        })
+    }
+
     pub(crate) fn unpipe_without_deref(&self) {
         self.sink.set(SinkHandle::None);
         self.sink_paused.set(false);
@@ -136,6 +161,7 @@ impl ByteStream {
 
         if !self.buffer.get().is_empty() {
             let buffered = self.buffer.replace(Vec::new());
+            self.offset.set(0);
             let result = if self.has_received_last_chunk.get() {
                 streams::Result::OwnedAndDone(buffered)
             } else {
@@ -193,7 +219,7 @@ impl ByteStream {
         self.parent_const().producer.get().start();
     }
 
-    pub(crate) fn on_data(&self, stream: streams::Result) -> Result<(), bun_jsc::JsTerminated> {
+    pub(crate) fn on_data(&self, mut stream: streams::Result) -> Result<(), bun_jsc::JsTerminated> {
         bun_jsc::mark_binding!();
         if self.done.get() {
             // The owned `Vec<u8>`/`Vec`
@@ -223,7 +249,8 @@ impl ByteStream {
 
             if self.sink_paused.get() {
                 bun_output::scoped_log!(ByteStream, "ByteStream.onData sink paused → buffer");
-                self.append(stream);
+                self.append(stream, 0)
+                    .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
                 return Ok(());
             }
 
@@ -338,46 +365,119 @@ impl ByteStream {
         if self.pending.get().state == streams::PendingState::Pending {
             debug_assert!(self.buffer.get().is_empty());
 
-            let is_done = self.has_received_last_chunk.get();
-            let result = match stream {
-                streams::Result::Err(_) => {
-                    self.done.set(true);
-                    stream
-                }
-                streams::Result::Done => {
-                    self.done.set(true);
-                    streams::Result::Done
-                }
-                streams::Result::Owned(owned) | streams::Result::OwnedAndDone(owned) => {
-                    if is_done {
+            // The pending pull came without a view (C++ native-source adapter):
+            // hand the chunk off as its own allocation. `signal_drained` stays
+            // gated by the view-copy branch below so the producer is not
+            // resumed ahead of node:stream Readable's buffer (which that path
+            // meters via the view size).
+            if self.pending_value.get().get().is_none() {
+                let is_done = self.has_received_last_chunk.get();
+                let result = match stream {
+                    streams::Result::Err(_) => {
                         self.done.set(true);
-                        if owned.is_empty() {
-                            streams::Result::Done
-                        } else {
-                            streams::Result::OwnedAndDone(owned)
-                        }
-                    } else {
-                        streams::Result::Owned(owned)
+                        stream
                     }
-                }
-                streams::Result::Temporary(temp) | streams::Result::TemporaryAndDone(temp) => {
-                    let owned = temp.slice().to_vec();
-                    if is_done {
+                    streams::Result::Done => {
                         self.done.set(true);
-                        if owned.is_empty() {
-                            streams::Result::Done
-                        } else {
-                            streams::Result::OwnedAndDone(owned)
-                        }
-                    } else {
-                        streams::Result::Owned(owned)
+                        streams::Result::Done
                     }
-                }
-                _ => unreachable!(),
-            };
+                    streams::Result::Owned(owned) | streams::Result::OwnedAndDone(owned) => {
+                        if is_done {
+                            self.done.set(true);
+                            if owned.is_empty() {
+                                streams::Result::Done
+                            } else {
+                                streams::Result::OwnedAndDone(owned)
+                            }
+                        } else {
+                            streams::Result::Owned(owned)
+                        }
+                    }
+                    streams::Result::Temporary(temp) | streams::Result::TemporaryAndDone(temp) => {
+                        let owned = temp.slice().to_vec();
+                        if is_done {
+                            self.done.set(true);
+                            if owned.is_empty() {
+                                streams::Result::Done
+                            } else {
+                                streams::Result::OwnedAndDone(owned)
+                            }
+                        } else {
+                            streams::Result::Owned(owned)
+                        }
+                    }
+                    _ => unreachable!(),
+                };
+                self.pending.with_mut(|p| p.result = result);
+                self.signal_drained();
+                self.pending.with_mut(|p| p.run());
+                return Ok(());
+            }
 
-            self.pending.with_mut(|p| p.result = result);
-            self.signal_drained();
+            let chunk = stream.slice();
+            // Re-derive the destination from the GC-rooted view instead of trusting the
+            // raw pointer captured at pull time: JS can detach or transfer the backing
+            // ArrayBuffer between the pull and the data arriving, leaving
+            // `pending_buffer` dangling. A detached view re-derives to an empty slice.
+            let global = self.parent_const().global_this();
+            let mut pending_view = self
+                .pending_value
+                .get()
+                .get()
+                .and_then(|view| view.as_array_buffer(global))
+                .unwrap_or_default();
+            let pending_buf = pending_view.slice_mut();
+            let to_copy_len = chunk.len().min(pending_buf.len());
+            let pending_buffer_len = pending_buf.len();
+            debug_assert!(pending_buf.as_ptr() != chunk.as_ptr());
+            pending_buf[..to_copy_len].copy_from_slice(&chunk[..to_copy_len]);
+            let has_remaining = chunk.len() > to_copy_len;
+            self.pending_buffer.set(Self::empty_pending_buffer());
+
+            let is_really_done =
+                self.has_received_last_chunk.get() && to_copy_len <= pending_buffer_len;
+
+            if is_really_done {
+                self.done.set(true);
+
+                if to_copy_len == 0 {
+                    if matches!(stream, streams::Result::Err(_)) {
+                        let err = core::mem::replace(&mut stream, streams::Result::Done);
+                        self.pending.with_mut(|p| p.result = err);
+                    } else {
+                        self.pending.with_mut(|p| p.result = streams::Result::Done);
+                    }
+                } else {
+                    let v = self.value();
+                    self.pending.with_mut(|p| {
+                        p.result = streams::Result::IntoArrayAndDone(IntoArray {
+                            value: v,
+                            len: to_copy_len as blob::SizeType, // @truncate
+                        });
+                    });
+                }
+            } else {
+                let v = self.value();
+                self.pending.with_mut(|p| {
+                    p.result = streams::Result::IntoArray(IntoArray {
+                        value: v,
+                        len: to_copy_len as blob::SizeType, // @truncate
+                    });
+                });
+            }
+
+            if has_remaining {
+                self.append(stream, to_copy_len)
+                    .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
+            } else {
+                // Only resume the producer when the whole chunk fit the pull
+                // view. When the tail spilled into `buffer` the next `on_pull`
+                // signals once it drains, so resuming now would let another
+                // producer chunk land with no reader to take it (it would go
+                // straight to `append` below), inflating `buffer` and the
+                // producer's own staging buffer by an extra recv each cycle.
+                self.signal_drained();
+            }
 
             bun_output::scoped_log!(ByteStream, "ByteStream.onData pending.run()");
 
@@ -392,19 +492,24 @@ impl ByteStream {
 
         bun_output::scoped_log!(ByteStream, "ByteStream.onData no action just append");
 
-        self.append(stream);
+        self.append(stream, 0)
+            .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
         Ok(())
     }
 
-    fn append(&self, stream: streams::Result) {
+    fn append(&self, stream: streams::Result, offset: usize) -> Result<(), bun_alloc::AllocError> {
         if self.buffer.get().capacity() == 0 {
             match stream {
                 streams::Result::Owned(mut owned) | streams::Result::OwnedAndDone(mut owned) => {
                     // `move_to_list_managed` moves the buffer, no copy.
                     self.buffer.set(owned.move_to_list_managed());
+                    self.offset.set(self.offset.get() + offset);
                 }
                 streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
-                    self.buffer.set(temp.slice().to_vec());
+                    let chunk = &temp.slice()[offset..];
+                    let mut buf = Vec::with_capacity(chunk.len());
+                    buf.extend_from_slice(chunk);
+                    self.buffer.set(buf);
                 }
                 streams::Result::Err(err) => {
                     self.pending
@@ -413,15 +518,17 @@ impl ByteStream {
                 streams::Result::Done => {}
                 _ => unreachable!(),
             }
-            return;
+            return Ok(());
         }
 
         match stream {
             streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
-                self.buffer.with_mut(|b| b.extend_from_slice(temp.slice()));
+                self.buffer
+                    .with_mut(|b| b.extend_from_slice(&temp.slice()[offset..]));
             }
             streams::Result::OwnedAndDone(owned) | streams::Result::Owned(owned) => {
-                self.buffer.with_mut(|b| b.extend_from_slice(owned.slice()));
+                self.buffer
+                    .with_mut(|b| b.extend_from_slice(&owned.slice()[offset..]));
                 // `owned: Vec<u8>` drops here.
             }
             streams::Result::Err(err) => {
@@ -441,24 +548,89 @@ impl ByteStream {
             // We don't support the rest of these yet
             _ => unreachable!(),
         }
+
+        Ok(())
     }
 
-    fn on_pull(&self, _buffer: &mut [u8], _view: JSValue) -> streams::Result {
+    fn set_value(&self, view: JSValue) {
+        bun_jsc::mark_binding!();
+        let global = self.parent_const().global_this();
+        self.pending_value.with_mut(|pv| pv.set(global, view));
+    }
+
+    fn on_pull(&self, buffer: &mut [u8], view: JSValue) -> streams::Result {
         bun_jsc::mark_binding!();
         debug_assert!(self.buffer_action.get().is_none());
 
-        if !self.buffer.get().is_empty() {
-            debug_assert!(self.pending.get().state != streams::PendingState::Pending);
-            let owned = self.buffer.replace(Vec::new());
-
-            self.signal_drained();
-
+        // The C++ native-source adapter passes no pull view (`Start::ReadyOwned`
+        // → `m_sourceOwnsChunks`); hand off `self.buffer` as the chunk directly.
+        // native-readable.ts passes a view and meters via the copy path below so
+        // node:stream Readable's over-eager `_read` stays bounded.
+        if buffer.is_empty() {
+            if !self.buffer.get().is_empty() {
+                debug_assert!(self.value().is_empty());
+                debug_assert_eq!(self.offset.get(), 0);
+                let owned = self.buffer.replace(Vec::new());
+                self.signal_drained();
+                if self.has_received_last_chunk.get() {
+                    self.done.set(true);
+                    return streams::Result::OwnedAndDone(owned);
+                }
+                return streams::Result::Owned(owned);
+            }
             if self.has_received_last_chunk.get() {
-                self.done.set(true);
-                return streams::Result::OwnedAndDone(owned);
+                if matches!(self.pending.get().result, streams::Result::Err(_)) {
+                    return self
+                        .pending
+                        .with_mut(|p| core::mem::replace(&mut p.result, streams::Result::Done));
+                }
+                return streams::Result::Done;
+            }
+            // No pull view: `on_data` dispatches on `pending_value` being empty
+            // to resolve with `Owned` instead of copying into a view.
+            return streams::Result::Pending(self.pending.as_ptr());
+        }
+
+        if !self.buffer.get().is_empty() {
+            debug_assert!(self.value().is_empty()); // == .zero
+            // R-2: confine the `&mut Vec<u8>` to a `with_mut` so no `JsCell`
+            // borrow escapes the copy. The result tuple drives the rest.
+            let (to_write, remaining_in_buffer_len) = self.buffer.with_mut(|b| {
+                let to_write = (b.len() - self.offset.get()).min(buffer.len());
+                let remaining_in_buffer_len = to_write; // length of `this.buffer.items[this.offset..][0..to_write]`
+
+                buffer[..to_write].copy_from_slice(&b[self.offset.get()..][..to_write]);
+
+                if self.offset.get() + to_write == b.len() {
+                    self.offset.set(0);
+                    b.clear();
+                } else {
+                    self.offset.set(self.offset.get() + to_write);
+                }
+                (to_write, remaining_in_buffer_len)
+            });
+
+            if self.buffer.get().is_empty() {
+                self.signal_drained();
             }
 
-            return streams::Result::Owned(owned);
+            if self.has_received_last_chunk.get() && remaining_in_buffer_len == 0 {
+                self.buffer.with_mut(|b| {
+                    b.clear();
+                    b.shrink_to_fit();
+                });
+                self.done.set(true);
+
+                return streams::Result::IntoArrayAndDone(IntoArray {
+                    value: view,
+                    len: to_write as blob::SizeType, // @truncate
+                });
+            }
+
+            return streams::Result::IntoArray(IntoArray {
+                value: view,
+                len: to_write as blob::SizeType, // @truncate
+            });
         }
 
         if self.has_received_last_chunk.get() {
@@ -472,6 +644,10 @@ impl ByteStream {
             return streams::Result::Done;
         }
 
+        // Raw borrow of a JS-owned buffer; rooted by `set_value`.
+        self.pending_buffer.set(std::ptr::from_mut::<[u8]>(buffer));
+        self.set_value(view);
+
         // R-2: `JsCell::as_ptr` yields the stable `*mut Pending` that the
         // returned `streams::Result::Pending` raw-backref needs.
         streams::Result::Pending(self.pending.as_ptr())
@@ -479,6 +655,7 @@ impl ByteStream {
 
     fn on_cancel(&self) {
         bun_jsc::mark_binding!();
+        let view = self.value();
         if self.buffer.get().capacity() > 0 {
             self.buffer.with_mut(|b| {
                 b.clear();
@@ -486,8 +663,10 @@ impl ByteStream {
             });
         }
         self.done.set(true);
+        self.pending_value.with_mut(|pv| pv.deinit());
 
-        if self.pending.get().state == streams::PendingState::Pending {
+        if !view.is_empty() {
+            self.pending_buffer.set(Self::empty_pending_buffer());
             self.pending.with_mut(|p| {
                 p.result.release();
                 p.result = streams::Result::Done;
@@ -528,9 +707,11 @@ impl ByteStream {
             });
         }
 
+        self.pending_value.with_mut(|pv| pv.deinit());
         if !self.done.get() {
             self.done.set(true);
 
+            self.pending_buffer.set(Self::empty_pending_buffer());
             let is_promise = self.pending.with_mut(|p| {
                 p.result.release();
                 p.result = streams::Result::Done;

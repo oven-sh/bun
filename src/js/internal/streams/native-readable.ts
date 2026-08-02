@@ -20,7 +20,6 @@ const kHighWaterMark = Symbol("highWaterMark");
 const kPendingRead = Symbol("pendingRead");
 const kHasResized = Symbol("hasResized");
 const kRemainingChunk = Symbol("remainingChunk");
-const kSourceOwnsChunks = Symbol("sourceOwnsChunks");
 
 const MIN_BUFFER_SIZE = 512;
 let dynamicallyAdjustChunkSize = (_?) => (
@@ -37,8 +36,7 @@ type NativeReadable = typeof import("node:stream").Readable &
     [kPendingRead]: boolean;
     [kHighWaterMark]: number;
     [kHasResized]: boolean;
-    [kRemainingChunk]: Buffer | undefined;
-    [kSourceOwnsChunks]: boolean;
+    [kRemainingChunk]: Buffer;
     debugId: number;
   };
 
@@ -74,8 +72,6 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   stream[kPendingRead] = false;
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
-  stream[kRemainingChunk] = undefined;
-  stream[kSourceOwnsChunks] = false;
 
   const highWaterMark = options.highWaterMark;
   stream[kHighWaterMark] = typeof highWaterMark === "number" ? highWaterMark : 256 * 1024;
@@ -147,8 +143,9 @@ function read(this: NativeReadable, maxToRead: number) {
       this[kHasResized] = true;
       this[kHighWaterMark] = Math.min(this[kHighWaterMark], result);
     } else if (typeof result === "number" && result < 0) {
+      // Start::ReadyOwned: the source meters via the pull view's size, so keep
+      // the view at Readable's own hwm and don't grow it.
       this[kHasResized] = true;
-      this[kSourceOwnsChunks] = true;
     }
     if ($isTypedArrayView(result) && result.byteLength > 0) {
       pushAndCheck(this, result);
@@ -160,7 +157,7 @@ function read(this: NativeReadable, maxToRead: number) {
       pushAndCheck(this, drainResult);
     }
   }
-  const chunk = this[kSourceOwnsChunks] ? undefined : getRemainingChunk(this, maxToRead);
+  const chunk = getRemainingChunk(this, maxToRead);
   var result = ptr.pull(chunk, this[kCloseState]);
   $assert(result !== undefined);
   $debug(

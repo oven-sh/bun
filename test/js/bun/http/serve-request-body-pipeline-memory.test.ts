@@ -9,7 +9,6 @@
 
 import { expect, test } from "bun:test";
 import { connect } from "node:net";
-import { Readable } from "node:stream";
 
 type Seen = { len: number; backing: number; off: number };
 
@@ -107,26 +106,9 @@ test("for await (req.body) chunks are backed by right-sized buffers, not the ada
   checkRightSized(seen, BODY, writes.length);
 });
 
-test("Readable.fromWeb(req.body) chunks are backed by right-sized buffers", async () => {
-  const BODY = 64 * 1024;
-  const writes = [BODY / 4, BODY / 4, BODY / 4, BODY / 4];
-  const seen = await runUpload(
-    async (req, onParked, onChunk) => {
-      const r = Readable.fromWeb(req.body as any);
-      const out: Seen[] = [];
-      r.on("data", (chunk: Buffer) => {
-        out.push({ len: chunk.byteLength, backing: chunk.buffer.byteLength, off: chunk.byteOffset });
-        onChunk();
-      });
-      onParked();
-      await new Promise<void>((res, rej) => {
-        r.once("end", () => res());
-        r.once("error", rej);
-      });
-      return out;
-    },
-    BODY,
-    writes,
-  );
-  checkRightSized(seen, BODY, writes.length);
-});
+// `Readable.fromWeb(req.body)` is deliberately left on the copy-into-view path:
+// node:stream Readable calls `_read` ahead of downstream consumption, so
+// metering via the pull view's size is what keeps the producer paused while
+// a chunk is still sitting in the Readable's own buffer. The C++ adapter
+// above pulls once per reader.read(), so it can hand off whole buffers
+// without that hazard.

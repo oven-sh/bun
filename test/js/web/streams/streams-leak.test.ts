@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, rss, tempDir } from "harness";
 
-test("native ReadableStream reuses the pull buffer across small reads", async () => {
+test("native ReadableStream backs small reads with right-sized buffers", async () => {
   // #getInternalBuffer used to rotate to a fresh autoAllocateChunkSize
   // (256KB) Uint8Array whenever $data.length < chunkSize — true after
   // every nonzero read, since #handleNumberResult stores the tail
@@ -60,14 +60,13 @@ test("native ReadableStream reuses the pull buffer across small reads", async ()
   // through the native pull path.
   expect(chunks.length).toBeGreaterThanOrEqual(CHUNKS_TO_WRITE);
 
-  // Consecutive small reads should land in the same backing buffer (the
-  // tail subarray is reused until a read fills it). 128 bytes of 2-byte
-  // chunks fits well inside one 256KB buffer, so the whole stream should
-  // share a handful at most. Pre-fix every chunk had its own 256KB
-  // buffer, so this was ~chunks.length.
-  const distinctBuffers = new Set(chunks.map(c => c.buffer));
-  expect(distinctBuffers.size).toBeLessThan(8);
+  // Each chunk is handed off as its own right-sized allocation; pre-fix each
+  // was a subarray over a fresh 256 KB Gigacage buffer.
+  for (const c of chunks) {
+    expect(c.buffer.byteLength).toBe(c.byteLength);
+  }
 
+  const distinctBuffers = new Set(chunks.map(c => c.buffer));
   let backingBytes = 0;
   for (const buf of distinctBuffers) backingBytes += buf.byteLength;
   // Pre-fix this was ~chunks.length * 256KB ≈ 16 MB.

@@ -1981,7 +1981,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
 
-        // owned-field cleanup (all_closed_promise / user_routes / config /
         if Self::HAS_H3 {
             if let Some(h3a) = server.h3_app.take() {
                 // SAFETY: live H3::App handle owned by this server.

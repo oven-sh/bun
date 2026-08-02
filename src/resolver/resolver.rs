@@ -575,6 +575,12 @@ pub struct Resolver<'a> {
     ///
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
+
+    /// Per-resolve state set by callers (same contract as `custom_dir_paths`).
+    /// Declaration-file importers resolve like tsc: bare specifiers match the
+    /// "types" exports condition and relative runtime specifiers prefer their
+    /// declaration-file siblings.
+    pub importer_is_type_script_declaration_file: bool,
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -650,6 +656,7 @@ impl<'a> Resolver<'a> {
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
+            importer_is_type_script_declaration_file: false,
         }
     }
 
@@ -936,6 +943,7 @@ impl<'a> Resolver<'a> {
             standalone_module_graph: None,
             prefer_module_field: true,
             custom_dir_paths: None,
+            importer_is_type_script_declaration_file: false,
         }
     }
 
@@ -2684,15 +2692,14 @@ impl<'a> Resolver<'a> {
                                     {
                                         let esm_resolution = ESModule {
                                             conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
-                                                    &self.opts.conditions.require
-                                                }
                                                 ast::ImportKind::At
                                                 | ast::ImportKind::AtConditional => {
                                                     &self.opts.conditions.style
                                                 }
-                                                _ => &self.opts.conditions.import,
+                                                _ => self.opts.conditions.for_kind(
+                                                    self.importer_is_type_script_declaration_file,
+                                                    kind,
+                                                ),
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
@@ -2741,15 +2748,14 @@ impl<'a> Resolver<'a> {
                                     if extname == b".js" && esm.subpath.len() > 3 {
                                         let esm_resolution = ESModule {
                                             conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
-                                                    &self.opts.conditions.require
-                                                }
                                                 ast::ImportKind::At
                                                 | ast::ImportKind::AtConditional => {
                                                     &self.opts.conditions.style
                                                 }
-                                                _ => &self.opts.conditions.import,
+                                                _ => self.opts.conditions.for_kind(
+                                                    self.importer_is_type_script_declaration_file,
+                                                    kind,
+                                                ),
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
@@ -3182,13 +3188,10 @@ impl<'a> Resolver<'a> {
                                     // directory path accidentally being interpreted as URL escapes.
                                     {
                                         let esm_resolution = ESModule {
-                                            conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
-                                                    &self.opts.conditions.require
-                                                }
-                                                _ => &self.opts.conditions.import,
-                                            },
+                                            conditions: self.opts.conditions.for_kind(
+                                                self.importer_is_type_script_declaration_file,
+                                                kind,
+                                            ),
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
                                         }
@@ -3221,13 +3224,10 @@ impl<'a> Resolver<'a> {
                                     let extname = bun_paths::extension(esm.subpath);
                                     if extname == b".js" && esm.subpath.len() > 3 {
                                         let esm_resolution = ESModule {
-                                            conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
-                                                    &self.opts.conditions.require
-                                                }
-                                                _ => &self.opts.conditions.import,
-                                            },
+                                            conditions: self.opts.conditions.for_kind(
+                                                self.importer_is_type_script_declaration_file,
+                                                kind,
+                                            ),
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
                                         }
@@ -4859,12 +4859,10 @@ impl<'a> Resolver<'a> {
         // the `ESModule` is constructed as a temporary whose
         // borrow of `self.debug_logs` ends as soon as `resolve_imports` returns.
         let esm_resolution = ESModule {
-            conditions: match kind {
-                ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
-                    &self.opts.conditions.require
-                }
-                _ => &self.opts.conditions.import,
-            },
+            conditions: self
+                .opts
+                .conditions
+                .for_kind(self.importer_is_type_script_declaration_file, kind),
             debug_logs: self.debug_logs.as_mut(),
             module_type: &mut module_type,
         }
@@ -5608,11 +5606,53 @@ impl<'a> Resolver<'a> {
         dec_ret!(MatchStatus::NotFound);
     }
 
+    /// tsc resolution inside declaration files: "./foo.mjs" from a ".d.mts"
+    /// file means "./foo.d.mts".
+    fn load_declaration_file_sibling(
+        &mut self,
+        path: &[u8],
+        extension_order: options::ExtOrder,
+    ) -> Option<LoadResult> {
+        let base = bun_paths::basename(path);
+        let last_dot = strings::last_index_of_char(base, b'.')?;
+        let ext = &base[last_dot..base.len()];
+        let declaration_exts: &[&[u8]] = if ext == b".js" || ext == b".jsx" {
+            &[b".d.ts", b".d.mts"]
+        } else if ext == b".mjs" {
+            &[b".d.mts"]
+        } else if ext == b".cjs" {
+            &[b".d.cts"]
+        } else {
+            return None;
+        };
+        let stem_len = path.len() - ext.len();
+        let mut buf = bun_paths::path_buffer_pool::get();
+        for declaration_ext in declaration_exts {
+            let total_len = stem_len + declaration_ext.len();
+            if total_len > buf.len() {
+                return None;
+            }
+            buf[..stem_len].copy_from_slice(&path[..stem_len]);
+            buf[stem_len..total_len].copy_from_slice(declaration_ext);
+            // No further recursion: ".ts"/".mts"/".cts" never match above.
+            if let Some(result) = self.load_as_file(&buf[..total_len], extension_order) {
+                return Some(result);
+            }
+        }
+        None
+    }
+
     pub(crate) fn load_as_file(
         &mut self,
         path: &[u8],
         extension_order: options::ExtOrder,
     ) -> Option<LoadResult> {
+        if self.importer_is_type_script_declaration_file {
+            if let Some(result) = self.load_declaration_file_sibling(path, extension_order) {
+                return Some(result);
+            }
+        }
+
         // SAFETY: RealFS is the global singleton. Derive provenance from the raw
         // `*mut FileSystem` field so intervening `unsafe { &mut *self.fs() }` calls in
         // `load_extension` / `dirname_store.append_slice` don't invalidate `rfs`
@@ -5763,31 +5803,31 @@ impl<'a> Resolver<'a> {
         //   replacing it with a TypeScript one; e.g. "./foo.js" can be matched
         //   by "./foo.ts" or "./foo.d.ts"
         //
-        // We don't care about ".d.ts" files because we can't do anything with
-        // those, so we ignore that part of the behavior.
-        //
         // See the discussion here for more historical context:
         // https://github.com/microsoft/TypeScript/issues/4595
         if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
             let ext = &base[last_dot..base.len()];
-            // NOTE: the node_modules gate only applies to the `.mjs` arm.
-            if ext == b".js"
-                || ext == b".jsx"
-                || (ext == b".mjs"
-                    && (!FeatureFlags::DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES
-                        || !strings::path_contains_node_modules_folder(path)))
+            // NOTE: the node_modules gate only applies to the `.mjs` source arm.
+            let source_exts: &[&[u8]] = if ext == b".js" || ext == b".jsx" {
+                &[b".ts", b".tsx", b".mts"]
+            } else if ext == b".mjs"
+                && (!FeatureFlags::DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES
+                    || !strings::path_contains_node_modules_folder(path))
             {
+                &[b".mts"]
+            } else {
+                &[]
+            };
+
+            // Declaration files get the ".d.ts" part of the tsc behavior
+            // quoted above via `load_declaration_file_sibling`; other
+            // importers keep the pre-existing source-only rewrites.
+            if !source_exts.is_empty() {
                 let segment = &base[0..last_dot];
                 let tail = &mut bufs!(load_as_file)[path.len() - base.len()..];
                 tail[..segment.len()].copy_from_slice(segment);
 
-                let exts: &[&[u8]] = if ext == b".mjs" {
-                    &[b".mts"]
-                } else {
-                    &[b".ts", b".tsx", b".mts"]
-                };
-
-                for ext_to_replace in exts {
+                for ext_to_replace in source_exts.iter() {
                     let buffer = &mut tail[0..segment.len() + ext_to_replace.len()];
                     buffer[segment.len()..].copy_from_slice(ext_to_replace);
 

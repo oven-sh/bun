@@ -820,6 +820,220 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         result
     }
 
+    /// Declaration-file mode: `export default <type-only declaration>` (for
+    /// example `export default interface Foo {}` or the tsc emit
+    /// `export default function f(): void;`) still gets a `default` export,
+    /// bound to undefined. Synthesized at the end of the parse pass so
+    /// overloads and declaration merging with a real default export emit
+    /// exactly one.
+    fn dts_default_export_stub(p: &mut Self, loc: bun_ast::Loc) -> Result<Stmt> {
+        p.dts_needs_default_export_stub = true;
+        Ok(p.s(S::TypeScript {}, loc))
+    }
+
+    /// `export * [as ns] from "path"`; split out of `t_export` so
+    /// declaration-file mode can route `export type * from` here too.
+    #[inline(never)]
+    fn t_export_star(
+        p: &mut Self,
+        opts: &mut ParseStatementOptions<'a>,
+        loc: bun_ast::Loc,
+    ) -> Result<Stmt> {
+        if !opts.is_module_scope && (!opts.is_namespace_scope || !opts.is_typescript_declare) {
+            p.lexer.unexpected()?;
+            return Err(crate::Error::SyntaxError);
+        }
+
+        p.lexer.next()?;
+        // Both arms below assign exactly once before any read.
+        let namespace_ref: Ref;
+        let mut alias: Option<G::ExportStarAlias> = None;
+        let path: ParsedPath;
+
+        if p.lexer.is_contextual_keyword(b"as") {
+            // "export * as ns from 'path'"
+            p.lexer.next()?;
+            let name = p.parse_clause_alias(b"export")?;
+            namespace_ref = p.store_name_in_ref(name);
+            if Self::IS_TYPESCRIPT_ENABLED
+                && p.options.typescript_declaration_file
+                && opts.is_module_scope
+                && !p.dts_suppress_type_name_recording
+            {
+                // The star alias wins over a synthesized export for the same
+                // name (see `dts_export_clause_aliases`).
+                p.dts_export_clause_aliases.put(name, true)?;
+            }
+            alias = Some(G::ExportStarAlias {
+                loc: p.lexer.loc(),
+                original_name: bun_ast::StoreStr::new(name),
+            });
+            p.lexer.next()?;
+            p.lexer.expect_contextual_keyword(b"from")?;
+            path = p.parse_path()?;
+        } else {
+            // "export * from 'path'"
+            p.lexer.expect_contextual_keyword(b"from")?;
+            path = p.parse_path()?;
+            // Sanitize the basename into an identifier and copy into the arena.
+            let name: &'a [u8] = {
+                use std::io::Write as _;
+                let base = fs::PathName::init(path.text).non_unique_name_string_base();
+                let mut buf: Vec<u8> = Vec::new();
+                write!(&mut buf, "{}", bun_core::fmt::fmt_identifier(base)).expect("unreachable");
+                p.arena.alloc_slice_copy(&buf)
+            };
+            namespace_ref = p.store_name_in_ref(name);
+        }
+
+        let import_record_index = p.add_import_record(ImportKind::Stmt, path.loc, path.text);
+
+        if path.is_macro {
+            p.log().add_error(
+                Some(p.source),
+                path.loc,
+                b"cannot use macro in export statement",
+            );
+        } else if path.import_tag != ImportRecordTag::None {
+            p.log().add_error(
+                Some(p.source),
+                loc,
+                b"cannot use export statement with \"type\" attribute",
+            );
+        }
+
+        if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
+            // In the scan pass, we need _some_ way of knowing *not* to mark as unused
+            p.import_records.items_mut()[import_record_index as usize]
+                .flags
+                .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
+        }
+
+        p.lexer.expect_or_insert_semicolon()?;
+        p.has_es_module_syntax = true;
+        Ok(p.s(
+            S::ExportStar {
+                namespace_ref,
+                alias,
+                import_record_index,
+            },
+            loc,
+        ))
+    }
+
+    /// `export { ... } [from "path"]`; split out of `t_export` so
+    /// declaration-file mode can route `export type { ... }` here too.
+    #[inline(never)]
+    fn t_export_clause_stmt(
+        p: &mut Self,
+        opts: &mut ParseStatementOptions<'a>,
+        loc: bun_ast::Loc,
+    ) -> Result<Stmt> {
+        if !opts.is_module_scope && (!opts.is_namespace_scope || !opts.is_typescript_declare) {
+            p.lexer.unexpected()?;
+            return Err(crate::Error::SyntaxError);
+        }
+
+        let export_clause = p.parse_export_clause()?;
+        if Self::IS_TYPESCRIPT_ENABLED
+            && p.options.typescript_declaration_file
+            && opts.is_module_scope
+            && !p.dts_suppress_type_name_recording
+        {
+            // A clause export wins over a synthesized one for the same name
+            // (see `dts_export_clause_aliases`).
+            for item in export_clause.clauses.iter() {
+                p.dts_export_clause_aliases.put(item.alias.slice(), true)?;
+            }
+        }
+        if p.lexer.is_contextual_keyword(b"from") {
+            p.lexer.expect_contextual_keyword(b"from")?;
+            let parsed_path = p.parse_path()?;
+
+            p.lexer.expect_or_insert_semicolon()?;
+
+            if Self::IS_TYPESCRIPT_ENABLED {
+                // export {type Foo} from 'bar';
+                // ->
+                // nothing
+                // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
+                if export_clause.clauses.is_empty() && export_clause.had_type_only_exports {
+                    return Ok(p.s(S::TypeScript {}, loc));
+                }
+            }
+
+            if parsed_path.is_macro {
+                p.log().add_error(
+                    Some(p.source),
+                    loc,
+                    b"export from cannot be used with \"type\": \"macro\"",
+                );
+            } else if parsed_path.import_tag != ImportRecordTag::None {
+                p.log().add_error(
+                    Some(p.source),
+                    loc,
+                    b"export from cannot be used with \"type\" attribute",
+                );
+            }
+
+            let import_record_index =
+                p.add_import_record(ImportKind::Stmt, parsed_path.loc, parsed_path.text);
+            let path_name = fs::PathName::init(parsed_path.text);
+            let namespace_ref = {
+                use std::io::Write as _;
+                let mut buf: Vec<u8> = Vec::new();
+                write!(
+                    &mut buf,
+                    "import_{}",
+                    bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base())
+                )
+                .expect("unreachable");
+                p.store_name_in_ref(p.arena.alloc_slice_copy(&buf))
+            };
+
+            if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
+                // In the scan pass, we need _some_ way of knowing *not* to mark as unused
+                p.import_records.items_mut()[import_record_index as usize]
+                    .flags
+                    .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
+            }
+            p.current_scope_mut().is_after_const_local_prefix = true;
+            p.has_es_module_syntax = true;
+            return Ok(p.s(
+                S::ExportFrom {
+                    // SAFETY: sole owner — fresh arena slice from parse_export_clause,
+                    // moved into the AST node here; no other &mut alias exists.
+                    items: export_clause.clauses.into(),
+                    is_single_line: export_clause.is_single_line,
+                    namespace_ref,
+                    import_record_index,
+                },
+                loc,
+            ));
+        }
+        p.lexer.expect_or_insert_semicolon()?;
+
+        if Self::IS_TYPESCRIPT_ENABLED {
+            // export {type Foo};
+            // ->
+            // nothing
+            // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
+            if export_clause.clauses.is_empty() && export_clause.had_type_only_exports {
+                return Ok(p.s(S::TypeScript {}, loc));
+            }
+        }
+        p.has_es_module_syntax = true;
+        Ok(p.s(
+            S::ExportClause {
+                // SAFETY: sole owner — fresh arena slice from parse_export_clause,
+                // moved into the AST node here; no other &mut alias exists.
+                items: export_clause.clauses.into(),
+                is_single_line: export_clause.is_single_line,
+            },
+            loc,
+        ))
+    }
+
     // ─── heavy bodies still blocked ──────────────────────────────────────────
     #[inline(never)]
     fn t_export(
@@ -930,6 +1144,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     );
                                     return Err(crate::Error::SyntaxError);
                                 }
+                                // Declaration files keep `export type { }` /
+                                // `export type * from` as runtime exports.
+                                if p.options.typescript_declaration_file
+                                    && opts.is_module_scope
+                                    && !p.dts_suppress_type_name_recording
+                                {
+                                    match p.lexer.token {
+                                        T::TOpenBrace => {
+                                            return Self::t_export_clause_stmt(p, opts, loc);
+                                        }
+                                        T::TAsterisk => {
+                                            return Self::t_export_star(p, opts, loc);
+                                        }
+                                        _ => {}
+                                    }
+                                }
                                 let mut skipper = ParseStatementOptions {
                                     is_module_scope: opts.is_module_scope,
                                     is_export: true,
@@ -997,6 +1227,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let stmt = p.parse_fn_stmt(loc, &mut stmt_opts, Some(async_range))?;
                         if matches!(stmt.data, js_ast::StmtData::STypeScript(_)) {
                             // This was just a type annotation
+                            if p.options.typescript_declaration_file
+                                && opts.is_module_scope
+                                && !p.dts_suppress_type_name_recording
+                            {
+                                return Self::dts_default_export_stub(p, loc);
+                            }
                             return Ok(stmt);
                         }
 
@@ -1054,6 +1290,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         match &stmt.data {
                             // This was just a type annotation
                             js_ast::StmtData::STypeScript(_) => {
+                                if p.options.typescript_declaration_file
+                                    && opts.is_module_scope
+                                    && !p.dts_suppress_type_name_recording
+                                {
+                                    return Self::dts_default_export_stub(p, loc);
+                                }
                                 return Ok(stmt);
                             }
 
@@ -1192,184 +1434,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     loc,
                 ))
             }
-            T::TAsterisk => {
-                if !opts.is_module_scope
-                    && (!opts.is_namespace_scope || !opts.is_typescript_declare)
-                {
-                    p.lexer.unexpected()?;
-                    return Err(crate::Error::SyntaxError);
-                }
-
-                p.lexer.next()?;
-                // Both arms below assign exactly once before any read.
-                let namespace_ref: Ref;
-                let mut alias: Option<G::ExportStarAlias> = None;
-                let path: ParsedPath;
-
-                if p.lexer.is_contextual_keyword(b"as") {
-                    // "export * as ns from 'path'"
-                    p.lexer.next()?;
-                    let name = p.parse_clause_alias(b"export")?;
-                    namespace_ref = p.store_name_in_ref(name);
-                    alias = Some(G::ExportStarAlias {
-                        loc: p.lexer.loc(),
-                        original_name: bun_ast::StoreStr::new(name),
-                    });
-                    p.lexer.next()?;
-                    p.lexer.expect_contextual_keyword(b"from")?;
-                    path = p.parse_path()?;
-                } else {
-                    // "export * from 'path'"
-                    p.lexer.expect_contextual_keyword(b"from")?;
-                    path = p.parse_path()?;
-                    // Sanitize the basename into an identifier and copy into the arena.
-                    let name: &'a [u8] = {
-                        use std::io::Write as _;
-                        let base = fs::PathName::init(path.text).non_unique_name_string_base();
-                        let mut buf: Vec<u8> = Vec::new();
-                        write!(&mut buf, "{}", bun_core::fmt::fmt_identifier(base))
-                            .expect("unreachable");
-                        p.arena.alloc_slice_copy(&buf)
-                    };
-                    namespace_ref = p.store_name_in_ref(name);
-                }
-
-                let import_record_index = p.add_import_record(
-                    ImportKind::Stmt,
-                    path.loc,
-                    path.text,
-                    // TODO: import assertions
-                    // path.assertions
-                );
-
-                if path.is_macro {
-                    p.log().add_error(
-                        Some(p.source),
-                        path.loc,
-                        b"cannot use macro in export statement",
-                    );
-                } else if path.import_tag != ImportRecordTag::None {
-                    p.log().add_error(
-                        Some(p.source),
-                        loc,
-                        b"cannot use export statement with \"type\" attribute",
-                    );
-                }
-
-                if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
-                    // In the scan pass, we need _some_ way of knowing *not* to mark as unused
-                    p.import_records.items_mut()[import_record_index as usize]
-                        .flags
-                        .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
-                }
-
-                p.lexer.expect_or_insert_semicolon()?;
-                p.has_es_module_syntax = true;
-                Ok(p.s(
-                    S::ExportStar {
-                        namespace_ref,
-                        alias,
-                        import_record_index,
-                    },
-                    loc,
-                ))
-            }
-            T::TOpenBrace => {
-                if !opts.is_module_scope
-                    && (!opts.is_namespace_scope || !opts.is_typescript_declare)
-                {
-                    p.lexer.unexpected()?;
-                    return Err(crate::Error::SyntaxError);
-                }
-
-                let export_clause = p.parse_export_clause()?;
-                if p.lexer.is_contextual_keyword(b"from") {
-                    p.lexer.expect_contextual_keyword(b"from")?;
-                    let parsed_path = p.parse_path()?;
-
-                    p.lexer.expect_or_insert_semicolon()?;
-
-                    if Self::IS_TYPESCRIPT_ENABLED {
-                        // export {type Foo} from 'bar';
-                        // ->
-                        // nothing
-                        // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
-                        if export_clause.clauses.is_empty() && export_clause.had_type_only_exports {
-                            return Ok(p.s(S::TypeScript {}, loc));
-                        }
-                    }
-
-                    if parsed_path.is_macro {
-                        p.log().add_error(
-                            Some(p.source),
-                            loc,
-                            b"export from cannot be used with \"type\": \"macro\"",
-                        );
-                    } else if parsed_path.import_tag != ImportRecordTag::None {
-                        p.log().add_error(
-                            Some(p.source),
-                            loc,
-                            b"export from cannot be used with \"type\" attribute",
-                        );
-                    }
-
-                    let import_record_index =
-                        p.add_import_record(ImportKind::Stmt, parsed_path.loc, parsed_path.text);
-                    let path_name = fs::PathName::init(parsed_path.text);
-                    let namespace_ref = {
-                        use std::io::Write as _;
-                        let mut buf: Vec<u8> = Vec::new();
-                        write!(
-                            &mut buf,
-                            "import_{}",
-                            bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base())
-                        )
-                        .expect("unreachable");
-                        p.store_name_in_ref(p.arena.alloc_slice_copy(&buf))
-                    };
-
-                    if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
-                        // In the scan pass, we need _some_ way of knowing *not* to mark as unused
-                        p.import_records.items_mut()[import_record_index as usize]
-                            .flags
-                            .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
-                    }
-                    p.current_scope_mut().is_after_const_local_prefix = true;
-                    p.has_es_module_syntax = true;
-                    return Ok(p.s(
-                        S::ExportFrom {
-                            // SAFETY: sole owner — fresh arena slice from parse_export_clause,
-                            // moved into the AST node here; no other &mut alias exists.
-                            items: export_clause.clauses.into(),
-                            is_single_line: export_clause.is_single_line,
-                            namespace_ref,
-                            import_record_index,
-                        },
-                        loc,
-                    ));
-                }
-                p.lexer.expect_or_insert_semicolon()?;
-
-                if Self::IS_TYPESCRIPT_ENABLED {
-                    // export {type Foo};
-                    // ->
-                    // nothing
-                    // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
-                    if export_clause.clauses.is_empty() && export_clause.had_type_only_exports {
-                        return Ok(p.s(S::TypeScript {}, loc));
-                    }
-                }
-                p.has_es_module_syntax = true;
-                Ok(p.s(
-                    S::ExportClause {
-                        // SAFETY: sole owner — fresh arena slice from parse_export_clause,
-                        // moved into the AST node here; no other &mut alias exists.
-                        items: export_clause.clauses.into(),
-                        is_single_line: export_clause.is_single_line,
-                    },
-                    loc,
-                ))
-            }
+            T::TAsterisk => Self::t_export_star(p, opts, loc),
+            T::TOpenBrace => Self::t_export_clause_stmt(p, opts, loc),
             T::TEquals => {
                 // "export = value;"
 
@@ -1573,6 +1639,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         );
                                     } else {
                                         // "import type foo from 'bar';"
+                                        if p.options.typescript_declaration_file
+                                            && opts.is_module_scope
+                                            && !p.dts_suppress_type_name_recording
+                                        {
+                                            // Declaration files keep type-only
+                                            // imports as runtime imports.
+                                            stmt.default_name.as_mut().unwrap().ref_ =
+                                                p.store_name_in_ref(default_name);
+                                            p.lexer.expect_contextual_keyword(b"from")?;
+                                            let path = p.parse_path()?;
+                                            p.lexer.expect_or_insert_semicolon()?;
+                                            return p
+                                                .process_import_statement(stmt, path, loc, false);
+                                        }
                                         p.lexer.expect_contextual_keyword(b"from")?;
                                         let _ = p.parse_path()?;
                                         p.lexer.expect_or_insert_semicolon()?;
@@ -1584,6 +1664,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // "import type * as foo from 'bar';"
                                 p.lexer.next()?;
                                 p.lexer.expect_contextual_keyword(b"as")?;
+                                if p.options.typescript_declaration_file
+                                    && opts.is_module_scope
+                                    && !p.dts_suppress_type_name_recording
+                                {
+                                    stmt = S::Import {
+                                        namespace_ref: p.store_name_in_ref(p.lexer.identifier),
+                                        star_name_loc: p.lexer.loc(),
+                                        import_record_index: u32::MAX,
+                                        ..Default::default()
+                                    };
+                                    p.lexer.expect(T::TIdentifier)?;
+                                    p.lexer.expect_contextual_keyword(b"from")?;
+                                    let path = p.parse_path()?;
+                                    p.lexer.expect_or_insert_semicolon()?;
+                                    return p.process_import_statement(stmt, path, loc, false);
+                                }
                                 p.lexer.expect(T::TIdentifier)?;
                                 p.lexer.expect_contextual_keyword(b"from")?;
                                 let _ = p.parse_path()?;
@@ -1593,7 +1689,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             T::TOpenBrace => {
                                 // "import type {foo} from 'bar';"
-                                let _ = p.parse_import_clause()?;
+                                let import_clause = p.parse_import_clause()?;
+                                if p.options.typescript_declaration_file
+                                    && opts.is_module_scope
+                                    && !p.dts_suppress_type_name_recording
+                                {
+                                    stmt = S::Import {
+                                        namespace_ref: Ref::NONE,
+                                        import_record_index: u32::MAX,
+                                        // SAFETY: sole owner — fresh arena slice from
+                                        // parse_import_clause, moved into the AST node
+                                        // here; no other &mut alias exists.
+                                        items: import_clause.items.into(),
+                                        is_single_line: import_clause.is_single_line,
+                                        ..Default::default()
+                                    };
+                                    p.lexer.expect_contextual_keyword(b"from")?;
+                                    let path = p.parse_path()?;
+                                    p.lexer.expect_or_insert_semicolon()?;
+                                    return p.process_import_statement(stmt, path, loc, false);
+                                }
                                 p.lexer.expect_contextual_keyword(b"from")?;
                                 let _ = p.parse_path()?;
                                 p.lexer.expect_or_insert_semicolon()?;
@@ -1779,6 +1894,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "type Foo = any"
                     let mut stmt_opts = ParseStatementOptions {
                         is_module_scope: opts.is_module_scope,
+                        is_export: opts.is_export,
                         ..Default::default()
                     };
                     p.skip_type_script_type_stmt(&mut stmt_opts)?;
@@ -1806,6 +1922,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !p.lexer.has_newline_before || opts.is_name_optional {
                     let mut stmt_opts = ParseStatementOptions {
                         is_module_scope: opts.is_module_scope,
+                        is_export: opts.is_export,
                         ..Default::default()
                     };
 
@@ -1873,7 +1990,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                     p.lexer.expect(T::TOpenBrace)?;
                     let scope_index = p.scopes_in_order.len();
-                    let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
+                    let old_suppress = p.dts_suppress_type_name_recording;
+                    p.dts_suppress_type_name_recording = true;
+                    let body_result = p.parse_stmts_up_to(T::TCloseBrace, opts);
+                    p.dts_suppress_type_name_recording = old_suppress;
+                    let _ = body_result?;
                     p.lexer.next()?;
                     // The statements inside are dropped, so discard any scopes they
                     // recorded or the visit pass will hit a scope order mismatch.
@@ -1934,7 +2055,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // inside a namespace with an "export var" statement containing all
                 // of the declared bindings. That "export var" statement will later
                 // cause identifiers to be transformed into property accesses.
-                if opts.is_namespace_scope && opts.is_export {
+                //
+                // Declaration files reuse the conversion at module scope so
+                // `declare const x` leaves a real (undefined) binding.
+                if (opts.is_namespace_scope && opts.is_export)
+                    || (Self::IS_TYPESCRIPT_ENABLED
+                        && p.options.typescript_declaration_file
+                        && opts.is_module_scope
+                        && !p.dts_suppress_type_name_recording)
+                {
                     let mut decls: G::DeclList = bun_alloc::AstAlloc::vec();
                     match &stmt.data {
                         js_ast::StmtData::SLocal(local) => {
@@ -1954,7 +2083,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return Ok(Some(p.s(
                             S::Local {
                                 kind: js_ast::LocalKind::KVar,
-                                is_export: true,
+                                is_export: opts.is_export,
                                 decls,
                                 ..Default::default()
                             },

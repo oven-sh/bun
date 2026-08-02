@@ -652,6 +652,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Stmt, Error> {
         let p = self;
         let mut name: Option<js_ast::LocRef> = None;
+        let mut name_text: &'a [u8] = b"";
         let class_keyword = p.lexer.range();
         if p.lexer.token == T::TClass {
             //marksyntaxfeature
@@ -667,7 +668,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && (!Self::IS_TYPESCRIPT_ENABLED || p.lexer.identifier != b"implements"))
         {
             let name_loc = p.lexer.loc();
-            let name_text = p.lexer.identifier;
+            name_text = p.lexer.identifier;
             p.lexer.expect(T::TIdentifier)?;
 
             // We must return here
@@ -725,6 +726,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.pop_and_discard_scope(scope_index);
                 if opts.is_namespace_scope && opts.is_export {
                     p.has_non_local_export_declare_inside_namespace = true;
+                }
+
+                if opts.is_module_scope && !name_text.is_empty() {
+                    p.record_declaration_file_type_name(name_text, opts.is_export)?;
                 }
 
                 return Ok(p.s(S::TypeScript {}, loc));

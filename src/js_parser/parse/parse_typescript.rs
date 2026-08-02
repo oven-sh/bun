@@ -210,6 +210,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // "namespace foo {}";
         let name_loc = p.lexer.loc();
         let name_text = p.lexer.identifier;
+        // `declare module "foo"`: `lexer.identifier` is stale for the
+        // string-literal form.
+        let name_is_identifier = p.lexer.token == T::TIdentifier;
         p.lexer.next()?;
 
         // Generate the namespace object
@@ -267,7 +270,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_typescript_declare: opts.is_typescript_declare,
                 ..ParseStatementOptions::default()
             };
-            stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut _opts)?;
+            // Ambient bodies are dropped wholesale; declaration-file mode must
+            // not retain type-only specifiers (and their import records) here.
+            let old_suppress = p.dts_suppress_type_name_recording;
+            if opts.is_typescript_declare {
+                p.dts_suppress_type_name_recording = true;
+            }
+            let body = p.parse_stmts_up_to(T::TCloseBrace, &mut _opts);
+            p.dts_suppress_type_name_recording = old_suppress;
+            stmts = body?;
             p.lexer.next()?;
         }
         let has_non_local_export_declare_inside_namespace =
@@ -400,6 +411,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.pop_and_discard_scope(scope_index);
             if opts.is_module_scope {
                 p.local_type_names.put(name_text, true)?;
+                if name_is_identifier {
+                    p.record_declaration_file_type_name(name_text, opts.is_export)?;
+                }
             }
             return Ok(p.s(S::TypeScript {}, loc));
         }
@@ -548,6 +562,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if opts.is_typescript_declare {
             // "import type foo = require('bar');"
             // "import type foo = bar.baz;"
+            //
+            // Declaration files synthesize an undefined binding for the name
+            // (not the require result: the `bar.baz` form would evaluate a
+            // synthesized undefined) so `export { foo }` clauses still link.
+            if opts.is_module_scope {
+                p.record_declaration_file_type_name(default_name, opts.is_export)?;
+            }
             return Ok(p.s(S::TypeScript {}, loc));
         }
 
@@ -734,6 +755,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if opts.is_typescript_declare {
             if opts.is_namespace_scope && opts.is_export {
                 p.has_non_local_export_declare_inside_namespace = true;
+            }
+
+            if opts.is_module_scope {
+                p.record_declaration_file_type_name(name_text, opts.is_export)?;
             }
 
             return Ok(p.s(S::TypeScript {}, loc));

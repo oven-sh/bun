@@ -713,6 +713,10 @@ pub struct ESMConditions {
     pub(crate) import: ConditionsMap,
     pub(crate) require: ConditionsMap,
     pub(crate) style: ConditionsMap,
+    /// `import` / `require` plus the "types" condition, for declaration-file
+    /// importers.
+    pub(crate) import_types: ConditionsMap,
+    pub(crate) require_types: ConditionsMap,
 }
 
 impl ESMConditions {
@@ -763,11 +767,18 @@ impl ESMConditions {
         require_condition_map.insert(b"default".as_slice(), ());
         style_condition_map.insert(b"default".as_slice(), ());
 
+        let mut import_types_condition_map = import_condition_map.clone()?;
+        import_types_condition_map.insert(b"types".as_slice(), ());
+        let mut require_types_condition_map = require_condition_map.clone()?;
+        require_types_condition_map.insert(b"types".as_slice(), ());
+
         Ok(ESMConditions {
             default: default_condition_amp,
             import: import_condition_map,
             require: require_condition_map,
             style: style_condition_map,
+            import_types: import_types_condition_map,
+            require_types: require_types_condition_map,
         })
     }
 
@@ -776,12 +787,16 @@ impl ESMConditions {
         let import = self.import.clone()?;
         let require = self.require.clone()?;
         let style = self.style.clone()?;
+        let import_types = self.import_types.clone()?;
+        let require_types = self.require_types.clone()?;
 
         Ok(ESMConditions {
             default,
             import,
             require,
             style,
+            import_types,
+            require_types,
         })
     }
 
@@ -790,12 +805,16 @@ impl ESMConditions {
         self.import.reserve(conditions.len());
         self.require.reserve(conditions.len());
         self.style.reserve(conditions.len());
+        self.import_types.reserve(conditions.len());
+        self.require_types.reserve(conditions.len());
 
         for condition in conditions {
             self.default.insert(*condition, ());
             self.import.insert(*condition, ());
             self.require.insert(*condition, ());
             self.style.insert(*condition, ());
+            self.import_types.insert(*condition, ());
+            self.require_types.insert(*condition, ());
         }
         Ok(())
     }
@@ -1438,6 +1457,8 @@ impl<'a> BundleOptions<'a> {
                 import: bun_core::handle_oom(self.conditions.import.clone()),
                 require: bun_core::handle_oom(self.conditions.require.clone()),
                 style: bun_core::handle_oom(self.conditions.style.clone()),
+                import_types: bun_core::handle_oom(self.conditions.import_types.clone()),
+                require_types: bun_core::handle_oom(self.conditions.require_types.clone()),
             },
             tree_shaking: self.tree_shaking,
             tree_shaking_override: self.tree_shaking_override,
@@ -1692,6 +1713,8 @@ impl<'a> BundleOptions<'a> {
                 import: Default::default(),
                 require: Default::default(),
                 style: Default::default(),
+                import_types: Default::default(),
+                require_types: Default::default(),
             }, // filled below
             tree_shaking: false,
             tree_shaking_override: None,

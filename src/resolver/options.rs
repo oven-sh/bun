@@ -52,6 +52,39 @@ pub struct Conditions {
     pub import: crate::package_json::ConditionsMap,
     pub require: crate::package_json::ConditionsMap,
     pub style: crate::package_json::ConditionsMap,
+    /// `import` / `require` plus the "types" condition, for declaration-file
+    /// importers (see `Resolver::importer_is_type_script_declaration_file`).
+    pub import_types: crate::package_json::ConditionsMap,
+    pub require_types: crate::package_json::ConditionsMap,
+}
+
+impl Conditions {
+    /// Condition set for an exports/imports-map walk. On the field, not
+    /// `Resolver`, so call sites can keep `debug_logs` mutably borrowed.
+    /// CSS `@import` kinds stay the caller's concern: the sites that had a
+    /// `style` arm keep it inline, the rest never routed them to `style`.
+    pub fn for_kind(
+        &self,
+        importer_is_type_script_declaration_file: bool,
+        kind: bun_ast::ImportKind,
+    ) -> &crate::package_json::ConditionsMap {
+        match kind {
+            bun_ast::ImportKind::Require | bun_ast::ImportKind::RequireResolve => {
+                if importer_is_type_script_declaration_file {
+                    &self.require_types
+                } else {
+                    &self.require
+                }
+            }
+            _ => {
+                if importer_is_type_script_declaration_file {
+                    &self.import_types
+                } else {
+                    &self.import
+                }
+            }
+        }
+    }
 }
 
 /// `Copy` tag selecting one of the extension-order lists owned by

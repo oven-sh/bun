@@ -1334,6 +1334,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if opts.is_module_scope {
             self.local_type_names.put(name, true)?;
+            self.record_declaration_file_type_name(name, opts.is_export)?;
         }
 
         let _ = self.skip_type_script_type_parameters(
@@ -1356,6 +1357,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if opts.is_module_scope {
             self.local_type_names.put(name, true)?;
+            self.record_declaration_file_type_name(name, opts.is_export)?;
         }
 
         let _ = self.skip_type_script_type_parameters(

@@ -2395,6 +2395,8 @@ pub mod parse_worker {
             loader,
         );
         opts.bundle = true;
+        opts.typescript_declaration_file = loader.is_typescript()
+            && bun_ast::loader::is_type_script_declaration_file(source.path.text);
         opts.warn_about_unbundled_modules = false;
         // `AllowUnresolved` is the same nominal type on
         // both sides (re-export in options.rs). `'static` erasure: `topts` borrows

@@ -2194,12 +2194,29 @@ pub mod bv2_impl {
 
             let mut had_busted_dir_cache = false;
             let resolve_result: _resolver::Result = loop {
-                // SAFETY: see `transpiler` note above.
-                match unsafe { &mut *transpiler }.resolver.resolve(
-                    source_dir,
-                    &import_record.specifier,
-                    import_record.kind,
-                ) {
+                // Per-resolve flag; see
+                // `Resolver::importer_is_type_script_declaration_file`.
+                let resolved = {
+                    // SAFETY: see `transpiler` note above.
+                    unsafe { &mut *transpiler }
+                        .resolver
+                        .importer_is_type_script_declaration_file =
+                        bun_ast::loader::is_type_script_declaration_file(
+                            &import_record.source_file,
+                        );
+                    // SAFETY: see `transpiler` note above.
+                    let r = unsafe { &mut *transpiler }.resolver.resolve(
+                        source_dir,
+                        &import_record.specifier,
+                        import_record.kind,
+                    );
+                    // SAFETY: see `transpiler` note above.
+                    unsafe { &mut *transpiler }
+                        .resolver
+                        .importer_is_type_script_declaration_file = false;
+                    r
+                };
+                match resolved {
                     Ok(r) => break r,
                     Err(err) => {
                         // Only perform directory busting when hot-reloading is enabled
@@ -6066,11 +6083,20 @@ pub mod bv2_impl {
 
                 let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result = 'inner: loop {
-                    match transpiler.resolver.resolve_with_framework(
-                        source_dir,
-                        import_record.path.text,
-                        import_record.kind,
-                    ) {
+                    // Per-resolve flag; see
+                    // `Resolver::importer_is_type_script_declaration_file`.
+                    let resolved = {
+                        transpiler.resolver.importer_is_type_script_declaration_file =
+                            bun_ast::loader::is_type_script_declaration_file(source.path.text);
+                        let r = transpiler.resolver.resolve_with_framework(
+                            source_dir,
+                            import_record.path.text,
+                            import_record.kind,
+                        );
+                        transpiler.resolver.importer_is_type_script_declaration_file = false;
+                        r
+                    };
+                    match resolved {
                         Ok(r) => break r,
                         Err(err) => {
                             // borrowck — `log_for_resolution_failures` returns

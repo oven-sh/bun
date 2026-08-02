@@ -345,6 +345,21 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) is_exported_inside_namespace: RefRefMap,
     pub(crate) local_type_names: StringBoolMap,
 
+    /// Declaration-file mode: module-scope type-only declaration names, in
+    /// source order, to synthesize `var` bindings for at the end of the parse
+    /// pass. The map value is whether the declaration was exported.
+    pub(crate) dts_type_names: StringBoolMap,
+    pub(crate) dts_type_name_order: Vec<&'a [u8]>,
+    /// True inside a `declare global { ... }` body, which shares the
+    /// module-scope parse options but must not synthesize bindings.
+    pub(crate) dts_suppress_type_name_recording: bool,
+    /// A type-only `export default` was elided; the end of the parse pass
+    /// synthesizes one default export unless a real one exists.
+    pub(crate) dts_needs_default_export_stub: bool,
+    /// Aliases exported by module-scope export clauses; synthesized bindings
+    /// for these names stay non-exported so the clause is the sole export.
+    pub(crate) dts_export_clause_aliases: StringBoolMap,
+
     // This is the reference to the generated function argument for the namespace,
     // which is different than the reference to the namespace itself:
     //
@@ -4529,6 +4544,111 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ref_
     }
 
+    /// Declaration-file mode: queue a type-only declaration's name for
+    /// `synthesize_declaration_file_bindings`.
+    pub(crate) fn record_declaration_file_type_name(
+        &mut self,
+        name: &'a [u8],
+        is_export: bool,
+    ) -> Result<(), crate::Error> {
+        if !Self::IS_TYPESCRIPT_ENABLED
+            || !self.options.typescript_declaration_file
+            || self.dts_suppress_type_name_recording
+            || !js_lexer::is_identifier(name)
+        {
+            return Ok(());
+        }
+        match self.dts_type_names.get(name) {
+            Some(&prev_is_export) => {
+                if is_export && !prev_is_export {
+                    self.dts_type_names.put(name, true)?;
+                }
+            }
+            None => {
+                self.dts_type_names.put(name, is_export)?;
+                self.dts_type_name_order.push(name);
+            }
+        }
+        Ok(())
+    }
+
+    /// Declaration-file mode: synthesize `var` bindings (undefined) for the
+    /// recorded type-only declarations so re-export chains link. Names with a
+    /// real binding (declaration merging, imports) are skipped.
+    pub(crate) fn synthesize_declaration_file_bindings(
+        &mut self,
+        stmts: &mut BumpVec<'a, Stmt>,
+    ) -> Result<(), crate::Error> {
+        // A type-only default export produces a stub only when nothing else
+        // exports "default": a real default export (class/interface
+        // declaration merging) or a clause alias (`export { X as default }`,
+        // `export { default } from`) wins.
+        if self.dts_needs_default_export_stub
+            && !self
+                .dts_export_clause_aliases
+                .contains_key(b"default".as_slice())
+            && !stmts
+                .iter()
+                .any(|s| matches!(s.data, js_ast::StmtData::SExportDefault(_)))
+        {
+            self.has_es_module_syntax = true;
+            let default_name = self.create_default_name(bun_ast::Loc::EMPTY);
+            let value = js_ast::StmtOrExpr::Expr(
+                self.new_expr(js_ast::E::Undefined {}, bun_ast::Loc::EMPTY),
+            );
+            let stmt = self.s(
+                S::ExportDefault {
+                    default_name,
+                    value,
+                },
+                bun_ast::Loc::EMPTY,
+            );
+            stmts.push(stmt);
+        }
+        if self.dts_type_name_order.is_empty() {
+            return Ok(());
+        }
+        debug_assert!(self.current_scope == self.module_scope);
+        let names = core::mem::take(&mut self.dts_type_name_order);
+        let mut exported_decls: Vec<G::Decl> = Vec::new();
+        let mut local_decls: Vec<G::Decl> = Vec::new();
+        for name in names {
+            if self.current_scope().members.contains_key(name) {
+                continue;
+            }
+            let is_export = self.dts_type_names.get(name).copied().unwrap_or(false)
+                && !self.dts_export_clause_aliases.contains_key(name);
+            let ref_ =
+                self.declare_symbol(js_ast::symbol::Kind::Hoisted, bun_ast::Loc::EMPTY, name)?;
+            let decl = G::Decl {
+                binding: self.b(B::Identifier { r#ref: ref_ }, bun_ast::Loc::EMPTY),
+                value: None,
+            };
+            if is_export {
+                exported_decls.push(decl);
+            } else {
+                local_decls.push(decl);
+            }
+        }
+        for (decls, is_export) in [(exported_decls, true), (local_decls, false)] {
+            if decls.is_empty() {
+                continue;
+            }
+            let decls = js_ast::g::DeclList::from_slice(&decls);
+            let stmt = self.s(
+                S::Local {
+                    kind: js_ast::s::Kind::KVar,
+                    decls,
+                    is_export,
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            );
+            stmts.push(stmt);
+        }
+        Ok(())
+    }
+
     pub(crate) fn declare_symbol(
         &mut self,
         kind: js_ast::symbol::Kind,
@@ -4657,7 +4777,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match &mut binding.data {
             js_ast::b::B::BMissing(_) => {}
             js_ast::b::B::BIdentifier(bind) => {
-                if !opts.is_typescript_declare || (opts.is_namespace_scope && opts.is_export) {
+                // Declaration files keep module-scope `declare` bindings as
+                // real symbols; the statement becomes a `var` in parse_stmt.
+                if !opts.is_typescript_declare
+                    || (opts.is_namespace_scope && opts.is_export)
+                    || (Self::IS_TYPESCRIPT_ENABLED
+                        && self.options.typescript_declaration_file
+                        && opts.is_module_scope
+                        && !self.dts_suppress_type_name_recording)
+                {
                     bind.r#ref = self.declare_symbol(
                         kind,
                         binding.loc,
@@ -8791,6 +8919,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             emitted_namespace_vars: RefMap::default(),
             is_exported_inside_namespace: Default::default(),
             local_type_names: StringBoolMap::default(),
+            dts_type_names: StringBoolMap::default(),
+            dts_type_name_order: Vec::new(),
+            dts_suppress_type_name_recording: false,
+            dts_needs_default_export_stub: false,
+            dts_export_clause_aliases: StringBoolMap::default(),
             enclosing_namespace_arg_ref: None,
             jsx_imports: crate::JSXImportSymbols::default(),
             react_refresh: ReactRefresh::default(),

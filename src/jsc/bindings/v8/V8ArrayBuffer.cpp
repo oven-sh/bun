@@ -60,7 +60,8 @@ Local<ArrayBuffer> ArrayBufferView::Buffer()
     auto& vm = globalObject->vm();
 
     JSC::JSArrayBuffer* jsBuffer = view->possiblySharedJSBuffer(globalObject);
-    RELEASE_ASSERT(jsBuffer, "v8::ArrayBufferView::Buffer: failed to materialize the ArrayBuffer");
+    if (!jsBuffer) [[unlikely]]
+        return Local<ArrayBuffer>();
     HandleScope* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
     return handleScope->createLocal<ArrayBuffer>(vm, jsBuffer);
 }

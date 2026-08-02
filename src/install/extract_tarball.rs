@@ -581,14 +581,55 @@ impl ExtractTarball {
                                     | sys::Errno::BUSY
                                     | sys::Errno::EXIST
                             ) {
-                                // The cache path is keyed by the package identity, so an existing
-                                // destination is an equivalent entry that a concurrent `bun install`
-                                // published first. Never delete it — accept it and drop our copy.
-                                if cache_dir.open_at(folder_name).is_ok() {
-                                    let _ = tmpdir.delete_tree(tmpname.as_bytes());
-                                    break;
-                                }
-                                if retries < MAX_RETRIES {
+                                // The cache path is keyed by the package identity, so an
+                                // existing destination with a package.json is an equivalent
+                                // entry that a concurrent `bun install` published first. Accept
+                                // it and drop our copy instead of deleting theirs, which would
+                                // leave a window where neither exists.
+                                //
+                                // A destination without a package.json is a stale entry that
+                                // `package_missing_from_cache()` already rejected. Nothing is
+                                // reading from it as a valid cache entry, so move it aside and
+                                // retry. This mirrors the POSIX arm's RENAME_EXCHANGE, which
+                                // atomically puts the fresh extraction at the cache path.
+                                if let Ok(dest) = cache_dir.open_at(folder_name) {
+                                    if sys::exists_at(
+                                        dest.fd(),
+                                        ZStr::from_static(b"package.json\0"),
+                                    ) {
+                                        drop(dest);
+                                        let _ = tmpdir.delete_tree(tmpname.as_bytes());
+                                        break;
+                                    }
+                                    drop(dest);
+                                    if retries < MAX_RETRIES {
+                                        let mut tempdest_buf = PathBuffer::uninit();
+                                        tempdest_buf[0..tmpname.len()]
+                                            .copy_from_slice(tmpname.as_bytes());
+                                        tempdest_buf[tmpname.len()..][0..4]
+                                            .copy_from_slice(&[b't', b'm', b'p', 0]);
+                                        let tempdest =
+                                            ZStr::from_buf(&tempdest_buf, tmpname.len() + 3);
+                                        let mut folder_name_z_buf = PathBuffer::uninit();
+                                        folder_name_z_buf[0..folder_name.len()]
+                                            .copy_from_slice(folder_name);
+                                        folder_name_z_buf[folder_name.len()] = 0;
+                                        let folder_name_z =
+                                            ZStr::from_buf(&folder_name_z_buf, folder_name.len());
+                                        if sys::renameat(
+                                            Fd::from_std_dir(cache_dir),
+                                            folder_name_z,
+                                            Fd::from_std_dir(tmpdir),
+                                            tempdest,
+                                        )
+                                        .is_ok()
+                                        {
+                                            let _ = tmpdir.delete_tree(tempdest.as_bytes());
+                                        }
+                                        retries += 1;
+                                        continue;
+                                    }
+                                } else if retries < MAX_RETRIES {
                                     retries += 1;
                                     // 10ms, 20ms, 40ms, 80ms — long enough for a
                                     // concurrent close to land, short enough to not

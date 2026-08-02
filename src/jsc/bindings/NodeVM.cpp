@@ -1111,11 +1111,6 @@ void NodeVMGlobalObject::setContextifiedObject(JSC::JSObject* contextifiedObject
     m_sandbox.set(vm(), this, contextifiedObject);
 }
 
-void NodeVMGlobalObject::clearContextifiedObject()
-{
-    m_sandbox.clear();
-}
-
 void NodeVMGlobalObject::sigintReceived()
 {
     vm().notifyNeedTermination();

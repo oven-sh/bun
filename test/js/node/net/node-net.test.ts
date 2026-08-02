@@ -1068,8 +1068,7 @@ describe("net.Server accepted-socket buffering", () => {
   });
 
   it("keeps a client socket's buffered response available for a late reader after peer FIN", async () => {
-    // The abandoned-socket teardown targets only server-accepted sockets:
-    // an outbound client with no reader yet must keep its buffered response
+    // An outbound client with no reader yet must keep its buffered response
     // indefinitely, like node (a late .on('data') still delivers it).
     const received = Promise.withResolvers<string>();
     const server = createServer(sock => {
@@ -1083,8 +1082,9 @@ describe("net.Server accepted-socket buffering", () => {
       await listening.promise;
       client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
       client.on("error", received.reject);
-      // Wait well past the teardown's setImmediate window before reading.
-      await new Promise<void>(resolve => setTimeout(resolve, 50));
+      while (!client._readableState?.ended && !client.destroyed) await new Promise<void>(r => setImmediate(r));
+      await new Promise<void>(r => setImmediate(r));
+      await new Promise<void>(r => setImmediate(r));
       expect(client.destroyed).toBe(false);
       let got = "";
       client.on("data", chunk => (got += chunk));
@@ -1097,8 +1097,6 @@ describe("net.Server accepted-socket buffering", () => {
   });
 
   it("delivers bytes to a 'data' listener attached via setImmediate from the connection handler", async () => {
-    // The abandoned-socket teardown at EOF is deferred so a nextTick /
-    // microtask / setImmediate attach still counts as engaging the reader.
     const received = Promise.withResolvers<string>();
     const server = createServer(sock => {
       setImmediate(() => {
@@ -1118,6 +1116,55 @@ describe("net.Server accepted-socket buffering", () => {
       const data = await received.promise;
       expect(data).toBe("hello");
     } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  it("keeps a server socket open while buffered data from a write-then-FIN client is unread", async () => {
+    // A client that sends its request and immediately half-closes (curl-style
+    // `shutdown(SHUT_WR)`) must not cause the server socket to be torn down
+    // before the app's async pipeline attaches a reader: the buffered payload
+    // stays deliverable and 'end' only follows once it is drained, like Node.
+    const connected = Promise.withResolvers<Socket>();
+    const server = createServer(s => connected.resolve(s));
+    let client: Socket | undefined;
+    let sock: Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, "127.0.0.1", () => listening.resolve());
+      await listening.promise;
+      client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
+      client.on("error", connected.reject);
+      await new Promise<void>((resolve, reject) => {
+        client!.once("connect", () => resolve());
+        client!.once("error", reject);
+      });
+      client.end("PAYLOAD-1234567890");
+      sock = await connected.promise;
+      const events: string[] = [];
+      sock.on("end", () => events.push("end"));
+      sock.on("close", hadError => events.push("close:" + hadError));
+      // Wait for the peer FIN to mark the readable side ended, then let any
+      // FIN-time lifecycle work settle before asserting the socket stayed open.
+      while (!sock._readableState?.ended && !sock.destroyed) await new Promise<void>(r => setImmediate(r));
+      await new Promise<void>(r => setImmediate(r));
+      await new Promise<void>(r => setImmediate(r));
+      expect({
+        destroyed: sock.destroyed,
+        readableLength: sock.readableLength,
+        events: [...events],
+      }).toEqual({ destroyed: false, readableLength: 18, events: [] });
+      const received = Promise.withResolvers<string>();
+      let got = "";
+      sock.on("data", chunk => (got += chunk));
+      sock.once("end", () => received.resolve(got));
+      sock.once("error", received.reject);
+      expect(await received.promise).toBe("PAYLOAD-1234567890");
+      expect(events).toEqual(["end"]);
+    } finally {
+      sock?.destroy();
       client?.destroy();
       server.close();
     }

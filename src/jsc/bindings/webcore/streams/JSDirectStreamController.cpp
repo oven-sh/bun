@@ -29,6 +29,8 @@
 #include <wtf/Locker.h>
 #include <wtf/text/StringBuilder.h>
 
+extern "C" void Bun__Process__queueNextTick2(Zig::GlobalObject*, JSC::EncodedJSValue func, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2);
+
 namespace WebCore {
 
 using namespace JSC;
@@ -64,16 +66,23 @@ JSDirectStreamController* JSDirectStreamController::create(VM& vm, Structure* st
     return cell;
 }
 
-// Deliver buffered data to a waiting reader at the end of this tick via the runtime's
-// deferred-task service (JSStreamsRuntime.cpp); a no-op there if the data was already taken.
+// Deliver buffered data to a waiting reader at the end of this tick. Scheduling goes
+// through process.nextTick so the job (and its rooted controller) runs as part of the
+// regular microtask/nextTick drain; a no-op in the handler if the data was already taken.
 // A write made inside pull() runs before the read that triggered it is recorded, so arming
 // does not require a waiting consumer.
 void JSDirectStreamController::armEndOfTickFlush(JSGlobalObject* globalObject)
 {
     if (m_endOfTickFlushArmed || m_closed || !m_stream)
         return;
-    JSStreamsRuntime::from(globalObject)->armEndOfTickFlush(globalObject, this);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     m_endOfTickFlushArmed = true;
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+    auto* handler = JSStreamsRuntime::from(globalObject)->onDirectEndOfTickFlush();
+    Bun__Process__queueNextTick2(zigGlobal, JSValue::encode(handler), JSValue::encode(jsUndefined()), JSValue::encode(this));
+    if (scope.exception()) [[unlikely]]
+        m_endOfTickFlushArmed = false;
 }
 
 Structure* JSDirectStreamController::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
@@ -426,6 +435,17 @@ static void callUnderlyingSourceClose(JSC::VM& vm, JSGlobalObject* globalObject,
     }
 }
 
+// Drop the direct controller's retained user-source state once no further pull/close callbacks
+// can run (m_closed set, or the stream has left Readable). Idempotent.
+static void directStreamControllerClearSource(JSDirectStreamController* controller)
+{
+    controller->m_underlyingSource.clear();
+    controller->m_pull.clear();
+    controller->m_deferCloseReason.clear();
+    if (auto* stream = controller->m_stream.get())
+        readableStreamClearSourceBarriers(stream);
+}
+
 void JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue error)
 {
     auto& vm = getVM(globalObject);
@@ -448,6 +468,7 @@ void JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue
         callUnderlyingSourceClose(vm, globalObject, this, error);
         RETURN_IF_EXCEPTION(scope, );
     }
+    directStreamControllerClearSource(this);
 
     if (auto* pendingRead = m_pendingRead.get()) {
         m_pendingRead.clear();
@@ -639,6 +660,7 @@ void JSDirectStreamController::onClose(JSGlobalObject* globalObject, JSValue rea
 
     callUnderlyingSourceClose(vm, globalObject, this, reason);
     RETURN_IF_EXCEPTION(scope, );
+    directStreamControllerClearSource(this);
 
     JSValue flushed;
     {
@@ -847,6 +869,30 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullRejected, (JSGlobalObje
     JSValue error = callFrame->argument(0);
     controller->handleError(globalObject, error);
     RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectEndOfTickFlush, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(1));
+    if (!controller) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    controller->m_endOfTickFlushArmed = false;
+    if (controller->m_closed || !controller->m_stream)
+        return JSValue::encode(jsUndefined());
+    // onFlush may throw (e.g. a read request's chunkSteps threw). This is a boundary:
+    // convert the abrupt completion into the direct controller's error action so the
+    // stream errors instead of surfacing as an uncaught nextTick exception.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    controller->onFlush(globalObject);
+    if (scope.exception()) [[unlikely]] {
+        JSC::JSValue error = takeAbruptCompletion(globalObject, scope);
+        if (!error)
+            return JSValue::encode(jsUndefined());
+        controller->handleError(globalObject, error);
+        scope.clearExceptionExceptTermination();
+    }
     return JSValue::encode(jsUndefined());
 }
 

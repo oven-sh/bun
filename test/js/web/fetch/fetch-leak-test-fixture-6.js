@@ -1,4 +1,8 @@
 import { expect } from "bun:test";
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
 let rssSample = 0;
 const url = process.env.SERVER_URL;
 const maxMemoryIncrease = parseInt(process.env.MAX_MEMORY_INCREASE || "0", 10);
@@ -13,12 +17,12 @@ for (let i = 0; i < 500; i++) {
     await Bun.sleep(1);
   }
   await Bun.sleep(1);
-  const memoryUsage = process.memoryUsage().rss / 1024 / 1024;
+  const memoryUsage = rss() / 1024 / 1024;
   // memory should be stable after X iterations
   if (i == 250) rssSample = memoryUsage;
 }
 await Bun.sleep(1);
 Bun.gc(true);
-const memoryUsage = process.memoryUsage().rss / 1024 / 1024;
+const memoryUsage = rss() / 1024 / 1024;
 expect(rssSample).toBeGreaterThanOrEqual(memoryUsage - maxMemoryIncrease);
 console.log("done");

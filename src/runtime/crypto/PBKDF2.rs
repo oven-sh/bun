@@ -2,7 +2,8 @@ use core::ffi::c_uint;
 
 use bun_boringssl_sys as boringssl;
 use bun_jsc::{
-    AnyTaskJob, AnyTaskJobCtx, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsResult,
+    AnyTaskJob, AnyTaskJobCtx, ArrayBuffer, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue,
+    JsResult,
 };
 
 use crate::node::StringOrBuffer;
@@ -237,6 +238,12 @@ impl PBKDF2 {
 
         if guard.password.slice().len() > i32::MAX as usize {
             return Err(global_this.throw_invalid_arguments(format_args!("password is too long")));
+        }
+
+        if !is_async {
+            if let StringOrBuffer::Buffer(buffer) = &mut guard.salt {
+                buffer.buffer = ArrayBuffer::from_typed_array(global_this, buffer.buffer.value);
+            }
         }
 
         if is_async {

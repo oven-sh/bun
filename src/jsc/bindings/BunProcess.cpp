@@ -3498,7 +3498,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * g
 
     result->putDirectOffset(vm, 0, jsNumber(std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec));
     result->putDirectOffset(vm, 1, jsNumber(std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec));
+#if OS(DARWIN)
+    // ru_maxrss is bytes on darwin; Node reports kilobytes everywhere.
+    result->putDirectOffset(vm, 2, jsNumber(rusage.ru_maxrss / 1024));
+#else
     result->putDirectOffset(vm, 2, jsNumber(rusage.ru_maxrss));
+#endif
     result->putDirectOffset(vm, 3, jsNumber(rusage.ru_ixrss));
     result->putDirectOffset(vm, 4, jsNumber(rusage.ru_idrss));
     result->putDirectOffset(vm, 5, jsNumber(rusage.ru_isrss));

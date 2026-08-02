@@ -19,7 +19,7 @@ it("fetch() with a buffered gzip response works (one chunk)", async () => {
     port: 0,
 
     async fetch(req) {
-      gcTick(true);
+      gcTick();
       return new Response(require("fs").readFileSync(gzipped), {
         headers: {
           "Content-Encoding": "gzip",
@@ -28,19 +28,19 @@ it("fetch() with a buffered gzip response works (one chunk)", async () => {
       });
     },
   });
-  gcTick(true);
+  gcTick();
 
   const res = await fetch(server.url, { verbose: true });
-  gcTick(true);
+  gcTick();
   const arrayBuffer = await res.arrayBuffer();
   const clone = new Buffer(arrayBuffer);
-  gcTick(true);
+  gcTick();
   await (async function () {
     const second = Buffer.from(htmlText);
-    gcTick(true);
+    gcTick();
     expect(second.equals(clone)).toBe(true);
   })();
-  gcTick(true);
+  gcTick();
 });
 
 it("fetch() with a redirect that returns a buffered gzip response works (one chunk)", async () => {

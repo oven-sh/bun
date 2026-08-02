@@ -36,28 +36,28 @@ use bun_sys::Fd;
 // `resolved` may instead own a rewritten URL (see `Cow` below) and `git_repo_name` is
 // always owned.
 
-pub struct YarnLock<'a> {
-    pub entries: Vec<Entry<'a>>,
+pub(crate) struct YarnLock<'a> {
+    pub(crate) entries: Vec<Entry<'a>>,
 }
 
 pub struct Entry<'a> {
-    pub specs: Vec<&'a [u8]>,
-    pub version: &'a [u8],
+    pub(crate) specs: Vec<&'a [u8]>,
+    pub(crate) version: &'a [u8],
     // Usually borrows from the input; owned when `parse_git_url` rewrites a
     // `github:` spec to a `https://github.com/...` URL.
-    pub resolved: Option<Cow<'a, [u8]>>,
-    pub integrity: Option<&'a [u8]>,
-    pub dependencies: Option<StringHashMap<&'a [u8]>>,
-    pub optional_dependencies: Option<StringHashMap<&'a [u8]>>,
-    pub peer_dependencies: Option<StringHashMap<&'a [u8]>>,
-    pub dev_dependencies: Option<StringHashMap<&'a [u8]>>,
-    pub commit: Option<&'a [u8]>,
-    pub workspace: bool,
-    pub file: Option<&'a [u8]>,
-    pub os: Option<Vec<&'a [u8]>>,
-    pub cpu: Option<Vec<&'a [u8]>>,
+    pub(crate) resolved: Option<Cow<'a, [u8]>>,
+    pub(crate) integrity: Option<&'a [u8]>,
+    pub(crate) dependencies: Option<StringHashMap<&'a [u8]>>,
+    pub(crate) optional_dependencies: Option<StringHashMap<&'a [u8]>>,
+    pub(crate) peer_dependencies: Option<StringHashMap<&'a [u8]>>,
+    pub(crate) dev_dependencies: Option<StringHashMap<&'a [u8]>>,
+    pub(crate) commit: Option<&'a [u8]>,
+    pub(crate) workspace: bool,
+    pub(crate) file: Option<&'a [u8]>,
+    pub(crate) os: Option<Vec<&'a [u8]>>,
+    pub(crate) cpu: Option<Vec<&'a [u8]>>,
     // Owned heap allocation (unlike the borrowed fields above); created in parse()
-    pub git_repo_name: Option<Box<[u8]>>,
+    pub(crate) git_repo_name: Option<Box<[u8]>>,
 }
 
 impl<'a> Default for Entry<'a> {
@@ -81,24 +81,22 @@ impl<'a> Default for Entry<'a> {
     }
 }
 
-pub struct ParsedGitUrl<'a> {
-    pub url: &'a [u8],
-    pub commit: Option<&'a [u8]>,
-    pub owner: Option<&'a [u8]>,
-    pub repo: Option<&'a [u8]>,
+pub(crate) struct ParsedGitUrl<'a> {
+    pub(crate) url: &'a [u8],
+    pub(crate) commit: Option<&'a [u8]>,
+    pub(crate) repo: Option<&'a [u8]>,
     // Optional owned "https://github.com/{path}" buffer so the borrow
     // case stays zero-copy. Callers must check `owned_url` first: when it is `Some`,
     // it supersedes `url` (see `into_resolved`).
-    pub owned_url: Option<Vec<u8>>,
+    pub(crate) owned_url: Option<Vec<u8>>,
 }
 
-pub struct ParsedNpmAlias<'a> {
-    pub package: &'a [u8],
-    pub version: &'a [u8],
+pub(crate) struct ParsedNpmAlias<'a> {
+    pub(crate) version: &'a [u8],
 }
 
 impl<'a> Entry<'a> {
-    pub fn get_name_from_spec(spec: &[u8]) -> &[u8] {
+    pub(crate) fn get_name_from_spec(spec: &[u8]) -> &[u8] {
         let unquoted = if spec[0] == b'"' && spec[spec.len() - 1] == b'"' {
             &spec[1..spec.len() - 1]
         } else {
@@ -129,36 +127,35 @@ impl<'a> Entry<'a> {
         unquoted
     }
 
-    pub fn is_git_dependency(version: &[u8]) -> bool {
+    pub(crate) fn is_git_dependency(version: &[u8]) -> bool {
         version.starts_with(b"git+")
             || version.starts_with(b"git://")
             || version.starts_with(b"github:")
             || version.starts_with(b"https://github.com/")
     }
 
-    pub fn is_npm_alias(version: &[u8]) -> bool {
+    pub(crate) fn is_npm_alias(version: &[u8]) -> bool {
         version.starts_with(b"npm:")
     }
 
-    pub fn is_remote_tarball(version: &[u8]) -> bool {
+    pub(crate) fn is_remote_tarball(version: &[u8]) -> bool {
         version.starts_with(b"https://") && version.ends_with(b".tgz")
     }
 
-    pub fn is_workspace_dependency(version: &[u8]) -> bool {
+    pub(crate) fn is_workspace_dependency(version: &[u8]) -> bool {
         version.starts_with(b"workspace:") || version == b"*"
     }
 
-    pub fn is_file_dependency(version: &[u8]) -> bool {
+    pub(crate) fn is_file_dependency(version: &[u8]) -> bool {
         version.starts_with(b"file:") || version.starts_with(b"./") || version.starts_with(b"../")
     }
 
-    pub fn parse_git_url(
+    pub(crate) fn parse_git_url(
         _yarn_lock: &YarnLock<'a>,
         version: &'a [u8],
     ) -> Result<ParsedGitUrl<'a>, Error> {
         let mut url: &[u8] = version;
         let mut commit: Option<&[u8]> = None;
-        let mut owner: Option<&[u8]> = None;
         let mut repo: Option<&[u8]> = None;
         let mut owned_url: Option<Vec<u8>> = None;
 
@@ -180,7 +177,6 @@ impl<'a> Entry<'a> {
             };
 
             if let Some(slash_idx) = strings::index_of(path_without_commit, b"/") {
-                owner = Some(&path_without_commit[0..slash_idx]);
                 repo = Some(&path_without_commit[slash_idx + 1..]);
             }
             let mut buf =
@@ -196,7 +192,6 @@ impl<'a> Entry<'a> {
                 remaining = &remaining[idx + b"github.com/".len()..];
             }
             if let Some(slash_idx) = strings::index_of(remaining, b"/") {
-                owner = Some(&remaining[0..slash_idx]);
                 let after_owner = &remaining[slash_idx + 1..];
                 if after_owner.ends_with(b".git") {
                     repo = Some(&after_owner[0..after_owner.len() - b".git".len()]);
@@ -209,24 +204,19 @@ impl<'a> Entry<'a> {
         Ok(ParsedGitUrl {
             url,
             commit,
-            owner,
             repo,
             owned_url,
         })
     }
 
-    pub fn parse_npm_alias(version: &[u8]) -> ParsedNpmAlias<'_> {
+    pub(crate) fn parse_npm_alias(version: &[u8]) -> ParsedNpmAlias<'_> {
         if version.len() <= 4 {
-            return ParsedNpmAlias {
-                package: b"",
-                version: b"*",
-            };
+            return ParsedNpmAlias { version: b"*" };
         }
 
         let npm_part = &version[4..];
         if let Some(at_idx) = strings::index_of(npm_part, b"@") {
             return ParsedNpmAlias {
-                package: &npm_part[0..at_idx],
                 version: if at_idx + 1 < npm_part.len() {
                     &npm_part[at_idx + 1..]
                 } else {
@@ -234,13 +224,10 @@ impl<'a> Entry<'a> {
                 },
             };
         }
-        ParsedNpmAlias {
-            package: npm_part,
-            version: b"*",
-        }
+        ParsedNpmAlias { version: b"*" }
     }
 
-    pub fn get_package_name_from_resolved_url(url: &[u8]) -> Option<&[u8]> {
+    pub(crate) fn get_package_name_from_resolved_url(url: &[u8]) -> Option<&[u8]> {
         if let Some(dash_idx) = strings::index_of(url, b"/-/") {
             let mut slash_count: usize = 0;
             let mut last_slash: usize = 0;
@@ -272,13 +259,13 @@ impl<'a> Entry<'a> {
 }
 
 impl<'a> YarnLock<'a> {
-    pub(crate) fn init() -> YarnLock<'a> {
+    fn init() -> YarnLock<'a> {
         YarnLock {
             entries: Vec::new(),
         }
     }
 
-    pub(crate) fn parse(&mut self, content: &'a [u8]) -> Result<(), Error> {
+    fn parse(&mut self, content: &'a [u8]) -> Result<(), Error> {
         let mut lines = strings::split(content, b"\n");
         let mut current_entry: Option<Entry<'a>> = None;
         let mut current_specs: Vec<&'a [u8]> = Vec::new();
@@ -1967,7 +1954,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     let result = LoadResult::Ok(lockfile::LoadResultOk {
         lockfile: this,
         migrated: lockfile::Migrated::Yarn,
-        loaded_from_binary_lockfile: false,
         serializer_result: Default::default(),
         format: lockfile::LockfileFormat::Binary,
     });

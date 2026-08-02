@@ -122,7 +122,7 @@ impl ExtensionOrder {
     /// Returns the
     /// [`ExtOrder`] tag; resolve to a slice via
     /// [`BundleOptions::ext_order_slice`].
-    pub fn kind(&self, kind: bun_ast::ImportKind, is_node_modules: bool) -> ExtOrder {
+    pub(crate) fn kind(&self, kind: bun_ast::ImportKind, is_node_modules: bool) -> ExtOrder {
         use bun_ast::ImportKind as K;
         match kind {
             K::Url | K::AtConditional | K::At => ExtOrder::Css,
@@ -150,7 +150,7 @@ impl BundleOptions {
     /// reallocated after `Resolver::init1`, so the returned borrow is
     /// stable for the resolver's lifetime.
     #[inline]
-    pub fn ext_order_slice(&self, tag: ExtOrder) -> &[Box<[u8]>] {
+    pub(crate) fn ext_order_slice(&self, tag: ExtOrder) -> &[Box<[u8]>] {
         match tag {
             ExtOrder::DefaultDefault => &self.extension_order.default.default,
             ExtOrder::DefaultEsm => &self.extension_order.default.esm,
@@ -175,7 +175,7 @@ pub mod bundle_options {
             b".tsx", b".jsx", b".mts", b".ts", b".mjs", b".js", b".cts", b".cjs", b".json",
         ];
         /// Mirrors `bun_bundler::options::bundle_options_defaults::node_modules`.
-        pub mod node_modules {
+        pub(crate) mod node_modules {
             pub(crate) const EXTENSION_ORDER: &[&[u8]] = &[
                 b".jsx", b".cjs", b".js", b".mjs", b".mts", b".tsx", b".ts", b".cts", b".json",
             ];
@@ -305,7 +305,7 @@ impl BundleOptions {
 // `opts.main_fields` against `DEFAULT_MAIN_FIELDS.get(opts.target)` to detect whether the
 // user explicitly set a main-fields list. The previous `&[]` stub made that check always
 // false, silently disabling the module-vs-main dual-resolution path.
-pub(crate) struct TargetMainFields;
+struct TargetMainFields;
 
 // Note that this means if a package specifies "module" and "main", the ES6
 // module will not be selected. This means tree shaking will not work when
@@ -333,7 +333,7 @@ static DEFAULT_MAIN_FIELDS_BROWSER: &[&[u8]] = &[b"browser", b"module", b"jsnext
 static DEFAULT_MAIN_FIELDS_BUN: &[&[u8]] = &[b"module", b"main", b"jsnext:main"];
 
 impl TargetMainFields {
-    pub(crate) fn get(&self, t: Target) -> &'static [&'static [u8]] {
+    fn get(&self, t: Target) -> &'static [&'static [u8]] {
         match t {
             Target::Node => DEFAULT_MAIN_FIELDS_NODE,
             Target::Browser => DEFAULT_MAIN_FIELDS_BROWSER,
@@ -341,4 +341,4 @@ impl TargetMainFields {
         }
     }
 }
-pub(crate) const DEFAULT_MAIN_FIELDS: TargetMainFields = TargetMainFields;
+const DEFAULT_MAIN_FIELDS: TargetMainFields = TargetMainFields;

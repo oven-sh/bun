@@ -261,32 +261,6 @@ napi_get_last_error_info(napi_env env, const napi_extended_error_info** result)
     return napi_ok;
 }
 
-JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSObject* object, JSC::JSGlobalObject* globalObject)
-{
-    JSC::JSArray* exportKeys = ownPropertyKeys(globalObject, object, PropertyNameMode::StringsAndSymbols, DontEnumPropertiesMode::Include);
-    JSC::Identifier ident = JSC::Identifier::fromString(vm, "__BunTemporaryGlobal"_s);
-    WTF::StringBuilder sourceCodeBuilder = WTF::StringBuilder();
-    // TODO: handle symbol collision
-    sourceCodeBuilder.append("\nvar  $$NativeModule = globalThis['__BunTemporaryGlobal']; console.log($$NativeModule); globalThis['__BunTemporaryGlobal'] = null;\n if (!$$NativeModule) { throw new Error('Assertion failure: Native module not found'); }\n\n"_s);
-
-    for (unsigned i = 0; i < exportKeys->length(); i++) {
-        auto key = exportKeys->getIndexQuickly(i);
-        if (key.isSymbol()) {
-            continue;
-        }
-        auto named = key.toWTFString(globalObject);
-        sourceCodeBuilder.append(""_s);
-        // TODO: handle invalid identifiers
-        sourceCodeBuilder.append("export var "_s);
-        sourceCodeBuilder.append(named);
-        sourceCodeBuilder.append(" = $$NativeModule."_s);
-        sourceCodeBuilder.append(named);
-        sourceCodeBuilder.append(";\n"_s);
-    }
-    globalObject->putDirect(vm, ident, object, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum);
-    return JSC::makeSource(sourceCodeBuilder.toString(), JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted, keyString, WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
-}
-
 void Napi::NapiRefWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
 {
     auto* weakValue = reinterpret_cast<NapiRef*>(context);

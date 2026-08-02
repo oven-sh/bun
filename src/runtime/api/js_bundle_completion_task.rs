@@ -44,9 +44,7 @@ use bun_sys::OpenDirOptions;
 use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::node::fs::{self as node_fs, NodeFS, args as fs_args};
-use crate::node::types::{
-    Encoding, FileSystemFlags, PathLike, PathOrFileDescriptor, StringOrBuffer,
-};
+use crate::node::types::{FileSystemFlags, PathLike, PathOrFileDescriptor, StringOrBuffer};
 use crate::server::html_bundle;
 
 /// See module doc for the layering rationale.
@@ -56,29 +54,29 @@ pub struct JSBundleCompletionTask {
     // NOTE: this should arguably be a thread-safe refcount, but it is the plain
     // (non-atomic) `RefCount<Self>` — a pre-existing discrepancy. See the
     // `unsafe impl Send` below for the thread-affinity constraint this imposes.
-    pub ref_count: RefCount<Self>,
-    pub config: JSBundlerConfig,
+    pub(crate) ref_count: RefCount<Self>,
+    pub(crate) config: JSBundlerConfig,
     // BACKREF — the JS-thread `EventLoop` outlives every completion task; safe
     // `Deref` so call sites read `self.jsc_event_loop.enqueue_task_concurrent(..)`.
-    pub jsc_event_loop: BackRef<EventLoop>,
+    pub(crate) jsc_event_loop: BackRef<EventLoop>,
     pub task: AnyTask,
     pub global_this: BackRef<JSGlobalObject>,
-    pub promise: jsc::JSPromiseStrong,
+    pub(crate) promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
-    pub env: *mut bun_dotenv::Loader,
-    pub log: bun_ast::Log,
-    pub cancelled: bool,
+    pub(crate) env: *mut bun_dotenv::Loader,
+    pub(crate) log: bun_ast::Log,
+    pub(crate) cancelled: bool,
 
-    pub html_build_task: Option<*mut html_bundle::Route>,
+    pub(crate) html_build_task: Option<*mut html_bundle::Route>,
 
-    pub result: BundleV2Result,
+    pub(crate) result: BundleV2Result,
 
     /// intrusive queue link (UnboundedQueue)
-    pub next: bun_threading::Link<JSBundleCompletionTask>,
+    pub(crate) next: bun_threading::Link<JSBundleCompletionTask>,
     /// arena-owned by BundleThread heap
-    pub transpiler: *mut BundleV2<'static>,
-    pub plugins: Option<NonNull<Plugin>>,
-    pub started_at_ns: u64,
+    pub(crate) transpiler: *mut BundleV2<'static>,
+    pub(crate) plugins: Option<NonNull<Plugin>>,
+    pub(crate) started_at_ns: u64,
 }
 
 impl JSBundleCompletionTask {
@@ -321,6 +319,20 @@ impl JSBundleCompletionTask {
         let dirname: &[u8] = paths::dirname(&full_outfile_path).unwrap_or(b".");
         let basename: &[u8] = paths::basename(&full_outfile_path);
 
+        // Key the entry point at /$bunfs/root/<basename> like the CLI (which renames before appending .exe).
+        let entry_key = basename.strip_suffix(b".exe").unwrap_or(basename);
+        output_files[entry_point_index].dest_path = Box::from(entry_key);
+
+        if !compile_options.assets.is_empty() {
+            if let Err(msg) = crate::cli::build_command::collect_compile_assets(
+                &compile_options.assets,
+                entry_key,
+                output_files,
+            ) {
+                return CompileResult::fail_fmt(format_args!("{}", msg));
+            }
+        }
+
         #[cfg(not(windows))]
         let mut root_dir = Dir::cwd();
         #[cfg(windows)]
@@ -474,7 +486,6 @@ impl JSBundleCompletionTask {
                         _ => unsafe { core::hint::unreachable_unchecked() },
                     };
                     let write_args = fs_args::WriteFile {
-                        encoding: Encoding::Buffer,
                         flag: FileSystemFlags::W,
                         mode: node_fs::DEFAULT_PERMISSION,
                         file: PathOrFileDescriptor::Path(PathLike::String(

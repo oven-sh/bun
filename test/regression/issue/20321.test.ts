@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "child_process";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("spawnSync should not crash when stdout is set to process.stderr (issue #20321)", () => {
   // Test with process.stderr as stdout
@@ -77,14 +77,14 @@ test("spawnSync should work with file descriptors directly", () => {
 
 test("spawnSync should handle the AWS CDK use case", () => {
   // This is the exact use case from AWS CDK that was failing
-  const dir = tempDirWithFiles("spawnsync-cdk", {
+  using dir = tempDir("spawnsync-cdk", {
     "test.js": `console.log("CDK output");`,
   });
 
   const proc = spawnSync(bunExe(), ["test.js"], {
     encoding: "utf-8",
     stdio: ["ignore", process.stderr, "inherit"],
-    cwd: dir,
+    cwd: String(dir),
     env: bunEnv,
   });
 

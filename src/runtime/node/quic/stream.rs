@@ -22,23 +22,23 @@ const QUIC_STREAM_HEADERS_FLAGS_TERMINAL: u32 = 1;
 /// `IDX_STATE_STREAM_*` offsets the JS layer reads).
 #[repr(C)]
 pub struct StreamState {
-    pub id: i64,
-    pub pending: u8,
-    pub fin_sent: u8,
-    pub fin_received: u8,
-    pub read_ended: u8,
-    pub write_ended: u8,
+    pub(crate) id: i64,
+    pub(crate) pending: u8,
+    pub(crate) fin_sent: u8,
+    pub(crate) fin_received: u8,
+    pub(crate) read_ended: u8,
+    pub(crate) write_ended: u8,
     pub reset: u8,
-    pub reset_code: u64,
-    pub has_outbound: u8,
-    pub has_reader: u8,
-    pub wants_block: u8,
-    pub wants_headers: u8,
-    pub wants_reset: u8,
-    pub wants_trailers: u8,
-    pub received_early_data: u8,
-    pub write_desired_size: u32,
-    pub high_water_mark: u32,
+    pub(crate) reset_code: u64,
+    pub(crate) has_outbound: u8,
+    pub(crate) has_reader: u8,
+    pub(crate) wants_block: u8,
+    pub(crate) wants_headers: u8,
+    pub(crate) wants_reset: u8,
+    pub(crate) wants_trailers: u8,
+    pub(crate) received_early_data: u8,
+    pub(crate) write_desired_size: u32,
+    pub(crate) high_water_mark: u32,
 }
 
 pub(crate) const STREAM_STATS_FIELDS: &[&str] = &[
@@ -109,7 +109,7 @@ pub struct QuicStream {
     state: Cell<*mut StreamState>,
     stats: Cell<*mut u64>,
     pub(super) outbound: JsCell<Outbound>,
-    pub(super) inbound: JsCell<Inbound>,
+    inbound: JsCell<Inbound>,
     wakeup: JsCell<Option<Strong>>,
     peer_stop_sending_code: Cell<Option<u64>>,
     wrote_to_lsquic: Cell<bool>,
@@ -197,7 +197,7 @@ impl QuicStream {
         Ok((raw_ptr, handle))
     }
 
-    pub(super) fn bind_raw(&self, raw: *mut lsquic::lsquic_stream) {
+    fn bind_raw(&self, raw: *mut lsquic::lsquic_stream) {
         self.raw.set(raw);
         // SAFETY: `raw` is the live stream lsquic just handed us.
         let s = unsafe { lsquic::Stream::from_raw(raw) }.expect("non-null stream");
@@ -353,7 +353,7 @@ impl QuicStream {
         self.with_state(|s| s.id)
     }
 
-    pub(super) fn push_inbound(&self, data: &[u8], fin: bool) {
+    fn push_inbound(&self, data: &[u8], fin: bool) {
         if self.destroyed.get() {
             return;
         }
@@ -412,7 +412,7 @@ impl QuicStream {
         });
     }
 
-    pub(super) fn mark_reset(&self, code: u64) {
+    fn mark_reset(&self, code: u64) {
         if self.destroyed.get() {
             return;
         }
@@ -436,7 +436,7 @@ impl QuicStream {
     pub(super) fn mark_close_reported(&self) -> bool {
         self.close_reported.replace(true)
     }
-    pub(super) fn mark_headers_received(&self) -> bool {
+    fn mark_headers_received(&self) -> bool {
         !self.headers_received.replace(true)
     }
     pub(super) fn wants_headers(&self) -> bool {

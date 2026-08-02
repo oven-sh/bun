@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, tls } from "harness";
 import { join } from "path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
@@ -175,4 +175,87 @@ test.skipIf(!isASAN)(
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
   },
   timeout,
+);
+
+// Regression: Bun.serve() inside a worker, streaming a JS ReadableStream body,
+// then worker.terminate() mid-stream. Worker shutdown stops the server which
+// tears down the in-flight HTTP(S)ResponseSink and fires its JS onClose hook
+// via AsyncContextFrame::call while the VM's sticky TerminationException is
+// still pending, tripping Interpreter::executeCallImpl's
+// scope.assertNoException() and SIGABRTing the whole process. Release WebKit
+// compiles that ASSERT out, so this is debug/ASAN only. Two cells cover
+// HTTPResponseSink and HTTPSResponseSink; the type:"direct" shape hits a
+// separate pre-existing VMTraps::deferTerminationSlow assert and is tracked
+// separately.
+describe.skipIf(!isDebug)(
+  "terminate() while Bun.serve is streaming a ReadableStream body does not trip assertNoException()",
+  () => {
+    async function runCell(
+      workerBody: string,
+      scheme: "http" | "https",
+      fetchOpts: string,
+      workerData?: Record<string, string>,
+    ) {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const { Worker } = require("node:worker_threads");
+          const workerData = ${JSON.stringify(workerData ?? {})};
+          const src = ${JSON.stringify(workerBody)};
+          for (let i = 0; i < ${rounds}; i++) {
+            const w = new Worker(src, { eval: true, workerData });
+            const port = await new Promise(r => w.once("message", r));
+            const res = await fetch("${scheme}://127.0.0.1:" + port + "/", ${fetchOpts});
+            const rd = res.body.getReader();
+            await rd.read();
+            const done = new Promise(r => w.once("exit", r));
+            w.terminate();
+            await done;
+            await rd.cancel().catch(() => {});
+          }
+          console.log("survived");
+        `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("survived\n");
+      expect(exitCode).toBe(0);
+    }
+
+    const pullBody =
+      "let i = 0;" +
+      "return new Response(new ReadableStream({ async pull(c) {" +
+      "  c.enqueue(new Uint8Array(8192).fill(i++));" +
+      "  if (i > 20000) c.close();" +
+      "  await Bun.sleep(0);" +
+      "} }));";
+    const httpWorker =
+      "const server = Bun.serve({ port: 0, fetch() {" +
+      pullBody +
+      "} });" +
+      "require('node:worker_threads').parentPort.postMessage(server.port);";
+    const httpsWorker =
+      "const { workerData } = require('node:worker_threads');" +
+      "const server = Bun.serve({ port: 0, tls: { cert: workerData.cert, key: workerData.key }, fetch() {" +
+      pullBody +
+      "} });" +
+      "require('node:worker_threads').parentPort.postMessage(server.port);";
+
+    test.concurrent("http (HTTPResponseSink)", () => runCell(httpWorker, "http", "{}"), timeout);
+    test.concurrent(
+      "https (HTTPSResponseSink)",
+      () =>
+        runCell(httpsWorker, "https", "{ tls: { rejectUnauthorized: false } }", {
+          cert: tls.cert,
+          key: tls.key,
+        }),
+      timeout,
+    );
+  },
 );

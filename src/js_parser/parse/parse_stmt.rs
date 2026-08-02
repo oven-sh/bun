@@ -209,7 +209,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loop {
             p.lexer.next()?;
             p.lexer.expect(T::TOpenParen)?;
-            let test_ = p.parse_expr(Level::Lowest)?;
+            let test = p.parse_expr(Level::Lowest)?;
             p.lexer.expect(T::TCloseParen)?;
             let mut stmt_opts = ParseStatementOptions {
                 lexical_decl: LexicalDecl::AllowFnInsideIf,
@@ -220,7 +220,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Create the if node
             let if_stmt = p.s(
                 S::If {
-                    test_,
+                    test,
                     yes,
                     no: None,
                 },
@@ -277,7 +277,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let body = p.parse_stmt(&mut stmt_opts)?;
         p.lexer.expect(T::TWhile)?;
         p.lexer.expect(T::TOpenParen)?;
-        let test_ = p.parse_expr(Level::Lowest)?;
+        let test = p.parse_expr(Level::Lowest)?;
         p.lexer.expect(T::TCloseParen)?;
 
         // This is a weird corner case where automatic semicolon insertion applies
@@ -285,7 +285,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TSemicolon {
             p.lexer.next()?;
         }
-        Ok(p.s(S::DoWhile { body, test_ }, loc))
+        Ok(p.s(S::DoWhile { body, test }, loc))
     }
 
     #[inline(never)]
@@ -293,13 +293,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
 
         p.lexer.expect(T::TOpenParen)?;
-        let test_ = p.parse_expr(Level::Lowest)?;
+        let test = p.parse_expr(Level::Lowest)?;
         p.lexer.expect(T::TCloseParen)?;
 
         let mut stmt_opts = ParseStatementOptions::default();
         let body = p.parse_stmt(&mut stmt_opts)?;
 
-        Ok(p.s(S::While { body, test_ }, loc))
+        Ok(p.s(S::While { body, test }, loc))
     }
 
     #[cold]
@@ -307,7 +307,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn t_with(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
         p.lexer.expect(T::TOpenParen)?;
-        let test_ = p.parse_expr(Level::Lowest)?;
+        let test = p.parse_expr(Level::Lowest)?;
         let body_loc = p.lexer.loc();
         p.lexer.expect(T::TCloseParen)?;
 
@@ -323,7 +323,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             S::With {
                 body,
                 body_loc,
-                value: test_,
+                value: test,
             },
             loc,
         ))
@@ -334,7 +334,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
 
         p.lexer.expect(T::TOpenParen)?;
-        let test_ = p.parse_expr(Level::Lowest)?;
+        let test = p.parse_expr(Level::Lowest)?;
         p.lexer.expect(T::TCloseParen)?;
 
         let body_loc = p.lexer.loc();
@@ -392,7 +392,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expect(T::TCloseBrace)?;
             Ok(p.s(
                 S::Switch {
-                    test_,
+                    test,
                     body_loc,
                     cases: bun_ast::StoreSlice::from_bump(cases),
                 },
@@ -414,7 +414,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.pop_scope();
         p.lexer.next()?;
 
-        let mut catch_: Option<js_ast::Catch> = None;
+        let mut catch: Option<js_ast::Catch> = None;
         let mut finally: Option<js_ast::Finally> = None;
 
         if p.lexer.token == T::TCatch {
@@ -452,7 +452,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
             p.pop_scope();
             p.lexer.next()?;
-            catch_ = Some(js_ast::Catch {
+            catch = Some(js_ast::Catch {
                 loc: catch_loc,
                 binding,
                 body: bun_ast::StoreSlice::from_bump(stmts),
@@ -461,7 +461,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.pop_scope();
         }
 
-        if p.lexer.token == T::TFinally || catch_.is_none() {
+        if p.lexer.token == T::TFinally || catch.is_none() {
             let finally_loc = p.lexer.loc();
             let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, finally_loc)?;
             p.lexer.expect(T::TFinally)?;
@@ -479,7 +479,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             S::Try {
                 body_loc,
                 body: bun_ast::StoreSlice::from_bump(body),
-                catch_,
+                catch,
                 finally,
             },
             loc,
@@ -519,7 +519,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expect(T::TOpenParen)?;
 
             let mut init_: Option<Stmt> = None;
-            let mut test_: Option<Expr> = None;
+            let mut test: Option<Expr> = None;
             let mut update: Option<Expr> = None;
 
             // "in" expressions aren't allowed here
@@ -701,7 +701,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             p.lexer.expect(T::TSemicolon)?;
             if p.lexer.token != T::TSemicolon {
-                test_ = Some(p.parse_expr(Level::Lowest)?);
+                test = Some(p.parse_expr(Level::Lowest)?);
             }
 
             p.lexer.expect(T::TSemicolon)?;
@@ -716,7 +716,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Ok(p.s(
                 S::For {
                     init: init_,
-                    test_,
+                    test,
                     update,
                     body,
                 },
@@ -1969,7 +1969,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(None)
     }
 
-    pub fn parse_stmt(&mut self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {
+    pub(crate) fn parse_stmt(&mut self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {
         if !self.stack_check.is_safe_to_recurse() {
             // Sentinel error; mapped to a "Maximum call stack size exceeded"
             // syntax error at the catch site in parse_entry.rs.

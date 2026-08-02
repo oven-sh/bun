@@ -823,26 +823,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Declaration-file mode: `export default <type-only declaration>` (for
     /// example `export default interface Foo {}` or the tsc emit
     /// `export default function f(): void;`) still gets a `default` export,
-    /// bound to undefined, so importers link.
+    /// bound to undefined. Synthesized at the end of the parse pass so
+    /// overloads and declaration merging with a real default export emit
+    /// exactly one.
     fn dts_default_export_stub(
         p: &mut Self,
         loc: bun_ast::Loc,
-        default_loc: bun_ast::Loc,
+        _default_loc: bun_ast::Loc,
     ) -> Result<Stmt> {
-        if p.dts_emitted_default_export {
-            return Ok(p.s(S::TypeScript {}, loc));
-        }
-        p.dts_emitted_default_export = true;
-        p.has_es_module_syntax = true;
-        let default_name = p.create_default_name(default_loc);
-        let value = js_ast::StmtOrExpr::Expr(p.new_expr(js_ast::E::Undefined {}, default_loc));
-        Ok(p.s(
-            S::ExportDefault {
-                default_name,
-                value,
-            },
-            loc,
-        ))
+        p.dts_needs_default_export_stub = true;
+        Ok(p.s(S::TypeScript {}, loc))
     }
 
     /// `export * [as ns] from "path"`; split out of `t_export` so

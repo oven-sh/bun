@@ -238,17 +238,35 @@ export { Alias as default };
   constructor(url: string);
 }
 `,
+    // Class/interface declaration merging on the default export keeps the
+    // real class as the sole default, in either order.
+    "merge1.d.ts": `export default class Merged {
+  constructor();
+}
+export default interface Merged {
+  x: number;
+}
+`,
+    "merge2.d.ts": `export default interface Merged {
+  x: number;
+}
+export default class Merged {
+  constructor();
+}
+`,
     "index.ts": `import fn from "./fn.d.ts";
 import iface from "./iface.d.ts";
 import c from "./const.d.ts";
 import alias from "./alias.d.ts";
 import Klass from "./klass.d.ts";
-console.log(JSON.stringify([typeof fn, typeof iface, typeof c, typeof alias, typeof Klass]));
+import M1 from "./merge1.d.ts";
+import M2 from "./merge2.d.ts";
+console.log(JSON.stringify([typeof fn, typeof iface, typeof c, typeof alias, typeof Klass, typeof M1, typeof M2]));
 `,
   });
   const { stdout, stderr, exitCode } = await run(dir, "index.ts");
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual(["undefined", "undefined", "undefined", "undefined", "function"]);
+  expect(JSON.parse(stdout.trim())).toEqual(["undefined", "undefined", "undefined", "undefined", "function", "function", "function"]);
   expect(exitCode).toBe(0);
 });
 

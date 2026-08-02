@@ -353,9 +353,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// True inside a `declare global { ... }` body, which shares the
     /// module-scope parse options but must not synthesize bindings.
     pub(crate) dts_suppress_type_name_recording: bool,
-    /// Overloaded `export default function f(): void;` signatures must
-    /// produce only one synthesized default export.
-    pub(crate) dts_emitted_default_export: bool,
+    /// A type-only `export default` was elided; the end of the parse pass
+    /// synthesizes one default export unless a real one exists.
+    pub(crate) dts_needs_default_export_stub: bool,
     /// Aliases exported by module-scope export clauses; synthesized bindings
     /// for these names stay non-exported so the clause is the sole export.
     pub(crate) dts_export_clause_aliases: StringBoolMap,
@@ -4579,6 +4579,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         stmts: &mut BumpVec<'a, Stmt>,
     ) -> Result<(), crate::Error> {
+        // A type-only default export produces a stub only when no real
+        // default export exists (class/interface declaration merging on the
+        // default export keeps the real one).
+        if self.dts_needs_default_export_stub
+            && !stmts
+                .iter()
+                .any(|s| matches!(s.data, js_ast::StmtData::SExportDefault(_)))
+        {
+            self.has_es_module_syntax = true;
+            let default_name = self.create_default_name(bun_ast::Loc::EMPTY);
+            let value = js_ast::StmtOrExpr::Expr(
+                self.new_expr(js_ast::E::Undefined {}, bun_ast::Loc::EMPTY),
+            );
+            let stmt = self.s(
+                S::ExportDefault {
+                    default_name,
+                    value,
+                },
+                bun_ast::Loc::EMPTY,
+            );
+            stmts.push(stmt);
+        }
         if self.dts_type_name_order.is_empty() {
             return Ok(());
         }
@@ -8894,7 +8916,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             dts_type_names: StringBoolMap::default(),
             dts_type_name_order: Vec::new(),
             dts_suppress_type_name_recording: false,
-            dts_emitted_default_export: false,
+            dts_needs_default_export_stub: false,
             dts_export_clause_aliases: StringBoolMap::default(),
             enclosing_namespace_arg_ref: None,
             jsx_imports: crate::JSXImportSymbols::default(),

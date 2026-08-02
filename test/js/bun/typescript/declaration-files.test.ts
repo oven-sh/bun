@@ -42,6 +42,7 @@ console.log("OK:", JSON.stringify(BUEvents));
 test.concurrent("type aliases, interfaces and declare statements become undefined exports", async () => {
   using dir = tempDir("dts-synth", {
     "api.d.ts": `export type Alias = string;
+export declare type DeclaredAlias = number;
 export interface Shape {
   x: number;
 }
@@ -66,6 +67,7 @@ console.log(JSON.stringify(Object.values(api).map(v => typeof v)));
   expect(JSON.parse(stdout.split("\n")[0])).toEqual([
     "Alias",
     "Client",
+    "DeclaredAlias",
     "Flags",
     "LocalOnly",
     "NS",

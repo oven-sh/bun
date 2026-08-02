@@ -1884,6 +1884,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "type Foo = any"
                     let mut stmt_opts = ParseStatementOptions {
                         is_module_scope: opts.is_module_scope,
+                        is_export: opts.is_export,
                         ..Default::default()
                     };
                     p.skip_type_script_type_stmt(&mut stmt_opts)?;

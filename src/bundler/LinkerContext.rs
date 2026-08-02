@@ -34,7 +34,7 @@ use bun_ast::SideEffects;
 use bun_resolver::Resolver;
 
 use crate::Graph::Graph;
-use crate::options::{Format, Loader, SourceMapOption, Target};
+use crate::options::{CompileMode, Format, Loader, SourceMapOption, Target};
 use crate::{
     AdditionalFile, BundleV2, Chunk, CompileResultForSourceMap, ContentHasher, ImportTracker,
     LinkerGraph, MangledProps, PartRange, StableRef, WrapKind,
@@ -1241,7 +1241,7 @@ pub struct LinkerOptions {
     pub(crate) css_chunking: bool,
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,
-    pub(crate) compile_mode: crate::options::CompileMode,
+    pub(crate) compile_mode: CompileMode,
     pub(crate) metafile: bool,
     /// Path to write JSON metafile (for Bun.build API)
     pub(crate) metafile_json_path: &'static [u8],
@@ -1269,7 +1269,7 @@ impl Default for LinkerOptions {
             css_chunking: false,
             source_maps: SourceMapOption::None,
             target: Target::Browser,
-            compile_mode: crate::options::CompileMode::None,
+            compile_mode: CompileMode::None,
             metafile: false,
             metafile_json_path: b"",
             metafile_markdown_path: b"",

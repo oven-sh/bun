@@ -233,8 +233,83 @@ describe("Intl.getCanonicalLocales", () => {
       mo: Intl.getCanonicalLocales("mo")[0],
       ji: Intl.getCanonicalLocales("ji")[0],
     }).toEqual({ in: "id", iw: "he", mo: "ro", ji: "yi" });
-    // sh/tl/no are kept as-is (ICU ships bundles under both names)
-    expect(Intl.getCanonicalLocales(["sh", "tl", "no"])).toEqual(["sh", "tl", "no"]);
+    // `no` is the CLDR macrolanguage and stays as-is; `sh`/`tl` map to their
+    // CLDR replacements via the languageAlias table.
+    expect(Intl.getCanonicalLocales(["sh", "tl", "no"])).toEqual(["sr-Latn", "fil", "no"]);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/14713
+// ICU's uloc_canonicalize does not apply CLDR alias mappings; JSC must route
+// through icu::Locale::createCanonical / ualoc_canonicalForm to get the
+// UTS #35 canonical form that ECMA-402 requires.
+describe("Intl.Locale canonicalization", () => {
+  test("deprecated language subtags", () => {
+    expect({
+      fre: new Intl.Locale("fre").baseName,
+      cmn: new Intl.Locale("cmn").baseName,
+      sh: new Intl.Locale("sh").baseName,
+      tl: new Intl.Locale("tl").baseName,
+      aam: new Intl.Locale("aam").baseName,
+    }).toEqual({ fre: "fr", cmn: "zh", sh: "sr-Latn", tl: "fil", aam: "aas" });
+  });
+
+  test("deprecated region subtags", () => {
+    expect({
+      "en-uk": new Intl.Locale("en-uk").baseName,
+      "en-DD": new Intl.Locale("en-DD").baseName,
+      "en-BU": new Intl.Locale("en-BU").baseName,
+      "ru-SU": new Intl.Locale("ru-SU").baseName,
+      "hy-SU": new Intl.Locale("hy-SU").baseName,
+      "und-Armn-SU": new Intl.Locale("und-Armn-SU").baseName,
+    }).toEqual({
+      "en-uk": "en-GB",
+      "en-DD": "en-DE",
+      "en-BU": "en-MM",
+      "ru-SU": "ru-RU",
+      "hy-SU": "hy-AM",
+      "und-Armn-SU": "und-Armn-AM",
+    });
+  });
+
+  test("canonicalization runs before and after option overrides", () => {
+    // CanonicalizeUnicodeLocaleId is applied to the input tag before options
+    // are merged, so SU resolves against und-Armn (-> AM) rather than ru (-> RU).
+    expect(new Intl.Locale("und-Armn-SU", { language: "ru" }).toString()).toBe("ru-Armn-AM");
+    // And again after, so deprecated option values are also replaced.
+    expect(new Intl.Locale("en", { region: "uk" }).toString()).toBe("en-GB");
+    expect(new Intl.Locale("fre", { region: "uk" }).toString()).toBe("fr-GB");
+    // `und` round-trips through an empty ICU locale ID; on macOS 13/14
+    // libicucore canonicalizes "" to the process default locale, which would
+    // leak into the result as e.g. "sr-Latn-US-u-va-posix".
+    expect(new Intl.Locale("und").toString()).toBe("und");
+    expect(new Intl.Locale("und-u-ca-gregory").toString()).toBe("und-u-ca-gregory");
+    expect(new Intl.Locale("und-x-private").toString()).toBe("und-x-private");
+    expect(new Intl.Locale("und", { language: "sh" }).toString()).toBe("sr-Latn");
+  });
+
+  test("derived getters reflect the canonical form", () => {
+    const uk = new Intl.Locale("en-uk");
+    const sh = new Intl.Locale("sh");
+    expect({ region: uk.region, language: sh.language, script: sh.script }).toEqual({
+      region: "GB",
+      language: "sr",
+      script: "Latn",
+    });
+  });
+
+  test("unicode extension keywords survive alias replacement", () => {
+    expect(new Intl.Locale("fre-u-ca-gregory").toString()).toBe("fr-u-ca-gregory");
+    expect(new Intl.Locale("en-uk-u-ca-gregory").toString()).toBe("en-GB-u-ca-gregory");
+  });
+
+  test("Intl.getCanonicalLocales applies the same alias mappings", () => {
+    expect(Intl.getCanonicalLocales(["fre", "en-uk", "und-Armn-SU", "cmn"])).toEqual([
+      "fr",
+      "en-GB",
+      "und-Armn-AM",
+      "zh",
+    ]);
   });
 });
 

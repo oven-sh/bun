@@ -156,20 +156,24 @@ impl Watcher {
     /// receives watch callbacks on the watcher thread. This function does not
     /// actually start the watcher thread.
     ///
+    /// `subscription` is the set of [`Op`]s the context consumes. Ops outside it
+    /// are never requested from the OS, so they cost nothing to deliver, decode
+    /// or dispatch — and are never delivered, so a context must not rely on an
+    /// op it did not subscribe to. Pass [`Op::all`] to receive everything.
+    ///
     /// ```ignore
-    /// let watcher = Watcher::init(instance_of_t, fs)?;
+    /// let watcher = Watcher::init(instance_of_t, top_level_dir, Op::all())?;
     /// // on error: watcher.shutdown(false);
     /// watcher.start()?;
-    ///
     /// // To integrate a started watcher into module resolution:
     /// transpiler.resolver.watcher = watcher.get_resolve_watcher();
-    ///
     /// // To integrate a started watcher into bundle_v2:
     /// bundle_v2.bun_watcher = watcher;
     /// ```
     pub fn init<T: WatcherContext>(
         ctx: *mut T,
         top_level_dir: &'static [u8],
+        subscription: Op,
     ) -> Result<Box<Watcher>, crate::Error> {
         fn on_file_update_wrapped<T: WatcherContext>(
             ctx_opaque: *mut (),
@@ -194,7 +198,7 @@ impl Watcher {
             ctx: ctx.cast::<()>(),
             on_file_update: on_file_update_wrapped::<T>,
             on_error: on_error_wrapped::<T>,
-            platform: Platform::new(top_level_dir)?,
+            platform: Platform::new(top_level_dir, subscription)?,
             watch_events: vec![WatchEvent::default(); MAX_COUNT].into_boxed_slice(),
             changed_filepaths: [const { None }; MAX_COUNT],
             watchloop_handle: bun_core::AtomicCell::new(false),
@@ -433,7 +437,11 @@ impl Watcher {
                 if (item as usize) < self.watchlist.len() {
                     let moved_fd = self.watchlist.items_fd()[item as usize];
                     if moved_fd.is_valid() {
-                        self.add_file_descriptor_to_kqueue_without_checks(moved_fd, item as usize);
+                        self.add_file_descriptor_to_kqueue_without_checks(
+                            moved_fd,
+                            item as usize,
+                            self.watchlist.items_kind()[item as usize],
+                        );
                     }
                 }
             }
@@ -469,9 +477,9 @@ impl Watcher {
         &mut self,
         fd: Fd,
         watchlist_id: usize,
+        kind: WatchItemKind,
     ) {
         use libc::{EV_ADD, EV_CLEAR, EV_ENABLE, EVFILT_VNODE, kevent as KEvent};
-        use libc::{NOTE_DELETE, NOTE_RENAME, NOTE_WRITE};
 
         // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
         let mut event: KEvent = bun_core::ffi::zeroed();
@@ -480,7 +488,7 @@ impl Watcher {
         // we want to know about the vnode
         event.filter = EVFILT_VNODE as _;
 
-        event.fflags = (NOTE_WRITE | NOTE_RENAME | NOTE_DELETE) as _;
+        event.fflags = crate::kevent_watcher::vnode_fflags(self.platform.subscription, kind) as _;
 
         // id
         event.ident = usize::try_from(fd.native()).expect("int cast");
@@ -533,7 +541,7 @@ impl Watcher {
         };
 
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
+        self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id, WatchItemKind::File);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let eventlist_index = {
             // inotify needs a trailing NUL. When
@@ -612,7 +620,11 @@ impl Watcher {
         let watchlist_id = self.watchlist.len();
 
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
+        self.add_file_descriptor_to_kqueue_without_checks(
+            fd,
+            watchlist_id,
+            WatchItemKind::Directory,
+        );
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let eventlist_index = {
             let mut buf = bun_paths::path_buffer_pool::get();
@@ -989,13 +1001,16 @@ impl WatchEvent {
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub struct Op: u8 {
-        const DELETE   = 1 << 0;
-        const METADATA = 1 << 1;
-        const RENAME   = 1 << 2;
-        const WRITE    = 1 << 3;
-        const MOVE_TO  = 1 << 4;
-        const CREATE   = 1 << 5;
-        // bits 6..7 = _padding
+        const DELETE    = 1 << 0;
+        const METADATA  = 1 << 1;
+        const RENAME    = 1 << 2;
+        const WRITE     = 1 << 3;
+        const MOVE_TO   = 1 << 4;
+        const CREATE    = 1 << 5;
+        /// An entry left a watched directory (moved out, or the source half of
+        /// a rename). The mirror of [`Op::MOVE_TO`].
+        const MOVE_FROM = 1 << 6;
+        // bit 7 = _padding
     }
 }
 
@@ -1013,6 +1028,7 @@ pub(crate) const OP_NAMES: &[(Op, &str)] = &[
     (Op::WRITE, "write"),
     (Op::MOVE_TO, "move_to"),
     (Op::CREATE, "create"),
+    (Op::MOVE_FROM, "move_from"),
 ];
 
 impl fmt::Display for Op {

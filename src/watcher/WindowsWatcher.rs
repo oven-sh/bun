@@ -21,6 +21,31 @@ pub struct WindowsWatcher {
     pub(crate) watcher: DirWatcher,
     pub(crate) buf: PathBuffer,
     pub(crate) base_idx: usize,
+    /// Precomputed `ReadDirectoryChangesW` filter; see [`notify_filter`].
+    /// Held here rather than on `DirWatcher`, whose layout is pinned by
+    /// `assert_ffi_layout!` (the kernel requires `overlapped` at offset 0).
+    pub(crate) filter: w::FileNotifyChangeFilter,
+}
+
+/// Translate a subscription into a `ReadDirectoryChangesW` filter.
+///
+/// Coarser than inotify/kqueue: the filter selects which *changes* wake the
+/// call, not which `FILE_ACTION_*` come back, and one filter bit can produce
+/// several actions. Metadata is deliberately absent — Windows reports it as
+/// FILE_ACTION_MODIFIED, indistinguishable from a content write, so requesting
+/// it would mis-report `chmod` as `Op::WRITE`.
+fn notify_filter(subscription: Op) -> w::FileNotifyChangeFilter {
+    let mut filter = w::FileNotifyChangeFilter::empty();
+    if subscription.intersects(Op::CREATE | Op::DELETE | Op::RENAME | Op::MOVE_TO | Op::MOVE_FROM) {
+        filter |= w::FileNotifyChangeFilter::FILE_NAME | w::FileNotifyChangeFilter::DIR_NAME;
+    }
+    if subscription.contains(Op::CREATE) {
+        filter |= w::FileNotifyChangeFilter::CREATION;
+    }
+    if subscription.contains(Op::WRITE) {
+        filter |= w::FileNotifyChangeFilter::LAST_WRITE;
+    }
+    filter
 }
 
 impl Default for WindowsWatcher {
@@ -34,6 +59,7 @@ impl Default for WindowsWatcher {
             },
             buf: PathBuffer::uninit(),
             base_idx: 0,
+            filter: w::FileNotifyChangeFilter::empty(),
         }
     }
 }
@@ -96,11 +122,7 @@ const _: () = assert!(
 
 impl DirWatcher {
     /// invalidates any EventIterators
-    fn prepare(&mut self) -> bun_sys::Result<()> {
-        let filter = w::FileNotifyChangeFilter::FILE_NAME
-            | w::FileNotifyChangeFilter::DIR_NAME
-            | w::FileNotifyChangeFilter::LAST_WRITE
-            | w::FileNotifyChangeFilter::CREATION;
+    fn prepare(&mut self, filter: w::FileNotifyChangeFilter) -> bun_sys::Result<()> {
         // SAFETY: dir_handle is a valid directory handle opened with FILE_LIST_DIRECTORY;
         // buf and overlapped are valid for the duration of the async operation (self-owned).
         if unsafe {
@@ -214,8 +236,9 @@ impl WindowsWatcher {
     // `Self` carries the 64 KiB `DirWatcher` buffer inline; it is moved once
     // into `Box::new(Watcher { .. })` in `Watcher::init`.
     #[allow(clippy::large_stack_frames)]
-    pub(crate) fn new(root: &[u8]) -> crate::Result<Self> {
+    pub(crate) fn new(root: &[u8], subscription: Op) -> crate::Result<Self> {
         let mut this = Self::default();
+        this.filter = notify_filter(subscription);
         this.init(root)?;
         Ok(this)
     }
@@ -300,7 +323,7 @@ impl WindowsWatcher {
 
     /// wait until new events are available
     fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
-        if let Err(err) = self.watcher.prepare() {
+        if let Err(err) = self.watcher.prepare(self.filter) {
             bun_core::scoped_log!(watcher, "prepare() returned error");
             return Err(err);
         }
@@ -355,7 +378,7 @@ impl WindowsWatcher {
                         watcher,
                         "ReadDirectoryChangesW buffer overflow (nbytes==0); re-arming"
                     );
-                    if let Err(err) = self.watcher.prepare() {
+                    if let Err(err) = self.watcher.prepare(self.filter) {
                         return Err(err);
                     }
                     continue;
@@ -541,16 +564,15 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
 }
 
 fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEvent {
-    let mut op = Op::empty();
-    if event.action == Action::Removed {
-        op |= Op::DELETE;
-    }
-    if event.action == Action::RenamedOld {
-        op |= Op::RENAME;
-    }
-    if event.action == Action::Modified {
-        op |= Op::WRITE;
-    }
+    // `RenamedOld` carries both `RENAME` and `MOVE_FROM`: consumers key on
+    // `RENAME`, and `MOVE_FROM` names which half of the rename this is.
+    let op = match event.action {
+        Action::Added => Op::CREATE,
+        Action::Removed => Op::DELETE,
+        Action::Modified => Op::WRITE,
+        Action::RenamedOld => Op::RENAME | Op::MOVE_FROM,
+        Action::RenamedNew => Op::MOVE_TO,
+    };
     WatchEvent {
         op,
         index,

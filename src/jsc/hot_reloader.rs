@@ -17,6 +17,17 @@ use bun_sys::{self, Fd};
 use bun_watcher::WatchItemColumns as _;
 use bun_watcher::{ChangedFilePath, Op as WatchOp, Watcher};
 
+/// Events `--hot` / `--watch` consume. Anything omitted is never requested from
+/// the OS, so it costs nothing to deliver or dispatch.
+///
+/// The reload decisions below test `WRITE`, `DELETE` and `RENAME`; the remaining
+/// bits are needed because a directory event's *names* drive re-resolution
+/// regardless of which op carried them. `METADATA` is the one op nothing tests
+/// for, and it is kept deliberately: it is what makes `touch` and `chmod`
+/// observable at all, so dropping it would narrow what `--watch` reports rather
+/// than merely skip work.
+const HOT_RELOAD_SUBSCRIPTION: WatchOp = WatchOp::all();
+
 use crate::Task as JscTask;
 use crate::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use crate::virtual_machine::VirtualMachine;
@@ -718,7 +729,11 @@ where
             _event_loop: PhantomData,
         }));
 
-        let watcher = match Watcher::init(reloader, ctx.watcher_top_level_dir()) {
+        let watcher = match Watcher::init(
+            reloader,
+            ctx.watcher_top_level_dir(),
+            HOT_RELOAD_SUBSCRIPTION,
+        ) {
             Ok(w) => w,
             Err(err) => {
                 bun_core::handle_error_return_trace(&err);

@@ -55,6 +55,66 @@ pub struct INotifyWatcher {
     pub(crate) watch_count: AtomicU32,
     /// nanoseconds
     pub(crate) coalesce_interval: isize,
+    /// See [`Watcher::init`].
+    subscription: Op,
+}
+
+/// Translate a subscription into the inotify mask for a **file** watch.
+///
+/// `IN_EXCL_UNLINK` is unconditional: it is a modifier, not an event.
+fn file_mask(subscription: Op) -> u32 {
+    use bun_sys::linux::IN;
+    let mut mask = IN::EXCL_UNLINK;
+    if subscription.contains(Op::DELETE) {
+        mask |= IN::DELETE_SELF;
+    }
+    if subscription.contains(Op::RENAME) {
+        mask |= IN::MOVE_SELF;
+    }
+    if subscription.contains(Op::MOVE_TO) {
+        mask |= IN::MOVED_TO;
+    }
+    if subscription.contains(Op::WRITE) {
+        mask |= IN::MODIFY;
+    }
+    if subscription.contains(Op::METADATA) {
+        mask |= IN::ATTRIB;
+    }
+    mask
+}
+
+/// Translate a subscription into the inotify mask for a **directory** watch.
+///
+/// `IN_ONLYDIR` guards against the path being swapped for a file between
+/// resolution and registration.
+///
+/// `Op::METADATA` is deliberately not honoured here. IN_ATTRIB on a directory
+/// reports metadata changes of every entry inside it, named, and consumers treat
+/// a named directory event as "re-resolve this entry" — so a bare `touch` would
+/// reload the module. Metadata reaches consumers through the per-file watch
+/// instead.
+fn dir_mask(subscription: Op) -> u32 {
+    use bun_sys::linux::IN;
+    let mut mask = IN::EXCL_UNLINK | IN::ONLYDIR;
+    if subscription.contains(Op::DELETE) {
+        mask |= IN::DELETE | IN::DELETE_SELF;
+    }
+    if subscription.contains(Op::CREATE) {
+        mask |= IN::CREATE;
+    }
+    if subscription.contains(Op::RENAME) {
+        mask |= IN::MOVE_SELF;
+    }
+    if subscription.contains(Op::MOVE_TO) {
+        mask |= IN::MOVED_TO;
+    }
+    if subscription.contains(Op::MOVE_FROM) {
+        mask |= IN::MOVED_FROM;
+    }
+    if subscription.contains(Op::WRITE) {
+        mask |= IN::MODIFY;
+    }
+    mask
 }
 
 impl Default for INotifyWatcher {
@@ -67,6 +127,7 @@ impl Default for INotifyWatcher {
             read_ptr: None,
             watch_count: AtomicU32::new(0),
             coalesce_interval: 100_000,
+            subscription: Op::all(),
         }
     }
 }
@@ -122,15 +183,19 @@ impl Event {
     pub(crate) fn size(&self) -> u32 {
         u32::try_from(size_of::<Event>()).expect("int cast") + self.name_len
     }
+
+    /// The kernel dropped events because `max_queued_events` was exceeded.
+    /// Delivered with `watch_descriptor == -1`, so it matches no watchlist entry.
+    pub fn is_queue_overflow(&self) -> bool {
+        (self.mask & bun_sys::linux::IN::Q_OVERFLOW) != 0
+    }
 }
 
 impl INotifyWatcher {
     pub(crate) fn watch_path(&mut self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
-        use bun_sys::linux::IN;
         debug_assert!(self.loaded);
         let old_count = self.watch_count.fetch_add(1, Ordering::Release);
-        let watch_file_mask =
-            IN::EXCL_UNLINK | IN::MOVE_SELF | IN::DELETE_SELF | IN::MOVED_TO | IN::MODIFY;
+        let watch_file_mask = file_mask(self.subscription);
         // SAFETY: fd is a valid inotify fd (loaded == true), pathname is NUL-terminated.
         let rc = unsafe {
             bun_sys::linux::inotify_add_watch(self.fd.native(), pathname.as_ptr(), watch_file_mask)
@@ -151,17 +216,9 @@ impl INotifyWatcher {
     }
 
     pub(crate) fn watch_dir(&mut self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
-        use bun_sys::linux::IN;
         debug_assert!(self.loaded);
         let old_count = self.watch_count.fetch_add(1, Ordering::Release);
-        let watch_dir_mask = IN::EXCL_UNLINK
-            | IN::DELETE
-            | IN::DELETE_SELF
-            | IN::CREATE
-            | IN::MOVE_SELF
-            | IN::ONLYDIR
-            | IN::MOVED_TO
-            | IN::MODIFY;
+        let watch_dir_mask = dir_mask(self.subscription);
         // SAFETY: fd is a valid inotify fd (loaded == true), pathname is NUL-terminated.
         let rc = unsafe {
             bun_sys::linux::inotify_add_watch(self.fd.native(), pathname.as_ptr(), watch_dir_mask)
@@ -181,7 +238,7 @@ impl INotifyWatcher {
         result
     }
 
-    pub(crate) fn new(_root: &[u8]) -> crate::Result<Self> {
+    pub(crate) fn new(_root: &[u8], subscription: Op) -> crate::Result<Self> {
         use bun_sys::linux::IN;
 
         let raw = bun_sys::linux::inotify_init1(IN::CLOEXEC);
@@ -196,6 +253,7 @@ impl INotifyWatcher {
         Ok(Self {
             fd,
             loaded: true,
+            subscription,
             coalesce_interval: env_var::BUN_INOTIFY_COALESCE_INTERVAL
                 .get()
                 .and_then(|v| isize::try_from(v).ok())
@@ -403,6 +461,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
 
     let mut event_id: usize = 0;
     let mut events_processed: usize = 0;
+    let mut overflowed = false;
 
     if events_processed < events.len() {
         let mut temp_name_list: [Option<&ZStr>; 128] = [None; 128];
@@ -439,6 +498,14 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 }
             }
 
+            // Carries `wd == -1`, so it matches no watchlist entry and would
+            // otherwise be discarded by the lookup below.
+            if event.is_queue_overflow() {
+                overflowed = true;
+                events_processed += 1;
+                continue;
+            }
+
             let idx = match this
                 .eventlist_index_scratch
                 .iter()
@@ -473,7 +540,46 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         }
     }
 
+    if overflowed {
+        resync_after_overflow(this);
+    }
+
     Ok(())
+}
+
+/// Replay a synthetic `WRITE` for every watched path after the kernel dropped an
+/// unknown set of events (`/proc/sys/fs/inotify/max_queued_events` exceeded).
+/// Which paths changed is unrecoverable, so every one is treated as suspect.
+fn resync_after_overflow(this: &mut Watcher) {
+    // `WatchItemIndex::MAX` is the no-watch-item sentinel, never a real index.
+    let len = {
+        let _guard = this.mutex.lock_guard();
+        this.watchlist.len().min(WatchItemIndex::MAX as usize)
+    };
+    bun_core::warn!(
+        "inotify event queue overflowed; re-checking all {} watched paths. Raise /proc/sys/fs/inotify/max_queued_events to avoid this.\n",
+        len
+    );
+
+    let mut start = 0;
+    while start < len {
+        let count = (len - start).min(max_count);
+        for i in 0..count {
+            // `WRITE` (never `DELETE`) is deliberate: it makes consumers
+            // re-check each path without driving the eviction path, whose
+            // `evict_list` is a fixed 8096-entry buffer.
+            this.watch_events[i] = WatchEvent {
+                op: Op::WRITE,
+                index: (start + i) as WatchItemIndex,
+                ..Default::default()
+            };
+        }
+        // `dispatch_file_updates` re-takes `this.mutex` and re-checks `running`;
+        // entries evicted between batches are filtered by the consumer's own
+        // bounds check against the current watchlist length.
+        this.dispatch_file_updates(count, 0);
+        start += count;
+    }
 }
 
 fn process_inotify_event_batch(
@@ -535,11 +641,17 @@ fn watch_event_from_inotify_event(event: &Event, index: WatchItemIndex) -> Watch
     if (event.mask & IN::MOVED_TO) > 0 {
         op |= Op::MOVE_TO;
     }
+    if (event.mask & IN::MOVED_FROM) > 0 {
+        op |= Op::MOVE_FROM;
+    }
     if (event.mask & IN::MODIFY) > 0 {
         op |= Op::WRITE;
     }
     if (event.mask & IN::CREATE) > 0 {
         op |= Op::CREATE;
+    }
+    if (event.mask & IN::ATTRIB) > 0 {
+        op |= Op::METADATA;
     }
     WatchEvent {
         op,

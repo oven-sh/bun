@@ -7,17 +7,43 @@ pub(crate) type Platform = KEventWatcher;
 
 pub struct KEventWatcher {
     pub(crate) fd: Fd,
+    /// See [`crate::watcher_impl::Watcher::init`].
+    pub(crate) subscription: Op,
+}
+
+/// Translate a subscription into EVFILT_VNODE `fflags`.
+///
+/// NOTE_ATTRIB is requested for files only. A directory vnode reports it solely
+/// for changes to the directory's own metadata — entry-level `chmod`/`touch`
+/// raise nothing on the parent — and no consumer acts on that, so requesting it
+/// there only adds wakeups. (This differs from inotify, where IN_ATTRIB on a
+/// directory *does* report its entries; see `dir_mask` in INotifyWatcher.)
+pub(crate) fn vnode_fflags(subscription: Op, kind: crate::watcher_impl::WatchItemKind) -> u32 {
+    let mut fflags = 0u32;
+    if subscription.contains(Op::DELETE) {
+        fflags |= libc::NOTE_DELETE;
+    }
+    if subscription.contains(Op::RENAME) {
+        fflags |= libc::NOTE_RENAME | libc::NOTE_LINK;
+    }
+    if subscription.contains(Op::WRITE) {
+        fflags |= libc::NOTE_WRITE;
+    }
+    if subscription.contains(Op::METADATA) && kind == crate::watcher_impl::WatchItemKind::File {
+        fflags |= libc::NOTE_ATTRIB;
+    }
+    fflags
 }
 
 const CHANGELIST_COUNT: usize = 128;
 
 impl KEventWatcher {
-    pub(crate) fn new(_root: &[u8]) -> crate::Result<Self> {
+    pub(crate) fn new(_root: &[u8], subscription: Op) -> crate::Result<Self> {
         let fd = bun_sys::kqueue()?;
         if fd.native() == 0 {
             return Err(crate::Error::KQueueError);
         }
-        Ok(Self { fd })
+        Ok(Self { fd, subscription })
     }
 
     pub(crate) fn stop(&mut self) {

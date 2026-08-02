@@ -153,7 +153,7 @@ test("--prefer-offline resolves auto-installed packages from the disk cache", as
   // Without --prefer-offline the resolver asks the registry and fails.
   {
     await using proc = run();
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(requests).toContain("/no-deps");
     expect(stderr).toContain("Cannot find package 'no-deps'");
     expect(exitCode).not.toBe(0);
@@ -166,11 +166,90 @@ test("--prefer-offline resolves auto-installed packages from the disk cache", as
   {
     await using proc = run("--prefer-offline");
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(requests).not.toContain("/no-deps");
+    expect(requests).toEqual([]);
     expect(stderr).not.toContain("Cannot find package");
     expect(stdout).toBe("2.0.0\n");
     expect(exitCode).toBe(0);
   }
+});
+
+// Offline, a bare specifier resolves as dist-tag "latest", which must pick the
+// newest stable cached version and skip prereleases that sort above it
+// (prereleases-2 caches 1.0.0-next.23 > 0.5.0, the only stable version).
+test("--prefer-offline resolves latest to the newest stable cached version", async () => {
+  const fixtures = join(import.meta.dir, "..", "install", "registry", "packages", "prereleases-2");
+  const requests: string[] = [];
+  let online = true;
+  using registry = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const pathname = new URL(req.url).pathname;
+      requests.push(pathname);
+      if (!online) return new Response("offline", { status: 404 });
+      if (pathname === "/prereleases-2") {
+        const manifest = await Bun.file(join(fixtures, "package.json")).text();
+        return Response.json(
+          JSON.parse(manifest.replaceAll("http://localhost:4873", `http://127.0.0.1:${registry.port}`)),
+        );
+      }
+      const tgz = pathname.match(/^\/prereleases-2\/-\/(prereleases-2-[^/]+\.tgz)$/);
+      if (tgz) return new Response(Bun.file(join(fixtures, tgz[1])));
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  const bunfig = `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`;
+  using dir = tempDir("prefer-offline-latest", {
+    "package.json": JSON.stringify({ name: "myapp", version: "1.0.0" }),
+    "index.js": `console.log(require("prereleases-2/package.json").version);`,
+    "bunfig.toml": bunfig,
+    // Scratch projects that only exist to seed the shared cache.
+    "seed-pre/package.json": JSON.stringify({
+      name: "seed-pre",
+      dependencies: { "prereleases-2": "1.0.0-next.23" },
+    }),
+    "seed-pre/bunfig.toml": bunfig,
+    "seed-stable/package.json": JSON.stringify({
+      name: "seed-stable",
+      dependencies: { "prereleases-2": "0.5.0" },
+    }),
+    "seed-stable/bunfig.toml": bunfig,
+  });
+  const cacheDir = join(String(dir), ".bun-cache");
+  const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir };
+
+  for (const seed of ["seed-pre", "seed-stable"]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(String(dir), seed),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  // Keep only the extracted packages and their version index.
+  online = false;
+  for (const entry of readdirSync(cacheDir).filter(e => e.endsWith(".npm"))) {
+    rmSync(join(cacheDir, entry), { force: true });
+  }
+  requests.length = 0;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--prefer-offline", "--install=force", "index.js"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(requests).toEqual([]);
+  expect(stderr).not.toContain("Cannot find package");
+  expect(stdout).toBe("0.5.0\n");
+  expect(exitCode).toBe(0);
 });
 
 test("--install=fallback to install missing packages", async () => {

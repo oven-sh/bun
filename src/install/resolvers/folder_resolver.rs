@@ -187,8 +187,7 @@ fn normalize_package_json_path<'a>(
     // We consider it valid if there is a package.json in the folder
     let normalized: &[u8] = if non_normalized_path.len() == 1 && non_normalized_path[0] == b'.' {
         match global_or_relative {
-            // "." means the cache folder itself; the dot-path branch below
-            // would resolve it against the project's top-level dir instead.
+            // "." is the cache folder itself, not the project's top-level dir.
             GlobalOrRelative::CacheFolder(_) => b"",
             _ => non_normalized_path,
         }

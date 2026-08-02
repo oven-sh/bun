@@ -100,7 +100,6 @@ impl PackageManager {
 
     pub(crate) fn get_installed_versions_from_disk_cache(
         &mut self,
-        tags_buf: &mut Vec<u8>,
         package_name: &[u8],
     ) -> crate::Result<Vec<semver::Version>> {
         let mut list: Vec<semver::Version> = Vec::new();
@@ -136,33 +135,21 @@ impl PackageManager {
                 continue;
             }
             let name: &[u8] = entry.name.slice_u8();
-            // Entries are named by `cached_npm_package_folder_name_print`
-            // minus the `<package>@` prefix: `<version>`, then `@@<registry
-            // host>` for non-default registries, then the `@@@<cache
-            // version>` suffix. Trim from the first `@@` so the version
-            // parses; `path_for_cached_npm_path` reconstructs the full name.
+            // Entry names carry `@@<registry host>` / `@@@<cache version>`
+            // suffixes after the version; trim them before parsing.
             let name = &name[..strings::index_of(name, b"@@").unwrap_or(name.len())];
             let sliced = SlicedString::init(name, name);
             let parsed = semver::Version::parse(sliced);
             if !parsed.valid || parsed.wildcard != semver::query::Wildcard::None {
                 continue;
             }
-            // not handling OOM
-            // TODO: wildcard
-            let mut version = parsed.version.min();
-            let total = (version.tag.build.len() + version.tag.pre.len()) as usize;
-            if total > 0 {
-                let len_before = tags_buf.len();
-                // `clone_into` writes exactly `total` bytes (build.len + pre.len)
-                // into `available` and advances it; zero-fill the tail first so
-                // we can hand it out as a safe `&mut [u8]` instead of slicing
-                // raw spare capacity.
-                tags_buf.resize(len_before + total, 0);
-                let mut available = &mut tags_buf[len_before..];
-                let new_version = version.clone_into(name, &mut available);
-                version = new_version;
+            let version = parsed.version.min();
+            // Pre/build tags are stored as wyhash hex in entry names and
+            // cannot be mapped back to a cache path, so only stable versions
+            // are resolvable offline.
+            if version.tag.has_pre() || version.tag.has_build() {
+                continue;
             }
-
             list.push(version);
         }
 
@@ -177,44 +164,37 @@ impl PackageManager {
     ) -> Option<PackageID> {
         match version.tag {
             dependency::Tag::Npm => {}
-            // Offline, "latest" means the newest stable version in the cache.
-            // Other dist tags stay ambiguous and go to the registry.
+            // Offline, "latest" means the newest stable cached version.
             dependency::Tag::DistTag if version.dist_tag().tag.slice(version_buf) == b"latest" => {}
             _ => return None,
         }
 
-        let mut tags_buf: Vec<u8> = Vec::new();
-        let mut installed_versions =
-            match self.get_installed_versions_from_disk_cache(&mut tags_buf, package_name) {
-                Ok(v) => v,
-                Err(err) => {
-                    bun_core::debug!(
-                        "error getting installed versions from disk cache: {}",
-                        err.name()
-                    );
-                    return None;
-                }
-            };
-
-        // TODO: make this fewer passes
+        let mut installed_versions = match self.get_installed_versions_from_disk_cache(package_name)
         {
-            let tags_slice: &[u8] = tags_buf.as_slice();
-            // Sort descending. Use the total-order helper with swapped args
-            // (`b.order(a)`) so equal keys yield `Equal`; a two-way Less/Greater
-            // closure is not antisymmetric and may panic since Rust 1.81.
-            installed_versions.sort_by(|a, b| semver::Version::order_fn(tags_slice, *b, *a));
-        }
+            Ok(v) => v,
+            Err(err) => {
+                bun_core::debug!(
+                    "error getting installed versions from disk cache: {}",
+                    err.name()
+                );
+                return None;
+            }
+        };
+
+        // Sort descending. The entries are tag-free (stable versions only),
+        // so no string buffer is needed. Use the total-order helper with
+        // swapped args (`b.order(a)`) so equal keys yield `Equal`; a two-way
+        // Less/Greater closure is not antisymmetric and may panic since
+        // Rust 1.81.
+        installed_versions.sort_by(|a, b| semver::Version::order_fn(&[], *b, *a));
         let npm_query = version.try_npm();
         for installed_version in installed_versions.iter().copied() {
             let matches = match npm_query {
-                Some(npm) => npm.version.satisfies(
-                    installed_version,
-                    self.lockfile.buffers.string_bytes.as_slice(),
-                    tags_buf.as_slice(),
-                ),
-                // "latest": the list is sorted descending, so the first
-                // non-prerelease version is the newest stable one.
-                None => !installed_version.tag.has_pre(),
+                // The query's pre/build tags were parsed against `version_buf`,
+                // not the lockfile's string bytes.
+                Some(npm) => npm.version.satisfies(installed_version, version_buf, &[]),
+                // Sorted descending: the first entry is the newest stable.
+                None => true,
             };
             if matches {
                 let mut buf = PathBuffer::uninit();
@@ -226,8 +206,10 @@ impl PackageManager {
                 ) {
                     Ok(p) => p,
                     Err(err) => {
+                        // Stale or foreign-registry index entries reconstruct
+                        // to a path that no longer exists; try the next one.
                         bun_core::debug!("error getting path for cached npm path: {}", err.name());
-                        return None;
+                        continue;
                     }
                 };
                 let dep_version = dependency::Version {
@@ -262,7 +244,7 @@ impl PackageManager {
                             "error getting or putting folder resolution: {}",
                             err.name()
                         );
-                        return None;
+                        continue;
                     }
                 }
             }

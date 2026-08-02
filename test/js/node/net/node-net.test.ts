@@ -699,6 +699,42 @@ it("unref should exit when no more work pending", async () => {
   expect(await process.exited).toBe(0);
 });
 
+// An unref() applied while lookup is pending must survive the autoSelectFamily handle reinit.
+it("unref survives an autoSelectFamily retry", async () => {
+  // IPv4-only server + injected lookup listing ::1 first forces a refused attempt then a retry; unref() runs mid-lookup.
+  const server = createServer(() => {});
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const lookup = (host, opts, cb) =>
+            setTimeout(() => cb(null, [{ address: "::1", family: 6 }, { address: "127.0.0.1", family: 4 }]), 10);
+          const s = net.connect({ host: "localhost", port: ${server.address().port}, autoSelectFamily: true, lookup });
+          s.on("data", () => {});
+          s.on("error", e => process.stdout.write("error " + e.code + "\\n"));
+          s.on("connect", () => process.stdout.write("connected " + s.remoteAddress + "\\n"));
+          s.unref();
+          // Sentinel keeping the loop alive across the refuse + retry.
+          setTimeout(() => process.stdout.write("timer\\n"), 500);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    // After the sentinel timer only the unref'd socket remains, so the process must exit.
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim().split("\n").sort()).toEqual(["connected 127.0.0.1", "timer"]);
+    expect(exitCode).toBe(0);
+  } finally {
+    server.close();
+  }
+});
+
 it("socket should keep process alive if unref is not called", async () => {
   const process = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "node-ref-default-fixture.js")],

@@ -105,7 +105,9 @@ pub enum Protocol {
 }
 
 pub use bun_http_types::Encoding::Encoding;
-pub use header_value_iterator::HeaderValueIterator;
+pub use header_value_iterator::{
+    HeaderValueIterator, connection_header_keep_alive, upgrade_header_is_not_h2,
+};
 pub use init_error::InitError;
 
 /// Cloned response metadata (headers + url + status). Ownership transfers to
@@ -1815,22 +1817,23 @@ impl<'a> HTTPClient<'a> {
                 // configured regardless, so the helper is called unconditionally
                 // below with `null` SNI in the IP case.
                 let mut owned: Vec<u8>; // drops on scope exit
-                let host_z: *const core::ffi::c_char = if !strings::is_ip_address(raw_hostname) {
-                    // SAFETY: TEMP_HOSTNAME only accessed from HTTP thread
-                    let temp = scratch::temp_hostname();
-                    if raw_hostname.len() < temp.len() {
-                        temp[..raw_hostname.len()].copy_from_slice(raw_hostname);
-                        temp[raw_hostname.len()] = 0;
-                        temp.as_ptr().cast::<core::ffi::c_char>()
+                let host_z: *const core::ffi::c_char =
+                    if !bun_core::ip_address::is_ip_address(raw_hostname) {
+                        // SAFETY: TEMP_HOSTNAME only accessed from HTTP thread
+                        let temp = scratch::temp_hostname();
+                        if raw_hostname.len() < temp.len() {
+                            temp[..raw_hostname.len()].copy_from_slice(raw_hostname);
+                            temp[raw_hostname.len()] = 0;
+                            temp.as_ptr().cast::<core::ffi::c_char>()
+                        } else {
+                            owned = Vec::with_capacity(raw_hostname.len() + 1);
+                            owned.extend_from_slice(raw_hostname);
+                            owned.push(0);
+                            owned.as_ptr().cast::<core::ffi::c_char>()
+                        }
                     } else {
-                        owned = Vec::with_capacity(raw_hostname.len() + 1);
-                        owned.extend_from_slice(raw_hostname);
-                        owned.push(0);
-                        owned.as_ptr().cast::<core::ffi::c_char>()
-                    }
-                } else {
-                    core::ptr::null()
-                };
+                        core::ptr::null()
+                    };
 
                 // SAFETY: `ssl_ptr` was null-checked above and is the live SSL
                 // handle for this just-opened socket.
@@ -2328,6 +2331,7 @@ impl<'a> HTTPClient<'a> {
         let mut override_accept_header = false;
         let mut override_host_header = false;
         let mut override_connection_header = false;
+        let mut connection_close_requested = false;
         let mut override_user_agent = false;
         let mut add_transfer_encoding = true;
         let mut original_content_length: Option<&[u8]> = None;
@@ -2359,17 +2363,15 @@ impl<'a> HTTPClient<'a> {
                 h if h == hash_header_const(b"Connection") => {
                     if will_append {
                         override_connection_header = true;
-                        let connection_value = self.header_str(header_values[i]);
-                        if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            connection_value,
-                            b"close",
-                        ) {
-                            self.flags.disable_keepalive = true;
-                        } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            connection_value,
-                            b"keep-alive",
-                        ) {
-                            self.flags.disable_keepalive = false;
+                        match connection_header_keep_alive(self.header_str(header_values[i])) {
+                            Some(false) => {
+                                connection_close_requested = true;
+                                self.flags.disable_keepalive = true;
+                            }
+                            Some(true) if !connection_close_requested => {
+                                self.flags.disable_keepalive = false;
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -2404,11 +2406,7 @@ impl<'a> HTTPClient<'a> {
                 }
                 h if h == hash_header_const(b"Upgrade") => {
                     if will_append {
-                        let value = self.header_str(header_values[i]);
-                        if !bun_core::strings::eql_any_case_insensitive_ascii(
-                            value,
-                            &[b"h2", b"h2c"],
-                        ) {
+                        if upgrade_header_is_not_h2(self.header_str(header_values[i])) {
                             self.flags.upgrade_state = HTTPUpgradeState::Pending;
                         }
                     }
@@ -4752,6 +4750,7 @@ impl<'a> HTTPClient<'a> {
         let mut location: &[u8] = b"";
         let mut pretend_304 = false;
         let mut is_server_sent_events = false;
+        let mut content_codings: u32 = 0;
         for (header_i, header) in response.headers.list.iter().enumerate() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
@@ -4800,25 +4799,21 @@ impl<'a> HTTPClient<'a> {
                 }
                 h if h == hash_header_const(b"Content-Encoding") => {
                     if !self.flags.disable_decompression {
-                        // RFC 9110 §8.4.1: content codings are case-insensitive.
-                        // `x-gzip` is a registered deprecated alias of `gzip`.
-                        let value = header.value();
-                        if strings::eql_case_insensitive_ascii_check_length(value, b"gzip")
-                            || strings::eql_case_insensitive_ascii_check_length(value, b"x-gzip")
-                        {
-                            self.state.encoding = Encoding::Gzip;
-                            self.state.content_encoding_i = header_i as u8;
-                        } else if strings::eql_case_insensitive_ascii_check_length(
-                            value, b"deflate",
-                        ) {
-                            self.state.encoding = Encoding::Deflate;
-                            self.state.content_encoding_i = header_i as u8;
-                        } else if strings::eql_case_insensitive_ascii_check_length(value, b"br") {
-                            self.state.encoding = Encoding::Brotli;
-                            self.state.content_encoding_i = header_i as u8;
-                        } else if strings::eql_case_insensitive_ascii_check_length(value, b"zstd") {
-                            self.state.encoding = Encoding::Zstd;
-                            self.state.content_encoding_i = header_i as u8;
+                        for token in HeaderValueIterator::init(header.value()) {
+                            match Encoding::from_token(token) {
+                                Some(Encoding::Identity) => {}
+                                Some(coding) if coding.is_compressed() && content_codings == 0 => {
+                                    self.state.encoding = coding;
+                                    self.state.content_encoding_i = header_i as u8;
+                                    content_codings = 1;
+                                }
+                                // Stacked or unknown codings: we can only strip one layer, so pass through raw.
+                                _ => {
+                                    self.state.encoding = Encoding::Identity;
+                                    self.state.content_encoding_i = u8::MAX;
+                                    content_codings = u32::MAX;
+                                }
+                            }
                         }
                     }
                 }
@@ -4832,52 +4827,27 @@ impl<'a> HTTPClient<'a> {
                     {
                         continue;
                     }
-                    // RFC 9112 §7: transfer-coding names are case-insensitive.
-                    let value = header.value();
-                    if strings::eql_case_insensitive_ascii_check_length(value, b"gzip")
-                        || strings::eql_case_insensitive_ascii_check_length(value, b"x-gzip")
-                    {
-                        if !self.flags.disable_decompression {
-                            self.state.transfer_encoding = Encoding::Gzip;
+                    // RFC 9112 §6.1: `chunked`, if present, must be the final coding.
+                    for token in HeaderValueIterator::init(header.value()) {
+                        if self.state.transfer_encoding == Encoding::Chunked {
+                            return Err(crate::Error::UnsupportedTransferEncoding);
                         }
-                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"deflate") {
-                        if !self.flags.disable_decompression {
-                            self.state.transfer_encoding = Encoding::Deflate;
+                        match Encoding::from_token(token) {
+                            Some(Encoding::Chunked) => {
+                                self.state.transfer_encoding = Encoding::Chunked;
+                            }
+                            Some(_) => {}
+                            None => return Err(crate::Error::UnsupportedTransferEncoding),
                         }
-                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"br") {
-                        if !self.flags.disable_decompression {
-                            self.state.transfer_encoding = Encoding::Brotli;
-                        }
-                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"zstd") {
-                        if !self.flags.disable_decompression {
-                            self.state.transfer_encoding = Encoding::Zstd;
-                        }
-                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"identity") {
-                        self.state.transfer_encoding = Encoding::Identity;
-                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"chunked") {
-                        self.state.transfer_encoding = Encoding::Chunked;
-                    } else {
-                        return Err(crate::Error::UnsupportedTransferEncoding);
                     }
                 }
                 h if h == hash_header_const(b"Location") => {
                     location = header.value();
                 }
                 h if h == hash_header_const(b"Connection") => {
-                    // `close` applies on any status (RFC 9112 §9.6); only an
-                    // explicit `keep-alive` is gated on a 2xx success.
-                    if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                        header.value(),
-                        b"close",
-                    ) {
+                    // `close` on any field line, any status, is sticky (RFC 9110 §5.3, RFC 9112 §9.6).
+                    if connection_header_keep_alive(header.value()) == Some(false) {
                         self.state.flags.allow_keepalive = false;
-                    } else if (200..=299).contains(&response.status_code)
-                        && bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            header.value(),
-                            b"keep-alive",
-                        )
-                    {
-                        self.state.flags.allow_keepalive = true;
                     }
                 }
                 h if h == hash_header_const(b"Last-Modified") => {

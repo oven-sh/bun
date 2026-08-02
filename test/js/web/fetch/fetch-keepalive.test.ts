@@ -88,6 +88,7 @@ test.concurrent.each([
   [200, "close, keep-alive"],
   [200, "Keep-Alive ,\tClose"],
   [200, "upgrade, close"],
+  [200, "close\\r\\nConnection: keep-alive"],
 ] as const)("a %d response with Connection: %s is not pooled", async (status, connection) => {
   await using proc = Bun.spawn({
     cmd: [

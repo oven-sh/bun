@@ -2330,6 +2330,7 @@ impl<'a> HTTPClient<'a> {
         let mut override_accept_header = false;
         let mut override_host_header = false;
         let mut override_connection_header = false;
+        let mut connection_close_requested = false;
         let mut override_user_agent = false;
         let mut add_transfer_encoding = true;
         let mut original_content_length: Option<&[u8]> = None;
@@ -2361,10 +2362,15 @@ impl<'a> HTTPClient<'a> {
                 h if h == hash_header_const(b"Connection") => {
                     if will_append {
                         override_connection_header = true;
-                        if let Some(keep_alive) =
-                            connection_header_keep_alive(self.header_str(header_values[i]))
-                        {
-                            self.flags.disable_keepalive = !keep_alive;
+                        match connection_header_keep_alive(self.header_str(header_values[i])) {
+                            Some(false) => {
+                                connection_close_requested = true;
+                                self.flags.disable_keepalive = true;
+                            }
+                            Some(true) if !connection_close_requested => {
+                                self.flags.disable_keepalive = false;
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -4838,13 +4844,9 @@ impl<'a> HTTPClient<'a> {
                     location = header.value();
                 }
                 h if h == hash_header_const(b"Connection") => {
-                    // `close` applies on any status (RFC 9112 §9.6); `keep-alive` only on 2xx.
-                    match connection_header_keep_alive(header.value()) {
-                        Some(false) => self.state.flags.allow_keepalive = false,
-                        Some(true) if (200..=299).contains(&response.status_code) => {
-                            self.state.flags.allow_keepalive = true;
-                        }
-                        _ => {}
+                    // `close` on any field line, any status, is sticky (RFC 9110 §5.3, RFC 9112 §9.6).
+                    if connection_header_keep_alive(header.value()) == Some(false) {
+                        self.state.flags.allow_keepalive = false;
                     }
                 }
                 h if h == hash_header_const(b"Last-Modified") => {

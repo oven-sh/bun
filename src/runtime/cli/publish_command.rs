@@ -542,7 +542,7 @@ impl PublishCommand {
             match PackageManager::init(&mut *ctx, cli.clone(), Subcommand::Publish) {
                 Ok(v) => v,
                 Err(err) => {
-                    if !cli.silent {
+                    if !cli.log_level.is_silent() {
                         if err == bun_install::Error::MissingPackageJSON {
                             Output::err_generic("missing package.json, nothing to publish", ());
                         }

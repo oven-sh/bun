@@ -2492,9 +2492,10 @@ pub(crate) mod __gated_printer {
 
                 if self.options.inline_require_and_import_errors {
                     if record.path.is_disabled
-                        && record
-                            .flags
-                            .contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                        && record.flags.contains(
+                            ImportRecordFlags::HANDLES_IMPORT_ERRORS
+                                | ImportRecordFlags::WAS_UNRESOLVED,
+                        )
                     {
                         self.print_require_error(record.path.text);
                         if wrap {
@@ -3880,10 +3881,10 @@ pub(crate) mod __gated_printer {
                             {
                                 self.add_source_mapping(expr.loc);
 
-                                if import_record
-                                    .flags
-                                    .contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS)
-                                {
+                                if import_record.flags.contains(
+                                    ImportRecordFlags::HANDLES_IMPORT_ERRORS
+                                        | ImportRecordFlags::WAS_UNRESOLVED,
+                                ) {
                                     self.print_require_error(import_record.path.text);
                                 } else {
                                     self.print_disabled_import();

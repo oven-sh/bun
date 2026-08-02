@@ -723,7 +723,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if Self::IS_TYPESCRIPT_ENABLED {
             if opts.is_typescript_declare {
                 p.pop_and_discard_scope(scope_index);
-                if opts.is_namespace_scope && opts.is_export {
+                if opts.scope.is_namespace() && opts.is_export {
                     p.has_non_local_export_declare_inside_namespace = true;
                 }
 

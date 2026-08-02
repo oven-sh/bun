@@ -726,17 +726,6 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     return result.toString();
 }
 
-WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const ZigString* arg_name_string, const ZigString* expected_type_string, JSValue actual_value)
-{
-    auto arg_name = std::span<const Latin1Character>(arg_name_string->ptr, arg_name_string->len);
-    ASSERT(WTF::charactersAreAllASCII(arg_name));
-
-    auto expected_type = std::span<const Latin1Character>(expected_type_string->ptr, expected_type_string->len);
-    ASSERT(WTF::charactersAreAllASCII(expected_type));
-
-    return ERR_INVALID_ARG_TYPE(scope, globalObject, arg_name, expected_type, actual_value);
-}
-
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue val_arg_name, JSValue val_expected_type, JSValue val_actual_value)
 {
     auto* arg_name_str = val_arg_name.toString(globalObject);
@@ -1165,13 +1154,6 @@ JSC::EncodedJSValue INVALID_FILE_URL_HOST(JSC::ThrowScope& throwScope, JSC::JSGl
     throwScope.release();
     return {};
 }
-JSC::EncodedJSValue INVALID_FILE_URL_HOST(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const ASCIILiteral platform)
-{
-    auto message = makeString("File URL host must be \"localhost\" or empty on "_s, platform);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_FILE_URL_HOST, message));
-    throwScope.release();
-    return {};
-}
 /// `File URL path {suffix}`
 JSC::EncodedJSValue INVALID_FILE_URL_PATH(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const ASCIILiteral suffix)
 {
@@ -1394,17 +1376,6 @@ JSC::EncodedJSValue CRYPTO_ECDH_INVALID_FORMAT(ThrowScope& scope, JSGlobalObject
     builder.append("Invalid ECDH format: "_s);
     builder.append(formatString);
     scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_ECDH_INVALID_FORMAT, builder.toString()));
-    return {};
-}
-
-JSC::EncodedJSValue CRYPTO_JWK_UNSUPPORTED_CURVE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& curve)
-{
-    WTF::StringBuilder builder;
-    builder.append("Unsupported JWK EC curve: "_s);
-    builder.append(curve);
-    builder.append('.');
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_JWK_UNSUPPORTED_CURVE, builder.toString()));
-    throwScope.release();
     return {};
 }
 

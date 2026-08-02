@@ -788,6 +788,7 @@ fn cmd_editor(repl: &mut Repl, _: &[u8]) -> ReplResult {
     ));
     repl.input_mode = InputMode::Editor;
     repl.editor_buffer.clear();
+    repl.multiline_buffer.clear();
     ReplResult::SkipEval
 }
 

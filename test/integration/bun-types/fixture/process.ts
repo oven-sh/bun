@@ -24,6 +24,11 @@ process.once("SIGINT", () => {
   console.log("Interrupt from keyboard");
 });
 
+process.addUncaughtExceptionCaptureCallback(err => {
+  console.log(err.message);
+  return true;
+});
+
 // commented methods are not yet implemented
 console.log(process.allowedNodeEnvironmentFlags);
 // console.log(process.channel);

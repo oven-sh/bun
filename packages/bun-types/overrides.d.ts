@@ -95,6 +95,19 @@ declare global {
       noDeprecation?: boolean | undefined;
 
       /**
+       * Adds a callback that is invoked when an uncaught exception occurs,
+       * receiving the exception as its first argument.
+       *
+       * Unlike {@link setUncaughtExceptionCaptureCallback}, multiple callbacks
+       * can be registered and they do not conflict with the `domain` module.
+       * Callbacks run in reverse order of registration (most recent first).
+       * If a callback returns `true`, the remaining callbacks and the default
+       * `'uncaughtException'` handling are skipped.
+       * @since Node.js v25.9.0
+       */
+      addUncaughtExceptionCaptureCallback(fn: (err: Error) => boolean | void): void;
+
+      /**
        * Emitted when the operating system signals that available memory is
        * running low. Use this to release caches or reap idle resources instead
        * of polling.

@@ -5,6 +5,7 @@
 #include "BunBuiltinNames.h"
 #include "BunClientData.h"
 #include "JSEventEmitter.h"
+#include "WriteBarrierList.h"
 
 namespace Zig {
 class GlobalObject;
@@ -27,6 +28,9 @@ class Process : public WebCore::JSEventEmitter {
     // Only used by internal code via passing to queueNextTick
     LazyProperty<Process, JSFunction> m_emitHelperFunction;
     WriteBarrier<Unknown> m_uncaughtExceptionCaptureCallback;
+    // process.addUncaughtExceptionCaptureCallback registrations. These coexist with
+    // m_uncaughtExceptionCaptureCallback and are only consulted when it is unset.
+    WriteBarrierList<JSObject> m_uncaughtExceptionAuxiliaryCallbacks;
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116
     WriteBarrier<JSString> m_cachedCwd;
@@ -122,6 +126,11 @@ public:
     inline JSC::JSValue getUncaughtExceptionCaptureCallback()
     {
         return m_uncaughtExceptionCaptureCallback.get();
+    }
+
+    inline WriteBarrierList<JSObject>& uncaughtExceptionAuxiliaryCallbacks()
+    {
+        return m_uncaughtExceptionAuxiliaryCallbacks;
     }
 
     inline Structure* cpuUsageStructure() { return m_cpuUsageStructure.getInitializedOnMainThread(this); }

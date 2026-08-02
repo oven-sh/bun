@@ -648,7 +648,8 @@ function SocketEmitEndNT(self, _err?) {
     }
     return;
   }
-  if (!self[kended]) {
+  // A close driven by our own destroy() is not a peer EOF; Node emits only 'close' there.
+  if (!self[kended] && !self.destroyed) {
     finishSocketEnd(self);
   } else if (_err && !self.destroyed) {
     // An error excluded from the synthesis above (teardown noise, or no
@@ -1333,7 +1334,8 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       }
       return;
     }
-    if (!deferEndForOnreadTail(self)) finishSocketEnd(self);
+    // Same destroyed guard as SocketEmitEndNT: our own destroy() is not a peer EOF.
+    if (!self.destroyed && !deferEndForOnreadTail(self)) finishSocketEnd(self);
     // A write that was waiting on the native drain can never complete once the
     // socket is gone - fail it so 'finish'/destroy are not stuck behind it
     // (mirrors SocketEmitEndNT).

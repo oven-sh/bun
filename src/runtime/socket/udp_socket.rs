@@ -47,16 +47,6 @@ bun_output::declare_scope!(UdpSocket, visible);
 /// status, not a CRT errno, so reading `_errno()` here would be the wrong
 /// source.
 #[inline]
-fn storage_as<T>(storage: &mut sockaddr_storage) -> &mut T {
-    const {
-        assert!(size_of::<T>() <= size_of::<sockaddr_storage>());
-        assert!(align_of::<T>() <= align_of::<sockaddr_storage>());
-    }
-    // SAFETY: size/alignment checked above; provenance comes from `storage`.
-    unsafe { &mut *std::ptr::from_mut(storage).cast::<T>() }
-}
-
-#[inline]
 fn errno_sys(rc: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
     #[cfg(windows)]
     {

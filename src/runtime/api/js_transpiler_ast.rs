@@ -190,7 +190,8 @@ impl<'a> Writer<'a> {
                     let mut bytes = [0u8; 4];
                     bytes[..take].copy_from_slice(&s[i..i + take]);
                     let cp = strings::decode_wtf8_rune_t::<i32>(bytes, width, -1);
-                    if cp < 0 {
+                    // WTF-8 accepts surrogates; strict UTF-8 (`TextDecoder`, raw mode) does not.
+                    if cp < 0 || (0xD800..=0xDFFF).contains(&cp) {
                         self.uescape(0xFFFD);
                         i += utf8_maximal_subpart(&s[i..]);
                     } else {

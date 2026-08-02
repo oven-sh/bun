@@ -279,6 +279,10 @@ describe("Bun.Transpiler.unstable_parse", () => {
     const src2 = Uint8Array.of(0x23, 0x21, 0xf0, 0x80, 0x80, 0x0a, 0x31);
     expect(js.unstable_parse(src2).hashbang).toBe("#!\uFFFD\uFFFD\uFFFD");
     expect(js.unstable_parse(src2, { format: "raw" }).root.hashbang).toBe("#!\uFFFD\uFFFD\uFFFD");
+    // WTF-8-encoded surrogate [ED A0 80]: strict UTF-8 rejects (ED's 2nd byte ≤ 9F).
+    const src3 = Uint8Array.of(0x23, 0x21, 0xed, 0xa0, 0x80, 0x0a, 0x31);
+    expect(js.unstable_parse(src3).hashbang).toBe("#!\uFFFD\uFFFD\uFFFD");
+    expect(js.unstable_parse(src3, { format: "raw" }).root.hashbang).toBe("#!\uFFFD\uFFFD\uFFFD");
   });
 
   test("options getters cannot detach the input buffer mid-parse", () => {

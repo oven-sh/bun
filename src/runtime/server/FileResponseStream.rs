@@ -381,6 +381,7 @@ impl FileResponseStream {
         // SAFETY: `read()` dispatches `on_read_chunk`/`on_reader_done` back
         // into this object through the parent pointer, so no cell borrow
         // spans it.
+        // SAFETY: as the drive site above.
         unsafe { BufferedReader::read(self.reader.as_ptr()) };
         true
     }
@@ -576,6 +577,10 @@ impl FileResponseStream {
 
 // BufferedReader vtable parent.
 // `loop_` delegates to the inherent `r#loop()` which already does the
+// cfg(windows) `.uv_loop` projection. The read/done/error arms take a ref for
+// the duration of the handler since it can end in `finish()`.
+// cfg(windows) `.uv_loop` projection. The read/done/error arms take a ref for
+// the duration of the handler since it can end in `finish()`.
 bun_io::impl_buffered_reader_parent! {
     FileResponseStream for FileResponseStream;
     has_on_read_chunk = true;

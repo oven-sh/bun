@@ -62,6 +62,8 @@ pub struct WindowsNamedPipe {
     /// Non-owning alias of the heap `uv::Pipe`. The owning
     /// `Box<uv::Pipe>` is leaked in [`from`] and adopted by
     /// `self.writer.source` (`Source::Pipe`) inside [`start`]; this field only
+    /// ever observes/null-checks the handle, never frees it. Cleared by
+    /// [`Self::on_close`] before the writer's async close frees the Box.
     #[cfg(windows)]
     pub(crate) pipe: Cell<Option<NonNull<uv::Pipe>>>, // any duplex
     #[cfg(not(windows))]
@@ -563,6 +565,9 @@ impl WindowsNamedPipe {
 
     /// `extern "C"` trampoline matching `uv_connect_cb` (`Pipe::connect`'s
     /// `on_connect` parameter). Recovers `*mut Self` from `req->data` (set in
+    /// `connect()`) and forwards to the safe `&self` body. Only ever invoked
+    /// by libuv (coerces to the `uv_connect_cb` fn-pointer type at the
+    /// `Pipe::connect` call site).
     #[cfg(windows)]
     extern "C" fn uv_on_connect(req: *mut uv::uv_connect_t, status: uv::ReturnCode) {
         // SAFETY: `req` is `self.connect_req`, whose `data` was set to
@@ -1137,6 +1142,8 @@ impl uv::StreamReader for WindowsNamedPipe {
     #[inline]
     unsafe fn on_read(this: *mut Self, data: &[u8]) {
         // `data` points into `(*this).incoming` (it was returned from
+        // `on_read_alloc`). Capture the only thing the body needs (length)
+        // and drop the slice before touching `*this`.
         let nread = data.len();
         let _ = data;
         // SAFETY: `this` is the live context stashed in `handle.data` by

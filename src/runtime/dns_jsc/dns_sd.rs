@@ -543,7 +543,9 @@ impl SharedConnection {
         // SAFETY: this thread's live RuntimeState; the timer slot is valid until `destroy`.
         unsafe {
             (*state).timer.update(
-                self.early_out_timer.as_ptr(),
+                core::ptr::addr_of!(self.early_out_timer)
+                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                    .cast_mut(),
                 &ElTimespec {
                     sec: next.sec,
                     nsec: next.nsec,

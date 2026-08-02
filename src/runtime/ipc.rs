@@ -38,6 +38,10 @@ use bun_uws;
 /// Queue for messages sent between parent and child processes in an IPC environment. node:cluster sends json serialized messages
 /// to describe different events it performs. It will send a message with an incrementing sequence number and then call a callback
 /// when a message is received with an 'ack' property of the same sequence number.
+///
+/// Note: moved down from `bun_runtime::node::node_cluster_binding` (cycle-break per
+/// docs/PORTING.md) — `SendQueue` stores one inline so the struct must live at this tier.
+/// All field accesses + dispatch methods need only `bun_jsc`/`bun_collections` symbols.
 pub struct InternalMsgHolder {
     pub seq: i32,
 
@@ -1521,6 +1525,8 @@ impl SendQueue {
 
     /// starts a write request. on posix, this always calls _onWriteComplete immediately. on windows, it may
     /// call _onWriteComplete later.
+    ///
+    /// The outbound bytes are read from `queue[0]` *inside* this method.
     fn write(&self, fd: Option<Fd>) {
         let Some(socket) = self.get_socket() else {
             self.on_write_complete(-1);
@@ -1568,6 +1574,7 @@ impl SendQueue {
                     // and thunks it through libuv. The callback receives the
                     // raw `*mut WindowsWrite` (NOT `&mut`) because
                     // `windows_on_write_complete` deallocates the request via
+                    // `WindowsWrite::destroy`.
                     |req: *mut WindowsWrite, rc| SendQueue::windows_on_write_complete(req, rc),
                 )
             };
@@ -1756,6 +1763,9 @@ impl uv::StreamReader for SendQueue {
     #[inline]
     unsafe fn on_read(this: *mut Self, data: &[u8]) {
         // `data` points into `(*this).incoming` (it was returned from
+        // `on_read_alloc`); the callee re-derives the written tail from
+        // `incoming` itself, so only the length is forwarded and only a shared
+        // view of `*this` is formed.
         let nread = data.len();
         let _ = data;
         // SAFETY: `this` is the live `SendQueue` stashed in `handle.data` by
@@ -2030,6 +2040,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
         }
         Mode::Advanced => {
             // Advanced mode: uses length-prefix, no newline scanning needed.
+            // Try to decode directly from the incoming chunk first, only buffer if needed.
             let buffered = send_queue.incoming.with_mut(|inc| {
                 let IncomingBuffer::Advanced(adv_buf) = inc else {
                     unreachable!()
@@ -2191,6 +2202,8 @@ pub mod IPCHandlers {
                         };
                         debug_assert!(json_buf.data.len() + nread <= json_buf.data.capacity());
                         // libuv wrote `nread` bytes at `data[old_len..]` via the
+                        // slice returned from `on_read_alloc`; only the count is
+                        // forwarded.
                         json_buf.notify_written(nread);
                     });
 

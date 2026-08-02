@@ -19,9 +19,11 @@ use crate::webcore::{
 /// Q: Why is this needed?
 /// A: The dev server needs to attach its own callback when the request is
 ///    aborted.
+///
 /// Q: Why can't the dev server just call `.setAbortHandler(...)` then?
 /// A: It can't, because that is *already* called by the RequestContext, setting
 ///    the callback and the user data context pointer.
+///
 ///    If it did, it would *overwrite* the user data context pointer (this
 ///    is what it did before), causing segfaults.
 pub struct AdditionalOnAbortCallback {
@@ -252,6 +254,11 @@ use bun_jsc::SysErrorJsc as _;
 
 /// RAII: releases one intrusive ref on a [`RequestContext`] at scope exit.
 ///
+/// Every callback entry that can reach a `deref()` (uWS handlers, promise
+/// reactions, task callbacks) constructs one of these from its raw entry
+/// pointer as the first statement: the guard's ref keeps the pooled context
+/// alive for the whole frame even if the body drops the base ref, and the
+/// actual pool release happens here at drop.
 struct RequestContextRef<ThisServer, const SSL: bool, const DBG: bool, const H3: bool>
 where
     ThisServer: ServerLike + 'static,
@@ -568,6 +575,8 @@ where
     ///
     /// Returned lifetime is **decoupled** from `&self` (unbounded `'r`): the
     /// server is not a sub-field of `RequestContext` (it owns the pool the
+    /// context lives in), so callers may hold `&ThisServer` past calls that
+    /// end or recycle this context.
     #[inline]
     pub(crate) fn server<'r>(&self) -> &'r ThisServer {
         // SAFETY: BACKREF — `server` is `Some(non-null)` after `init()` and
@@ -587,6 +596,8 @@ where
     ///
     /// Returns an unbounded `&'r mut` because the slot is a separate
     /// `HiveArray` allocation, **not** a sub-field of `*self`, so callers may
+    /// hold it across disjoint reborrows of other `RequestContext` fields
+    /// (same pattern as [`server()`]).
     #[inline]
     #[allow(
         clippy::mut_from_ref,
@@ -682,6 +693,8 @@ where
 
     pub(crate) fn set_cookies(&self, cookie_map: Option<*mut CookieMap>) {
         // S008: `CookieMap` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+        // `new_ref` takes a ref for storage. Replacing drops (and so unrefs)
+        // the old one.
         drop(self.cookies.replace(
             cookie_map.map(|p| CookieMapRef::new_ref(bun_opaque::opaque_deref(p.cast_const()))),
         ));
@@ -2561,6 +2574,8 @@ where
                 if shim::blob_is_s3(blob) {
                     // we need to read the size asynchronously
                     // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
+                    // Ref for the S3 stat; adopted and released by
+                    // `on_s3_size_resolved_thunk`.
                     this.ref_();
 
                     let crate::webcore::blob::store::Data::S3(s3) =
@@ -2885,6 +2900,7 @@ where
 
         debug_assert!(self.server.get().is_some());
         // server is a BACKREF; `global_this()` returns a lifetime decoupled
+        // from `&self`.
         let global_this = self.server().global_this();
         if let Some(resp) = self.response_mut() {
             if let Some(stream) = resp.get_body_readable_stream(global_this) {
@@ -4119,6 +4135,7 @@ where
         }
 
         // This is the start of a task, so it's a good time to drain
+        // The pooled body slot is a separate allocation decoupled from `*this`.
         if let Some(body) = this.request_body_mut() {
             // The up-front maxRequestBodySize check in the server only
             // sees Content-Length. HTTP/3 (and H1 chunked) bodies may

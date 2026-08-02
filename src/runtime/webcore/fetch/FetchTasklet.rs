@@ -36,6 +36,7 @@ use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Respo
 
 use bun_jsc::JsTerminatedResult;
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
+// ConcurrentTask callbacks at the tier-3 layer.
 type ElJsResult<T> = bun_event_loop::JsResult<T>;
 
 use boringssl::c::{X509_free, d2i_X509};

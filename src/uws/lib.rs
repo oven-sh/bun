@@ -1158,6 +1158,7 @@ pub mod ssl_wrapper {
         /// callbacks. Only SSLs whose handlers opted in ever park (see
         /// `init_with_ctx`), so this is a no-op FFI probe otherwise. The
         /// callbacks run JS which may close the wrapper; `self.ssl` is
+        /// re-checked between pops.
         fn flush_pending_events(&self, buffer: &mut [u8; BUFFER_SIZE]) {
             if self.handlers.get().on_session.is_some() {
                 loop {

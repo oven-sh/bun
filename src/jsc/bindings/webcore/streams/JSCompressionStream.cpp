@@ -595,8 +595,8 @@ static JSPromise* codeAndEnqueue(JSGlobalObject* globalObject, JSTransformStream
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         if (void* sinkPtr = stream->m_nativeSinkPtr) {
             JSValue wrote = JSValue::decode(CompressionStreamCoder__transformInto(coder, globalObject, input, inputLen, finish, stream->m_nativeSinkId, sinkPtr));
-            if (!catchScope.exception() && wrote.isNumber() && wrote.asNumber() < 0)
-                sinkBackpressure = true;
+            if (!catchScope.exception())
+                sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
         } else {
             JSValue out = JSValue::decode(CompressionStreamCoder__transform(coder, globalObject, input, inputLen, finish));
             if (!catchScope.exception()) {

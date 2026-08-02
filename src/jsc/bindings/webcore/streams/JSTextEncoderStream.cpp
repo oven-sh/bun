@@ -307,8 +307,8 @@ static JSPromise* encodeAndEnqueue(JSGlobalObject* globalObject, JSTextEncoderSt
             JSValue wrote = JSValue::decode(flush
                     ? TextEncoderStreamEncoder__flushIntoSink(stream->m_encoder, globalObject, stream->m_nativeSinkId, sinkPtr)
                     : TextEncoderStreamEncoder__encodeIntoSink(stream->m_encoder, globalObject, JSValue::encode(chunk), stream->m_nativeSinkId, sinkPtr));
-            if (!catchScope.exception() && wrote.isNumber() && wrote.asNumber() < 0)
-                sinkBackpressure = true;
+            if (!catchScope.exception())
+                sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
         } else {
             JSValue buffer = JSValue::decode(flush
                     ? TextEncoderStreamEncoder__flushForStream(stream->m_encoder, globalObject)

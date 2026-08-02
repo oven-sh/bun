@@ -1540,6 +1540,16 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundReadStreamIntoSinkOnReady, (JS
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* op = uncheckedDowncast<JSReadStreamIntoSinkOperation>(callFrame->argument(0));
+    // A native transform arm may be parked on m_nativeSinkReadyPromise without the
+    // pump itself being suspended (output bypasses the pump's read loop). Resolve it
+    // regardless of m_waitingOnSink so the transform's in-flight write can settle.
+    if (auto* ts = op->m_nativeTransform.get()) {
+        if (auto* ready = ts->m_nativeSinkReadyPromise.get()) {
+            ts->m_nativeSinkReadyPromise.clear();
+            Bun::WebStreams::resolvePromise(globalObject, ready, jsUndefined());
+            scope.assertNoException();
+        }
+    }
     if (!op->m_waitingOnSink)
         return JSValue::encode(jsUndefined());
     op->m_waitingOnSink = false;

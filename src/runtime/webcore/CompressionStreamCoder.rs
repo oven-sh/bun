@@ -231,7 +231,7 @@ impl CompressionStreamCoder {
                     out.reserve(CHUNK);
                     let spare = out.spare_capacity_mut();
                     s.next_out = spare.as_mut_ptr().cast();
-                    s.avail_out = spare.len() as u32;
+                    s.avail_out = spare.len().min(u32::MAX as usize) as u32;
                     let before = s.avail_out;
                     // SAFETY: `s` was initialized by `deflateInit2_`; next_in/
                     // avail_in borrow `remaining`, next_out/avail_out borrow
@@ -284,7 +284,7 @@ impl CompressionStreamCoder {
                     out.reserve(CHUNK);
                     let spare = out.spare_capacity_mut();
                     s.next_out = spare.as_mut_ptr().cast();
-                    s.avail_out = spare.len() as u32;
+                    s.avail_out = spare.len().min(u32::MAX as usize) as u32;
                     let before = s.avail_out;
                     // SAFETY: `s` was initialized by `inflateInit2_`; buffers
                     // as in the deflate arm.

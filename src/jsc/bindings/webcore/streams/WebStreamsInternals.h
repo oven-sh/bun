@@ -459,6 +459,11 @@ void transformStreamDefaultControllerClearAlgorithms(JSTransformStreamDefaultCon
 void transformStreamDefaultControllerEnqueue(JSC::JSGlobalObject*, JSTransformStreamDefaultController*, JSC::JSValue chunk); // userJS: yes; throws — JSTransformStreamDefaultController.cpp
 void nativeTransformReleaseState(JSTransformStream*); // userJS: no — JSTransformStreamDefaultController.cpp
 
+// `js_write_bytes` returns a negative number for native ByteStream/FileReader sources
+// under backpressure, but a pending JSPromise for the JSController-sourced sinks that
+// readStreamIntoSink attaches (HTTPResponseSink/FileSink). Both mean "suspend".
+bool nativeSinkWriteIsBackpressure(JSC::VM&, JSC::JSValue wrote); // userJS: no — WebStreamsMisc.cpp
+
 // Brackets a native transform/flush arm so a re-entrant ClearAlgorithms (reached via a
 // reader.cancel() inside the arm's chunk coercion) defers nativeTransformReleaseState
 // until control unwinds back here.

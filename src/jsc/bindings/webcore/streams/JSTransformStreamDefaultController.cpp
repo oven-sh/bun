@@ -403,7 +403,7 @@ void nativeTransformReleaseState(JSTransformStream* stream)
 // ClearAlgorithms is the one shared terminal (post-flush, error, cancel), but a
 // re-entrant reader.cancel() from user JS inside a native arm's chunk coercion reaches
 // it while the coder is still in use on the stack. Defer when m_nativeStateInUse; the
-// arm's epilogue (nativeTransformFinishArm) frees it once control unwinds.
+// runNativeArm epilogue frees it once control unwinds.
 static void nativeTransformReleaseStateOrDefer(JSTransformStreamDefaultController* controller)
 {
     auto* stream = dynamicDowncast<JSTransformStream>(controller->m_algorithmContext.get());

@@ -23,10 +23,6 @@
 # ships ClangCL. Runs everywhere else. (Verified still failing, build 87834.)
 [ WINDOWS ] test/bundler/native-plugin.test.ts [ SKIP ] # node-gyp needs a ClangCL toolset the Windows agents do not have
 
-# First test ("websocket > bun --inspect") times out after 270s under
-# release-asan (build 87834). Passes on release.
-[ ASAN ] test/cli/inspect/inspect.test.ts [ TIMEOUT ] # websocket > bun --inspect times out at 270s on release-asan
-
 # Windows-only gaps in named-pipe / socket teardown for ported Node net tests
 # (these pass on Linux and macOS): half-close (FIN) handling on named pipes,
 # RST delivery surfacing as ECONNRESET, and localAddress/localPort

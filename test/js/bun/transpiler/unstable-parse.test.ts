@@ -273,6 +273,25 @@ describe("Bun.Transpiler.unstable_parse", () => {
     expect(ast.hashbang).toBe("#!\uFFFD\uFFFD\uFFFD");
   });
 
+  test("options getters cannot detach the input buffer mid-parse", () => {
+    // Options [[Get]]s run before the buffer view is borrowed; a hostile getter
+    // that detaches sees the parse observe a zero-length view, never freed bytes.
+    const src = "const x = 1;\n" + Buffer.alloc(4000, "a;").toString();
+    const buf = new TextEncoder().encode(src);
+    let fired = false;
+    const ast = ts.unstable_parse(buf, {
+      get format() {
+        fired = true;
+        (buf.buffer as any).transfer(0);
+        return undefined;
+      },
+    });
+    expect(fired).toBe(true);
+    expect(buf.byteLength).toBe(0);
+    expect(ast.kind).toBe("ast");
+    expect(ast.stmts).toEqual([]);
+  });
+
   test("symbols are resolvable by name", () => {
     const ast = ts.unstable_parse(`function foo(bar) { return bar }`);
     const names = ast.symbols.map((s: any) => s.name);
@@ -302,6 +321,8 @@ describe("Bun.Transpiler.unstable_parse", () => {
         `import def, { a as b } from "pkg";\n` +
         `export function f(a, b = 5) { try { return a?.b[0] + \`x\${b}y\` } catch (e) {} }\n` +
         `const { x = 1.5, ...y } = { a: /re/g, b: "héllo 🎉", c: "\\uD800x\\uDC00" };\n` +
+        `const empty = ""; const flagless = /re/; const tmpl = \`\${1}\`;\n` +
+        `const bom = "\\uFEFFx";\n` +
         `for (const k of [1, 2]) if (k) break; else continue;`;
       const obj = ts.unstable_parse(src);
       const { root } = ts.unstable_parse(src, { format: "raw" });
@@ -314,6 +335,15 @@ describe("Bun.Transpiler.unstable_parse", () => {
       const { root } = ts.unstable_parse(src, { format: "raw" });
       expect(obj.stmts[0].decls[0].value.value).toBe("a\uD800b\uDC00c");
       expect(root.stmts[0].decls[0].value.value).toBe("a\uD800b\uDC00c");
+    });
+
+    test("empty strings do not alias their pool neighbor", () => {
+      const src = `const r = /foo/; const s = "";`;
+      const { root } = ts.unstable_parse(src, { format: "raw" });
+      const json = JSON.parse(JSON.stringify(root));
+      expect(json.stmts[0].decls[0].value.flags).toBe("");
+      expect(json.stmts[1].decls[0].value.value).toBe("");
+      expect(json.stmts[0].kind).toBe("s_local");
     });
 
     test("loader in options object", () => {

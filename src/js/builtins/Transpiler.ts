@@ -19,13 +19,16 @@ export function unstableParse(this: Transpiler, code: any, opts: any) {
   const keyTableOffset = stringsOffset - keyTableLen * 8;
 
   const bytes = new Uint8Array(buffer);
-  const decoder = new TextDecoder();
+  // ignoreBOM: the string pool holds arbitrary content, not a BOM-prefixed stream.
+  const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
   const stringCache = new $Map<number, string>();
   const string16Cache = new $Map<number, string>();
   const nodeCache = new $Map<number, any>();
   const arrayCache = new $Map<number, any>();
 
   const readString = (off: number, len: number): string => {
+    // `intern_str(b"")` does not advance the pool cursor, so an empty string shares its offset with the next entry.
+    if (len === 0) return "";
     let s = stringCache.$get(off);
     if (s !== undefined) return s;
     s = decoder.decode(bytes.subarray(stringsOffset + off, stringsOffset + off + len));
@@ -35,6 +38,7 @@ export function unstableParse(this: Transpiler, code: any, opts: any) {
 
   // Per-code-unit decode so lone surrogates survive (matches object-mode `str16`).
   const readString16 = (off: number, len: number): string => {
+    if (len === 0) return "";
     let s = string16Cache.$get(off);
     if (s !== undefined) return s;
     const base = stringsOffset + off;

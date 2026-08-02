@@ -1402,14 +1402,6 @@ impl JSTranspiler {
             ));
         };
 
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
-            return Err(global.throw_invalid_argument_type(
-                "unstable_parse",
-                "code",
-                "string or Uint8Array",
-            ));
-        };
-        let code = code_holder.slice();
         args.eat();
 
         let mut raw_format = false;
@@ -1440,6 +1432,16 @@ impl JSTranspiler {
         if global.has_exception() {
             return Ok(JSValue::ZERO);
         }
+
+        // Borrow after every options `[[Get]]` so a getter cannot detach the input buffer under us.
+        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+            return Err(global.throw_invalid_argument_type(
+                "unstable_parse",
+                "code",
+                "string or Uint8Array",
+            ));
+        };
+        let code = code_holder.slice();
 
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();

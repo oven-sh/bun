@@ -562,13 +562,7 @@ class Database implements SqliteTypes.Database {
     const max = Database.MAX_QUERY_CACHE_SIZE;
     if (max > 0) {
       // evicted statements stay usable; close() still finalizes them via kOwnedByDatabaseFlag
-      if (cache.$size >= max) {
-        let oldest;
-        cache.$forEach((_, key) => {
-          if (oldest === undefined) oldest = key;
-        });
-        cache.$delete(oldest);
-      }
+      if (cache.$size >= max) cache.$delete(cache.$keys().next().value);
       cache.$set(query, stmt);
     }
     return stmt;

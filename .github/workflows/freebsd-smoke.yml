@@ -1,5 +1,8 @@
 name: FreeBSD smoke test
 
+permissions:
+  contents: read
+
 # Runs the cross-compiled FreeBSD binary inside a FreeBSD VM to verify it
 # actually starts and executes JavaScript. The build itself happens on
 # BuildKite (cross-compiled from Linux); this just validates the result.

@@ -62,9 +62,14 @@ fn align_up(v: u64, a: u64) -> u64 {
     (v + a - 1) / a * a
 }
 
+/// True if the buffer looks like an ELF64 binary (magic + 64-bit class).
+pub fn is_elf64(elf: &[u8]) -> bool {
+    elf.len() >= 64 && &elf[0..4] == b"\x7fELF" && elf[4] == 2
+}
+
 /// Validate header and return (e_shoff, e_shnum, e_shstrndx, e_shentsize).
 fn parse_header(elf: &[u8]) -> Result<(u64, u16, u16, u16), SignError> {
-    if elf.len() < 64 || &elf[0..4] != b"\x7fELF" || elf[4] != 2 {
+    if !is_elf64(elf) {
         return Err(SignError::NotElf64);
     }
     let e_shoff = read_u64(elf, E_SHOFF);

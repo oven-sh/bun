@@ -53,8 +53,14 @@ pub fn sign_selfsign_inplace(path: &std::path::Path) -> Result<(), SignError> {
 }
 
 /// Sign a file in-place, stripping any existing `.codesign` section first.
+/// Non-ELF inputs (e.g. Mach-O templates for `--target=bun-darwin-*`) are
+/// skipped silently: the compile pipeline calls this unconditionally on
+/// OHOS, and only ELF outputs need signing.
 pub fn sign_selfsign_inplace_with_strip(path: &std::path::Path) -> Result<(), SignError> {
     let bytes = std::fs::read(path)?;
+    if !elf::is_elf64(&bytes) {
+        return Ok(());
+    }
     let signed = sign_selfsign_with_strip(&bytes)?;
     std::fs::write(path, &signed)?;
     Ok(())

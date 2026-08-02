@@ -105,7 +105,7 @@ impl ClientSession {
     ///
     /// INVARIANT: `qsocket` is set by `ClientContext::connect` once
     /// `us_quic_connect_addr` returns and remains valid until
-    /// `callbacks::on_conn_close` (which sets `closed = true`). The
+    /// `callbacks::on_conn_close` (which calls `mark_closed()`). The
     /// `quic::Socket` is an FFI-owned allocation distinct from `self`, so the
     /// returned `&mut` does not alias `self`. HTTP-thread-only.
     #[inline]

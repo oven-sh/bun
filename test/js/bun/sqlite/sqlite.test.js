@@ -1637,6 +1637,34 @@ it("WAL is checkpointed at exit for a database closed with close(false) while a 
   expect(existsSync(file + "-wal") ? statSync(file + "-wal").size : 0).toBe(0);
 });
 
+it("`using` releases the connection even after an explicit close(false) left a prepare() statement live", () => {
+  using dir = tempDir("sqlite-using-after-close", {});
+  const file = path.join(String(dir), "x.sqlite");
+  let stmt;
+  {
+    using db = new Database(file);
+    db.exec("CREATE TABLE t (a)");
+    stmt = db.prepare("SELECT a FROM t");
+    stmt.get();
+    db.close();
+    expect(stmt.all()).toEqual([]);
+  }
+  expect(() => stmt.all()).toThrow("Database has closed");
+  rmSync(file);
+  expect(existsSync(file)).toBe(false);
+});
+
+it("a statement the user finalized still reports 'Statement has finalized' after close()", () => {
+  const db = new Database(":memory:");
+  const a = db.prepare("SELECT 1");
+  const b = db.prepare("SELECT 2");
+  a.finalize();
+  db.close();
+  expect(() => a.get()).toThrow("Statement has finalized");
+  b.finalize();
+  expect(() => b.get()).toThrow("Statement has finalized");
+});
+
 it("query() cache evicts least-recently-used statements past MAX_QUERY_CACHE_SIZE", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE foo (a INTEGER)");

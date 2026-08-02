@@ -266,7 +266,15 @@ console.log(JSON.stringify([typeof fn, typeof iface, typeof c, typeof alias, typ
   });
   const { stdout, stderr, exitCode } = await run(dir, "index.ts");
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual(["undefined", "undefined", "undefined", "undefined", "function", "function", "function"]);
+  expect(JSON.parse(stdout.trim())).toEqual([
+    "undefined",
+    "undefined",
+    "undefined",
+    "undefined",
+    "function",
+    "function",
+    "function",
+  ]);
   expect(exitCode).toBe(0);
 });
 

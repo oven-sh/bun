@@ -62,12 +62,3 @@ impl RefCountedStr {
         self.data = Box::default();
     }
 }
-
-impl Default for RefCountedStr {
-    fn default() -> Self {
-        Self {
-            refcount: Cell::new(1),
-            data: Box::default(),
-        }
-    }
-}

@@ -135,7 +135,6 @@ public:
     static void destroy(JSCell* cell);
     void setContextifiedObject(JSC::JSObject* contextifiedObject);
     JSObject* contextifiedObject() const { return m_sandbox.get(); }
-    void clearContextifiedObject();
     void sigintReceived();
     bool isNotContextified() const { return m_contextOptions.notContextified; }
     bool hasOwnMicrotaskQueue() const { return m_contextOptions.ownMicrotaskQueue; }

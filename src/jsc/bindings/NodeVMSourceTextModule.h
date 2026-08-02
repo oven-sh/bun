@@ -32,7 +32,6 @@ public:
 
     JSValue createModuleRecord(JSGlobalObject* globalObject);
     void ensureModuleRecord(JSGlobalObject* globalObject);
-    bool hasModuleRecord() const { return !!m_moduleRecord; }
     JSModuleRecord* moduleRecordIfExists() const { return m_moduleRecord.get(); }
     AbstractModuleRecord* moduleRecord(JSGlobalObject* globalObject);
     JSValue link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives, JSValue scriptFetcher);

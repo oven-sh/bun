@@ -1442,8 +1442,7 @@ pub mod webcore {
 pub mod Node {
     /// `bun.api.node.ErrorCode` — the Node-compat `ERR_*` codes; the
     /// `node::ErrorCode` alias resolves directly to [`crate::ErrorCode`]
-    /// (LAYERING: avoids a
-    /// `bun_jsc → bun_runtime` cycle for `DeferredError` / `node_error_binding`).
+    /// (LAYERING: avoids a `bun_jsc → bun_runtime` cycle for `DeferredError`).
     pub use crate::ErrorCode;
     pub use crate::node_path::*;
 }

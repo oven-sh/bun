@@ -2219,7 +2219,6 @@ dependencies = [
  "libc",
  "scopeguard",
  "strum",
- "thiserror",
 ]
 
 [[package]]

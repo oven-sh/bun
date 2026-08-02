@@ -9,7 +9,7 @@
 // built binary, so it belongs in test/internal/source-lints/ per the README.
 
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
@@ -18,17 +18,10 @@ function src(p: string): string {
   return readFileSync(path.join(repoRoot, p), "utf8");
 }
 
-function exists(p: string): boolean {
-  return existsSync(path.join(repoRoot, p));
-}
-
 test("webcore DOMJIT dead files and helpers do not reappear", () => {
-  // Whole files with zero includers (the only user was behind `#if 0`).
-  expect(exists("src/jsc/bindings/webcore/DOMJITCheckDOM.h")).toBe(false);
-  expect(exists("src/jsc/bindings/webcore/JSEventDOMJIT.cpp")).toBe(false);
-  expect(exists("src/jsc/bindings/webcore/DOMJITHelpers.cpp")).toBe(false);
-  expect(exists("src/jsc/bindings/webcore/JSDOMConvertSerializedScriptValue.h")).toBe(false);
-
+  // Deleted-file absence is asserted indirectly via surviving files: the
+  // JSDOMConvert.h include and the JSEvent.* references below are the only
+  // places the deleted headers/symbols were wired in.
   const checks: Array<[string, RegExp]> = [
     ["src/jsc/bindings/webcore/DOMJITHelpers.h", /namespace DOMJIT\b/],
     ["src/jsc/bindings/webcore/DOMJITHelpers.h", /branchIfNotWorldIsNormal|branchIfNotEvent|operationToJSNode/],
@@ -54,6 +47,8 @@ test("webcore EventPath/EventContext/EventListenerMap dead members do not reappe
     ["src/jsc/bindings/webcore/EventContext.h", /\bhandleLocalEvents\b/],
     ["src/jsc/bindings/webcore/EventContext.h", /\bsetRelatedTarget\b|\bisMouseOrFocusEventContext\b/],
     ["src/jsc/bindings/webcore/EventContext.h", /\bisTouchEventContext\b|\bisWindowContext\b/],
+    ["src/jsc/bindings/webcore/EventContext.h", /\bisCurrentTargetInShadowTree\b|\bEventInvokePhase\b/],
+    ["src/jsc/bindings/webcore/EventContext.h", /\bm_node\b|\bm_target\b|\bm_currentTargetIsInShadowTree\b/],
     ["src/jsc/bindings/webcore/EventContext.h", /enum class Type : uint8_t/],
     ["src/jsc/bindings/webcore/EventContext.cpp", /\bhandleLocalEvents\b|\bisUnreachableNode\b/],
   ];

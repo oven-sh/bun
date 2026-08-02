@@ -38,28 +38,19 @@ class EventContext {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(EventContext);
 
 public:
-    using EventInvokePhase = EventTarget::EventInvokePhase;
-
-    EventContext(Node*, EventTarget* currentTarget, EventTarget* origin, int closedShadowDepth);
+    EventContext(EventTarget* currentTarget, int closedShadowDepth);
     ~EventContext();
 
     EventTarget* currentTarget() const { return m_currentTarget.get(); }
-    bool isCurrentTargetInShadowTree() const { return false; }
-    EventTarget* target() const { return m_target.get(); }
-    int closedShadowDepth() const { return 0; }
+    int closedShadowDepth() const { return m_closedShadowDepth; }
 
 private:
-    RefPtr<Node> m_node;
     RefPtr<EventTarget> m_currentTarget;
-    RefPtr<EventTarget> m_target;
-    [[maybe_unused]] int m_closedShadowDepth { 0 };
-    [[maybe_unused]] bool m_currentTargetIsInShadowTree { false };
+    int m_closedShadowDepth { 0 };
 };
 
-inline EventContext::EventContext(Node* node, EventTarget* currentTarget, EventTarget* origin, int closedShadowDepth)
-    : m_node { node }
-    , m_currentTarget { currentTarget }
-    , m_target { origin }
+inline EventContext::EventContext(EventTarget* currentTarget, int closedShadowDepth)
+    : m_currentTarget { currentTarget }
     , m_closedShadowDepth { closedShadowDepth }
 {
 }

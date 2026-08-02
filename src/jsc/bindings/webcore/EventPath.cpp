@@ -74,13 +74,13 @@ EventPath::EventPath(const Vector<EventTarget*>& targets)
 {
     m_path = targets.map([&](auto* target) {
         ASSERT(target);
-        return EventContext { nullptr, target, *targets.begin(), 0 };
+        return EventContext { target, 0 };
     });
 }
 
 EventPath::EventPath(EventTarget& target)
 {
-    m_path = { EventContext { nullptr, &target, &target, 0 } };
+    m_path = { EventContext { &target, 0 } };
 }
 
 }

@@ -25,9 +25,19 @@ uint64_t uv__hrtime(uv_clocktype_t type);
 
 #if defined(__linux__)
 #include "uv-posix-polyfills-linux.c"
+// #elif defined(__MVS__)
+// #include "uv/os390.h"
+// #elif defined(__PASE__) /* __PASE__ and _AIX are both defined on IBM i */
+// #include "uv/posix.h" /* IBM i needs uv/posix.h, not uv/aix.h */
+// #elif defined(_AIX)
+// #include "uv/aix.h"
+// #elif defined(__sun)
+// #include "uv/sunos.h"
 #elif defined(__APPLE__)
 #include "uv-posix-polyfills-darwin.c"
 #elif defined(__FreeBSD__)
+#include "uv-posix-polyfills-posix.c"
+#elif defined(__CYGWIN__) || defined(__MSYS__) || defined(__HAIKU__) || defined(__QNX__) || defined(__GNU__)
 #include "uv-posix-polyfills-posix.c"
 #endif
 

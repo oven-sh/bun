@@ -36,8 +36,10 @@
 #include <termios.h>
 #include <pwd.h>
 
+#if !defined(__MVS__)
 #include <semaphore.h>
 #include <sys/param.h> /* MAXHOSTNAMELEN on Linux and the BSDs */
+#endif
 #include <pthread.h>
 #include <signal.h>
 
@@ -45,10 +47,20 @@
 
 #if defined(__linux__)
 #include "uv/linux.h"
+#elif defined(__MVS__)
+#include "uv/os390.h"
+#elif defined(__PASE__) /* __PASE__ and _AIX are both defined on IBM i */
+#include "uv/posix.h" /* IBM i needs uv/posix.h, not uv/aix.h */
+#elif defined(_AIX)
+#include "uv/aix.h"
+#elif defined(__sun)
+#include "uv/sunos.h"
 #elif defined(__APPLE__)
 #include "uv/darwin.h"
 #elif defined(__DragonFly__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
 #include "uv/bsd.h"
+#elif defined(__CYGWIN__) || defined(__MSYS__) || defined(__HAIKU__) || defined(__QNX__) || defined(__GNU__)
+#include "uv/posix.h"
 #endif
 
 #ifndef NI_MAXHOST
@@ -118,7 +130,8 @@ typedef UV_PLATFORM_SEM_T uv_sem_t;
 typedef pthread_cond_t uv_cond_t;
 typedef pthread_key_t uv_key_t;
 
-#if defined(__OpenBSD__) || !defined(PTHREAD_BARRIER_SERIAL_THREAD)
+/* Note: guard clauses should match uv_barrier_init's in src/unix/thread.c. */
+#if defined(_AIX) || defined(__OpenBSD__) || !defined(PTHREAD_BARRIER_SERIAL_THREAD)
 /* TODO(bnoordhuis) Merge into uv_barrier_t in v2. */
 struct _uv_barrier {
     uv_mutex_t mutex;

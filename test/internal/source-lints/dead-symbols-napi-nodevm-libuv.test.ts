@@ -1,7 +1,7 @@
 // Guards against reintroduction of symbols removed as dead code from napi,
 // NodeVM*, JSBufferList, JSStringDecoder, BunClientData, EventLoopTask,
-// JSEnvironmentVariableMap, libuv platform headers, zlib, io/windows_event_loop,
-// and node/net.ts. Each entry was verified to have zero callers across src/
+// JSEnvironmentVariableMap, zlib, io/{posix,windows}_event_loop, and
+// node/net.ts. Each entry was verified to have zero callers across src/
 // and build/debug/codegen/ before deletion; this test fails if any reappear.
 //
 // This is a source-tree lint: it reads files from src/ and does not touch the
@@ -72,17 +72,6 @@ test("BunClientData / EventLoopTask / JSEnvironmentVariableMap / blob / Bindgen 
   ];
   const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);
-});
-
-test("libuv platform headers for non-targeted OSes are not included", () => {
-  // Assert against the surviving includer rather than `existsSync` on the
-  // deleted header paths: the gate's stash/restore step can leave deleted
-  // files on disk, and an unreferenced header on disk is harmless anyway.
-  const unix = src("src/jsc/bindings/libuv/uv/unix.h");
-  expect(unix).not.toMatch(/#include "uv\/aix\.h"/);
-  expect(unix).not.toMatch(/#include "uv\/os390\.h"/);
-  expect(unix).not.toMatch(/#include "uv\/sunos\.h"/);
-  expect(unix).not.toMatch(/#include "uv\/posix\.h"/);
 });
 
 test("zlib / io / install / net.ts dead items do not reappear", () => {

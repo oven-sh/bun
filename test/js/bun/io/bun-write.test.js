@@ -425,6 +425,56 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await Bun.write(Bun.stderr, Bun.file(path.join(import.meta.dir, "hello-world.txt")));
   });
 
+  // macOS fcopyfile(COPYFILE_DATA) rewrites dst from offset 0, and slice copies
+  // used to ftruncate(dst, N) afterwards on macOS/FreeBSD; both destroy bytes in
+  // a file the caller already had open. Linux is skipped: copy_file_range rejects
+  // O_APPEND with EBADF and the non-append case already preserves bytes, so the
+  // test cannot fail-before there.
+  describe.skipIf(isWindows || isLinux)("Bun.write(Bun.file(fd), Bun.file(path)) does not truncate the fd", () => {
+    it("preserves bytes past the slice window in an r+ fd", async () => {
+      using dir = tempDir("bun-write-fd-slice", {
+        "src.bin": Buffer.alloc(200_000, "S").toString(),
+        "dst.bin": Buffer.alloc(30, "D").toString(),
+      });
+      const dst = join(String(dir), "dst.bin");
+      const fd = fs.openSync(dst, "r+");
+      try {
+        const written = await Bun.write(Bun.file(fd).slice(0, 5), Bun.file(join(String(dir), "src.bin")));
+        expect({ written, content: fs.readFileSync(dst, "utf8") }).toEqual({
+          written: 5,
+          content: "SSSSS" + Buffer.alloc(25, "D").toString(),
+        });
+      } finally {
+        fs.closeSync(fd);
+      }
+    });
+
+    it("preserves pre-existing bytes when stdout is redirected with >>", async () => {
+      using dir = tempDir("bun-write-stdout-append", {
+        "src.bin": Buffer.alloc(1000, "S").toString(),
+        "log.txt": "AAAAAAAAAA",
+      });
+      const src = join(String(dir), "src.bin");
+      const log = join(String(dir), "log.txt");
+      const script = `process.stderr.write(String(await Bun.write(Bun.stdout.slice(0, 100), Bun.file(${JSON.stringify(src)}))))`;
+
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", `"$BUN" -e ${JSON.stringify(script)} >> ${JSON.stringify(log)}`],
+        env: { ...bunEnv, BUN: bunExe() },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, resolved: stderr, content: fs.readFileSync(log, "utf8") }).toEqual({
+        stdout: "",
+        resolved: "100",
+        content: "AAAAAAAAAA" + Buffer.alloc(100, "S").toString(),
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   // On Linux, FIFO -> FIFO goes through splice(2). fstat on a FIFO reports
   // st_size == 0, and the copy loop used to treat its unknown-size probe as
   // the total byte budget, silently dropping the rest of the stream.

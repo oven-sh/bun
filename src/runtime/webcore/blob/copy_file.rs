@@ -527,6 +527,53 @@ impl<'a> CopyFile<'a> {
         Ok(())
     }
 
+    /// read() from `source_fd`, write() to `destination_fd`, stopping after
+    /// `cap` bytes have been read (or EOF). Unlike
+    /// `copy_file_using_read_write_loop`, this never reads past `cap` and
+    /// never touches the destination's length, so it is safe for a
+    /// caller-supplied fd (Bun.stdout redirected to a file, Bun.file(fd)).
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    fn do_read_write_loop_capped(&mut self, cap: SizeType) -> Result<(), crate::Error> {
+        let mut buf = [0u8; 64 * 1024];
+        let mut remaining = cap;
+        let mut total: u64 = 0;
+        while remaining > 0 {
+            let want = (buf.len() as SizeType).min(remaining) as usize;
+            let amt = match bun_sys::read(self.source_fd, &mut buf[..want]) {
+                bun_sys::Result::Ok(n) => n,
+                bun_sys::Result::Err(err) => {
+                    self.read_len = total as SizeType;
+                    self.system_error = Some(err.to_system_error());
+                    return Err(bun_errno::from_errno(err.errno as i32).into());
+                }
+            };
+            if amt == 0 {
+                break;
+            }
+            remaining -= amt as SizeType;
+            let mut slice = &buf[..amt];
+            while !slice.is_empty() {
+                match bun_sys::write(self.destination_fd, slice) {
+                    bun_sys::Result::Ok(0) => {
+                        self.read_len = total as SizeType;
+                        return Ok(());
+                    }
+                    bun_sys::Result::Ok(n) => {
+                        total += n as u64;
+                        slice = &slice[n..];
+                    }
+                    bun_sys::Result::Err(err) => {
+                        self.read_len = total as SizeType;
+                        self.system_error = Some(err.to_system_error());
+                        return Err(bun_errno::from_errno(err.errno as i32).into());
+                    }
+                }
+            }
+        }
+        self.read_len = total as SizeType;
+        Ok(())
+    }
+
     #[cfg(target_os = "macos")]
     pub(crate) fn do_fcopy_file_with_read_write_loop_fallback(
         &mut self,
@@ -870,20 +917,31 @@ impl<'a> CopyFile<'a> {
 
             #[cfg(target_os = "macos")]
             {
-                if self.do_fcopy_file_with_read_write_loop_fallback().is_err() {
+                // fcopyfile(COPYFILE_DATA) rewrites the destination from
+                // offset 0 and the slice-trim below is implemented as
+                // ftruncate(dest); both destroy bytes in a file the caller
+                // already had open (Bun.stdout redirected with `>>`,
+                // Bun.file(fd)). Only take the fcopyfile path for a
+                // destination this function opened itself.
+                if matches!(
+                    self.destination_file_store.pathlike,
+                    PathOrFileDescriptor::Path(_)
+                ) {
+                    if self.do_fcopy_file_with_read_write_loop_fallback().is_err() {
+                        self.do_close();
+                        return;
+                    }
+                    if stat.st_size != 0
+                        && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
+                    {
+                        let _ = bun_sys::ftruncate(
+                            self.destination_fd,
+                            i64::try_from(self.max_length).expect("int cast"),
+                        );
+                    }
+                } else if self.do_read_write_loop_capped(self.max_length).is_err() {
                     self.do_close();
                     return;
-                }
-                if stat.st_size != 0
-                    && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
-                {
-                    // SAFETY: `destination_fd` is open; libc ftruncate(2).
-                    let _ = unsafe {
-                        bun_sys::darwin::ftruncate(
-                            self.destination_fd.native(),
-                            i64::try_from(self.max_length).expect("int cast"),
-                        )
-                    };
                 }
 
                 self.do_close();
@@ -892,32 +950,40 @@ impl<'a> CopyFile<'a> {
 
             #[cfg(target_os = "freebsd")]
             {
-                let mut total_written: u64 = 0;
-                match node_fs::NodeFS::copy_file_using_read_write_loop(
-                    bun_core::ZStr::EMPTY,
-                    bun_core::ZStr::EMPTY,
-                    self.source_fd,
-                    self.destination_fd,
-                    0,
-                    &mut total_written,
+                if matches!(
+                    self.destination_file_store.pathlike,
+                    PathOrFileDescriptor::Path(_)
                 ) {
-                    bun_sys::Result::Err(err) => {
-                        self.system_error = Some(err.to_system_error());
-                        self.do_close();
-                        return;
-                    }
-                    bun_sys::Result::Ok(()) => {}
-                }
-                if stat.st_size != 0
-                    && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
-                {
-                    let _ = bun_sys::ftruncate(
+                    let mut total_written: u64 = 0;
+                    match node_fs::NodeFS::copy_file_using_read_write_loop(
+                        bun_core::ZStr::EMPTY,
+                        bun_core::ZStr::EMPTY,
+                        self.source_fd,
                         self.destination_fd,
-                        i64::try_from(self.max_length).expect("int cast"),
-                    );
-                    self.read_len = total_written.min(self.max_length as u64) as SizeType;
-                } else {
-                    self.read_len = total_written as SizeType;
+                        0,
+                        &mut total_written,
+                    ) {
+                        bun_sys::Result::Err(err) => {
+                            self.system_error = Some(err.to_system_error());
+                            self.do_close();
+                            return;
+                        }
+                        bun_sys::Result::Ok(()) => {}
+                    }
+                    if stat.st_size != 0
+                        && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
+                    {
+                        let _ = bun_sys::ftruncate(
+                            self.destination_fd,
+                            i64::try_from(self.max_length).expect("int cast"),
+                        );
+                        self.read_len = total_written.min(self.max_length as u64) as SizeType;
+                    } else {
+                        self.read_len = total_written as SizeType;
+                    }
+                } else if self.do_read_write_loop_capped(self.max_length).is_err() {
+                    self.do_close();
+                    return;
                 }
                 self.do_close();
                 return;

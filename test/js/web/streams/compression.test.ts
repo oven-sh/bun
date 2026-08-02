@@ -474,6 +474,59 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     expect(pulls).toBe(TOTAL);
   });
 
+  test("request body -> DecompressionStream propagates backpressure to the client", async () => {
+    let clientPulls = 0;
+    let clientPullsWhileServerStalled = -1;
+    const chunk = crypto.getRandomValues(new Uint8Array(64 * 1024));
+    const compressed = new Uint8Array(
+      await new Response(new Blob([chunk]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer(),
+    );
+    const TOTAL = 200;
+    const { promise: drain, resolve: startDrain } = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const reader = req.body!.pipeThrough(new DecompressionStream("gzip")).getReader();
+        await reader.read();
+        // Stall: let the client's pull loop either park or run away.
+        for (let i = 0; i < 40; i++) await Bun.sleep(1);
+        clientPullsWhileServerStalled = clientPulls;
+        startDrain();
+        while (!(await reader.read()).done) {}
+        return new Response("ok");
+      },
+    });
+    const body = new ReadableStream({
+      pull(c) {
+        clientPulls++;
+        c.enqueue(compressed.slice());
+        if (clientPulls >= TOTAL) c.close();
+      },
+    });
+    const res = await fetch(server.url, { method: "POST", body, duplex: "half" } as RequestInit);
+    await drain;
+    expect(await res.text()).toBe("ok");
+    expect(clientPullsWhileServerStalled).toBeGreaterThan(0);
+    expect(clientPullsWhileServerStalled).toBeLessThan(TOTAL);
+    expect(clientPulls).toBe(TOTAL);
+  });
+
+  test("req.clone().textStream() -> TextEncoderStream -> CompressionStream -> Response round-trips", async () => {
+    const input = Buffer.alloc(64 * 1024, "The quick brown fox. ").toString();
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const cloned = req.clone();
+        return new Response(
+          cloned.textStream().pipeThrough(new TextEncoderStream()).pipeThrough(new CompressionStream("gzip")),
+        );
+      },
+    });
+    const res = await fetch(server.url, { method: "POST", body: input });
+    const out = await new Response(res.body!.pipeThrough(new DecompressionStream("gzip"))).text();
+    expect(out).toBe(input);
+  });
+
   // readable highWaterMark is 1 (matching Node.js and Chromium), so a single
   // write completes before any reader is attached.
   test("a single write completes without a reader attached", async () => {

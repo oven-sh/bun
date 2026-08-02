@@ -27,6 +27,5 @@
 #pragma once
 
 #include "JSDOMWrapper.h"
-#include "Node.h"
 #include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/SnippetParams.h>

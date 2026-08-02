@@ -35,7 +35,6 @@
 
 #include "AddEventListenerOptions.h"
 #include "Event.h"
-#include "EventTarget.h"
 #include <wtf/MainThread.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>

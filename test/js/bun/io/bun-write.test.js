@@ -481,6 +481,31 @@ const IS_UV_FS_COPYFILE_DISABLED =
       });
       expect(exitCode).toBe(0);
     });
+
+    it("does not fallocate an O_APPEND fd for a source above the preallocate threshold", async () => {
+      const size = 3_000_000;
+      using dir = tempDir("bun-write-fd-preallocate", { "dst.bin": "AAAAAAAAAA" });
+      const src = join(String(dir), "src.bin");
+      const dst = join(String(dir), "dst.bin");
+      fs.writeFileSync(src, Buffer.alloc(size, "S"));
+      const script = `
+        const fs = require("fs");
+        const fd = fs.openSync(${JSON.stringify(dst)}, "a");
+        try {
+          process.stderr.write(String(await Bun.write(Bun.file(fd), Bun.file(${JSON.stringify(src)}))));
+        } finally { fs.closeSync(fd); }
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: fallbackEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, resolved: stderr, head: fs.readFileSync(dst).subarray(0, 15).toString(), size: fs.statSync(dst).size }).toEqual({
+        stdout: "",
+        resolved: String(size),
+        head: "AAAAAAAAAASSSSS",
+        size: 10 + size,
+      });
+      expect(exitCode).toBe(0);
+    });
   });
 
   // fstat on a FIFO reports st_size == 0, so the kernel-copy / bounded loop

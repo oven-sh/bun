@@ -805,6 +805,10 @@ impl<'a> CopyFile<'a> {
                 }
 
                 if PREALLOCATE_SUPPORTED
+                    && matches!(
+                        self.destination_file_store.pathlike,
+                        PathOrFileDescriptor::Path(_)
+                    )
                     && self.max_length > PREALLOCATE_LENGTH
                     && self.max_length != MAX_SIZE
                 {

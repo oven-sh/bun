@@ -5,7 +5,6 @@ import {
   bunEnv,
   bunExe,
   getMaxFD,
-  isASAN,
   isBroken,
   isDebug,
   isMacOS,
@@ -1229,11 +1228,7 @@ it("throws when an ArrayBufferView is used for stdout or stderr", async () => {
   expect(exitCode).toBe(0);
 });
 
-// The stdin stream throws mid-setup; the error-path cleanup in Bun.spawn
-// currently triggers an ASAN heap-use-after-free on release-asan (build 87834).
-// Skipped there so the other 135 tests in this file run; the whole file was
-// previously quarantined on ASAN in expectations.txt.
-it.skipIf(isWindows || isASAN)("leaves a caller-supplied stdout fd open when stdin stream setup fails", async () => {
+it.skipIf(isWindows)("leaves a caller-supplied stdout fd open when stdin stream setup fails", async () => {
   const file = join(tmp, "stdin-setup-failure.txt");
   const fixture = `
     const { openSync, fstatSync, writeSync, closeSync } = require("node:fs");
@@ -1273,7 +1268,7 @@ it.skipIf(isWindows || isASAN)("leaves a caller-supplied stdout fd open when std
   expect(exitCode).toBe(0);
 });
 
-it.skipIf(isWindows || isASAN)("leaves a Bun.file(fd) stdout open when stdin stream setup fails", async () => {
+it.skipIf(isWindows)("leaves a Bun.file(fd) stdout open when stdin stream setup fails", async () => {
   // Bun.file(fd) as stdout is an fd-backed Blob; extract_blob lowers it to
   // Stdio::Fd before spawn, so the error-path cleanup must recognise it as
   // caller-owned via the Fd variant and leave it open.

@@ -65,12 +65,6 @@ public:
         m_slots[index].set(vm, this, value);
     }
 
-    JSC::JSValue read(unsigned index) const
-    {
-        ASSERT(index < capacity);
-        return m_slots[index].get();
-    }
-
     bool clear(unsigned index)
     {
         ASSERT(index < capacity);

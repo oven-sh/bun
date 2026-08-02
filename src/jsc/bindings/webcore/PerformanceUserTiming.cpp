@@ -27,50 +27,13 @@
 #include "config.h"
 #include "PerformanceUserTiming.h"
 
-// #include "Document.h"
-// #include "FrameDestructionObserverInlines.h"
-// #include "InspectorInstrumetation.h"
 #include "MessagePort.h"
 #include "PerformanceMarkOptions.h"
 #include "PerformanceMeasureOptions.h"
-#include "PerformanceTiming.h"
 #include "SerializedScriptValue.h"
-// #include "WorkerOrWorkletGlobalScope.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
-#include <wtf/SortedArrayMap.h>
 
 namespace WebCore {
-
-using NavigationTimingFunction = unsigned long long (PerformanceTiming::*)() const;
-
-static constexpr SortedArrayMap restrictedMarkFunctions { std::to_array<std::pair<ComparableASCIILiteral, NavigationTimingFunction>>({
-    { "connectEnd"_s, &PerformanceTiming::connectEnd },
-    { "connectStart"_s, &PerformanceTiming::connectStart },
-    { "domComplete"_s, &PerformanceTiming::domComplete },
-    { "domContentLoadedEventEnd"_s, &PerformanceTiming::domContentLoadedEventEnd },
-    { "domContentLoadedEventStart"_s, &PerformanceTiming::domContentLoadedEventStart },
-    { "domInteractive"_s, &PerformanceTiming::domInteractive },
-    { "domLoading"_s, &PerformanceTiming::domLoading },
-    { "domainLookupEnd"_s, &PerformanceTiming::domainLookupEnd },
-    { "domainLookupStart"_s, &PerformanceTiming::domainLookupStart },
-    { "fetchStart"_s, &PerformanceTiming::fetchStart },
-    { "loadEventEnd"_s, &PerformanceTiming::loadEventEnd },
-    { "loadEventStart"_s, &PerformanceTiming::loadEventStart },
-    { "navigationStart"_s, &PerformanceTiming::navigationStart },
-    { "redirectEnd"_s, &PerformanceTiming::redirectEnd },
-    { "redirectStart"_s, &PerformanceTiming::redirectStart },
-    { "requestStart"_s, &PerformanceTiming::requestStart },
-    { "responseEnd"_s, &PerformanceTiming::responseEnd },
-    { "responseStart"_s, &PerformanceTiming::responseStart },
-    { "secureConnectionStart"_s, &PerformanceTiming::secureConnectionStart },
-    { "unloadEventEnd"_s, &PerformanceTiming::unloadEventEnd },
-    { "unloadEventStart"_s, &PerformanceTiming::unloadEventStart },
-}) };
-
-bool PerformanceUserTiming::isRestrictedMarkName(const String& markName)
-{
-    return restrictedMarkFunctions.contains(markName);
-}
 
 PerformanceUserTiming::PerformanceUserTiming(Performance& performance)
     : m_performance(performance)

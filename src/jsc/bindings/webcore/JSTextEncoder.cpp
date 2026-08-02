@@ -52,20 +52,10 @@
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
-// #include "ScriptExecutionContext.h"
-// #include "WebCoreJSClientData.h"
-
-#include <JavaScriptCore/DOMJITAbstractHeap.h>
-#include "DOMJITIDLConvert.h"
-#include "DOMJITIDLType.h"
-#include "DOMJITIDLTypeFilter.h"
-#include "DOMJITHelpers.h"
-#include <JavaScriptCore/DFGAbstractHeap.h>
 #include "BunClientData.h"
 
 namespace WebCore {
 using namespace JSC;
-using namespace JSC::DOMJIT;
 
 extern "C" JSC::EncodedJSValue TextEncoder__encode8(JSC::JSGlobalObject* global, const Latin1Character* stringPtr, size_t stringLen);
 extern "C" JSC::EncodedJSValue TextEncoder__encode16(JSC::JSGlobalObject* global, const char16_t* stringPtr, size_t stringLen);

@@ -53,10 +53,6 @@ pub(crate) mod netc {
 }
 #[cfg(windows)]
 pub(crate) mod netc {
-    /// `AI_ADDRCONFIG` (`ws2def.h`). Only consulted when
-    /// `BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG` is set; default hints on Windows
-    /// leave `ai_flags = 0`.
-    pub(crate) use bun_dns::AI_ADDRCONFIG;
     pub(crate) use bun_libuv_sys::{
         addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage,
     };
@@ -967,23 +963,17 @@ pub mod get_addr_info_request {
         }
     }
 
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg(target_os = "macos")]
     pub struct BackendDnsSd {
-        #[cfg(target_os = "macos")]
         pub(crate) query: dns_sd::QueryState,
     }
 
+    #[cfg(target_os = "macos")]
     impl BackendDnsSd {
-        #[cfg(target_os = "macos")]
         pub(crate) fn new(protocol: dns_sd::DNSServiceProtocol) -> Self {
             Self {
                 query: dns_sd::QueryState::new(protocol),
             }
-        }
-        #[cfg(not(target_os = "macos"))]
-        #[allow(dead_code)]
-        pub(crate) fn new(_protocol: u32) -> Self {
-            Self {}
         }
     }
 
@@ -1078,19 +1068,13 @@ pub mod get_addr_info_request {
     }
     pub enum Backend {
         CAres,
+        #[cfg(target_os = "macos")]
         DnsSd(BackendDnsSd),
         Libc(LibcBackend),
     }
 
     impl Backend {
-        #[allow(dead_code)]
-        pub(crate) fn as_dns_sd(&self) -> &BackendDnsSd {
-            match self {
-                Backend::DnsSd(l) => l,
-                _ => unreachable!(),
-            }
-        }
-        #[allow(dead_code)]
+        #[cfg(target_os = "macos")]
         pub(crate) fn as_dns_sd_mut(&mut self) -> &mut BackendDnsSd {
             match self {
                 Backend::DnsSd(l) => l,
@@ -2266,7 +2250,7 @@ pub mod internal {
     }
 
     // we just hardcode a STREAM socktype
-    #[allow(dead_code)]
+    #[cfg(not(windows))]
     fn default_hints() -> AddrInfo {
         let mut h: AddrInfo = bun_core::ffi::zeroed();
         h.ai_family = netc::AF_UNSPEC;
@@ -2285,7 +2269,7 @@ pub mod internal {
         h
     }
 
-    #[allow(dead_code)]
+    #[cfg(not(windows))]
     pub(crate) fn get_hints() -> AddrInfo {
         let mut hints_copy = default_hints();
         if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG

@@ -473,6 +473,12 @@ export const dnsCacheSeed = $newRustFunction("runtime/dns_jsc/dns.rs", "internal
   addresses: string[],
 ) => number[];
 
+/** macOS: replay synthetic dns_sd replies ("4:add", "6:nsr:more", ...) through QueryState; undefined elsewhere. */
+export const dnsSdReplay = $newRustFunction("runtime/dns_jsc/dns.rs", "internal.dnsSdReplayForTesting", 2) as (
+  protocolMask: number,
+  replies: string[],
+) => { ready: boolean; hasDeadline: boolean; results: number } | undefined;
+
 export const fetchH2Internals = {
   liveCounts: $newRustFunction("http/H2Client.rs", "TestingAPIs.liveCounts", 0) as () => {
     sessions: number;

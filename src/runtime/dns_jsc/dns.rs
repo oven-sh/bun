@@ -2759,6 +2759,68 @@ pub mod internal {
         Ok(object)
     }
 
+    /// `bun:internal-for-testing`: replay synthetic replies ("4:add", "6:nsr:more", ...) through dns_sd::QueryState.
+    pub(crate) fn dns_sd_replay_for_testing(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (global, frame);
+            Ok(JSValue::UNDEFINED)
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let args = frame.arguments();
+            if args.len() < 2 || !args[0].is_number() || !args[1].is_array() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "expected (protocolMask: number, replies: string[])"
+                )));
+            }
+            let mut q = dns_sd::QueryState::new(args[0].to_int32() as u32);
+            let len = args[1].get_length(global)? as usize;
+            for i in 0..len {
+                let spec = args[1].get_index(global, i as u32)?.to_slice(global)?;
+                let spec = spec.slice();
+                let mut sa: SockaddrStorage = bun_core::ffi::zeroed();
+                sa.ss_family = if spec.first() == Some(&b'6') {
+                    netc::AF_INET6
+                } else {
+                    netc::AF_INET
+                } as _;
+                let mut flags = 0;
+                if strings::contains(spec, b":add") {
+                    flags |= dns_sd::FLAGS_ADD;
+                }
+                if strings::contains(spec, b":more") {
+                    flags |= dns_sd::FLAGS_MORE_COMING;
+                }
+                let err = if strings::contains(spec, b":nsr") {
+                    dns_sd::ERR_NO_SUCH_RECORD
+                } else if strings::contains(spec, b":timeout") {
+                    dns_sd::ERR_TIMEOUT
+                } else {
+                    dns_sd::ERR_NO_ERROR
+                };
+                // SAFETY: `sa` is a family-tagged sockaddr_storage on this stack frame.
+                unsafe { q.record_reply(flags, err, (&raw const sa).cast(), 60) };
+            }
+            let out = JSValue::create_empty_object(global, 3);
+            out.put(global, b"ready", JSValue::js_boolean(q.is_ready()));
+            out.put(
+                global,
+                b"hasDeadline",
+                JSValue::js_boolean(q.early_out_deadline_ms().is_some()),
+            );
+            out.put(
+                global,
+                b"results",
+                JSValue::js_number(q.results.len() as f64),
+            );
+            Ok(out)
+        }
+    }
+
     /// `bun:internal-for-testing`: seed the connect-path DNS cache for `hostname`
     /// by running `addresses` through the real [`process_results`] interleave and
     /// storing the result, so a real `fetch()` / `Bun.connect()` consumes it.
@@ -5970,4 +6032,8 @@ export_host_fn!(
 export_host_fn!(
     internal::seed_cache_for_testing,
     "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_seedCacheForTesting"
+);
+export_host_fn!(
+    internal::dns_sd_replay_for_testing,
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_dnsSdReplayForTesting"
 );

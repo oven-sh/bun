@@ -1,3 +1,4 @@
+import { dnsSdReplay } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import dns from "dns";
 import { bunEnv, bunExe, isMacOS } from "harness";
@@ -110,4 +111,58 @@ test.skipIf(!isMacOS)("literals, scoped IPv6 and hints stay on getaddrinfo", asy
     { address: "fe80::1%lo0", family: 6 },
     { address: "::1", family: 6 },
   ]);
+});
+
+// NXDOMAIN and multi-record lookups interleaved on one connection: a negative reply can carry MoreComing for a sibling's answer.
+test.skipIf(!isMacOS)("interleaved NXDOMAIN and multi-record lookups all settle", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { lookup } = require("dns").promises;
+        const base = "www.example.com";
+        if (!(await lookup(base, { all: true }).catch(() => null))) { console.log(JSON.stringify({ skipped: true })); process.exit(0); }
+        const letters = [...base].flatMap((c, k) => (c === "." ? [] : [k]));
+        const spell = i => [...base].map((c, k) => ((i >> letters.indexOf(k)) & 1 && c !== "." ? c.toUpperCase() : c)).join("");
+        let nx = 0, ok = 0, other = [];
+        for (let round = 0; round < 4; round++) {
+          const tag = Math.random().toString(36).slice(2);
+          const batch = [];
+          for (let i = 0; i < 30; i++) {
+            batch.push(lookup("nx-" + tag + "-" + i + ".example").then(() => other.push("nx resolved"), e => (e.code === "ENOTFOUND" ? nx++ : other.push(e.code))));
+            batch.push(lookup(spell(round * 30 + i), { all: true }).then(r => (r.length ? ok++ : other.push("empty")), e => other.push(e.code)));
+          }
+          await Promise.all(batch);
+        }
+        console.log(JSON.stringify({ nx, ok, other }));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const result = JSON.parse(stdout.trim().split("\n").pop()!);
+  if (!result.skipped) expect(result).toEqual({ nx: 120, ok: 120, other: [] });
+  expect(exitCode).toBe(0);
+});
+
+// Deterministic QueryState checks via synthetic replies (mask 1=v4, 2=v6, 3=both; "family:add|nsr|timeout[:more]").
+test.skipIf(!isMacOS)("dns_sd query state: readiness and early-out coverage", () => {
+  const both = 3;
+  expect(dnsSdReplay(both, ["4:add", "6:nsr"])).toEqual({ ready: true, hasDeadline: false, results: 1 });
+  expect(dnsSdReplay(both, ["4:add", "6:add"])).toEqual({ ready: true, hasDeadline: false, results: 2 });
+  expect(dnsSdReplay(both, ["4:nsr", "6:nsr"])).toEqual({ ready: true, hasDeadline: false, results: 0 });
+  // One family answered, the other silent: not ready, but the second-family bound is armed.
+  expect(dnsSdReplay(both, ["4:add"])).toEqual({ ready: false, hasDeadline: true, results: 1 });
+  // Nothing in hand and a family genuinely pending: keep waiting on the daemon, no early-out.
+  expect(dnsSdReplay(both, ["4:nsr"])).toEqual({ ready: false, hasDeadline: false, results: 0 });
+  // Every family reported but the last reply carried MoreComing (possibly for a dead sibling): bounded, with results...
+  expect(dnsSdReplay(both, ["4:add", "6:add:more"])).toEqual({ ready: false, hasDeadline: true, results: 2 });
+  // ...and without (NXDOMAIN whose final reply carries an orphaned MoreComing must not hang on the keep-alive).
+  expect(dnsSdReplay(both, ["4:nsr", "6:nsr:more"])).toEqual({ ready: false, hasDeadline: true, results: 0 });
+  // A later reply for the same query clears MoreComing.
+  expect(dnsSdReplay(both, ["4:add:more", "6:nsr"])).toEqual({ ready: true, hasDeadline: false, results: 1 });
+  expect(dnsSdReplay(1, ["4:timeout"])).toEqual({ ready: true, hasDeadline: false, results: 0 });
 });

@@ -216,12 +216,17 @@ impl QueryState {
         {
             self.sd_error = error_code;
         }
-        let waiting = self.pending_proto != 0 || self.awaiting_more;
-        if !self.results.is_empty() && waiting && self.partial_at_ms.is_none() {
-            self.partial_at_ms = Some(now_ms());
-        } else if !waiting {
+        if self.only_stragglers_left() {
+            self.partial_at_ms.get_or_insert_with(now_ms);
+        } else {
             self.partial_at_ms = None;
         }
+    }
+
+    /// Everything decisive is in (answers, or every family reported) but a silent family or dangling `MoreComing` remains.
+    fn only_stragglers_left(&self) -> bool {
+        let outstanding = self.pending_proto != 0 || self.awaiting_more;
+        outstanding && (self.pending_proto == 0 || !self.results.is_empty())
     }
 
     pub(crate) fn is_ready(&self) -> bool {
@@ -230,12 +235,9 @@ impl QueryState {
             || (self.pending_proto == 0 && !self.awaiting_more)
     }
 
-    /// Deadline for giving up on whatever is still outstanding once answers are in hand.
+    /// Deadline for giving up on stragglers (a silent second family, or a dangling `MoreComing`).
     pub(crate) fn early_out_deadline_ms(&self) -> Option<i64> {
-        if self.gave_up_on_pending || self.results.is_empty() {
-            return None;
-        }
-        if self.pending_proto == 0 && !self.awaiting_more {
+        if self.gave_up_on_pending || !self.only_stragglers_left() {
             return None;
         }
         self.partial_at_ms.map(|t| t + SECOND_FAMILY_EXTRA_MS)
@@ -547,9 +549,7 @@ impl SharedConnection {
             conn.early_out_armed_for.set(0);
             let now = now_ms();
             let ready = conn.take_ready(|q| {
-                let due = q
-                    .early_out_deadline_ms()
-                    .is_some_and(|d| d <= now && !q.results.is_empty());
+                let due = q.early_out_deadline_ms().is_some_and(|d| d <= now);
                 if due {
                     q.gave_up_on_pending = true;
                 }

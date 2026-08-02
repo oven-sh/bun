@@ -3988,6 +3988,27 @@ impl VirtualMachine {
         slice
     }
 
+    /// Canonicalize the entry point's path (open + `get_fd_path`) without
+    /// going through the resolver, whose preserve-symlinks mode shapes its
+    /// shared caches. `None` when the path can't be opened or is too long;
+    /// the caller falls back to the resolved spelling.
+    fn realpath_for_main(&mut self, path: &[u8]) -> Option<&'static [u8]> {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if path.len() >= buf.len() {
+            return None;
+        }
+        buf[..path.len()].copy_from_slice(path);
+        buf[path.len()] = 0;
+        // SAFETY: `buf[path.len()] == 0` written above.
+        let z = bun_core::ZStr::from_buf(&buf[..], path.len());
+        let fd = bun_sys::open(z, bun_sys::O::RDONLY, 0).ok()?;
+        let mut out = bun_paths::path_buffer_pool::get();
+        let resolved = bun_sys::get_fd_path(fd, &mut out);
+        let _ = bun_sys::close(fd);
+        let resolved = resolved.ok()?;
+        Some(self.dupe_resolved_path(resolved))
+    }
+
     /// Note: `is_a_file_path` is a runtime
     /// arg to avoid duplicating the body for both monomorphizations.
     pub(crate) fn _resolve(
@@ -4084,8 +4105,11 @@ impl VirtualMachine {
 
         // Node applies --preserve-symlinks-main / NODE_PRESERVE_SYMLINKS_MAIN
         // (not --preserve-symlinks) to the entry point, which is resolved from
-        // the synthetic main module here (workers included).
-        let main_preserve_override: Option<bool> = (source == MAIN_FILE_NAME).then(|| {
+        // the synthetic main module here (workers included). Applied after the
+        // resolve (see `path_text` below) rather than by flipping
+        // `opts.preserve_symlinks` for one call: that option shapes cached
+        // `DirInfo` entries, and the dir cache is keyed by path only.
+        let main_preserve: Option<bool> = (source == MAIN_FILE_NAME).then(|| {
             bun_options_types::context::try_get()
                 .is_some_and(|c| c.runtime_options.preserve_symlinks_main)
                 || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
@@ -4104,20 +4128,12 @@ impl VirtualMachine {
                 bun_ast::ImportKind::Require
             };
             let global_cache = self.transpiler.resolver.opts.global_cache;
-            let resolved = {
-                let saved_preserve = self.transpiler.resolver.opts.preserve_symlinks;
-                self.transpiler.resolver.opts.preserve_symlinks =
-                    main_preserve_override.unwrap_or(saved_preserve);
-                let resolved = self.transpiler.resolver.resolve_and_auto_install(
-                    source_to_use,
-                    normalized_specifier,
-                    import_kind,
-                    global_cache,
-                );
-                self.transpiler.resolver.opts.preserve_symlinks = saved_preserve;
-                resolved
-            };
-            match resolved {
+            match self.transpiler.resolver.resolve_and_auto_install(
+                source_to_use,
+                normalized_specifier,
+                import_kind,
+                global_cache,
+            ) {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {
@@ -4187,10 +4203,23 @@ impl VirtualMachine {
         let result_path = result
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
-        // SAFETY: `result_path.text` borrows the resolver's arena, which
-        // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
-        // note).
-        ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
+        let path_text: &[u8] = match main_preserve {
+            // The resolver realpathed the entry and `set_realpath` kept the
+            // link spelling in `pretty`; that spelling is the entry's identity.
+            Some(true) if result_path.is_symlink && !result_path.pretty.is_empty() => {
+                result_path.pretty
+            }
+            // The preserve-mode resolver kept the entry's link path, but Node
+            // realpaths the entry when only the general flag is on.
+            Some(false) if self.transpiler.resolver.opts.preserve_symlinks => self
+                .realpath_for_main(result_path.text)
+                .unwrap_or(result_path.text),
+            _ => result_path.text,
+        };
+        // SAFETY: `result_path.text`/`.pretty` borrow the resolver's arena,
+        // which outlives `ResolveFunctionResult` (see the struct's
+        // lifetime-erasure note).
+        ret.path = unsafe { bun_ptr::detach_lifetime(path_text) };
         ret.result = Some(result);
 
         Ok(())

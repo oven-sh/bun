@@ -1135,12 +1135,9 @@ impl Linux {
                                 if !entry_is_file {
                                     // SAFETY: owner_watcher live under manager.mutex;
                                     // the `&mut` is scoped to the call.
-                                    if let Err(e) = Linux::add_one(
-                                        manager,
-                                        unsafe { &mut *owner_watcher },
-                                        abs,
-                                        entry_rel,
-                                    ) {
+                                    let watcher = unsafe { &mut *owner_watcher };
+                                    if let Err(e) = Linux::add_one(manager, watcher, abs, entry_rel)
+                                    {
                                         if add_err.is_none() {
                                             add_err = Some(e);
                                         }

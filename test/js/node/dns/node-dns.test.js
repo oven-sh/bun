@@ -122,11 +122,18 @@ test.skipIf(isWindows)("dns.resolveSrv accepts compressed target in RDATA", asyn
       // QNAME at offset 12. After decompression the target is
       // srv.<query-name>.
       const rdata = Buffer.from([
-        0x00, 0x0a, // priority
-        0x00, 0x32, // weight
-        0x00, 0x50, // port
-        0x03, 0x73, 0x72, 0x76, // "srv"
-        0xc0, 0x0c, // compression pointer -> offset 12
+        0x00,
+        0x0a, // priority
+        0x00,
+        0x32, // weight
+        0x00,
+        0x50, // port
+        0x03,
+        0x73,
+        0x72,
+        0x76, // "srv"
+        0xc0,
+        0x0c, // compression pointer -> offset 12
       ]);
       const answer = Buffer.concat([
         Buffer.from([0xc0, 0x0c, 0x00, 0x21, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c]),
@@ -144,9 +151,7 @@ test.skipIf(isWindows)("dns.resolveSrv accepts compressed target in RDATA", asyn
     const { promise, resolve, reject } = Promise.withResolvers();
     resolver.resolveSrv("_test._tcp.example.test", (err, records) => (err ? reject(err) : resolve(records)));
     const records = await promise;
-    expect(records).toEqual([
-      { name: "srv._test._tcp.example.test", priority: 10, weight: 50, port: 80 },
-    ]);
+    expect(records).toEqual([{ name: "srv._test._tcp.example.test", priority: 10, weight: 50, port: 80 }]);
   } finally {
     socket.close();
   }

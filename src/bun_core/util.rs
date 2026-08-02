@@ -1269,23 +1269,6 @@ impl Stdio {
     }
 }
 
-/// Niche-packed `Option<Fd>`: the invalid-fd bit pattern is the `none` sentinel.
-/// Use instead of encoding the invalid value directly.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub struct FdOptional(FdBacking);
-impl FdOptional {
-    pub const NONE: FdOptional = FdOptional(Fd::INVALID.0);
-    #[inline]
-    pub const fn unwrap(self) -> Option<Fd> {
-        if self.0 == FdOptional::NONE.0 {
-            None
-        } else {
-            Some(Fd(self.0))
-        }
-    }
-}
-
 /// Best-effort fd → path. Returns bytes written (>0), 0 on misc failure,
 /// -1 on EBADF/ENOENT (caller may render `[BADF]`). Body is libc-only
 /// (`readlink("/proc/self/fd/N")` on Linux, `fcntl(F_GETPATH)` on macOS,

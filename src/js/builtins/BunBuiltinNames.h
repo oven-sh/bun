@@ -99,7 +99,6 @@ using namespace JSC;
     macro(filename) \
     macro(flush) \
     macro(format) \
-    macro(fulfillModuleSync) \
     macro(handleEvent) \
     macro(headers) \
     macro(highWaterMark) \

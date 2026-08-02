@@ -10,11 +10,6 @@
 #include "HTTPParsers.h"
 namespace WebCore {
 
-extern "C" WebCore::Cookie* Cookie__fromJS(JSC::EncodedJSValue value)
-{
-    return WebCoreCast<WebCore::JSCookie, WebCore::Cookie>(value);
-}
-
 Cookie::~Cookie() = default;
 
 Cookie::Cookie(const String& name, const String& value,

@@ -70,13 +70,6 @@ extern "C" bool is_executable_file(const char* path)
 }
 #endif
 
-extern "C" void bun_ignore_sigpipe()
-{
-#if !OS(WINDOWS)
-    // ignore SIGPIPE
-    signal(SIGPIPE, SIG_IGN);
-#endif
-}
 extern "C" ssize_t bun_sysconf__SC_CLK_TCK()
 {
 #ifdef __APPLE__
@@ -750,26 +743,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] size_t Bun__ramSize()
     // This value is cached internally.
     return WTF::ramSize();
 }
-
-#if !OS(WINDOWS)
-
-extern "C" void Bun__disableSOLinger(int fd)
-{
-    struct linger l = { 1, 0 };
-    setsockopt(fd, SOL_SOCKET, SO_LINGER, &l, sizeof(l));
-}
-
-#else
-
-#include <winsock2.h>
-
-extern "C" void Bun__disableSOLinger(SOCKET fd)
-{
-    struct linger l = { 1, 0 };
-    setsockopt(fd, SOL_SOCKET, SO_LINGER, (char*)&l, sizeof(l));
-}
-
-#endif
 
 extern "C" int ffi_vprintf(const char* fmt, va_list ap)
 {

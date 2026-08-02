@@ -21,17 +21,6 @@ pub struct PrinterOptions<'a> {
     pub project_root: Option<&'a [u8]>,
     /// Targets to output the CSS for.
     pub targets: Targets,
-    /// Whether to analyze dependencies (i.e. `@import` and `url()`).
-    /// If true, the dependencies are returned as part of the
-    /// [ToCssResult](super::stylesheet::ToCssResult).
-    ///
-    /// When enabled, `@import` and `url()` dependencies
-    /// are replaced with hashed placeholders that can be replaced with the final
-    /// urls later (after bundling).
-    pub analyze_dependencies: Option<css::dependencies::DependencyOptions>,
-    /// A mapping of pseudo classes to replace with class names that can be applied
-    /// from JavaScript. Useful for polyfills, for example.
-    pub pseudo_classes: Option<PseudoClasses<'a>>,
 }
 
 impl<'a> PrinterOptions<'a> {
@@ -47,8 +36,6 @@ impl<'a> PrinterOptions<'a> {
                 browsers: None,
                 ..Targets::default()
             },
-            analyze_dependencies: None,
-            pseudo_classes: None,
         }
     }
 }
@@ -57,23 +44,6 @@ impl<'a> Default for PrinterOptions<'a> {
     fn default() -> Self {
         Self::default()
     }
-}
-
-/// A mapping of user action pseudo classes to replace with class names.
-///
-/// See [PrinterOptions](PrinterOptions).
-#[derive(Default, Clone, Copy)]
-pub struct PseudoClasses<'a> {
-    /// The class name to replace `:hover` with.
-    pub(crate) hover: Option<&'a [u8]>,
-    /// The class name to replace `:active` with.
-    pub(crate) active: Option<&'a [u8]>,
-    /// The class name to replace `:focus` with.
-    pub(crate) focus: Option<&'a [u8]>,
-    /// The class name to replace `:focus-visible` with.
-    pub(crate) focus_visible: Option<&'a [u8]>,
-    /// The class name to replace `:focus-within` with.
-    pub(crate) focus_within: Option<&'a [u8]>,
 }
 
 pub use css::targets::Targets;
@@ -130,11 +100,6 @@ pub struct Printer<'a> {
     pub(crate) skip_prefixed_nested_rules: bool,
     pub(crate) in_calc: bool,
     pub(crate) css_module: Option<css::CssModule<'a>>,
-    pub(crate) dependencies: Option<BumpVec<'a, css::Dependency>>,
-    pub(crate) remove_imports: bool,
-    /// A mapping of pseudo classes to replace with class names that can be applied
-    /// from JavaScript. Useful for polyfills, for example.
-    pub(crate) pseudo_classes: Option<PseudoClasses<'a>>,
     // INVARIANT: `with_context()` points this at a stack-local `StyleContext` (via an
     // unsafe variance cast — see the SAFETY note there) and always restores the parent
     // before that frame returns; never stash `ctx` beyond the `with_context` call.
@@ -261,7 +226,7 @@ impl<'a> Printer<'a> {
         Err(PrintErr::CSSPrintError)
     }
 
-    // deinit() dropped — scratchbuf/dependencies are arena-backed
+    // deinit() dropped — scratchbuf is arena-backed
     // BumpVec<'a, _>; freed in bulk by `arena.reset()`. No explicit Drop impl needed.
 
     /// If `import_records` is null, then the printer will error when it encounters code that relies on import records (urls())
@@ -279,17 +244,6 @@ impl<'a> Printer<'a> {
             dest,
             minify: options.minify,
             targets: options.targets,
-            dependencies: if options.analyze_dependencies.is_some() {
-                Some(BumpVec::new_in(arena))
-            } else {
-                None
-            },
-            remove_imports: options
-                .analyze_dependencies
-                .as_ref()
-                .map(|d| d.remove_imports)
-                .unwrap_or(false),
-            pseudo_classes: options.pseudo_classes,
             import_info,
             scratchbuf,
             arena,
@@ -312,14 +266,6 @@ impl<'a> Printer<'a> {
             prefix_expansion_bytes: 0,
             error_kind: None,
         }
-    }
-
-    #[inline]
-    pub(crate) fn get_import_records(&mut self) -> PrintResult<&'a [ImportRecord]> {
-        if let Some(info) = &self.import_info {
-            return Ok(info.import_records);
-        }
-        Err(self.add_no_import_record_error())
     }
 
     #[inline]

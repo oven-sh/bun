@@ -487,21 +487,6 @@ extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject
     return JSValue::encode(structure);
 }
 
-extern "C" EncodedJSValue JSC__createEmptyObjectWithStructure(JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto* object = JSC::constructEmptyObject(vm, structure);
-
-    ensureStillAliveHere(object);
-    vm.writeBarrier(object);
-
-    return JSValue::encode(object);
-}
-
-extern "C" void JSC__putDirectOffset(JSC::VM* vm, JSC::EncodedJSValue object, uint32_t offset, JSC::EncodedJSValue value)
-{
-    JSValue::decode(object).getObject()->putDirectOffset(*vm, offset, JSValue::decode(value));
-}
 extern "C" uint32_t JSC__JSObject__maxInlineCapacity = JSC::JSFinalObject::maxInlineCapacity;
 
 // PostgreSQL time formatting helpers - following WebKit's pattern

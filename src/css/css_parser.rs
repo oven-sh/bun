@@ -27,7 +27,7 @@ pub use crate::css_modules::{
     self, Config as CssModuleConfig, CssModule, CssModuleExports, CssModuleReference,
     CssModuleReferences,
 };
-pub use crate::dependencies::{self, Dependency};
+pub use crate::dependencies;
 pub use crate::error::{
     self as errors_, BasicParseError, BasicParseErrorKind, Err, ErrorLocation, MinifyErr,
     MinifyError, MinifyErrorKind, ParseError, ParserError, PrinterError, PrinterErrorKind,

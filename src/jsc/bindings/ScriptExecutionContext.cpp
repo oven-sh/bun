@@ -8,7 +8,6 @@
 #include "BunClientData.h"
 #include "EventLoopTask.h"
 #include <wtf/Threading.h>
-extern "C" void Bun__startLoop(us_loop_t* loop);
 
 namespace WebCore {
 static constexpr ScriptExecutionContextIdentifier INITIAL_IDENTIFIER_INTERNAL = 1;
@@ -290,11 +289,6 @@ void ScriptExecutionContext::postTask(EventLoopTask* task)
 }
 
 // Native bindings
-extern "C" ScriptExecutionContextIdentifier ScriptExecutionContextIdentifier__forGlobalObject(JSC::JSGlobalObject* globalObject)
-{
-    return defaultGlobalObject(globalObject)->scriptExecutionContext()->identifier();
-}
-
 extern "C" JSC::JSGlobalObject* ScriptExecutionContextIdentifier__getGlobalObject(ScriptExecutionContextIdentifier id)
 {
     auto* context = ScriptExecutionContext::getScriptExecutionContext(id);

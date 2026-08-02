@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isMacOS, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
 
@@ -40,8 +40,10 @@ test("coverage report generation scales with ranges, not bytes", () => {
   const plain = run(false);
   // The per-byte path adds ~2s on release / ~4.5s on debug+ASAN; the per-range
   // path keeps `covered` close to `plain`. Floor guards against noise on fast
-  // release lanes where `plain` is a few tens of ms.
-  expect(covered, `plain=${plain.toFixed(0)}ms covered=${covered.toFixed(0)}ms`).toBeLessThan(Math.max(plain, 150) * 3);
+  // release lanes where `plain` is a few tens of ms; macOS 26 arm64 sees ~500ms
+  // of JSC ControlFlowProfiler overhead here, so use a higher floor on darwin.
+  const floor = isMacOS ? 250 : 150;
+  expect(covered, `plain=${plain.toFixed(0)}ms covered=${covered.toFixed(0)}ms`).toBeLessThan(Math.max(plain, floor) * 3);
 });
 
 test("coverage crash", () => {

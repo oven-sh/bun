@@ -75,24 +75,26 @@ pub mod analyze_transpiled_module {
     use bun_collections::HashMap;
     use bun_core::slice_as_bytes;
 
+    /// Every record kind carries one trailing bitcast-`FetchParameters` slot
+    /// after its `StringID` payload.
     #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum RecordKind {
-        /// module_name, import_name, local_name
+        /// module_name, import_name, local_name, fetch_parameters
         ImportInfoSingle,
-        /// module_name, import_name, local_name
+        /// module_name, import_name, local_name, fetch_parameters
         ImportInfoSingleTypeScript,
-        /// module_name, import_name = '*', local_name
+        /// module_name, import_name = '*', local_name, fetch_parameters
         ImportInfoNamespace,
-        /// export_name, import_name, module_name
+        /// export_name, import_name, module_name, fetch_parameters
         ExportInfoIndirect,
-        /// export_name, local_name, padding (for local => indirect conversion)
+        /// export_name, local_name, padding, fetch_parameters (for local => indirect conversion)
         ExportInfoLocal,
-        /// export_name, module_name
+        /// export_name, module_name, fetch_parameters
         ExportInfoNamespace,
-        /// module_name
+        /// module_name, fetch_parameters
         ExportInfoStar,
-        /// module_name, import_name = '*', local_name
+        /// module_name, import_name = '*', local_name, fetch_parameters
         ///
         /// `import defer * as ns from "mod"` — same payload as
         /// `ImportInfoNamespace` but the resulting `ImportEntry` carries
@@ -106,10 +108,10 @@ pub mod analyze_transpiled_module {
                 Self::ImportInfoSingleTypeScript => 4,
                 Self::ImportInfoNamespace => 4,
                 Self::ImportInfoNamespaceDefer => 4,
-                Self::ExportInfoIndirect => 3,
-                Self::ExportInfoLocal => 3,
-                Self::ExportInfoNamespace => 2,
-                Self::ExportInfoStar => 1,
+                Self::ExportInfoIndirect => 4,
+                Self::ExportInfoLocal => 4,
+                Self::ExportInfoNamespace => 3,
+                Self::ExportInfoStar => 2,
             }
         }
     }
@@ -426,13 +428,19 @@ pub mod analyze_transpiled_module {
             export_name: StringID,
             import_name: StringID,
             module_name: StringID,
+            fetch_parameters: FetchParameters,
         ) {
             if self.has_or_add_exported_name(export_name) {
                 return;
             } // a syntax error will be emitted later in this case
             self.add_record(
                 RecordKind::ExportInfoIndirect,
-                &[export_name, import_name, module_name],
+                &[
+                    export_name,
+                    import_name,
+                    module_name,
+                    StringID(fetch_parameters.0),
+                ],
             );
         }
         pub(crate) fn add_export_info_local(
@@ -445,21 +453,37 @@ pub mod analyze_transpiled_module {
             } // a syntax error will be emitted later in this case
             self.add_record(
                 RecordKind::ExportInfoLocal,
-                &[export_name, local_name, StringID(u32::MAX)],
+                &[
+                    export_name,
+                    local_name,
+                    StringID(u32::MAX),
+                    StringID(FetchParameters::None.0),
+                ],
             );
         }
         pub(crate) fn add_export_info_namespace(
             &mut self,
             export_name: StringID,
             module_name: StringID,
+            fetch_parameters: FetchParameters,
         ) {
             if self.has_or_add_exported_name(export_name) {
                 return;
             } // a syntax error will be emitted later in this case
-            self.add_record(RecordKind::ExportInfoNamespace, &[export_name, module_name]);
+            self.add_record(
+                RecordKind::ExportInfoNamespace,
+                &[export_name, module_name, StringID(fetch_parameters.0)],
+            );
         }
-        pub(crate) fn add_export_info_star(&mut self, module_name: StringID) {
-            self.add_record(RecordKind::ExportInfoStar, &[module_name]);
+        pub(crate) fn add_export_info_star(
+            &mut self,
+            module_name: StringID,
+            fetch_parameters: FetchParameters,
+        ) {
+            self.add_record(
+                RecordKind::ExportInfoStar,
+                &[module_name, StringID(fetch_parameters.0)],
+            );
         }
 
         fn has_or_add_exported_name(&mut self, name: StringID) -> bool {
@@ -532,6 +556,7 @@ pub mod analyze_transpiled_module {
             struct LocalImport {
                 module_name: StringID,
                 import_name: StringID,
+                fetch_parameters: StringID,
                 record_kinds_idx: usize,
                 is_namespace: bool,
             }
@@ -548,6 +573,7 @@ pub mod analyze_transpiled_module {
                             LocalImport {
                                 module_name: self.buffer[i],
                                 import_name: self.buffer[i + 1],
+                                fetch_parameters: self.buffer[i + 3],
                                 record_kinds_idx: idx,
                                 is_namespace: false,
                             },
@@ -558,6 +584,7 @@ pub mod analyze_transpiled_module {
                             LocalImport {
                                 module_name: self.buffer[i],
                                 import_name: StringID::STAR_NAMESPACE,
+                                fetch_parameters: self.buffer[i + 3],
                                 record_kinds_idx: idx,
                                 is_namespace: true,
                             },
@@ -583,6 +610,7 @@ pub mod analyze_transpiled_module {
                             *k = RecordKind::ExportInfoIndirect;
                             self.buffer[i + 1] = ip.import_name;
                             self.buffer[i + 2] = ip.module_name;
+                            self.buffer[i + 3] = ip.fetch_parameters;
                             // In TypeScript, the re-exported import may target a type-only
                             // export that was elided. Convert the import to SingleTypeScript
                             // so JSC tolerates it being NotFound during linking.
@@ -5157,9 +5185,16 @@ pub(crate) mod __gated_printer {
                             );
                             if let Some(alias) = &s.alias {
                                 let alias_id = mi.str(alias.original_name.slice());
-                                mi.add_export_info_namespace(alias_id, irp_id);
+                                mi.add_export_info_namespace(
+                                    alias_id,
+                                    irp_id,
+                                    analyze_transpiled_module::FetchParameters::None,
+                                );
                             } else {
-                                mi.add_export_info_star(irp_id);
+                                mi.add_export_info_star(
+                                    irp_id,
+                                    analyze_transpiled_module::FetchParameters::None,
+                                );
                             }
                         }
                     }
@@ -5337,7 +5372,12 @@ pub(crate) mod __gated_printer {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let alias_id = mi.str(item.alias.slice());
                             let name_id = mi.str(name);
-                            mi.add_export_info_indirect(alias_id, name_id, irp_id);
+                            mi.add_export_info_indirect(
+                                alias_id,
+                                name_id,
+                                irp_id,
+                                analyze_transpiled_module::FetchParameters::None,
+                            );
                         }
                     }
                 }

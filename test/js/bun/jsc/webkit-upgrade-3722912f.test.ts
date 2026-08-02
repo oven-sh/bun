@@ -71,15 +71,23 @@ describe.concurrent("WebKit 3722912ff800 upgrade", () => {
     // in release.
     using dir = tempDir("wk-typed-import", {
       "d.json": `{"ok":true}`,
+      "mid.ts": `
+        import j from "./d.json" with { type: "json" };
+        import * as ns from "./d.json" with { type: "json" };
+        export { j, ns };
+      `,
       "typed.test.ts": `
         import j from "./d.json" with { type: "json" };
         import t from "./d.json" with { type: "text" };
         import * as ns from "./d.json" with { type: "json" };
+        import { j as rj, ns as rns } from "./mid.ts";
         import { test, expect } from "bun:test";
         test("typed", () => {
           expect(j).toEqual({ ok: true });
           expect(JSON.parse(t as string)).toEqual({ ok: true });
           expect(ns.default).toEqual({ ok: true });
+          expect(rj).toEqual({ ok: true });
+          expect(rns.default).toEqual({ ok: true });
         });
       `,
     });
@@ -90,10 +98,9 @@ describe.concurrent("WebKit 3722912ff800 upgrade", () => {
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("1 pass");
     expect(stderr).not.toContain("Imports different");
-    expect(stdout).toBeDefined();
     expect(exitCode).toBe(0);
   });
 });

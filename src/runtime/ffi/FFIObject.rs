@@ -110,9 +110,8 @@ unsafe extern "C" {
     fn Bun__FFI__CStringConstructor(global: *const JSGlobalObject) -> JSValue;
 }
 
-// DOMJIT slow-path host fn, represented here as a const descriptor. The DOMJIT
-// signature (effect/type filters) lives on the C++ side in `ZigGeneratedCode.cpp`,
-// currently commented out there, so `FFI__ptr__put` installs a plain host fn.
+// `FFI__ptr__put` installs a plain host fn; its DOMJIT wiring in
+// `ZigGeneratedCode.cpp` is commented out.
 const DOM_CALL: DomCall = DomCall {
     class_name: "FFI",
     function_name: "ptr",
@@ -147,9 +146,6 @@ pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
 pub mod reader {
     use super::*;
 
-    // Same DOMCall shape as `DOM_CALL` above: the C++ side is the
-    // `Reader__*__put` helpers in `ZigGeneratedCode.cpp`; the runtime
-    // descriptor here only needs the `put` extern.
     const DOM_CALLS: &[(&str, DomCall)] = &[
         (
             "u8",
@@ -429,9 +425,8 @@ pub mod reader {
         JSValue::from_uint64_no_truncate(global_object, value)
     }
 
-    // The DOMJIT fast-path (no type checks) readers are currently disabled
-    // (commented-out wrappers in `ZigGeneratedCode.cpp`); only the slow paths
-    // above are live.
+    // The DOMJIT fast-path readers are disabled (commented out in
+    // `ZigGeneratedCode.cpp`); these slow paths are the only implementations.
 }
 
 pub(crate) fn ptr(global_this: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JSValue {

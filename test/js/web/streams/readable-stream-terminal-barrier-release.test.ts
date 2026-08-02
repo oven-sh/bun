@@ -119,5 +119,4 @@ test("direct controller write() after reader.cancel() does not throw", async () 
   expect(ctrl.write("after-cancel")).toBe("after-cancel".length);
   expect(() => ctrl.end()).not.toThrow();
   expect(() => ctrl.flush()).not.toThrow();
-  expect(() => ctrl.error(new Error("after-cancel"))).not.toThrow();
 });

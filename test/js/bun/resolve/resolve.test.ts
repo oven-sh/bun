@@ -1206,25 +1206,28 @@ describe("--preserve-symlinks", () => {
     expect(withoutMain.exitCode).not.toBe(0);
   });
 
-  it.concurrent("-main only: entry under a symlinked directory keeps its link path, other modules are realpathed", async () => {
-    // The entry's resolve must not leak preserve-mode entries into the shared
-    // dir cache: foo.cjs below has to be realpathed even though the entry is
-    // not.
-    const dir = tempDirWithFiles("preserve-symlinks-main-dir", {
-      "real/app/bin/entry.cjs": `const foo = require("../lib/foo.cjs");\nconsole.log(__filename);\nconsole.log(foo);\n`,
-      "real/app/lib/foo.cjs": `module.exports = __filename;\n`,
-    });
-    symlinkSync(join(dir, "real"), join(dir, "opt"), "dir");
-    const { stdout, stderr, exitCode } = await run(dir, [
-      "--preserve-symlinks-main",
-      join(dir, "opt", "app", "bin", "entry.cjs"),
-    ]);
-    expect(stderr).toBe("");
-    const [entryLine, fooLine] = stdout.replaceAll("\\", "/").trim().split("\n");
-    expect(entryLine).toEndWith("/opt/app/bin/entry.cjs");
-    expect(fooLine).toEndWith("/real/app/lib/foo.cjs");
-    expect(exitCode).toBe(0);
-  });
+  it.concurrent(
+    "-main only: entry under a symlinked directory keeps its link path, other modules are realpathed",
+    async () => {
+      // The entry's resolve must not leak preserve-mode entries into the shared
+      // dir cache: foo.cjs below has to be realpathed even though the entry is
+      // not.
+      const dir = tempDirWithFiles("preserve-symlinks-main-dir", {
+        "real/app/bin/entry.cjs": `const foo = require("../lib/foo.cjs");\nconsole.log(__filename);\nconsole.log(foo);\n`,
+        "real/app/lib/foo.cjs": `module.exports = __filename;\n`,
+      });
+      symlinkSync(join(dir, "real"), join(dir, "opt"), "dir");
+      const { stdout, stderr, exitCode } = await run(dir, [
+        "--preserve-symlinks-main",
+        join(dir, "opt", "app", "bin", "entry.cjs"),
+      ]);
+      expect(stderr).toBe("");
+      const [entryLine, fooLine] = stdout.replaceAll("\\", "/").trim().split("\n");
+      expect(entryLine).toEndWith("/opt/app/bin/entry.cjs");
+      expect(fooLine).toEndWith("/real/app/lib/foo.cjs");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   it.concurrent("bun build --preserve-symlinks resolves through file symlinks", async () => {
     const dir = makeTree();

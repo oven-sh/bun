@@ -59,6 +59,7 @@ bool Isolate::IsInUse()
 
 void Isolate::LowMemoryNotification()
 {
+    JSC::JSLockHolder lock(vm());
     vm().heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
 }
 

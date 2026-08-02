@@ -181,11 +181,9 @@ impl PackageManager {
             }
         };
 
-        // Sort descending. The entries are tag-free (stable versions only),
-        // so no string buffer is needed. Use the total-order helper with
-        // swapped args (`b.order(a)`) so equal keys yield `Equal`; a two-way
-        // Less/Greater closure is not antisymmetric and may panic since
-        // Rust 1.81.
+        // Sort descending via the total-order helper (`b.order(a)`); a plain
+        // Less/Greater closure is not antisymmetric and may panic since 1.81.
+        // Entries are stable-only, so no string buffer is needed.
         installed_versions.sort_by(|a, b| semver::Version::order_fn(&[], *b, *a));
         let npm_query = version.try_npm();
         for installed_version in installed_versions.iter().copied() {

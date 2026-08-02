@@ -2572,7 +2572,7 @@ pub mod internal {
             // Null host: fall through to getaddrinfo(NULL, service) on the work pool.
             return false;
         };
-        if dns_sd::is_numeric_host(host) {
+        if strings::to_ip_address(host.as_bytes()).is_some() {
             return false;
         }
 

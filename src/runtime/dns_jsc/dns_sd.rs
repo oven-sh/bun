@@ -88,30 +88,6 @@ pub(crate) fn protocol_for_hints(hints: &AddrInfo) -> DNSServiceProtocol {
     }
 }
 
-/// Is `name` a numeric host (`::1`, `127.1`, `0x7f000001`, `fe80::1%en0`)? `AI_NUMERICHOST` is a pure parse — it never contacts a resolver, and Libinfo skips even its path check — so this asks the platform instead of guessing from the characters.
-pub(crate) fn is_numeric_host(name: &ZStr) -> bool {
-    let mut hints: AddrInfo = bun_core::ffi::zeroed();
-    hints.ai_family = netc::AF_UNSPEC;
-    hints.ai_socktype = netc::SOCK_STREAM;
-    hints.ai_flags = libc::AI_NUMERICHOST;
-    let mut out: *mut AddrInfo = ptr::null_mut();
-    // SAFETY: FFI; `name` is NUL-terminated, `hints`/`out` are stack locals, and
-    // any list returned is freed here.
-    unsafe {
-        if libc::getaddrinfo(
-            name.as_ptr().cast::<c_char>(),
-            ptr::null(),
-            &raw const hints,
-            &raw mut out,
-        ) != 0
-        {
-            return false;
-        }
-        bun_dns::freeaddrinfo(out.cast());
-    }
-    true
-}
-
 /// `hints` bits dns_sd can't express (AI_V4MAPPED/AI_ALL/...); AI_ADDRCONFIG maps to SuppressUnusable.
 pub(crate) fn getaddrinfo_only_flags(flags: c_int) -> bool {
     flags & !netc::AI_ADDRCONFIG != 0
@@ -700,10 +676,10 @@ pub(crate) fn lookup(
 ) -> JSValue {
     bun_core::Environment::only_mac();
 
-    let name_z = bun::ZBox::from_bytes(query.name.as_ref());
-    // mDNSResponder answers names; a numeric host is a parse and hints dns_sd
-    // can't express (AI_V4MAPPED/AI_ALL) need getaddrinfo's own semantics.
-    if getaddrinfo_only_flags(query.options.flags) || is_numeric_host(&name_z) {
+    // mDNSResponder answers names; numeric hosts are a parse and AI_V4MAPPED/AI_ALL need getaddrinfo's semantics.
+    if getaddrinfo_only_flags(query.options.flags)
+        || strings::to_ip_address(query.name.as_ref()).is_some()
+    {
         return lib_c::lookup(this, query, global_this);
     }
 
@@ -740,6 +716,7 @@ pub(crate) fn lookup(
     // SAFETY: request was just heap-allocated in init() and is exclusively owned here.
     let promise_value = unsafe { (*request).head.promise.value() };
 
+    let name_z = bun::ZBox::from_bytes(query.name.as_ref());
     let Some(_) = shared.start(
         Inflight::Jsc(request),
         protocol,

@@ -101,12 +101,16 @@ test.skipIf(!isMacOS)("literals, scoped IPv6 and hints stay on getaddrinfo", asy
     dns.promises.lookup("::1"),
     dns.promises.lookup("127.1"),
     dns.promises.lookup("0x7f000001"),
+    dns.promises.lookup("0177.0.0.1"),
+    dns.promises.lookup("2130706433"),
     dns.promises.lookup("fe80::1%lo0"),
     dns.promises.lookup("localhost", { family: 6, hints: dns.V4MAPPED }),
   ]);
   expect(results).toEqual([
     { address: "::1", family: 6 },
     { address: "127.0.0.1", family: 4 },
+    { address: "127.0.0.1", family: 4 },
+    { address: "177.0.0.1", family: 4 },
     { address: "127.0.0.1", family: 4 },
     { address: "fe80::1%lo0", family: 6 },
     { address: "::1", family: 6 },

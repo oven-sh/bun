@@ -820,6 +820,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         result
     }
 
+    /// Declaration-file mode: `export default <type-only declaration>` (for
+    /// example `export default interface Foo {}` or the tsc emit
+    /// `export default function f(): void;`) still gets a `default` export,
+    /// bound to undefined, so importers link.
+    fn dts_default_export_stub(
+        p: &mut Self,
+        loc: bun_ast::Loc,
+        default_loc: bun_ast::Loc,
+    ) -> Result<Stmt> {
+        p.has_es_module_syntax = true;
+        let default_name = p.create_default_name(default_loc);
+        let value = js_ast::StmtOrExpr::Expr(p.new_expr(js_ast::E::Undefined {}, default_loc));
+        Ok(p.s(
+            S::ExportDefault {
+                default_name,
+                value,
+            },
+            loc,
+        ))
+    }
+
     /// `export * [as ns] from "path"`; split out of `t_export` so
     /// declaration-file mode can route `export type * from` here too.
     #[inline(never)]
@@ -1122,6 +1143,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // Declaration files keep `export type { }` /
                                 // `export type * from` as runtime exports.
                                 if p.options.typescript_declaration_file
+                                    && opts.is_module_scope
                                     && !p.dts_suppress_type_name_recording
                                 {
                                     match p.lexer.token {
@@ -1201,6 +1223,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let stmt = p.parse_fn_stmt(loc, &mut stmt_opts, Some(async_range))?;
                         if matches!(stmt.data, js_ast::StmtData::STypeScript(_)) {
                             // This was just a type annotation
+                            if p.options.typescript_declaration_file
+                                && opts.is_module_scope
+                                && !p.dts_suppress_type_name_recording
+                            {
+                                return Self::dts_default_export_stub(p, loc, default_loc);
+                            }
                             return Ok(stmt);
                         }
 
@@ -1258,6 +1286,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         match &stmt.data {
                             // This was just a type annotation
                             js_ast::StmtData::STypeScript(_) => {
+                                if p.options.typescript_declaration_file
+                                    && opts.is_module_scope
+                                    && !p.dts_suppress_type_name_recording
+                                {
+                                    return Self::dts_default_export_stub(p, loc, default_loc);
+                                }
                                 return Ok(stmt);
                             }
 
@@ -1601,7 +1635,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         );
                                     } else {
                                         // "import type foo from 'bar';"
-                                        if p.options.typescript_declaration_file {
+                                        if p.options.typescript_declaration_file
+                                            && opts.is_module_scope
+                                            && !p.dts_suppress_type_name_recording
+                                        {
                                             // Declaration files keep type-only
                                             // imports as runtime imports.
                                             stmt.default_name.as_mut().unwrap().ref_ =
@@ -1623,7 +1660,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // "import type * as foo from 'bar';"
                                 p.lexer.next()?;
                                 p.lexer.expect_contextual_keyword(b"as")?;
-                                if p.options.typescript_declaration_file {
+                                if p.options.typescript_declaration_file
+                                    && opts.is_module_scope
+                                    && !p.dts_suppress_type_name_recording
+                                {
                                     stmt = S::Import {
                                         namespace_ref: p.store_name_in_ref(p.lexer.identifier),
                                         star_name_loc: p.lexer.loc(),
@@ -1646,7 +1686,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             T::TOpenBrace => {
                                 // "import type {foo} from 'bar';"
                                 let import_clause = p.parse_import_clause()?;
-                                if p.options.typescript_declaration_file {
+                                if p.options.typescript_declaration_file
+                                    && opts.is_module_scope
+                                    && !p.dts_suppress_type_name_recording
+                                {
                                     stmt = S::Import {
                                         namespace_ref: Ref::NONE,
                                         import_record_index: u32::MAX,

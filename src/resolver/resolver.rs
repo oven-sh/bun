@@ -5797,24 +5797,15 @@ impl<'a> Resolver<'a> {
                 &[]
             };
 
-            // Declaration-file part of the tsc behavior quoted above. Tried
-            // after every runtime candidate, including inside node_modules.
-            let declaration_exts: &[&[u8]] = if ext == b".js" || ext == b".jsx" {
-                &[b".d.ts", b".d.mts"]
-            } else if ext == b".mjs" {
-                &[b".d.mts"]
-            } else if ext == b".cjs" {
-                &[b".d.cts"]
-            } else {
-                &[]
-            };
-
-            if !source_exts.is_empty() || !declaration_exts.is_empty() {
+            // Declaration files get the ".d.ts" part of the tsc behavior
+            // quoted above via `load_declaration_file_sibling`; other
+            // importers keep the pre-existing source-only rewrites.
+            if !source_exts.is_empty() {
                 let segment = &base[0..last_dot];
                 let tail = &mut bufs!(load_as_file)[path.len() - base.len()..];
                 tail[..segment.len()].copy_from_slice(segment);
 
-                for ext_to_replace in source_exts.iter().chain(declaration_exts.iter()) {
+                for ext_to_replace in source_exts.iter() {
                     let buffer = &mut tail[0..segment.len() + ext_to_replace.len()];
                     buffer[segment.len()..].copy_from_slice(ext_to_replace);
 

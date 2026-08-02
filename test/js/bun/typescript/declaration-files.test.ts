@@ -206,3 +206,137 @@ console.log(JSON.stringify(Object.keys(m)));
   expect(stdout).toBe(`["real"]\n`);
   expect(exitCode).toBe(0);
 });
+
+test.concurrent("type-only default exports synthesize a default binding", async () => {
+  using dir = tempDir("dts-default", {
+    // tsc's emit for a default-exported function is a body-less declaration.
+    "fn.d.ts": `export default function pLimit(concurrency: number): void;
+`,
+    "iface.d.ts": `export default interface Props {
+  x: number;
+}
+`,
+    "const.d.ts": `declare const _default: { a: number };
+export default _default;
+`,
+    "alias.d.ts": `type Alias = string;
+export { Alias as default };
+`,
+    "klass.d.ts": `export default class Client {
+  constructor(url: string);
+}
+`,
+    "index.ts": `import fn from "./fn.d.ts";
+import iface from "./iface.d.ts";
+import c from "./const.d.ts";
+import alias from "./alias.d.ts";
+import Klass from "./klass.d.ts";
+console.log(JSON.stringify([typeof fn, typeof iface, typeof c, typeof alias, typeof Klass]));
+`,
+  });
+  const { stdout, stderr, exitCode } = await run(dir, "index.ts");
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual(["undefined", "undefined", "undefined", "undefined", "function"]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("require() loads .d.cts declaration files", async () => {
+  using dir = tempDir("dts-cts", {
+    // DefinitelyTyped-style CommonJS declaration: `export =`.
+    "lib.d.cts": `interface SomeInterface {
+  a: number;
+}
+export = SomeInterface;
+`,
+    // ESM-syntax declarations loaded via require() interop.
+    "esm-ish.d.cts": `export type Foo = number;
+export interface Bar {}
+`,
+    // `import x = require(...)` resolving a .cjs specifier to its .d.cts sibling.
+    "helper.d.cts": `export type HelperType = string;
+`,
+    "wrapper.d.cts": `import helper = require("./helper.cjs");
+export { HelperType } from "./helper.cjs";
+`,
+    "index.ts": `const lib = require("./lib.d.cts");
+const esm = require("./esm-ish.d.cts");
+const wrapper = require("./wrapper.d.cts");
+console.log(JSON.stringify([typeof lib, Object.keys(esm).sort(), Object.keys(wrapper)]));
+`,
+  });
+  const { stdout, stderr, exitCode } = await run(dir, "index.ts");
+  expect(stderr).toBe("");
+  const [libType, esmKeys, wrapperKeys] = JSON.parse(stdout.trim());
+  expect(libType).toBe("undefined");
+  expect(esmKeys).toEqual(["Bar", "Foo"]);
+  expect(wrapperKeys).toContain("HelperType");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("require() from a .d.cts picks a package's types export over require", async () => {
+  // Pins the deliberate semantics: from declaration files, bare specifiers
+  // resolve to the "types" entry, so type names link and runtime values
+  // shadow to undefined.
+  using dir = tempDir("dts-require-types", {
+    "node_modules/clib/package.json": `{
+  "name": "clib",
+  "exports": {
+    ".": {
+      "types": "./index.d.cts",
+      "require": "./index.cjs"
+    }
+  }
+}`,
+    "node_modules/clib/index.cjs": `module.exports = { runtimeOnly: 1 };
+`,
+    "node_modules/clib/index.d.cts": `export type COpts = { a: number };
+export declare const runtimeOnly: number;
+`,
+    "wrapper.d.cts": `export { COpts, runtimeOnly } from "clib";
+`,
+    "main.ts": `import * as m from "./wrapper.d.cts";
+console.log(JSON.stringify([Object.keys(m).sort(), m.runtimeOnly === undefined]));
+`,
+  });
+  const { stdout, stderr, exitCode } = await run(dir, "main.ts");
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual([["COpts", "runtimeOnly"], true]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("export type inside a namespace body in a declaration file still parses", async () => {
+  using dir = tempDir("dts-namespace-scope", {
+    "ns.d.ts": `export namespace Foo {
+  export type Inner = number;
+}
+declare module "some-ambient" {
+  import type { Options } from "./never-resolved";
+  export type { Options };
+}
+export const marker = 1;
+`,
+    "index.ts": `import { marker } from "./ns.d.ts";
+console.log(marker);
+`,
+  });
+  const { stdout, stderr, exitCode } = await run(dir, "index.ts");
+  expect(stderr).toBe("");
+  expect(stdout).toBe("1\n");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("non-declaration importers do not fall back to declaration siblings", async () => {
+  // Blast-radius pin: the declaration-sibling fallback applies only when the
+  // importer is itself a declaration file. A regular .ts importer of a
+  // missing runtime file keeps the resolution error.
+  using dir = tempDir("dts-no-global-fallback", {
+    "only-types.d.mts": `export type T = number;
+`,
+    "index.ts": `import "./only-types.mjs";
+console.log("loaded");
+`,
+  });
+  const { stdout, stderr, exitCode } = await run(dir, "index.ts");
+  expect(stderr).toContain("Cannot find module");
+  expect(exitCode).not.toBe(0);
+});

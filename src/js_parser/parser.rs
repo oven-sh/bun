@@ -1567,9 +1567,6 @@ pub struct ParseClassOptions<'a> {
     pub(crate) is_type_script_declare: bool,
 }
 
-/// Tracks which kind of statement list the parser is currently inside.
-/// `Module` and `Namespace` are mutually exclusive (a namespace body is never
-/// the module scope), so a single tri-state replaces the former pair of bools.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum StatementScope {
@@ -1614,8 +1611,6 @@ impl<'a> ParseStatementOptions<'a> {
         !decs.values.is_empty()
     }
 
-    /// ESM import/export declarations are only legal at module scope or inside
-    /// a TypeScript `declare namespace` block.
     #[inline]
     pub(crate) fn allows_esm_import_export(&self) -> bool {
         match self.scope {

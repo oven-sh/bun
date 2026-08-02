@@ -14,10 +14,6 @@ pub enum SideEffects {
     NoSideEffects,
 }
 
-/// A boolean value the parser was able to prove at compile time, together
-/// with whether evaluating the original expression could have observable
-/// side effects. Returned as `Option<Known>` from `to_boolean` /
-/// `to_null_or_undefined`; `None` means the value could not be determined.
 #[derive(Clone, Copy, Debug)]
 pub struct Known {
     pub(crate) value: bool,

@@ -1472,9 +1472,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     S::Local {
                                         kind: S::Kind::KVar,
                                         is_export: false,
-                                        was_commonjs_export: true,
+                                        origin: S::LocalOrigin::CommonJsExport,
                                         decls,
-                                        ..Default::default()
                                     },
                                     stmt.loc,
                                 );

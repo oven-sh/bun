@@ -970,8 +970,7 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
                             S::Local {
                                 decls: Vec::move_from_list(clone),
                                 is_export: before.is_export,
-                                was_commonjs_export: before.was_commonjs_export,
-                                was_ts_import_equals: before.was_ts_import_equals,
+                                origin: before.origin,
                                 kind: before.kind,
                             },
                             prev_loc,

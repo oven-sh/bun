@@ -678,6 +678,91 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("class Foo\n");
       expect(exitCode).toBe(0);
     });
+
+    // tsc treats emitDecoratorMetadata as a no-op unless experimentalDecorators is also set.
+    // It must not flip a TypeScript file to the legacy decorator calling convention on its own.
+    describe.each([
+      ["emitDecoratorMetadata alone", { emitDecoratorMetadata: true }],
+      [
+        "experimentalDecorators:false + emitDecoratorMetadata:true",
+        { experimentalDecorators: false, emitDecoratorMetadata: true },
+      ],
+    ])("%s", (_label, compilerOptions) => {
+      test("bun run uses standard decorators", async () => {
+        using dir = tempDir("es-dec-ts-meta-only", {
+          "tsconfig.json": JSON.stringify({ compilerOptions }),
+          "test.ts": `
+            function dec(value: any, ctx: any) {
+              console.log(JSON.stringify([arguments.length, ctx?.kind, typeof ctx?.addInitializer]));
+            }
+            class Foo { @dec m() {} }
+            void Foo;
+          `,
+        });
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+
+        const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(filterStderr(rawStderr)).toBe("");
+        expect(stdout.trim()).toBe(`[2,"method","function"]`);
+        expect(exitCode).toBe(0);
+      });
+
+      test("Bun.Transpiler uses standard decorators", () => {
+        const out = new Bun.Transpiler({
+          loader: "ts",
+          tsconfig: JSON.stringify({ compilerOptions }),
+        }).transformSync("function d() {} class C { @d m() {} }");
+        expect(out).not.toContain("__legacyDecorateClassTS");
+        expect(out).not.toContain("__legacyMetadataTS");
+        expect(out).toContain("__decorateElement");
+      });
+    });
+
+    test("emitDecoratorMetadata with experimentalDecorators:true still emits legacy metadata", () => {
+      const out = new Bun.Transpiler({
+        loader: "ts",
+        tsconfig: JSON.stringify({ compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } }),
+      }).transformSync("function d() {} class C { @d m(a: number): string { return ''; } }");
+      expect(out).toContain("__legacyDecorateClassTS");
+      expect(out).toContain("design:type");
+    });
+
+    for (const [where, base, child] of [
+      ["child", {}, { experimentalDecorators: true, emitDecoratorMetadata: true }],
+      ["base", { experimentalDecorators: true, emitDecoratorMetadata: true }, {}],
+    ] as const) {
+      test(`experimentalDecorators in the ${where} of a tsconfig extends chain selects legacy decorators`, async () => {
+        using dir = tempDir("es-dec-ts-extends", {
+          "base.json": JSON.stringify({ compilerOptions: base }),
+          "tsconfig.json": JSON.stringify({ extends: "./base.json", compilerOptions: child }),
+          "test.ts": `
+            function d(target: any, key: any, desc: any) {
+              console.log(JSON.stringify([arguments.length, typeof key, typeof desc?.value]));
+            }
+            class Foo { @d m() {} }
+            void Foo;
+          `,
+        });
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+
+        const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(filterStderr(rawStderr)).toBe("");
+        expect(stdout.trim()).toBe(`[3,"string","function"]`);
+        expect(exitCode).toBe(0);
+      });
+    }
   });
 
   describe("extends clause", () => {

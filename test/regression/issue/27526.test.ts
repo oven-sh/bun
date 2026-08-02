@@ -1,10 +1,8 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// When emitDecoratorMetadata is true in tsconfig but experimentalDecorators is
-// absent, Bun should use legacy decorator semantics (not TC39 standard).
-// emitDecoratorMetadata only makes sense with legacy decorators.
-test("legacy decorators work when emitDecoratorMetadata is true without experimentalDecorators", async () => {
+// https://github.com/oven-sh/bun/issues/27526
+test("legacy decorators work when experimentalDecorators and emitDecoratorMetadata are set", async () => {
   using dir = tempDir("issue-27526", {
     "tsconfig.json": JSON.stringify({
       compilerOptions: {
@@ -12,6 +10,7 @@ test("legacy decorators work when emitDecoratorMetadata is true without experime
         module: "commonjs",
         strict: true,
         esModuleInterop: true,
+        experimentalDecorators: true,
         emitDecoratorMetadata: true,
       },
     }),

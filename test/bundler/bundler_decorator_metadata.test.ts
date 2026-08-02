@@ -1261,4 +1261,31 @@ describe("bundler", () => {
       stdout: "true\n",
     },
   });
+
+  for (const compilerOptions of [
+    { emitDecoratorMetadata: true },
+    { experimentalDecorators: false, emitDecoratorMetadata: true },
+  ]) {
+    itBundled(
+      `decorator_metadata/StandardDecoratorsWhenExperimentalDecoratorsUnset${"experimentalDecorators" in compilerOptions ? "ExplicitFalse" : ""}`,
+      {
+        files: {
+          "/entry.ts": /* ts */ `
+            function d(value: any, ctx: any) {
+              console.log(JSON.stringify([arguments.length, ctx?.kind, typeof ctx?.addInitializer]));
+            }
+            class C { @d m() {} }
+            new C();
+        `,
+          "/tsconfig.json": JSON.stringify({ compilerOptions }),
+        },
+        bundling: true,
+        run: { stdout: `[2,"method","function"]\n` },
+        onAfterBundle(api) {
+          api.expectFile("/out.js").not.toContain("__legacyDecorateClassTS");
+          api.expectFile("/out.js").not.toContain("design:type");
+        },
+      },
+    );
+  }
 });

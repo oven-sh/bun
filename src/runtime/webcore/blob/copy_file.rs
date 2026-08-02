@@ -972,6 +972,11 @@ fn read_write_fallback(
     }
 }
 
+/// read() from `src_fd`, write() to `dest_fd`, stopping after `cap` bytes (or
+/// EOF). Never reads past `cap` and never touches the destination's length, so
+/// it is safe for a caller-supplied fd (Bun.stdout redirected to a file,
+/// Bun.file(fd)).
+#[inline(never)] // 64 KB stack buffer
 #[cfg(not(windows))]
 fn read_write_loop_capped(
     src_fd: Fd,

@@ -8,15 +8,16 @@ import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, tempDir, VerdaccioRegistry } from "harness";
 import { join } from "path";
 
-let verdaccio: VerdaccioRegistry;
+let verdaccio: VerdaccioRegistry | undefined;
 
 beforeAll(async () => {
+  if (!isWindows) return;
   verdaccio = new VerdaccioRegistry();
   await verdaccio.start();
-});
+}, 60_000);
 
 afterAll(() => {
-  verdaccio.stop();
+  verdaccio?.stop();
 });
 
 // The destructive rename-out-and-delete lived in the #[cfg(windows)] publish
@@ -38,7 +39,7 @@ test.skipIf(!isWindows)(
 
     using root = tempDir("bun-install-cache-race", {});
     const cache = join(String(root), "shared-cache");
-    const bunfig = `[install]\nregistry = "${verdaccio.registryUrl()}"\n`;
+    const bunfig = `[install]\nregistry = "${verdaccio!.registryUrl()}"\n`;
 
     const projects: string[] = [];
     for (let i = 0; i < 4; i++) {

@@ -62,9 +62,6 @@ test/js/node/test/parallel/test-stream-wrap-encoding.js [ FAIL ] # needs interna
 # test-http-max-http-headers.js is vendored.
 test/js/node/test/parallel/test-set-http-max-http-headers.js [ FAIL ] # spawns test-http-max-http-headers.js which is not vendored
 
-# Tests that are flaky
-test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
-
 # Tests failed due to ASAN: attempting free on address which was not malloc()-ed
 [ ASAN ] test/integration/next-pages/test/dev-server-ssr-100.test.ts [ CRASH ]
 [ ASAN ] test/integration/next-pages/test/next-build.test.ts [ CRASH ]

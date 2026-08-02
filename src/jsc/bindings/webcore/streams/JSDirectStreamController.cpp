@@ -884,8 +884,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectEndOfTickFlush, (JSGlobalOb
 }
 
 // The FIVE public own methods are JSBoundFunctions over these [bound-convention] targets.
-// Once m_closed is set (end/close, error, or consumer cancel) they no-op: a producer's
-// in-flight pull() calling any of them after the controller is closed must not throw.
+// Once m_closed is set they no-op: a late call from an in-flight pull() must not throw.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectWrite, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);

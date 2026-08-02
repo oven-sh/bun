@@ -8,6 +8,7 @@
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMWrapperCache.h"
 #include "JSReadableStream.h"
+#include "JSSink.h"
 #include "JSStreamsRuntime.h"
 #include "JSTransformStream.h"
 #include "JSTransformStreamDefaultController.h"
@@ -29,6 +30,7 @@ extern "C" void* CompressionStreamCoder__create(uint8_t format, bool decompress)
 extern "C" void CompressionStreamCoder__destroy(void* coder);
 extern "C" JSC::EncodedJSValue CompressionStreamCoder__transform(void* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish);
 extern "C" JSC::EncodedJSValue CompressionStreamCoder__transformInto(void* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish, uint8_t sinkId, void* sinkPtr);
+extern "C" JSC::EncodedJSValue CompressionStreamCoder__transformAsync(void* coder, JSC::JSGlobalObject* global, JSC::EncodedJSValue streamCell, JSC::EncodedJSValue chunk, const uint8_t* input, size_t inputLen, bool finish);
 
 namespace WebCore {
 
@@ -579,15 +581,24 @@ static std::optional<std::span<const uint8_t>> bufferSourceBytes(JSGlobalObject*
     return std::nullopt;
 }
 
+static constexpr size_t kAsyncCodecThreshold = 128 * 1024;
+
 // Runs the Rust coder and delivers the output. When a native JSSink is attached
 // (m_nativeSinkPtr), the coder writes straight to it (no JSUint8Array); otherwise
 // the result is enqueued on the readable. Abrupt completions become a rejected
 // promise — a transform algorithm must never throw synchronously into
 // ProcessWrite/ProcessClose.
-static JSPromise* codeAndEnqueue(JSGlobalObject* globalObject, JSTransformStream* stream, void* coder, JSTransformStreamDefaultController* controller, const uint8_t* input, size_t inputLen, bool finish)
+static JSPromise* codeAndEnqueue(JSGlobalObject* globalObject, JSTransformStream* stream, void* coder, JSTransformStreamDefaultController* controller, JSValue chunk, const uint8_t* input, size_t inputLen, bool finish)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (inputLen > kAsyncCodecThreshold && coder) {
+        JSValue p = JSValue::decode(CompressionStreamCoder__transformAsync(coder, globalObject, JSValue::encode(stream), JSValue::encode(chunk), input, inputLen, finish));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        stream->m_asyncCodecInFlight = true;
+        return dynamicDowncast<JSPromise>(p);
+    }
 
     JSValue thrown;
     bool sinkBackpressure = false;
@@ -638,7 +649,7 @@ static JSPromise* compressionStreamTransformImpl(JSGlobalObject* globalObject, J
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
     if (!bytes) [[unlikely]]
         return nullptr;
-    RELEASE_AND_RETURN(scope, codeAndEnqueue(globalObject, stream, stream->m_coder, controller, bytes->data(), bytes->size(), false));
+    RELEASE_AND_RETURN(scope, codeAndEnqueue(globalObject, stream, stream->m_coder, controller, chunk, bytes->data(), bytes->size(), false));
 }
 
 JSPromise* compressionStreamTransform(JSGlobalObject* globalObject, JSCompressionStream* stream, JSTransformStreamDefaultController* controller, JSValue chunk)
@@ -648,7 +659,7 @@ JSPromise* compressionStreamTransform(JSGlobalObject* globalObject, JSCompressio
 
 JSPromise* compressionStreamFlush(JSGlobalObject* globalObject, JSCompressionStream* stream, JSTransformStreamDefaultController* controller)
 {
-    return codeAndEnqueue(globalObject, stream, stream->m_coder, controller, nullptr, 0, true);
+    return codeAndEnqueue(globalObject, stream, stream->m_coder, controller, jsUndefined(), nullptr, 0, true);
 }
 
 JSPromise* decompressionStreamTransform(JSGlobalObject* globalObject, JSDecompressionStream* stream, JSTransformStreamDefaultController* controller, JSValue chunk)
@@ -658,7 +669,65 @@ JSPromise* decompressionStreamTransform(JSGlobalObject* globalObject, JSDecompre
 
 JSPromise* decompressionStreamFlush(JSGlobalObject* globalObject, JSDecompressionStream* stream, JSTransformStreamDefaultController* controller)
 {
-    return codeAndEnqueue(globalObject, stream, stream->m_coder, controller, nullptr, 0, true);
+    return codeAndEnqueue(globalObject, stream, stream->m_coder, controller, jsUndefined(), nullptr, 0, true);
+}
+
+// JS-thread completion for the off-thread codec dispatched by codeAndEnqueue. Delivers the
+// output exactly as the synchronous path would (sink-write or controller-enqueue), settles
+// the transform-algorithm promise, and runs any coder release deferred while the task held it.
+// `out[..outLen]` is owned by the Rust caller and remains valid only for the duration of this
+// synchronous call — copy it before returning if it must outlive us.
+extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue streamCell, JSC::EncodedJSValue pendingPromise, const uint8_t* out, size_t outLen, JSC::EncodedJSValue error)
+{
+    auto& vm = getVM(globalObject);
+    auto* stream = dynamicDowncast<JSTransformStream>(JSValue::decode(streamCell));
+    auto* promise = dynamicDowncast<JSPromise>(JSValue::decode(pendingPromise));
+    ASSERT(stream);
+    ASSERT(promise);
+    if (!stream || !promise) [[unlikely]]
+        return;
+
+    stream->m_asyncCodecInFlight = false;
+    if (stream->m_nativeStateReleasePending && !stream->m_nativeStateInUse) [[unlikely]]
+        nativeTransformReleaseState(stream);
+
+    if (error) {
+        rejectPromise(globalObject, promise, JSValue::decode(error));
+        return;
+    }
+
+    JSValue thrown;
+    bool sinkBackpressure = false;
+    {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        if (void* sinkPtr = stream->m_nativeSinkPtr) {
+            if (outLen) {
+                JSValue wrote = JSValue::decode(WebCore::JSSink__writeBytes(static_cast<WebCore::SinkID>(stream->m_nativeSinkId), sinkPtr, globalObject, out, outLen));
+                if (!catchScope.exception())
+                    sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
+            }
+        } else if (outLen) {
+            auto copied = JSC::ArrayBuffer::tryCreate(std::span<const uint8_t>(out, outLen));
+            if (!copied) [[unlikely]] {
+                thrown = JSC::createOutOfMemoryError(globalObject);
+            } else {
+                auto* view = JSC::JSUint8Array::create(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), WTF::move(copied), 0, outLen);
+                if (!catchScope.exception())
+                    transformStreamDefaultControllerEnqueue(globalObject, stream->m_controller.get(), JSValue(view));
+            }
+        }
+        if (catchScope.exception()) [[unlikely]]
+            thrown = takeAbruptCompletion(globalObject, catchScope);
+    }
+    if (!thrown.isEmpty()) {
+        rejectPromise(globalObject, promise, thrown);
+        return;
+    }
+    if (sinkBackpressure) {
+        stream->m_nativeSinkReadyPromise.set(vm, stream, promise);
+        return;
+    }
+    resolvePromise(globalObject, promise, jsUndefined());
 }
 
 } // namespace WebStreams

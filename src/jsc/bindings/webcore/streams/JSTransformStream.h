@@ -59,6 +59,9 @@ public:
     // ClearAlgorithms defers the eager free to the arm's epilogue instead.
     bool m_nativeStateInUse : 1 { false };
     bool m_nativeStateReleasePending : 1 { false };
+    // An off-thread codec task holds the coder; ClearAlgorithms / runNativeArm must defer
+    // the free until the task's JS-thread completion clears this.
+    bool m_asyncCodecInFlight : 1 { false };
 
     // Native byte-producing subclasses only: when `readStreamIntoSink` attaches a
     // native JSSink controller to this transform, the transform arms write coder

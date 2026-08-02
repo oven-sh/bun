@@ -12,7 +12,10 @@
 use core::ffi::c_int;
 use core::ptr::{self, NonNull};
 
-use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue};
+use bun_jsc::{
+    AnyTaskJob, AnyTaskJobCtx, ErrorCode, JSGlobalObject, JSPromiseStrong, JSUint8Array, JSValue,
+    JsResult, Strong,
+};
 
 use bun_brotli::c as brotli;
 use bun_zlib as zlib;
@@ -81,6 +84,11 @@ pub struct CompressionStreamCoder {
     zstd_head: [u8; 4],
     zstd_head_len: u8,
 }
+
+// SAFETY: the z_stream / Brotli*Instance / ZSTD_*Ctx handles are single-owner
+// heap state with no thread affinity; TransformStream serializes writes so at
+// most one chunk is ever in flight per coder.
+unsafe impl Send for CompressionStreamCoder {}
 
 impl Drop for CompressionStreamCoder {
     fn drop(&mut self) {
@@ -540,6 +548,74 @@ impl CompressionStreamCoder {
     }
 }
 
+/// Input bytes for an off-thread codec step. When the chunk is a pinnable
+/// `ArrayBuffer`/view, the backing store is pinned (cannot be detached) and
+/// the `JSValue` is `protect()`ed (cannot be collected) so the worker thread
+/// reads the bytes in place; otherwise the bytes are copied. `Drop` releases
+/// both — it runs on the JS thread because `AnyTaskJob` reclaims its ctx box
+/// there.
+pub(crate) enum AsyncInput {
+    Pinned {
+        value: JSValue,
+        ptr: *const u8,
+        len: usize,
+    },
+    Owned(Vec<u8>),
+}
+
+// SAFETY: `Pinned.ptr` borrows a JS ArrayBuffer backing store that is pinned
+// and GC-protected for the lifetime of this value; the worker only reads
+// through it. The `JSValue` word is only dereferenced (unpin/unprotect) back
+// on the JS thread in `Drop`.
+unsafe impl Send for AsyncInput {}
+
+impl AsyncInput {
+    /// Pin `chunk`'s backing store and GC-protect it, borrowing its bytes; or
+    /// copy `fallback` when `chunk` is not a pinnable BufferSource (the
+    /// string → `WTF::CString`-scratch branch of `bufferSourceBytes`).
+    pub(crate) fn new(global: &JSGlobalObject, chunk: JSValue, fallback: &[u8]) -> Self {
+        if let Some(buf) = chunk.as_pinned_arraybuffer(global) {
+            // A resizable non-shared backing can `mprotect()` pages out on
+            // `resize()`; pinning does not block that, so spill to a copy.
+            if buf.resizable && !buf.shared {
+                chunk.unpin_array_buffer();
+                return Self::Owned(fallback.to_vec());
+            }
+            chunk.protect();
+            return Self::Pinned {
+                value: chunk,
+                ptr: buf.ptr,
+                len: buf.byte_len,
+            };
+        }
+        Self::Owned(fallback.to_vec())
+    }
+
+    #[inline]
+    pub(crate) fn slice(&self) -> &[u8] {
+        match self {
+            Self::Pinned { ptr, len, .. } => {
+                if ptr.is_null() {
+                    return &[];
+                }
+                // SAFETY: backing store is pinned + GC-protected for `self`'s
+                // lifetime; `(ptr, len)` came from a live `ArrayBuffer` view.
+                unsafe { core::slice::from_raw_parts(*ptr, *len) }
+            }
+            Self::Owned(v) => v.as_slice(),
+        }
+    }
+}
+
+impl Drop for AsyncInput {
+    fn drop(&mut self) {
+        if let Self::Pinned { value, .. } = *self {
+            value.unpin_array_buffer();
+            value.unprotect();
+        }
+    }
+}
+
 // ─── extern "C" surface (called from JSCompressionStream.cpp) ──────────────
 
 #[unsafe(no_mangle)]
@@ -603,20 +679,23 @@ pub extern "C" fn CompressionStreamCoder__transform(
     }
 }
 
-fn throw_codec_error(global: &JSGlobalObject, e: CodecError) {
-    match e {
-        CodecError::TrailingJunk => {
-            let _ = global
-                .err(
-                    ErrorCode::ERR_TRAILING_JUNK_AFTER_STREAM_END,
-                    format_args!("Trailing junk found after the end of the compressed stream"),
-                )
-                .throw();
-        }
-        CodecError::Message(msg) => {
-            let _ = global.throw_type_error(format_args!("{msg}"));
-        }
+/// Build (do not throw) the JS error value for a `CodecError`. The async
+/// threadpool path hands this value to C++ for promise rejection; the sync
+/// path throws it via `throw_codec_error` below.
+fn codec_error_to_js(global: &JSGlobalObject, e: &CodecError) -> JSValue {
+    match *e {
+        CodecError::TrailingJunk => global
+            .err(
+                ErrorCode::ERR_TRAILING_JUNK_AFTER_STREAM_END,
+                format_args!("Trailing junk found after the end of the compressed stream"),
+            )
+            .to_js(),
+        CodecError::Message(msg) => global.create_type_error_instance(format_args!("{msg}")),
     }
+}
+
+fn throw_codec_error(global: &JSGlobalObject, e: CodecError) {
+    let _ = global.throw_value(codec_error_to_js(global, &e));
 }
 
 unsafe extern "C" {
@@ -631,9 +710,9 @@ unsafe extern "C" {
 
 /// Runs one transform step and writes the output straight to a native JSSink
 /// (`m_sinkPtr`), so the chunk never becomes a `JSUint8Array`. Returns the
-/// sink's `write_bytes` result (a number; negative means backpressure),
-/// `undefined` for an empty output, or `JSValue::zero` with an exception
-/// pending on `global` on codec failure.
+/// sink's `write_bytes` result (see nativeSinkWriteIsBackpressure for the
+/// backpressure-signal shapes), `undefined` for an empty output, or
+/// `JSValue::zero` with an exception pending on `global` on codec failure.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn CompressionStreamCoder__transformInto(
@@ -668,4 +747,124 @@ pub extern "C" fn CompressionStreamCoder__transformInto(
             JSValue::ZERO
         }
     }
+}
+
+// ─── off-thread path (chunks > kAsyncCodecThreshold) ───────────────────────
+
+unsafe extern "C" {
+    /// JS-thread completion hook implemented in `JSCompressionStream.cpp`.
+    /// On success (`error == JSValue::ZERO`) the C++ side copies
+    /// `out[..out_len]` into the sink / a fresh Uint8Array before returning;
+    /// on error the span is ignored and the promise is rejected with `error`.
+    fn Bun__CompressionStream__deliverAsync(
+        global: &JSGlobalObject,
+        stream_cell: JSValue,
+        promise: JSValue,
+        out: *const u8,
+        out_len: usize,
+        error: JSValue,
+    );
+}
+
+struct CompressionAsyncCtx {
+    coder: *mut CompressionStreamCoder,
+    input: AsyncInput,
+    finish: bool,
+    /// GC root for the `JSTransformStream` cell that owns `coder`;
+    /// `m_asyncCodecInFlight` on that cell defers `m_coder` teardown until
+    /// `Bun__CompressionStream__deliverAsync` clears it.
+    stream: Strong,
+    promise: JSPromiseStrong,
+    result: Result<Vec<u8>, CodecError>,
+}
+
+impl AnyTaskJobCtx for CompressionAsyncCtx {
+    fn run(&mut self, _global: *mut JSGlobalObject) {
+        // SAFETY: `coder` is the live heap state owned by the rooted
+        // `JSTransformStream` cell; `m_asyncCodecInFlight` guarantees
+        // `nativeTransformReleaseState` cannot free it while this task is
+        // outstanding, and TransformStream serializes writes so no other
+        // transform step aliases it.
+        let coder = unsafe { &mut *self.coder };
+        self.result = coder.transform(self.input.slice(), self.finish);
+    }
+
+    fn then(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+        let stream = self.stream.get();
+        let promise = self.promise.value();
+        match &self.result {
+            Ok(out) => {
+                // SAFETY: FFI call into `JSCompressionStream.cpp`; `out` is
+                // owned by `self` and outlives this synchronous call — the C++
+                // side copies the bytes before returning.
+                unsafe {
+                    Bun__CompressionStream__deliverAsync(
+                        global,
+                        stream,
+                        promise,
+                        out.as_ptr(),
+                        out.len(),
+                        JSValue::ZERO,
+                    );
+                }
+            }
+            Err(e) => {
+                let err = codec_error_to_js(global, e);
+                // SAFETY: as above; the output span is ignored on the error path.
+                unsafe {
+                    Bun__CompressionStream__deliverAsync(
+                        global,
+                        stream,
+                        promise,
+                        core::ptr::null(),
+                        0,
+                        err,
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Runs one transform step on the WorkPool and returns a pending `JSPromise`
+/// that the C++ `Bun__CompressionStream__deliverAsync` settles on the JS
+/// thread once the codec finishes (enqueue / sink-write+backpressure /
+/// reject). Called from `codeAndEnqueue` for `input_len > kAsyncCodecThreshold`.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn CompressionStreamCoder__transformAsync(
+    this: *mut CompressionStreamCoder,
+    global: &JSGlobalObject,
+    stream_cell: JSValue,
+    chunk: JSValue,
+    input: *const u8,
+    input_len: usize,
+    finish: bool,
+) -> JSValue {
+    let fallback = if input.is_null() {
+        &[][..]
+    } else {
+        // SAFETY: the caller passes a BufferSource's bytes; `fallback` does
+        // not outlive this call (either pinned and ignored, or copied).
+        unsafe { core::slice::from_raw_parts(input, input_len) }
+    };
+    let job = AnyTaskJob::create(
+        global,
+        CompressionAsyncCtx {
+            coder: this,
+            input: AsyncInput::new(global, chunk, fallback),
+            finish,
+            stream: Strong::create(stream_cell, global),
+            promise: JSPromiseStrong::init(global),
+            result: Ok(Vec::new()),
+        },
+    )
+    .expect("CompressionAsyncCtx::init is infallible");
+    // SAFETY: `job` is exclusively owned until `schedule` hands it to the
+    // WorkPool; reading `ctx.promise` before scheduling has no aliasing.
+    let promise = unsafe { (*job).ctx.promise.value() };
+    // SAFETY: `job` is a freshly-created live pointer.
+    unsafe { AnyTaskJob::schedule(job) };
+    promise
 }

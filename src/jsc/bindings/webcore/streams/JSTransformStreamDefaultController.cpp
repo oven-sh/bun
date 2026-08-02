@@ -409,7 +409,7 @@ static void nativeTransformReleaseStateOrDefer(JSTransformStreamDefaultControlle
     auto* stream = dynamicDowncast<JSTransformStream>(controller->m_algorithmContext.get());
     if (!stream)
         return;
-    if (stream->m_nativeStateInUse) {
+    if (stream->m_nativeStateInUse || stream->m_asyncCodecInFlight) {
         stream->m_nativeStateReleasePending = true;
         return;
     }

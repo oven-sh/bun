@@ -306,9 +306,10 @@ const SCRATCH_CAP: usize = 64 * 1024;
 /// Native-sink transform step: encodes `chunk` into the encoder's reusable
 /// scratch buffer and writes it straight to the sink, so a
 /// `ByteStream → TextEncoderStream → JSSink` chain allocates no
-/// `JSUint8Array` per chunk. Returns the sink's `write_bytes` result (a
-/// number; negative means backpressure), `undefined` for an empty output, or
-/// `JSValue::zero` with the exception pending on `global`.
+/// `JSUint8Array` per chunk. Returns the sink's `write_bytes` result (see
+/// nativeSinkWriteIsBackpressure for the backpressure-signal shapes),
+/// `undefined` for an empty output, or `JSValue::zero` with the exception
+/// pending on `global`.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(

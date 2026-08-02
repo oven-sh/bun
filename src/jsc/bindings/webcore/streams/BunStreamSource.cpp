@@ -1163,13 +1163,6 @@ static void rsisContinueAfterReady(JSC::VM& vm, JSGlobalObject* globalObject, JS
         op->m_pendingBatch.clear();
         RELEASE_AND_RETURN(scope, rsisFinish(globalObject, op));
     }
-    if (auto* ts = op->m_nativeTransform.get()) {
-        if (auto* ready = ts->m_nativeSinkReadyPromise.get()) {
-            ts->m_nativeSinkReadyPromise.clear();
-            resolvePromise(globalObject, ready, jsUndefined());
-            scope.assertNoException();
-        }
-    }
     auto* tail = dynamicDowncast<JSArray>(op->m_pendingBatch.get());
     op->m_pendingBatch.clear();
     if (!tail) {

@@ -474,7 +474,7 @@ JSC::JSPromise* runNativeArm(JSC::JSCell* context, Arm&& arm)
     stream->m_nativeStateInUse = true;
     JSC::JSPromise* result = arm(stream);
     stream->m_nativeStateInUse = false;
-    if (stream->m_nativeStateReleasePending) [[unlikely]]
+    if (stream->m_nativeStateReleasePending && !stream->m_asyncCodecInFlight) [[unlikely]]
         nativeTransformReleaseState(stream);
     return result;
 }

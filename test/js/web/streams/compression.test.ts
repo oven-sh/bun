@@ -321,6 +321,80 @@ describe("CompressionStream and DecompressionStream", () => {
       }
     });
   });
+
+  // Chunks larger than 128KB are handed to the threadpool so the codec work
+  // doesn't block the JS thread; these cover byte-identical output on that
+  // path and that the write promise is observably asynchronous.
+  describe("large chunks (>128KB async codec path)", () => {
+    function randomBytes(len: number) {
+      const out = new Uint8Array(len);
+      for (let off = 0; off < len; off += 65536) {
+        crypto.getRandomValues(out.subarray(off, Math.min(off + 65536, len)));
+      }
+      return out;
+    }
+
+    test("2MB chunk round-trips through CompressionStream('gzip') -> DecompressionStream('gzip')", async () => {
+      const big = randomBytes(2 * 1024 * 1024);
+
+      const cs = new CompressionStream("gzip");
+      const cw = cs.writable.getWriter();
+      const compressedP = new Response(cs.readable).arrayBuffer();
+      await cw.write(big);
+      await cw.close();
+      const compressed = new Uint8Array(await compressedP);
+      expect(compressed.byteLength).toBeGreaterThan(0);
+
+      const ds = new DecompressionStream("gzip");
+      const dw = ds.writable.getWriter();
+      const decompressedP = new Response(ds.readable).arrayBuffer();
+      await dw.write(compressed);
+      await dw.close();
+      const decompressed = Buffer.from(await decompressedP);
+
+      expect(decompressed.byteLength).toBe(big.byteLength);
+      expect(Buffer.compare(decompressed, Buffer.from(big.buffer))).toBe(0);
+    });
+
+    test("DecompressionStream('gzip') handles a single >128KB compressed chunk", async () => {
+      const big = randomBytes(2 * 1024 * 1024);
+      // Incompressible input so the gzipped output itself exceeds the 128KB
+      // threshold and takes the threadpool path as a single write.
+      const compressed = zlib.gzipSync(big);
+      expect(compressed.byteLength).toBeGreaterThan(128 * 1024);
+
+      const ds = new DecompressionStream("gzip");
+      const dw = ds.writable.getWriter();
+      const outP = new Response(ds.readable).arrayBuffer();
+      await dw.write(compressed);
+      await dw.close();
+      const out = Buffer.from(await outP);
+
+      expect(out.byteLength).toBe(big.byteLength);
+      expect(Buffer.compare(out, Buffer.from(big.buffer))).toBe(0);
+    });
+
+    test("writing a 2MB chunk does not block the JS thread (setImmediate fires before the write settles)", async () => {
+      const big = randomBytes(2 * 1024 * 1024);
+      const cs = new CompressionStream("gzip");
+      const writer = cs.writable.getWriter();
+      const drained = cs.readable.pipeTo(new WritableStream({ write() {} }));
+
+      const order: string[] = [];
+      const writeP = writer.write(big).then(() => order.push("write"));
+      await new Promise<void>(r =>
+        setImmediate(() => {
+          order.push("immediate");
+          r();
+        }),
+      );
+      await writeP;
+      expect(order).toEqual(["immediate", "write"]);
+
+      await writer.close();
+      await drained;
+    });
+  });
 });
 
 // Ported behaviors from Node v26's webstreams adapters
@@ -437,6 +511,23 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     },
   );
 
+  // Poll `get()` once per tick until it stays unchanged for 5 consecutive
+  // samples (parked on backpressure) or reaches `total` (ran away). The caller
+  // asserts the parked value is < total.
+  async function waitUntilStable(get: () => number, total: number) {
+    let last = get();
+    let stable = 0;
+    while (stable < 5 && get() < total) {
+      await Bun.sleep(1);
+      const now = get();
+      if (now === last) stable++;
+      else {
+        stable = 0;
+        last = now;
+      }
+    }
+  }
+
   // Native-sink backpressure: when the HTTP response sink's socket buffer fills
   // (slow client), the transform arm's writeBytes returns a pending promise and
   // the writable side parks on m_nativeSinkReadyPromise. Without that, a fast
@@ -464,7 +555,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     await reader.read();
     // Let the server's pull loop run until it either parks on backpressure or
     // runs away to TOTAL.
-    for (let i = 0; i < 40; i++) await Bun.sleep(1);
+    await waitUntilStable(() => pulls, TOTAL);
     const pullsWhileStalled = pulls;
     while (!(await reader.read()).done) {}
     // Without backpressure the pull loop reaches TOTAL while the client is
@@ -489,7 +580,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
         const reader = req.body!.pipeThrough(new DecompressionStream("gzip")).getReader();
         await reader.read();
         // Stall: let the client's pull loop either park or run away.
-        for (let i = 0; i < 40; i++) await Bun.sleep(1);
+        await waitUntilStable(() => clientPulls, TOTAL);
         clientPullsWhileServerStalled = clientPulls;
         startDrain();
         while (!(await reader.read()).done) {}

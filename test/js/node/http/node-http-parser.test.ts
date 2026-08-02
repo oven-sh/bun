@@ -232,6 +232,26 @@ describe("ConnectionsList", () => {
     expect(list.expired()).toEqual([]);
   });
 
+  test("idle() and expired() skip a close()d parser instead of crashing", () => {
+    const list = new ConnectionsList();
+    const alive = new HTTPParser();
+    const closed = new HTTPParser();
+    alive.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+    closed.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+    closed.close();
+
+    try {
+      expect(list.idle()).toEqual([]);
+      // expired() short-circuits when both timeouts are 0, so pass 1ms to
+      // actually iterate; only assert the closed parser is skipped since
+      // `alive` may legitimately appear.
+      expect(list.expired(1, 1)).not.toContain(closed);
+      expect(list.all()).toEqual([alive, closed]);
+    } finally {
+      alive.close();
+    }
+  });
+
   test("works with HTTPParser", () => {
     const p1 = new HTTPParser();
     p1.name = "parser1";

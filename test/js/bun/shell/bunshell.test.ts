@@ -971,6 +971,21 @@ booga"
       const { stdout } = await $`{echo,a,b,c} {d,e,f}`;
       expect(stdout.toString()).toEqual("a b c d e f\n");
     });
+
+    describe("degenerate inputs", () => {
+      // These lex to zero expansions (the lexer rolls back to plain text);
+      // the word must pass through literally like bash, not crash.
+      doTest("},{", "},{");
+      doTest("a},{b", "a},{b");
+      doTest("}{", "}{");
+
+      test("more than 65535 tokens fails with a catchable error", async () => {
+        const word = "{" + Array(32768).fill("a").join(",") + "}";
+        const { stderr, exitCode } = await $`echo ${{ raw: word }}`.quiet();
+        expect(stderr.toString()).toBe("bun: unexpected token while expanding braces\n");
+        expect(exitCode).toBe(1);
+      });
+    });
   });
 
   describe("variables", () => {

@@ -849,6 +849,17 @@ pub(crate) fn upload_stream(
         )
         .to_js());
     }
+    // A merely-locked stream would otherwise end synchronously inside
+    // ResumableSink::init_exact_refs, firing resolve_thunk before
+    // task.callback_context is assigned below (null deref).
+    if readable_stream.is_locked(global_this) {
+        credentials.deref();
+        return Ok(bun_jsc::JSPromise::rejected_promise(
+            global_this,
+            bun_core::String::static_("ReadableStream is locked").to_error_instance(global_this),
+        )
+        .to_js());
+    }
 
     match readable_stream.ptr {
         ReadableStreamPtr::Invalid => {

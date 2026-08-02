@@ -93,6 +93,11 @@ JSArray* JSConnectionsList::idle(JSGlobalObject* globalObject)
             continue;
         }
 
+        // A close()d parser stays in the set but has no impl anymore.
+        if (!parser->impl()) {
+            continue;
+        }
+
         if (parser->impl()->lastMessageStart() == 0) {
             result->putDirectIndex(globalObject, i++, parser);
         }
@@ -144,6 +149,11 @@ JSArray* JSConnectionsList::expired(JSGlobalObject* globalObject, uint64_t heade
     while (iter->next(globalObject, item)) {
         JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(item);
         if (!parser) {
+            continue;
+        }
+
+        // A close()d parser stays in the set but has no impl anymore.
+        if (!parser->impl()) {
             continue;
         }
 

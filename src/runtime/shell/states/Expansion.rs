@@ -322,14 +322,18 @@ impl Expansion {
                 &mut expanded[..],
                 lexer_output.contains_nested,
             ) {
-                if matches!(e, braces::ParserError::TooManyBraces) {
-                    let msg = "too many braces in brace expansion".to_string();
-                    me.state =
-                        ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
-                    return;
-                }
-                // An unexpected token from brace expansion is a parser bug.
-                panic!("unexpected error from Braces.expand: {e:?}");
+                // >u16::MAX tokens hits UnexpectedToken from user input; surface
+                // both non-OOM variants as catchable shell errors like Bun.braces().
+                let msg = match e {
+                    braces::ParserError::TooManyBraces => "too many braces in brace expansion",
+                    braces::ParserError::UnexpectedToken => {
+                        "unexpected token while expanding braces"
+                    }
+                    braces::ParserError::OutOfMemory => bun_core::out_of_memory(),
+                };
+                me.state =
+                    ExpansionState::Err(Box::new(ShellErr::Custom(msg.as_bytes().to_vec().into())));
+                return;
             }
             drop(arena);
             expanded

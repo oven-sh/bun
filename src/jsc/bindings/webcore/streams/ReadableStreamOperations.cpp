@@ -447,7 +447,7 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
             pendingRead->fulfill(vm, doneResult);
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
-        // m_closed stays false: a late write()/end() from an in-flight pull() must not throw.
+        controller->m_closed = true;
         directStreamControllerClearSource(controller);
         sourceCancelPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
         break;

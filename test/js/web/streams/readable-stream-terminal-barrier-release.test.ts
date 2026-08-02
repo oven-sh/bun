@@ -96,11 +96,10 @@ test("ReadableStream releases source-only WriteBarriers once terminal", async ()
   expect(exitCode).toBe(0);
 });
 
-// readableStreamCancel's Direct arm must not set m_closed: a producer whose async pull()
-// outlives a consumer-side cancel() still holds the bound controller, and its late
-// write()/end() are no-ops that do not throw (Bun v1.3.x behavior). #36703 briefly made
-// this throw; this test pins the non-throwing contract.
-test("direct controller write() after reader.cancel() does not throw", async () => {
+// The bound direct-controller methods no-op (rather than throw) once m_closed is set.
+// A producer whose async pull() outlives a consumer-side cancel() — or keeps calling
+// after its own end()/error() — must not see a TypeError.
+test("direct controller methods no-op once closed", async () => {
   let ctrl: any;
   let pullStarted = Promise.withResolvers<void>();
   const rs = new ReadableStream({
@@ -116,7 +115,25 @@ test("direct controller write() after reader.cancel() does not throw", async () 
   reader.read().catch(() => {});
   await pullStarted.promise;
   await reader.cancel();
-  expect(ctrl.write("after-cancel")).toBe("after-cancel".length);
-  expect(() => ctrl.end()).not.toThrow();
-  expect(() => ctrl.flush()).not.toThrow();
+  expect(ctrl.write("after-cancel")).toBe(0);
+  expect(ctrl.end()).toBeUndefined();
+  expect(ctrl.flush()).toBeUndefined();
+  expect(ctrl.error(new Error("after-cancel"))).toBeUndefined();
+
+  // Same contract when m_closed is reached via end() instead of cancel().
+  let ctrl2: any;
+  const rs2 = new ReadableStream({
+    type: "direct",
+    pull(c: any) {
+      ctrl2 = c;
+      c.write("x");
+      c.end();
+    },
+  });
+  for await (const _ of rs2) {
+  }
+  expect(ctrl2.write("after-end")).toBe(0);
+  expect(ctrl2.end()).toBeUndefined();
+  expect(ctrl2.flush()).toBeUndefined();
+  expect(ctrl2.error(new Error("after-end"))).toBeUndefined();
 });

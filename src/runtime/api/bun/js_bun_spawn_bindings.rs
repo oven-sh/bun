@@ -78,14 +78,14 @@ impl TerminalCreateResult {
 fn __bun_subprocess_ipc_global_this(
     subprocess: core::ptr::NonNull<core::ffi::c_void>,
 ) -> *const JSGlobalObject {
-    // SAFETY: see block comment.
+    // SAFETY: `subprocess` is the live backref stored by `subprocess_ipc_owner`; the Subprocess holds a ref on its SendQueue and detaches before it is freed.
     unsafe { subprocess.cast::<SubprocessT<'static>>().as_ref() }
         .global_this
         .as_ptr()
 }
 #[unsafe(no_mangle)]
 fn __bun_subprocess_ipc_handle_close(subprocess: core::ptr::NonNull<core::ffi::c_void>) {
-    // SAFETY: see block comment.
+    // SAFETY: `subprocess` is the live backref stored by `subprocess_ipc_owner`; the Subprocess holds a ref on its SendQueue and detaches before it is freed.
     SubprocessT::handle_ipc_close(unsafe { subprocess.cast::<SubprocessT<'static>>().as_ref() });
 }
 #[unsafe(no_mangle)]
@@ -94,7 +94,7 @@ fn __bun_subprocess_ipc_handle_message(
     msg: &IPC::DecodedIPCMessage,
     handle: JSValue,
 ) {
-    // SAFETY: see block comment.
+    // SAFETY: `subprocess` is the live backref stored by `subprocess_ipc_owner`; the Subprocess holds a ref on its SendQueue and detaches before it is freed.
     SubprocessT::handle_ipc_message(
         unsafe { subprocess.cast::<SubprocessT<'static>>().as_ref() },
         msg,
@@ -103,7 +103,7 @@ fn __bun_subprocess_ipc_handle_message(
 }
 #[unsafe(no_mangle)]
 fn __bun_subprocess_ipc_this_jsvalue(subprocess: core::ptr::NonNull<core::ffi::c_void>) -> JSValue {
-    // SAFETY: see block comment.
+    // SAFETY: `subprocess` is the live backref stored by `subprocess_ipc_owner`; the Subprocess holds a ref on its SendQueue and detaches before it is freed.
     unsafe { subprocess.cast::<SubprocessT<'static>>().as_ref() }
         .this_value
         .get()

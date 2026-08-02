@@ -241,8 +241,6 @@ impl FileResponseStream {
 
         // hold a ref for the in-flight read; released in on_reader_done/on_reader_error
         this_ref.hold_read_ref();
-        // SAFETY: `read()` dispatches `on_read_chunk`/`on_reader_done` back into
-        // this object through the parent pointer, so no cell borrow spans it.
         // SAFETY: `reader` is live for the stream's lifetime; `read` is the
         // raw re-entrancy-safe entry (its dispatch runs user JS).
         unsafe { BufferedReader::read(this_ref.reader.as_ptr()) };

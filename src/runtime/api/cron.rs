@@ -52,6 +52,7 @@ use bun_sys::{self as sys, Fd, File};
 // ─── local shims (upstream-crate gaps; see PORTING.md §extension traits) ────
 
 /// Recover `&mut VirtualMachine` from the per-thread singleton.
+///
 /// Safe: delegates to [`VirtualMachine::as_mut`], which already encapsulates
 /// the single-JS-thread thread-local deref (provenance from `get_mut_ptr()`).
 #[inline]
@@ -69,6 +70,9 @@ use crate::jsc_hooks::timer_all_mut as timer_all;
 // Note: every method on the path to `finish()` (which `heap::take`-
 // drops `this`) takes a raw `*mut Self` receiver.
 // A `&mut self` *parameter* would carry a Stacked Borrows FnEntry protector,
+// making the in-flight dealloc UB; each entry point instead confines its
+// exclusive access to a temporary `(*this).method(..)` borrow that ends
+// before any call that may free `this`.
 trait CronJobBase: Sized {
     fn remaining_fds_mut(&mut self) -> &mut i8;
     fn err_msg_mut(&mut self) -> &mut Option<Vec<u8>>;
@@ -315,6 +319,8 @@ impl CronJobBase for CronRegisterJob {
                     && self.state != RegisterState::BootingOut
                 {
                     // Materialize the trimmed stderr into an owned buffer:
+                    // `final_buffer()` borrows the reader mutably, and
+                    // `set_err` below needs `&mut self` — copy out so the two
                     // borrows do not overlap (Windows only; POSIX ignores
                     // stderr here).
                     #[cfg(windows)]

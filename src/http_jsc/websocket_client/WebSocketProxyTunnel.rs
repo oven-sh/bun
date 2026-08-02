@@ -12,6 +12,7 @@
 //! ## Aliasing model
 //!
 //! Every public entry that drives the `SslWrapper` (`start`, `receive`, `on_writable`,
+//! `write`, `shutdown`) forms a `&SslWrapper` over the `wrapper` field and then
 //! synchronously re-enters this struct through the `ctx` backref via
 //! `on_open`/`on_data`/`on_handshake`/`on_close`/`write_encrypted`.
 //!
@@ -20,6 +21,7 @@
 //!   `ptr::addr_of_mut!` so the `&mut` covers only that field's bytes.
 //! - Callbacks **never** form `&Self`/`&mut Self` (whole-struct) and **never** read
 //!   `(*ctx).wrapper` — either would touch `wrapper`'s bytes through the
+//!   Box-provenance `ctx` and alias the caller's shared `&SslWrapper` (harmless — no Unique tag to pop, since every `SslWrapper` method is `&self`).
 //!   They access only disjoint fields (`ref_count`, `ssl`, `sni_hostname`,
 //!   `write_buffer`, `socket`, `upgrade_client`, `connected_websocket`) via
 //!   `(*ctx).field` raw projections.
@@ -48,6 +50,7 @@ bun_core::declare_scope!(WebSocketProxyTunnel, visible);
 
 /// Union type for upgrade client to maintain type safety.
 /// The upgrade client can be either HTTP or HTTPS depending on the proxy connection.
+///
 /// `Copy` so callbacks can snapshot the value and dispatch on the copy without
 /// holding a borrow of the tunnel across the re-entrant call.
 #[derive(Clone, Copy)]
@@ -121,7 +124,12 @@ pub struct WebSocketProxyTunnel {
     /// Write buffer for encrypted data (maintains TLS record ordering)
     write_buffer: StreamBuffer,
     /// Snapshot of `wrapper.ssl` taken in `start()`.
+    ///
     /// Callbacks fired from inside `SslWrapper::{start,receive_data,...}` run while
+    /// the caller holds a live `&SslWrapper` (all its methods are `&self`, so a
+    /// shared read of `wrapper` is harmless; only a whole-struct `&mut *ctx` in a
+    /// callback would overlap it). Snapshotting the `*mut SSL` here — the field is a
+    /// `Cell` — lets `on_handshake` read it without touching `wrapper` at all.
     ssl: Option<NonNull<boringssl::c::SSL>>,
     /// Hostname for SNI (Server Name Indication)
     sni_hostname: Option<Box<[u8]>>,
@@ -227,6 +235,7 @@ impl WebSocketProxyTunnel {
         //
         // This could live inside `onOpen`, which `SslWrapper::start()`
         // invokes immediately before `handle_traffic()`. We hoist it here because
+        // `start()` holds `&SslWrapper` across the `on_open` dispatch, and any
         // read of `(*ctx).wrapper` from inside the callback would invalidate that
         // borrow under Stacked Borrows. The observable order vs BoringSSL is
         // identical: SNI is set on the `SSL*` before the handshake is driven.
@@ -280,6 +289,7 @@ impl WebSocketProxyTunnel {
         bun_core::scoped_log!(WebSocketProxyTunnel, "onOpen");
         // SNI configuration is done in `start()` before the wrapper is driven;
         // see the note there. This callback intentionally does not touch
+        // `(*this).wrapper` — the caller (`SslWrapper::start`) holds `&self`
         // over those bytes.
         let _ = this;
     }

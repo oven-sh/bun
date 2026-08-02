@@ -1,6 +1,3 @@
-//! JS-thread completion}" boilerplate. Each call site supplies only a `Ctx` impl of
-//!
-
 use bun_event_loop::Task;
 use bun_io::KeepAlive;
 use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};

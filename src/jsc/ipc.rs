@@ -2203,6 +2203,7 @@ pub mod IPCHandlers {
 
         /// `nread` is the byte count libuv reported into the slice handed out
         /// by `on_read_alloc` (i.e. the tail of `send_queue.incoming` past its
+        /// current `len`).
         pub(crate) fn on_read(send_queue: &SendQueue, nread: usize) {
             log!("NewNamedPipeIPCHandler#onRead {}", nread);
             let global_this = send_queue.get_global_this();

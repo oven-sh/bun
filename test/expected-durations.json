@@ -25001,10 +25001,10 @@
     "windows": 616
   },
   "js/node/test/sequential/test-http-server-request-timeouts-mixed.js": {
-    "default": 6306,
-    "asan": 12509,
-    "musl": 6307,
-    "windows": 6348
+    "default": 3153,
+    "asan": 9384,
+    "musl": 3154,
+    "windows": 3174
   },
   "js/node/test/sequential/test-http2-large-file.js": {
     "default": 154,

@@ -199,7 +199,10 @@ impl FileResponseStream {
         // SAFETY: `this` reborrows the live heap::alloc allocation above.
         let _guard = unsafe { bun_ptr::ScopedRef::<Self>::new(this) };
 
-        let start_result = if opts.offset > 0 {
+        let start_result = if opts.file_type == FileType::File || opts.offset > 0 {
+            // Regular files always use positioned reads so the body matches
+            // the fstat-derived Content-Length regardless of any inherited
+            // cursor on a caller-supplied fd.
             this.reader
                 .start_file_offset(this.fd, opts.pollable, opts.offset as usize)
         } else {

@@ -56,7 +56,7 @@ fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<Signal
 /// `Terminal.CreateResult` — local mirror that flattens `IntrusiveRc<Terminal>`
 /// to a `BackRef<Terminal>` used by `Subprocess.terminal`, so the scopeguard /
 /// field-assignment paths share one pointer type with `existing_terminal`.
-pub(crate) struct TerminalCreateResult {
+struct TerminalCreateResult {
     /// BACKREF — the `IntrusiveRc<Terminal>` pointer leaked via `into_raw()`
     /// when this struct was populated; the +1 ref is held until
     /// `Subprocess::finalize` (or the spawn-error scopeguard's
@@ -69,7 +69,7 @@ impl TerminalCreateResult {
     /// Shared borrow of the held `Terminal` (BackRef invariant: +1-ref'd
     /// IntrusiveRc, live while this struct is held).
     #[inline]
-    pub(crate) fn term(&self) -> &Terminal {
+    fn term(&self) -> &Terminal {
         self.terminal.get()
     }
 }
@@ -310,7 +310,7 @@ fn get_argv(
 }
 
 /// Bun.spawn() calls this.
-pub fn spawn(
+pub(crate) fn spawn(
     global_this: &JSGlobalObject,
     args: JSValue,
     secondary_args_value: Option<JSValue>,
@@ -319,7 +319,7 @@ pub fn spawn(
 }
 
 /// Bun.spawnSync() calls this.
-pub fn spawn_sync(
+pub(crate) fn spawn_sync(
     global_this: &JSGlobalObject,
     args: JSValue,
     secondary_args_value: Option<JSValue>,
@@ -327,7 +327,7 @@ pub fn spawn_sync(
     spawn_maybe_sync::<true>(global_this, args, secondary_args_value)
 }
 
-pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
+fn spawn_maybe_sync<const IS_SYNC: bool>(
     global_this: &JSGlobalObject,
     args_: JSValue,
     secondary_args_value: Option<JSValue>,
@@ -539,7 +539,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     // `from_js` returns a live FFI handle owned by JS.
                     // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref`
                     // is the centralised non-null deref proof.
-                    **abort_signal = Some(WebCore::AbortSignal::opaque_ref(signal).ref_());
+                    let sig = WebCore::AbortSignal::opaque_ref(signal);
+                    if let Some(abort_error) = sig.node_abort_error_if_aborted(global_this) {
+                        return Err(global_this.throw_value(abort_error));
+                    }
+                    **abort_signal = Some(sig.ref_());
                 } else {
                     return Err(global_this.throw_invalid_argument_type_value(
                         b"signal",
@@ -1275,7 +1279,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     // stores it as `*mut Process`; the matching `deref()` in
     // `Subprocess::finalize` (or the error path below) frees the Box when the
     // refcount reaches zero.
-    let process: *mut Process = spawned.to_process(loop_handle, IS_SYNC);
+    let process: *mut Process = spawned.to_process(loop_handle);
 
     #[cfg(unix)]
     let posix_ipc_fd = if !IS_SYNC && maybe_ipc_mode.is_some() {
@@ -1392,10 +1396,14 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             #[cfg(unix)]
             {
                 if let Some(fd) = spawned_stdout {
-                    fd.close();
+                    if !stdio[1].borrows_caller_fd() {
+                        fd.close();
+                    }
                 }
                 if let Some(fd) = spawned_stderr {
-                    fd.close();
+                    if !stdio[2].borrows_caller_fd() {
+                        fd.close();
+                    }
                 }
             }
             #[cfg(not(unix))]
@@ -1607,22 +1615,14 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if matches!(subprocess.stdin.get(), Writable::Pipe(_)) && promise_for_stream == JSValue::ZERO {
-        // Note: the SignalHandler impl is on
-        // `Subprocess` and the stored back-pointer is the `*mut Subprocess`
-        // (whole-allocation provenance), so `Writable::on_close` can raw-project
-        // `stdin` instead of doing out-of-provenance pointer arithmetic. The
-        // vtable only dereferences this pointer later on the JS thread, after
-        // the local `subprocess` borrow has ended.
-        // SAFETY: `subprocess_ptr` is the stable boxed `Subprocess` (from
-        // `heap::alloc` above) and `stdin` was just confirmed to be the
-        // `Pipe` variant; the signal's stored back-pointer remains valid for
-        // the lifetime of the FileSink, which is owned by `subprocess.stdin`.
+        // Store the whole-allocation `*mut Subprocess` so Writable::on_close can raw-project stdin.
+        // SAFETY: `subprocess_ptr` is the stable boxed Subprocess; stdin was just confirmed `Pipe`.
         unsafe {
             if let Writable::Pipe(pipe) = (*subprocess_ptr).stdin.get() {
                 (*pipe.as_ptr())
-                    .signal
-                    .set(WebCore::streams::Signal::init_with_type::<SubprocessT<'_>>(
-                        subprocess_ptr,
+                    .source
+                    .set(WebCore::streams::SourceHandle::Subprocess(
+                        bun_ptr::BackRef::from_raw(subprocess_ptr.cast::<SubprocessT<'static>>()),
                     ));
             }
         }
@@ -2093,7 +2093,7 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
 /// `storage` receives ownership of every `K=V\0` line whose pointer is pushed
 /// into `envp` (and, for `PATH=`, sliced into `*path`); the caller's
 /// `Vec<ZBox>` is dropped after `spawn_process` returns.
-pub(crate) fn append_envp_from_js(
+fn append_envp_from_js(
     global_this: &JSGlobalObject,
     object: &JSObject,
     envp: &mut Vec<CStrPtr>,

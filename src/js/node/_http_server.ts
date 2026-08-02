@@ -1905,7 +1905,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   get authorized() {
     if (!this.encrypted) return undefined;
     if (!this.server?.[tlsSymbol]?.requestCert) return false;
-    return this[kHandle]?.authorizationError === null;
+    return this[kHandle]?.peerCertVerified === true;
   }
 
   get authorizationError() {

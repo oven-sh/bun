@@ -45,19 +45,6 @@ namespace WebCore {
 
 EventListenerMap::EventListenerMap() = default;
 
-bool EventListenerMap::containsCapturing(const AtomString& eventType) const
-{
-    auto* listeners = find(eventType);
-    if (!listeners)
-        return false;
-
-    for (auto& eventListener : *listeners) {
-        if (eventListener->useCapture())
-            return true;
-    }
-    return false;
-}
-
 bool EventListenerMap::containsActive(const AtomString& eventType) const
 {
     auto* listeners = find(eventType);

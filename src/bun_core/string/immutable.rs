@@ -11,7 +11,7 @@ use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
 
 pub use self::unicode::{
-    CodepointIterator, Cursor, NewCodePointIterator, UnsignedCodepointIterator, codepoint_size,
+    CodepointIterator, Cursor, NewCodePointIterator, UnsignedCodepointIterator,
     contains_non_bmp_code_point_or_is_invalid_identifier, decode_wtf8_rune_t,
     decode_wtf8_rune_t_multibyte, wtf8_byte_sequence_length,
     wtf8_byte_sequence_length_with_invalid,
@@ -60,16 +60,11 @@ pub mod unicode {
         wtf8_byte_sequence_length, wtf8_byte_sequence_length_with_invalid,
     };
 
-    pub use super::unicode_draft::{
-        codepoint_size, decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte,
-    };
+    pub use super::unicode_draft::{decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte};
 
     /// `CodepointIterator` — yields WTF-8 codepoints with byte-width.
     pub struct NewCodePointIterator<'a> {
         pub bytes: &'a [u8],
-        pub i: usize,
-        pub width: u8,
-        pub c: CodePoint,
     }
     pub type CodepointIterator<'a> = NewCodePointIterator<'a>;
     pub type UnsignedCodepointIterator<'a> = NewCodePointIterator<'a>;
@@ -77,20 +72,7 @@ pub mod unicode {
     impl<'a> NewCodePointIterator<'a> {
         pub const ZERO_VALUE: CodePoint = -1;
         pub fn init(bytes: &'a [u8]) -> Self {
-            Self {
-                bytes,
-                i: 0,
-                width: 0,
-                c: 0,
-            }
-        }
-        pub fn init_offset(bytes: &'a [u8], i: usize) -> Self {
-            Self {
-                bytes,
-                i,
-                width: 0,
-                c: 0,
-            }
+            Self { bytes }
         }
 
         /// True iff any byte in `slice` begins a multi-byte WTF-8 sequence.
@@ -360,10 +342,6 @@ pub fn contains(self_: &[u8], str: &[u8]) -> bool {
     index_of(self_, str).is_some()
 }
 
-// Canonical impl lives in tier-0 `crate::strings_impl` (which `bun_paths` etc.
-// reach without depending on this crate); re-export to avoid a second copy.
-pub use crate::strings_impl::contains_case_insensitive_ascii;
-
 /// Index of the first byte in `slice` that appears in `chars` (SIMD via
 /// highway). Returns `usize` (unlike the `u32`-returning single-char
 /// scanners above) so callers can index with the result directly.
@@ -479,7 +457,7 @@ pub fn is_npm_package_name_ignore_length(target: &[u8]) -> bool {
 
 // Secret-redaction scanners are canonical in crate::strings_impl (only callers
 // live in bun_core/fmt.rs). Re-exported here to preserve the bun.strings.* path.
-pub use crate::strings_impl::{
+pub(crate) use crate::strings_impl::{
     find_url_password, is_uuid, starts_with_npm_secret, starts_with_secret, starts_with_uuid,
 };
 
@@ -598,19 +576,12 @@ pub fn split<'a>(self_: &'a [u8], delimiter: &'a [u8]) -> SplitIterator<'a> {
 }
 
 pub struct SplitIterator<'a> {
-    pub buffer: &'a [u8],
-    pub index: Option<usize>,
-    pub delimiter: &'a [u8],
+    pub(crate) buffer: &'a [u8],
+    pub(crate) index: Option<usize>,
+    pub(crate) delimiter: &'a [u8],
 }
 
 impl<'a> SplitIterator<'a> {
-    /// Returns a slice of the first field. This never fails.
-    /// Call this only to get the first field and then use `next` to get all subsequent fields.
-    pub fn first(&mut self) -> &'a [u8] {
-        debug_assert!(self.index.unwrap() == 0);
-        self.next().unwrap()
-    }
-
     /// Returns a slice of the next field, or null if splitting is complete.
     pub fn next(&mut self) -> Option<&'a [u8]> {
         let start = self.index?;
@@ -631,11 +602,6 @@ impl<'a> SplitIterator<'a> {
         let end = self.buffer.len();
         let start = self.index.unwrap_or(end);
         &self.buffer[start..end]
-    }
-
-    /// Resets the iterator to the initial slice.
-    pub fn reset(&mut self) {
-        self.index = Some(0);
     }
 }
 
@@ -683,7 +649,7 @@ impl StringOrTinyStringMeta {
 const _: () = assert!(core::mem::size_of::<StringOrTinyString>() == 32);
 
 impl StringOrTinyString {
-    pub const MAX: usize = 31;
+    pub(crate) const MAX: usize = 31;
 
     #[inline]
     pub fn slice(&self) -> &[u8] {
@@ -1015,7 +981,7 @@ fn eql_comptime_check_len_with_known_type<T: crate::NoUninit + Eq, const CHECK_L
 ///
 ///   strings.eql_comptime(input, b"hello world");
 ///   strings.eql_comptime(input, b"hai");
-pub fn eql_comptime_check_len_with_type<T: crate::NoUninit + Eq, const CHECK_LEN: bool>(
+pub(crate) fn eql_comptime_check_len_with_type<T: crate::NoUninit + Eq, const CHECK_LEN: bool>(
     a: &[T],
     b: &[T],
 ) -> bool {
@@ -1044,7 +1010,7 @@ pub fn eql_case_insensitive_asciii_check_length(a: &[u8], b: &[u8]) -> bool {
 // call shape across the tree (`eql_case_insensitive_ascii(a, b, true)`);
 // callers wanting the length-agnostic forms have the `_check_length` /
 // `_ignore_length` wrappers above.
-pub use crate::strings_impl::eql_case_insensitive_ascii;
+pub use crate::strings_impl::{contains_case_insensitive_ascii, eql_case_insensitive_ascii};
 
 pub fn eql_case_insensitive_t<T: crate::NoUninit + Into<u32>>(a: &[T], b: &[u8]) -> bool {
     if a.len() != b.len() || a.is_empty() {
@@ -1074,7 +1040,7 @@ pub fn eql_case_insensitive_t<T: crate::NoUninit + Into<u32>>(a: &[T], b: &[u8])
     true
 }
 
-pub fn has_prefix_case_insensitive_t<T: crate::NoUninit + Into<u32>>(
+pub(crate) fn has_prefix_case_insensitive_t<T: crate::NoUninit + Into<u32>>(
     str: &[T],
     prefix: &[u8],
 ) -> bool {
@@ -1185,13 +1151,6 @@ pub fn concat_buf_t<'a, T: Copy>(out: &'a mut [T], strs: &[&[T]]) -> Result<&'a 
     Ok(&mut out[0..off])
 }
 
-pub fn index(self_: &[u8], str: &[u8]) -> i32 {
-    match index_of(self_, str) {
-        Some(i) => i32::try_from(i).expect("int cast"),
-        None => -1,
-    }
-}
-
 /// Returns a substring starting at `start` up to the end of the string.
 /// If `start` is greater than the string's length, returns an empty string.
 pub fn substring(self_: &[u8], start: Option<usize>, stop: Option<usize>) -> &[u8] {
@@ -1230,7 +1189,7 @@ macro_rules! w {
 pub fn first_non_ascii(slice: &[u8]) -> Option<u32> {
     first_non_ascii_usize(slice).map(|i| i as u32)
 }
-pub use crate::strings_impl::first_non_ascii_usize;
+pub(crate) use crate::strings_impl::first_non_ascii_usize;
 
 /// `bun.strings.isValidUTF8` — SIMD-validated UTF-8 check.
 /// Wraps `simdutf::validate::utf8`; the gated `unicode_draft` adds a
@@ -1328,7 +1287,7 @@ pub fn index_of_needs_escape_for_java_script_string(slice: &[u8], quote_char: u8
     highway::index_of_needs_escape_for_javascript_string(slice, quote_char)
 }
 
-pub fn index_of_needs_url_encode(slice: &[u8]) -> Option<u32> {
+pub(crate) fn index_of_needs_url_encode(slice: &[u8]) -> Option<u32> {
     if slice.is_empty() {
         return None;
     }
@@ -1570,7 +1529,7 @@ pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
 }
 
 /// Leave a single leading char
-/// ```
+/// ```text
 /// trim_subsequent_leading_chars("foo\n\n\n\n", '\n') -> "foo\n"
 /// ```
 pub fn trim_subsequent_leading_chars(slice: &[u8], char: u8) -> &[u8] {
@@ -1645,11 +1604,11 @@ pub fn trim_suffix<'a>(buffer: &'a [u8], suffix: &[u8]) -> &'a [u8] {
 /// The final element is the end index of the desired line
 #[derive(Copy, Clone, Default)]
 pub struct LineRange {
-    pub start: u32,
-    pub end: u32,
+    pub(crate) start: u32,
+    pub(crate) end: u32,
 }
 
-pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
+pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
     text: &[u8],
     target_line: u32,
 ) -> BoundedArray<LineRange, LINE_RANGE_COUNT> {
@@ -1673,7 +1632,7 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         return ranges;
     };
 
-    let iter = CodepointIterator::init_offset(text, 0);
+    let iter = CodepointIterator::init(text);
     let mut cursor = unicode::Cursor {
         i: first_newline_or_nonascii_i,
         ..Default::default()
@@ -1828,21 +1787,6 @@ pub fn length_of_leading_whitespace_ascii(slice: &[u8]) -> usize {
         return i;
     }
     slice.len()
-}
-
-pub fn join(slices: &[&[u8]], delimiter: &[u8]) -> Result<Box<[u8]>, AllocError> {
-    if slices.is_empty() {
-        return Ok(Box::default());
-    }
-    let total: usize =
-        slices.iter().map(|s| s.len()).sum::<usize>() + delimiter.len() * (slices.len() - 1);
-    let mut out = Vec::with_capacity(total);
-    out.extend_from_slice(slices[0]);
-    for s in &slices[1..] {
-        out.extend_from_slice(delimiter);
-        out.extend_from_slice(s);
-    }
-    Ok(out.into_boxed_slice())
 }
 
 // ── Lexicographic slice ordering ──────────────────────────────────────────
@@ -2056,8 +2000,8 @@ pub fn format_escapes(str: &[u8], flags: QuoteEscapeFormatFlags) -> QuoteEscapeF
 }
 
 pub struct QuoteEscapeFormat<'a> {
-    pub data: &'a [u8],
-    pub flags: QuoteEscapeFormatFlags,
+    pub(crate) data: &'a [u8],
+    pub(crate) flags: QuoteEscapeFormatFlags,
 }
 
 impl core::fmt::Display for QuoteEscapeFormat<'_> {
@@ -2230,11 +2174,11 @@ pub const fn is_unicode_space_separator(cp: u32) -> bool {
 /// The C++ side uses ANSI::findEscapeCharacter (SIMD) and ANSI::consumeANSI.
 #[repr(C)]
 pub struct ANSIIterator {
-    pub input: *const u8,
-    pub input_len: usize,
-    pub cursor: usize,
-    pub slice_ptr: *const u8,
-    pub slice_len: usize,
+    pub(crate) input: *const u8,
+    pub(crate) input_len: usize,
+    pub(crate) cursor: usize,
+    pub(crate) slice_ptr: *const u8,
+    pub(crate) slice_len: usize,
 }
 
 impl ANSIIterator {
@@ -2478,32 +2422,22 @@ pub fn try_convert_utf8_to_utf16_in_buffer<'a>(
 /// Decode one WTF-8 sequence at the head of `s`; invalid lead/truncated → (U+FFFD, 1).
 /// Lone surrogates pass through (WTF-8). Helper for [`convert_utf8_to_utf16_in_buffer`].
 fn decode_wtf8_one(s: &[u8]) -> (u32, usize) {
-    let b0 = s[0] as u32;
+    let b0 = s[0];
     if b0 < 0x80 {
-        return (b0, 1);
+        return (b0 as u32, 1);
     }
-    if b0 < 0xC0 || s.len() < 2 {
+    let width = wtf8_byte_sequence_length_with_invalid(b0);
+    if width == 1 {
         return (0xFFFD, 1);
     }
-    let b1 = s[1] as u32;
-    if b0 < 0xE0 {
-        return (((b0 & 0x1F) << 6) | (b1 & 0x3F), 2);
-    }
-    if s.len() < 3 {
+    let take = (width as usize).min(s.len());
+    let mut buf = [0u8; 4];
+    buf[..take].copy_from_slice(&s[..take]);
+    let cp = decode_wtf8_rune_t::<i32>(buf, width, -1);
+    if cp < 0 {
         return (0xFFFD, 1);
     }
-    let b2 = s[2] as u32;
-    if b0 < 0xF0 {
-        return (((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F), 3);
-    }
-    if s.len() < 4 {
-        return (0xFFFD, 1);
-    }
-    let b3 = s[3] as u32;
-    (
-        ((b0 & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F),
-        4,
-    )
+    (cp as u32, take)
 }
 
 /// `strings.toUTF8ListWithType` — append UTF-8 transcoding of `utf16` onto
@@ -2707,5 +2641,21 @@ mod tests {
         assert_eq!(super::first_non_ascii(b"ab\xC3"), Some(2));
         assert!(super::eql_case_insensitive_ascii(b"A", b"a", true));
         assert!(!super::eql_case_insensitive_ascii(b"Ab", b"a", true));
+    }
+
+    #[test]
+    fn convert_utf8_to_utf16_in_buffer_fallback_rejects_malformed_sequences() {
+        let mut buf = [0u16; 16];
+        let out =
+            super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xC0\xAE\xC0\xAF\xC1\x9C\xC0\x80");
+        assert_eq!(out, &[0xFFFD; 8][..]);
+        let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xE0\x80\x80");
+        assert_eq!(out, &[0xFFFD, 0xFFFD, 0xFFFD][..]);
+        let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"a\xC2\x41");
+        assert_eq!(out, &[b'a' as u16, 0xFFFD, b'A' as u16][..]);
+        let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xED\xA0\x80");
+        assert_eq!(out, &[0xD800][..]);
+        let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xC3\xA9\xF0\x9F\x98\x80");
+        assert_eq!(out, &[0x00E9, 0xD83D, 0xDE00][..]);
     }
 }

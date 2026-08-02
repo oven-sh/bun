@@ -8,9 +8,6 @@
 // This file is only compatible with 64 bit CPUs
 // It must be kept in sync with JSCJSValue.h
 // https://github.com/oven-sh/WebKit/blob/main/Source/JavaScriptCore/runtime/JSCJSValue.h
-#ifdef IS_CALLBACK
-#define INJECT_BEFORE int c = 500; // This is a callback, so we need to inject code before the call
-#endif
 #define IS_BIG_ENDIAN 0
 #define USE_JSVALUE64 1
 #define USE_JSVALUE32_64 0
@@ -73,10 +70,6 @@ BUN_FFI_IMPORT extern struct NapiEnv Bun__thisFFIModuleNapiEnv;
 #endif
 
 
-#ifdef INJECT_BEFORE
-// #include <stdint.h>
-#endif
-// #include <tcclib.h>
 
 // This value is 2^49, used to encode doubles such that the encoded value will
 // begin with a 15-bit pattern within the range 0x0002..0xFFFC.
@@ -146,17 +139,6 @@ typedef void* JSContext;
   int64_t *argsPtr = (int64_t*)((size_t*)callFrame + Bun_FFI_PointerOffsetToArgumentsList)
 
 
-#ifdef IS_CALLBACK
-void* callback_ctx;
-BUN_FFI_IMPORT ZIG_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args);
-// We wrap 
-static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args)  __attribute__((__always_inline__));
-static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args) {
-  EncodedJSValue return_value;
-  return_value.asZigRepr = FFI_Callback_call(ctx, argCount, args);
-  return return_value;
-}
-#endif
 
 static bool JSVALUE_IS_CELL(EncodedJSValue val) __attribute__((__always_inline__));
 static bool JSVALUE_IS_INT32(EncodedJSValue val) __attribute__((__always_inline__)); 
@@ -382,10 +364,7 @@ static EncodedJSValue INT64_TO_JSVALUE(void* jsGlobalObject, int64_t val) {
   return INT64_TO_JSVALUE_SLOW(jsGlobalObject, val);
 }
 
-#ifndef IS_CALLBACK
 BUN_FFI_IMPORT ZIG_REPR_TYPE JSFunctionCall(void* jsGlobalObject, void* callFrame);
-
-#endif
 
 
 // --- Generated Code ---

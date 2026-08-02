@@ -104,7 +104,7 @@ impl SettingsType {
     pub const SETTINGS_MAX_FRAME_SIZE: Self = Self(0x5);
     pub const SETTINGS_MAX_HEADER_LIST_SIZE: Self = Self(0x6);
     // Non-standard extension settings (still unsupported):
-    pub const SETTINGS_ENABLE_CONNECT_PROTOCOL: Self = Self(0x8);
+    pub(crate) const SETTINGS_ENABLE_CONNECT_PROTOCOL: Self = Self(0x8);
 }
 
 // ─── wire helpers ───────────────────────────────
@@ -133,10 +133,6 @@ impl UInt31WithReserved {
         Self(value)
     }
     #[inline]
-    pub const fn init(value: u32, reserved: bool) -> Self {
-        Self((value & 0x7fff_ffff) | if reserved { 0x8000_0000 } else { 0 })
-    }
-    #[inline]
     pub fn from_bytes(src: &[u8]) -> Self {
         Self(u32_from_bytes(src))
     }
@@ -153,8 +149,8 @@ impl UInt31WithReserved {
 #[repr(C, packed)]
 #[derive(Copy, Clone, Default)]
 pub struct StreamPriority {
-    pub stream_identifier: u32,
-    pub weight: u8,
+    pub(crate) stream_identifier: u32,
+    pub(crate) weight: u8,
 }
 // SAFETY: `#[repr(C, packed)]` with `u32 + u8` fields — no padding, no niches,
 // every 5-byte pattern is a valid value.
@@ -165,15 +161,6 @@ const _: () = assert!(core::mem::size_of::<StreamPriority>() == StreamPriority::
 
 impl StreamPriority {
     pub const BYTE_SIZE: usize = 5;
-
-    #[inline]
-    pub fn from(dst: &mut StreamPriority, src: &[u8]) {
-        bytemuck::bytes_of_mut(dst).copy_from_slice(src);
-        // Byte-swap each field; `weight: u8` is a no-op.
-        // Brace-expr `{packed.field}` performs an unaligned copy;
-        // assignment to a packed field is an unaligned store. No `unsafe`.
-        dst.stream_identifier = u32::swap_bytes(dst.stream_identifier);
-    }
 }
 
 /// NOT `#[repr(packed)]` — the `u24` length is widened to a native `u32`
@@ -291,5 +278,5 @@ impl Default for FullSettingsPayload {
     }
 }
 impl FullSettingsPayload {
-    pub(crate) const BYTE_SIZE: usize = 42;
+    const BYTE_SIZE: usize = 42;
 }

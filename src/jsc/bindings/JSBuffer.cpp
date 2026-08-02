@@ -18,7 +18,6 @@
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/ExceptionScope.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
@@ -87,7 +86,11 @@ extern "C" bool Bun__Node__ZeroFillBuffers;
 
 // SIMD-optimized search functions from highway_strings.cpp
 extern "C" void* highway_memmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
+extern "C" size_t highway_memrmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
+extern "C" size_t highway_memmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
+extern "C" size_t highway_memrmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" size_t highway_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
+static constexpr size_t kHighwayNotFound = ~static_cast<size_t>(0);
 
 // export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String
 extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
@@ -1566,6 +1569,8 @@ static int64_t indexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t
     return byteOffset + static_cast<int64_t>(static_cast<const uint8_t*>(result) - haystackPtr);
 }
 
+// UCS2 searches operate on whole uint16_t units (Node's SearchString<uint16_t>),
+// so a match can only start on an even byte offset.
 static int64_t indexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
 {
     if (thisLength == 1) return -1;
@@ -1573,16 +1578,13 @@ static int64_t indexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8
     thisLength /= 2;
     valueLength /= 2;
     byteOffset /= 2;
-    auto haystack = std::span<const uint16_t>((const uint16_t*)(thisPtr), thisLength).subspan(byteOffset);
-    auto needle = std::span<const uint16_t>((const uint16_t*)(valuePtr), valueLength);
-    auto it = std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end());
-    if (it == haystack.end()) return -1;
-    auto idx = byteOffset + std::distance(haystack.begin(), it);
-    return idx * 2;
+    const uint16_t* haystack = reinterpret_cast<const uint16_t*>(thisPtr);
+    size_t result = highway_memmem16(haystack + byteOffset, static_cast<size_t>(thisLength - byteOffset),
+        reinterpret_cast<const uint16_t*>(valuePtr), static_cast<size_t>(valueLength));
+    if (result == kHighwayNotFound) return -1;
+    return (byteOffset + static_cast<int64_t>(result)) * 2;
 }
 
-// UCS2 searches operate on whole uint16_t units (Node's SearchString<uint16_t>),
-// so a match can only start on an even byte offset.
 static int64_t lastIndexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
 {
     if (thisLength == 1) return -1;
@@ -1590,22 +1592,26 @@ static int64_t lastIndexOf16(const uint8_t* thisPtr, int64_t thisLength, const u
     thisLength /= 2;
     valueLength /= 2;
     byteOffset /= 2;
-    auto haystack = std::span<const uint16_t>((const uint16_t*)(thisPtr), std::min(thisLength, byteOffset + valueLength));
-    auto needle = std::span<const uint16_t>((const uint16_t*)(valuePtr), valueLength);
-    auto it = std::find_end(haystack.begin(), haystack.end(), needle.begin(), needle.end());
-    if (it == haystack.end()) return -1;
-    return std::distance(haystack.begin(), it) * 2;
+    int64_t haystackLen = std::min(thisLength, byteOffset + valueLength);
+    if (haystackLen < valueLength) return -1;
+    size_t result = highway_memrmem16(reinterpret_cast<const uint16_t*>(thisPtr), static_cast<size_t>(haystackLen),
+        reinterpret_cast<const uint16_t*>(valuePtr), static_cast<size_t>(valueLength));
+    if (result == kHighwayNotFound) return -1;
+    return static_cast<int64_t>(result) * 2;
 }
 
 static int64_t lastIndexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
 {
-    auto start = thisPtr;
-    auto end = thisPtr + std::min(thisLength, byteOffset + valueLength);
-    auto it = std::find_end(start, end, valuePtr, valuePtr + valueLength);
-    if (it != end) {
-        return it - thisPtr;
+    int64_t haystackLen = std::min(thisLength, byteOffset + valueLength);
+    if (haystackLen < valueLength) return -1;
+    if (valueLength == 1) {
+        auto span = std::span<const uint8_t>(thisPtr, static_cast<size_t>(haystackLen));
+        return WTF::reverseFind(span, valuePtr[0]);
     }
-    return -1;
+    size_t result = highway_memrmem(thisPtr, static_cast<size_t>(haystackLen),
+        valuePtr, static_cast<size_t>(valueLength));
+    if (result == kHighwayNotFound) return -1;
+    return static_cast<int64_t>(result);
 }
 
 // Port of the search-range handling in Node's src/node_buffer.cc

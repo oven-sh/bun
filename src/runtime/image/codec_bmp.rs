@@ -10,23 +10,23 @@
 
 use super::codecs;
 
-pub struct Header {
-    pub width: u32,
-    pub height: u32,
+pub(crate) struct Header {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
     /// y-stride direction: BMP rows are bottom-up unless biHeight < 0.
-    pub top_down: bool,
-    pub bpp: u16, // 24 or 32
-    pub pix_off: u32,
+    pub(crate) top_down: bool,
+    pub(crate) bpp: u16, // 24 or 32
+    pub(crate) pix_off: u32,
     /// BI_BITFIELDS masks; for BI_RGB these are the Windows defaults.
-    pub r_mask: u32,
-    pub g_mask: u32,
-    pub b_mask: u32,
-    pub a_mask: u32,
+    pub(crate) r_mask: u32,
+    pub(crate) g_mask: u32,
+    pub(crate) b_mask: u32,
+    pub(crate) a_mask: u32,
 }
 
 /// Read enough of BITMAPFILEHEADER + BITMAPINFOHEADER (any version ≥ 40)
 /// to size and locate the pixel array. Everything is little-endian.
-pub fn parse_header(b: &[u8]) -> Result<Header, codecs::Error> {
+pub(crate) fn parse_header(b: &[u8]) -> Result<Header, codecs::Error> {
     // BITMAPFILEHEADER(14) + at least BITMAPINFOHEADER(40).
     if b.len() < 54 || b[0] != b'B' || b[1] != b'M' {
         return Err(codecs::Error::DecodeFailed);
@@ -129,7 +129,7 @@ fn to8(v: u32, width: u32) -> u8 {
     }
 }
 
-pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
     let h = parse_header(bytes)?;
     codecs::guard(h.width, h.height, max_pixels)?;
 

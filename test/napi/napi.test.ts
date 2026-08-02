@@ -11,7 +11,7 @@ import {
   isMusl,
   isWindows,
   nodeExeMatchingAbi,
-  tempDirWithFiles,
+  tempDir,
 } from "harness";
 import { join } from "path";
 
@@ -73,7 +73,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   describe.each(["esm", "cjs"])("bundle .node files to %s via", format => {
     describe.each(["node", "bun"])("target %s", target => {
       it("Bun.build", async () => {
-        const dir = tempDirWithFiles("node-file-cli", {
+        await using dir = tempDir("node-file-cli", {
           "package.json": JSON.stringify({
             name: "napi-app",
             version: "1.0.0",
@@ -116,7 +116,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         it(
           "should work with --compile",
           async () => {
-            const dir = tempDirWithFiles("napi-app-compile-" + format, {
+            await using dir = tempDir("napi-app-compile-" + format, {
               "package.json": JSON.stringify({
                 name: "napi-app",
                 version: "1.0.0",
@@ -140,7 +140,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
               stderr: "inherit",
             });
             expect(build.success).toBeTrue();
-            const tmpdir = tempDirWithFiles("should-be-empty-except", {});
+            await using tmpdir = tempDir("should-be-empty-except", {});
             const result = spawnSync({
               cmd: [exe, "self"],
               env: { ...bunEnv, BUN_TMPDIR: tmpdir },
@@ -166,7 +166,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       }
 
       it("`bun build`", async () => {
-        const dir = tempDirWithFiles("node-file-build", {
+        await using dir = tempDir("node-file-build", {
           "package.json": JSON.stringify({
             name: "napi-app",
             version: "1.0.0",
@@ -1231,19 +1231,20 @@ describe.skipIf(!canBuildNodeAddons())("napi_create_string_latin1", () => {
   it("does not leak the WTFStringImpl", async () => {
     const fixture = /* js */ `
       const nativeTests = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))});
+      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
       const size = 256 * 1024;
       for (let i = 0; i < 20; i++) {
         const s = nativeTests.create_latin1_string(size);
         if (s.length !== size) throw new Error("wrong length: " + s.length);
       }
       Bun.gc(true);
-      const before = process.memoryUsage.rss();
+      const before = rss();
       for (let i = 0; i < 300; i++) {
         const s = nativeTests.create_latin1_string(size);
         if (s.length !== size) throw new Error("wrong length: " + s.length);
       }
       Bun.gc(true);
-      const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+      const growthMB = (rss() - before) / 1024 / 1024;
       console.error("RSS growth: " + growthMB.toFixed(1) + " MB");
       process.exit(growthMB > Number(process.env.THRESHOLD_MB) ? 1 : 0);
     `;

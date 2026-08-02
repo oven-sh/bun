@@ -73,6 +73,59 @@ test("fetch does not reuse a pooled TLS connection for a request with a differen
   expect(plain).not.toBe(overrideA);
 });
 
+// RFC 9112 §9.6: a server's `Connection: close` applies regardless of status
+// code. Previously bun only honored it for 2xx, so a 4xx/5xx with
+// `Connection: close` was pooled; a concurrent fetch that picked the pooled
+// socket before the server's FIN landed failed with ECONNRESET. Subprocess
+// so the pool can't leak into other tests. The server here keeps the socket
+// open and answers every request on it, so the connection count is exactly
+// how many times bun dialed (pooled reuse => 1, correct => 4).
+test.concurrent.each([200, 400, 413, 500])("a %d response with Connection: close is not pooled", async status => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import net from "node:net";
+        let connections = 0;
+        const server = net.createServer(sock => {
+          connections++;
+          sock.on("error", () => {});
+          let buf = "";
+          sock.on("data", d => {
+            buf += d.toString("latin1");
+            while (buf.includes("\\r\\n\\r\\n")) {
+              buf = buf.slice(buf.indexOf("\\r\\n\\r\\n") + 4);
+              sock.write("HTTP/1.1 ${status} X\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok");
+            }
+          });
+        });
+        server.listen(0, "127.0.0.1");
+        await new Promise(r => server.on("listening", r));
+        const url = "http://127.0.0.1:" + server.address().port + "/";
+        const statuses = [];
+        for (let i = 0; i < 4; i++) {
+          const res = await fetch(url, { keepalive: true });
+          statuses.push(res.status);
+          await res.text();
+        }
+        console.log(JSON.stringify({ statuses, connections }));
+        process.exit(0);
+        `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+  expect({ result, exitCode }).toEqual({
+    result: { statuses: [status, status, status, status], connections: 4 },
+    exitCode: 0,
+  });
+});
+
 // A reused keep-alive connection reset during a streaming PUT must reject with
 // ECONNRESET, not retry: the stream body is already consumed, and the retry
 // panicked in send_initial_request_payload. Subprocess: the panic aborts the process.

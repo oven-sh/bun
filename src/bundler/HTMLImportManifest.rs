@@ -53,10 +53,10 @@ use crate::{BundleV2, Chunk, LinkerGraph};
 
 #[derive(Clone, Copy)]
 pub struct HTMLImportManifest<'a> {
-    pub index: u32,
-    pub graph: &'a Graph<'a>,
-    pub chunks: &'a [Chunk],
-    pub linker_graph: &'a LinkerGraph<'a>,
+    pub(crate) index: u32,
+    pub(crate) graph: &'a Graph<'a>,
+    pub(crate) chunks: &'a [Chunk],
+    pub(crate) linker_graph: &'a LinkerGraph<'a>,
 }
 
 impl<'a> fmt::Display for HTMLImportManifest<'a> {
@@ -127,7 +127,7 @@ fn write_entry_item<W: Write + ?Sized>(
 }
 
 // Extremely unfortunate, but necessary due to E.String not accepting pre-escaped input and this happening at the very end.
-pub fn write_escaped_json<W: Write + ?Sized>(
+pub(crate) fn write_escaped_json<W: Write + ?Sized>(
     index: u32,
     graph: &Graph,
     linker_graph: &LinkerGraph<'_>,
@@ -162,12 +162,12 @@ impl<'a> fmt::Display for EscapedJson<'a> {
 }
 
 impl<'a> HTMLImportManifest<'a> {
-    pub fn format_escaped_json(self) -> EscapedJson<'a> {
+    pub(crate) fn format_escaped_json(self) -> EscapedJson<'a> {
         EscapedJson(self)
     }
 }
 
-pub fn write<W: Write + ?Sized>(
+pub(crate) fn write<W: Write + ?Sized>(
     index: u32,
     graph: &Graph,
     linker_graph: &LinkerGraph<'_>,
@@ -363,7 +363,7 @@ pub mod html_import_manifest {
         .format_escaped_json()
     }
 
-    pub fn write_escaped_json(
+    pub(crate) fn write_escaped_json(
         index: u32,
         graph: &Graph,
         linker_graph: &LinkerGraph<'_>,

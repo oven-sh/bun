@@ -6,6 +6,7 @@ use bun_core;
 use bun_core::String as BunString;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 unsafe extern "C" {
     safe fn bun_sysconf__SC_NPROCESSORS_ONLN() -> i32;
 }
@@ -35,7 +36,6 @@ pub(crate) fn freemem() -> u64 {
 
 mod _impl {
     use super::*;
-    use crate::node::ErrorCode;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use bun_core::ZStr;
     use bun_core::ZigString;
@@ -56,15 +56,14 @@ mod _impl {
     // ─── local shims for upstream API gaps (Phase D) ──────────────────────────
 
     /// Unified error for `cpus_impl_*` so `?` works on both `JsResult` and
-    /// `crate::Error`/`bun_sys::Error`. The variant payload is discarded by
-    /// `cpus()`, which throws a `SystemError`.
+    /// `crate::Error`/`bun_sys::Error`.
     pub(crate) enum OsError {
-        Js,
+        Js(bun_jsc::JsError),
         Any,
     }
     impl From<bun_jsc::JsError> for OsError {
-        fn from(_: bun_jsc::JsError) -> Self {
-            Self::Js
+        fn from(e: bun_jsc::JsError) -> Self {
+            Self::Js(e)
         }
     }
     impl From<crate::Error> for OsError {
@@ -158,7 +157,7 @@ mod _impl {
         )*};
     }
         create_callback! {
-            create_cpus_callback,               "cpus",              1, bindgen_Node_os_jsCpus;
+            create_cpus_callback,               "cpus",              0, bindgen_Node_os_jsCpus;
             create_freemem_callback,            "freemem",           0, bindgen_Node_os_jsFreemem;
             create_get_priority_callback,       "getPriority",       2, bindgen_Node_os_jsGetPriority;
             create_homedir_callback,            "homedir",           1, bindgen_Node_os_jsHomedir;
@@ -184,13 +183,7 @@ mod _impl {
     }
 
     pub(crate) fn create_node_os_binding(global: &JSGlobalObject) -> JsResult<JSValue> {
-        let obj = JSValue::create_empty_object(global, 14);
-        // SAFETY: pure FFI getter
-        obj.put(
-            global,
-            b"hostCpuCount",
-            JSValue::js_number(1i32.max(bun_sysconf__SC_NPROCESSORS_ONLN()) as f64),
-        );
+        let obj = JSValue::create_empty_object(global, 13);
         obj.put(global, b"cpus", gen_::create_cpus_callback(global));
         obj.put(global, b"freemem", gen_::create_freemem_callback(global));
         obj.put(
@@ -263,15 +256,9 @@ mod _impl {
 
         match result {
             Ok(v) => Ok(v),
-            Err(_) => {
-                let err = SystemError {
-                    message: BunString::static_("Failed to get CPU information").into(),
-                    code: BunString::static_(<&'static str>::from(ErrorCode::ERR_SYSTEM_ERROR))
-                        .into(),
-                    ..Default::default()
-                };
-                Err(global.throw_value(err.to_error_instance(global)))
-            }
+            // Node never throws here (`getCPUs() || []`).
+            Err(OsError::Any) => JSValue::create_empty_array(global, 0),
+            Err(OsError::Js(e)) => Err(e),
         }
     }
 
@@ -289,9 +276,7 @@ mod _impl {
                 match bun_sys::File::open(bun_core::zstr!("/proc/stat"), bun_sys::O::RDONLY, 0) {
                     Ok(f) => f,
                     Err(_) => {
-                        // hidepid mounts (common on Android) deny /proc/stat. lazyCpus in os.ts
-                        // pre-creates hostCpuCount lazy proxies, so return that many stub
-                        // entries (zeroed times / unknown model / speed 0) — matches Node.
+                        // Android hidepid often denies /proc/stat; return NPROCESSORS_ONLN stubs.
                         // SAFETY: pure FFI getter
                         let count: u32 =
                             u32::try_from(1i32.max(bun_sysconf__SC_NPROCESSORS_ONLN())).unwrap();
@@ -301,17 +286,17 @@ mod _impl {
                             let cpu = JSValue::create_empty_object(global_this, 3);
                             cpu.put(
                                 global_this,
-                                b"times",
-                                CPUTimes::default().to_value(global_this),
-                            );
-                            cpu.put(
-                                global_this,
                                 b"model",
                                 ZigString::static_("unknown")
                                     .with_encoding()
                                     .to_js(global_this),
                             );
                             cpu.put(global_this, b"speed", JSValue::js_number(0.0));
+                            cpu.put(
+                                global_this,
+                                b"times",
+                                CPUTimes::default().to_value(global_this),
+                            );
                             stubs.put_index(global_this, i, cpu)?;
                             i += 1;
                         }
@@ -353,8 +338,16 @@ mod _impl {
                     },
                 };
 
-                // Actually create the JS object representing the CPU
-                let cpu = JSValue::create_empty_object(global_this, 1);
+                // Seed defaults in Node's key order; later passes overwrite model/speed.
+                let cpu = JSValue::create_empty_object(global_this, 3);
+                cpu.put(
+                    global_this,
+                    b"model",
+                    ZigString::static_("unknown")
+                        .with_encoding()
+                        .to_js(global_this),
+                );
+                cpu.put(global_this, b"speed", JSValue::js_number(0.0));
                 cpu.put(global_this, b"times", times.to_value(global_this));
                 values.put_index(global_this, num_cpus, cpu)?;
 
@@ -379,26 +372,14 @@ mod _impl {
             const KEY_MODEL_NAME: &[u8] = b"model name\t: ";
 
             let mut cpu_index: u32 = 0;
-            let mut has_model_name = true;
             while let Some(line) = line_iter.next() {
                 if line.starts_with(KEY_PROCESSOR) {
-                    if !has_model_name {
-                        let cpu = values.get_index(global_this, cpu_index)?;
-                        cpu.put(
-                            global_this,
-                            b"model",
-                            ZigString::static_("unknown")
-                                .with_encoding()
-                                .to_js(global_this),
-                        );
-                    }
                     // If this line starts a new processor, parse the index from the line
                     let digits = strings::trim(&line[KEY_PROCESSOR.len()..], b" \t\n");
                     cpu_index = parse_u32(digits)?;
                     if cpu_index >= num_cpus {
                         return Err(OsError::Any);
                     }
-                    has_model_name = false;
                 } else if line.starts_with(KEY_MODEL_NAME) {
                     // If this is the model name, extract it and store on the current cpu
                     let model_name = &line[KEY_MODEL_NAME.len()..];
@@ -410,39 +391,14 @@ mod _impl {
                             .with_encoding()
                             .to_js(global_this),
                     );
-                    has_model_name = true;
                 }
-            }
-            if !has_model_name {
-                let cpu = values.get_index(global_this, cpu_index)?;
-                cpu.put(
-                    global_this,
-                    b"model",
-                    ZigString::static_("unknown")
-                        .with_encoding()
-                        .to_js(global_this),
-                );
             }
 
             file_buf.clear();
-        } else {
-            // Initialize model name to "unknown"
-            let mut it = values.array_iterator(global_this)?;
-            while let Some(cpu) = it.next()? {
-                cpu.put(
-                    global_this,
-                    b"model",
-                    ZigString::static_("unknown")
-                        .with_encoding()
-                        .to_js(global_this),
-                );
-            }
         }
 
         // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq to get current frequency (optional)
         for cpu_index in 0..num_cpus as usize {
-            let cpu = values.get_index(global_this, cpu_index as u32)?;
-
             let mut path_buf = [0u8; 128];
             let path: &ZStr = {
                 let mut cursor = &mut path_buf[..];
@@ -466,12 +422,10 @@ mod _impl {
                 let digits = strings::trim(contents, b" \n");
                 let speed = parse_u64(digits).unwrap_or(0) / 1000;
 
+                let cpu = values.get_index(global_this, cpu_index as u32)?;
                 cpu.put(global_this, b"speed", JSValue::js_number(speed as f64));
 
                 file_buf.clear();
-            } else {
-                // Initialize CPU speed to 0
-                cpu.put(global_this, b"speed", JSValue::js_number(0.0));
             }
         }
 
@@ -618,12 +572,12 @@ mod _impl {
             };
 
             let cpu = JSValue::create_empty_object(global_this, 3);
+            cpu.put(global_this, b"model", model_name);
             cpu.put(
                 global_this,
                 b"speed",
                 JSValue::js_number((speed / 1_000_000) as f64),
             );
-            cpu.put(global_this, b"model", model_name);
             cpu.put(global_this, b"times", times.to_value(global_this));
 
             values.put_index(global_this, cpu_index, cpu)?;

@@ -4690,7 +4690,8 @@ pub(crate) fn fix_dead_code_elimination() {
     #[cfg(not(windows))]
     {
         use v8_api::*;
-        keep_symbols!(            _ZN2v87Isolate10GetCurrentEv, _ZN2v87Isolate13TryGetCurrentEv,
+        keep_symbols!(
+            _ZN2v87Isolate10GetCurrentEv, _ZN2v87Isolate13TryGetCurrentEv,
             _ZN2v87Isolate17GetCurrentContextEv,
             _ZN2v87Isolate28GetEnteredOrMicrotaskContextEv,
             _ZN2v87Isolate36GetContinuationPreservedEmbedderDataEv,

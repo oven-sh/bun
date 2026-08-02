@@ -1,8 +1,5 @@
 #include "V8Function.h"
 #include "shim/Function.h"
-#include "shim/FunctionTemplate.h"
-#include "shim/ObjectTemplate.h"
-#include "shim/InternalFieldObject.h"
 #include "V8Context.h"
 #include "V8HandleScope.h"
 #include "v8_compatibility_assertions.h"
@@ -10,7 +7,6 @@
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/ConstructData.h"
-#include "JavaScriptCore/ThrowScope.h"
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Function)
 
@@ -50,26 +46,8 @@ MaybeLocal<Object> Function::NewInstance(Local<Context> context, int argc, Local
     }
     JSC::ArgList args(argBuffer);
 
-    if (auto* v8Function = const_cast<shim::Function*>(localToObjectPointer<shim::Function>())) {
-        if (auto* functionTemplate = v8Function->functionTemplate()) {
-            auto* instanceTemplate = functionTemplate->ensureInstanceTemplate(globalObject);
-            auto* receiver = instanceTemplate->newInstance();
-            RETURN_IF_EXCEPTION(scope, MaybeLocal<Object>());
-
-            JSC::JSValue prototype = v8Function->get(globalObject, vm.propertyNames->prototype);
-            RETURN_IF_EXCEPTION(scope, MaybeLocal<Object>());
-            if (prototype.isObject()) {
-                receiver->setPrototypeDirect(vm, prototype);
-            }
-
-            JSC::JSValue result = shim::FunctionTemplate::invokeCallback(globalObject, v8Function, receiver, args, true);
-            RETURN_IF_EXCEPTION(scope, MaybeLocal<Object>());
-
-            JSC::JSObject* resultObject = result.isObject() ? result.getObject() : receiver;
-            return context->currentHandleScope()->createLocal<Object>(vm, resultObject);
-        }
-    }
-
+    // shim::Function's InternalFunction construct callback is
+    // FunctionTemplate::functionConstruct, so JSC::construct dispatches there.
     JSC::JSValue callee = localToJSValue();
     JSC::JSObject* result = JSC::construct(globalObject, callee, args, "v8::Function::NewInstance"_s);
     RETURN_IF_EXCEPTION(scope, MaybeLocal<Object>());

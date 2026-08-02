@@ -1512,7 +1512,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     pub(crate) fn start(&mut self, stream_start: &Start) -> bun_sys::Result<()> {
-        if self.state.is_aborted() || self.res.is_none() || self.any_res().unwrap().has_responded() {
+        if self.state.is_aborted() || self.res.is_none() || self.any_res().unwrap().has_responded()
+        {
             self.mark_done();
             self.source.close(None);
             return bun_sys::Result::Ok(());

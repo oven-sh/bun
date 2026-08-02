@@ -3,8 +3,6 @@
 #include "ScriptExecutionContext.h"
 #include "ContextDestructionObserver.h"
 
-#include "libusockets.h"
-#include "_libusockets.h"
 #include "BunClientData.h"
 #include "EventLoopTask.h"
 #include <wtf/Threading.h>

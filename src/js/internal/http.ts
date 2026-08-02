@@ -12,7 +12,6 @@ const {
   setServerAppFlags,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   drainMicrotasks,
-  setServerIdleTimeout,
 } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as {
   getHeader: (headers: Headers, name: string) => string | undefined;
   setHeader: (headers: Headers, name: string, value: string) => void;
@@ -39,7 +38,6 @@ const {
   ) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
   drainMicrotasks: () => void;
-  setServerIdleTimeout: (server: any, timeout: number) => void;
 };
 
 const kDeprecatedReplySymbol = Symbol("deprecatedReply");
@@ -530,17 +528,6 @@ function checkShouldUseProxy(proxyConfig: ProxyConfig, reqOptions: any) {
   return proxyConfig.shouldUseProxy(reqOptions.host || "localhost", reqOptions.port);
 }
 
-function filterEnvForProxies(env) {
-  return {
-    http_proxy: env.http_proxy,
-    HTTP_PROXY: env.HTTP_PROXY,
-    https_proxy: env.https_proxy,
-    HTTPS_PROXY: env.HTTPS_PROXY,
-    no_proxy: env.no_proxy,
-    NO_PROXY: env.NO_PROXY,
-  };
-}
-
 export {
   Headers,
   METHODS,
@@ -557,7 +544,6 @@ export {
   emitErrorNextTickIfErrorListenerNT,
   eofInProgress,
   fakeSocketSymbol,
-  filterEnvForProxies,
   firstWriteSymbol,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   getHeader,
@@ -594,7 +580,6 @@ export {
   setRequestTimeout,
   setServerAppFlags,
   setServerCustomOptions,
-  setServerIdleTimeout,
   tlsSymbol,
   typeSymbol,
   utcDate,

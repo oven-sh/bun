@@ -3591,7 +3591,7 @@ mod v8_api {
         pub(super) fn v8_FunctionTemplate_PrototypeTemplate() -> *mut c_void;
         #[link_name = "?Set@Template@v8@@QEAAXV?$Local@VName@v8@@@2@V?$Local@VData@v8@@@2@W4PropertyAttribute@2@@Z"]
         pub(super) fn v8_Template_Set() -> *mut c_void;
-        #[link_name = "?SetNativeDataProperty@Template@v8@@QEAAXV?$Local@VName@v8@@@2@P6AXV32@AEBV?$PropertyCallbackInfo@VValue@v8@@@2@@ZP6AXV32@V?$Local@VValue@v8@@@2@AEBV?$PropertyCallbackInfo@X@2@@Z3W4PropertyAttribute@2@W4SideEffectType@2@8@Z"]
+        #[link_name = "?SetNativeDataProperty@Template@v8@@QEAAXV?$Local@VName@v8@@@2@P6AX0AEBV?$PropertyCallbackInfo@VValue@v8@@@2@@ZP6AX0V?$Local@VValue@v8@@@2@AEBV?$PropertyCallbackInfo@X@2@@Z3W4PropertyAttribute@2@W4SideEffectType@2@7@Z"]
         pub(super) fn v8_Template_SetNativeDataProperty() -> *mut c_void;
         #[link_name = "?New@Signature@v8@@SA?AV?$Local@VSignature@v8@@@2@PEAVIsolate@2@V?$Local@VFunctionTemplate@v8@@@2@@Z"]
         pub(super) fn v8_Signature_New() -> *mut c_void;
@@ -3615,9 +3615,9 @@ mod v8_api {
         pub(super) fn v8_Array_CheckCast() -> *mut c_void;
         #[link_name = "?SetName@Function@v8@@QEAAXV?$Local@VString@v8@@@2@@Z"]
         pub(super) fn v8_Function_SetName() -> *mut c_void;
-        #[link_name = "?Call@Function@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@HPEAV52@@Z"]
+        #[link_name = "?Call@Function@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@HQEAV52@@Z"]
         pub(super) fn v8_Function_Call() -> *mut c_void;
-        #[link_name = "?NewInstance@Function@v8@@QEBA?AV?$MaybeLocal@VObject@v8@@@2@V?$Local@VContext@v8@@@2@HPEAV?$Local@VValue@v8@@@2@@Z"]
+        #[link_name = "?NewInstance@Function@v8@@QEBA?AV?$MaybeLocal@VObject@v8@@@2@V?$Local@VContext@v8@@@2@HQEAV?$Local@VValue@v8@@@2@@Z"]
         pub(super) fn v8_Function_NewInstance() -> *mut c_void;
         #[link_name = "?IsBoolean@Value@v8@@QEBA_NXZ"]
         pub(super) fn v8_Value_IsBoolean() -> *mut c_void;

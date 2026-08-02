@@ -1216,6 +1216,9 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
     use js_ast::ExprData;
     match &expr.data {
         ExprData::EIdentifier(_) | ExprData::EDot(_) | ExprData::EIndex(_) => true,
+        // These print as bare identifiers (`undefined`/`Infinity`/`NaN`) which
+        // `delete` then parses back as a reference (strict-mode SyntaxError).
+        ExprData::EUndefined(_) => true,
         ExprData::ENumber(e) => e.value().is_infinite() || e.value().is_nan(),
         _ => false,
     }

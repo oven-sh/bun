@@ -962,13 +962,8 @@ impl FileSink {
         // belongs to the wrapper it's about to be stored in, so no extra
         // `ref_()` there. Callers that allocate via `init`/`create` and then
         // `to_js()` must `deref()` once to release init's +1 (see
-        // `Blob::get_writer`).
-        //
-        // `pending` (a backpressured `write()` promise) and `readable_stream`
-        // (spawn-stdin source) are left in place: both are released by
-        // `deinit` (Box drop) once `must_be_kept_alive_until_eof` and the
-        // assignToStream ref are gone. `js_sink_ref` roots the wrapper itself,
-        // so it is released here.
+        // `Blob::get_writer`). `pending`/`readable_stream` are left for
+        // `deinit` (Box drop) since in-flight IO may still need them.
         self.js_sink_ref.with_mut(|r| r.deinit());
         // SAFETY: `&mut self` carries write provenance over the whole
         // allocation; this is the last use of `self` in `finalize`.

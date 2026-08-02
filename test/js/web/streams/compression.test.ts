@@ -413,9 +413,7 @@ describe("CompressionStream and DecompressionStream", () => {
         },
       });
       const res = await fetch(server.url);
-      const out = Buffer.from(
-        await new Response(res.body!.pipeThrough(new DecompressionStream("gzip"))).arrayBuffer(),
-      );
+      const out = Buffer.from(await new Response(res.body!.pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
       expect(out.byteLength).toBe(big.byteLength);
       expect(Buffer.compare(out, Buffer.from(big.buffer))).toBe(0);
     });

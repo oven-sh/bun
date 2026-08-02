@@ -1114,6 +1114,7 @@ describe("--preserve-symlinks", () => {
       "shared/lib/bare.mjs": `import pkg from "somepkg";\nexport default pkg;\n`,
       "shared/lib/where.mjs": `export default import.meta.url;\n`,
       "shared/main.mjs": `import v from "./gen/dep.mjs";\nconsole.log(v);\n`,
+      "shared/mainjs.js": `import v from "./gen/dep.mjs";\nconsole.log(v);\n`,
       "app/gen/dep.mjs": `export default "RESOLVED-FROM-APP-GEN";\n`,
       "app/gen/dep.cjs": `module.exports = "RESOLVED-FROM-APP-GEN";\n`,
       "app/node_modules/somepkg/package.json": `{ "name": "somepkg", "version": "1.0.0", "type": "module", "main": "index.mjs" }`,
@@ -1128,6 +1129,7 @@ describe("--preserve-symlinks", () => {
       symlinkSync(join(dir, "shared", "lib", f), join(dir, "app", "lib", f), "file");
     }
     symlinkSync(join(dir, "shared", "main.mjs"), join(dir, "app", "main-sym.mjs"), "file");
+    symlinkSync(join(dir, "shared", "mainjs.js"), join(dir, "app", "mainsym.js"), "file");
     return dir;
   }
 
@@ -1200,9 +1202,17 @@ describe("--preserve-symlinks", () => {
     expect(withMain.stdout).toBe("RESOLVED-FROM-APP-GEN\n");
     expect(withMain.exitCode).toBe(0);
 
+    // `bun run` with an extensionless target goes through the module
+    // resolution fallback rather than the direct-file fast path.
+    const fallback = await run(join(dir, "app"), ["run", "--preserve-symlinks-main", "./mainsym"]);
+    expect(fallback.stderr).toBe("");
+    expect(fallback.stdout).toBe("RESOLVED-FROM-APP-GEN\n");
+    expect(fallback.exitCode).toBe(0);
+
     // Without -main the entry is still realpathed (Node behavior), so its
     // relative import resolves from shared/ and fails.
     const withoutMain = await run(join(dir, "app"), ["--preserve-symlinks", "main-sym.mjs"]);
+    expect(withoutMain.stderr).toContain("Cannot find module");
     expect(withoutMain.exitCode).not.toBe(0);
   });
 
@@ -1223,8 +1233,8 @@ describe("--preserve-symlinks", () => {
       ]);
       expect(stderr).toBe("");
       const [entryLine, fooLine] = stdout.replaceAll("\\", "/").trim().split("\n");
-      expect(entryLine).toEndWith("/opt/app/bin/entry.cjs");
-      expect(fooLine).toEndWith("/real/app/lib/foo.cjs");
+      expect(entryLine).toBe(join(dir, "opt", "app", "bin", "entry.cjs").replaceAll("\\", "/"));
+      expect(fooLine).toBe(join(realpathSync(dir), "real", "app", "lib", "foo.cjs").replaceAll("\\", "/"));
       expect(exitCode).toBe(0);
     },
   );

@@ -2550,18 +2550,14 @@ impl RunCommand {
             bstr::BStr::new(target_name),
             bstr::BStr::new(fs_top_level_dir),
         );
-        // Temporarily honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN
-        // for this one resolve.
+        let preserve_symlinks_main = ctx.runtime_options.preserve_symlinks_main
+            || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
+                .get()
+                .unwrap_or(false);
         let resolution: ::core::result::Result<bun_resolver::Result, bun_resolver::Error> = {
-            let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks;
-            this_transpiler.resolver.opts.preserve_symlinks =
-                ctx.runtime_options.preserve_symlinks_main
-                    || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
-                        .get()
-                        .unwrap_or(false);
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
-            let resolved = match this_transpiler.resolver.resolve(
+            match this_transpiler.resolver.resolve(
                 top_level_dir,
                 target_name,
                 bun_ast::ImportKind::EntryPointRun,
@@ -2576,9 +2572,7 @@ impl RunCommand {
                         bun_ast::ImportKind::EntryPointRun,
                     )
                 }
-            };
-            this_transpiler.resolver.opts.preserve_symlinks = saved_preserve;
-            resolved
+            }
         };
         // (path, loader) — captured if the resolve hit a real file whose
         // loader Bun cannot execute (e.g. `.css`); used by the `log_errors`
@@ -2597,9 +2591,29 @@ impl RunCommand {
                     .unwrap_or(Loader::Tsx);
                 if loader.can_be_run_by_bun() || loader == Loader::Html || loader == Loader::Md {
                     bun_core::scoped_log!(RUN_LOG, "Resolved to: `{}`", bstr::BStr::new(path.text));
-                    // borrowck — `boot_and_handle_error` takes
-                    // `&mut ctx`; copy `path.text` out of the resolver borrow.
-                    let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
+                    // Node applies --preserve-symlinks-main / NODE_PRESERVE_SYMLINKS_MAIN
+                    // (not --preserve-symlinks) to the entry point. Adjust the
+                    // resolved spelling here instead of flipping
+                    // `opts.preserve_symlinks` for one resolve: that option
+                    // shapes the process-lifetime DirInfo cache, which is
+                    // keyed by path only.
+                    // (Also copies `path.text` out of the resolver borrow for
+                    // the `&mut ctx` call below.)
+                    let text: Box<[u8]> =
+                        if preserve_symlinks_main && path.is_symlink && !path.pretty.is_empty() {
+                            // The resolver realpathed the entry; `set_realpath`
+                            // kept the link spelling in `pretty`.
+                            path.pretty.to_vec().into_boxed_slice()
+                        } else if !preserve_symlinks_main
+                            && this_transpiler.resolver.opts.preserve_symlinks
+                        {
+                            // The preserve-mode resolver kept the link path,
+                            // but the entry must be realpathed.
+                            Self::realpath_entry(path.text)
+                                .unwrap_or_else(|| path.text.to_vec().into_boxed_slice())
+                        } else {
+                            path.text.to_vec().into_boxed_slice()
+                        };
                     return Ok(Self::boot_and_handle_error(ctx, &text, Some(loader)));
                 } else {
                     bun_core::scoped_log!(
@@ -2759,6 +2773,28 @@ impl RunCommand {
         }
 
         Ok(false)
+    }
+
+    /// Canonicalize an entry-point path (open + `get_fd_path`) without going
+    /// through the resolver, whose preserve-symlinks mode shapes its shared
+    /// caches. `None` when the path can't be opened or is too long; the
+    /// caller falls back to the resolved spelling.
+    fn realpath_entry(path: &[u8]) -> Option<Box<[u8]>> {
+        let mut buf = PathBuffer::uninit();
+        if path.len() >= buf.len() {
+            return None;
+        }
+        buf[..path.len()].copy_from_slice(path);
+        buf[path.len()] = 0;
+        // SAFETY: `buf[path.len()] == 0` written above.
+        let z = bun_core::ZStr::from_buf(&buf[..], path.len());
+        let fd = bun_sys::open(z, bun_sys::O::RDONLY, 0).ok()?;
+        let mut out = PathBuffer::uninit();
+        let resolved = bun_sys::get_fd_path(fd, &mut out);
+        let _ = bun_sys::close(fd);
+        resolved
+            .ok()
+            .map(|p| p.to_vec().into_boxed_slice())
     }
 
     /// Fast-path file probe: if `target` resolves to an existing regular file,

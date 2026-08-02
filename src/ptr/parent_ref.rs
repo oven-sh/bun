@@ -36,7 +36,6 @@ use core::ptr::NonNull;
 /// `#[repr(transparent)]` over `NonNull<T>`, so
 /// `Option<ParentRef<T>>` is pointer-sized (NonNull niche) — bit-identical to
 /// the `*mut T` field it replaces, no struct-layout churn.
-///
 #[repr(transparent)]
 pub struct ParentRef<T: ?Sized, P = crate::Shared> {
     ptr: NonNull<T>,
@@ -45,6 +44,8 @@ pub struct ParentRef<T: ?Sized, P = crate::Shared> {
 
 impl<T: ?Sized> ParentRef<T, crate::Shared> {
     /// Construct from a shared borrow of the parent. Provenance is
+    /// `SharedReadOnly`: writes and deallocation through the stored pointer
+    /// are UB — use the `Mut` constructors for write access.
     #[inline]
     pub fn new(parent: &T) -> Self {
         Self {
@@ -166,11 +167,9 @@ impl<T: ?Sized, P> ParentRef<T, P> {
     pub fn as_const_ptr(self) -> *const T {
         self.ptr.as_ptr()
     }
-}
 
-impl<T> ParentRef<T, crate::Mut> {
     #[inline]
-    pub fn as_mut_ptr(self) -> *mut T {
+    pub const fn as_mut_ptr(self) -> *mut T {
         self.ptr.as_ptr()
     }
 }

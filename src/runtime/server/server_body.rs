@@ -2795,11 +2795,20 @@ where
 
     pub fn finalize(self: Box<Self>) {
         httplog!("finalize");
-        // `deinit_if_we_can` may defer the actual free (pending requests still
-        // hold a ref), so hand ownership back to the raw teardown path.
-        let this = bun_core::heap::release(self);
+        let this_ptr = bun_core::heap::into_raw(self);
+        // SAFETY: just unboxed; uniquely owned here until either the inline
+        // `deinit()` below or `schedule_deinit()`'s enqueued task reclaims it.
+        // `deinit_if_we_can` may defer (pending requests), so the free is not
+        // unconditional. `Box::into_raw` (not `heap::release`) keeps raw-owner
+        // provenance for the `deinit()` dealloc — a `&mut self`-derived tag
+        // there would be Stacked-Borrows UB. JSC-handle Drops are no-ops past
+        // `is_shutting_down()`, so the synchronous free is safe then.
+        let this = unsafe { &mut *this_ptr };
         this.js_value.finalize();
         this.deinit_if_we_can();
+        if this.flags.contains(ServerFlags::DEINIT_SCHEDULED) && this.vm().is_shutting_down() {
+            Self::deinit(this_ptr);
+        }
     }
 
     pub(crate) fn get_all_closed_promise(&mut self, global: &JSGlobalObject) -> JSValue {

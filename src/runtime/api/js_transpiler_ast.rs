@@ -10,10 +10,17 @@ use bun_core::fmt::{ItoaBuf, itoa};
 use bun_core::{StackCheck, strings};
 use std::io::Write as _;
 
-/// Stack recursion exceeded while serializing a deeply nested AST.
-pub(crate) struct StackOverflow;
+pub(crate) enum SerializeError {
+    /// Stack recursion exceeded while serializing a deeply nested AST.
+    StackOverflow,
+    /// Raw tape offsets/lengths are `u32`; input exceeds 4 GiB.
+    TapeTooLarge,
+}
 
-pub(crate) fn ast_to_json(ast: &ast::Ast<'_>, buf: &mut Vec<u8>) -> Result<(), StackOverflow> {
+/// Final tape (records + key table + strings) must be addressable by `u32`.
+const TAPE_MAX_LEN: usize = u32::MAX as usize;
+
+pub(crate) fn ast_to_json(ast: &ast::Ast<'_>, buf: &mut Vec<u8>) -> Result<(), SerializeError> {
     buf.reserve(ast.approximate_newline_count.saturating_mul(64).max(256));
     let mut w = Writer {
         buf,
@@ -330,8 +337,8 @@ impl<'a> Writer<'a> {
     fn arr<T>(
         &mut self,
         items: impl IntoIterator<Item = T>,
-        mut f: impl FnMut(&mut Self, T) -> Result<(), StackOverflow>,
-    ) -> Result<(), StackOverflow> {
+        mut f: impl FnMut(&mut Self, T) -> Result<(), SerializeError>,
+    ) -> Result<(), SerializeError> {
         self.raw(b"[");
         let mut first = true;
         for it in items {
@@ -371,9 +378,9 @@ impl<'a> Writer<'a> {
 
 // ─── statements ────────────────────────────────────────────────────────────
 impl<'a> Writer<'a> {
-    fn stmt(&mut self, s: &Stmt) -> Result<(), StackOverflow> {
+    fn stmt(&mut self, s: &Stmt) -> Result<(), SerializeError> {
         if !self.stack.is_safe_to_recurse() {
-            return Err(StackOverflow);
+            return Err(SerializeError::StackOverflow);
         }
         let kind: &'static str = s.data.tag().into();
         self.begin(kind, s.loc);
@@ -614,11 +621,11 @@ impl<'a> Writer<'a> {
     fn stmt_list<'s>(
         &mut self,
         items: impl Iterator<Item = &'s Stmt>,
-    ) -> Result<(), StackOverflow> {
+    ) -> Result<(), SerializeError> {
         self.arr(items, |w, s| w.stmt(s))
     }
 
-    fn case(&mut self, c: &Case) -> Result<(), StackOverflow> {
+    fn case(&mut self, c: &Case) -> Result<(), SerializeError> {
         self.raw(b"{\"loc\":");
         self.loc(c.loc);
         self.key("value");
@@ -629,7 +636,7 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
-    fn catch(&mut self, c: &Catch) -> Result<(), StackOverflow> {
+    fn catch(&mut self, c: &Catch) -> Result<(), SerializeError> {
         self.raw(b"{\"loc\":");
         self.loc(c.loc);
         self.key("binding");
@@ -643,7 +650,7 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
-    fn finally(&mut self, f: &Finally) -> Result<(), StackOverflow> {
+    fn finally(&mut self, f: &Finally) -> Result<(), SerializeError> {
         self.raw(b"{\"loc\":");
         self.loc(f.loc);
         self.key("stmts");
@@ -664,7 +671,7 @@ impl<'a> Writer<'a> {
         self.end();
     }
 
-    fn enum_value(&mut self, ev: &EnumValue) -> Result<(), StackOverflow> {
+    fn enum_value(&mut self, ev: &EnumValue) -> Result<(), SerializeError> {
         self.raw(b"{\"loc\":");
         self.loc(ev.loc);
         self.key("name");
@@ -678,9 +685,9 @@ impl<'a> Writer<'a> {
 
 // ─── expressions ───────────────────────────────────────────────────────────
 impl<'a> Writer<'a> {
-    fn expr(&mut self, e: &Expr) -> Result<(), StackOverflow> {
+    fn expr(&mut self, e: &Expr) -> Result<(), SerializeError> {
         if !self.stack.is_safe_to_recurse() {
-            return Err(StackOverflow);
+            return Err(SerializeError::StackOverflow);
         }
         let kind: &'static str = e.data.tag().into();
         self.begin(kind, e.loc);
@@ -912,7 +919,7 @@ impl<'a> Writer<'a> {
     }
 
     #[inline]
-    fn opt_expr(&mut self, e: Option<Expr>) -> Result<(), StackOverflow> {
+    fn opt_expr(&mut self, e: Option<Expr>) -> Result<(), SerializeError> {
         match e {
             Some(e) => self.expr(&e),
             None => {
@@ -926,7 +933,7 @@ impl<'a> Writer<'a> {
     fn expr_list<'e>(
         &mut self,
         items: impl Iterator<Item = &'e Expr>,
-    ) -> Result<(), StackOverflow> {
+    ) -> Result<(), SerializeError> {
         self.arr(items, |w, e| w.expr(e))
     }
 
@@ -942,7 +949,7 @@ impl<'a> Writer<'a> {
         }
     }
 
-    fn template_part(&mut self, p: &E::TemplatePart) -> Result<(), StackOverflow> {
+    fn template_part(&mut self, p: &E::TemplatePart) -> Result<(), SerializeError> {
         self.raw(b"{\"value\":");
         self.expr(&p.value)?;
         self.key("tailLoc");
@@ -956,9 +963,9 @@ impl<'a> Writer<'a> {
 
 // ─── bindings ──────────────────────────────────────────────────────────────
 impl<'a> Writer<'a> {
-    fn binding(&mut self, b: &Binding) -> Result<(), StackOverflow> {
+    fn binding(&mut self, b: &Binding) -> Result<(), SerializeError> {
         if !self.stack.is_safe_to_recurse() {
-            return Err(StackOverflow);
+            return Err(SerializeError::StackOverflow);
         }
         let kind: &'static str = b.data.tag().into();
         self.begin(kind, b.loc);
@@ -983,7 +990,7 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
-    fn array_binding(&mut self, ab: &ArrayBinding) -> Result<(), StackOverflow> {
+    fn array_binding(&mut self, ab: &ArrayBinding) -> Result<(), SerializeError> {
         self.raw(b"{\"binding\":");
         self.binding(&ab.binding)?;
         self.key("defaultValue");
@@ -992,7 +999,7 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
-    fn b_property(&mut self, p: &ast::b::Property) -> Result<(), StackOverflow> {
+    fn b_property(&mut self, p: &ast::b::Property) -> Result<(), SerializeError> {
         self.raw(b"{\"key\":");
         self.expr(&p.key)?;
         self.key("value");
@@ -1013,7 +1020,7 @@ impl<'a> Writer<'a> {
 
 // ─── shared G.* nodes ──────────────────────────────────────────────────────
 impl<'a> Writer<'a> {
-    fn g_decl(&mut self, d: &G::Decl) -> Result<(), StackOverflow> {
+    fn g_decl(&mut self, d: &G::Decl) -> Result<(), SerializeError> {
         self.raw(b"{\"binding\":");
         self.binding(&d.binding)?;
         self.key("value");
@@ -1022,7 +1029,7 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
-    fn g_arg(&mut self, a: &G::Arg) -> Result<(), StackOverflow> {
+    fn g_arg(&mut self, a: &G::Arg) -> Result<(), SerializeError> {
         self.raw(b"{\"binding\":");
         self.binding(&a.binding)?;
         self.key("default");
@@ -1035,7 +1042,7 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
-    fn g_fn_body(&mut self, b: &G::FnBody) -> Result<(), StackOverflow> {
+    fn g_fn_body(&mut self, b: &G::FnBody) -> Result<(), SerializeError> {
         self.raw(b"{\"loc\":");
         self.loc(b.loc);
         self.key("stmts");
@@ -1044,7 +1051,7 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
-    fn g_fn(&mut self, f: &G::Fn) -> Result<(), StackOverflow> {
+    fn g_fn(&mut self, f: &G::Fn) -> Result<(), SerializeError> {
         self.raw(b"{\"name\":");
         self.opt_loc_ref(f.name);
         self.key("args");
@@ -1063,7 +1070,7 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
-    fn g_property(&mut self, p: &G::Property) -> Result<(), StackOverflow> {
+    fn g_property(&mut self, p: &G::Property) -> Result<(), SerializeError> {
         self.raw(b"{\"propertyKind\":");
         self.enum_(p.kind);
         self.key("key");
@@ -1099,7 +1106,7 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
-    fn g_class(&mut self, c: &G::Class) -> Result<(), StackOverflow> {
+    fn g_class(&mut self, c: &G::Class) -> Result<(), SerializeError> {
         self.raw(b"{\"name\":");
         self.opt_loc_ref(c.class_name);
         self.key("extends");
@@ -1144,7 +1151,7 @@ const V_NULL: Val = Val {
     hi: 0,
 };
 
-pub(crate) fn ast_to_tape(ast: &ast::Ast<'_>, buf: &mut Vec<u8>) -> Result<(), StackOverflow> {
+pub(crate) fn ast_to_tape(ast: &ast::Ast<'_>, buf: &mut Vec<u8>) -> Result<(), SerializeError> {
     buf.reserve(
         ast.approximate_newline_count
             .saturating_mul(96)
@@ -1165,8 +1172,13 @@ pub(crate) fn ast_to_tape(ast: &ast::Ast<'_>, buf: &mut Vec<u8>) -> Result<(), S
     }
     let key_table_len = w.key_names.len() as u32;
 
-    let strings_offset = w.buf.len() as u32;
-    let strings_len = w.strings.len() as u32;
+    let strings_offset = w.buf.len();
+    let strings_len = w.strings.len();
+    if w.overflow || strings_offset.saturating_add(strings_len) > TAPE_MAX_LEN {
+        return Err(SerializeError::TapeTooLarge);
+    }
+    let strings_offset = strings_offset as u32;
+    let strings_len = strings_len as u32;
     w.buf.extend_from_slice(&w.strings);
 
     let hdr = w.buf;
@@ -1188,6 +1200,10 @@ struct TapeWriter<'a> {
     symbols: &'a [Symbol],
     import_records: &'a [ImportRecord],
     stack: StackCheck,
+    /// Set when any offset/length would no longer fit in `u32`; checked at
+    /// each recursive entry and after `write_root` so a wrapped offset is
+    /// never returned to JS.
+    overflow: bool,
 }
 
 impl<'a> TapeWriter<'a> {
@@ -1208,6 +1224,7 @@ impl<'a> TapeWriter<'a> {
             symbols,
             import_records,
             stack: StackCheck::init(),
+            overflow: false,
         }
     }
 
@@ -1237,10 +1254,13 @@ impl<'a> TapeWriter<'a> {
         if let Some(&v) = self.string_index.get(s) {
             return v;
         }
-        let off = self.strings.len() as u32;
-        let len = s.len() as u32;
+        let off = self.strings.len();
+        if off.saturating_add(s.len()) > TAPE_MAX_LEN {
+            self.overflow = true;
+            return (0, 0);
+        }
         self.strings.extend_from_slice(s);
-        let v = (off, len);
+        let v = (off as u32, s.len() as u32);
         self.string_index.insert(s.to_vec().into_boxed_slice(), v);
         v
     }
@@ -1253,15 +1273,18 @@ impl<'a> TapeWriter<'a> {
     #[inline]
     fn begin_node(&mut self) -> u32 {
         self.align4();
-        let off = self.buf.len() as u32;
+        let off = self.buf.len();
+        if off > TAPE_MAX_LEN {
+            self.overflow = true;
+        }
         self.buf.extend_from_slice(&[0u8; 4]);
-        off
+        off as u32
     }
 
     #[inline]
     fn end_node(&mut self, off: u32) -> u32 {
-        let payload = self.buf.len() as u32 - off - 4;
-        debug_assert!(payload % 12 == 0);
+        let payload = (self.buf.len() as u32).wrapping_sub(off).wrapping_sub(4);
+        debug_assert!(payload.is_multiple_of(12));
         let n = (payload / 12) as u16;
         self.buf[off as usize..off as usize + 2].copy_from_slice(&n.to_le_bytes());
         off
@@ -1379,7 +1402,11 @@ impl<'a> TapeWriter<'a> {
     /// Write an array block of already-encoded payloads.
     fn write_array(&mut self, items: &[Val]) -> (u32, u32) {
         self.align4();
-        let off = self.buf.len() as u32;
+        let off = self.buf.len();
+        if off > TAPE_MAX_LEN || items.len() > TAPE_MAX_LEN {
+            self.overflow = true;
+        }
+        let off = off as u32;
         let count = items.len() as u32;
         self.buf.extend_from_slice(&count.to_le_bytes());
         for v in items {
@@ -1394,8 +1421,8 @@ impl<'a> TapeWriter<'a> {
     fn write_node_array<T>(
         &mut self,
         items: impl Iterator<Item = T>,
-        mut f: impl FnMut(&mut Self, T) -> Result<u32, StackOverflow>,
-    ) -> Result<(u32, u32), StackOverflow> {
+        mut f: impl FnMut(&mut Self, T) -> Result<u32, SerializeError>,
+    ) -> Result<(u32, u32), SerializeError> {
         let mut offs: Vec<Val> = Vec::new();
         for it in items {
             let o = f(self, it)?;
@@ -1481,7 +1508,7 @@ impl<'a> TapeWriter<'a> {
         }
     }
 
-    fn write_root(&mut self, ast: &ast::Ast<'_>) -> Result<u32, StackOverflow> {
+    fn write_root(&mut self, ast: &ast::Ast<'_>) -> Result<u32, SerializeError> {
         let hashbang = if ast.hashbang.slice().is_empty() {
             V_NULL
         } else {
@@ -1556,9 +1583,12 @@ impl<'a> TapeWriter<'a> {
 
 // ─── tape: statements ──────────────────────────────────────────────────────
 impl<'a> TapeWriter<'a> {
-    fn stmt(&mut self, s: &Stmt) -> Result<u32, StackOverflow> {
+    fn stmt(&mut self, s: &Stmt) -> Result<u32, SerializeError> {
         if !self.stack.is_safe_to_recurse() {
-            return Err(StackOverflow);
+            return Err(SerializeError::StackOverflow);
+        }
+        if self.overflow {
+            return Err(SerializeError::TapeTooLarge);
         }
         let kind: &'static str = s.data.tag().into();
         macro_rules! node {
@@ -1834,11 +1864,11 @@ impl<'a> TapeWriter<'a> {
     fn stmt_list<'s>(
         &mut self,
         items: impl Iterator<Item = &'s Stmt>,
-    ) -> Result<(u32, u32), StackOverflow> {
+    ) -> Result<(u32, u32), SerializeError> {
         self.write_node_array(items, |w, s| w.stmt(s))
     }
 
-    fn opt_stmt(&mut self, s: Option<Stmt>) -> Result<Val, StackOverflow> {
+    fn opt_stmt(&mut self, s: Option<Stmt>) -> Result<Val, SerializeError> {
         match s {
             Some(s) => {
                 let o = self.stmt(&s)?;
@@ -1852,7 +1882,7 @@ impl<'a> TapeWriter<'a> {
         }
     }
 
-    fn case(&mut self, c: &Case) -> Result<u32, StackOverflow> {
+    fn case(&mut self, c: &Case) -> Result<u32, SerializeError> {
         let value = self.opt_expr(c.value)?;
         let body = self.stmt_list(c.body.iter())?;
         let off = self.begin_node();
@@ -1862,7 +1892,7 @@ impl<'a> TapeWriter<'a> {
         Ok(self.end_node(off))
     }
 
-    fn catch(&mut self, c: &Catch) -> Result<u32, StackOverflow> {
+    fn catch(&mut self, c: &Catch) -> Result<u32, SerializeError> {
         let binding = match c.binding {
             Some(b) => {
                 let o = self.binding(&b)?;
@@ -1882,7 +1912,7 @@ impl<'a> TapeWriter<'a> {
         Ok(self.end_node(off))
     }
 
-    fn finally(&mut self, f: &Finally) -> Result<u32, StackOverflow> {
+    fn finally(&mut self, f: &Finally) -> Result<u32, SerializeError> {
         let stmts = self.stmt_list(f.stmts.iter())?;
         let off = self.begin_node();
         self.f_loc(f.loc);
@@ -1900,7 +1930,7 @@ impl<'a> TapeWriter<'a> {
         self.end_node(off)
     }
 
-    fn enum_value(&mut self, ev: &EnumValue) -> Result<u32, StackOverflow> {
+    fn enum_value(&mut self, ev: &EnumValue) -> Result<u32, SerializeError> {
         let value = self.opt_expr(ev.value)?;
         let off = self.begin_node();
         self.f_loc(ev.loc);
@@ -1912,9 +1942,12 @@ impl<'a> TapeWriter<'a> {
 
 // ─── tape: expressions ─────────────────────────────────────────────────────
 impl<'a> TapeWriter<'a> {
-    fn expr(&mut self, e: &Expr) -> Result<u32, StackOverflow> {
+    fn expr(&mut self, e: &Expr) -> Result<u32, SerializeError> {
         if !self.stack.is_safe_to_recurse() {
-            return Err(StackOverflow);
+            return Err(SerializeError::StackOverflow);
+        }
+        if self.overflow {
+            return Err(SerializeError::TapeTooLarge);
         }
         let kind: &'static str = e.data.tag().into();
         macro_rules! node {
@@ -2164,7 +2197,7 @@ impl<'a> TapeWriter<'a> {
     }
 
     #[inline]
-    fn opt_expr(&mut self, e: Option<Expr>) -> Result<Val, StackOverflow> {
+    fn opt_expr(&mut self, e: Option<Expr>) -> Result<Val, SerializeError> {
         match e {
             Some(e) => {
                 let o = self.expr(&e)?;
@@ -2182,11 +2215,11 @@ impl<'a> TapeWriter<'a> {
     fn expr_list<'e>(
         &mut self,
         items: impl Iterator<Item = &'e Expr>,
-    ) -> Result<(u32, u32), StackOverflow> {
+    ) -> Result<(u32, u32), SerializeError> {
         self.write_node_array(items, |w, e| w.expr(e))
     }
 
-    fn template_part(&mut self, p: &E::TemplatePart) -> Result<u32, StackOverflow> {
+    fn template_part(&mut self, p: &E::TemplatePart) -> Result<u32, SerializeError> {
         let value = self.expr(&p.value)?;
         let tail = self.v_template_contents(&p.tail);
         let off = self.begin_node();
@@ -2199,9 +2232,12 @@ impl<'a> TapeWriter<'a> {
 
 // ─── tape: bindings ────────────────────────────────────────────────────────
 impl<'a> TapeWriter<'a> {
-    fn binding(&mut self, b: &Binding) -> Result<u32, StackOverflow> {
+    fn binding(&mut self, b: &Binding) -> Result<u32, SerializeError> {
         if !self.stack.is_safe_to_recurse() {
-            return Err(StackOverflow);
+            return Err(SerializeError::StackOverflow);
+        }
+        if self.overflow {
+            return Err(SerializeError::TapeTooLarge);
         }
         let kind: &'static str = b.data.tag().into();
         macro_rules! node {
@@ -2232,7 +2268,7 @@ impl<'a> TapeWriter<'a> {
         }
     }
 
-    fn array_binding(&mut self, ab: &ArrayBinding) -> Result<u32, StackOverflow> {
+    fn array_binding(&mut self, ab: &ArrayBinding) -> Result<u32, SerializeError> {
         let binding = self.binding(&ab.binding)?;
         let default_value = self.opt_expr(ab.default_value)?;
         let off = self.begin_node();
@@ -2241,7 +2277,7 @@ impl<'a> TapeWriter<'a> {
         Ok(self.end_node(off))
     }
 
-    fn b_property(&mut self, p: &ast::b::Property) -> Result<u32, StackOverflow> {
+    fn b_property(&mut self, p: &ast::b::Property) -> Result<u32, SerializeError> {
         let key = self.expr(&p.key)?;
         let value = self.binding(&p.value)?;
         let default_value = match &p.default_value {
@@ -2267,7 +2303,7 @@ impl<'a> TapeWriter<'a> {
 
 // ─── tape: shared G.* nodes ────────────────────────────────────────────────
 impl<'a> TapeWriter<'a> {
-    fn g_decl(&mut self, d: &G::Decl) -> Result<u32, StackOverflow> {
+    fn g_decl(&mut self, d: &G::Decl) -> Result<u32, SerializeError> {
         let binding = self.binding(&d.binding)?;
         let value = self.opt_expr(d.value)?;
         let off = self.begin_node();
@@ -2276,7 +2312,7 @@ impl<'a> TapeWriter<'a> {
         Ok(self.end_node(off))
     }
 
-    fn g_arg(&mut self, a: &G::Arg) -> Result<u32, StackOverflow> {
+    fn g_arg(&mut self, a: &G::Arg) -> Result<u32, SerializeError> {
         let binding = self.binding(&a.binding)?;
         let default = self.opt_expr(a.default)?;
         let ts_decorators = self.expr_list(a.ts_decorators.slice().iter())?;
@@ -2288,7 +2324,7 @@ impl<'a> TapeWriter<'a> {
         Ok(self.end_node(off))
     }
 
-    fn g_fn_body(&mut self, b: &G::FnBody) -> Result<u32, StackOverflow> {
+    fn g_fn_body(&mut self, b: &G::FnBody) -> Result<u32, SerializeError> {
         let stmts = self.stmt_list(b.stmts.iter())?;
         let off = self.begin_node();
         self.f_loc(b.loc);
@@ -2296,7 +2332,7 @@ impl<'a> TapeWriter<'a> {
         Ok(self.end_node(off))
     }
 
-    fn g_fn(&mut self, f: &G::Fn) -> Result<u32, StackOverflow> {
+    fn g_fn(&mut self, f: &G::Fn) -> Result<u32, SerializeError> {
         let name = self.opt_loc_ref(f.name);
         let args = self.write_node_array(f.args.iter(), |w, a| w.g_arg(a))?;
         let body = self.g_fn_body(&f.body)?;
@@ -2314,7 +2350,7 @@ impl<'a> TapeWriter<'a> {
         Ok(self.end_node(off))
     }
 
-    fn g_property(&mut self, p: &G::Property) -> Result<u32, StackOverflow> {
+    fn g_property(&mut self, p: &G::Property) -> Result<u32, SerializeError> {
         let key = self.opt_expr(p.key)?;
         let value = self.opt_expr(p.value)?;
         let initializer = self.opt_expr(p.initializer)?;
@@ -2352,7 +2388,7 @@ impl<'a> TapeWriter<'a> {
         Ok(self.end_node(off))
     }
 
-    fn g_class(&mut self, c: &G::Class) -> Result<u32, StackOverflow> {
+    fn g_class(&mut self, c: &G::Class) -> Result<u32, SerializeError> {
         let name = self.opt_loc_ref(c.class_name);
         let extends = self.opt_expr(c.extends)?;
         let ts_decorators = self.expr_list(c.ts_decorators.slice().iter())?;

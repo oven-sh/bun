@@ -1423,7 +1423,7 @@ impl JSTranspiler {
                         } else {
                             return Err(global.throw_invalid_arguments(format_args!(
                                 "unstable_parse: format must be \"raw\", got \"{}\"",
-                                String::from_utf8_lossy(fmt.slice())
+                                bstr::BStr::new(fmt.slice())
                             )));
                         }
                     }
@@ -1475,9 +1475,18 @@ impl JSTranspiler {
         }
 
         if raw_format {
+            use crate::api::js_transpiler_ast::SerializeError;
             let mut tape = Vec::<u8>::new();
-            if crate::api::js_transpiler_ast::ast_to_tape(&parse_result.ast, &mut tape).is_err() {
-                return Err(global.throw_stack_overflow());
+            if let Err(e) = crate::api::js_transpiler_ast::ast_to_tape(&parse_result.ast, &mut tape)
+            {
+                return Err(match e {
+                    SerializeError::StackOverflow => global.throw_stack_overflow(),
+                    SerializeError::TapeTooLarge => {
+                        global.throw_value(global.create_range_error_instance(format_args!(
+                            "unstable_parse: raw AST tape exceeds 4 GiB"
+                        )))
+                    }
+                });
             }
             tape.shrink_to_fit();
             let ab = jsc::ArrayBuffer::from_owned_bytes(

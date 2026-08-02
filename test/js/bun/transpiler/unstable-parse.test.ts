@@ -355,16 +355,16 @@ describe("Bun.Transpiler.unstable_parse", () => {
       const { root } = ts.unstable_parse(`const x = 1`, { format: "raw" });
       expect(() => {
         root.stmts[0].kind = "x";
-      }).toThrow();
+      }).toThrow(TypeError);
       expect(() => {
         delete root.stmts[0].loc;
-      }).toThrow();
+      }).toThrow(TypeError);
       expect(() => {
         root.stmts[0] = null;
-      }).toThrow();
+      }).toThrow(TypeError);
       expect(() => {
         Object.defineProperty(root.stmts[0], "kind", { value: "x" });
-      }).toThrow();
+      }).toThrow(TypeError);
     });
 
     test("visit() walks the tree by kind", () => {
@@ -393,11 +393,29 @@ describe("Bun.Transpiler.unstable_parse", () => {
     test("visit() does not mis-dispatch on helper nodes", () => {
       const { visit } = ts.unstable_parse(`try { a() } catch (e) { b() }`, { format: "raw" });
       const kinds: string[] = [];
-      visit({
-        enter(n: any) {
-          if (typeof n.kind === "string") kinds.push(n.kind);
-        },
-      });
+      const lookups: PropertyKey[] = [];
+      // A bad `visitNode` would read a helper node's first field (`loc`/`binding`)
+      // as a kind and do `visitors["loc"]`, silently falling back to `enter`.
+      // Trap every lookup so that mis-dispatch fails the test directly.
+      visit(
+        new Proxy(
+          {
+            enter(n: any) {
+              if (typeof n.kind === "string") kinds.push(n.kind);
+            },
+          },
+          {
+            get(target, prop, recv) {
+              lookups.push(prop);
+              return Reflect.get(target, prop, recv);
+            },
+          },
+        ),
+      );
+      for (const p of lookups) {
+        if (typeof p !== "string") continue;
+        expect(p === "enter" || /^(s_|e_|b_)/.test(p)).toBe(true);
+      }
       expect(kinds.length).toBeGreaterThan(0);
       for (const k of kinds) expect(k).toMatch(/^(s_|e_|b_)/);
     });

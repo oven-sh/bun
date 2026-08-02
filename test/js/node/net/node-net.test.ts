@@ -1906,3 +1906,133 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
     target.close();
   }
 });
+
+describe("net.Socket write buffering behind a stalled peer", () => {
+  // A writer that queues past backpressure fills the Writable buffer; when the
+  // in-flight _write completes, clearBuffer hands the whole batch to _writev.
+  // Node holds the caller's Buffers by reference in a uv_write_t, so queuing
+  // N bytes costs ~N bytes of RSS. Concatenating the batch and copying the
+  // unsent tail into a native Vec on top of the caller's live references costs
+  // ~2x that at steady state (and ~3x at the transient peak).
+  //
+  // cork()/uncork() forces the whole batch through _writev synchronously so the
+  // sample is deterministic; the `bufs` array keeps the caller's references
+  // live so the steady-state difference (native copy vs. reference) is what is
+  // measured, not the GC-raceable transient peak.
+  //
+  // Windows keeps the Buffer.concat path (Winsock only completes a first large
+  // send synchronously when it is a single WSASend, and usockets has no
+  // vectored send there), so the by-reference bound only applies on POSIX.
+  it.skipIf(isWindows)(
+    "holds queued _writev chunks by reference instead of copying into the native buffer",
+    async () => {
+      const CHUNK = 65536;
+      const N = 1024; // 64 MiB queued
+      const fixture = `
+      const net = require("node:net");
+      const CHUNK = ${CHUNK};
+      const N = ${N};
+      const server = net.createServer({ pauseOnConnect: true }, () => {});
+      server.listen(0, "127.0.0.1", () => {
+        const port = server.address().port;
+        const c = net.connect(port, "127.0.0.1", () => {
+          Bun.gc(true);
+          const rss0 = process.memoryUsage().rss;
+          const bufs = [];
+          c.cork();
+          for (let n = 0; n < N; n++) {
+            const b = Buffer.alloc(CHUNK, 0x62);
+            bufs.push(b);
+            c.write(b);
+          }
+          c.uncork();
+          Bun.gc(true);
+          const rss1 = process.memoryUsage().rss;
+          process.stdout.write(JSON.stringify({
+            writableLength: c.writableLength,
+            rssDelta: rss1 - rss0,
+            held: bufs.length,
+          }) + "\\n");
+          c.destroy();
+          server.close();
+        });
+      });
+    `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const { writableLength, rssDelta, held } = JSON.parse(stdout);
+      const queued = CHUNK * N;
+      expect(held).toBe(N);
+      // Most of the 64 MiB is still queued (a few MiB went to the kernel send
+      // buffer); writableLength reports the queued byte count either way.
+      expect(writableLength).toBeGreaterThan(queued * 0.75);
+      // Holding the queue by reference costs ~1.0x on top of the caller's live
+      // `bufs` (same Buffers). Copying into the native Vec costs another ~1.0x
+      // (plus growth headroom), i.e. >= 2.0x. The bound sits between the two,
+      // with headroom for ASAN/debug per-allocation overhead on the reference
+      // side.
+      const bound = queued * (isASAN || isDebug ? 1.7 : 1.5);
+      expect(rssDelta).toBeLessThan(bound);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The chunk-by-chunk path must still deliver every byte in order once the
+  // peer starts reading: this exercises the drain-resume path where
+  // _pendingData is an array.
+  it("delivers every queued byte in order once the peer reads", async () => {
+    const CHUNK = 65536;
+    const N = 512; // 32 MiB
+    const serverRecv = Promise.withResolvers<Buffer>();
+    const server = createServer({ pauseOnConnect: true }, sock => {
+      setImmediate(() => sock.resume());
+      const chunks: Buffer[] = [];
+      sock.on("data", d => chunks.push(d));
+      sock.on("end", () => {
+        sock.destroy();
+        serverRecv.resolve(Buffer.concat(chunks));
+      });
+      sock.on("error", serverRecv.reject);
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.on("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const port = (server.address() as import("node:net").AddressInfo).port;
+
+    const expected = Buffer.allocUnsafe(CHUNK * N);
+    const finished = Promise.withResolvers<void>();
+    let sawFalse = false;
+    let c: Socket | undefined;
+    try {
+      c = connect(port, "127.0.0.1", () => {
+        for (let n = 0; n < N; n++) {
+          const b = Buffer.alloc(CHUNK, n & 0xff);
+          b.copy(expected, n * CHUNK);
+          if (!c!.write(b)) sawFalse = true;
+        }
+        c!.end();
+        c!.on("finish", finished.resolve);
+      });
+      c.on("error", err => {
+        finished.reject(err);
+        serverRecv.reject(err);
+      });
+      const got = await serverRecv.promise;
+      await finished.promise;
+      // The test only exercises the _writev queue path if backpressure was hit.
+      expect(sawFalse).toBe(true);
+      expect(got.length).toBe(CHUNK * N);
+      expect(got.equals(expected)).toBe(true);
+      expect(c.bytesWritten).toBe(CHUNK * N);
+    } finally {
+      c?.destroy();
+      server.close();
+    }
+  });
+});

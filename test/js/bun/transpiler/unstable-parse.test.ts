@@ -340,10 +340,7 @@ describe("Bun.Transpiler.unstable_parse", () => {
     });
 
     test("visit() walks the tree by kind", () => {
-      const { visit } = ts.unstable_parse(
-        `function f(a) { return a + 1 } const x = f(2) * f(3);`,
-        { format: "raw" },
-      );
+      const { visit } = ts.unstable_parse(`function f(a) { return a + 1 } const x = f(2) * f(3);`, { format: "raw" });
       const calls: string[] = [];
       const idents: string[] = [];
       let nodeCount = 0;
@@ -366,10 +363,7 @@ describe("Bun.Transpiler.unstable_parse", () => {
     });
 
     test("visit() handler returning false skips children", () => {
-      const { visit } = ts.unstable_parse(
-        `function skip() { callee() } target()`,
-        { format: "raw" },
-      );
+      const { visit } = ts.unstable_parse(`function skip() { callee() } target()`, { format: "raw" });
       const calls: string[] = [];
       visit({
         s_function() {

@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -1543,13 +1543,61 @@ it("should close with WAL enabled", () => {
   expect(readdirSync(dir).sort()).toEqual(["empty.txt", "my.db"]);
 });
 
-it("close(true) should throw an error if the database is in use", () => {
+it("close(true) finalizes outstanding prepared statements instead of throwing", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
   db.exec("INSERT INTO foo (name) VALUES ('foo')");
   const prepared = db.prepare("SELECT * FROM foo");
-  expect(() => db.close(true)).toThrow("database is locked");
-  prepared.finalize();
+  expect(() => db.close(true)).not.toThrow();
+  expect(() => prepared.all()).toThrow("Statement has finalized");
+});
+
+it("close(true) finalizes query() statements created after the cache filled up (#36572)", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (a INTEGER)");
+  // One more distinct query string than MAX_QUERY_CACHE_SIZE, so the last
+  // statement does not fit in the query cache.
+  for (let i = 0; i <= Database.MAX_QUERY_CACHE_SIZE; i++) {
+    db.query(`SELECT a + ${i} AS v FROM foo`).all();
+  }
+  expect(() => db.close(true)).not.toThrow();
+});
+
+it("close(true) finalizes query() statements past the cache limit that are still referenced (#36572)", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (a INTEGER)");
+  const statements = [];
+  for (let i = 0; i <= Database.MAX_QUERY_CACHE_SIZE; i++) {
+    statements.push(db.query(`SELECT a + ${i} AS v FROM foo`));
+  }
+  expect(() => db.close(true)).not.toThrow();
+  for (const stmt of statements) {
+    expect(() => stmt.all()).toThrow("Statement has finalized");
+  }
+});
+
+it("close(true) succeeds after unreferenced query() statements were GC'd (#36572)", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (a INTEGER)");
+  for (let i = 0; i <= Database.MAX_QUERY_CACHE_SIZE * 2; i++) {
+    db.query(`SELECT a + ${i} AS v FROM foo`).all();
+  }
+  // Collects the statement wrappers; close(true) must not fail over
+  // statements that are pending sweep.
+  Bun.gc(true);
+  expect(() => db.close(true)).not.toThrow();
+});
+
+it("close(true) works when query() statements past the cache limit were already finalized", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (a INTEGER)");
+  const statements = [];
+  for (let i = 0; i <= Database.MAX_QUERY_CACHE_SIZE; i++) {
+    statements.push(db.query(`SELECT a + ${i} AS v FROM foo`));
+  }
+  for (const stmt of statements) {
+    stmt.finalize();
+  }
   expect(() => db.close(true)).not.toThrow();
 });
 
@@ -1561,16 +1609,30 @@ it("close() should NOT throw an error if the database is in use", () => {
   expect(() => db.close()).not.toThrow("database is locked");
 });
 
-it("should dispose AND throw an error if the database is in use", () => {
+it("close() releases the database file so it can be deleted immediately (#36572)", () => {
+  using dir = tempDir("sqlite-close-unlink", {});
+  const file = path.join(String(dir), "x.sqlite");
+  const db = new Database(file);
+  db.exec("CREATE TABLE t (a INTEGER)");
+  db.prepare("SELECT a FROM t").all();
+  db.close();
+  // On Windows this throws EBUSY if the statement above kept the
+  // connection (and the file handle) open past close().
+  rmSync(file);
+  expect(existsSync(file)).toBe(false);
+});
+
+it("should dispose even if a prepared statement is still live", () => {
+  let prepared;
   expect(() => {
-    let prepared;
     {
       using db = new Database(":memory:");
       db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
       db.exec("INSERT INTO foo (name) VALUES ('foo')");
       prepared = db.prepare("SELECT * FROM foo");
     }
-  }).toThrow("database is locked");
+  }).not.toThrow();
+  expect(() => prepared.get()).toThrow("Statement has finalized");
 });
 
 it("should dispose", () => {
@@ -1656,7 +1718,7 @@ it("reports changes in Statement#run", () => {
 });
 
 it("#13082", async () => {
-  async function run() {
+  async function run(op) {
     const stmt = (() => {
       const db = new Database(":memory:");
       let stmt = db.prepare("select 1");
@@ -1666,18 +1728,21 @@ it("#13082", async () => {
     Bun.gc(true);
     await Bun.sleep(100);
     Bun.gc(true);
-    stmt.all();
-    stmt.get();
-    stmt.run();
+    stmt[op]();
   }
 
-  const count = 100;
+  const ops = ["all", "get", "run"];
+  const count = 99;
   const runs = new Array(count);
   for (let i = 0; i < count; i++) {
-    runs[i] = run();
+    runs[i] = run(ops[i % ops.length]);
   }
 
-  await Promise.allSettled(runs);
+  const results = await Promise.allSettled(runs);
+  for (const result of results) {
+    expect(result.status).toBe("rejected");
+    expect(result.reason.message).toBe("Statement has finalized");
+  }
 });
 
 // The internal SQL.run / SQL.prepare / SQL.isInTransaction helpers used to
@@ -1881,6 +1946,57 @@ it("all() reports an error when a result-row push finalizes the statement", asyn
       rows: [{ a: 3 }, { a: 2 }, { a: 1 }],
     }),
   );
+  expect(exitCode).toBe(0);
+});
+
+// A result-row push can also close the whole database (which finalizes every
+// statement) and then throw; the raw() loop must not touch the freed stmt.
+// Run in a subprocess because the unsafe variant resets freed memory and the
+// Array.prototype accessor affects every array in the process.
+it("raw() does not touch the statement when a result-row push closes the database and throws", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const out = {};
+
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE t (a INTEGER)");
+    db.run("INSERT INTO t VALUES (1), (2), (3)");
+
+    const stmt = db.query("SELECT a FROM t ORDER BY a ASC");
+    Object.defineProperty(Array.prototype, 0, {
+      configurable: true,
+      get() {
+        return undefined;
+      },
+      set(_row) {
+        db.close();
+        throw new Error("boom");
+      },
+    });
+
+    let message = "did not throw";
+    try {
+      stmt.raw();
+    } catch (e) {
+      message = e.message;
+    }
+    delete Array.prototype[0];
+    out.closeDuringRaw = message;
+
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(JSON.stringify({ closeDuringRaw: "boom" }));
   expect(exitCode).toBe(0);
 });
 

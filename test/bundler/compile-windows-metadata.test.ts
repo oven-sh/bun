@@ -19,6 +19,24 @@ async function readPESubsystem(path: string): Promise<number> {
   return view.getUint16(peOffset + 24 + 68, true);
 }
 
+// Read one VersionInfo field from a PE via Windows PowerShell 5.1.
+// The console output code page is per-console (shared by every process attached
+// to it), so a concurrent process on the CI box can flip it off UTF-8 between
+// Bun's startup SetConsoleOutputCP(65001) and this spawn; PowerShell 5.1 then
+// best-fit maps U+00A9 to ASCII 'c'. Forcing [Console]::OutputEncoding inside
+// the command makes the read independent of that state.
+function getMetadata(outfile: string, field: string): string {
+  try {
+    return execSync(
+      `powershell -NoProfile -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ` +
+        `(Get-ItemProperty '${outfile}').VersionInfo.${field}"`,
+      { encoding: "utf8" },
+    ).trim();
+  } catch {
+    return "";
+  }
+}
+
 // Helper to ensure executable cleanup
 function cleanup(outfile: string) {
   return {
@@ -185,22 +203,12 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       expect(exists).toBe(true);
 
       // Verify metadata using PowerShell
-      const getMetadata = (field: string) => {
-        try {
-          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
-            encoding: "utf8",
-          }).trim();
-        } catch {
-          return "";
-        }
-      };
-
-      expect(getMetadata("ProductName")).toBe("My Application");
-      expect(getMetadata("CompanyName")).toBe("Test Company Inc");
-      expect(getMetadata("FileDescription")).toBe("A test application with metadata");
-      expect(getMetadata("LegalCopyright")).toBe("Copyright © 2024 Test Company Inc");
-      expect(getMetadata("ProductVersion")).toBe("1.2.3.4");
-      expect(getMetadata("FileVersion")).toBe("1.2.3.4");
+      expect(getMetadata(outfile, "ProductName")).toBe("My Application");
+      expect(getMetadata(outfile, "CompanyName")).toBe("Test Company Inc");
+      expect(getMetadata(outfile, "FileDescription")).toBe("A test application with metadata");
+      expect(getMetadata(outfile, "LegalCopyright")).toBe("Copyright © 2024 Test Company Inc");
+      expect(getMetadata(outfile, "ProductVersion")).toBe("1.2.3.4");
+      expect(getMetadata(outfile, "FileVersion")).toBe("1.2.3.4");
     });
 
     test("partial metadata flags", async () => {
@@ -231,19 +239,9 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
 
       await expectBuildOk(proc);
 
-      const getMetadata = (field: string) => {
-        try {
-          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
-            encoding: "utf8",
-          }).trim();
-        } catch {
-          return "";
-        }
-      };
-
-      expect(getMetadata("ProductName")).toBe("Simple App");
-      expect(getMetadata("ProductVersion")).toBe("2.0.0.0");
-      expect(getMetadata("FileVersion")).toBe("2.0.0.0");
+      expect(getMetadata(outfile, "ProductName")).toBe("Simple App");
+      expect(getMetadata(outfile, "ProductVersion")).toBe("2.0.0.0");
+      expect(getMetadata(outfile, "FileVersion")).toBe("2.0.0.0");
     });
 
     test("windows flags without --compile should error", async () => {
@@ -324,21 +322,11 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       const exists = await Bun.file(outfile).exists();
       expect(exists).toBe(true);
 
-      const getMetadata = (field: string) => {
-        try {
-          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
-            encoding: "utf8",
-          }).trim();
-        } catch {
-          return "";
-        }
-      };
-
-      expect(getMetadata("ProductName")).toBe("API App");
-      expect(getMetadata("CompanyName")).toBe("API Company");
-      expect(getMetadata("FileDescription")).toBe("Built with Bun.build API");
-      expect(getMetadata("LegalCopyright")).toBe("© 2024 API Company");
-      expect(getMetadata("ProductVersion")).toBe("3.0.0.0");
+      expect(getMetadata(outfile, "ProductName")).toBe("API App");
+      expect(getMetadata(outfile, "CompanyName")).toBe("API Company");
+      expect(getMetadata(outfile, "FileDescription")).toBe("Built with Bun.build API");
+      expect(getMetadata(outfile, "LegalCopyright")).toBe("© 2024 API Company");
+      expect(getMetadata(outfile, "ProductVersion")).toBe("3.0.0.0");
     });
 
     test("partial metadata via Bun.build()", async () => {
@@ -364,18 +352,8 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       const outfile = result.outputs[0].path;
       await using _cleanup = cleanup(outfile);
 
-      const getMetadata = (field: string) => {
-        try {
-          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
-            encoding: "utf8",
-          }).trim();
-        } catch {
-          return "";
-        }
-      };
-
-      expect(getMetadata("ProductName")).toBe("Partial App");
-      expect(getMetadata("ProductVersion")).toBe("1.0.0.0");
+      expect(getMetadata(outfile, "ProductName")).toBe("Partial App");
+      expect(getMetadata(outfile, "ProductVersion")).toBe("1.0.0.0");
     });
 
     test("relative outdir with compile", async () => {
@@ -439,11 +417,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
 
       await expectBuildOk(proc);
 
-      const version = execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.ProductVersion"`, {
-        encoding: "utf8",
-      }).trim();
-
-      expect(version).toBe(expected);
+      expect(getMetadata(outfile, "ProductVersion")).toBe(expected);
     });
 
     test.each([
@@ -506,17 +480,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       await expectBuildOk(proc);
 
       // Check that Original Filename is empty (not "bun.exe")
-      const getMetadata = (field: string) => {
-        try {
-          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
-            encoding: "utf8",
-          }).trim();
-        } catch {
-          return "";
-        }
-      };
-
-      const originalFilename = getMetadata("OriginalFilename");
+      const originalFilename = getMetadata(outfile, "OriginalFilename");
       expect(originalFilename).toBe("");
       expect(originalFilename).not.toBe("bun.exe");
     });
@@ -555,24 +519,14 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
 
       await expectBuildOk(proc);
 
-      const getMetadata = (field: string) => {
-        try {
-          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
-            encoding: "utf8",
-          }).trim();
-        } catch {
-          return "";
-        }
-      };
-
       // Verify all custom metadata is set correctly
-      expect(getMetadata("ProductName")).toBe("Complete App");
-      expect(getMetadata("CompanyName")).toBe("Test Publisher");
-      expect(getMetadata("FileDescription")).toBe("Application with full metadata");
-      expect(getMetadata("ProductVersion")).toBe("5.4.3.2");
+      expect(getMetadata(outfile, "ProductName")).toBe("Complete App");
+      expect(getMetadata(outfile, "CompanyName")).toBe("Test Publisher");
+      expect(getMetadata(outfile, "FileDescription")).toBe("Application with full metadata");
+      expect(getMetadata(outfile, "ProductVersion")).toBe("5.4.3.2");
 
       // But Original Filename should still be empty
-      const originalFilename = getMetadata("OriginalFilename");
+      const originalFilename = getMetadata(outfile, "OriginalFilename");
       expect(originalFilename).toBe("");
       expect(originalFilename).not.toBe("bun.exe");
     });
@@ -645,18 +599,8 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       const exists = await Bun.file(outfile).exists();
       expect(exists).toBe(true);
 
-      const getMetadata = (field: string) => {
-        try {
-          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
-            encoding: "utf8",
-          }).trim();
-        } catch {
-          return "";
-        }
-      };
-
-      expect(getMetadata("ProductName")).toContain("App");
-      expect(getMetadata("CompanyName")).toContain("Company & Co.");
+      expect(getMetadata(outfile, "ProductName")).toContain("App");
+      expect(getMetadata(outfile, "CompanyName")).toContain("Company & Co.");
     });
 
     test("unicode in metadata", async () => {
@@ -760,18 +704,8 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       const exists = await Bun.file(outfile).exists();
       expect(exists).toBe(true);
 
-      const getMetadata = (field: string) => {
-        try {
-          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
-            encoding: "utf8",
-          }).trim();
-        } catch {
-          return "";
-        }
-      };
-
-      expect(getMetadata("ProductName")).toBe("Hidden Console App");
-      expect(getMetadata("ProductVersion")).toBe("1.0.0.0");
+      expect(getMetadata(outfile, "ProductName")).toBe("Hidden Console App");
+      expect(getMetadata(outfile, "ProductVersion")).toBe("1.0.0.0");
     });
 
     test("metadata with --windows-icon", async () => {
@@ -834,18 +768,8 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       const exists = await Bun.file(outfile).exists();
       expect(exists).toBe(true);
 
-      const getMetadata = (field: string) => {
-        try {
-          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
-            encoding: "utf8",
-          }).trim();
-        } catch {
-          return "";
-        }
-      };
-
-      expect(getMetadata("ProductName")).toBe("App with Icon");
-      expect(getMetadata("ProductVersion")).toBe("2.0.0.0");
+      expect(getMetadata(outfile, "ProductName")).toBe("App with Icon");
+      expect(getMetadata(outfile, "ProductVersion")).toBe("2.0.0.0");
     });
   });
 });

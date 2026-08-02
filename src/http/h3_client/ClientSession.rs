@@ -114,8 +114,7 @@ impl ClientSession {
         match self.state {
             SessionState::Draining | SessionState::Failed => false,
             SessionState::Connecting => self.pending.len() < 64,
-            // lsquic's n_avail_streams already accounts for every `pending` entry once the
-            // handshake is done (make_stream was called for each).
+            // lsquic's n_avail_streams already counts every `pending` entry post-handshake.
             SessionState::Established => {
                 self.qsocket_mut().is_some_and(|qs| qs.streams_avail() > 0)
             }

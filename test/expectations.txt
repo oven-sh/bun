@@ -16,3 +16,29 @@
 #
 # Entries match by SUBSTRING, so a path prefix quarantines an entire family.
 # A stale entry is invisible: the file simply never runs and nobody finds out.
+
+# The whole file's beforeAll builds a napi addon with node-gyp, and the Windows
+# agents have no ClangCL toolset ("MSB8020: The build tools for ClangCL cannot
+# be found"), so nothing in the file can run there. Remove once the agent image
+# ships ClangCL. Runs everywhere else. (Verified still failing, build 87834.)
+[ WINDOWS ] test/bundler/native-plugin.test.ts [ SKIP ] # node-gyp needs a ClangCL toolset the Windows agents do not have
+
+# First test ("websocket > bun --inspect") times out after 270s under
+# release-asan (build 87834). Passes on release.
+[ ASAN ] test/cli/inspect/inspect.test.ts [ TIMEOUT ] # websocket > bun --inspect times out at 270s on release-asan
+
+# Windows-only gaps in named-pipe / socket teardown for ported Node net tests
+# (these pass on Linux and macOS): half-close (FIN) handling on named pipes,
+# RST delivery surfacing as ECONNRESET, and localAddress/localPort
+# bind-before-connect on the libuv path. (Verified still failing, build 87834.)
+[ WINDOWS ] test/js/node/test/parallel/test-net-pingpong.js [ FAIL ] # named-pipe half-close: count 1000 !== 1001 at close
+[ WINDOWS ] test/js/node/test/parallel/test-net-pipe-connect-errors.js [ FAIL ] # connect to a regular file reports ENOENT instead of ENOTSOCK/ECONNREFUSED
+[ WINDOWS ] test/js/node/test/parallel/test-net-client-bind-twice.js [ FAIL ] # localAddress/localPort binding not implemented on the libuv connect path; reports ECONNREFUSED instead of EADDRINUSE
+[ WINDOWS ] test/js/node/test/parallel/test-net-server-reset.js [ FAIL ] # server-side RST reports ECONNREFUSED instead of ECONNRESET on the libuv path
+
+# Cluster workers sharing a listen port behave differently on Linux, where
+# SO_REUSEPORT load-balances across the workers' own listeners instead of the
+# primary distributing accepted connections; the upstream test's expectations
+# only hold on the distributing model. Passes on macOS and Windows.
+# (Verified still failing on every Linux lane, build 87834.)
+[ LINUX ] test/js/node/test/sequential/test-net-listen-shared-ports.js [ FAIL ] # SO_REUSEPORT shared-listener semantics on Linux

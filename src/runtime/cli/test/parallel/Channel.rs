@@ -3,6 +3,7 @@
 //! socket/pipe with backpressure buffered and drained via the loop, so a full
 //! kernel buffer never truncates a frame. The owner type provides
 //! `on_channel_frame(kind, &mut Frame::Reader)` and `on_channel_done()`.
+//!
 //! POSIX backend: `uws::NewSocketHandler` adopted from a socketpair fd.
 //! Windows backend: `uv::Pipe` over the inherited duplex named-pipe end (same
 //! mechanism as `Bun.spawn({ipc})` / `process.send()`).
@@ -14,6 +15,11 @@
 //! self-pointer. `Drop` assumes no write is in flight — true for both call
 //! sites (start() errdefer and reap_worker after the peer has exited).
 //!
+//! Reentrancy: the read/close/writable callbacks re-enter the owner, which
+//! may call back into this channel (`send`), so every method takes `&self`
+//! and mutable state lives in `Cell`/[`JsCell`]. Owners must not drop or
+//! replace the channel from inside one of its callbacks; the coordinator
+//! defers reaping until the callback frame has unwound.
 
 use core::cell::Cell;
 #[cfg(not(windows))]
@@ -144,6 +150,10 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 pub struct WindowsBackend {
     pub(crate) pipe: Cell<*mut uv::Pipe>,
     /// Read scratch — libuv asks us to allocate before each read.
+    /// Wrapped so every byte is interior-mutable: libuv forms
+    /// `&mut Channel` from the stored root on each read; a plain array here
+    /// would be the one field where that retag pops the shared views held
+    /// during frame decoding.
     pub(crate) read_chunk: JsCell<[u8; 16 * 1024]>,
     /// Payload owned by the in-flight uv_write; must stay stable until the
     /// callback. New writes go to `out` until this completes, then the buffers
@@ -178,6 +188,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     // parameter would trip `invalid_reference_casting` on the `&T → &mut T`
     // promotion; the raw-pointer route sidesteps that lint while keeping both
     // call sites (which pass `&`/`&mut` and coerce) unchanged.
+    /// `this` is the channel's address derived from the owner's `&mut`.
     pub(crate) fn adopt(this: *mut Self, vm: *const VirtualMachine, fd: Fd) -> bool {
         // SAFETY: caller passes `&raw mut owner.channel` (live for the call).
         let self_ = unsafe { &*this };
@@ -469,6 +480,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                     // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
                     unsafe { uv::Pipe::close_and_destroy(p) };
                 } else {
+                    // Already closing: keep ownership; the uv close callback
                     // finishes the teardown.
                     self.backend.pipe.set(p);
                 }

@@ -8,6 +8,7 @@ use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
 /// Per-job payload trait. Implementors own the off-thread work body and the
 /// JS-thread completion; the surrounding heap/queue/keep-alive plumbing is
 /// supplied by [`AnyTaskJob`].
+///
 /// `Drop` on the implementor is the deinit path — it runs on the JS thread
 /// (from `run_from_js`'s `heap::take`) on every exit, including the
 /// `is_shutting_down` early-out and `init` failure.
@@ -26,6 +27,7 @@ pub trait AnyTaskJobCtx: Sized {
 
     /// JS-thread completion. Called once after `run` re-queues onto the event
     /// loop, unless the VM is already shutting down. Any `Err` is surfaced as
+    /// the completion callback's result (i.e. propagated to the tick loop).
     fn then(&mut self, global: &JSGlobalObject) -> JsResult<()>;
 }
 
@@ -71,6 +73,7 @@ impl<C> Drop for AnyTaskJob<C> {
 }
 
 impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
+    /// Heap-allocate, wire the intrusive `WorkPoolTask`, and run
     /// [`AnyTaskJobCtx::init`]. On `init` error the allocation is freed
     /// (running `Drop for C`). The returned pointer is owned by the caller
     /// until handed to [`Self::schedule`].

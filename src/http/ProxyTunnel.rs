@@ -144,8 +144,6 @@ impl ProxyTunnel {
         Self::wrapper_ref(this.as_ptr()).and_then(|w| w.ssl.get())
     }
 
-    ///
-    ///
     /// INVARIANT (module): `this` is a live intrusive-refcounted tunnel and
     /// no `&mut ProxyTunnel` (whole-struct) is held across the call.
     #[inline]

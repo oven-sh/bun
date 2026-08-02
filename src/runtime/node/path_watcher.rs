@@ -87,6 +87,7 @@ pub(crate) struct PathWatcherManager {
     /// Dedup map: dedup key → PathWatcher. The key is the resolved path with a one-byte
     /// suffix encoding `recursive` (so `fs.watch(p)` and `fs.watch(p, {recursive:true})`
     /// don't share — they want different OS registrations on every platform).
+    ///
     /// Interior-mutable: written through `&'static PathWatcherManager` while holding
     /// `mutex`. The field must be `UnsafeCell` so deriving `&mut` from a shared
     /// manager reference is defined.
@@ -219,6 +220,8 @@ pub struct PathWatcher {
 /// fs-watch tests that write two files back-to-back). Kept identical to
 /// `win_watcher.rs` so POSIX and Windows agree on which bursts are coalesced.
 ///
+/// Fields are `Cell` so `should_emit` takes `&self` — the emit paths then only
+/// ever need shared access to a `PathWatcher`.
 #[derive(Default)]
 pub(crate) struct ChangeEvent {
     #[cfg(not(windows))]
@@ -258,6 +261,8 @@ impl PathWatcher {
 
     /// Called from the platform reader thread with `manager.mutex` held.
     /// `rel_path` is borrowed — `onPathUpdatePosix` dupes it before enqueuing.
+    /// `&self`: per-handler state is `Cell`-based, so the emit paths never
+    /// need an exclusive `PathWatcher` borrow.
     #[cfg(not(windows))]
     fn emit(&self, event_type: WatchEventKind, rel_path: &[u8], is_file: bool) {
         let timestamp = bun_core::time::milli_timestamp();
@@ -669,6 +674,9 @@ pub(crate) struct Linux {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 struct WdOwner {
+    /// Raw `*mut`. Stored in a long-lived map; `platform.wds` is written through
+    /// it under `manager.mutex`, so a `&PathWatcher` here would make every
+    /// write-through a const→mut cast (UB). Lifetime: outlives the entry
     /// because `remove_watch` drops all of a watcher's wd entries before `destroy()`.
     watcher: *mut PathWatcher,
     /// Path of the watched directory/file relative to `watcher.path`. Empty for
@@ -1345,6 +1353,8 @@ pub(crate) struct Kqueue {
 
 #[cfg(target_os = "freebsd")]
 struct KqEntry {
+    /// Raw `*mut`. See `WdOwner.watcher` — stored long-lived, dereferenced
+    /// under `manager.mutex`; outlives the entry because
     /// `remove_watch` clears all of a watcher's entries before `destroy()`.
     watcher: *mut PathWatcher,
     fd: Fd,

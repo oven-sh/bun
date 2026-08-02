@@ -865,12 +865,8 @@ impl<'a> CopyFile<'a> {
 
             #[cfg(target_os = "macos")]
             {
-                // fcopyfile(COPYFILE_DATA) rewrites the destination from
-                // offset 0 and the slice-trim below is implemented as
-                // ftruncate(dest); both destroy bytes in a file the caller
-                // already had open (Bun.stdout redirected with `>>`,
-                // Bun.file(fd)). Only take the fcopyfile path for a
-                // destination this function opened itself.
+                // fcopyfile rewrites dest from offset 0 and the slice trim is
+                // ftruncate; both are only safe for a dest Bun opened O_TRUNC.
                 if matches!(
                     self.destination_file_store.pathlike,
                     PathOrFileDescriptor::Path(_)
@@ -950,11 +946,6 @@ impl<'a> CopyFile<'a> {
     }
 }
 
-/// The read/write fallback used when Linux's kernel copy syscalls are
-/// unavailable for this fd pair. For a destination Bun opened itself with
-/// `O_TRUNC`, copy the whole source and then `ftruncate` (cheap, matches the
-/// historical behaviour). For a caller-supplied fd, copy exactly `cap` bytes
-/// so nothing outside the requested window is touched.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn read_write_fallback(
     src_fd: Fd,

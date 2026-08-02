@@ -486,7 +486,28 @@ const results = query.all("hello", "goodbye");
 
 SQLite supports signed 64-bit integers, but JavaScript only supports signed 52-bit integers or arbitrary-precision integers with `bigint`.
 
-`bigint` input is supported everywhere, but by default `bun:sqlite` returns integers as `number` types. If you need to handle integers larger than 2^53, set the `safeIntegers` option to `true` when creating a `Database` instance. This also validates that `bigint` values passed to `bun:sqlite` do not exceed 64 bits.
+`bigint` input is supported everywhere, but by default `bun:sqlite` returns integers as `number` types. If you need to handle integers larger than 2^53, set the `safeIntegers` option to `true` when creating a `Database` instance.
+
+Regardless of the `safeIntegers` setting, `bun:sqlite` throws a `RangeError` if a `bigint` value in a bound parameter does not fit in a signed 64-bit integer:
+
+```ts db.ts icon="/icons/typescript.svg"
+import { Database } from "bun:sqlite";
+
+const db = new Database(":memory:");
+db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value INTEGER)");
+
+const query = db.query("INSERT INTO test (value) VALUES ($value)");
+
+try {
+  query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n });
+} catch (e) {
+  console.log(e.message);
+}
+```
+
+```txt
+BigInt value '81129638414606663681390495662081' is out of range
+```
 
 ### `safeIntegers: true`
 
@@ -504,27 +525,6 @@ console.log(result.max_int);
 
 ```txt
 9007199254741093n
-```
-
-When `safeIntegers` is `true`, `bun:sqlite` throws an error if a `bigint` value in a bound parameter exceeds 64 bits:
-
-```ts db.ts icon="/icons/typescript.svg" highlight={3}
-import { Database } from "bun:sqlite";
-
-const db = new Database(":memory:", { safeIntegers: true });
-db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value INTEGER)");
-
-const query = db.query("INSERT INTO test (value) VALUES ($value)");
-
-try {
-  query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n });
-} catch (e) {
-  console.log(e.message);
-}
-```
-
-```txt
-BigInt value '81129638414606663681390495662081' is out of range
 ```
 
 ### `safeIntegers: false` (default)

@@ -505,6 +505,7 @@ public:
 
     bool need_update() { return version_db->version.load() != version; }
     void update_version() { version = version_db->version.load(); }
+    void updateColumnNamesIfNeeded(JSC::JSGlobalObject*);
 
     ~JSSQLStatement();
 
@@ -850,13 +851,22 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
     castedThis->_prototype.set(vm, castedThis, object);
 }
 
+void JSSQLStatement::updateColumnNamesIfNeeded(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    // sqlite3_step() may transparently re-prepare under a changed result shape.
+    const bool reprepared = sqlite3_stmt_status(stmt, SQLITE_STMTSTATUS_REPREPARE, 1) > 0;
+    if (!hasExecuted || reprepared || need_update()) {
+        initializeColumnNames(lexicalGlobalObject, this);
+    }
+}
+
 void JSSQLStatement::destroy(JSC::JSCell* cell)
 {
     JSSQLStatement* thisObject = static_cast<JSSQLStatement*>(cell);
     thisObject->~JSSQLStatement();
 }
 
-static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3* db, sqlite3_stmt* stmt, int i, JSC::JSValue value, JSC::ThrowScope& scope, bool isSafeInteger)
+static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3* db, sqlite3_stmt* stmt, int i, JSC::JSValue value, JSC::ThrowScope& scope)
 {
     auto throwSQLiteError = [&]() -> void {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errmsg(db))));
@@ -901,30 +911,24 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
         }
 
         if (roped->is8Bit() && roped->containsOnlyASCII()) {
-            CHECK_BIND(sqlite3_bind_text(stmt, i, reinterpret_cast<const char*>(roped->span8().data()), roped->length(), SQLITE_TRANSIENT));
-        } else if (!roped->is8Bit()) {
-            CHECK_BIND(sqlite3_bind_text16(stmt, i, roped->span16().data(), roped->length() * 2, SQLITE_TRANSIENT));
+            CHECK_BIND(sqlite3_bind_text64(stmt, i, reinterpret_cast<const char*>(roped->span8().data()), roped->length(), SQLITE_TRANSIENT, SQLITE_UTF8));
         } else {
+            // Not sqlite3_bind_text16: SQLite's UTF-16 decoder stores lone surrogates as ill-formed UTF-8.
             auto utf8 = roped->utf8();
-            CHECK_BIND(sqlite3_bind_text(stmt, i, utf8.data(), utf8.length(), SQLITE_TRANSIENT));
+            CHECK_BIND(sqlite3_bind_text64(stmt, i, utf8.data(), utf8.length(), SQLITE_TRANSIENT, SQLITE_UTF8));
         }
 
     } else if (value.isHeapBigInt()) [[unlikely]] {
-        if (!isSafeInteger) {
+        JSBigInt* bigInt = value.asHeapBigInt();
+        const auto min = JSBigInt::compare(bigInt, std::numeric_limits<int64_t>::min());
+        const auto max = JSBigInt::compare(bigInt, std::numeric_limits<int64_t>::max());
+        if ((min == JSBigInt::ComparisonResult::GreaterThan || min == JSBigInt::ComparisonResult::Equal) && (max == JSBigInt::ComparisonResult::LessThan || max == JSBigInt::ComparisonResult::Equal)) [[likely]] {
             CHECK_BIND(sqlite3_bind_int64(stmt, i, JSBigInt::toBigInt64(value)));
         } else {
-            JSBigInt* bigInt = value.asHeapBigInt();
-            const auto min = JSBigInt::compare(bigInt, std::numeric_limits<int64_t>::min());
-            const auto max = JSBigInt::compare(bigInt, std::numeric_limits<int64_t>::max());
-            if ((min == JSBigInt::ComparisonResult::GreaterThan || min == JSBigInt::ComparisonResult::Equal) && (max == JSBigInt::ComparisonResult::LessThan || max == JSBigInt::ComparisonResult::Equal)) [[likely]] {
-                CHECK_BIND(sqlite3_bind_int64(stmt, i, JSBigInt::toBigInt64(value)));
-            } else {
-                throwRangeError(lexicalGlobalObject, scope, makeString("BigInt value '"_s, bigInt->toString(lexicalGlobalObject, 10), "' is out of range"_s));
-                sqlite3_clear_bindings(stmt);
-                return false;
-            }
+            throwRangeError(lexicalGlobalObject, scope, makeString("BigInt value '"_s, bigInt->toString(lexicalGlobalObject, 10), "' is out of range"_s));
+            sqlite3_clear_bindings(stmt);
+            return false;
         }
-
     } else if (JSC::JSArrayBufferView* buffer = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
         CHECK_BIND(sqlite3_bind_blob(stmt, i, buffer->vector(), buffer->byteLength(), SQLITE_TRANSIENT));
     } else {
@@ -936,7 +940,7 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
 #undef CHECK_BIND
 }
 
-static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindingsMap& bindings, JSC::JSObject* target, JSC::ThrowScope& scope, sqlite3* db, sqlite3_stmt* stmt, bool safeIntegers, JSSQLStatement* statement)
+static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindingsMap& bindings, JSC::JSObject* target, JSC::ThrowScope& scope, sqlite3* db, sqlite3_stmt* stmt, JSSQLStatement* statement)
 {
     int count = 0;
 
@@ -1014,7 +1018,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
             }
             RETURN_IF_EXCEPTION(scope, {});
 
-            if (!rebindValue(globalObject, db, stmt, i + 1, value, scope, safeIntegers)) {
+            if (!rebindValue(globalObject, db, stmt, i + 1, value, scope)) {
                 return {};
             }
 
@@ -1041,7 +1045,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
 
             RETURN_IF_EXCEPTION(scope, {});
 
-            if (!rebindValue(globalObject, db, stmt, i + 1, value, scope, safeIntegers)) {
+            if (!rebindValue(globalObject, db, stmt, i + 1, value, scope)) {
                 return {};
             }
 
@@ -1069,7 +1073,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
 
             RETURN_IF_EXCEPTION(scope, {});
 
-            if (!rebindValue(globalObject, db, stmt, i + 1, value, scope, safeIntegers)) {
+            if (!rebindValue(globalObject, db, stmt, i + 1, value, scope)) {
                 return {};
             }
 
@@ -1104,7 +1108,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
             if (!statementStillAlive())
                 return {};
 
-            if (!rebindValue(globalObject, db, stmt, i + 1, value, scope, safeIntegers)) {
+            if (!rebindValue(globalObject, db, stmt, i + 1, value, scope)) {
                 return {};
             }
 
@@ -1116,7 +1120,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
     return jsNumber(count);
 }
 
-static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue values, JSC::ThrowScope& scope, sqlite3* db, sqlite3_stmt* stmt, SQLiteBindingsMap& bindings, bool safeIntegers, JSSQLStatement* statement)
+static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue values, JSC::ThrowScope& scope, sqlite3* db, sqlite3_stmt* stmt, SQLiteBindingsMap& bindings, JSSQLStatement* statement)
 {
     sqlite3_clear_bindings(stmt);
     JSC::JSArray* array = dynamicDowncast<JSC::JSArray>(values);
@@ -1124,7 +1128,7 @@ static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JS
 
     if (!array) {
         if (JSC::JSObject* object = values.getObject()) {
-            auto res = rebindObject(lexicalGlobalObject, bindings, object, scope, db, stmt, safeIntegers, statement);
+            auto res = rebindObject(lexicalGlobalObject, bindings, object, scope, db, stmt, statement);
             RETURN_IF_EXCEPTION(scope, {});
             return res;
         }
@@ -1160,7 +1164,7 @@ static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JS
             if (!value)
                 value = JSC::jsUndefined();
         }
-        if (!rebindValue(lexicalGlobalObject, db, stmt, i + 1, value, scope, safeIntegers)) {
+        if (!rebindValue(lexicalGlobalObject, db, stmt, i + 1, value, scope)) {
             return {};
         }
         RETURN_IF_EXCEPTION(scope, {});
@@ -1533,7 +1537,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
                 int count = sqlite3_bind_parameter_count(sql.stmt);
 
                 SQLiteBindingsMap bindings { static_cast<uint16_t>(count > -1 ? count : 0), strict };
-                JSC::JSValue reb = rebindStatement(lexicalGlobalObject, bindingsAliveScope.value(), scope, db, sql.stmt, bindings, safeIntegers, nullptr);
+                JSC::JSValue reb = rebindStatement(lexicalGlobalObject, bindingsAliveScope.value(), scope, db, sql.stmt, bindings, nullptr);
                 RETURN_IF_EXCEPTION(scope, {});
 
                 if (versionDB->db != db) [[unlikely]] {
@@ -2172,10 +2176,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionIterate, (JSC::JS
         castedThis->version_db->version++;
     }
 
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
-        initializeColumnNames(lexicalGlobalObject, castedThis);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
+    castedThis->updateColumnNamesIfNeeded(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSValue result = jsNull();
     if (status == SQLITE_ROW) {
@@ -2224,10 +2226,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
         castedThis->version_db->version++;
     }
 
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
-        initializeColumnNames(lexicalGlobalObject, castedThis);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
+    castedThis->updateColumnNamesIfNeeded(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     int columnCount = sqlite3_column_count(stmt);
     JSValue result = jsUndefined();
@@ -2317,10 +2317,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
         castedThis->version_db->version++;
     }
 
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
-        initializeColumnNames(lexicalGlobalObject, castedThis);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
+    castedThis->updateColumnNamesIfNeeded(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSValue result = jsNull();
     if (status == SQLITE_ROW) {
@@ -2373,14 +2371,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
         castedThis->version_db->version++;
     }
 
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
-        initializeColumnNames(lexicalGlobalObject, castedThis);
-
-        if (scope.exception()) [[unlikely]] {
-            // Don't forget to reset before releasing the exception.
-            sqlite3_reset(stmt);
-            RELEASE_AND_RETURN(scope, {});
-        }
+    castedThis->updateColumnNamesIfNeeded(lexicalGlobalObject);
+    if (scope.exception()) [[unlikely]] {
+        // Don't forget to reset before releasing the exception.
+        sqlite3_reset(stmt);
+        RELEASE_AND_RETURN(scope, {});
     }
 
     size_t columnCount = sqlite3_column_count(stmt);
@@ -2462,12 +2457,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
         castedThis->version_db->version++;
     }
 
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
-        initializeColumnNames(lexicalGlobalObject, castedThis);
-        if (scope.exception()) [[unlikely]] {
-            sqlite3_reset(stmt);
-            RELEASE_AND_RETURN(scope, {});
-        }
+    castedThis->updateColumnNamesIfNeeded(lexicalGlobalObject);
+    if (scope.exception()) [[unlikely]] {
+        sqlite3_reset(stmt);
+        RELEASE_AND_RETURN(scope, {});
     }
 
     size_t columnCount = sqlite3_column_count(stmt);
@@ -2563,12 +2556,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
         castedThis->version_db->version++;
     }
 
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
-        initializeColumnNames(lexicalGlobalObject, castedThis);
-        if (scope.exception()) [[unlikely]] {
-            sqlite3_reset(stmt);
-            RELEASE_AND_RETURN(scope, {});
-        }
+    castedThis->updateColumnNamesIfNeeded(lexicalGlobalObject);
+    if (scope.exception()) [[unlikely]] {
+        sqlite3_reset(stmt);
+        RELEASE_AND_RETURN(scope, {});
     }
 
     while (status == SQLITE_ROW) {
@@ -2670,8 +2661,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
     CHECK_THIS
     CHECK_PREPARED
 
-    int count = sqlite3_column_count(castedThis->stmt);
-
     // We need to reset and step the statement to get fresh types,
     // but only do this for read-only statements to avoid side effects
     bool isReadOnly = sqlite3_stmt_readonly(castedThis->stmt) != 0;
@@ -2693,6 +2682,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
 
     // Step once to get to the first row (safe for read-only statements)
     int stepStatus = sqlite3_step(castedThis->stmt);
+
+    // After the step: sqlite3_step() can re-prepare under a changed column count.
+    int count = sqlite3_column_count(castedThis->stmt);
 
     // If we got a row, get types from it
     if (stepStatus == SQLITE_ROW) {
@@ -2872,7 +2864,7 @@ JSC::JSValue JSSQLStatement::rebind(JSC::JSGlobalObject* lexicalGlobalObject, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stmt = this->stmt;
 
-    auto val = rebindStatement(lexicalGlobalObject, values, scope, this->version_db->db, stmt, this->m_bindingNames, this->useBigInt64, this);
+    auto val = rebindStatement(lexicalGlobalObject, values, scope, this->version_db->db, stmt, this->m_bindingNames, this);
     RETURN_IF_EXCEPTION(scope, {});
 
     // A getter invoked while binding can finalize this statement; the callers

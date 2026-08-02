@@ -66,6 +66,10 @@ pub struct Parser<'a> {
 pub struct Options<'a> {
     pub jsx: options::JSX::Pragma,
     pub ts: bool,
+    /// The file is a TypeScript declaration file (`.d.ts`/`.d.mts`/`.d.cts`).
+    /// Type-only exports synthesize runtime bindings (undefined `var`s) so
+    /// import/re-export chains through declaration files still link.
+    pub typescript_declaration_file: bool,
     pub keep_names: bool,
     pub ignore_dce_annotations: bool,
     pub preserve_unused_imports_ts: bool,
@@ -114,6 +118,7 @@ impl<'a> Default for Options<'a> {
         Options {
             jsx: options::JSX::Pragma::default(),
             ts: false,
+            typescript_declaration_file: false,
             keep_names: true,
             ignore_dce_annotations: false,
             preserve_unused_imports_ts: false,
@@ -162,6 +167,7 @@ impl<'a> Options<'a> {
         Options {
             jsx: self.jsx.clone(),
             ts: self.ts,
+            typescript_declaration_file: self.typescript_declaration_file,
             keep_names: self.keep_names,
             ignore_dce_annotations: self.ignore_dce_annotations,
             preserve_unused_imports_ts: self.preserve_unused_imports_ts,
@@ -242,6 +248,10 @@ impl<'a> Options<'a> {
             hasher.update(b"NO_TS");
         }
 
+        if self.typescript_declaration_file {
+            hasher.update(b"DTS");
+        }
+
         if self.ignore_dce_annotations {
             hasher.update(b"no_dce");
         }
@@ -260,6 +270,7 @@ impl<'a> Options<'a> {
         // (see field comment); caller overwrites before use.
         let mut opts = Options {
             ts: loader.is_typescript(),
+            typescript_declaration_file: false,
             jsx,
             keep_names: true,
             ignore_dce_annotations: false,
@@ -705,7 +716,12 @@ impl<'a> Parser<'a> {
         // June 4: "Parsing took: 18028000"
         // June 4: "Rest of this took: 8003000"
         let stmts: &'a mut [Stmt] = match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
-            Ok(s) => s.into_bump_slice_mut(),
+            Ok(mut s) => {
+                if TS && p.options.typescript_declaration_file {
+                    p.synthesize_declaration_file_bindings(&mut s)?;
+                }
+                s.into_bump_slice_mut()
+            }
             Err(e) => {
                 parse_tracer.end();
                 if e == crate::Error::StackOverflow {

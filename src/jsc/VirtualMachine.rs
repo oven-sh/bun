@@ -4082,6 +4082,12 @@ impl VirtualMachine {
             top_level_dir
         };
 
+        // Declaration-file importers resolve like tsc does (see
+        // `Resolver::importer_is_type_script_declaration_file`).
+        let importer_is_declaration_file = !is_special_source
+            && is_a_file_path
+            && bun_ast::loader::is_type_script_declaration_file(source);
+
         // A `loop`
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
@@ -4093,12 +4099,24 @@ impl VirtualMachine {
                 bun_ast::ImportKind::Require
             };
             let global_cache = self.transpiler.resolver.opts.global_cache;
-            match self.transpiler.resolver.resolve_and_auto_install(
-                source_to_use,
-                normalized_specifier,
-                import_kind,
-                global_cache,
-            ) {
+            // Set only for the duration of the call; the flag is per-resolve
+            // state.
+            let resolved = {
+                self.transpiler
+                    .resolver
+                    .importer_is_type_script_declaration_file = importer_is_declaration_file;
+                let r = self.transpiler.resolver.resolve_and_auto_install(
+                    source_to_use,
+                    normalized_specifier,
+                    import_kind,
+                    global_cache,
+                );
+                self.transpiler
+                    .resolver
+                    .importer_is_type_script_declaration_file = false;
+                r
+            };
+            match resolved {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {

@@ -1075,6 +1075,8 @@ fn resolver_bundle_options_subset(
             import: src.conditions.import.clone().expect("oom"),
             require: src.conditions.require.clone().expect("oom"),
             style: src.conditions.style.clone().expect("oom"),
+            import_types: src.conditions.import_types.clone().expect("oom"),
+            require_types: src.conditions.require_types.clone().expect("oom"),
         },
         external: src.external.clone(),
         extra_cjs_extensions: src.extra_cjs_extensions.clone(),
@@ -1536,6 +1538,8 @@ impl<'a> Transpiler<'a> {
                 use js_ast::parser::options as p_opts;
                 let mut opts = js_ast::ParserOptions::<'_> {
                     ts: loader.is_typescript(),
+                    typescript_declaration_file: loader.is_typescript()
+                        && bun_ast::loader::is_type_script_declaration_file(source.path.text),
                     jsx: to_parser_jsx_pragma(jsx),
                     keep_names: true,
                     ignore_dce_annotations: self.options.ignore_dce_annotations,

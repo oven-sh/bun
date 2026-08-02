@@ -574,6 +574,14 @@ pub struct Resolver<'a> {
     ///
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
+
+    /// Per-resolve state set by callers (same contract as `custom_dir_paths`):
+    /// the importer is a TypeScript declaration file (`.d.ts`/`.d.mts`/
+    /// `.d.cts`). Declaration files resolve like tsc resolves them: bare
+    /// specifiers match the "types" exports condition and relative runtime
+    /// specifiers prefer their declaration-file siblings, so a declaration
+    /// graph stays within declaration files and always links.
+    pub importer_is_type_script_declaration_file: bool,
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -649,6 +657,7 @@ impl<'a> Resolver<'a> {
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
+            importer_is_type_script_declaration_file: false,
         }
     }
 
@@ -935,6 +944,7 @@ impl<'a> Resolver<'a> {
             standalone_module_graph: None,
             prefer_module_field: true,
             custom_dir_paths: None,
+            importer_is_type_script_declaration_file: false,
         }
     }
 
@@ -2680,13 +2690,25 @@ impl<'a> Resolver<'a> {
                                             conditions: match kind {
                                                 ast::ImportKind::Require
                                                 | ast::ImportKind::RequireResolve => {
-                                                    &self.opts.conditions.require
+                                                    if self.importer_is_type_script_declaration_file
+                                                    {
+                                                        &self.opts.conditions.require_types
+                                                    } else {
+                                                        &self.opts.conditions.require
+                                                    }
                                                 }
                                                 ast::ImportKind::At
                                                 | ast::ImportKind::AtConditional => {
                                                     &self.opts.conditions.style
                                                 }
-                                                _ => &self.opts.conditions.import,
+                                                _ => {
+                                                    if self.importer_is_type_script_declaration_file
+                                                    {
+                                                        &self.opts.conditions.import_types
+                                                    } else {
+                                                        &self.opts.conditions.import
+                                                    }
+                                                }
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
@@ -2737,13 +2759,25 @@ impl<'a> Resolver<'a> {
                                             conditions: match kind {
                                                 ast::ImportKind::Require
                                                 | ast::ImportKind::RequireResolve => {
-                                                    &self.opts.conditions.require
+                                                    if self.importer_is_type_script_declaration_file
+                                                    {
+                                                        &self.opts.conditions.require_types
+                                                    } else {
+                                                        &self.opts.conditions.require
+                                                    }
                                                 }
                                                 ast::ImportKind::At
                                                 | ast::ImportKind::AtConditional => {
                                                     &self.opts.conditions.style
                                                 }
-                                                _ => &self.opts.conditions.import,
+                                                _ => {
+                                                    if self.importer_is_type_script_declaration_file
+                                                    {
+                                                        &self.opts.conditions.import_types
+                                                    } else {
+                                                        &self.opts.conditions.import
+                                                    }
+                                                }
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
@@ -3179,9 +3213,21 @@ impl<'a> Resolver<'a> {
                                             conditions: match kind {
                                                 ast::ImportKind::Require
                                                 | ast::ImportKind::RequireResolve => {
-                                                    &self.opts.conditions.require
+                                                    if self.importer_is_type_script_declaration_file
+                                                    {
+                                                        &self.opts.conditions.require_types
+                                                    } else {
+                                                        &self.opts.conditions.require
+                                                    }
                                                 }
-                                                _ => &self.opts.conditions.import,
+                                                _ => {
+                                                    if self.importer_is_type_script_declaration_file
+                                                    {
+                                                        &self.opts.conditions.import_types
+                                                    } else {
+                                                        &self.opts.conditions.import
+                                                    }
+                                                }
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
@@ -3218,9 +3264,21 @@ impl<'a> Resolver<'a> {
                                             conditions: match kind {
                                                 ast::ImportKind::Require
                                                 | ast::ImportKind::RequireResolve => {
-                                                    &self.opts.conditions.require
+                                                    if self.importer_is_type_script_declaration_file
+                                                    {
+                                                        &self.opts.conditions.require_types
+                                                    } else {
+                                                        &self.opts.conditions.require
+                                                    }
                                                 }
-                                                _ => &self.opts.conditions.import,
+                                                _ => {
+                                                    if self.importer_is_type_script_declaration_file
+                                                    {
+                                                        &self.opts.conditions.import_types
+                                                    } else {
+                                                        &self.opts.conditions.import
+                                                    }
+                                                }
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
@@ -4855,9 +4913,19 @@ impl<'a> Resolver<'a> {
         let esm_resolution = ESModule {
             conditions: match kind {
                 ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
-                    &self.opts.conditions.require
+                    if self.importer_is_type_script_declaration_file {
+                        &self.opts.conditions.require_types
+                    } else {
+                        &self.opts.conditions.require
+                    }
                 }
-                _ => &self.opts.conditions.import,
+                _ => {
+                    if self.importer_is_type_script_declaration_file {
+                        &self.opts.conditions.import_types
+                    } else {
+                        &self.opts.conditions.import
+                    }
+                }
             },
             debug_logs: self.debug_logs.as_mut(),
             module_type: &mut module_type,
@@ -5602,11 +5670,53 @@ impl<'a> Resolver<'a> {
         dec_ret!(MatchStatus::NotFound);
     }
 
+    /// Declaration-file importers resolve relative runtime specifiers to
+    /// their declaration siblings first, the way tsc does ("./foo.mjs" from a
+    /// ".d.mts" file means "./foo.d.mts"). This keeps a declaration graph
+    /// inside declaration files, whose type-only exports are synthesized, so
+    /// every re-export chain links.
+    fn load_declaration_file_sibling(
+        &mut self,
+        path: &[u8],
+        extension_order: options::ExtOrder,
+    ) -> Option<LoadResult> {
+        let base = bun_paths::basename(path);
+        let last_dot = strings::last_index_of_char(base, b'.')?;
+        let ext = &base[last_dot..base.len()];
+        let declaration_exts: &[&[u8]] = if ext == b".js" || ext == b".jsx" {
+            &[b".d.ts", b".d.mts"]
+        } else if ext == b".mjs" {
+            &[b".d.mts"]
+        } else if ext == b".cjs" {
+            &[b".d.cts"]
+        } else {
+            return None;
+        };
+        let stem = &path[..path.len() - ext.len()];
+        for declaration_ext in declaration_exts {
+            let mut candidate = Vec::with_capacity(stem.len() + declaration_ext.len());
+            candidate.extend_from_slice(stem);
+            candidate.extend_from_slice(declaration_ext);
+            // No further recursion: the candidate's last extension (".ts"/
+            // ".mts"/".cts") never matches the rewrite list above.
+            if let Some(result) = self.load_as_file(&candidate, extension_order) {
+                return Some(result);
+            }
+        }
+        None
+    }
+
     pub(crate) fn load_as_file(
         &mut self,
         path: &[u8],
         extension_order: options::ExtOrder,
     ) -> Option<LoadResult> {
+        if self.importer_is_type_script_declaration_file {
+            if let Some(result) = self.load_declaration_file_sibling(path, extension_order) {
+                return Some(result);
+            }
+        }
+
         // SAFETY: RealFS is the global singleton. Derive provenance from the raw
         // `*mut FileSystem` field so intervening `unsafe { &mut *self.fs() }` calls in
         // `load_extension` / `dirname_store.append_slice` don't invalidate `rfs`
@@ -5757,31 +5867,43 @@ impl<'a> Resolver<'a> {
         //   replacing it with a TypeScript one; e.g. "./foo.js" can be matched
         //   by "./foo.ts" or "./foo.d.ts"
         //
-        // We don't care about ".d.ts" files because we can't do anything with
-        // those, so we ignore that part of the behavior.
-        //
         // See the discussion here for more historical context:
         // https://github.com/microsoft/TypeScript/issues/4595
         if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
             let ext = &base[last_dot..base.len()];
-            // NOTE: the node_modules gate only applies to the `.mjs` arm.
-            if ext == b".js"
-                || ext == b".jsx"
-                || (ext == b".mjs"
-                    && (!FeatureFlags::DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES
-                        || !strings::path_contains_node_modules_folder(path)))
+            // NOTE: the node_modules gate only applies to the `.mjs` source arm.
+            let source_exts: &[&[u8]] = if ext == b".js" || ext == b".jsx" {
+                &[b".ts", b".tsx", b".mts"]
+            } else if ext == b".mjs"
+                && (!FeatureFlags::DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES
+                    || !strings::path_contains_node_modules_folder(path))
             {
+                &[b".mts"]
+            } else {
+                &[]
+            };
+
+            // Declaration-file part of the tsc behavior quoted above. These
+            // transpile to modules whose type-only exports become synthesized
+            // (undefined) bindings, so declaration files importing ".mjs"
+            // siblings that only ship as ".d.mts" resolve. Tried after every
+            // runtime candidate, including inside node_modules.
+            let declaration_exts: &[&[u8]] = if ext == b".js" || ext == b".jsx" {
+                &[b".d.ts", b".d.mts"]
+            } else if ext == b".mjs" {
+                &[b".d.mts"]
+            } else if ext == b".cjs" {
+                &[b".d.cts"]
+            } else {
+                &[]
+            };
+
+            if !source_exts.is_empty() || !declaration_exts.is_empty() {
                 let segment = &base[0..last_dot];
                 let tail = &mut bufs!(load_as_file)[path.len() - base.len()..];
                 tail[..segment.len()].copy_from_slice(segment);
 
-                let exts: &[&[u8]] = if ext == b".mjs" {
-                    &[b".mts"]
-                } else {
-                    &[b".ts", b".tsx", b".mts"]
-                };
-
-                for ext_to_replace in exts {
+                for ext_to_replace in source_exts.iter().chain(declaration_exts.iter()) {
                     let buffer = &mut tail[0..segment.len() + ext_to_replace.len()];
                     buffer[segment.len()..].copy_from_slice(ext_to_replace);
 

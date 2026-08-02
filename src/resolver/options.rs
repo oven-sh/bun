@@ -52,6 +52,11 @@ pub struct Conditions {
     pub import: crate::package_json::ConditionsMap,
     pub require: crate::package_json::ConditionsMap,
     pub style: crate::package_json::ConditionsMap,
+    /// `import` / `require` plus the "types" condition, used when the
+    /// importer is a TypeScript declaration file (see
+    /// `Resolver::importer_is_type_script_declaration_file`).
+    pub import_types: crate::package_json::ConditionsMap,
+    pub require_types: crate::package_json::ConditionsMap,
 }
 
 /// `Copy` tag selecting one of the extension-order lists owned by

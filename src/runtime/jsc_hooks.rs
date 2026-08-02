@@ -4979,6 +4979,32 @@ unsafe fn resolve<'a>(
         ImportKind::Require
     };
 
+    // Declaration-file importers resolve like tsc does (see
+    // `Resolver::importer_is_type_script_declaration_file`).
+    let importer_is_declaration_file = !is_special_source
+        && is_a_file_path
+        && bun_ast::loader::is_type_script_declaration_file(source);
+    if importer_is_declaration_file {
+        // SAFETY: plain bool field; single-entry on the JS thread.
+        unsafe {
+            (*vm)
+                .transpiler
+                .resolver
+                .importer_is_type_script_declaration_file = true;
+        }
+    }
+    // `vm` is a Copy raw pointer; `guard` takes it by value so the closure
+    // doesn't borrow the local.
+    let _declaration_file_flag_guard = scopeguard::guard(vm, |vm| {
+        // SAFETY: see above.
+        unsafe {
+            (*vm)
+                .transpiler
+                .resolver
+                .importer_is_type_script_declaration_file = false;
+        }
+    });
+
     // This cache-bust is disabled when the filesystem is not being used to
     // resolve.
     let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);

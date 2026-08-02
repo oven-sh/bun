@@ -207,18 +207,64 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "import { type xx as yy } from 'mod'"
                     // "import { type if as yy } from 'mod'"
                     // "import { type 'xx' as yy } from 'mod'"
-                    let _ = p.parse_clause_alias(b"import")?;
-                    p.lexer.next()?;
-
-                    if p.lexer.is_contextual_keyword(b"as") {
+                    if p.options.typescript_declaration_file {
+                        // Declaration files keep type-only specifiers as
+                        // runtime imports so local export clauses that
+                        // reference them still resolve.
+                        let inner_alias_loc = p.lexer.loc();
+                        let inner_alias = p.parse_clause_alias(b"import")?;
+                        let mut name = LocRef {
+                            loc: inner_alias_loc,
+                            ref_: p.store_name_in_ref(inner_alias),
+                        };
+                        let mut original_name = inner_alias;
                         p.lexer.next()?;
 
-                        p.lexer.expect(T::TIdentifier)?;
-                    } else if !is_identifier_inner {
-                        // An import where the name is a keyword must have an alias
-                        p.lexer.expected_string(b"\"as\"")?;
+                        if p.lexer.is_contextual_keyword(b"as") {
+                            p.lexer.next()?;
+                            original_name = p.lexer.identifier;
+                            name = LocRef {
+                                loc: inner_alias_loc,
+                                ref_: p.store_name_in_ref(original_name),
+                            };
+                            p.lexer.expect(T::TIdentifier)?;
+                        } else if !is_identifier_inner {
+                            // An import where the name is a keyword must have an alias
+                            p.lexer.expected_string(b"\"as\"")?;
+                        }
+
+                        if is_eval_or_arguments(original_name) {
+                            let r = js_lexer::range_of_identifier(p.source, name.loc);
+                            p.log().add_range_error_fmt(
+                                Some(p.source),
+                                r,
+                                format_args!(
+                                    "Cannot use \"{}\" as an identifier here",
+                                    bstr::BStr::new(original_name)
+                                ),
+                            );
+                        }
+
+                        items.push(ClauseItem {
+                            alias: inner_alias.into(),
+                            alias_loc: inner_alias_loc,
+                            name,
+                            original_name: original_name.into(),
+                        });
+                    } else {
+                        let _ = p.parse_clause_alias(b"import")?;
+                        p.lexer.next()?;
+
+                        if p.lexer.is_contextual_keyword(b"as") {
+                            p.lexer.next()?;
+
+                            p.lexer.expect(T::TIdentifier)?;
+                        } else if !is_identifier_inner {
+                            // An import where the name is a keyword must have an alias
+                            p.lexer.expected_string(b"\"as\"")?;
+                        }
+                        had_type_only_imports = true;
                     }
-                    had_type_only_imports = true;
                 }
             } else {
                 if p.lexer.is_contextual_keyword(b"as") {
@@ -384,16 +430,45 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // "export { type default as if } from 'path'"
                         // "export { type xx as 'yy' }"
                         // "export { type 'xx' } from 'mod'"
-                        let _ = p.parse_clause_alias(b"export").unwrap_or(b"");
-                        p.lexer.next()?;
-
-                        if p.lexer.is_contextual_keyword(b"as") {
+                        if p.options.typescript_declaration_file {
+                            // Declaration files keep type-only specifiers as
+                            // runtime exports; the names resolve against
+                            // synthesized bindings.
+                            let inner_loc = p.lexer.loc();
+                            let inner_name = p.parse_clause_alias(b"export")?;
+                            let name = LocRef {
+                                loc: inner_loc,
+                                ref_: p.store_name_in_ref(inner_name),
+                            };
+                            let mut item_alias = inner_name;
+                            let mut item_alias_loc = inner_loc;
                             p.lexer.next()?;
+
+                            if p.lexer.is_contextual_keyword(b"as") {
+                                p.lexer.next()?;
+                                item_alias_loc = p.lexer.loc();
+                                item_alias = p.parse_clause_alias(b"export")?;
+                                p.lexer.next()?;
+                            }
+
+                            items.push(ClauseItem {
+                                alias: item_alias.into(),
+                                alias_loc: item_alias_loc,
+                                name,
+                                original_name: inner_name.into(),
+                            });
+                        } else {
                             let _ = p.parse_clause_alias(b"export").unwrap_or(b"");
                             p.lexer.next()?;
-                        }
 
-                        had_type_only_exports = true;
+                            if p.lexer.is_contextual_keyword(b"as") {
+                                p.lexer.next()?;
+                                let _ = p.parse_clause_alias(b"export").unwrap_or(b"");
+                                p.lexer.next()?;
+                            }
+
+                            had_type_only_exports = true;
+                        }
                     }
                 } else {
                     if p.lexer.is_contextual_keyword(b"as") {

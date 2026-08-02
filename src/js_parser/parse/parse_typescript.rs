@@ -210,6 +210,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // "namespace foo {}";
         let name_loc = p.lexer.loc();
         let name_text = p.lexer.identifier;
+        // `declare module "foo"` has a string-literal name; `lexer.identifier`
+        // is stale text in that case.
+        let name_is_identifier = p.lexer.token == T::TIdentifier;
         p.lexer.next()?;
 
         // Generate the namespace object
@@ -400,6 +403,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.pop_and_discard_scope(scope_index);
             if opts.is_module_scope {
                 p.local_type_names.put(name_text, true)?;
+                if name_is_identifier {
+                    p.record_declaration_file_type_name(name_text, opts.is_export)?;
+                }
             }
             return Ok(p.s(S::TypeScript {}, loc));
         }
@@ -735,6 +741,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if opts.is_typescript_declare {
             if opts.is_namespace_scope && opts.is_export {
                 p.has_non_local_export_declare_inside_namespace = true;
+            }
+
+            if opts.is_module_scope {
+                p.record_declaration_file_type_name(name_text, opts.is_export)?;
             }
 
             return Ok(p.s(S::TypeScript {}, loc));

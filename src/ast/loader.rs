@@ -100,6 +100,15 @@ bun_core::comptime_string_map! {
     };
 }
 
+/// TypeScript declaration files: `foo.d.ts`, `foo.d.mts`, `foo.d.cts`.
+/// Matches the file-name rule tsc uses (`isDeclarationFileName`), minus the
+/// rare `.d.*.ts` arbitrary-extension form.
+pub fn is_type_script_declaration_file(path: &[u8]) -> bool {
+    bun_core::strings::has_suffix_comptime(path, b".d.ts")
+        || bun_core::strings::has_suffix_comptime(path, b".d.mts")
+        || bun_core::strings::has_suffix_comptime(path, b".d.cts")
+}
+
 impl Loader {
     #[inline]
     pub fn is_css(self) -> bool {

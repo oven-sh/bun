@@ -422,7 +422,14 @@ impl RefCountedTimer {
         let vm = std::ptr::from_ref::<VirtualMachine>(owner.client.get().vm).cast_mut();
         // SAFETY: `vm` is the live per-thread VM; the timer is an unlinked
         // field of the boxed `JSValkeyClient` (stable address until disarmed).
-        unsafe { VirtualMachine::timer_insert(vm, self.event_loop_timer.as_ptr()) };
+        unsafe {
+            VirtualMachine::timer_insert(
+                vm,
+                core::ptr::addr_of!(self.event_loop_timer)
+                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                    .cast_mut(),
+            )
+        };
         if !self.ref_held.replace(true) {
             owner.ref_();
         }

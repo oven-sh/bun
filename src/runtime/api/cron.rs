@@ -1761,7 +1761,12 @@ impl CronJob {
         };
         // SAFETY: `event_loop_timer` is the live inline timer field of the
         // heap-allocated `CronJob` `this_ref` borrows.
-        timer_all().update(this_ref.event_loop_timer.as_ptr(), &next_time);
+        timer_all().update(
+            core::ptr::addr_of!(this_ref.event_loop_timer)
+                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                .cast_mut(),
+            &next_time,
+        );
     }
 
     pub(crate) fn on_timer_fire(this: *mut Self, vm: &VirtualMachine) {
@@ -2008,7 +2013,12 @@ impl CronJob {
         job_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         // SAFETY: `event_loop_timer` is the live inline timer field of the
         // heap-allocated `CronJob` `job_ref` borrows.
-        timer_all().update(job_ref.event_loop_timer.as_ptr(), &next_time);
+        timer_all().update(
+            core::ptr::addr_of!(job_ref.event_loop_timer)
+                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                .cast_mut(),
+            &next_time,
+        );
 
         Ok(js_value)
     }

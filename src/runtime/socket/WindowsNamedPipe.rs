@@ -991,7 +991,11 @@ impl WindowsNamedPipe {
                 nsec: next.nsec,
             };
         });
-        timer_all().insert(self.event_loop_timer.as_ptr());
+        timer_all().insert(
+            core::ptr::addr_of!(self.event_loop_timer)
+                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                .cast_mut(),
+        );
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__set_timeout")]

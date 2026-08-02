@@ -1649,7 +1649,9 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             unsafe {
                 jsc::VirtualMachineRef::timer_insert(
                     jsc_vm_ptr,
-                    subprocess.event_loop_timer.as_ptr(),
+                    core::ptr::addr_of!(subprocess.event_loop_timer)
+                        .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                        .cast_mut(),
                 );
             }
             subprocess.set_event_loop_timer_refd(true);

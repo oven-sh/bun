@@ -4002,9 +4002,12 @@ impl Resolver {
         // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
         unsafe {
             (*state).timer.increment_timer_ref(1, uws_loop);
-            // `JsCell` is `#[repr(transparent)]`, so `as_ptr()` yields the same
-            // address `dispatch.rs::owner!` recovers via `from_field_ptr!`.
-            (*state).timer.insert(self.event_loop_timer.as_ptr());
+            // whole-struct provenance: `from_field_ptr!` recovers the container on fire
+            (*state).timer.insert(
+                core::ptr::addr_of!(self.event_loop_timer)
+                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                    .cast_mut(),
+            );
         }
         true
     }

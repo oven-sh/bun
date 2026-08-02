@@ -609,7 +609,11 @@ impl UpgradedDuplex {
                 nsec: next.nsec,
             };
         });
-        timer_all().insert(self.event_loop_timer.as_ptr());
+        timer_all().insert(
+            core::ptr::addr_of!(self.event_loop_timer)
+                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                .cast_mut(),
+        );
     }
 
     #[uws_callback(export = "UpgradedDuplex__set_timeout")]

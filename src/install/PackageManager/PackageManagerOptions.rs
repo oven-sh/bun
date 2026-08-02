@@ -283,6 +283,27 @@ pub struct Update {
     pub(crate) peer: bool,
 }
 
+/// Base directory that `.bun/<sub>` hangs off for globally installed packages
+/// and their bins.
+///
+/// `XDG_CACHE_HOME` used to select this outright, which put global installs
+/// under a cache directory: not the `~/.bun/bin` the installer puts on `PATH`,
+/// and fair game for any tool that clears caches. It is honored now only when
+/// that legacy location already exists, so existing installs keep resolving.
+fn global_install_base(sub: &[&[u8]]) -> Option<&'static [u8]> {
+    use bun_paths::{platform, resolve_path::join_abs_string_buf};
+
+    if let Some(cache_dir) = env_var::XDG_CACHE_HOME.get() {
+        let mut probe = bun_paths::path_buffer_pool::get();
+        let legacy = join_abs_string_buf::<platform::Auto>(cache_dir, &mut probe[..], sub);
+        if bun_sys::exists(legacy) {
+            return Some(cache_dir);
+        }
+    }
+
+    env_var::HOME.get()
+}
+
 // mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
 pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf};
@@ -312,12 +333,9 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd>
             .map_err(Into::into);
     }
 
-    if let Some(home_dir) = env_var::XDG_CACHE_HOME
-        .get()
-        .or_else(|| env_var::HOME.get())
-    {
+    let parts: [&[u8]; 3] = [b".bun", b"install", b"global"];
+    if let Some(home_dir) = global_install_base(&parts) {
         let mut buf = PathBuffer::uninit();
-        let parts: [&[u8]; 3] = [b".bun", b"install", b"global"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
@@ -360,12 +378,9 @@ pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Res
             .map_err(Into::into);
     }
 
-    if let Some(home_dir) = env_var::XDG_CACHE_HOME
-        .get()
-        .or_else(|| env_var::HOME.get())
-    {
+    let parts: [&[u8]; 2] = [b".bun", b"bin"];
+    if let Some(home_dir) = global_install_base(&parts) {
         let mut buf = PathBuffer::uninit();
-        let parts: [&[u8]; 2] = [b".bun", b"bin"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())

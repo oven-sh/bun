@@ -720,7 +720,9 @@ impl S3UploadStreamWrapper {
                         crate::webcore::streams::SourceHandle::ByteStream(_)
                             | crate::webcore::streams::SourceHandle::FileReader(_)
                     );
-                    sink.state = sink.state.max(crate::webcore::streams::NetworkSinkState::Done);
+                    sink.state = sink
+                        .state
+                        .max(crate::webcore::streams::NetworkSinkState::Done);
                     sink.pending.result = crate::webcore::streams::Writable::Done;
                     sink.pending.run();
                     if sink.flush_promise.has_value() {

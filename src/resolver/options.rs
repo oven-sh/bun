@@ -61,6 +61,8 @@ pub struct Conditions {
 impl Conditions {
     /// Condition set for an exports/imports-map walk. On the field, not
     /// `Resolver`, so call sites can keep `debug_logs` mutably borrowed.
+    /// CSS `@import` kinds stay the caller's concern: the sites that had a
+    /// `style` arm keep it inline, the rest never routed them to `style`.
     pub fn for_kind(
         &self,
         importer_is_type_script_declaration_file: bool,
@@ -74,7 +76,6 @@ impl Conditions {
                     &self.require
                 }
             }
-            bun_ast::ImportKind::At | bun_ast::ImportKind::AtConditional => &self.style,
             _ => {
                 if importer_is_type_script_declaration_file {
                     &self.import_types

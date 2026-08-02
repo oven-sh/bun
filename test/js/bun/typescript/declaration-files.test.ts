@@ -309,6 +309,10 @@ test.concurrent("export type inside a namespace body in a declaration file still
     "ns.d.ts": `export namespace Foo {
   export type Inner = number;
 }
+export namespace Bar {
+  type X = number;
+  export type { X };
+}
 declare module "some-ambient" {
   import type { Options } from "./never-resolved";
   export type { Options };

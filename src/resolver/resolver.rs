@@ -2685,10 +2685,16 @@ impl<'a> Resolver<'a> {
                                     // directory path accidentally being interpreted as URL escapes.
                                     {
                                         let esm_resolution = ESModule {
-                                            conditions: self.opts.conditions.for_kind(
-                                                self.importer_is_type_script_declaration_file,
-                                                kind,
-                                            ),
+                                            conditions: match kind {
+                                                ast::ImportKind::At
+                                                | ast::ImportKind::AtConditional => {
+                                                    &self.opts.conditions.style
+                                                }
+                                                _ => self.opts.conditions.for_kind(
+                                                    self.importer_is_type_script_declaration_file,
+                                                    kind,
+                                                ),
+                                            },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
                                         }
@@ -2735,10 +2741,16 @@ impl<'a> Resolver<'a> {
                                     let extname = bun_paths::extension(esm.subpath);
                                     if extname == b".js" && esm.subpath.len() > 3 {
                                         let esm_resolution = ESModule {
-                                            conditions: self.opts.conditions.for_kind(
-                                                self.importer_is_type_script_declaration_file,
-                                                kind,
-                                            ),
+                                            conditions: match kind {
+                                                ast::ImportKind::At
+                                                | ast::ImportKind::AtConditional => {
+                                                    &self.opts.conditions.style
+                                                }
+                                                _ => self.opts.conditions.for_kind(
+                                                    self.importer_is_type_script_declaration_file,
+                                                    kind,
+                                                ),
+                                            },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
                                         }

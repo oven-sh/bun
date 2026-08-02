@@ -1565,16 +1565,13 @@ fn connect_finish<const IS_SSL: bool>(
     // Note: `do_connect` reads `self.connection` directly so no second
     // borrow is needed here.
     if socket_ref.do_connect().is_err() {
-        // The failing syscall is Winsock `bind`/`connect` on Windows (bsd.c
-        // preserves the WSA code across `closesocket`); `last_errno()` would
-        // read the CRT's thread-local `_errno()`, which Winsock does not set.
+        // Winsock sets WSAGetLastError, not the CRT `_errno()` that
+        // `last_errno()` reads.
         #[cfg(windows)]
         let os_errno = {
             let mut e = bun_sys::windows::WSAGetLastError().map_or(0, |err| err as c_int);
-            // Winsock AF_UNIX reports WSAECONNREFUSED for any path that has no
-            // listening socket, whether or not the file exists. Node (via
-            // libuv's `uv_pipe_connect`, which uses `CreateFile`) distinguishes
-            // ENOENT from ENOTSOCK. Refine on the failure path only.
+            // Winsock AF_UNIX returns WSAECONNREFUSED whether the path exists
+            // or not; Node distinguishes ENOENT via `CreateFile`.
             if port.is_none() && e == bun_sys::SystemErrno::ECONNREFUSED as c_int {
                 if let Some(UnixOrHost::Unix(path)) = socket_ref.connection.get() {
                     if !bun_sys::exists(path) {

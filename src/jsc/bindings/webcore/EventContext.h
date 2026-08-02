@@ -30,8 +30,6 @@
 #include "root.h"
 #include "Event.h"
 
-#include "Node.h"
-
 namespace WebCore {
 
 class EventContext {

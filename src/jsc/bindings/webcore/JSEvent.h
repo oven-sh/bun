@@ -22,7 +22,6 @@
 
 #include "Event.h"
 #include "JSDOMWrapper.h"
-#include <JavaScriptCore/Snippet.h>
 #include <wtf/NeverDestroyed.h>
 
 namespace WebCore {

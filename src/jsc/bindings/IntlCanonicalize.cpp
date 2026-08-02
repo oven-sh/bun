@@ -13,6 +13,13 @@ extern "C" int32_t ualoc_canonicalForm(const char*, char*, int32_t, UErrorCode*)
 
 extern "C" int32_t Bun__canonicalizeLocaleID(const char* localeID, char* name, int32_t nameCapacity, UErrorCode* err)
 {
+    // uloc_forLanguageTag("und") yields "", and on macOS 13/14 libicucore
+    // canonicalizes "" to the process default locale; keep the root locale as-is.
+    if (localeID != nullptr && localeID[0] == '\0') {
+        if (nameCapacity > 0)
+            name[0] = '\0';
+        return 0;
+    }
     return ualoc_canonicalForm(localeID, name, nameCapacity, err);
 }
 

@@ -279,6 +279,10 @@ describe("Intl.Locale canonicalization", () => {
     // And again after, so deprecated option values are also replaced.
     expect(new Intl.Locale("en", { region: "uk" }).toString()).toBe("en-GB");
     expect(new Intl.Locale("fre", { region: "uk" }).toString()).toBe("fr-GB");
+    // `und` round-trips through an empty ICU locale ID; on macOS 13/14
+    // libicucore canonicalizes "" to the process default locale, which would
+    // leak into the result as e.g. "sr-Latn-US-u-va-posix".
+    expect(new Intl.Locale("und").toString()).toBe("und");
     expect(new Intl.Locale("und", { language: "sh" }).toString()).toBe("sr-Latn");
   });
 

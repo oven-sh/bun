@@ -1067,20 +1067,19 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
     });
   });
 
-  test(".editor entered from a pending multiline abandons the pending input", async () => {
-    await withTerminalRepl(async ({ send, waitFor }) => {
-      send("function __stale() {\n");
+  test(".editor is ignored while a multiline input is pending", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      send("function __pending() {\n");
       await waitFor("...");
       send(".editor\n");
-      await waitFor(/editor mode/i);
-      send("\x03"); // Ctrl+C to cancel editor
-      await waitFor(/cancelled/i);
-      // The pending `function __stale() {` must be gone: a fresh multiline
-      // should complete on its own closing bracket.
-      send("[1,\n");
       await waitFor("...");
-      send("2]\n");
-      await waitFor("[ 1, 2 ]");
+      // `.editor` must not switch modes here: the next line still feeds the
+      // pending function body, which then completes and is callable.
+      send("return 42 }\n");
+      await waitFor(/\u276f|> /);
+      send("__pending()\n");
+      await waitFor("42");
+      expect(allOutput()).not.toMatch(/editor mode/i);
     });
   });
 

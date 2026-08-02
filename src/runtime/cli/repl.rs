@@ -781,6 +781,9 @@ fn cmd_save(repl: &mut Repl, args: &[u8]) -> ReplResult {
 }
 
 fn cmd_editor(repl: &mut Repl, _: &[u8]) -> ReplResult {
+    if repl.input_mode == InputMode::Multiline {
+        return ReplResult::SkipEval;
+    }
     repl.print(format_args!(
         "{}// Entering editor mode (Ctrl+D to finish, Ctrl+C to cancel){}\n",
         Color::DIM,
@@ -788,7 +791,6 @@ fn cmd_editor(repl: &mut Repl, _: &[u8]) -> ReplResult {
     ));
     repl.input_mode = InputMode::Editor;
     repl.editor_buffer.clear();
-    repl.multiline_buffer.clear();
     ReplResult::SkipEval
 }
 

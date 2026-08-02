@@ -5146,8 +5146,7 @@ extern "C" void JSGlobalObject__throwStackOverflow(JSC::JSGlobalObject* globalOb
 }
 
 // Matches `bun_jsc::PropertyKeyKind` (`#[repr(u8)]`). A private name is always
-// a symbol, so the previous `(isSymbol, isPrivate)` bool pair admitted an
-// unreachable `(false, true)` state; collapse it into a three-way kind.
+// a symbol, so `(isSymbol=false, isPrivate=true)` is unreachable.
 enum class PropertyKeyKind : uint8_t {
     String = 0,
     Symbol = 1,

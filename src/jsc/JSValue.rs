@@ -2183,8 +2183,7 @@ pub type ForEachCallback =
 
 /// Kind of property key observed by [`ForEachPropertyCallback`].
 ///
-/// Collapses the previous `(is_symbol, is_private_symbol)` bool pair: a
-/// private name is always a symbol, so `(false, true)` was unrepresentable.
+/// A JSC private name is always a symbol, so `PrivateSymbol` implies symbol.
 /// Discriminants match the `uint8_t` produced by
 /// `JSC__JSValue__forEachProperty*` in `bindings.cpp`.
 #[repr(u8)]

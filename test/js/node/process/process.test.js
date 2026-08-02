@@ -341,7 +341,7 @@ it("process.versions", () => {
     ares: "3ac47ee46edd8ea40370222f91613fc16c434853",
     libdeflate: "c8c56a20f8f621e6a966b716b31f1dedab6a41e3",
     zstd: "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
-    lshpack: "8905c024b6d052f083a3d11d0a169b3c2735c8a1",
+    lshpack: "cf0f70dd10b352194c97448eb5d00b4aa484f531",
   };
 
   for (const [name, expectedHash] of Object.entries(expectedVersions)) {

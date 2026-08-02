@@ -887,13 +887,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             namespace_ref = p.store_name_in_ref(name);
         }
 
-        let import_record_index = p.add_import_record(
-            ImportKind::Stmt,
-            path.loc,
-            path.text,
-            // TODO: import assertions
-            // path.assertions
-        );
+        let import_record_index = p.add_import_record(ImportKind::Stmt, path.loc, path.text);
 
         if path.is_macro {
             p.log().add_error(

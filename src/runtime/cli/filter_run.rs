@@ -66,8 +66,14 @@ pub(crate) struct ProcessHandle<'a> {
 
     remaining_dependencies: usize,
     dependents: Vec<*mut ProcessHandle<'a>>,
-    visited: bool,
-    visiting: bool,
+    visit_state: VisitState,
+}
+
+#[derive(Clone, Copy)]
+enum VisitState {
+    Unvisited,
+    Visiting,
+    Visited,
 }
 
 impl<'a> ProcessHandle<'a> {
@@ -978,8 +984,7 @@ pub(crate) fn run_scripts_with_filter(
             end_time: None,
             remaining_dependencies: 0,
             dependents: Vec::new(),
-            visited: false,
-            visiting: false,
+            visit_state: VisitState::Unvisited,
         });
     }
     state.handles = handles_vec.into_boxed_slice();
@@ -1068,19 +1073,20 @@ pub(crate) fn run_scripts_with_filter(
 }
 
 fn has_cycle(current: &mut ProcessHandle) -> bool {
-    current.visited = true;
-    current.visiting = true;
+    current.visit_state = VisitState::Visiting;
     for &dep in &current.dependents {
         // SAFETY: dep points into state.handles, valid for the run loop lifetime.
         let dep = unsafe { &mut *dep };
-        if dep.visiting {
-            return true;
-        } else if !dep.visited {
-            if has_cycle(dep) {
-                return true;
+        match dep.visit_state {
+            VisitState::Visiting => return true,
+            VisitState::Unvisited => {
+                if has_cycle(dep) {
+                    return true;
+                }
             }
+            VisitState::Visited => {}
         }
     }
-    current.visiting = false;
+    current.visit_state = VisitState::Visited;
     false
 }

@@ -95,7 +95,6 @@ test("zlib / io / install / net.ts dead items do not reappear", () => {
     ["src/io/windows_event_loop.rs", /pub fn can_ref\(&self\) -> bool/],
     ["src/install/lockfile/bun.lock.rs", /\/\/ pub fn save\(this: &Lockfile\)/],
     ["src/js/node/net.ts", /const kpendingRead = Symbol\("kpendingRead"\);/],
-    ["src/js/node/net.ts", /const kServerSocket = Symbol\("kServerSocket"\);/],
   ];
   const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);

@@ -122,6 +122,12 @@ const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const owner_symbol = Symbol("owner_symbol");
 
+// The `clientHandle[kServerSocket] = handle` write in onconnection is the only
+// use: it is a GC edge that keeps the native Listener reachable while an
+// accepted socket's handle is alive. Without it the Listener can be finalized
+// with sockets still in its group, and Listener::finalize -> close_all fires
+// the JS on_close callback during the GC sweep (asserts in AllocatingScope).
+const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 // tls.Server exposes its native SecureContext constructor through this key so
@@ -1123,6 +1129,7 @@ function onconnection(err, clientHandle) {
     self.emit("error", err);
     return;
   }
+  clientHandle[kServerSocket] = handle;
   const options = self[bunSocketServerOptions];
   const { pauseOnConnect, connectionListener, [kSocketClass]: SClass } = options;
   // Propagate the server's half-open/highWaterMark settings to the accepted

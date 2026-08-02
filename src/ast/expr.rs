@@ -2667,25 +2667,25 @@ impl Data {
 // Equality
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub enum Equality {
     /// Nothing is known about the equality of the two operands.
     Unknown,
     Equal,
     NotEqual,
-    /// The expression is `require.main === module` (or any of `!==`, `==`, `!=`,
-    /// in either ordering).
-    ///
-    /// We want to replace this with the dedicated import_meta_main node, which:
-    /// - Stops this module from having p.require_ref, allowing conversion to ESM
-    /// - Allows us to inline `import.meta.main`'s value, if it is known (bun build --compile)
+    /// `require.main === module` (or `!==`/`==`/`!=`, in either order); the
+    /// caller rewrites this to an import_meta_main node.
     RequireMainAndModule,
 }
 
 impl From<bool> for Equality {
     #[inline]
     fn from(equal: bool) -> Self {
-        if equal { Equality::Equal } else { Equality::NotEqual }
+        if equal {
+            Equality::Equal
+        } else {
+            Equality::NotEqual
+        }
     }
 }
 

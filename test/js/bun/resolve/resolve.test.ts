@@ -1209,6 +1209,13 @@ describe("--preserve-symlinks", () => {
     expect(fallback.stdout).toBe("RESOLVED-FROM-APP-GEN\n");
     expect(fallback.exitCode).toBe(0);
 
+    // Same fallback path without -main: the entry is realpathed even though
+    // --preserve-symlinks kept the resolver in preserve mode.
+    const fallbackWithoutMain = await run(join(dir, "app"), ["run", "--preserve-symlinks", "./mainsym"]);
+    expect(fallbackWithoutMain.stderr).toContain("Cannot find module './gen/dep.mjs'");
+    expect(fallbackWithoutMain.stdout).toBe("");
+    expect(fallbackWithoutMain.exitCode).not.toBe(0);
+
     // Without -main the entry is still realpathed (Node behavior), so its
     // relative import resolves from shared/ and fails.
     const withoutMain = await run(join(dir, "app"), ["--preserve-symlinks", "main-sym.mjs"]);

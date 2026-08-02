@@ -713,11 +713,9 @@ impl ServerWebSocket {
                 sig.unref();
             }
             if was_not_empty {
-                // Keep the `server` traced edge (set in `init`) even after
-                // close: `self.handler` points into the server's allocation,
-                // and JS can still call publish()/send() on a retained closed
-                // socket. Clearing the edge here let the server free while
-                // this wrapper was alive, a use-after-free (#36788).
+                // The `server` traced edge set in `init` must outlive this
+                // wrapper: `self.handler` points into the server's allocation
+                // and publish()/send() still work on closed sockets (#36788).
                 // R-2: closure-scoped `&mut JsRef` via `JsCell::with_mut` —
                 // no raw `*mut` projection needed.
                 this_value_cell.with_mut(|v| v.downgrade());

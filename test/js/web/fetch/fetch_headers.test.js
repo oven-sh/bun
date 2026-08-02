@@ -72,6 +72,43 @@ describe("Headers", async () => {
     }
   });
 
+  it.each([251, 300])("sends every request header field on the wire (%i user headers)", async N => {
+    // build_request() previously capped user headers at 250 (256-slot scratch
+    // minus 6 defaults) and silently dropped the rest; the origin must receive
+    // every field.
+    const { promise: gotHead, resolve, reject } = Promise.withResolvers();
+    const srv = net.createServer(s => {
+      let b = Buffer.alloc(0);
+      s.on("data", d => {
+        b = Buffer.concat([b, d]);
+        if (b.indexOf("\r\n\r\n") >= 0) {
+          resolve(b.toString("latin1").split("\r\n\r\n")[0]);
+          s.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        }
+      });
+      s.once("error", reject);
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    try {
+      const port = srv.address().port;
+      const headers = {};
+      for (let i = 0; i < N; i++) headers["x-" + String(i).padStart(4, "0")] = "v";
+      const [res, head] = await Promise.all([fetch(`http://127.0.0.1:${port}/`, { headers }), gotHead]);
+      await res.text();
+      const lines = head.split("\r\n").slice(1);
+      const received = lines.filter(l => l.startsWith("x-")).sort();
+      const expected = Object.keys(headers)
+        .map(k => `${k}: v`)
+        .sort();
+      expect(received.length).toBe(N);
+      expect(received).toEqual(expected);
+      expect(res.status).toBe(200);
+    } finally {
+      await new Promise(r => srv.close(r));
+    }
+  });
+
   it("Invalid values for well-known headers name the header, not its index", () => {
     // The HTTPHeaderName fast path must report the header's name (e.g. 'Location'),
     // not its numeric enum value (e.g. '51').

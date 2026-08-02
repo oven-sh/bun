@@ -69,9 +69,11 @@ test.skipIf(!isMacOS)("concurrent lookups return complete answer sets", async ()
         for (const base of ["www.example.com", "google.com"]) {
           // No resolver (offline/sandboxed agent): nothing to assert against.
           if (!(await lookup(base, { all: true }).catch(() => null))) { console.log(JSON.stringify({ base, skipped: true })); continue; }
+          const letters = [...base].flatMap((c, k) => (c === "." ? [] : [k])); // bit j flips the j-th letter, never a dot
           const names = Array.from({ length: N }, (_, i) =>
-            [...base].map((c, j) => ((i >> j) & 1 && c !== "." ? c.toUpperCase() : c)).join(""),
+            [...base].map((c, k) => ((i >> letters.indexOf(k)) & 1 && c !== "." ? c.toUpperCase() : c)).join(""),
           );
+          if (new Set(names).size !== N) throw new Error("expected " + N + " distinct spellings");
           const results = await Promise.all(names.map(n => lookup(n, { all: true })));
           const shapes = new Set(results.map(r => r.map(a => a.family + " " + a.address).sort().join(",")));
           console.log(JSON.stringify({ base, distinct: shapes.size, records: results[0].length }));

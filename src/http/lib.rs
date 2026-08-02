@@ -207,15 +207,13 @@ pub struct Flags {
     pub(crate) defer_fail_until_connecting_is_complete: bool,
     pub(crate) upgrade_state: HTTPUpgradeState,
     pub(crate) protocol: Protocol,
-    /// Set by `fetch(url, { protocol: "http2" })`: ALPN advertises only h2
-    /// and the request fails if the server selects anything else.
-    pub force_http2: bool,
-    /// Set by `fetch(url, { protocol: "http1.1" })`: opt out of h2 even when
-    /// the experimental env flag would otherwise advertise it.
-    pub force_http1: bool,
-    /// Set by `fetch(url, { protocol: "http3" })`: skip TCP entirely and open
-    /// a QUIC connection. HTTPS-only; no proxy/unix-socket support.
-    pub force_http3: bool,
+    /// Set by `fetch(url, { protocol: "..." })`. `Some(Http2)` makes ALPN
+    /// advertise only h2 and fail if the server selects anything else;
+    /// `Some(Http1_1)` opts out of h2 even when the experimental flag would
+    /// otherwise advertise it; `Some(Http3)` skips TCP entirely and opens a
+    /// QUIC connection (HTTPS-only, no proxy/unix-socket support). `None`
+    /// leaves protocol selection to ALPN and the experimental flags.
+    pub forced_protocol: Option<Protocol>,
     /// Set after the first H3 retry so a stale-session/GOAWAY race retries
     /// once on a fresh connection but never loops.
     pub(crate) h3_retried: bool,
@@ -238,9 +236,7 @@ impl Default for Flags {
             defer_fail_until_connecting_is_complete: false,
             upgrade_state: HTTPUpgradeState::None,
             protocol: Protocol::Http1_1,
-            force_http2: false,
-            force_http1: false,
-            force_http3: false,
+            forced_protocol: None,
             h3_retried: false,
             is_node_http_client: false,
         }
@@ -339,7 +335,7 @@ pub const DECODED_BODY_RETAIN_CAP: usize = 512 * 1024;
 /// Whether the experimental Alt-Svc-driven HTTP/3 upgrade is enabled at all
 /// (CLI flag or env var). Used on its own to gate `H3.AltSvc.record` — a
 /// response that arrived over a request shape h3 can't serve (proxy, sendfile,
-/// `force_http1`) still carries an authoritative Alt-Svc for the origin.
+/// pinned to h1) still carries an authoritative Alt-Svc for the origin.
 pub(crate) fn h3_alt_svc_enabled() -> bool {
     // SAFETY: set once at startup before HTTP thread spawns; only read thereafter.
     let cli = EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI.load(Ordering::Relaxed);
@@ -1265,7 +1261,7 @@ enum PendingH2Resolution<'a> {
     /// ALPN selected h2; waiters attach onto this session.
     H2(&'a mut h2::ClientSession),
     /// Handshake completed and ALPN selected http/1.1. Waiters can be pinned
-    /// to h1 (and force_http2 waiters failed) since the server has spoken.
+    /// to h1 (and h2-pinned waiters failed) since the server has spoken.
     H1,
     /// Leader's connect/handshake failed or was aborted before ALPN. Nothing
     /// has been learned about the server's protocol support, so waiters must
@@ -1870,7 +1866,7 @@ impl<'a> HTTPClient<'a> {
         if self.signals.get(signals::Field::CertErrors) {
             return false;
         }
-        if self.flags.force_http1 {
+        if self.flags.forced_protocol == Some(Protocol::Http1_1) {
             return false;
         }
         if self.http_proxy.is_some() {
@@ -1888,7 +1884,7 @@ impl<'a> HTTPClient<'a> {
         ) {
             return false;
         }
-        self.flags.force_http2
+        self.flags.forced_protocol == Some(Protocol::Http2)
             || EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.load(Ordering::Relaxed)
             || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT
                 .get()
@@ -1899,7 +1895,7 @@ impl<'a> HTTPClient<'a> {
         if !self.can_offer_h2() {
             return AlpnOffer::H1;
         }
-        if self.flags.force_http2 {
+        if self.flags.forced_protocol == Some(Protocol::Http2) {
             AlpnOffer::H2Only
         } else {
             AlpnOffer::H1OrH2
@@ -1916,7 +1912,10 @@ impl<'a> HTTPClient<'a> {
         if self.signals.get(signals::Field::CertErrors) {
             return false;
         }
-        if self.flags.force_http1 || self.flags.force_http2 {
+        if matches!(
+            self.flags.forced_protocol,
+            Some(Protocol::Http1_1 | Protocol::Http2)
+        ) {
             return false;
         }
         if self.http_proxy.is_some() {
@@ -1987,7 +1986,7 @@ impl<'a> HTTPClient<'a> {
             }
             self.flags.protocol = Protocol::Http1_1;
             self.resolve_pending_h2(PendingH2Resolution::H1);
-            if self.flags.force_http2 {
+            if self.flags.forced_protocol == Some(Protocol::Http2) {
                 self.close_and_fail::<IS_SSL>(crate::Error::HTTP2Unsupported, socket);
                 return;
             }
@@ -2710,10 +2709,10 @@ impl<'a> HTTPClient<'a> {
         }
 
         // protocol: "http2" is documented as HTTPS-only (h2c is out of scope).
-        // Every consumer of force_http2 is gated on the SSL const-generic, so without
-        // this an http:// request would silently fall through to HTTP/1.1.
+        // Every h2 consumer is gated on the SSL const-generic, so without this
+        // an http:// request would silently fall through to HTTP/1.1.
         if !IS_SSL {
-            if self.flags.force_http2 {
+            if self.flags.forced_protocol == Some(Protocol::Http2) {
                 self.fail(crate::Error::HTTP2Unsupported);
                 self.complete_connecting_process();
                 return;
@@ -2723,13 +2722,13 @@ impl<'a> HTTPClient<'a> {
         if IS_SSL {
             // Opportunistic Alt-Svc upgrade: a previous response from this origin
             // advertised `h3`, and the experimental flag is on. Don't touch
-            // `flags.force_http3` — that's the user's explicit `protocol:"http3"`
+            // `flags.forced_protocol` — that's the user's explicit `protocol:"http3"`
             // choice and persists across redirects, whereas an Alt-Svc upgrade is
             // per-origin and a cross-origin redirect must re-evaluate from h1.
             // `doRedirectMultiplexed` resets `flags.protocol`, so the redirected
-            // request lands back here with `force_http3` still false and consults
-            // the cache for the new origin.
-            if !self.flags.force_http3 && self.can_try_h3_alt_svc() {
+            // request lands back here with `forced_protocol` still `None` and
+            // consults the cache for the new origin.
+            if self.flags.forced_protocol != Some(Protocol::Http3) && self.can_try_h3_alt_svc() {
                 if let Some(alt_port) =
                     h3::alt_svc::lookup(self.url.hostname, self.url.get_port_auto())
                 {
@@ -2757,13 +2756,15 @@ impl<'a> HTTPClient<'a> {
         // `can_offer_h2` refuses to advertise h2 when a JS `checkServerIdentity`
         // callback is set, so `protocol: "http2"` + callback would handshake and
         // then fail in `first_call` anyway. Fail up front instead.
-        if self.flags.force_http2 && self.signals.get(signals::Field::CertErrors) {
+        if self.flags.forced_protocol == Some(Protocol::Http2)
+            && self.signals.get(signals::Field::CertErrors)
+        {
             self.fail(crate::Error::HTTP2Unsupported);
             self.complete_connecting_process();
             return;
         }
 
-        if self.flags.force_http3 {
+        if self.flags.forced_protocol == Some(Protocol::Http3) {
             // h3 never routes through `check_server_identity`; refuse the
             // combination instead of silently skipping the JS callback.
             if self.signals.get(signals::Field::CertErrors) {
@@ -3930,11 +3931,11 @@ impl<'a> HTTPClient<'a> {
             match &mut resolution {
                 PendingH2Resolution::H2(s) => s.enqueue(waiter),
                 PendingH2Resolution::H1 => {
-                    // ALPN selected http/1.1 on the leader's handshake; a
-                    // force_http2 waiter would just open a fresh TLS connection
+                    // ALPN selected http/1.1 on the leader's handshake; an
+                    // h2-pinned waiter would just open a fresh TLS connection
                     // and fail the same way, so fail it here instead of burning
                     // another handshake.
-                    if waiter.flags.force_http2 {
+                    if waiter.flags.forced_protocol == Some(Protocol::Http2) {
                         waiter.fail(crate::Error::HTTP2Unsupported);
                         continue;
                     }
@@ -3942,7 +3943,7 @@ impl<'a> HTTPClient<'a> {
                     // PendingConnect that the rest of this loop would re-coalesce
                     // onto (which would serialise N cold fetches into N
                     // sequential handshakes). The origin already chose h1 once.
-                    waiter.flags.force_http1 = true;
+                    waiter.flags.forced_protocol = Some(Protocol::Http1_1);
                     waiter.start_::<true>();
                 }
                 // The first waiter becomes the new leader; the rest re-coalesce

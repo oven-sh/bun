@@ -983,22 +983,13 @@ impl SourceHandle {
 // HTTPServerWritable
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Monotone lifecycle for `HTTPServerWritable`: `Writing` → `EndRequested` →
-/// `Done` → `Aborted`. `start()` may reset to `Writing` before any I/O; after
-/// that the state only advances. `is_done()` holds for `Aborted`, and any
-/// state past `Writing` rejects further writes. Replaces the former
-/// `done`/`requested_end`/`aborted` bool triple so an out-of-order
-/// combination like aborted-but-not-done is unrepresentable.
+/// Monotone (`Ord`) lifecycle; only `start()` may reset to `Writing`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub(crate) enum HttpSinkState {
     #[default]
     Writing,
-    /// `end()`/`end_from_js()` was called with data still buffered; the final
-    /// `try_end`/`end` happens on drain.
     EndRequested,
-    /// The sink is finished (response ended or dead); `write()` is a no-op.
     Done,
-    /// `abort()` ran. Terminal.
     Aborted,
 }
 
@@ -2133,20 +2124,13 @@ pub type H3ResponseSink = HTTPServerWritable<true, true>;
 // NetworkSink
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Monotone lifecycle for `NetworkSink`: `Open` → `Ended` → `Done` →
-/// `Cancelled`. Each state subsumes the predicates of its predecessors
-/// (`is_done()` ⇒ `is_ended()`), so an out-of-order combination like
-/// done-but-not-ended is unrepresentable.
+/// Monotone (`Ord`) lifecycle: `is_done()` implies `is_ended()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub(crate) enum NetworkSinkState {
     #[default]
     Open,
-    /// `end()`/EOF reached; further `write()` is a no-op.
     Ended,
-    /// Upload callback settled (or the sink was torn down); `flush()` resolves
-    /// immediately.
     Done,
-    /// `abort()` ran. Terminal.
     Cancelled,
 }
 

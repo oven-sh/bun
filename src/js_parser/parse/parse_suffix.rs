@@ -5,7 +5,6 @@ use crate::Error;
 use crate::lexer::T;
 use crate::p::P;
 use crate::parser::DeferredErrors;
-use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::expr::EFlags;
 use bun_ast::op::Level;
 use bun_ast::{E, Expr, ExprData, OpCode, OptionalChain};
@@ -126,15 +125,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         left: &mut Expr,
     ) -> CResult {
         p.lexer.next()?;
-        let mut optional_start: Option<OptionalChain> = Some(OptionalChain::Start);
-
-        // Remove unnecessary optional chains
-        if p.options.features.minify_syntax {
-            let result = SideEffects::to_null_or_undefined(p, &left.data);
-            if result.ok && !result.value {
-                optional_start = None;
-            }
-        }
+        let optional_start: Option<OptionalChain> = Some(OptionalChain::Start);
 
         match p.lexer.token {
             T::TOpenBracket => {
@@ -255,11 +246,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // Only continue if we have started
-        if optional_start == Some(OptionalChain::Start) {
-            *optional_chain = Some(OptionalChain::Continuation);
-        }
-
+        *optional_chain = Some(OptionalChain::Continuation);
         Ok(Continuation::Next)
     }
 

@@ -918,6 +918,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.visit_expr_in_out(&mut e_.target, ExprIn::default());
 
+        e_.optional_chain = p.maybe_simplify_optional_chain(e_.optional_chain, &e_.target.data);
+
         match e_.index.data {
             Data::EPrivateIdentifier(mut private) => {
                 let name = p.load_name_from_ref(private.ref_);
@@ -1408,6 +1410,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
         );
 
+        e_.optional_chain = p.maybe_simplify_optional_chain(e_.optional_chain, &e_.target.data);
+
         // 'require.resolve' -> .e_require_resolve_call_target
         if matches!(e_.target.data, Data::ERequireCallTarget) && e_.name == b"resolve" {
             // we do not need to call p.recordUsageOfRuntimeRequire(); because `require`
@@ -1858,6 +1862,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             },
         );
+
+        e_.optional_chain = p.maybe_simplify_optional_chain(e_.optional_chain, &e_.target.data);
 
         // Copy the call side effect flag over if this is a known target
         // copy the small inline payloads out first so the `match &e_.target.data`

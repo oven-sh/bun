@@ -5313,6 +5313,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Drop an unnecessary `?.` when the visited `target` is provably not null/undefined.
+    pub(crate) fn maybe_simplify_optional_chain(
+        &self,
+        optional_chain: Option<js_ast::OptionalChain>,
+        target: &js_ast::ExprData,
+    ) -> Option<js_ast::OptionalChain> {
+        if !self.options.features.minify_syntax {
+            return optional_chain;
+        }
+        use crate::scan::scan_side_effects::SideEffects;
+        match optional_chain {
+            Some(js_ast::OptionalChain::Start) => {
+                let result = SideEffects::to_null_or_undefined(self, target);
+                if result.ok && !result.value {
+                    return None;
+                }
+            }
+            Some(js_ast::OptionalChain::Continuation) => {
+                let target_chain = match target {
+                    js_ast::ExprData::EDot(e) => Some(e.optional_chain),
+                    js_ast::ExprData::EIndex(e) => Some(e.optional_chain),
+                    js_ast::ExprData::ECall(e) => Some(e.optional_chain),
+                    _ => None,
+                };
+                if target_chain == Some(None) {
+                    return None;
+                }
+            }
+            None => {}
+        }
+        optional_chain
+    }
+
     /// This is only allowed to be called if allow_runtime is true
     /// If --target=bun, this does nothing.
     pub(crate) fn record_usage_of_runtime_require(&mut self) {

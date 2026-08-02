@@ -2572,10 +2572,6 @@ pub mod internal {
             // Null host: fall through to getaddrinfo(NULL, service) on the work pool.
             return false;
         };
-        if bun_core::ip_address::to_ip_address(host.as_bytes()).is_some() {
-            return false;
-        }
-
         let Some(shared) = dns_sd::SharedConnection::get(
             crate::api::bun::process::event_loop_handle_to_ctx(loop_),
         ) else {
@@ -2852,6 +2848,7 @@ pub mod internal {
     ) -> Option<*mut Request> {
         let preload = is_cache_hit.is_none();
         let key = RequestKey::init(host, port);
+
         let mut guard = global_cache().lock();
         GETADDRINFO_CALLS.fetch_add(1, Ordering::Relaxed);
         let mut timestamp_to_store: u32 = 0;

@@ -68,13 +68,13 @@ fn errno_sys(rc: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
     }
 }
 
-use bun_cares_sys::ares_inet_pton as inet_pton;
+use bun_core::ip_address;
+use bun_sys::net::Address;
 
 unsafe extern "C" {
     // libc byte-order conversions are pure on the integer argument — no
     // pointer/aliasing/thread preconditions — so declare them `safe fn`.
     safe fn ntohs(nshort: u16) -> u16;
-    safe fn htons(hshort: u16) -> u16;
 }
 
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
@@ -1571,29 +1571,14 @@ impl UDPSocket {
         };
 
         let str = bun_core::OwnedString::new(address_val.to_bun_string(global_this)?);
-        // Owned NUL-terminated copy as a mutable Vec so we can write a NUL at
-        // the `%` position for scope-id parsing.
-        let mut address_slice: Vec<u8> = str.to_owned_slice_z().into_vec_with_nul();
+        let address_slice: Vec<u8> = str.to_owned_slice_z().into_vec_with_nul();
         let bytes_len = address_slice.len() - 1; // exclude trailing NUL
 
-        // SAFETY: storage is large enough to hold sockaddr_in.
-        let addr4 = unsafe { &mut *std::ptr::from_mut(storage).cast::<sockaddr_in>() };
-        // SAFETY: libc addr-format fn; src is NUL-terminated, dst points to in_addr-sized storage.
-        if unsafe {
-            inet_pton(
-                inet::AF_INET as c_int,
-                address_slice.as_ptr().cast::<c_char>(),
-                (&raw mut addr4.addr).cast::<c_void>(),
-            )
-        } == 1
-        {
-            addr4.port = htons(port);
-            addr4.family = inet::AF_INET as inet::sa_family_t;
-        } else {
-            // SAFETY: storage is large enough to hold sockaddr_in6.
-            let addr6 = unsafe { &mut *std::ptr::from_mut(storage).cast::<sockaddr_in6>() };
-            addr6.scope_id = 0;
-
+        let Some(ip) = ip_address::to_ip_address(&address_slice[..bytes_len]) else {
+            return Ok(false);
+        };
+        let mut addr = Address::from_ip(ip, port);
+        if ip.is_ipv6() {
             if let Some(percent) = address_slice[..bytes_len].iter().position(|&b| b == b'%') {
                 if percent + 1 < bytes_len {
                     let iface_id: u32 = 'blk: {
@@ -1649,26 +1634,11 @@ impl UDPSocket {
                         break 'blk 0;
                     };
 
-                    address_slice[percent] = 0;
-                    addr6.scope_id = iface_id;
+                    addr.set_scope_id(iface_id);
                 }
             }
-
-            // SAFETY: libc addr-format fn; src is NUL-terminated, dst points to in6_addr-sized storage.
-            if unsafe {
-                inet_pton(
-                    inet::AF_INET6 as c_int,
-                    address_slice.as_ptr().cast::<c_char>(),
-                    (&raw mut addr6.addr).cast::<c_void>(),
-                )
-            } == 1
-            {
-                addr6.port = htons(port);
-                addr6.family = inet::AF_INET6 as inet::sa_family_t;
-            } else {
-                return Ok(false);
-            }
         }
+        *storage = addr.into_storage();
 
         Ok(true)
     }
@@ -2294,46 +2264,15 @@ pub(crate) fn js_dgram_bind_fd(global: &JSGlobalObject, frame: &CallFrame) -> Js
         let flags = frame.argument(3).coerce_to_i32(global)?;
 
         // Numeric literals only — the JS layer resolves names before calling.
-        let mut storage: sockaddr_storage = bun_core::ffi::zeroed();
-
-        // SAFETY: storage is large enough for sockaddr_in; src is NUL-terminated.
-        let addr4 = unsafe { &mut *std::ptr::from_mut(&mut storage).cast::<sockaddr_in>() };
-        // SAFETY: libc addr-format fn; src is NUL-terminated, dst points to in_addr-sized storage.
-        let parsed_v4 = unsafe {
-            inet_pton(
-                inet::AF_INET as c_int,
-                address_z.as_ptr(),
-                (&raw mut addr4.addr).cast::<c_void>(),
-            )
-        };
-        let socklen: libc::socklen_t = if parsed_v4 == 1 {
-            addr4.family = inet::AF_INET as inet::sa_family_t;
-            addr4.port = htons(port);
-            size_of::<sockaddr_in>() as libc::socklen_t
-        } else {
-            // SAFETY: storage is large enough for sockaddr_in6.
-            let addr6 = unsafe { &mut *std::ptr::from_mut(&mut storage).cast::<sockaddr_in6>() };
-            // SAFETY: libc addr-format fn; src is NUL-terminated, dst points to in6_addr-sized storage.
-            let parsed_v6 = unsafe {
-                inet_pton(
-                    inet::AF_INET6 as c_int,
-                    address_z.as_ptr(),
-                    (&raw mut addr6.addr).cast::<c_void>(),
-                )
-            };
-            if parsed_v6 != 1 {
-                return Err(global.throw_value(
-                    bun_sys::Error::from_code_int(
-                        SystemErrno::EINVAL as c_int,
-                        bun_sys::Tag::bind2,
-                    )
+        let Some(ip) = ip_address::to_ip_address(address_z.as_bytes()) else {
+            return Err(global.throw_value(
+                bun_sys::Error::from_code_int(SystemErrno::EINVAL as c_int, bun_sys::Tag::bind2)
                     .to_js(global),
-                ));
-            }
-            addr6.family = inet::AF_INET6 as inet::sa_family_t;
-            addr6.port = htons(port);
-            size_of::<sockaddr_in6>() as libc::socklen_t
+            ));
         };
+        let addr = Address::from_ip(ip, port);
+        let socklen = addr.socklen() as libc::socklen_t;
+        let storage = addr.into_storage();
 
         // IPV6_V6ONLY, SO_REUSEADDR/SO_REUSEPORT and bind(2) go through bsd.c
         // so this doesn't fork its platform gate.

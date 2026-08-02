@@ -19,6 +19,23 @@ mod sys {
 
     unsafe extern "C" {
         fn ares_inet_pton(af: c_int, src: *const c_char, dst: *mut c_void) -> c_int;
+        #[cfg(not(windows))]
+        fn inet_aton(cp: *const c_char, addr: *mut c_void) -> c_int;
+    }
+
+    /// BSD `inet_aton(3)`, which unlike `inet_pton` takes the shorthand forms (`127.1`, `0x7f000001`) that `getaddrinfo` accepts; Windows has no equivalent, so it parses strictly there.
+    pub(super) fn aton(src: &[u8], dst: &mut [u8; 4]) -> bool {
+        #[cfg(windows)]
+        {
+            pton(AF_INET, src, dst)
+        }
+        #[cfg(not(windows))]
+        {
+            debug_assert_eq!(src.last(), Some(&0));
+            // SAFETY: `src` is NUL-terminated per the assert; `dst` is the
+            // 4 bytes of an `in_addr`.
+            unsafe { inet_aton(src.as_ptr().cast(), dst.as_mut_ptr().cast()) != 0 }
+        }
     }
 
     /// Safe wrapper: `src` is NUL-terminated by construction and `dst` is sized for the family.
@@ -57,81 +74,19 @@ pub fn is_ipv6_address(input: &[u8]) -> bool {
 
 /// Parses what the platform resolver treats as a numeric host: dotted-quad, IPv6 (an optional `%zone` is stripped, not validated), and the `inet_aton` shorthand `getaddrinfo` accepts but `is_ip_address` rejects (`127.1`, `2130706433`, `0x7f000001`, `0177.0.0.1`).
 pub fn to_ip_address(input: &[u8]) -> Option<IpAddr> {
-    let head = match input.iter().position(|b| *b == b'%') {
-        Some(i) => &input[..i],
-        None => input,
-    };
-    if let Ok(s) = std::str::from_utf8(head) {
-        if let Ok(v6) = s.parse::<Ipv6Addr>() {
-            return Some(IpAddr::V6(v6));
-        }
-    }
-    inet_aton(input).map(IpAddr::V4)
-}
-
-/// `inet_aton(3)` in safe Rust, verified byte-for-byte against the platform parser over 20k inputs: 1-4 parts, each decimal / `0`-octal / `0x`-hex, the last absorbing the remaining bytes, and a whitespace terminator ending a valid address.
-fn inet_aton(input: &[u8]) -> Option<Ipv4Addr> {
-    let mut parts = [0u64; 4];
-    let mut n = 0usize;
-    let mut rest = input;
-    loop {
-        if n == 4 {
-            return None;
-        }
-        let (val, used) = parse_part(rest)?;
-        parts[n] = val;
-        n += 1;
-        rest = &rest[used..];
-        match rest.first() {
-            Some(b'.') => rest = &rest[1..],
-            // BSD stops at the first non-digit: a whitespace terminator ends a
-            // valid address ("1.2.3.4 5" parses), anything else rejects.
-            Some(c) if c.is_ascii_whitespace() => break,
-            Some(_) => return None,
-            None => break,
-        }
-    }
-    let last = parts[n - 1];
-    // Only the single-part form is unchecked (it truncates); every other shape
-    // must fit the bits its position leaves.
-    if n > 1 && last > (u32::MAX >> (8 * (n as u32 - 1))) as u64 {
+    let mut buf = [0u8; 512];
+    if input.is_empty() || input.len() >= buf.len() {
         return None;
     }
-    if parts[..n - 1].iter().any(|p| *p > 0xff) {
-        return None;
+    // A `%zone` suffix belongs to a numeric v6 host; the zone itself is the
+    // caller's business (getaddrinfo resolves it).
+    let head = input.iter().position(|b| *b == b'%').unwrap_or(input.len());
+    buf[..head].copy_from_slice(&input[..head]);
+    let mut v6 = [0u8; 16];
+    if pton(AF_INET6, &buf[..=head], &mut v6) {
+        return Some(IpAddr::V6(Ipv6Addr::from(v6)));
     }
-    let mut addr = last as u32;
-    for (i, p) in parts[..n - 1].iter().enumerate() {
-        addr |= (*p as u32) << (24 - 8 * i as u32);
-    }
-    Some(Ipv4Addr::from(addr))
-}
-
-fn parse_part(s: &[u8]) -> Option<(u64, usize)> {
-    if s.is_empty() || !s[0].is_ascii_digit() {
-        return None;
-    }
-    let (radix, start) = if s.len() >= 2 && s[0] == b'0' && (s[1] | 0x20) == b'x' {
-        (16u64, 2usize)
-    } else if s[0] == b'0' {
-        (8, 1)
-    } else {
-        (10, 0)
-    };
-    let mut i = start;
-    let mut val: u64 = 0;
-    while i < s.len() {
-        match (s[i] as char).to_digit(radix as u32) {
-            Some(d) => {
-                val = val.wrapping_mul(radix).wrapping_add(d as u64);
-                i += 1;
-            }
-            None => break,
-        }
-    }
-    // A bare "0" is octal zero with no further digits.
-    if i == start && !(radix == 8 && start == 1) {
-        return None;
-    }
-    Some((val, i))
+    buf[..input.len()].copy_from_slice(input);
+    let mut v4 = [0u8; 4];
+    sys::aton(&buf[..=input.len()], &mut v4).then(|| IpAddr::V4(Ipv4Addr::from(v4)))
 }

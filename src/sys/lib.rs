@@ -8505,6 +8505,70 @@ pub mod net {
         pub fn as_sockaddr(&self) -> *const sockaddr {
             (&raw const self.any).cast()
         }
+
+        /// Lay out `ip`:`port` as a sockaddr — the one place an in/in6 struct is written over the storage, so callers never cast.
+        pub fn from_ip(ip: core::net::IpAddr, port: u16) -> Self {
+            // SAFETY: `sockaddr_storage` is a POD C struct; all-zeros is valid.
+            let mut any: sockaddr_storage = unsafe { bun_core::ffi::zeroed_unchecked() };
+            match ip {
+                core::net::IpAddr::V4(v4) => {
+                    let inner = sockaddr_in {
+                        family: AF_INET as sa_family_t,
+                        port: port.to_be(),
+                        addr: u32::from_ne_bytes(v4.octets()),
+                        ..sockaddr_in::ZEROED
+                    };
+                    // SAFETY: `sockaddr_storage` is sized and aligned to hold a
+                    // `sockaddr_in`; both are POD and cannot overlap.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            (&raw const inner).cast::<u8>(),
+                            (&raw mut any).cast::<u8>(),
+                            core::mem::size_of::<sockaddr_in>(),
+                        );
+                    }
+                }
+                core::net::IpAddr::V6(v6) => {
+                    let inner = sockaddr_in6 {
+                        family: AF_INET6 as sa_family_t,
+                        port: port.to_be(),
+                        addr: v6.octets(),
+                        ..sockaddr_in6::ZEROED
+                    };
+                    // SAFETY: as above, for `sockaddr_in6`.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            (&raw const inner).cast::<u8>(),
+                            (&raw mut any).cast::<u8>(),
+                            core::mem::size_of::<sockaddr_in6>(),
+                        );
+                    }
+                }
+            }
+            Self { any }
+        }
+
+        /// The IPv6 zone index (`fe80::1%en0`); ignored for IPv4.
+        pub fn set_scope_id(&mut self, scope_id: u32) {
+            if self.family() == AF_INET6 {
+                // SAFETY: `family() == AF_INET6` ⇒ the storage holds a `sockaddr_in6`.
+                unsafe { (*(&raw mut self.any).cast::<sockaddr_in6>()).scope_id = scope_id };
+            }
+        }
+
+        /// Bytes of `sockaddr_storage` this address actually occupies.
+        pub fn socklen(&self) -> u32 {
+            (if self.family() == AF_INET6 {
+                core::mem::size_of::<sockaddr_in6>()
+            } else {
+                core::mem::size_of::<sockaddr_in>()
+            }) as u32
+        }
+
+        /// The raw storage, for FFI that takes `sockaddr_storage` by value.
+        pub fn into_storage(self) -> sockaddr_storage {
+            self.any
+        }
         /// Tag-checked borrow of the IPv4 payload. `None` unless
         /// `family() == AF_INET`.
         #[inline]

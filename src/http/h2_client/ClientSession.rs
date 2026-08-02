@@ -31,19 +31,12 @@ type u31 = u32;
 #[allow(non_camel_case_types)]
 type u24 = u32;
 
-/// Connection-establishment progress. Monotonic: the leader's `attach()` runs synchronously
-/// before any `on_data` can fire (so `PrefaceSent` precedes `SettingsReceived`), and
-/// `dispatch_frame` rejects any non-SETTINGS frame while `< SettingsReceived` (so
-/// `GoawayReceived` never precedes it).
+/// Monotonic connection-establishment progress (only ever advanced, via `.max()` where needed).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Phase {
-    /// Client connection preface not yet queued.
     Init,
-    /// Preface + initial SETTINGS queued; awaiting the server's SETTINGS.
     PrefaceSent,
-    /// Server's first SETTINGS processed; streams may be opened.
     SettingsReceived,
-    /// GOAWAY received; no new streams.
     GoawayReceived,
 }
 

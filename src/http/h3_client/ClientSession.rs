@@ -20,19 +20,15 @@ use crate::{HTTPClient, HeaderResult, Protocol};
 
 use crate::h3_client::h3_client;
 
-/// Lifecycle of a pooled HTTP/3 session. `Draining` vs `Failed` preserves whether the QUIC
-/// handshake ever completed, which `on_conn_close` needs to pick the error for requests that
-/// never got a stream.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SessionState {
     /// DNS and/or QUIC handshake in flight; `qsocket` may still be `None`.
     Connecting,
     /// `on_hsk_done(ok)` fired; lsquic streams can be created.
     Established,
-    /// Unusable for new requests after the handshake succeeded (GOAWAY, conn_close, retry
-    /// poisoning). In-flight streams may still complete.
+    /// Closed after the handshake succeeded (GOAWAY, conn_close, retry poisoning).
     Draining,
-    /// Unusable and the handshake never completed (hsk failure, DNS failure, aborted early).
+    /// Closed without ever completing the handshake (hsk/DNS failure, aborted early).
     Failed,
 }
 
@@ -117,12 +113,9 @@ impl ClientSession {
     pub(crate) fn has_headroom(&self) -> bool {
         match self.state {
             SessionState::Draining | SessionState::Failed => false,
-            // Before handshake nothing has had make_stream called yet, so cap optimistically
-            // at the default MAX_STREAMS.
             SessionState::Connecting => self.pending.len() < 64,
-            // After handshake every pending entry has had make_stream called, so lsquic's
-            // n_avail_streams already accounts for them — comparing against pending.len would
-            // double-subtract. `Established` implies `qsocket` is set.
+            // lsquic's n_avail_streams already accounts for every `pending` entry once the
+            // handshake is done (make_stream was called for each).
             SessionState::Established => {
                 self.qsocket_mut().is_some_and(|qs| qs.streams_avail() > 0)
             }

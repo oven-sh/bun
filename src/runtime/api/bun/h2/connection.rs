@@ -33,19 +33,14 @@ pub struct PendingLocalSettings {
     pub settings: Settings,
 }
 
-/// What to do with an assembling header block once HPACK decoding completes. Decoding always
-/// happens (§4.3: the connection-scoped HPACK table must stay in sync); this decides whether the
-/// decoded fields are surfaced to the embedder or the stream is reset instead.
+/// What to do with a header block after §4.3 HPACK decoding (which always runs for table sync).
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum HeaderBlockDisposition {
-    /// Surface each field via `on_header` and finalize normally.
     #[default]
     Deliver,
-    /// The embedder refused the stream (`can_open_stream() == false`, node's maxSessionMemory):
-    /// answer with RST_STREAM(ENHANCE_YOUR_CALM) after decoding.
+    /// `can_open_stream()` refused it: answer RST_STREAM(ENHANCE_YOUR_CALM).
     Refused,
-    /// HEADERS arrived on a closed/half-closed-remote stream: answer with
-    /// RST_STREAM(STREAM_CLOSED) after decoding.
+    /// Target stream is closed/half-closed-remote: answer RST_STREAM(STREAM_CLOSED).
     StreamClosed,
 }
 
@@ -268,8 +263,6 @@ pub struct Connection {
     /// (a trailer section), which RFC 9113 §8.1 forbids from carrying pseudo-headers and which
     /// must not be held to the request pseudo-header requirements of §8.3.1.
     header_is_request: bool,
-    /// What to do with the assembling header block once decoded (§4.3 always decodes it so the
-    /// connection-scoped HPACK table stays in sync; this decides whether the fields are surfaced).
     header_disposition: HeaderBlockDisposition,
     /// A locally-detected connection error already tore the session down: ignore further input.
     terminated: bool,

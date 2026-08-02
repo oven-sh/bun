@@ -925,8 +925,10 @@ impl FileSink {
     }
 
     pub fn finalize(&mut self) {
-        // `.classes.ts` finalize — see PORTING.md §JSC. Runs during lazy sweep;
-        // must not touch live JS cells.
+        // Called from (a) `~JSFileSink` during lazy sweep, and (b) synchronously
+        // from `${name}__doClose` (prototype `.close()`). Must satisfy both
+        // contexts: no touching live JS cells (sweep), and no tearing down
+        // state that in-flight IO still needs (close).
 
         // Shutdown never unwinds the writer: the loop stops ticking, so the
         // `onWrite`/`onClose`/EOF callbacks that balance these refs can no
@@ -960,9 +962,8 @@ impl FileSink {
         // belongs to the wrapper it's about to be stored in, so no extra
         // `ref_()` there. Callers that allocate via `init`/`create` and then
         // `to_js()` must `deref()` once to release init's +1 (see
-        // `Blob::get_writer`).
-        self.readable_stream.set(readable_stream::Strong::default());
-        self.pending.set(streams::WritablePending::default());
+        // `Blob::get_writer`). `pending`/`readable_stream` are left for
+        // `deinit` (Box drop) since in-flight IO may still need them.
         self.js_sink_ref.with_mut(|r| r.deinit());
         // SAFETY: `&mut self` carries write provenance over the whole
         // allocation; this is the last use of `self` in `finalize`.

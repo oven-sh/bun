@@ -2219,9 +2219,6 @@ impl NetworkSink {
 
     /// Narrowed like
     /// `flushPromise`; promise resolution only fails on VM termination.
-    /// `this` is the sink registered as the task's callback ctx. The wake at
-    /// the end can synchronously re-enter this sink (JS `onPull` →
-    /// `writer.write()`), so no `&mut NetworkSink` is held across it.
     pub(crate) fn on_writable(
         task: &bun_s3::MultiPartUpload,
         this: *mut NetworkSink,
@@ -2449,8 +2446,6 @@ impl NetworkSink {
             }
             (task_ref, wrapper)
         };
-        // `task_ref` is a separate counted allocation; `fail()` may deref it
-        // but the sink holds its own +1 until `detach_sink`.
         let task = task_ref.get();
         if err.is_some() {
             let _ = task.fail(bun_s3_signing::error::S3Error {

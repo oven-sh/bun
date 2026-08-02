@@ -261,8 +261,6 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub(crate) method_name_cache: [core::cell::Cell<jsc::JSValue>; N_HTTP_METHODS],
     pub(crate) base_url_string_for_joining: Box<[u8]>,
     pub(crate) config: ServerConfig,
-    /// `Cell`: incremented from request-dispatch callbacks that hold only
-    /// shared access to the server (JS may re-enter through the same pointer).
     pub(crate) pending_requests: core::cell::Cell<usize>,
     /// Live `ServerWebSocket` count. Lives on the server (not the websocket
     /// context) so a reload's context swap cannot reset it, and sits in a
@@ -976,8 +974,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         prepared.js_request.ensure_still_alive();
 
         if should_deinit_context.get() {
-            // `on_response` set the deferred flag instead of freeing in-place.
-            // `ctx` is not accessed after this returns.
             ctx_ref.deinit();
             return;
         }
@@ -1040,8 +1036,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         ctx_ref.defer_deinit_until_callback_completes.set(None);
 
         if should_deinit_context.get() {
-            // `on_response` set the deferred flag instead of freeing in-place;
-            // we own the slot now. `ctx` is not accessed after this.
             ctx_ref.deinit();
             return;
         }
@@ -1988,8 +1982,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         // owned-field cleanup (all_closed_promise / user_routes / config /
-        // h3_alt_svc / dev_server / plugins) is handled by the Box drop at
-        // scope exit — see `impl Drop for NewServer`.
         if Self::HAS_H3 {
             if let Some(h3a) = server.h3_app.take() {
                 // SAFETY: live H3::App handle owned by this server.

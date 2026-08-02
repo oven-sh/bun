@@ -5791,7 +5791,6 @@ impl S3BlobDownloadTask {
         (self.handler)(&self.blob, self.global_this, raw_bytes)
     }
 
-    /// Consumes the heap-allocated task produced by [`S3BlobDownloadTask::init`].
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
     pub(crate) fn on_s3_download_resolved(
         result: crate::webcore::__s3_client::S3DownloadResult,
@@ -5868,8 +5867,6 @@ impl S3BlobDownloadTask {
         let proxy_owned = http_proxy_href(global_this);
         let proxy = proxy_owned.as_deref();
 
-        // Adapter: S3 download callback ABI takes `*mut c_void` context — reclaim
-        // the boxed task.
         fn s3_cb(
             result: crate::webcore::__s3_client::S3DownloadResult<'_>,
             ctx: *mut c_void,

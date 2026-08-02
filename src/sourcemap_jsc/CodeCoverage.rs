@@ -369,9 +369,6 @@ struct Generator<'a> {
 }
 
 impl<'a> Generator<'a> {
-    // C++ (CodeCoverage.cpp) invokes this once, synchronously, with the stack `Generator`
-    // passed as `ctx` to CodeCoverage__withBlocksAndFunctions; `&mut Generator` is
-    // ABI-identical to the non-null `Generator*` it hands back.
     extern "C" fn do_(
         this: &mut Generator,
         blocks_ptr: *const BasicBlockRange,

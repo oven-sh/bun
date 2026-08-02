@@ -470,8 +470,6 @@ pub(crate) fn writable_stream(
         wrapper_callback(result, unsafe { bun_ptr::callback_ctx::<NetworkSink>(ctx) })
     }
     fn on_writable_thunk(task: &MultiPartUpload, ctx: *mut c_void, flushed: u64) {
-        // ctx is the NetworkSink set as callback_context; passed raw so the
-        // callee never holds an exclusive borrow across its re-entrant wake.
         let _ = NetworkSink::on_writable(task, ctx.cast::<NetworkSink>(), flushed);
     }
 

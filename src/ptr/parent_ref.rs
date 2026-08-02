@@ -37,13 +37,6 @@ use core::ptr::NonNull;
 /// `Option<ParentRef<T>>` is pointer-sized (NonNull niche) — bit-identical to
 /// the `*mut T` field it replaces, no struct-layout churn.
 ///
-/// # Provenance parameter
-/// `P` is [`Shared`](crate::Shared) (default) for back-pointers born from
-/// `&T` / a read-only `*const T` — those only ever yield `&T` — or
-/// [`Mut`](crate::Mut) for back-pointers born from a write-capable `*mut T`,
-/// which additionally expose the unsafe [`assume_mut`](Self::assume_mut). A
-/// field that needs `assume_mut` must be declared `ParentRef<T, Mut>`, which
-/// the compiler then refuses to fill from a `&T`.
 #[repr(transparent)]
 pub struct ParentRef<T: ?Sized, P = crate::Shared> {
     ptr: NonNull<T>,
@@ -52,8 +45,6 @@ pub struct ParentRef<T: ?Sized, P = crate::Shared> {
 
 impl<T: ?Sized> ParentRef<T, crate::Shared> {
     /// Construct from a shared borrow of the parent. Provenance is
-    /// `SharedReadOnly` — correct, because `ParentRef<T, Shared>` only ever
-    /// yields `&T`.
     #[inline]
     pub fn new(parent: &T) -> Self {
         Self {
@@ -91,8 +82,6 @@ impl<T: ?Sized> ParentRef<T, crate::Shared> {
 }
 
 impl<T: ?Sized> ParentRef<T, crate::Mut> {
-    /// Construct from an exclusive borrow of the parent; the stored pointer
-    /// keeps write provenance (same liveness invariant as [`ParentRef::new`]).
     #[inline]
     pub fn from_ref_mut(parent: &mut T) -> Self {
         Self {
@@ -151,7 +140,6 @@ impl<T: ?Sized> ParentRef<T, crate::Mut> {
         unsafe { &mut *self.ptr.as_ptr() }
     }
 
-    /// Forget the write capability.
     #[inline]
     pub const fn shared(self) -> ParentRef<T, crate::Shared> {
         ParentRef {
@@ -174,7 +162,6 @@ impl<T: ?Sized, P> ParentRef<T, P> {
         unsafe { self.ptr.as_ref() }
     }
 
-    /// Read-only raw pointer; available for either provenance.
     #[inline]
     pub fn as_const_ptr(self) -> *const T {
         self.ptr.as_ptr()
@@ -182,7 +169,6 @@ impl<T: ?Sized, P> ParentRef<T, P> {
 }
 
 impl<T> ParentRef<T, crate::Mut> {
-    /// Raw pointer with write provenance (only the `Mut` marker carries it).
     #[inline]
     pub fn as_mut_ptr(self) -> *mut T {
         self.ptr.as_ptr()

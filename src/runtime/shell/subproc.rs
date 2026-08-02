@@ -197,7 +197,6 @@ pub(crate) type Subprocess = ShellSubprocess;
 pub(crate) const DEFAULT_MAX_BUFFER_SIZE: u32 = 1024 * 1024 * 4;
 
 /// Backref from a heap-allocated [`ShellSubprocess`] to its owning `Cmd`.
-///
 /// Spec stores `cmd_parent: *ShellCmd` directly. In the NodeId-arena port the
 /// `Cmd` lives **inline** in `Interpreter::nodes: Vec<Node>`, so a raw `*mut
 /// Cmd` taken at spawn time dangles the moment a later `alloc_node` grows the
@@ -1443,8 +1442,6 @@ pub struct PipeReader {
     pub(crate) process: Option<*mut ShellSubprocess>,
     pub(crate) event_loop: EventLoopHandle,
     pub(crate) state: PipeReaderState,
-    /// Windows: records the spawn outcome only (`create()` moves the pipe
-    /// into `reader.source`); read by `start()` on unix.
     #[cfg_attr(windows, allow(dead_code))]
     pub(crate) stdio_result: StdioResult,
     pub(crate) out_type: OutKind,
@@ -1711,8 +1708,6 @@ impl PipeReader {
                 StdioResult::Unavailable
             }
             StdioResult::BufferFd(fd) => {
-                // `Fd` is Copy; `stdio_result` keeps reflecting the spawn
-                // outcome.
                 reader.source = Some(bun_io::Source::File(bun_io::Source::open_file(fd)));
                 StdioResult::BufferFd(fd)
             }
@@ -1963,9 +1958,6 @@ impl PipeReader {
         Yield::Suspended
     }
 
-    /// Move the terminal error (if any) out of `captured_writer`/`state`,
-    /// leaving `state.Err(None)` behind so PipeReader.deinit doesn't deref the
-    /// same SystemError twice.
     fn take_captured_error(&mut self) -> Option<SystemError> {
         if let Some(e) = self.captured_writer.err.take() {
             match core::mem::replace(&mut self.state, PipeReaderState::Pending) {
@@ -1977,7 +1969,6 @@ impl PipeReader {
                     self.state = old;
                 }
                 PipeReaderState::Pending => {
-                    // unreachable after the caller's is_done() guard.
                     self.state = PipeReaderState::Err(Some(Box::new(e)));
                 }
             }

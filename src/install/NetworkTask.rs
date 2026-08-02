@@ -42,7 +42,6 @@ pub(crate) fn filename_store_appender() -> FilenameStoreAppender<'static> {
 pub struct NetworkTask {
     // Self-referential: borrows `url_buf` / leaked header content owned by
     // sibling fields, so the lifetime is erased to `'static`.
-    //
     // `MaybeUninit` because the slot comes from `HiveArrayFallback`
     // as *uninitialized* memory (often zero-page on first mmap, but not
     // guaranteed — `get()`'s heap fallback is `Box::new_uninit()`) and is
@@ -813,7 +812,6 @@ impl NetworkTask {
         // credentials. The empty-`tarball_url` branch builds the URL from
         // `scope.url.href()`, so its origin matches and authorized downloads
         // keep working.
-        //
         // Compare (protocol, hostname, effective port) rather than the raw
         // `URL.origin` slice — `origin` is a borrowed prefix of the input
         // string and is not normalized for default ports, so a tarball URL of

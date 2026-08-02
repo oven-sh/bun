@@ -25,11 +25,6 @@ use crate::server::jsc::{EventLoopHandle, Task, VirtualMachine};
 
 bun_output::declare_scope!(FileResponseStream, hidden);
 
-/// Every method takes `&self`: uWS/reader callbacks re-enter this object
-/// through the raw parent pointer while an outer call is still on the stack,
-/// so mutable state lives in `Cell`/[`JsCell`]. Each entry point that can
-/// reach `finish()` holds a `ScopedRef` for its duration, so the owner-ref
-/// release in `finish()` never frees the allocation inside a borrow.
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct FileResponseStream {
     ref_count: Cell<u32>,
@@ -265,14 +260,6 @@ impl FileResponseStream {
 
     // ───────────────────────── reader backend ─────────────────────────
 
-    /// Exclusive view of the reader. `pause()`/`read()` are entered both
-    /// from our own drive sites and, on Windows, re-entrantly from inside
-    /// `on_read_chunk`; `bun_io::PipeReader` documents and defends that
-    /// re-entry (it launders its own state around the vtable callback,
-    /// PORT_NOTES_PLAN R-2, and expects streaming parents to call
-    /// `reader().pause()` because a `false` return does not pause on
-    /// Windows). This accessor is the single place that contract is relied
-    /// upon.
     #[allow(
         clippy::mut_from_ref,
         reason = "reader is a separate cell payload; see doc"
@@ -592,8 +579,6 @@ impl FileResponseStream {
 
 // BufferedReader vtable parent.
 // `loop_` delegates to the inherent `r#loop()` which already does the
-// cfg(windows) `.uv_loop` projection. The read/done/error arms take a ref for
-// the duration of the handler since it can end in `finish()`.
 bun_io::impl_buffered_reader_parent! {
     FileResponseStream for FileResponseStream;
     has_on_read_chunk = true;
@@ -653,8 +638,6 @@ fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> 
     }
 }
 
-// Taskable: the deferred-EOF hop enqueues `*mut Self`; the dispatch arm calls
-// `on_reader_done` (the in-flight read's ref keeps `*this` alive).
 impl bun_event_loop::Taskable for FileResponseStream {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FileResponseStreamEof;
 }

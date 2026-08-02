@@ -180,8 +180,6 @@ mod lib_c {
 pub(crate) mod lib_uv_backend {
     use super::*;
 
-    /// Boxed and enqueued by [`on_raw_libuv_complete`]; the
-    /// `task_tag::GetAddrInfoLibuvComplete` dispatch arm reclaims it.
     pub(crate) struct LibuvCompleteHolder {
         uv_info: *mut libuv::uv_getaddrinfo_t,
     }

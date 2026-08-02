@@ -1,11 +1,5 @@
-//! `AnyTaskJob<C>` — the canonical "{WorkPool offload → JS-thread re-queue →
 //! JS-thread completion}" boilerplate. Each call site supplies only a `Ctx` impl of
-//! [`AnyTaskJobCtx`]; the heap allocation, intrusive `WorkPoolTask` wiring,
-//! `KeepAlive` ref/unref, and `is_shutting_down` guard live here.
 //!
-//! All instantiations share `task_tag::AnyTaskJob`; the per-`C` completion is
-//! reached through the `run_from_js` entry stored at the head of the
-//! `#[repr(C)]` allocation (see [`dispatch_erased`]).
 
 use bun_event_loop::Task;
 use bun_io::KeepAlive;
@@ -17,7 +11,6 @@ use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
 /// Per-job payload trait. Implementors own the off-thread work body and the
 /// JS-thread completion; the surrounding heap/queue/keep-alive plumbing is
 /// supplied by [`AnyTaskJob`].
-///
 /// `Drop` on the implementor is the deinit path — it runs on the JS thread
 /// (from `run_from_js`'s `heap::take`) on every exit, including the
 /// `is_shutting_down` early-out and `init` failure.
@@ -36,18 +29,11 @@ pub trait AnyTaskJobCtx: Sized {
 
     /// JS-thread completion. Called once after `run` re-queues onto the event
     /// loop, unless the VM is already shutting down. Any `Err` is surfaced as
-    /// the completion callback's result (i.e. propagated to the tick loop).
     fn then(&mut self, global: &JSGlobalObject) -> JsResult<()>;
 }
 
-/// Heap-allocated `{run_from_js, WorkPoolTask, KeepAlive, ctx}` bundle.
-/// Created via [`Self::create`] / [`Self::create_and_schedule`]; freed in
 /// `run_from_js` (or on `init` failure). `ctx` is `pub` so callers can read
 /// e.g. a `JSPromiseStrong` field after scheduling.
-///
-/// `#[repr(C)]` with the type-erased JS-thread entry point first so the
-/// single `task_tag::AnyTaskJob` dispatch arm can complete any `C` without
-/// naming it — see [`dispatch_erased`].
 #[repr(C)]
 pub struct AnyTaskJob<C> {
     run_from_js_erased: fn(*mut ()) -> JsResult<()>,
@@ -70,8 +56,6 @@ pub unsafe fn dispatch_erased(ptr: *mut ()) -> JsResult<()> {
     entry(ptr)
 }
 
-// `dispatch_erased` reads the entry point through the allocation head, so it
-// must stay the first `#[repr(C)]` field.
 const _: () = assert!(core::mem::offset_of!(AnyTaskJob<()>, run_from_js_erased) == 0);
 
 impl<C> bun_event_loop::Taskable for AnyTaskJob<C> {
@@ -90,7 +74,6 @@ impl<C> Drop for AnyTaskJob<C> {
 }
 
 impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
-    /// Heap-allocate, wire the intrusive `WorkPoolTask`, and run
     /// [`AnyTaskJobCtx::init`]. On `init` error the allocation is freed
     /// (running `Drop for C`). The returned pointer is owned by the caller
     /// until handed to [`Self::schedule`].
@@ -164,9 +147,6 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
             .enqueue_task_concurrent(ConcurrentTask::create(Task::init(std::ptr::from_mut(job))));
     }
 
-    /// JS-thread completion (reached via [`dispatch_erased`]). Reclaims the
-    /// heap allocation; `Drop for Self` (poll.unref) and `Drop for C` run on
-    /// every path.
     fn run_from_js(this: *mut Self) -> JsResult<()> {
         // SAFETY: `this` was produced by `heap::into_raw` in `create` and is
         // uniquely owned here (the task fires exactly once).

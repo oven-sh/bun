@@ -33,7 +33,6 @@ pub struct WindowsNamedPipeContext {
     /// client.
     pub(super) named_pipe: WindowsNamedPipe,
 
-    // vm is used to enqueue `run_event` (deinit in the next tick)
     vm: &'static VirtualMachine,
     global_this: GlobalRef,
     task_event: EventState,
@@ -378,8 +377,6 @@ impl WindowsNamedPipeContext {
                         is_open: false,
                     },
                 );
-                // Record the pipe's allocation-root address (write provenance)
-                // before anything registers it with libuv/the writer.
                 (*ptr::addr_of_mut!((*this).named_pipe))
                     .root
                     .set(ptr::addr_of_mut!((*this).named_pipe));
@@ -471,8 +468,6 @@ impl Drop for WindowsNamedPipeContext {
     }
 }
 
-// Taskable: `deref()` enqueues `*mut Self`; the dispatch arm calls
-// `run_event`, which may free the context. Gated like the dispatch arm.
 #[cfg(windows)]
 impl bun_event_loop::Taskable for WindowsNamedPipeContext {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WindowsNamedPipeContext;

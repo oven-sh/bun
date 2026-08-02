@@ -8,7 +8,6 @@ use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult,
     WorkPoolTask,
 };
-// `bun_jsc::{ConcurrentTask, EventLoop}` are *modules* (re-exported from
 // `bun_event_loop`); pull the concrete types out by name.
 use bun_jsc::event_loop::EventLoop;
 // JSC-side ZigString carries `to_js` (the `bun_core::ZigString` repr-twin
@@ -481,7 +480,6 @@ pub(crate) trait PasswordOp: 'static {
     type Value;
     /// "hashing" | "verification" — slotted into the JS Error message.
     const ERR_VERB: &'static str;
-    /// Dispatch tag for this op's [`PasswordResult`] JS-thread completion.
     const TASK_TAG: bun_event_loop::TaskTag;
     /// Off-thread compute. `self` borrows the op so its inputs stay owned by
     /// the job and are `free_sensitive`d in the job's / op's `Drop`.

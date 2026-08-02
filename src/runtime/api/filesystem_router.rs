@@ -832,8 +832,6 @@ impl MatchedRoute {
 
     // Note: `deinit` is called only from `finalize`; not exposed as `Drop` because
     // `MatchedRoute` is a JsClass m_ctx payload (finalize owns teardown per PORTING.md).
-    // Takes the owning Box so the teardown's `&mut` derives from the allocation
-    // root; the Box drop at scope exit frees the allocation.
     #[allow(
         clippy::boxed_local,
         reason = "reclaim point for the allocation `finalize` owns"

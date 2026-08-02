@@ -503,9 +503,6 @@ pub struct StatWatcher {
     pub(crate) next: bun_threading::Link<StatWatcher>, // INTRUSIVE link for UnboundedQueue
 
     // JSC_BORROW per LIFETIMES.tsv — VM outlives the watcher. `BackRef` gives
-    // safe `&VirtualMachine` projection (Deref) at every read site. `Mut`
-    // provenance from `bun_vm_ptr()` for the one `rare_data()` (`&mut self`)
-    // call in `deinit`.
     ctx: BackRef<VirtualMachine, bun_ptr::Mut>,
 
     ref_count: ThreadSafeRefCount<StatWatcher>,
@@ -1220,9 +1217,6 @@ impl InitialStatTask {
     }
 }
 
-/// JS-thread hop for `StatWatcherScheduler::set_timer`. Boxed by
-/// `schedule_timer_update`; the `task_tag::StatWatcherTimerUpdate` dispatch
-/// arm reclaims it and calls [`Self::run`].
 pub(crate) struct StatWatcherTimerUpdate {
     // BACKREF — `scheduler` is the refcounted singleton, kept alive by
     // every `StatWatcher`'s `RefPtr<StatWatcherScheduler>`; the watcher

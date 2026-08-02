@@ -525,8 +525,6 @@ impl JSBundleCompletionTask {
         result
     }
 
-    /// `task_tag::JSBundleCompletionTask` entry: `onComplete` runs on the JS
-    /// thread once the bundle thread posts back via `complete_on_bundle_thread`.
     pub(crate) fn on_complete_anytask(ctx: *mut Self) -> bun_event_loop::JsResult<()> {
         // For the +1 taken by `complete_on_bundle_thread` enqueue.
         // SAFETY: `ctx` is the live heap allocation; `adopt` consumes the prior +1 on Drop.
@@ -567,9 +565,6 @@ impl JSBundleCompletionTask {
         // ptr deref inside). Detach via raw ptr so `this` can be reborrowed
         // for `result`/`config`/`log` below.
         let promise: *mut JSPromise = this.promise.swap();
-        // `JSPromise` is an opaque ZST handle, so this detached `&mut` covers
-        // zero Rust-visible bytes (see `JSPromiseStrong::get`); the GC-owned
-        // cell is valid for the duration of this JS-thread callback.
         let promise = JSPromise::opaque_mut(promise);
 
         // `do_compilation` borrows `&mut self` while needing
@@ -1145,8 +1140,6 @@ impl CompletionStruct for JSBundleCompletionTask {
     }
 }
 
-// Taskable: `complete_on_bundle_thread` enqueues `*mut Self`; the dispatch
-// arm calls `on_complete_anytask`.
 impl bun_event_loop::Taskable for JSBundleCompletionTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::JSBundleCompletionTask;
 }

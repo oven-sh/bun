@@ -1305,9 +1305,6 @@ pub(super) use super::{
 /// per-transport `RequestContext` so the same body serves HTTP/1 and HTTP/3.
 /// `super::PreparedRequest<SSL,DEBUG>` is the HTTP/1-concrete instantiation
 /// used by the bake/saved-request path; the generic form here is only reached
-/// from the `_for<Ctx>` dispatch helpers below. Raw pointers (mirroring
-/// `PreparedRequest`): the dispatch runs JS between `prepare` and
-/// `handle_request_for`, so no borrow may span the bundle's lifetime.
 pub struct PreparedRequestFor<Ctx> {
     pub(crate) js_request: JSValue,
     pub(crate) request_object: *mut Request,
@@ -1360,7 +1357,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// Shared `&JSGlobalObject` accessor (struct stores it as `*const`).
     #[inline(always)]
     fn global(&self) -> GlobalRef {
-        // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
         // `global_this` is set in `init()`; non-null and valid for the
         // server's lifetime (LIFETIMES.tsv: STATIC).
         GlobalRef::from(bun_opaque::opaque_deref(self.global_this))
@@ -3020,7 +3016,6 @@ where
         response_value: JSValue,
     ) {
         let request_object_ptr: *mut Request = prepared.request_object;
-        // Its own copy, so the guard's capture does not pin `request_object_ptr`.
         let detach_ptr = request_object_ptr;
         scopeguard::defer! {
             // uWS request will not live longer than this function
@@ -3098,9 +3093,6 @@ where
         );
     }
 
-    /// `this` (not `&mut self`): the raw pointer is stored as the ctx's server
-    /// backref and JS may re-enter the server during the caller's dispatch, so
-    /// only a shared view of the server is ever materialized here.
     fn prepare_js_request_context_for<Ctx: RequestCtxOps<Server = Self>>(
         this: *mut Self,
         req: &mut Ctx::Req,
@@ -3870,8 +3862,6 @@ fn server_set_on_client_error(
                         );
                     }
                     // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    // Userdata is the root `this_ptr` (not a reborrow-derived pointer):
-                    // uWS keeps it past this scope, after the scoped `&mut`s are gone.
                     bun_opaque::opaque_deref_mut(app)
                         .on_client_error(thunk, this_ptr.cast::<c_void>());
                 }
@@ -3938,8 +3928,6 @@ fn server_set_on_connection(
                         this.on_connection_callback(socket.cast::<c_void>());
                     }
                     // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    // Userdata is the root `this_ptr` (not a reborrow-derived pointer):
-                    // uWS keeps it past this scope, after the scoped `&mut`s are gone.
                     bun_opaque::opaque_deref_mut(app).filter(thunk, this_ptr.cast::<c_void>());
                 }
                 return Ok(JSValue::UNDEFINED);

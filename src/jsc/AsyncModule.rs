@@ -114,8 +114,6 @@ impl bun_event_loop::Taskable for Queue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::PollPendingModulesTask;
 }
 
-// Taskable: `AsyncModule` boxes itself in `done()`; the dispatch arm
-// (`bun_runtime::dispatch::run_task`) reclaims the box and calls `on_done`.
 impl bun_event_loop::Taskable for AsyncModule {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncModule;
 }
@@ -669,13 +667,10 @@ impl AsyncModule {
     }
 
     pub(crate) fn done(self, jsc_vm: &mut VirtualMachine) {
-        // `Queue::poll_modules` removed the element by value; the box is
-        // handed to the task queue and reclaimed by `on_done`.
         jsc_vm.modules.scheduled += 1;
         jsc_vm.enqueue_task(Task::from_boxed(Box::new(self)));
     }
 
-    /// Consumes the heap allocation produced by [`AsyncModule::done`].
     #[allow(
         clippy::boxed_local,
         reason = "reclaim point for the box `done()` handed to the task queue"

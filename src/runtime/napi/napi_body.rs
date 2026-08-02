@@ -2830,9 +2830,6 @@ impl ThreadSafeFunction {
             };
             finalizer.enqueue();
         }
-        // else-branch: `env` drops with the Box.
-
-        // callback.deinit() and queue.deinit() run via Drop of `self_` here.
     }
 
     /// Frees the allocation and nothing else: no finalizer, no registry entry,

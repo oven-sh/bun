@@ -789,8 +789,6 @@ impl Drop for Route {
 pub struct PendingResponse {
     method: Method,
     resp: AnyResponse,
-    /// `Cell`: cleared through shared references — the abort callback and the
-    /// resume loop both reach this allocation via its raw pointer.
     is_response_pending: Cell<bool>,
     // Raw ptr because the route owns the Vec containing this
     // PendingResponse; an `IntrusiveRc<Route>` field would form a cycle through

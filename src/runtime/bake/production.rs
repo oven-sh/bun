@@ -1447,9 +1447,6 @@ pub struct PerThread {
     pub(crate) source_maps: StringArrayHashMap<OutputFileIndex>,
 
     // Thread-local
-    // Note: stored as `BackRef` (the VM is process-lifetime and outlives
-    // every `PerThread`); `Mut` provenance from `init_bake` for
-    // `build_with_vm`'s `&mut *vm_ptr`.
     pub(crate) vm: bun_ptr::BackRef<VirtualMachine, bun_ptr::Mut>,
     /// Indexed by entry point index (OpaqueFileId)
     pub(crate) loaded_files: AutoBitSet,

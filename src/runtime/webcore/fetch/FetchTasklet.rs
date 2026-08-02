@@ -36,7 +36,6 @@ use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Respo
 
 use bun_jsc::JsTerminatedResult;
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
-// ConcurrentTask callbacks at the tier-3 layer.
 type ElJsResult<T> = bun_event_loop::JsResult<T>;
 
 use boringssl::c::{X509_free, d2i_X509};
@@ -1179,8 +1178,6 @@ impl FetchTasklet {
         let dispatch_cleanup = |_this: &mut FetchTasklet| {
             bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: promise_value is not null");
             tracker.did_dispatch(&global_this);
-            // `self.promise` was already emptied by the `take()` that moved
-            // it into the settle task above.
         };
 
         let result = if success {
@@ -2820,10 +2817,6 @@ impl Default for FetchOptions {
     }
 }
 
-/// JS-thread hop that settles a fetch promise with the value computed on the
-/// HTTP-completion path. Boxed at the enqueue site; the
-/// `task_tag::FetchTaskletPromiseSettle` dispatch arm reclaims it and calls
-/// [`Self::run`].
 pub(crate) struct FetchTaskletPromiseSettle {
     held: StrongOptional,
     promise: jsc::JSPromiseStrong,

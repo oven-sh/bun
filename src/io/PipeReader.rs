@@ -114,7 +114,6 @@ impl BufferedReaderVTable {
 
     /// When the reader has read a chunk of data
     /// and hasMore is true, it means that there might be more data to read.
-    ///
     /// Returning false prevents the reader from reading more data.
     fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
         self.link().on_read_chunk(chunk, has_more)
@@ -405,7 +404,6 @@ impl PosixBufferedReader {
             } else if (*this).flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING) {
                 (*this).flags.remove(PosixFlags::CLOSED_WITHOUT_REPORTING);
             }
-            // `finish`'s receiver borrow ends when it returns, before the dispatch.
             (*this).finish();
         }
         // Copy the (Copy) vtable out so no borrow of `*this` spans the
@@ -447,8 +445,6 @@ impl PosixBufferedReader {
         }
     }
 
-    /// Registration proper; returns the error instead of dispatching it so
-    /// [`Self::register_poll`] can dispatch outside this frame's protector.
     fn try_register_poll(&mut self) -> Result<(), sys::Error> {
         // pause() may land from inside on_read_chunk's JS re-entry while the
         // loop's own re-arm is still ahead on the stack.
@@ -1200,12 +1196,6 @@ impl PosixBufferedReader {
                                 (*this).close_without_reporting();
                                 core::mem::take(&mut (*this)._buffer)
                             };
-                            // `drain_chunk` delivers `buffer` iff streaming; when
-                            // it does, the bytes are consumed and must NOT be
-                            // reinstalled — `on_reader_done`'s
-                            // `consume_reader_buffer` would otherwise re-deliver
-                            // them (double output). Non-streaming: keep them for
-                            // the buffered consumer.
                             let delivered = vtable.is_streaming_enabled() && !buffer.is_empty();
                             let _ = Self::drain_chunk(&vtable, &buffer, ReadState::Eof);
                             // SAFETY: caller contract; `done()` is the tail.
@@ -1251,8 +1241,6 @@ impl PosixBufferedReader {
             let read_result = unsafe {
                 let maxbuf = (*this).maxbuf;
                 (*this)._buffer.reserve(16 * 1024);
-                // Writing into spare capacity; committed after the syscall
-                // reports how many bytes it initialized.
                 let buf = bun_core::vec::spare_bytes_mut(&mut (*this)._buffer);
                 let buf = MaxBuf::clamp_read_buf(maxbuf, buf);
                 sys_fn(fd, buf, (*this)._offset)
@@ -1277,9 +1265,6 @@ impl PosixBufferedReader {
                             (*this).close_without_reporting();
                             core::mem::take(&mut (*this)._buffer)
                         };
-                        // See the stack-path EOF above: only reinstall when the
-                        // drain did NOT deliver (non-streaming), else
-                        // `consume_reader_buffer` re-delivers the same bytes.
                         let delivered = vtable.is_streaming_enabled() && !buffer.is_empty();
                         let _ = Self::drain_chunk(&vtable, &buffer, ReadState::Eof);
                         // SAFETY: caller contract; `done()` is the tail.

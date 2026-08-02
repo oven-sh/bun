@@ -2946,7 +2946,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         if self.buffered_data_for_node_net.get().len() > 0 {
             // Neither write call touches `buffered_data_for_node_net`, so a
             // `JsCell::get()` projection is valid for the duration of the call.
-            //
             // The drain-driven retry must detect a fatal send error the same way
             // the initial write does: once the peer is gone the kernel rejects
             // every retry (EPIPE/ECONNRESET), and treating that as would-block
@@ -4157,8 +4156,6 @@ impl SocketMode {
 // DuplexUpgradeContext
 // ──────────────────────────────────────────────────────────────────────────
 
-// Taskable: enqueued as `*mut Self`; the dispatch arm forwards the raw
-// pointer to `run_event` (which may free it — no `&mut` at the boundary).
 impl bun_event_loop::Taskable for DuplexUpgradeContext {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::DuplexUpgradeContext;
 }
@@ -4213,8 +4210,6 @@ impl DuplexUpgradeContext {
         ))
     }
 
-    /// Copy out the TLS socket's `this_ptr` before any re-entrant dispatch, so
-    /// no borrow of `*this` spans the JS callback.
     #[inline]
     unsafe fn tls_this_ptr(this: *mut Self) -> Option<bun_ptr::ThisPtr<TLSSocket>> {
         // SAFETY: fn contract; borrow ends at `;`.
@@ -4299,7 +4294,6 @@ impl DuplexUpgradeContext {
             // SAFETY: fn contract; `handle_error(&self)` takes `this_ptr` copied
             // out, so no borrow of `*this` spans the JS call.
             if let Some(tls) = unsafe { Self::tls_this_ptr(this) } {
-                // `ThisPtr: Deref<Target = TLSSocket>`; `handle_error(&self)`.
                 tls.handle_error(err_value);
             }
         } else {
@@ -4469,11 +4463,8 @@ impl DuplexUpgradeContext {
         }
     }
 
-    /// Enqueue `self` on the owning VM's event loop. `vm` is the
     /// process-lifetime per-thread singleton stored at construction
     /// (`js_upgrade_duplex_to_tls`); `event_loop_mut()` is the safe accessor
-    /// for the VM-owned event-loop self-pointer. The dispatch arm calls
-    /// [`Self::run_event`] with this raw pointer.
     #[inline]
     /// # Safety
     /// `this` is the live heap `DuplexUpgradeContext`.

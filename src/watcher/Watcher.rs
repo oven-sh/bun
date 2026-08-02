@@ -338,14 +338,11 @@ impl Watcher {
         Ok(())
     }
 
-    /// Watcher-thread body. Returns whether the owner still holds the Box
-    /// (`true` ⇒ `thread_main` must not free it).
     fn thread_body(&mut self) -> bool {
         self.watchloop_handle.store(true);
         self.thread_lock.lock();
         Output::Source::configure_named_thread(zstr!("File Watcher"));
 
-        // defer Output.flush() — handled by thread_main
         log!("Watcher started");
 
         let owner_still_alive = match self.watch_loop() {

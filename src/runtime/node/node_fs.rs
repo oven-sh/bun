@@ -1014,7 +1014,6 @@ mod _async_tasks {
             let mut task = unsafe { bun_core::heap::take(this) };
             // `bun_sys::Error` frees its path on Drop.
             task.r#ref.unref(bun_io::js_vm_ctx());
-            // `promise` and `args: ThreadSafe<A>` (unprotects on Drop) drop with the box.
         }
     }
 
@@ -1399,7 +1398,6 @@ mod _async_tasks {
             let mut task = unsafe { bun_core::heap::take(this) };
             // `bun_sys::Error` frees its path on Drop.
             task.r#ref.unref(bun_io::js_vm_ctx());
-            // `promise` and `args: ThreadSafe<A>` (unprotects on Drop) drop with the box.
         }
     }
 
@@ -1803,9 +1801,6 @@ mod _async_tasks {
 
             // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
             unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-            // `promise` is a GC-rooted JS heap cell, still valid after `destroy`
-            // dropped only the `Strong` wrapper; `opaque_mut` is the safe
-            // accessor for the opaque ZST handle.
             if success {
                 bun_jsc::JSPromise::opaque_mut(promise).resolve(global_object, result)?;
             } else {
@@ -1821,12 +1816,10 @@ mod _async_tasks {
             // reclaim ownership (paired with the Box::leak in
             // create_with_shell_task()/create_mini()).
             let mut task = unsafe { bun_core::heap::take(this) };
-            // `bun_sys::Error` owns its path slice (`Box<[u8]>`) and frees it on Drop.
             if !IS_SHELL {
                 let ctx = event_loop_handle_to_ctx(task.evtloop);
                 task.r#ref.unref(ctx);
             }
-            // `promise` and `args: ThreadSafe<args::Cp>` drop with the box;
             // `Drop for ThreadSafe<args::Cp>` releases the `protect()` taken by
             // `to_thread_safe()` when `src`/`dest` are Buffers, so nothing leaks here.
         }
@@ -2664,8 +2657,6 @@ mod _async_tasks {
 
             // SAFETY: self was Box::leak'd in create(); destroyed exactly once here
             unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-            // GC-rooted JS heap cell, valid past `destroy`; `opaque_mut` is the
-            // safe accessor for the opaque ZST handle.
             if success {
                 bun_jsc::JSPromise::opaque_mut(promise).resolve(global_object, result)?;
             } else {
@@ -2687,7 +2678,6 @@ mod _async_tasks {
             task.r#ref.unref(bun_io::js_vm_ctx());
             task.free_root_path();
             task.clear_result_list();
-            // `args::Readdir` and `JSPromiseStrong` release on Drop with the box.
         }
     }
 

@@ -207,12 +207,6 @@ pub mod ssl_wrapper {
     /// See [`MAX_RENEGOTIATIONS`].
     const MAX_RENEGOTIATION_WINDOW: core::time::Duration = core::time::Duration::from_secs(600);
 
-    /// Every method takes `&self`: the handler vtable re-enters this wrapper
-    /// (the owner calls back into `write_data`/`shutdown`/`deinit`) while an
-    /// engine frame is still on the stack, so mutable state lives in `Cell`
-    /// and no `&mut SSLWrapper` ever exists to be aliased. The wrapper is an
-    /// inline field of its owner; [`SSLWrapper::deinit`] neuters in place so
-    /// an in-flight frame never observes moved bytes.
     pub struct SSLWrapper<T: Copy> {
         pub handlers: Cell<Handlers<T>>,
         pub ssl: Cell<Option<NonNull<boring_sys::SSL>>>,
@@ -226,8 +220,6 @@ pub mod ssl_wrapper {
     /// (e.g. `http_jsc`).
     pub type SslWrapper<T> = SSLWrapper<T>;
 
-    /// `Cell`-backed connection-state bitfield (layout below), read and written
-    /// through the wrapper's shared `&self`.
     #[repr(transparent)]
     #[derive(Default)]
     pub struct Flags(Cell<u8>);
@@ -808,10 +800,6 @@ pub mod ssl_wrapper {
             Ok(usize::try_from(written).expect("int cast"))
         }
 
-        /// Explicit teardown. Idempotent (`Cell::take` on both handles) and in
-        /// place — an in-flight `handle_traffic` frame on this wrapper sees
-        /// `ssl == None` after re-entry rather than freed bytes. Also runs from
-        /// `Drop`.
         pub fn deinit(&self) {
             self.flags.set_closed_notified(true);
             if let Some(ssl) = self.ssl.take() {
@@ -1170,7 +1158,6 @@ pub mod ssl_wrapper {
         /// callbacks. Only SSLs whose handlers opted in ever park (see
         /// `init_with_ctx`), so this is a no-op FFI probe otherwise. The
         /// callbacks run JS which may close the wrapper; `self.ssl` is
-        /// re-checked between pops.
         fn flush_pending_events(&self, buffer: &mut [u8; BUFFER_SIZE]) {
             if self.handlers.get().on_session.is_some() {
                 loop {
@@ -1219,8 +1206,6 @@ pub mod ssl_wrapper {
 
     impl<T: Copy> Drop for SSLWrapper<T> {
         fn drop(&mut self) {
-            // `deinit()` is idempotent (Cell::take on both handles), so an
-            // explicit `deinit()` followed by drop is a no-op the second time.
             self.deinit();
         }
     }

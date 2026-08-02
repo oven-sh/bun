@@ -93,8 +93,6 @@ impl Handler {
             return;
         }
 
-        // `self.vm` is a Shared backref; the mutable call goes through the
-        // per-thread singleton accessor rather than promoting its provenance.
         let _ =
             VirtualMachine::get()
                 .as_mut()

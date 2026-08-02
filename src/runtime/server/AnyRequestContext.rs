@@ -150,8 +150,6 @@ impl AnyRequestContext {
     pub(crate) fn set_additional_on_abort_callback(self, cb: Option<AdditionalOnAbortCallback>) {
         dispatch!(self, (), |_T, ctx| {
             if let Some(old) = ctx.additional_on_abort.replace(cb) {
-                // A previous callback owns a ref; release it rather than
-                // leaking (the debug-only invariant is "set at most once").
                 debug_assert!(false, "additional_on_abort set twice");
                 old.deref();
             }
@@ -199,7 +197,6 @@ impl AnyRequestContext {
                 // H3 populates url/headers eagerly
                 return;
             }
-            // `ctx.req` is `Cell<Option<*mut Req<SSL,H3>>>` where
             // `Req<_,_> = c_void` (erased handle). For non-H3 the underlying
             // type is always `uws::Request`, so the cast is purely nominal.
             ctx.req.set(Some(req.cast::<c_void>()));

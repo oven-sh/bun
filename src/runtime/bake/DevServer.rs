@@ -392,7 +392,6 @@ pub struct DevServer {
     // `CurrentBundle.bv2`). `Transpiler<'a>` borrows the global
     // `Fs::FileSystem` singleton + `dot_env::Loader`, both of which outlive
     // the server.
-    //
     // `MaybeUninit` until `Framework::init_transpiler` populates them in place
     // (in `init()` below) — `Transpiler` contains a non-nullable `&Arena`, so
     // neither `Default` nor `mem::zeroed()` are sound (PORTING.md §Forbidden).
@@ -1300,8 +1299,6 @@ impl DevServer {
     ) -> crate::Result<bool> {
         // TODO: all paths here must be prefixed with publicPath if set.
         self.server = Some(AnyServer::from(server));
-        // app is set before set_routes is called (server init path); deref
-        // per-use below, no long-lived `&mut`.
         let app = server.app.unwrap();
         let dev = std::ptr::from_mut::<Self>(self).cast::<c_void>();
 
@@ -2946,9 +2943,6 @@ impl DevServer {
         resp: AnyResponse,
         method: Method,
     ) {
-        // Note: erase `self` to a raw pointer so the `route_bundle` pointer
-        // doesn't conflict with `generate_client_bundle(&mut self, ..)`. Deref
-        // per-access; do not bind a long-lived `&mut`.
         let self_ptr = std::ptr::from_mut::<Self>(self);
         // SAFETY: statement-scoped reborrow; the returned `&mut RouteBundle`
         // immediately decays to a raw pointer.
@@ -3785,7 +3779,6 @@ impl<'a> HotUpdateContext<'a> {
     }
 }
 
-/// Outer cleanup for `finalize_bundle`; runs in its first `defer!` guard.
 fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr_event: bool) {
     bv2.deinit_without_freeing_arena();
     if let Some(cb) = &mut dev.current_bundle {
@@ -3827,8 +3820,6 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr
     }
 }
 
-/// Drains requests left on the current bundle; runs in `finalize_bundle`'s
-/// second `defer!` guard, before the outer cleanup (LIFO).
 fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
     if !current_bundle.requests.first.is_null() {
         // cannot be an assertion because in the case of OOM, the request list was not drained.
@@ -5784,9 +5775,6 @@ impl DevServer {
         // is deref'd per-access below (no long-lived `&mut`).
         let ev_ptr = unsafe { WatcherAtomics::watcher_acquire_event(atomics) };
         // Note: erase `self` to a raw ptr in the deferred closures so the
-        // loop body can keep using `self.bun_watcher`. Same for `ev_ptr`: give
-        // the `defer!` its own copy so the by-ref capture doesn't hold
-        // `ev_ptr` borrowed across the loop's per-access reborrows.
         let self_ptr: *mut Self = self;
         let ev_ptr_defer: *mut HotReloadEvent = ev_ptr;
         scopeguard::defer! {

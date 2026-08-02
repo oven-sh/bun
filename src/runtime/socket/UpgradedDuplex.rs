@@ -26,15 +26,7 @@ use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTim
 
 bun_output::declare_scope!(UpgradedDuplex, visible);
 
-/// Every method takes `&self`: the TLS engine's callbacks, the JS listener
-/// thunks and the timer all re-enter this object on the JS thread, so
-/// mutable state lives in `Cell`/[`JsCell`] and no `&mut UpgradedDuplex`
-/// ever exists to be aliased. Owned inline by `DuplexUpgradeContext`, which
-/// frees it on the tick after close.
 pub(crate) struct UpgradedDuplex {
-    /// The TLS engine. Neutered in place by [`Self::teardown`] rather than
-    /// replaced, so a `&WrapperType` from [`Self::wrapper_ref`] stays valid
-    /// across the engine's re-entry into this object.
     pub wrapper: JsCell<Option<WrapperType>>,
     /// The owning `JSTLSSocket` wrapper. Its `values:` slots root `origin` and
     /// the four listener thunks; the `JSValue` fields below are read-side
@@ -148,9 +140,6 @@ impl UpgradedDuplex {
     // SAFETY (all handlers): the SSLWrapper handlers ctx is `self as *mut
     // Self`, live for the wrapper's lifetime.
 
-    /// The live engine payload, if any. The `Option` is only assigned when
-    /// no engine frame is live and its payload is neutered in place (never
-    /// moved out), so the borrow stays valid across engine re-entry.
     #[inline]
     fn wrapper_ref(&self) -> Option<&WrapperType> {
         self.wrapper.get().as_ref()
@@ -316,7 +305,6 @@ impl UpgradedDuplex {
     /// ordinary post-start delivery.
     pub(super) fn drain_pending(&self) {
         // Nothing to replay, or the engine never came up (the socket died
-        // before `StartTLS`). Bail before taking so the bytes are not
         // destroyed by a drain that could not deliver them.
         if self.wrapper_ref().is_none() {
             return;
@@ -469,7 +457,6 @@ impl UpgradedDuplex {
         Ok(array)
     }
 
-    /// The SSLWrapper handler table pointing back at `self`.
     fn wrapper_handlers(&self) -> super::ssl_wrapper::Handlers<*mut UpgradedDuplex> {
         super::ssl_wrapper::Handlers {
             ctx: std::ptr::from_ref(self).cast_mut(),
@@ -483,11 +470,6 @@ impl UpgradedDuplex {
         }
     }
 
-    /// Install the freshly built engine and kick off the handshake. The `w`
-    /// borrow is live across the re-entrant `start()` (fires `on_open`); that
-    /// is sound because no path re-assigns the `wrapper` cell while an engine
-    /// frame is on the stack — `teardown()` neuters the payload in place
-    /// rather than `set(None)`. Preserve that if you touch `teardown()`.
     fn install_and_start(&self, wrapper: WrapperType, verify: ServerVerify) {
         self.wrapper.set(Some(wrapper));
         let w = self.wrapper_ref().unwrap();
@@ -644,18 +626,7 @@ impl UpgradedDuplex {
         // clear the timer
         self.set_timeout(0);
 
-        // Neuter in place rather than `self.wrapper.set(None)`: `teardown()`
-        // can run re-entrantly from `on_close` while a
-        // `SSLWrapper::handle_traffic` frame is still on the stack with a
-        // `&SSLWrapper` into the `Some` payload. Assigning `None` runs `Drop`
-        // (fine - `deinit()` nulls `ssl`/`ctx`) but then memmoves a fresh
         // `Option::None` value over the slot, whose payload bytes are stack
-        // garbage - the in-flight frame's `self.ssl` then reads junk and
-        // `flush_pending_events` UAFs into BoringSSL. `deinit()` alone leaves
-        // `ssl == None` / `closed_notified` readable so those guards work; the
-        // `Option` is dropped for real when the parent `DuplexUpgradeContext`
-        // frees on the next tick. See WindowsNamedPipe's WRAPPER_BUSY for the
-        // sibling pattern.
         if let Some(w) = self.wrapper_ref() {
             w.deinit();
         }

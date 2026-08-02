@@ -55,31 +55,13 @@ type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
 
 use crate::jsc_hooks::timer_all_mut as timer_all;
 
-/// Every method takes `&self`: the writer's handlers, the TLS engine's
-/// handlers, the libuv trampolines and the exported `WindowsNamedPipe__*`
-/// callbacks all re-enter this object on the JS thread, so mutable state
-/// lives in `Cell`/[`JsCell`] and no `&mut WindowsNamedPipe` ever exists
-/// to be aliased. Owned inline by `WindowsNamedPipeContext`, which frees it
-/// on the tick after close.
 pub struct WindowsNamedPipe {
-    /// The TLS engine. Moved out (dropped) by [`Self::release_resources`],
-    /// deferred while [`Flags::WRAPPER_BUSY`] is set (see
-    /// [`Self::with_wrapper`]).
     pub(crate) wrapper: JsCell<Option<WrapperType>>,
-    /// An `on_close` that arrived while [`Flags::WRITER_BUSY`] was set; run
-    /// from [`Self::close_writer`]'s epilogue once the writer borrow ends.
     pub(crate) deferred_writer_close: Cell<bool>,
-    /// This pipe's own address with write provenance (the owning
-    /// `WindowsNamedPipeContext` allocation root's field), recorded by the
-    /// context right after construction. Every raw `*mut Self` handed to
-    /// libuv / the writer / the TLS engine derives from it, never from a
-    /// `&self`.
     pub(crate) root: Cell<*mut WindowsNamedPipe>,
     /// Non-owning alias of the heap `uv::Pipe`. The owning
     /// `Box<uv::Pipe>` is leaked in [`from`] and adopted by
     /// `self.writer.source` (`Source::Pipe`) inside [`start`]; this field only
-    /// ever observes/null-checks the handle, never frees it. Cleared by
-    /// [`Self::on_close`] before the writer's async close frees the Box.
     #[cfg(windows)]
     pub(crate) pipe: Cell<Option<NonNull<uv::Pipe>>>, // any duplex
     #[cfg(not(windows))]
@@ -122,19 +104,7 @@ bitflags::bitflags! {
         /// allocation on early-error paths (before adoption) without risking a
         /// double-free once the writer owns it.
         const PIPE_ADOPTED = 1 << 4;
-        /// Set while an `SSLWrapper` method runs through
-        /// [`WindowsNamedPipe::with_wrapper`], whose borrow points into the
-        /// `wrapper` cell's `Some` payload. The engine's handlers can
-        /// synchronously reach `on_close → release_resources`; assigning
-        /// `wrapper = None` there would drop the engine and memmove the
-        /// `Option` under that in-flight frame, so `release_resources` defers
-        /// the move-out to `with_wrapper`'s epilogue while this bit is set.
         const WRAPPER_BUSY = 1 << 5;
-        /// Set while `writer` is exclusively borrowed for `close()` in
-        /// [`WindowsNamedPipe::close_writer`]. `StreamingWriter::close` fires
-        /// `Parent::on_close` synchronously, whose `release_resources` would
-        /// re-borrow the `writer` cell; `on_close` defers itself instead
-        /// (`deferred_writer_close`) and runs from `close_writer`'s epilogue.
         const WRITER_BUSY  = 1 << 6;
         // _: u2 padding
     }
@@ -182,18 +152,11 @@ impl WindowsNamedPipe {
         self.flags.set(flags);
     }
 
-    /// The live TLS engine, if any. The `Option` is only assigned when no
-    /// engine frame is live (see [`Flags::WRAPPER_BUSY`]), so the borrow stays
-    /// valid across engine re-entry.
     #[inline]
     fn wrapper_ref(&self) -> Option<&WrapperType> {
         self.wrapper.get().as_ref()
     }
 
-    /// Run `f` on the engine with [`Flags::WRAPPER_BUSY`] held. Only the
-    /// outermost scope clears the bit and runs the deferred move-out epilogue:
-    /// the engine's handlers call into JS, and JS `socket.write()`/`close()`
-    /// re-enter here while an outer engine frame is still executing.
     fn with_wrapper<R>(&self, f: impl FnOnce(&WrapperType) -> R) -> Option<R> {
         let w = self.wrapper_ref()?;
         let was_busy = self.flags.get().contains(Flags::WRAPPER_BUSY);
@@ -201,8 +164,6 @@ impl WindowsNamedPipe {
         let result = f(w);
         if !was_busy {
             self.update_flags(|flags| flags.remove(Flags::WRAPPER_BUSY));
-            // `release_resources` skipped the move-out while the engine frame
-            // above was live; it has returned, so drop the engine now.
             if self.flags.get().is_closed() {
                 self.wrapper.set(None);
             }
@@ -210,9 +171,6 @@ impl WindowsNamedPipe {
         Some(result)
     }
 
-    /// Raw non-owning alias of the heap `uv::Pipe` (see [`pipe`](Self::pipe)),
-    /// dereferenced for one libuv call at a time. The writer never holds a
-    /// competing `&mut uv::Pipe` across a call into this struct.
     #[cfg(windows)]
     #[inline]
     fn uv_pipe(&self) -> Option<*mut uv::Pipe> {
@@ -256,8 +214,6 @@ impl WindowsNamedPipe {
         (self.handlers.on_writable)(self.handlers.ctx);
     }
 
-    // takes `nread` (not the libuv `buffer` slice) because that slice points
-    // *into* `self.incoming` — see `StreamReader::on_read` below.
     #[cfg(windows)]
     fn on_read(&self, nread: usize) {
         bun_output::scoped_log!(WindowsNamedPipe, "onRead ({})", nread);
@@ -267,8 +223,6 @@ impl WindowsNamedPipe {
 
         self.reset_timeout();
 
-        // Move the buffer out so `data` is independent of the cell while the
-        // engine / `on_data` re-enter this object.
         let mut data = self.incoming.replace(Vec::new());
 
         if self
@@ -277,8 +231,6 @@ impl WindowsNamedPipe {
         {
             (self.handlers.on_data)(self.handlers.ctx, data.as_slice());
         }
-        // Restore the (cleared) allocation so the next `on_read_alloc` reuses
-        // it instead of growing from empty.
         data.clear();
         self.incoming.set(data);
     }
@@ -316,7 +268,6 @@ impl WindowsNamedPipe {
         }
     }
 
-    /// The recorded allocation root; see [`Self::root`].
     #[inline]
     fn root_ptr(&self) -> *mut WindowsNamedPipe {
         let p = self.root.get();
@@ -328,11 +279,6 @@ impl WindowsNamedPipe {
         self.with_writer(|w| w.close());
     }
 
-    /// Run `op` on the writer with [`Flags::WRITER_BUSY`] held. `close()`
-    /// and `end()` can synchronously fire `Parent::on_close`, which defers
-    /// itself while the flag is set and runs from this epilogue — so
-    /// `release_resources` never re-borrows the `writer` cell while `op`'s
-    /// exclusive borrow is live.
     fn with_writer<R>(&self, op: impl FnOnce(&mut StreamingWriter<Self>) -> R) -> R {
         let was_busy = self.flags.get().contains(Flags::WRITER_BUSY);
         self.update_flags(|f| f.insert(Flags::WRITER_BUSY));
@@ -421,7 +367,6 @@ impl WindowsNamedPipe {
         unsafe { &*this }.internal_write(d)
     }
 
-    /// The SSLWrapper handler table pointing back at `self`.
     #[cfg(windows)]
     fn wrapper_handlers(&self) -> ssl_wrapper::Handlers<*mut WindowsNamedPipe> {
         ssl_wrapper::Handlers {
@@ -455,17 +400,10 @@ impl WindowsNamedPipe {
 
     fn on_close(&self) {
         if self.flags.get().contains(Flags::WRITER_BUSY) {
-            // Called synchronously from inside `close_writer`'s exclusive
-            // writer borrow; defer to its epilogue.
             self.deferred_writer_close.set(true);
             return;
         }
         bun_output::scoped_log!(WindowsNamedPipe, "onClose");
-        // `self.pipe` is a non-owning alias of the `Box<uv::Pipe>` owned by
-        // `writer.source`. By the time the writer invokes this hook it has
-        // already `take()`n that Box and scheduled `uv_close` → `Box::from_raw`
-        // on it (PipeWriter::close), so the alias is about to dangle. Clear it
-        // so later `pause_stream()` observes `None` instead of a freed pointer.
         #[cfg(windows)]
         self.pipe.set(None);
         if !self.flags.get().is_closed() {
@@ -625,9 +563,6 @@ impl WindowsNamedPipe {
 
     /// `extern "C"` trampoline matching `uv_connect_cb` (`Pipe::connect`'s
     /// `on_connect` parameter). Recovers `*mut Self` from `req->data` (set in
-    /// `connect()`) and forwards to the safe `&self` body. Only ever invoked
-    /// by libuv (coerces to the `uv_connect_cb` fn-pointer type at the
-    /// `Pipe::connect` call site).
     #[cfg(windows)]
     extern "C" fn uv_on_connect(req: *mut uv::uv_connect_t, status: uv::ReturnCode) {
         // SAFETY: `req` is `self.connect_req`, whose `data` was set to
@@ -640,9 +575,6 @@ impl WindowsNamedPipe {
 
     #[cfg(windows)]
     fn on_connect(&self, status: uv::ReturnCode) {
-        // A deref-on-exit scopeguard would obscure the tail-call `deref()`; call
-        // it explicitly at each return.
-
         if let Some(pipe) = self.uv_pipe() {
             // SAFETY: live libuv handle alias; see `pipe`.
             unsafe { (*pipe).unref() };
@@ -898,10 +830,6 @@ impl WindowsNamedPipe {
             // SAFETY: live libuv handle alias; see `pipe`.
             unsafe { (*pipe_nn.as_ptr()).unref() };
             let this: *mut Self = self.root_ptr();
-            // After this call `self.writer.source` holds the SOLE `Box` for the
-            // allocation; `self.pipe` remains a non-owning alias for
-            // `pause_stream`, nulled by `on_close`, and `Drop` only reclaims
-            // when `PIPE_ADOPTED` was never set.
             self.update_flags(|f| f.insert(Flags::PIPE_ADOPTED));
             let start_pipe_result = self.writer.with_mut(|w| {
                 w.set_parent(this);
@@ -1111,10 +1039,6 @@ impl WindowsNamedPipe {
             }
             self.writer.with_mut(|w| w.outgoing = Default::default());
         }
-        // While an engine frame is live (`WRAPPER_BUSY`), moving the wrapper
-        // out here would memmove the `Option` under its `&SSLWrapper`; defer
-        // to `with_wrapper`'s epilogue, which drops it after the frame
-        // returns.
         if !self.flags.get().contains(Flags::WRAPPER_BUSY) {
             self.wrapper.set(None);
         }
@@ -1209,8 +1133,6 @@ impl uv::StreamReader for WindowsNamedPipe {
     #[inline]
     unsafe fn on_read(this: *mut Self, data: &[u8]) {
         // `data` points into `(*this).incoming` (it was returned from
-        // `on_read_alloc`). Capture the only thing the body needs (length)
-        // and drop the slice before touching `*this`.
         let nread = data.len();
         let _ = data;
         // SAFETY: `this` is the live context stashed in `handle.data` by

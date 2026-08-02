@@ -512,7 +512,6 @@ impl Worker {
     /// Reborrow the self-referential `arena` (= `&self.heap`) as a shared
     /// reference. `BackRef` field, so the deref is encapsulated in
     /// [`bun_ptr::BackRef::get`]; see note on the field.
-    ///
     /// `arena` is set to `&self.heap` in [`Worker::create`] before any caller
     /// can observe the `Worker`, and is never dangling after that point. The
     /// pointee is the worker's own `heap` field, which is pinned for the
@@ -638,7 +637,6 @@ impl Worker {
         if worker.has_created {
             worker.heap = None;
         }
-        // `worker` (the reclaimed Box) drops here, freeing the allocation.
     }
 
     // returns `&'static mut` (detached) — the `Worker` is

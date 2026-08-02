@@ -729,7 +729,6 @@ impl EventLoop {
     /// re-queued so they remain reachable from the static-rooted VM box (the
     /// pre-`532a5411961b` state). Consuming them silently here unhooked that
     /// root and surfaced the boxes as direct leaks (e.g. `AnyTaskJob<_>`); the
-    /// definer can't safely dispatch every erased callback at shutdown.
     pub fn release_queued_tasks_for_shutdown(&mut self) {
         self.drop_concurrent_cpp_tasks();
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
@@ -752,7 +751,6 @@ impl EventLoop {
         // Free (don't run — running could re-enter the dying VM) queued
         // ManagedTask boxes. Other tags are left in place: they were re-queued
         // by `release_queued_tasks_for_shutdown` because their callback can't
-        // be no-op-dispatched safely (some callbacks call into JS) and
         // their box may be aliased by the originator. Keeping them in
         // `self.tasks` (a field of the static-rooted `VirtualMachine` box that
         // is never `dealloc`'d) leaves the chain reachable to LSan — the same

@@ -28,8 +28,6 @@ pub mod any_event_loop;
 
 // ─── public surface ─────────────────────────────────────────────────────────
 
-/// Result alias for tier-3 callbacks. Carries `bun_core::JsError` (tier-0) so
-/// `ManagedTask` signatures don't take an upward dep.
 pub type JsResult<T> = core::result::Result<T, bun_core::JsError>;
 pub use ConcurrentTask::{Task, TaskTag, Taskable, task_tag};
 

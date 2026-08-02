@@ -2810,7 +2810,6 @@ pub struct IPCInstance {
     /// borrowed handle so the isolation swap can skip it.
     #[cfg(unix)]
     pub(crate) group: *mut uws::SocketGroup,
-    /// Owned ref (from `SendQueue::new`); released by `deinit` after `detach`.
     pub data: core::ptr::NonNull<crate::ipc::SendQueue>,
 }
 
@@ -2819,7 +2818,6 @@ impl IPCInstance {
         bun_core::heap::into_raw(Box::new(v))
     }
 
-    /// Shared access to the owned SendQueue.
     #[inline]
     pub fn data(&self) -> &crate::ipc::SendQueue {
         // SAFETY: `data` is an owned ref; live until `deinit`.
@@ -6491,14 +6489,8 @@ impl VirtualMachine {
 
             // Box the instance first so `data.owner` can name its final
             // address.
-            // Allocate the SendQueue first; its owner backref is patched once
-            // the IPCInstance box address is fixed.
-            let send_queue = crate::ipc::SendQueue::new(
-                mode,
-                // Patched below once the IPCInstance box address is fixed.
-                None,
-                crate::ipc::SocketUnion::Uninitialized,
-            );
+            let send_queue =
+                crate::ipc::SendQueue::new(mode, None, crate::ipc::SocketUnion::Uninitialized);
             let instance = IPCInstance::new(IPCInstance {
                 global_this: core::cell::Cell::new(self.global),
                 group,
@@ -6549,14 +6541,8 @@ impl VirtualMachine {
 
         #[cfg(windows)]
         let instance: *mut IPCInstance = {
-            // Allocate the SendQueue first; its owner backref is patched once
-            // the IPCInstance box address is fixed.
-            let send_queue = crate::ipc::SendQueue::new(
-                mode,
-                // Patched below once the IPCInstance box address is fixed.
-                None,
-                crate::ipc::SocketUnion::Uninitialized,
-            );
+            let send_queue =
+                crate::ipc::SendQueue::new(mode, None, crate::ipc::SocketUnion::Uninitialized);
             let instance = IPCInstance::new(IPCInstance {
                 global_this: core::cell::Cell::new(self.global),
                 // SAFETY: `SendQueue::new` returns a non-null owned ref.

@@ -99,17 +99,13 @@ enum State {
     Done,
 }
 
-/// Outcome of [`HTTPClient::buffer_and_parse_head`].
 enum HeadParse {
-    /// Head complete: all buffered bytes, the status code, and the head length.
     Done {
         full: Vec<u8>,
         status_code: u32,
         head_len: usize,
     },
-    /// Malformed response, or partial headers exceeding the size cap.
     Invalid,
-    /// Incomplete head; the bytes were stashed in `body` for the next read.
     NeedMore,
 }
 
@@ -187,7 +183,6 @@ pub struct HTTPClient<const SSL: bool> {
 // kind at connect time and routed via the `RawSocketEvents<SSL>` impl in
 // `bun_runtime::socket::uws_handlers`, which forwards to the `pub
 // handle_*` methods below.
-//
 // The handlers take `ThisPtr<Self>` (not `&mut Self`) because uSockets
 // dispatches them from the raw userdata pointer and several can free `Self`
 // (`deref` reaching zero) or be re-entered synchronously by `tcp.close()` /
@@ -407,8 +402,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // `RuntimeState.ssl_ctx_cache` (high-tier `bun_runtime`); routed
         // through `RuntimeHooks` so this crate stays below `bun_runtime`.
         //
-        // Owned ref; transferred to the connected WebSocket on upgrade, freed
-        // in `deinit` if we never get that far.
         let mut secure: Option<SslCtxOwned> = None;
         let secure_ptr: Option<*mut uws::SslCtx> = if SSL {
             let hooks =
@@ -451,10 +444,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
             None
         };
 
-        // All pre-connect state is built into the allocation up front: the
-        // `connect_*_group` calls below install `client` as socket userdata
-        // and may synchronously dispatch `handle_connect_error(*mut Self)`,
-        // so no borrow of `*client` may be live across them.
         let client: *mut Self = bun_core::heap::into_raw(Box::new(HTTPClient::<SSL> {
             ref_count: Cell::new(1),
             tcp: Socket::<SSL>::detached(),
@@ -876,9 +865,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
         socket.get_native_handle() == self.tcp.get_native_handle()
     }
 
-    /// Append `data` to any previously buffered partial head and try to parse
-    /// an HTTP response head. Pure (never re-enters), so callers may take a
-    /// scoped `&mut` for just this call.
     fn buffer_and_parse_head(&mut self, data: &[u8]) -> HeadParse {
         let mut body = data;
         if !self.body.is_empty() {
@@ -1033,8 +1019,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
     fn handle_proxy_response(this: ThisPtr<Self>, socket: Socket<SSL>, data: &[u8]) {
         log!("handleProxyResponse");
 
-        // Check for HTTP 200 response from proxy: the first chunk must open
-        // with the proxy's status line.
         const HTTP_200: &[u8] = b"HTTP/1.1 200 ";
         const HTTP_200_ALT: &[u8] = b"HTTP/1.0 200 ";
         if this.body.is_empty()

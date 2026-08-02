@@ -46,9 +46,6 @@ bun_output::declare_scope!(UdpSocket, visible);
 /// `connect()` path (line ~575): `us_udp_socket_connect()` returns a Winsock
 /// status, not a CRT errno, so reading `_errno()` here would be the wrong
 /// source.
-/// Reborrow `storage` as a specific sockaddr family. `sockaddr_storage` is
-/// sized and aligned for every sockaddr type, and the `&mut` derives from the
-/// caller's borrow.
 #[inline]
 fn storage_as<T>(storage: &mut sockaddr_storage) -> &mut T {
     const {

@@ -267,10 +267,8 @@ impl FSWatchTaskPosix {
         task.clean_entries();
         #[cfg(debug_assertions)]
         {
-            // ctx is valid for the lifetime of any task (ParentRef).
             debug_assert!(!core::ptr::eq(task.ctx().current_task.as_ptr(), this));
         }
-        // `task` (entries already cleaned) drops here.
     }
 }
 

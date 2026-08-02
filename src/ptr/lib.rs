@@ -84,24 +84,14 @@ pub use bun_core::callback_ctx;
 // `usize` length so it is a drop-in replacement for any `*const [T]` field.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Provenance markers for [`BackRef`]. `Shared` back-references are born from
-/// `&T` and only ever yield `&T`; `Mut` back-references are born from `&mut T` /
-/// a write-capable `*mut T` and additionally expose the `unsafe fn get_mut`.
 pub struct Shared;
 pub struct Mut;
 
 /// Non-owning, non-null back-reference to an object that outlives `self`.
-///
 /// For struct fields where the pointee is the owner/parent and is
 /// guaranteed live for the holder's entire lifetime (owner-creates-child).
 /// `Copy` + `Deref` so call sites read `self.owner.method()` instead of
 /// `unsafe { &*self.owner }.method()`.
-///
-/// The `P` parameter records the provenance the pointer was born with:
-/// `BackRef<T>` (i.e. `BackRef<T, Shared>`) comes from `&T` and is read-only;
-/// `BackRef<T, Mut>` comes from `&mut T`/`*mut T` and may `get_mut`. A field
-/// that needs `get_mut` must be declared `BackRef<T, Mut>`, which the compiler
-/// then refuses to fill from a `&T`.
 #[repr(transparent)]
 pub struct BackRef<T: ?Sized, P = Shared>(core::ptr::NonNull<T>, core::marker::PhantomData<P>);
 
@@ -133,8 +123,6 @@ impl<T: ?Sized> BackRef<T, Shared> {
 }
 
 impl<T: ?Sized> BackRef<T, Mut> {
-    /// Wrap a mutable reference to the owner (same liveness invariant as
-    /// [`BackRef::new`]); the stored pointer keeps write provenance.
     #[inline]
     pub fn new_mut(r: &mut T) -> Self {
         BackRef(core::ptr::NonNull::from(r), core::marker::PhantomData)
@@ -169,7 +157,6 @@ impl<T: ?Sized> BackRef<T, Mut> {
         unsafe { self.0.as_mut() }
     }
 
-    /// Forget the write capability.
     #[inline]
     pub const fn shared(self) -> BackRef<T, Shared> {
         BackRef(self.0, core::marker::PhantomData)
@@ -177,8 +164,6 @@ impl<T: ?Sized> BackRef<T, Mut> {
 }
 
 impl<T, P> BackRef<T, P> {
-    /// Placeholder for two-phase initialisation (`field: BackRef::dangling()`
-    /// then assigned for real before first deref). Dereferencing is UB.
     #[inline]
     pub const fn dangling() -> Self {
         BackRef(core::ptr::NonNull::dangling(), core::marker::PhantomData)
@@ -186,7 +171,6 @@ impl<T, P> BackRef<T, P> {
 }
 
 impl<T: ?Sized> BackRef<T, Mut> {
-    /// Raw pointer with write provenance (only the `Mut` marker carries it).
     #[inline]
     pub const fn as_ptr(self) -> *mut T {
         self.0.as_ptr()
@@ -194,7 +178,6 @@ impl<T: ?Sized> BackRef<T, Mut> {
 }
 
 impl<T: ?Sized, P> BackRef<T, P> {
-    /// Read-only raw pointer; available for either provenance.
     #[inline]
     pub const fn as_const_ptr(self) -> *const T {
         self.0.as_ptr()

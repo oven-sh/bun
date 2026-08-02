@@ -2073,13 +2073,7 @@ impl Options {
     }
 }
 
-/// Deferred `close()` + intrusive-ref release for [`JSValkeyClient`], hopped
-/// through the event loop because closing the socket can call into JS.
-/// Boxed at the enqueue site; the `task_tag::ValkeyDeferredClose` dispatch
-/// arm reclaims it and calls [`Self::run`].
 pub(crate) struct ValkeyDeferredClose {
-    // BACKREF — JSValkeyClient is intrusively ref-counted; the `ref_()` taken
-    // before enqueue keeps it alive across the hop and is released in `run`.
     ctx: *const JSValkeyClient,
 }
 

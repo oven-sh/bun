@@ -414,17 +414,11 @@ impl S3HttpSimpleTask {
         Ok(())
     }
 
-    /// HTTP-thread half of `http_callback`: copy the latest result/body/http
-    /// state into the task.
     fn stage_http_result(
         &mut self,
         async_http: *mut AsyncHTTP<'static>,
         mut result: HTTPClientResult<'_>,
     ) {
-        // `metadata` is handed over exactly once, on the first callback carrying response
-        // headers. A close-delimited body (no Content-Length, no Transfer-Encoding) reports
-        // progress again at EOF with `metadata: None`, so carry the earlier one across the
-        // assignment below.
         let previous_metadata = self.result.metadata.take();
         result.body_into(&mut self.response_buffer.list);
         // SAFETY: `result.body` (the only borrowed field) points at `self.response_buffer`,
@@ -445,10 +439,6 @@ impl S3HttpSimpleTask {
         // SAFETY: `async_http` is a valid live pointer for the duration of this callback;
         // `self.http` was previously initialised in `execute_simple_s3_request`.
         unsafe { core::ptr::write(self.http.as_mut_ptr(), core::ptr::read(async_http)) };
-        // `async_http.response_buffer == &self.response_buffer`, so copying it back would be
-        // a self-assignment: the `=` would drop the live Vec before re-installing a stale
-        // bitwise duplicate (UAF + double-free), so we simply omit it —
-        // `self.response_buffer` already holds the body.
     }
 
     /// this is the AsyncHTTP callback and is always called from the HTTPThread
@@ -478,11 +468,8 @@ impl S3HttpSimpleTask {
                     (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
                 );
                 // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
-                // is set during VM init and outlives this task.
                 ((*this).vm.expect("vm set at task creation"), queued)
             };
-            // Handing `this` to the JS thread transfers ownership (`on_response` `heap::take`s
-            // it), so the enqueue is the terminal action.
             vm.event_loop_shared().enqueue_task_concurrent(queued);
         }
     }

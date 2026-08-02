@@ -19,11 +19,9 @@ use crate::webcore::{
 /// Q: Why is this needed?
 /// A: The dev server needs to attach its own callback when the request is
 ///    aborted.
-///
 /// Q: Why can't the dev server just call `.setAbortHandler(...)` then?
 /// A: It can't, because that is *already* called by the RequestContext, setting
 ///    the callback and the user data context pointer.
-///
 ///    If it did, it would *overwrite* the user data context pointer (this
 ///    is what it did before), causing segfaults.
 pub struct AdditionalOnAbortCallback {
@@ -92,15 +90,7 @@ pub type RequestContextStackAllocator<
     REQUEST_CONTEXT_POOL_CAPACITY,
 >;
 
-/// Every method takes `&self`: uWS callbacks, promise reactions and the JS
-/// host functions all re-enter this object on the JS thread, so mutable
-/// state lives in `Cell`/[`JsCell`] and no `&mut RequestContext` ever exists
-/// to be aliased across a JS re-entry.
 ///
-/// Pooled and intrusively refcounted (`ref_`/`deref`/`deinit`); every entry
-/// that can reach a `deref()` pins the context with a `RequestContextRef`
-/// guard for its own duration so a self-releasing call is survivable by the
-/// caller frame, and the actual release happens at the guard's drop.
 pub struct RequestContext<
     ThisServer,
     const SSL_ENABLED: bool,
@@ -138,15 +128,8 @@ pub struct RequestContext<
     // fall back to `response_weakref` (see its doc below), so a `Strong`
     // here would root the Response unconditionally and change GC behavior.
     pub(crate) response_jsvalue: Cell<JSValue>,
-    /// The pool-slot / allocation root (write provenance), recorded at
-    /// [`Self::create`]. `as_ctx_ptr()` returns this — never a pointer
-    /// re-derived from `&self` — because the pool release (`deinit` →
-    /// `release_request_context` → `put`) drops and may deallocate through it.
     root: Cell<*mut Self>,
     pub(crate) ref_count: Cell<u8>,
-    /// References currently held by [`RequestContextRef::pin`] frame guards.
-    /// The refcount predicates subtract this so a frame's own pin does not
-    /// perturb "is the only reference" (`ref_count - pin_count == 1`).
     pub(crate) pin_count: Cell<u8>,
 
     /// Weak: for plain Blob/InternalBlob bodies the Response JSValue is
@@ -204,9 +187,6 @@ where
 {
     pub(crate) const IS_H3: bool = HTTP3;
 
-    /// The raw user-data pointer handed to uWS / task callbacks. Callbacks
-    /// only ever re-derive `&Self` from it, and the pool release in
-    /// [`deinit`] identifies the slot by address.
     #[inline]
     pub(crate) fn as_ctx_ptr(&self) -> *mut Self {
         let p = self.root.get();
@@ -228,9 +208,6 @@ where
     }
 
     pub(crate) fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
-        // `server` is a `BackRef` (BACKREF — server outlives `self`); the
-        // pointee is live for the holder's whole lifetime, so decouple the
-        // borrow from the temporary `Cell` read.
         let server = self.server.get()?;
         // SAFETY: BACKREF — the server outlives every context it allocates.
         unsafe { &*server.as_ptr() }.dev_server()
@@ -247,9 +224,6 @@ use bun_http_types as HTTP;
 use bun_http_types::MimeType::MimeType;
 use bun_paths::PathBuffer;
 use std::io::Write as _;
-// Forward to the real module (now declared in `crate::api`). `take` hands
-// back the cell's raw pointer together with its +1 ref; callers adopt it into
-// a `RequestContextRef` guard immediately.
 #[allow(non_snake_case)]
 mod NativePromiseContext {
     use super::{JSGlobalObject, JSValue};
@@ -278,18 +252,11 @@ use bun_jsc::SysErrorJsc as _;
 
 /// RAII: releases one intrusive ref on a [`RequestContext`] at scope exit.
 ///
-/// Every callback entry that can reach a `deref()` (uWS handlers, promise
-/// reactions, task callbacks) constructs one of these from its raw entry
-/// pointer as the first statement: the guard's ref keeps the pooled context
-/// alive for the whole frame even if the body drops the base ref, and the
-/// actual pool release happens here at drop.
 struct RequestContextRef<ThisServer, const SSL: bool, const DBG: bool, const H3: bool>
 where
     ThisServer: ServerLike + 'static,
 {
     ctx: *mut RequestContext<ThisServer, SSL, DBG, H3>,
-    /// Whether this guard's ref was taken by `pin` (counted in `pin_count`)
-    /// rather than adopted.
     is_pin: bool,
 }
 
@@ -298,7 +265,6 @@ impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool>
 where
     ThisServer: ServerLike + 'static,
 {
-    /// Take a fresh ref and hold it until drop.
     #[inline]
     fn pin(this: *mut RequestContext<ThisServer, SSL, DBG, H3>) -> Self {
         // SAFETY: `this` is a live context registered as the callback's
@@ -313,9 +279,6 @@ where
         }
     }
 
-    /// Adopt a reference the caller already owns (a matching `ref_()`
-    /// exists elsewhere); it is released at drop. Use [`Self::pin`] instead
-    /// when you need a *new* reference for the frame's duration.
     #[inline]
     fn adopt(this: *mut RequestContext<ThisServer, SSL, DBG, H3>) -> Self {
         Self {
@@ -324,8 +287,6 @@ where
         }
     }
 
-    /// Shared view of the pinned context. The guard's ref keeps the pointee
-    /// alive for the guard's whole lifetime.
     #[inline]
     fn ctx(&self) -> &RequestContext<ThisServer, SSL, DBG, H3> {
         // SAFETY: this guard owns a ref, so `*self.ctx` is live for `&self`.
@@ -607,8 +568,6 @@ where
     ///
     /// Returned lifetime is **decoupled** from `&self` (unbounded `'r`): the
     /// server is not a sub-field of `RequestContext` (it owns the pool the
-    /// context lives in), so callers may hold `&ThisServer` past calls that
-    /// end or recycle this context.
     #[inline]
     pub(crate) fn server<'r>(&self) -> &'r ThisServer {
         // SAFETY: BACKREF — `server` is `Some(non-null)` after `init()` and
@@ -628,8 +587,6 @@ where
     ///
     /// Returns an unbounded `&'r mut` because the slot is a separate
     /// `HiveArray` allocation, **not** a sub-field of `*self`, so callers may
-    /// hold it across disjoint reborrows of other `RequestContext` fields
-    /// (same pattern as [`server()`]).
     #[inline]
     #[allow(
         clippy::mut_from_ref,
@@ -665,11 +622,7 @@ where
         self.sink.get().map(|p| unsafe { &mut *p.as_ptr() })
     }
 
-    /// The tracked `Response` wrapper cell, or `None` once finalized.
     ///
-    /// Returns an unbounded `&'r mut` because the `Response` is the JSC-owned
-    /// wrapper allocation, **not** a sub-field of `*self`; the `JsCell`
-    /// borrow of the weak handle ends before this returns.
     #[inline]
     fn response_mut<'r>(&self) -> Option<&'r mut Response> {
         let ptr = self
@@ -680,7 +633,6 @@ where
         ptr.map(|p| unsafe { &mut *p })
     }
 
-    /// See [`response_mut`] — the tracked `Request` wrapper cell.
     #[inline]
     fn request_mut<'r>(&self) -> Option<&'r mut Request> {
         let ptr = self
@@ -713,7 +665,6 @@ where
             return;
         }
         if let Some(server) = self.server.get() {
-            // BACKREF. `as_mut()` is the audited `&mut VirtualMachine` accessor.
             server.vm().as_mut().drain_microtasks();
         }
     }
@@ -731,8 +682,6 @@ where
 
     pub(crate) fn set_cookies(&self, cookie_map: Option<*mut CookieMap>) {
         // S008: `CookieMap` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-        // `new_ref` takes a ref for storage. Replacing drops (and so unrefs)
-        // the old one.
         drop(self.cookies.replace(
             cookie_map.map(|p| CookieMapRef::new_ref(bun_opaque::opaque_deref(p.cast_const()))),
         ));
@@ -758,7 +707,6 @@ where
             // was collected before a prior microtask turn reached us).
             return Ok(JSValue::UNDEFINED);
         };
-        // Adopts the promise cell's +1 ref; released at scope exit.
         let ctx = RequestContextRef::adopt(ctx.as_ptr());
 
         let result = arguments[0];
@@ -851,8 +799,6 @@ where
         unsafe { self.render(response) };
     }
 
-    /// The refcount excluding frame pins (see `pin_count`); what the
-    /// "only reference of the context" predicates actually measure.
     #[inline]
     fn unpinned_ref_count(&self) -> u8 {
         self.ref_count.get() - self.pin_count.get()
@@ -977,8 +923,6 @@ where
         }
 
         if let Some(server) = self.server.take() {
-            // server is a BACKREF; pool put + onRequestComplete. `*self` may
-            // be recycled by the pool from here on: nothing below touches it.
             server.release_request_context(self.as_ctx_ptr().cast::<c_void>(), HTTP3);
             // SAFETY: `&mut` through the backref — the server outlives this
             // context and no other borrow of it is live here.
@@ -986,9 +930,6 @@ where
         }
     }
 
-    /// Release one intrusive ref. When the last outstanding ref goes, this
-    /// finalizes and returns the context to its pool, so `*self` may be
-    /// dead when this returns — callers make it their tail.
     pub fn deref(&self) {
         let ref_count = self.ref_count.get();
         stream_log!("deref {} -> {}", ref_count, ref_count - 1);
@@ -1015,7 +956,6 @@ where
             // was collected before a prior microtask turn reached us).
             return Ok(JSValue::UNDEFINED);
         };
-        // Adopts the promise cell's +1 ref; released at scope exit.
         let ctx = RequestContextRef::adopt(ctx.as_ptr());
 
         let err = arguments[0];
@@ -1049,7 +989,6 @@ where
             if !value.is_empty_or_undefined_or_null()
                 && let Some(server) = self.server.get()
             {
-                // BACKREF. `as_mut()` is the audited `&mut VirtualMachine` accessor.
                 server.vm().as_mut().run_error_handler(value, None);
             }
             let state = resp.state();
@@ -1105,7 +1044,6 @@ where
         }
     }
 
-    /// `ctx` is the live `RequestContext` threaded through cork user-data.
     fn render_missing_corked(ctx: *mut Self) {
         // SAFETY: `ctx` is the live `RequestContext` threaded through the
         // synchronous cork call; only a shared view is formed.
@@ -1248,8 +1186,6 @@ where
         }
     }
 
-    /// May release the last ref (pool-releasing `*self`); callers make it
-    /// their tail.
     pub(crate) fn end(&self, data: &[u8], close_connection: bool) {
         ctx_log!("end");
         if let Some(resp) = self.resp.get() {
@@ -1264,8 +1200,6 @@ where
         }
     }
 
-    /// May release the last ref (pool-releasing `*self`); callers make it
-    /// their tail.
     pub(crate) fn end_stream(&self, close_connection: bool) {
         ctx_log!("endStream");
         if let Some(resp) = self.resp.get() {
@@ -1315,8 +1249,6 @@ where
         }
     }
 
-    /// May release the last ref (pool-releasing `*self`); callers make it
-    /// their tail.
     pub(crate) fn end_without_body(&self, close_connection: bool) {
         ctx_log!("endWithoutBody");
         if let Some(resp) = self.resp.get() {
@@ -1344,14 +1276,12 @@ where
         }
     }
 
-    /// `this` is the live `RequestContext` user-data pointer registered with uWS.
     fn on_writable_complete_response_buffer(
         this: *mut Self,
         write_offset: u64,
         resp: uws::AnyResponse,
     ) -> bool {
         ctx_log!("onWritableCompleteResponseBuffer");
-        // Pin: the send below can release the base ref, which may be the last one.
         let pinned = RequestContextRef::pin(this);
         let this = pinned.ctx();
         debug_assert!(this.resp.get().is_some());
@@ -1402,8 +1332,6 @@ where
                 resp: Cell::new(Some(resp)),
                 req: Cell::new(Some(req)),
                 method: resolved_method,
-                // BACKREF — `server` is the live `NewServer` that owns the request
-                // pool this ctx lives in; caller passes `*mut Self`.
                 server: Cell::new(
                     NonNull::new(server).map(|p| bun_ptr::BackRef::from_raw_mut(p.as_ptr())),
                 ),
@@ -1437,17 +1365,13 @@ where
         ctx_log!("create<d> ({:p})<r>", this.as_ptr());
     }
 
-    /// `this` is the live `RequestContext` user-data pointer registered with uWS.
     fn on_timeout(this: *mut Self, _resp: uws::AnyResponse) {
-        // Pin: the JS timeout handler below can synchronously abort/end the
-        // request, which releases refs.
         let pinned = RequestContextRef::pin(this);
         let this = pinned.ctx();
         debug_assert!(this.resp.get().is_some());
         debug_assert!(this.server.get().is_some());
 
         let any_js_calls = core::cell::Cell::new(false);
-        // BACKREF, just asserted Some; `server()` is decoupled from `*this`.
         let server = this.server();
         let _ = server.vm();
         let global_this = server.global_this();
@@ -1470,11 +1394,8 @@ where
         }
     }
 
-    /// `this` is the live `RequestContext` user-data pointer registered with uWS.
     fn on_abort(this: *mut Self, resp: uws::AnyResponse) {
         ctx_log!("onAbort");
-        // Pin: this path releases the base ref (`_ref` below) and re-enters
-        // JS (`iec_trigger`, `signal_fire`, sink/stream abort) on the way.
         let pinned = RequestContextRef::pin(this);
         let this = pinned.ctx();
         debug_assert!(this.resp.get().is_some());
@@ -1502,13 +1423,9 @@ where
 
         this.detach_response();
         let any_js_calls = core::cell::Cell::new(false);
-        // BACKREF, just asserted Some; `server()` is decoupled from `*this`.
         let server = this.server();
         let vm = server.vm();
         let global_this = server.global_this();
-        // The abort releases the base ref on every exit path (the pin above
-        // survives it). Declared before the microtask drain so it runs
-        // *after* (LIFO).
         let _ref = RequestContextRef::adopt(this.as_ctx_ptr());
         // This is a task in the event loop.
         // If we called into JavaScript, we must drain the microtask queue.
@@ -1587,7 +1504,6 @@ where
         ctx_log!("finalizeWithoutDeinit<d> ({:p})<r>", self);
         self.blob.with_mut(|b| b.detach());
         debug_assert!(self.server.get().is_some());
-        // BACKREF
         let global_this = self.server().global_this();
 
         #[cfg(debug_assertions)]
@@ -1662,8 +1578,6 @@ where
     }
 
     fn on_file_stream_complete(ctx: *mut c_void, _resp: uws::AnyResponse) {
-        // Pin: `deref()` below releases the ref FileResponseStream held on
-        // us, which may be the last one.
         let pinned = RequestContextRef::pin(ctx.cast::<Self>());
         let this = pinned.ctx();
         this.detach_response();
@@ -1696,8 +1610,6 @@ where
         _resp: uws::AnyResponse,
     ) -> bool {
         ctx_log!("onWritableResponseStream({})", write_offset);
-        // Pin: the sink's `on_writable` re-enters JS, which can end/deref
-        // this context.
         let pinned = RequestContextRef::pin(this);
         let this = pinned.ctx();
         if let Some(wrapper) = this.sink_mut() {
@@ -1708,10 +1620,8 @@ where
         true
     }
 
-    /// `this` is the live `RequestContext` user-data pointer registered with uWS.
     fn on_writable_bytes(this: *mut Self, write_offset: u64, resp: uws::AnyResponse) -> bool {
         ctx_log!("onWritableBytes");
-        // Pin: the send below can release the base ref, which may be the last one.
         let pinned = RequestContextRef::pin(this);
         let this = pinned.ctx();
         debug_assert!(this.resp.get().is_some());
@@ -1728,8 +1638,6 @@ where
         true
     }
 
-    /// May release the last ref (pool-releasing `*self`); callers make it
-    /// their tail.
     pub(crate) fn send_writable_bytes_for_blob(
         &self,
         bytes_: &[u8],
@@ -1757,8 +1665,6 @@ where
         }
     }
 
-    /// May release the last ref (pool-releasing `*self`); callers make it
-    /// their tail.
     pub(crate) fn send_writable_bytes_for_complete_response_buffer(
         &self,
         write_offset_: u64,
@@ -1768,8 +1674,6 @@ where
         debug_assert!(self.resp.get().is_some());
 
         let close_connection = self.should_close_connection();
-        // Move the buffer out for the FFI call: `try_end` reads it through
-        // the pointer we pass while the cell must not be borrowed.
         let buffer = self.response_buf_owned.replace(Vec::new());
         let total_len = buffer.len();
         let bytes = &buffer[total_len.min(write_offset)..];
@@ -1801,7 +1705,6 @@ where
             return;
         }
 
-        // BACKREF
         let global_this = self.server().global_this();
         let resp = self.resp.get().expect("infallible: resp bound");
 
@@ -2024,7 +1927,6 @@ where
             self.flags.set_has_timeout_handler(false);
         }
 
-        // BACKREF
         let server = self.server();
         FileResponseStream::start(&file_response_stream::StartOptions {
             fd,
@@ -2047,9 +1949,7 @@ where
         });
     }
 
-    /// `this` is the `*mut RequestContext` previously registered as `lock.task`.
     fn do_render_with_body_locked(this: *mut c_void, value: &mut Body::Value) {
-        // Pin: the render below can end the request and release refs.
         let pinned = RequestContextRef::pin(this.cast::<Self>());
         pinned
             .ctx()
@@ -2109,7 +2009,6 @@ where
         let this: &Self = pair.this;
         let stream = &mut pair.stream;
         debug_assert!(this.server.get().is_some());
-        // BACKREF
         let global_this = this.server().global_this();
 
         if this.is_aborted_or_ended() {
@@ -2284,7 +2183,6 @@ where
                             && let Some(server) = this.server.get()
                             && !err.is_empty_or_undefined_or_null()
                         {
-                            // BACKREF. `as_mut()` is the audited `&mut VirtualMachine` accessor.
                             server.vm().as_mut().run_error_handler(err, None);
                         }
                         let mut readable_ref = this
@@ -2432,7 +2330,6 @@ where
 
         if self.end_request_streaming().unwrap_or(true) {
             // TODO: properly propagate exception upwards
-            // BACKREF. `as_mut()` is the audited `&mut VirtualMachine` accessor.
             self.server().vm().as_mut().drain_microtasks();
         }
     }
@@ -2448,7 +2345,6 @@ where
             // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
             // but we received nothing or the connection was aborted
             if matches!(body, Body::Value::Locked(_)) {
-                // BACKREF
                 let global_this = self.server().global_this();
                 body.to_error_instance(
                     Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed),
@@ -2511,11 +2407,9 @@ where
         self.resp.get().is_none()
             || self.flags.aborted()
             || self.server.get().is_none()
-            // BACKREF, just checked Some
             || self.server().terminated()
     }
 
-    /// `pair` is a live stack-local `HeaderResponseSizePair` threaded through cork user-data.
     fn do_render_head_response_after_s3_size_resolved(
         pair: *mut HeaderResponseSizePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>,
     ) {
@@ -2539,8 +2433,6 @@ where
         result: S3::simple_request::S3StatResult<'_>,
         this: *mut c_void,
     ) -> Result<(), jsc::JsTerminated> {
-        // Adopts the ref taken for the S3 stat (`do_render_head_response`);
-        // released at scope exit, after the body's own base-ref release.
         let stat_ref = RequestContextRef::adopt(this.cast::<Self>());
         stat_ref.ctx().on_s3_size_resolved(result);
         Ok(())
@@ -2598,7 +2490,6 @@ where
             this.end_without_body(this.should_close_connection());
             return;
         };
-        // BACKREF
         let global_this = server.global_this();
 
         // GET strips the handler's Content-Length / Transfer-Encoding and frames
@@ -2670,8 +2561,6 @@ where
                 if shim::blob_is_s3(blob) {
                     // we need to read the size asynchronously
                     // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
-                    // Ref for the S3 stat; adopted and released by
-                    // `on_s3_size_resolved_thunk`.
                     this.ref_();
 
                     let crate::webcore::blob::store::Data::S3(s3) =
@@ -2938,7 +2827,6 @@ where
                 if let (Some(flush), Some(resp)) = (wrapper.sink.pending_flush, self.resp.get()) {
                     stream_log!("handleResolveStream: waiting for pending flush");
                     debug_assert!(self.server.get().is_some());
-                    // BACKREF
                     let global_this = self.server().global_this();
                     // The sink no longer registers its own drain callback;
                     // RequestContext owns it (see on_writable_response_stream).
@@ -2997,7 +2885,6 @@ where
 
         debug_assert!(self.server.get().is_some());
         // server is a BACKREF; `global_this()` returns a lifetime decoupled
-        // from `&self`.
         let global_this = self.server().global_this();
         if let Some(resp) = self.response_mut() {
             if let Some(stream) = resp.get_body_readable_stream(global_this) {
@@ -3041,7 +2928,6 @@ where
         let Some(req) = NativePromiseContext::take::<Self>(args[args.len() - 1]) else {
             return Ok(JSValue::UNDEFINED);
         };
-        // Adopts the promise cell's +1 ref; released at scope exit.
         let req = RequestContextRef::adopt(req.as_ptr());
         req.ctx().handle_resolve_stream();
         Ok(JSValue::UNDEFINED)
@@ -3057,7 +2943,6 @@ where
             return Ok(JSValue::UNDEFINED);
         };
         let err = args[0];
-        // Adopts the promise cell's +1 ref; released at scope exit.
         let req = RequestContextRef::adopt(req.as_ptr());
 
         req.ctx().handle_reject_stream(global_this, err);
@@ -3133,10 +3018,8 @@ where
         if DEBUG_MODE {
             if let Some(server) = self.server.get() {
                 if !err.is_empty_or_undefined_or_null() {
-                    // BACKREF
                     let server = &*server;
                     let mut exception_list: jsc::ExceptionList = Vec::new();
-                    // `as_mut()` is the audited `&mut VirtualMachine` accessor.
                     server
                         .vm()
                         .as_mut()
@@ -3215,11 +3098,6 @@ where
         self.end_stream(self.should_close_connection());
     }
 
-    /// `value` points at the response body slot (a separate JSC-owned
-    /// allocation). It is passed raw, not as a protected `&mut` argument:
-    /// the render paths below re-derive `&mut Response` internally
-    /// (`render_metadata`), and each of them returns immediately after, so
-    /// the working reference is never used across such a re-entry.
     pub(crate) fn do_render_with_body(
         &self,
         value: *mut Body::Value,
@@ -3233,7 +3111,6 @@ where
         // If a ReadableStream can trivially be converted to a Blob, do so.
         // If it's a WTFStringImpl and it cannot be used as a UTF-8 string, convert it to a Blob.
         value.to_blob_if_possible();
-        // BACKREF
         let global_this = this.server().global_this();
         match value {
             Body::Value::Error(err_ref) => {
@@ -3362,8 +3239,6 @@ where
                                 this.do_render_blob();
                                 return;
                             }
-                            // The pipe holds a ref, released in `on_pipe` when
-                            // the stream reports done.
                             this.ref_();
                             // Same as do_render_stream's Pending branch: the
                             // body is in flight, so `handle_reject` must not
@@ -3432,9 +3307,6 @@ where
         this.do_render_blob();
     }
 
-    /// `ByteStream` sink `write_chunk` — `this` is the ctx registered when
-    /// the sink was installed, kept alive by the ref taken there until
-    /// [`Self::end_chunk`] releases it.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn write_chunk(
         this: *mut Self,
@@ -3467,8 +3339,6 @@ where
         }
     }
 
-    /// `ByteStream` sink completion; releases the ref taken when the sink
-    /// was installed (`_ref` adopts it).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn end_chunk(this: *mut Self, err: Option<&WebCore::streams::StreamError>) {
         let _ref = RequestContextRef::adopt(this);
@@ -3491,7 +3361,6 @@ where
         this.end_stream(this.should_close_connection());
     }
 
-    /// `this` is the live `RequestContext` user-data pointer registered with uWS.
     pub(crate) fn on_writable_byte_stream(
         this: *mut Self,
         _write_offset: u64,
@@ -3529,8 +3398,6 @@ where
         }
     }
 
-    /// `this` points to a live `RequestContext` threaded through cork
-    /// user-data; `render_bytes()` may release the last ref, so it is the tail.
     fn do_render_blob_corked(this: *mut Self) {
         // SAFETY: `this` is live for the synchronous cork call; only a shared
         // view is formed.
@@ -3609,11 +3476,7 @@ where
         if self.is_aborted_or_ended() {
             return;
         }
-        // BACKREF
         let global_this = self.server().global_this();
-        // Scope the `&mut Response` here: `do_render_with_body` re-derives
-        // the response internally (`render_metadata`), so only the body-value
-        // slot pointer crosses the call.
         let (value, owned_readable) = {
             let response: &mut Response = self.response_mut().unwrap();
             let owned_readable = response.get_body_readable_stream(global_this);
@@ -3672,7 +3535,6 @@ where
             self.render_production_error(500);
             return true;
         };
-        // BACKREF
         let global_this = (*server).global_this();
         let err = global_this.create_error_instance(format_args!(
             "Cannot send a Response with status {status}. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).",
@@ -3698,7 +3560,6 @@ where
         let Some(server) = self.server.get() else {
             return self.render_production_error(status);
         };
-        // BACKREF
         let server = &*server;
         let global_this = server.global_this();
         // `ServerLike::vm()` is the process-static VM `BackRef`; `as_mut()` is
@@ -3714,7 +3575,6 @@ where
 
             let exception_list = jsc_exceptions_to_api(exception_list_upstream);
             let log = vm.log_mut().unwrap();
-            // NOTE: format eagerly so the message outlives the pathname read.
             bun_core::pretty_errorln!(
                 "<r><red>{:?}<r> - <b>{}<r> failed",
                 self.method,
@@ -3744,7 +3604,6 @@ where
     ) {
         jsc::mark_binding!();
         if let Some(server) = self.server.get() {
-            // BACKREF
             let server = &*server;
             let on_error = server.config().on_error;
             if !on_error.is_empty() && !self.flags.has_called_error_handler() {
@@ -3792,7 +3651,6 @@ where
     ) {
         let ctx = self;
         debug_assert!(ctx.server.get().is_some());
-        // BACKREF
         let server = ctx.server();
         let vm = server.vm();
 
@@ -3883,8 +3741,6 @@ where
         let response: &mut Response = self.response_mut().unwrap();
         let sendfile = self.sendfile.get();
         let mut status = response.status_code();
-        // The blob is not replaced while metadata is rendered; a shared
-        // view suffices for size/type queries.
         let blob = self.blob.get();
         let mut needs_content_range = self.flags.needs_content_range()
             && (sendfile.total > 0 || sendfile.remain < blob.size());
@@ -3931,7 +3787,6 @@ where
         }
 
         if let Some(mut cookies) = self.cookies.replace(None) {
-            // BACKREF
             let global_this = self.server().global_this();
             let r = cookies.write(
                 global_this,
@@ -3943,7 +3798,6 @@ where
                 return;
             } // TODO: properly propagate exception upwards
         }
-        // Re-read after the (throwable) cookie write.
         let blob = self.blob.get();
 
         if needs_content_type
@@ -3963,7 +3817,6 @@ where
         // discover it (RFC 7838). Multiple Alt-Svc fields are valid, so a
         // user-supplied one composes rather than conflicts.
         if !HTTP3 {
-            // BACKREF
             if let Some(alt) = self.server().h3_alt_svc() {
                 resp.write_header(b"alt-svc", alt);
             }
@@ -4061,8 +3914,6 @@ where
         }
     }
 
-    /// May release the last ref (pool-releasing `*self`); callers make it
-    /// their tail.
     pub(crate) fn render_bytes(&self) {
         // SAFETY: `self.blob`'s backing bytes are owned by the context and
         // outlive the `try_end`/`on_writable` calls below; the cell read ends
@@ -4135,11 +3986,8 @@ where
         self.do_render();
     }
 
-    /// `this` is the live `RequestContext` user-data pointer registered with uWS.
     pub(crate) fn on_buffered_body_chunk(this: *mut Self, chunk: &[u8], last: bool) {
         ctx_log!("onBufferedBodyChunk {} {}", chunk.len(), last);
-        // Pin: `on_data`, `to_error_instance`, `resolve` and
-        // `end_without_body` re-enter JS, and the last releases the base ref.
         let pinned = RequestContextRef::pin(this);
         let this = pinned.ctx();
         debug_assert!(this.resp.get().is_some());
@@ -4153,7 +4001,6 @@ where
             // We have to ignore those chunks unless it's the last one
             return;
         }
-        // BACKREF; `server()` is decoupled from `*this`.
         let server = this.server();
         let vm = server.vm();
         let global_this = server.global_this();
@@ -4272,7 +4119,6 @@ where
         }
 
         // This is the start of a task, so it's a good time to drain
-        // The pooled body slot is a separate allocation decoupled from `*this`.
         if let Some(body) = this.request_body_mut() {
             // The up-front maxRequestBodySize check in the server only
             // sees Content-Length. HTTP/3 (and H1 chunked) bodies may
@@ -4417,9 +4263,6 @@ where
         }
     }
 
-    /// `this` is the `*mut RequestContext` previously registered as the
-    /// body stream's drain producer. `ByteStream::on_data` can re-enter here
-    /// from inside `on_buffered_body_chunk`; everything touched is a `Cell`.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_request_body_stream_drained(this: *mut Self) {
         // SAFETY: `this` is the registered live `*mut RequestContext`.
@@ -4497,7 +4340,6 @@ where
                         l.on_receive_value = None;
                     }
                     let mut new_body: Body::Value = Body::Value::Null;
-                    // BACKREF
                     let global_this = server.global_this();
                     let _ = Body::Value::resolve(&mut old, &mut new_body, global_this, None); // TODO: properly propagate exception upwards
                     *body = new_body;
@@ -4506,7 +4348,6 @@ where
         }
     }
 
-    /// `ptr` is the `*mut RequestContext` previously registered as the body callback context.
     pub(crate) fn on_request_body_readable_stream_available(
         ptr: *mut c_void,
         global_this: &JSGlobalObject,
@@ -4519,13 +4360,11 @@ where
             .set(readable_stream::Strong::init(readable, global_this));
     }
 
-    /// `this` is the `*mut RequestContext` previously registered as the body callback context.
     pub(crate) fn on_start_buffering_callback(this: *mut c_void) {
         // SAFETY: `this` is the registered live body-callback context.
         unsafe { &*this.cast::<Self>() }.on_start_buffering();
     }
 
-    /// `this` is the `*mut RequestContext` previously registered as the body callback context.
     pub(crate) fn on_start_streaming_request_body_callback(
         this: *mut c_void,
     ) -> WebCore::DrainResult {
@@ -4802,8 +4641,6 @@ bitflags::bitflags! {
     }
 }
 
-/// Interior-mutable so the owning [`RequestContext`] can flip flags through
-/// `&self` — see its type-level docs.
 #[repr(transparent)]
 #[derive(Default)]
 pub struct Flags<const DEBUG_MODE: bool>(Cell<FlagsBits>);

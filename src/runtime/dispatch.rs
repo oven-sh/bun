@@ -190,7 +190,6 @@ pub(crate) enum RunTaskResult {
 // Keeping `run_task` out-of-line lets `tick_queue_with_count` stay a tight
 // drain-loop wrapper (front-clustered via `src/startup.order`), and the cold
 // Shell*/Bake* clusters are further hoisted into [`run_task_cold`] so this
-// function's hot residue (AnyTaskJob/ManagedTask/CppTask + fs/napi) fits in 1-2
 // pages.
 #[inline(never)]
 pub(crate) fn run_task(
@@ -585,7 +584,6 @@ pub(crate) fn run_task(
 /// Shell* / Bake* (and, when they land, Install*) tags are never seen during
 /// `bun <file>` startup or the `dot` benchmark, but their per-arm bodies pull
 /// in `bun_shell` / `bun_bake` call sites that LLVM otherwise interleaves with
-/// the hot AnyTaskJob/ManagedTask/CppTask jump table. Splitting them behind a
 /// `#[cold]` boundary lets lld place this whole cluster after the
 /// front-clustered startup window (see `src/startup.order`).
 ///
@@ -1283,9 +1281,6 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             FetchTasklet::deref(task.ptr.cast::<FetchTasklet>());
             true
         }
-        // A queued deferred SendQueue task owns a ref (taken in
-        // `schedule_deferred`); it will never run, so drop that ref here
-        // rather than leak the SendQueue. The JS callbacks are skipped.
         task_tag::SendQueueDeferred => {
             // SAFETY: `task.ptr` is the SendQueue root queued with a held ref.
             unsafe {
@@ -1351,7 +1346,6 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             true
         }
         // Re-queued by the caller; the box stays reachable from the
-        // static-rooted VM. Dispatching an arbitrary task's callback
         // is not generally safe at shutdown (e.g. `AsyncModule::on_done`,
         // `dns::Holder::run` call straight into JS).
         _ => false,

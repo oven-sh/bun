@@ -52,7 +52,6 @@ use bun_sys::{self as sys, Fd, File};
 // ─── local shims (upstream-crate gaps; see PORTING.md §extension traits) ────
 
 /// Recover `&mut VirtualMachine` from the per-thread singleton.
-///
 /// Safe: delegates to [`VirtualMachine::as_mut`], which already encapsulates
 /// the single-JS-thread thread-local deref (provenance from `get_mut_ptr()`).
 #[inline]
@@ -70,19 +69,13 @@ use crate::jsc_hooks::timer_all_mut as timer_all;
 // Note: every method on the path to `finish()` (which `heap::take`-
 // drops `this`) takes a raw `*mut Self` receiver.
 // A `&mut self` *parameter* would carry a Stacked Borrows FnEntry protector,
-// making the in-flight dealloc UB; each entry point instead confines its
-// exclusive access to a temporary `(*this).method(..)` borrow that ends
-// before any call that may free `this`.
 trait CronJobBase: Sized {
     fn remaining_fds_mut(&mut self) -> &mut i8;
     fn err_msg_mut(&mut self) -> &mut Option<Vec<u8>>;
     fn has_called_process_exit_mut(&mut self) -> &mut bool;
     fn exit_status_mut(&mut self) -> &mut Option<Status>;
 
-    /// The job's state-machine enum.
     type State: Copy;
-    // The state constants / slots feed the platform-specific `prepare_*`
-    // defaults below, so each exists only on the targets that path builds on.
     #[cfg(all(not(target_os = "macos"), not(windows)))]
     const READING_CRONTAB: Self::State;
     #[cfg(target_os = "macos")]
@@ -94,8 +87,6 @@ trait CronJobBase: Sized {
     #[cfg(target_os = "macos")]
     fn title_bytes(&self) -> &[u8];
 
-    /// `None` records the error (for the caller to `finish`). `this_ptr` is
-    /// stored (never dereferenced) as the reader's parent pointer.
     #[cfg(all(not(target_os = "macos"), not(windows)))]
     fn prepare_list_crontab(&mut self, this_ptr: *mut core::ffi::c_void) -> Option<*const c_char>
     where
@@ -111,7 +102,6 @@ trait CronJobBase: Sized {
         crontab_path
     }
 
-    /// The `launchctl bootout` domain-target string; records OOM via `set_err`.
     #[cfg(target_os = "macos")]
     fn prepare_bootout(&mut self) -> Result<ZString, ()> {
         self.set_state(Self::BOOTING_OUT);
@@ -123,15 +113,11 @@ trait CronJobBase: Sized {
         .map_err(|_| self.set_err(format_args!("Out of memory")))
     }
 
-    /// Decide, under a scoped borrow, what the job should do next.
     fn check_finished(&mut self) -> JobAction;
     /// Consumes and frees `this`.
     unsafe fn finish(this: *mut Self);
-    /// May free `this` (via `finish` or a further spawn).
     unsafe fn advance_state(this: *mut Self);
 
-    /// Records the first error only; later errors are dropped so the message
-    /// the promise rejects with is the root cause.
     fn set_err(&mut self, args: core::fmt::Arguments<'_>) {
         if self.err_msg_mut().is_none() {
             let mut msg = Vec::new();
@@ -140,8 +126,6 @@ trait CronJobBase: Sized {
         }
     }
 
-    /// May free `this`. Caller must not touch `this` afterward. The decision
-    /// is computed under a scoped `&mut` that ends before the freeing calls.
     unsafe fn maybe_finished(this: *mut Self) {
         // SAFETY: caller guarantees `this` is the live heap job with no active
         // borrows; the exclusive borrow is confined to `check_finished`.
@@ -211,7 +195,6 @@ trait CronJobBase: Sized {
     }
 }
 
-/// What `check_finished` decided; the raw-ptr caller acts after the borrow ends.
 enum JobAction {
     Pending,
     Finish,
@@ -332,8 +315,6 @@ impl CronJobBase for CronRegisterJob {
                     && self.state != RegisterState::BootingOut
                 {
                     // Materialize the trimmed stderr into an owned buffer:
-                    // `final_buffer()` borrows the reader mutably, and
-                    // `set_err` below needs `&mut self` — copy out so the two
                     // borrows do not overlap (Windows only; POSIX ignores
                     // stderr here).
                     #[cfg(windows)]
@@ -503,9 +484,6 @@ impl CronRegisterJob {
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
     }
 
-    /// `Err` records the error (for the caller to `finish`). The returned
-    /// tmp-path pointer aims into `self.tmp_path`'s heap buffer, which stays
-    /// put until `finish`.
     #[cfg(not(target_os = "macos"))]
     fn prepare_install_crontab(&mut self) -> Result<(*const c_char, *const c_char), ()> {
         let existing_content = self.stdout_reader.final_buffer().as_slice();
@@ -587,7 +565,6 @@ impl CronRegisterJob {
         unsafe { Self::spawn_bootout(this) };
     }
 
-    /// `Err` records the error (for the caller to `finish`).
     #[cfg(target_os = "macos")]
     fn prepare_plist(&mut self) -> Result<(), ()> {
         self.state = RegisterState::WritingPlist;
@@ -750,8 +727,6 @@ impl CronRegisterJob {
         drop(plist_path);
     }
 
-    /// `Err` records the error (for the caller to `finish`). Takes `tmp_path`
-    /// out so `finish`/`Drop` won't delete the installed plist.
     #[cfg(target_os = "macos")]
     fn prepare_bootstrap(&mut self) -> Result<(ZString, ZString), ()> {
         self.state = RegisterState::Bootstrapping;
@@ -982,9 +957,6 @@ impl CronRegisterJob {
         drop(task_name);
     }
 
-    /// `Err` records the error (for the caller to `finish`). The returned
-    /// XML-path pointer aims into `self.tmp_path`'s heap buffer, which stays
-    /// put until `finish`.
     fn prepare_schtasks_create(&mut self) -> Result<(ZString, *const c_char), ()> {
         self.state = RegisterState::InstallingCrontab;
 
@@ -1176,8 +1148,6 @@ impl CronJobBase for CronRemoveJob {
                     // removal of a non-existent job should resolve without error.
                     || (cfg!(windows) && self.state == RemoveState::InstallingCrontab);
                 if exited.code != 0 && !is_acceptable_nonzero {
-                    // Owned copy: `final_buffer()` borrows the reader mutably
-                    // and would alias `set_err` below. Copy the trimmed bytes out.
                     #[cfg(windows)]
                     let stderr_owned: Vec<u8> = bun_core::strings::trim(
                         self.stderr_reader.final_buffer().as_slice(),
@@ -1282,7 +1252,6 @@ impl CronJobBase for CronRemoveJob {
 }
 
 impl CronRemoveJob {
-    /// Unlinks the job's plist, recording any error via `set_err`.
     #[cfg(target_os = "macos")]
     fn unlink_plist(&mut self) {
         let Some(home) = env_var::HOME.get() else {
@@ -1341,9 +1310,6 @@ impl CronRemoveJob {
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
     }
 
-    /// `Err` records the error (for the caller to `finish`). The returned
-    /// tmp-path pointer aims into `self.tmp_path`'s heap buffer, which stays
-    /// put until `finish`.
     #[cfg(not(target_os = "macos"))]
     fn prepare_filtered_crontab(&mut self) -> Result<(*const c_char, *const c_char), ()> {
         let existing_content = self.stdout_reader.final_buffer().as_slice();
@@ -1495,7 +1461,6 @@ impl CronRemoveJob {
         drop(task_name);
     }
 
-    /// `Err` records the error (for the caller to `finish`).
     fn prepare_schtasks_delete(&mut self) -> Result<ZString, ()> {
         self.state = RemoveState::InstallingCrontab;
         alloc_print_z(format_args!(

@@ -508,10 +508,6 @@ impl<'a> Coordinator<'a> {
         self.try_reap(w);
     }
 
-    /// Reap once both the process-exit notification and channel EOF have
-    /// arrived. This runs inside a channel/process callback, so only mark the
-    /// worker; `run_pending_reaps` does the teardown after the callback frame
-    /// has unwound (the reap drops `w.ipc`).
     pub(crate) fn try_reap(&mut self, w: &mut Worker) {
         if w.exit_status.is_none() || !w.ipc.done.get() {
             return;
@@ -519,8 +515,6 @@ impl<'a> Coordinator<'a> {
         w.reap_pending = true;
     }
 
-    /// Runs from `drive()` between event-loop ticks — never inside a channel
-    /// or process callback — so `reap_worker` may drop and rebuild `w.ipc`.
     fn run_pending_reaps(&mut self) {
         let n = self.spawned_count as usize;
         for i in 0..n {

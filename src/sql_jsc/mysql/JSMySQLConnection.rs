@@ -525,9 +525,6 @@ impl JSMySQLConnection {
             ref_count: Cell::new(1),
             js_value: JsCell::new(JsRef::empty()),
             global_object: GlobalRef::from(global_object),
-            // Sourced from the singleton's raw accessor so the backref's
-            // provenance is independent of the caller's live `&mut vm` local
-            // (still used below), rather than a child tag of it.
             vm: BackRef::from(
                 core::ptr::NonNull::new(VirtualMachine::get_mut_ptr()).expect("vm singleton"),
             ),

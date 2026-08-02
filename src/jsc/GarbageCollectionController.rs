@@ -12,12 +12,7 @@ use crate::virtual_machine::VirtualMachine;
 
 const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;
 
-/// Every method takes `&self`: `perform_gc()` runs GC finalizers on this
-/// thread, which may reach `vm.gc_controller` again, so no `&mut Self` may
-/// span it. Mutable state lives in `Cell`/[`JsCell`].
 pub struct GarbageCollectionController {
-    // `JsCell` is `#[repr(transparent)]`, so `offset_of!` (dispatch
-    // `container_of`) sees the inner `EventLoopTimer` at this field's offset.
     pub gc_repeating_timer: JsCell<EventLoopTimer>,
     /// Written by every `perform_gc()` caller, so the fast/slow comparison sees the last such call, not strictly the last fire; external callers are one-shot so worst case is one extra 30 s slow interval.
     pub(crate) gc_last_heap_size: Cell<usize>,

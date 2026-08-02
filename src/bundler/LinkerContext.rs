@@ -117,7 +117,6 @@ pub struct LinkerContext<'a> {
     /// to know whether or not we can free it safely.
     pub(crate) pending_task_count: AtomicU32,
 
-    ///
     pub(crate) has_any_css_locals: AtomicU32,
 
     /// Used by Bake to extract []CompileResult before it is joined.

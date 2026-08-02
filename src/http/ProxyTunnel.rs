@@ -93,7 +93,6 @@ impl Drop for ProxyTunnel {
 //
 // Centralise the `addr_of!((*ptr).field)` projections used by every SSLWrapper
 // callback. Each accessor projects ONE field disjoint from `wrapper` (the field
-// the in-flight `&SSLWrapper` overlaps), so the returned borrow does not
 // alias the caller. See the ALIASING NOTE below for the full invariant.
 impl ProxyTunnel {
     /// Read-only access to `socket` (disjoint from `wrapper`).
@@ -139,20 +138,12 @@ impl ProxyTunnel {
         Self::close_raw(this, err);
     }
 
-    /// Read the inner-TLS `SSL*` from `wrapper` (see [`Self::wrapper_ref`]).
     #[inline]
     fn wrapper_ssl(this: NonNull<Self>) -> Option<NonNull<bun_boringssl_sys::SSL>> {
         Self::wrapper_ref(this.as_ptr()).and_then(|w| w.ssl.get())
     }
 
-    /// Shared access to `wrapper` via raw field projection.
     ///
-    /// This is the dual of the disjoint-field accessors above: the returned
-    /// borrow covers ONLY `wrapper`, and every `SSLWrapper` method takes
-    /// `&self`, so the reentrant callbacks fired from
-    /// `start`/`shutdown`/`flush`/`receive_data` — which touch only
-    /// `socket`/`write_buffer`/`shutdown_err`/`ref_count` via the accessors
-    /// above — never alias it exclusively.
     ///
     /// INVARIANT (module): `this` is a live intrusive-refcounted tunnel and
     /// no `&mut ProxyTunnel` (whole-struct) is held across the call.
@@ -165,7 +156,6 @@ impl ProxyTunnel {
 
     /// Read-only access to `ref_count` (a `Cell<u32>`; disjoint from `wrapper`).
     /// Used to bump the intrusive refcount from within a callback whose caller
-    /// holds `&SSLWrapper` on `(*this).wrapper`.
     #[inline]
     fn ref_count_of<'a>(this: NonNull<Self>) -> &'a core::cell::Cell<u32> {
         // SAFETY: see [`Self::socket_of`].
@@ -179,7 +169,6 @@ impl ProxyTunnel {
     /// live `&mut self` (`on_writable`/`receive`). `ScopedRef::new` bumps via
     /// raw `CellRefCounted::ref_count_raw` field projection — touching only
     /// `ref_count`, never the whole tunnel — so it does not alias the caller's
-    /// `&SSLWrapper` (see ALIASING NOTE). HTTP-thread-only. Centralises the
     /// `unsafe { ScopedRef::new(nn.as_ptr()) }` open-coded at five call sites.
     #[inline]
     fn ref_scope(this: NonNull<Self>) -> bun_ptr::ScopedRef<Self> {
@@ -206,16 +195,9 @@ fn client_from_ctx<'a, 'c>(ctx: *mut HTTPClient<'c>) -> &'a mut HTTPClient<'c> {
 // ─── SSLWrapper callbacks (ctx = *mut HTTPClient) ────────────────────────────
 //
 // ALIASING NOTE: every callback below is invoked *synchronously from inside* an
-// SSLWrapper method whose `&self` receiver IS `(*proxy_tunnel).wrapper`.
-// Forming `&mut ProxyTunnel` here would create a unique borrow of memory that
-// overlaps the caller's `&SSLWrapper` — UB under Stacked Borrows. Callbacks
-// therefore never materialise `&mut ProxyTunnel`; they access individual
-// fields through raw `addr_of!`/`addr_of_mut!` projections so each borrow
-// covers only memory disjoint from `wrapper`.
 
 fn on_open(ctx: *mut HTTPClient) {
     // HTTPClient owns ProxyTunnel only by `NonNull` pointer, so the borrow
-    // here does not overlap the caller's `&SSLWrapper`.
     let this = client_from_ctx(ctx);
     scoped_log!(http_proxy_tunnel, "ProxyTunnel onOpen");
     bun_analytics::features::http_client_proxy.fetch_add(1, Ordering::Relaxed);
@@ -465,7 +447,6 @@ pub(crate) fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
     };
     // Live intrusive-refcounted tunnel. Access `write_buffer` and `socket` via
     // disjoint field accessors only — never form `&mut ProxyTunnel`, because
-    // the caller (flush/handle_traffic) holds `&SSLWrapper` which IS
     // `(*proxy).wrapper`; a whole-struct `&mut` would overlap it.
     let write_buffer = ProxyTunnel::write_buffer_of(proxy_nn);
     // Preserve TLS record ordering: if any encrypted bytes are buffered,
@@ -509,7 +490,6 @@ fn on_close(ctx: *mut HTTPClient) {
         return;
     };
     let proxy_ptr = proxy_nn.as_ptr();
-    // close_raw still holds `&SSLWrapper` on `(*proxy_ptr).wrapper`, so
     // bump refcount via the disjoint Cell projection.
     // Not a ScopedRef — the matching deref is deferred via
     // `schedule_proxy_deref` to avoid freeing within the callback.
@@ -629,9 +609,6 @@ impl ProxyTunnel {
         // synchronously fires on_open()/write_encrypted(), which re-derive
         // borrows to `*this` and fields of `*proxy_tunnel` from the raw ctx
         // pointer. NLL ends `proxy_tunnel_ref`/`this` here since neither is
-        // used below; the `&SSLWrapper` formed for the call covers only the
-        // `wrapper` field, and the callbacks access only disjoint tunnel
-        // fields via `addr_of!` (see ALIASING NOTE).
         let wrapper = ProxyTunnel::wrapper_ref(proxy_tunnel).unwrap();
         if !start_payload.is_empty() {
             scoped_log!(http_proxy_tunnel, "proxy tunnel start with payload");
@@ -648,7 +625,6 @@ impl ProxyTunnel {
     /// a held `&mut ProxyTunnel`.
     ///
     /// All field access goes through the disjoint-field accessors
-    /// ([`Self::shutdown_err_of`], [`Self::wrapper_ref`]), which already
     /// encode the module INVARIANT that `this` is a live intrusive-refcounted
     /// tunnel and no whole-struct `&mut ProxyTunnel` is held across the call.
     /// Callers satisfy that by construction (see [`Self::close_from_callback`]).
@@ -657,21 +633,12 @@ impl ProxyTunnel {
         Self::shutdown_err_of(this).set(err);
         // shutdown() fires on_close synchronously, which accesses only
         // disjoint tunnel fields via `addr_of!` (see on_close), so the
-        // `&SSLWrapper` from `wrapper_ref` is never aliased by a `&mut`
-        // across the reentrant call.
         if let Some(wrapper) = ProxyTunnel::wrapper_ref(this.as_ptr()) {
             // fast shutdown the connection
             let _ = wrapper.shutdown(true);
         }
     }
 
-    /// Callback-safe fast shutdown. Takes `NonNull<Self>` (like
-    /// [`Self::set_socket`] / [`Self::write_buffer_of`]) so the synchronous
-    /// `on_close` that `wrapper.shutdown()` fires — which reaches
-    /// `write_buffer_of`/`set_socket` through the tunnel's raw pointer — never
-    /// writes under a live whole-struct `&mut ProxyTunnel`. Only the disjoint
-    /// `wrapper` field is (shared-)borrowed for the call; `SslWrapper` methods
-    /// are `&self`.
     pub(crate) fn shutdown(this: NonNull<Self>) {
         // SAFETY: module INVARIANT — `this` is a live intrusive-refcounted
         // tunnel and the caller's `&mut` borrows are NLL-dead before this call.
@@ -711,7 +678,6 @@ impl ProxyTunnel {
         } // drop &mut write_buffer before flush() reborrows it inside write_encrypted
         // Refcount > 0 until _guard drops. The reentrant write_encrypted
         // touches only `write_buffer`/`socket` via accessors, disjoint from
-        // the `&wrapper` returned by `wrapper_ref`.
         if let Some(wrapper) = ProxyTunnel::wrapper_ref(self_ptr) {
             // Cycle to through the SSL state machine
             let _ = wrapper.flush();
@@ -726,8 +692,6 @@ impl ProxyTunnel {
         // receive_data() fires on_data/on_handshake/write_encrypted/on_close
         // synchronously; each accesses only tunnel fields disjoint from
         // `wrapper` via the accessors above (see ALIASING NOTE), so the
-        // `&SSLWrapper` from `wrapper_ref` is never aliased by a `&mut`
-        // across those reentrant calls.
         if let Some(wrapper) = ProxyTunnel::wrapper_ref(self_nn.as_ptr()) {
             wrapper.receive_data(buf);
         }

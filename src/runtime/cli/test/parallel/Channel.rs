@@ -3,7 +3,6 @@
 //! socket/pipe with backpressure buffered and drained via the loop, so a full
 //! kernel buffer never truncates a frame. The owner type provides
 //! `on_channel_frame(kind, &mut Frame::Reader)` and `on_channel_done()`.
-//!
 //! POSIX backend: `uws::NewSocketHandler` adopted from a socketpair fd.
 //! Windows backend: `uv::Pipe` over the inherited duplex named-pipe end (same
 //! mechanism as `Bun.spawn({ipc})` / `process.send()`).
@@ -15,11 +14,6 @@
 //! self-pointer. `Drop` assumes no write is in flight — true for both call
 //! sites (start() errdefer and reap_worker after the peer has exited).
 //!
-//! Reentrancy: the read/close/writable callbacks re-enter the owner, which
-//! may call back into this channel (`send`), so every method takes `&self`
-//! and mutable state lives in `Cell`/[`JsCell`]. Owners must not drop or
-//! replace the channel from inside one of its callbacks; the coordinator
-//! defers reaping until the callback frame has unwound.
 
 use core::cell::Cell;
 #[cfg(not(windows))]
@@ -65,10 +59,6 @@ pub struct Channel<Owner> {
 
     pub(crate) backend: Backend,
 
-    /// This channel's own address with write provenance, recorded by
-    /// [`Channel::adopt`] / [`Channel::adopt_pipe`] from the owner's
-    /// `&mut`. Callback pointers and the owner recovery derive from it,
-    /// never from a `&self`.
     root: Cell<*mut Channel<Owner>>,
 
     _owner: PhantomData<*mut Owner>,
@@ -93,10 +83,6 @@ impl<Owner> Default for Channel<Owner> {
 }
 
 impl<Owner: ChannelOwner> Channel<Owner> {
-    /// Raw backref to the embedding owner, derived from the root recorded at
-    /// adopt time (write provenance over the whole owner). Callers form
-    /// `&mut Owner` only for the duration of one callback call, with no cell
-    /// borrow of `self` held across it.
     #[inline]
     fn owner_ptr(&self) -> *mut Owner {
         let root = self.root.get();
@@ -156,14 +142,8 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 
 #[cfg(windows)]
 pub struct WindowsBackend {
-    /// Owned `Box<uv::Pipe>` held as its `heap::into_raw` pointer; null once
-    /// detached. Reclaimed by `close_and_destroy`.
     pub(crate) pipe: Cell<*mut uv::Pipe>,
     /// Read scratch — libuv asks us to allocate before each read.
-    /// Wrapped so every byte is interior-mutable: libuv forms
-    /// `&mut Channel` from the stored root on each read; a plain array here
-    /// would be the one field where that retag pops the shared views held
-    /// during frame decoding.
     pub(crate) read_chunk: JsCell<[u8; 16 * 1024]>,
     /// Payload owned by the in-flight uv_write; must stay stable until the
     /// callback. New writes go to `out` until this completes, then the buffers
@@ -198,7 +178,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     // parameter would trip `invalid_reference_casting` on the `&T → &mut T`
     // promotion; the raw-pointer route sidesteps that lint while keeping both
     // call sites (which pass `&`/`&mut` and coerce) unchanged.
-    /// `this` is the channel's address derived from the owner's `&mut`.
     pub(crate) fn adopt(this: *mut Self, vm: *const VirtualMachine, fd: Fd) -> bool {
         // SAFETY: caller passes `&raw mut owner.channel` (live for the call).
         let self_ = unsafe { &*this };
@@ -278,7 +257,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// `close()` / `Drop`, and both sides exit via Global.exit / drive()
     /// returning, so the extra ref never holds the process open.
     #[cfg(windows)]
-    /// `this` is the channel's address derived from the owner's `&mut`.
     pub(crate) fn adopt_pipe(
         this: *mut Self,
         _vm: *const VirtualMachine,
@@ -307,8 +285,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             // for `close_and_destroy`.
             return false;
         }
-        // `pipe` was Box-allocated by the caller (`heap::into_raw`); on success
-        // the channel takes ownership of the raw allocation.
         self.backend.pipe.set(pipe);
         true
     }
@@ -460,9 +436,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         #[cfg(not(windows))]
         {
             while !self.done.get() {
-                // No `out` borrow is held across `write()`: a synchronous
-                // close inside it re-enters this channel (`mark_done` →
-                // `on_channel_done`, which may `send()`).
                 let mut pending = self.out.replace(Vec::new());
                 if pending.is_empty() {
                     self.out.set(pending);
@@ -472,7 +445,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 let w = usize::try_from(wrote).unwrap_or(0).min(pending.len());
                 pending.drain_front(w);
                 self.out.with_mut(|cur| {
-                    // Bytes queued during the write are newer: after the tail.
                     pending.extend_from_slice(cur);
                     *cur = pending;
                 });
@@ -497,7 +469,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                     // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
                     unsafe { uv::Pipe::close_and_destroy(p) };
                 } else {
-                    // Already closing: keep ownership; the uv close callback
                     // finishes the teardown.
                     self.backend.pipe.set(p);
                 }
@@ -512,10 +483,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 
     // -- frame decode (shared) -----------------------------------------------
 
-    /// `data` is appended to the pending input and every complete frame is
-    /// dispatched to the owner. The buffer is moved out of `r#in` for the
-    /// duration so no cell borrow spans the owner callbacks; the read
-    /// callbacks never nest, so nothing appends to `r#in` behind our back.
     fn ingest(&self, data: &[u8]) {
         if self.done.get() {
             return;
@@ -550,8 +517,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             if cur.is_empty() {
                 *cur = buf;
             } else {
-                // Anything appended during the callbacks is newer: keep it
-                // after the unconsumed tail.
                 buf.extend_from_slice(cur);
                 *cur = buf;
             }
@@ -582,8 +547,6 @@ impl<Owner> Drop for Channel<Owner> {
         }
         #[cfg(not(windows))]
         {
-            // Detach the field before `close()` — usockets fires `raw_on_close`
-            // synchronously and it re-enters this channel through the ext slot.
             let sock = self.backend.socket.replace(Socket::DETACHED);
             if !sock.is_detached() {
                 sock.close(uws::CloseCode::Normal);

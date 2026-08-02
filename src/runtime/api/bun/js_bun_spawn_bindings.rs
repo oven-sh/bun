@@ -74,13 +74,6 @@ impl TerminalCreateResult {
     }
 }
 
-// `SendQueue.owner` — the `Subprocess` arm of `SendQueueOwner`. The SendQueue
-// lives in `bun_jsc` and cannot name `Subprocess`, so these hooks (declared
-// `extern "Rust"` in `bun_jsc::ipc`) supply the dispatch. `subprocess` is the
-// BACKREF stored by `subprocess_ipc_owner`; the Subprocess holds a ref on its
-// SendQueue and detaches before it is freed, so the pointer is live whenever
-// these run.
-
 #[unsafe(no_mangle)]
 fn __bun_subprocess_ipc_global_this(
     subprocess: core::ptr::NonNull<core::ffi::c_void>,
@@ -1449,8 +1442,6 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
             subprocess.finalize_streams();
             subprocess.process_mut().detach();
-            // The SendQueue allocated above is only released by `finalize()`,
-            // which won't run on this error path: detach and drop our ref.
             if let Some(ipc_data) = subprocess.ipc_data.take() {
                 // SAFETY: owned ref from `SendQueue::new` above; nothing else
                 // holds it yet (no socket wired, no task scheduled).

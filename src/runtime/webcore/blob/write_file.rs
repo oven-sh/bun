@@ -1344,30 +1344,19 @@ impl WriteFileWaitFromLockedValueTask {
         // TODO: properly propagate exception upwards
     }
 
-    /// Owns the task. Every arm except `body::Value::Locked` drops the
-    /// allocation; the `Locked` arm re-leaks it for the next callback.
     pub(crate) fn then(
         mut this: Box<WriteFileWaitFromLockedValueTask>,
         value: &mut body::Value,
     ) -> Result<(), JsTerminated> {
-        // `get()` returns a GC-owned cell, valid past `drop(this)`.
         let promise: *mut JSPromise = std::ptr::from_mut(this.promise.get());
-        // Copy the `BackRef` out so the borrow survives `drop(this)`.
         let global_ref = this.global_this;
         let global_this = global_ref.get();
-        // Dropping `this` drops fields, so leaving the `StoreRef` in
-        // `this.file_blob` would double-deref it. Move ownership out instead;
-        // the `Locked` arm — the only path that keeps `this` alive for a future
-        // callback — moves it back so the next `then()` invocation sees an
-        // intact `file_blob`. This also avoids the throwaway
-        // `content_type`/`name` clones that `Blob::dupe()` performs.
         let mut file_blob = core::mem::take(&mut this.file_blob);
         match value {
             body::Value::Error(err_ref) => {
                 let err = err_ref.to_js(global_this);
                 file_blob.detach();
                 let _ = value.use_();
-                // drops the `promise`/`file_blob` Strongs
                 drop(this);
                 JSPromise::opaque_mut(promise).reject_with_async_stack(global_this, Ok(err))?;
             }
@@ -1409,8 +1398,6 @@ impl WriteFileWaitFromLockedValueTask {
                     }
                 };
 
-                // Rebind the Box so it drops last; `file_blob` (moved into the
-                // guard declared after) detaches first.
                 let _this_box = this;
                 let _g = scopeguard::guard((), |()| file_blob.detach());
 

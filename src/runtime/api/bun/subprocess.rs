@@ -141,9 +141,6 @@ pub struct Subprocess<'a> {
     pub closed: Cell<EnumSet<StdioKind>>,
     pub this_value: JsCell<JsRef>,
 
-    /// `None` indicates all of the IPC data is uninitialized. `Some` holds an
-    /// owned ref (from `SendQueue::new`), released in `finalize` after
-    /// `detach`.
     pub(crate) ipc_data: Cell<Option<core::ptr::NonNull<IPC::SendQueue>>>,
     pub(crate) flags: Cell<Flags>,
 

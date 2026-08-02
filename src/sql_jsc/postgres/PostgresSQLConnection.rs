@@ -1185,10 +1185,6 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             pending_requests: Cell::new(0),
             poll_ref: JsCell::new(KeepAlive::default()),
             global_object: BackRef::new(global_object),
-            // Sourced from the singleton's raw accessor so the backref's
-            // provenance is independent of the `&mut vm` local above (still in
-            // use below), rather than a child tag of it; `vm_mut()` re-fetches
-            // through the canonical `VirtualMachine::as_mut()`.
             vm: BackRef::from(
                 core::ptr::NonNull::new(VirtualMachine::get_mut_ptr()).expect("vm singleton"),
             ),

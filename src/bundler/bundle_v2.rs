@@ -1096,8 +1096,6 @@ pub mod bv2_impl {
                 }
                 }
             }
-            // Taskable: `dispatch()` enqueues `*mut Resolve` for the JS-thread
-            // plugin hop; the arm calls `run_on_js_thread`.
             impl bun_event_loop::Taskable for Resolve {
                 const TAG: bun_event_loop::TaskTag =
                     bun_event_loop::task_tag::BundleV2PluginResolve;
@@ -1262,8 +1260,6 @@ pub mod bv2_impl {
                         );
                 }
             }
-            // Taskable: `dispatch()` enqueues `*mut Load` for the JS-thread
-            // plugin hop; the arm calls `run_on_js_thread`.
             impl bun_event_loop::Taskable for Load {
                 const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BundleV2PluginLoad;
             }

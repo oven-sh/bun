@@ -1987,7 +1987,6 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
         // dispatch — so the owning `&mut` never aliases.
         let mut this = unsafe { bun_core::heap::take(this) };
         this.handle_without_deinit();
-        // drop(this): free slice + destroy self
     }
 }
 

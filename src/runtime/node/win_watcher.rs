@@ -57,11 +57,6 @@ static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
 
 // TODO: make this a generic so we can reuse code with path_watcher
 // TODO: we probably should use native instead of libuv abstraction here for better performance
-/// Heap-allocated and always addressed via `*mut PathWatcherManager` (the
-/// process-global slot + each `PathWatcher`'s backref); every method takes
-/// `&self` or the raw pointer, and mutable state lives in `Cell`/[`JsCell`],
-/// so `unregister_watcher` can free the manager under its own frame without a
-/// live `&mut PathWatcherManager` above it.
 pub(crate) struct PathWatcherManager {
     // Keys are owned path bytes, values are raw heap
     // PathWatcher ptrs. `StringArrayHashMap` lets `get`/`insert` take `&[u8]` borrows.
@@ -87,9 +82,6 @@ impl PathWatcherManager {
         }))
     }
 
-    /// unregister is always called from main thread. Frees the manager (via
-    /// `deinit`) when the last watcher goes away, so callers pass the raw
-    /// heap pointer and must not touch `this` afterwards.
     fn unregister_watcher(this: *mut PathWatcherManager, watcher: *mut PathWatcher, path: &ZStr) {
         #[cfg(not(debug_assertions))]
         let _ = path;
@@ -136,10 +128,6 @@ impl PathWatcherManager {
             // the borrow ends before the free below.
             let me = unsafe { &*this };
 
-            // `unregister_watcher` only calls `deinit` once the map is empty;
-            // a displaced manager with live watchers defers its own teardown
-            // (`deinit_on_last_watcher`) — manager-side watcher teardown does
-            // not exist.
             if me.watchers.get().len() != 0 {
                 me.deinit_on_last_watcher.set(true);
                 return;
@@ -155,10 +143,6 @@ impl PathWatcherManager {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Heap-allocated and only ever addressed via `*mut PathWatcher`: libuv's
-/// event callback re-enters it and its own frames can free it, so no
-/// `&mut PathWatcher` is ever formed — methods take the raw pointer or `&self`
-/// and mutable state lives in `Cell`/[`JsCell`].
 pub struct PathWatcher {
     handle: uv::uv_fs_event_t,
     // LIFETIMES.tsv: BACKREF → Option<*mut PathWatcherManager>
@@ -237,8 +221,6 @@ impl PathWatcher {
         if let Some(err) = status.to_error(sys::Tag::watch) {
             me.emit_in_progress.set(true);
 
-            // Snapshot the keys: the JS callbacks below can `close()` and
-            // `swap_remove` a handler mid-loop; a removed key is skipped.
             let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
             for ctx in keys {
                 if !me.handlers.get().contains_key(&ctx) {
@@ -255,8 +237,6 @@ impl PathWatcher {
                 on_update_end_fn(Some(ctx));
             }
 
-            // Clear the guard first so a `close()` from the JS callbacks above
-            // can actually free the watcher; `this`/`me` are not used after.
             me.emit_in_progress.set(false);
             Self::maybe_deinit(this);
             return;
@@ -273,8 +253,6 @@ impl PathWatcher {
             // UV_CHANGE), or libuv could not convert the name to UTF-8.
             // Forward `(event, null)` to every handler like node, unsuppressed.
             me.emit_in_progress.set(true);
-            // Snapshot the keys: the JS callbacks below can `close()` and
-            // `swap_remove` a handler mid-loop; a removed key is skipped.
             let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
             for ctx in keys {
                 if !me.handlers.get().contains_key(&ctx) {
@@ -314,8 +292,6 @@ impl PathWatcher {
 
             let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
             for key in keys {
-                // The JS callbacks below can remove a handler; a key removed
-                // mid-loop yields `None` and is skipped rather than indexed.
                 let Some(fire) = me
                     .handlers
                     .with_mut(|h| h.get_mut(&key).map(|v| v.emit(hash, timestamp, event_type)))
@@ -393,7 +369,6 @@ impl PathWatcher {
 
         let this_box = Box::new(PathWatcher {
             handle: bun_core::ffi::zeroed(),
-            // LIFETIMES.tsv: BACKREF stays raw.
             manager: Cell::new(Some(manager)),
             emit_in_progress: Cell::new(false),
             handlers: JsCell::new(ArrayHashMap::default()),
@@ -478,8 +453,6 @@ impl PathWatcher {
         }
     }
 
-    /// Self-destroys via [`Self::deinit`] once no handler remains and no emit
-    /// is on the stack; callers must not touch `this` afterwards.
     fn maybe_deinit(this: *mut PathWatcher) {
         // SAFETY: `this` is the live heap pointer from `init`; the borrow ends
         // before `deinit` may free it.
@@ -510,8 +483,6 @@ impl PathWatcher {
                 } else {
                     ZStr::EMPTY
                 };
-                // Backref is valid until the manager deinits (see PathWatcherManager::deinit);
-                // this may free the manager, never `this`.
                 PathWatcherManager::unregister_watcher(manager, this, path);
             }
         }
@@ -549,7 +520,6 @@ pub(crate) fn watch(
     // (see static decl). The guard covers the whole registration — not just the
     // slot load — because `PathWatcher::init` below mutates the manager's
     // `watchers` map, and `fs.watch()` is reachable from Worker threads: two
-    // Workers releasing the lock before that mutation would race on the map.
     let _g = DEFAULT_MANAGER_MUTEX.lock_guard();
     let existing = DEFAULT_MANAGER.load();
     // The manager is bound to one VM's uv_loop; reusing it from a different VM
@@ -569,9 +539,6 @@ pub(crate) fn watch(
         existing
     };
 
-    // `manager` is a live heap-allocated pointer bound to the calling VM
-    // (created above or matched by `vm`); DEFAULT_MANAGER_MUTEX (still held)
-    // serializes this registration against other Workers.
     let watcher = match PathWatcher::init(manager, path, recursive) {
         sys::Result::Err(err) => return sys::Result::Err(err),
         sys::Result::Ok(w) => w,

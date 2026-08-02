@@ -50,7 +50,6 @@ use bun_uws;
 /// Queue for messages sent between parent and child processes in an IPC environment. node:cluster sends json serialized messages
 /// to describe different events it performs. It will send a message with an incrementing sequence number and then call a callback
 /// when a message is received with an 'ack' property of the same sequence number.
-///
 /// Note: moved down from `bun_runtime::node::node_cluster_binding` (cycle-break per
 /// docs/PORTING.md) — `SendQueue` stores one inline so the struct must live at this tier.
 /// All field accesses + dispatch methods need only `bun_jsc`/`bun_collections` symbols.
@@ -835,23 +834,9 @@ enum ContinueSendReason {
     OnWritable,
 }
 
-/// Every method takes `&self`: the socket handlers, the deferred task and
-/// JS entry points all re-enter this object on the JS thread, so
-/// mutable state lives in `Cell`/[`JsCell`] and no `&mut SendQueue` ever
-/// exists to be aliased.
-///
-/// Heap-allocated and intrusively refcounted: the owner holds one ref (from
-/// [`SendQueue::new`]) and the embedded deferred task holds one while
-/// scheduled, so it can never point at freed storage. Owner teardown is
-/// [`SendQueue::detach`] + [`CellRefCounted::deref`], never task
-/// cancellation.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct SendQueue {
     ref_count: Cell<u32>,
-    /// The allocation root written by [`SendQueue::new`]: the pointer that
-    /// carries write provenance, so queued tasks (whose final `deref` may
-    /// destroy the allocation) and the socket/uv backrefs never derive from
-    /// a `&self`.
     root: Cell<Option<core::ptr::NonNull<SendQueue>>>,
     pub(crate) queue: JsCell<Vec<SendHandle>>,
     pub(crate) waiting_for_ack: JsCell<Option<SendHandle>>,
@@ -866,14 +851,8 @@ pub struct SendQueue {
     pub(crate) incoming_fd: Cell<Option<Fd>>,
 
     pub socket: JsCell<SocketUnion>,
-    /// BACKREF to the owner, which holds a ref on this SendQueue. Cleared by
-    /// [`SendQueue::detach`] when the owner tears down; every reader tolerates
-    /// `None`.
     pub(crate) owner: Cell<Option<SendQueueOwner>>,
 
-    /// One embedded deferred task (`task_tag::SendQueueDeferred`): `scheduled`
-    /// says whether it is on the event loop's queue (holding a ref), and the
-    /// two `pending_*` flags are the work it drains when it runs.
     pub(crate) deferred_scheduled: Cell<bool>,
     pub(crate) pending_close: Cell<bool>,
     pub(crate) pending_after_close: Cell<bool>,
@@ -883,20 +862,13 @@ pub struct SendQueue {
     pub windows: JsCell<WindowsState>,
 }
 
-/// The SendQueue's owner — either a `Subprocess` (parent side, `bun_runtime`,
-/// opaque here) or an `IPCInstance` (child side, this crate). Tag + thin
-/// pointer; the `Subprocess` arm dispatches through `__bun_subprocess_ipc_*`
-/// hooks that `bun_runtime` defines, so the concrete type is never named at
-/// this tier.
 #[derive(Copy, Clone)]
 pub enum SendQueueOwner {
     Subprocess(core::ptr::NonNull<c_void>),
     Instance(core::ptr::NonNull<crate::virtual_machine::IPCInstance>),
 }
 
-// Higher-tier (`bun_runtime`) side of the `Subprocess` owner arm.
 unsafe extern "Rust" {
-    /// `subprocess` is the live `NonNull<Subprocess>` stored in [`SendQueueOwner::Subprocess`].
     fn __bun_subprocess_ipc_global_this(
         subprocess: core::ptr::NonNull<c_void>,
     ) -> *const JSGlobalObject;
@@ -948,7 +920,6 @@ impl SendQueueOwner {
         }
     }
 
-    /// `Subprocess.this_value.tryGet()` — `ZERO` for the VM-side owner.
     fn this_jsvalue(self) -> JSValue {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
@@ -976,34 +947,22 @@ pub enum SocketUnion {
 }
 
 impl SendQueue {
-    /// The owner, or `None` once [`SendQueue::detach`] has run.
     #[inline]
     fn owner_ref(&self) -> Option<SendQueueOwner> {
         self.owner.get()
     }
 
-    /// Point the owner backref at `owner`. Used by the two-phase `IPCInstance`
-    /// construction where the owner address is fixed after the SendQueue is
-    /// allocated.
     pub fn set_owner(&self, owner: SendQueueOwner) {
         self.owner.set(Some(owner));
     }
 
-    /// Owner teardown: sever the backref and close the socket without
-    /// notifying (the owner is going away). The owner then releases its ref
-    /// via [`CellRefCounted::deref`]; queued tasks holding their own refs run
-    /// harmlessly against the detached queue and release theirs.
     pub fn detach(&self) {
         log!("SendQueue#detach");
-        // No close notification after this point: mark it delivered before
-        // closing so the synchronous on_close re-entry (POSIX) neither enqueues
-        // a deferred task nor reaches the owner we clear below.
         self.close_event_sent.set(true);
         self.close_socket(CloseReason::Failure, CloseFrom::Deinit);
         self.owner.set(None);
     }
 
-    /// Heap-allocate a SendQueue with one ref held by the caller (the owner).
     pub fn new(mode: Mode, owner: Option<SendQueueOwner>, socket: SocketUnion) -> *mut SendQueue {
         log!("SendQueue#init");
         let this = bun_core::heap::into_raw(Box::new(Self {
@@ -1033,17 +992,11 @@ impl SendQueue {
         this
     }
 
-    /// The allocation-root pointer (write provenance). Every task ctx,
-    /// backref, and release goes through this, never a pointer re-derived
-    /// from `&self`.
     #[inline]
     fn root_ptr(&self) -> *mut SendQueue {
         self.root.get().expect("SendQueue::new sets root").as_ptr()
     }
 
-    /// The allocation-root pointer for callers that stash a `*mut SendQueue`
-    /// (socket ext slots, uv `handle.data`) rather than re-deriving one from
-    /// a `&self`.
     #[inline]
     pub fn as_ctx_ptr(&self) -> *mut SendQueue {
         self.root_ptr()
@@ -1070,9 +1023,6 @@ impl SendQueue {
                 CloseFrom::Deinit => "deinit",
             }
         );
-        // Copy the handle out; on POSIX `close()` re-enters `socket_closed`
-        // synchronously through the uSockets on_close handler, so no cell
-        // borrow may span it.
         let open = match *self.socket.get() {
             SocketUnion::Open(s) => Some(s),
             _ => None,
@@ -1116,8 +1066,6 @@ impl SendQueue {
         self.socket_closed_notify(true);
     }
 
-    /// `notify` is false only on the owner-teardown path (`CloseFrom::Deinit`),
-    /// where no `_onAfterIPCClosed` task should be scheduled.
     fn socket_closed_notify(&self, notify: bool) {
         log!("SendQueue#_socketClosed");
         #[cfg(windows)]
@@ -1130,7 +1078,6 @@ impl SendQueue {
                 // the callback doesn't touch a dead `SendQueue`.
                 unsafe { (*windows_write).owner = None };
             }
-            // will be freed by _windowsOnWriteComplete
             self.windows.with_mut(|w| w.windows_write = None);
         }
         self.keep_alive.with_mut(|k| k.disable());
@@ -1147,9 +1094,6 @@ impl SendQueue {
         }
     }
 
-    /// Put the embedded deferred task on the event loop (once). It owns a ref
-    /// while queued, released as the tail of [`Self::run_deferred`] or by
-    /// `__bun_release_task_at_shutdown` if it never runs.
     fn schedule_deferred(&self) {
         if self.deferred_scheduled.replace(true) {
             return;
@@ -1179,8 +1123,6 @@ impl SendQueue {
                 log!("SendQueue#_onAfterIPCClosed");
                 if !sq.close_event_sent.replace(true) {
                     if let Some(owner) = sq.owner.get() {
-                        // Runs the JS `disconnect` handler, which may reach this
-                        // SendQueue again through `&self`.
                         owner.handle_ipc_close();
                     }
                 }
@@ -1239,8 +1181,6 @@ impl SendQueue {
         self.schedule_deferred();
     }
 
-    /// Append `payload` as a new message (or onto the last plain message when
-    /// possible) and register `callback` for its completion.
     fn start_message(
         &self,
         global: &JSGlobalObject,
@@ -1264,7 +1204,6 @@ impl SendQueue {
                 false
             };
             if use_last {
-                // append onto the last plain message (a copy is unavoidable here)
                 let len = queue.len();
                 let last = &mut queue[len - 1];
                 if callback.is_callable() {
@@ -1272,7 +1211,6 @@ impl SendQueue {
                 }
                 handle_oom(last.data.write(&payload.list));
             } else {
-                // fallback case: append a new message that owns the buffer
                 queue.push(SendHandle {
                     data: payload,
                     handle,
@@ -1402,8 +1340,6 @@ impl SendQueue {
             }
         );
         self.debug_log_message_queue();
-        // `update_ref(global)` is called manually at every return below (the
-        // recursive `continue_send` path delegates to its own tail `update_ref`).
 
         if self.write_in_progress.get() {
             self.update_ref(global);
@@ -1448,7 +1384,6 @@ impl SendQueue {
             Next::Send(fd) => {
                 debug_assert!(!self.write_in_progress.get());
                 self.write_in_progress.set(true);
-                // `write` re-slices `queue[0]` internally.
                 self.write(fd);
                 // the write is queued. this._onWriteComplete() will be called when the write completes.
                 self.update_ref(global);
@@ -1613,8 +1548,6 @@ impl SendQueue {
 
     /// starts a write request. on posix, this always calls _onWriteComplete immediately. on windows, it may
     /// call _onWriteComplete later.
-    ///
-    /// The outbound bytes are read from `queue[0]` *inside* this method.
     fn write(&self, fd: Option<Fd>) {
         let Some(socket) = self.get_socket() else {
             self.on_write_complete(-1);
@@ -1627,8 +1560,6 @@ impl SendQueue {
             }
             let pipe: *mut uv::Pipe = socket;
 
-            // Copy the outbound bytes into an owned buffer; the queue borrow ends
-            // with the closure.
             let write_req_slice: Box<[u8]> = self.queue.with_mut(|queue| {
                 let first = &queue[0];
                 let data = &first.data.list[first.data.cursor..];
@@ -1664,12 +1595,10 @@ impl SendQueue {
                     // and thunks it through libuv. The callback receives the
                     // raw `*mut WindowsWrite` (NOT `&mut`) because
                     // `windows_on_write_complete` deallocates the request via
-                    // `WindowsWrite::destroy`.
                     |req: *mut WindowsWrite, rc| SendQueue::windows_on_write_complete(req, rc),
                 )
             };
             if result.to_error(bun_sys::Tag::write).is_some() {
-                // Synchronous-error path: mirror the async completion inline.
                 WindowsWrite::destroy(write_req);
                 self.windows.with_mut(|w| w.windows_write = None);
                 // SAFETY: pipe is live (socket == .open); pairs with the
@@ -1685,9 +1614,6 @@ impl SendQueue {
         }
         #[cfg(not(windows))]
         {
-            // Compute the write result while only holding the queue borrow;
-            // `on_write_complete` (which may pop the queue) runs after that
-            // borrow has ended.
             let n: i32 = self.queue.with_mut(|queue| {
                 let first = &queue[0];
                 let data = &first.data.list[first.data.cursor..];
@@ -1718,7 +1644,6 @@ impl SendQueue {
             }
         };
         let vm = VirtualMachine::get();
-        // RAII: `enter()` now, `exit()` on drop.
         let _scope = vm.enter_event_loop_scope();
 
         // SAFETY: owner is a BACKREF into the live SendQueue (cleared in
@@ -1743,10 +1668,6 @@ impl SendQueue {
         // The event-loop exit is handled by `_scope` drop.
     }
     fn get_global_this(&self) -> crate::GlobalRef {
-        // Only reached while attached: every path here originates from an
-        // open socket or a live owner call, both of which end at `detach()`.
-        // `opaque_ref` is the safe ZST-handle deref (panics on null) — see
-        // `bun_opaque::opaque_deref`.
         let owner = self.owner_ref().expect("SendQueue used after detach");
         crate::GlobalRef::from(JSGlobalObject::opaque_ref(owner.global_this()))
     }
@@ -1862,9 +1783,6 @@ impl uv::StreamReader for SendQueue {
     #[inline]
     unsafe fn on_read(this: *mut Self, data: &[u8]) {
         // `data` points into `(*this).incoming` (it was returned from
-        // `on_read_alloc`); the callee re-derives the written tail from
-        // `incoming` itself, so only the length is forwarded and only a shared
-        // view of `*this` is formed.
         let nread = data.len();
         let _ = data;
         // SAFETY: `this` is the live `SendQueue` stashed in `handle.data` by
@@ -1873,8 +1791,6 @@ impl uv::StreamReader for SendQueue {
     }
 }
 
-// Taskable: the embedded deferred task queues the SendQueue's own root
-// pointer under this tag; see `schedule_deferred` / `run_deferred`.
 impl bun_event_loop::Taskable for SendQueue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::SendQueueDeferred;
 }
@@ -1882,10 +1798,6 @@ impl bun_event_loop::Taskable for SendQueue {
 impl Drop for SendQueue {
     fn drop(&mut self) {
         log!("SendQueue#deinit");
-        // Refcount reached zero: `detach()` already closed the socket; this
-        // covers the never-attached / socket-still-open case. Mark the close
-        // event delivered first so the synchronous on_close re-entry can neither
-        // enqueue a task nor take a ref on this dying object.
         self.close_event_sent.set(true);
         self.close_socket(CloseReason::Failure, CloseFrom::Deinit);
 
@@ -2000,7 +1912,6 @@ fn handle_ipc_message(
                 let fd: Fd = send_queue.incoming_fd.take().unwrap();
 
                 let Some(owner) = send_queue.owner_ref() else {
-                    // Detached mid-handling: the fd cannot be delivered.
                     FdExt::close(fd);
                     return;
                 };
@@ -2044,19 +1955,12 @@ fn handle_ipc_message(
     }
 }
 
-/// Result of one buffered decode attempt, computed with the `incoming` cell
-/// borrowed and dispatched only after the borrow is released (dispatch runs
-/// user JS, which may re-enter this `SendQueue`).
 enum DecodeStep {
-    /// A complete message was decoded; dispatch it and try again.
     Message(DecodeIPCMessageResult),
-    /// Buffer holds no further complete message.
     Wait,
-    /// Undecodable input; the caller closes the socket.
     Fail(IPCDecodeError),
 }
 
-/// `Wait`/`Fail` handling shared by every decode loop.
 fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
     match step {
         DecodeStep::Message(_) => unreachable!("caller dispatches Message"),
@@ -2073,8 +1977,6 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
     }
 }
 
-/// Decode one message out of the buffered JSON stream (buffer borrow ends
-/// with the closure).
 fn decode_next_json(incoming: &JsCell<IncomingBuffer>, global: &JSGlobalObject) -> DecodeStep {
     incoming.with_mut(|inc| {
         let IncomingBuffer::Json(json_buf) = inc else {
@@ -2095,8 +1997,6 @@ fn decode_next_json(incoming: &JsCell<IncomingBuffer>, global: &JSGlobalObject) 
     })
 }
 
-/// Decode one message from the advanced (length-prefixed) buffer starting at
-/// `*slice_start`; on success advances `*slice_start`, on `Wait` compacts.
 fn decode_next_advanced(
     incoming: &JsCell<IncomingBuffer>,
     global: &JSGlobalObject,
@@ -2157,7 +2057,6 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
         }
         Mode::Advanced => {
             // Advanced mode: uses length-prefix, no newline scanning needed.
-            // Try to decode directly from the incoming chunk first, only buffer if needed.
             let buffered = send_queue.incoming.with_mut(|inc| {
                 let IncomingBuffer::Advanced(adv_buf) = inc else {
                     unreachable!()
@@ -2304,11 +2203,9 @@ pub mod IPCHandlers {
 
         /// `nread` is the byte count libuv reported into the slice handed out
         /// by `on_read_alloc` (i.e. the tail of `send_queue.incoming` past its
-        /// current `len`).
         pub(crate) fn on_read(send_queue: &SendQueue, nread: usize) {
             log!("NewNamedPipeIPCHandler#onRead {}", nread);
             let global_this = send_queue.get_global_this();
-            // RAII: `enter()` now, `exit()` on drop.
             let _scope = global_this.bun_vm().enter_event_loop_scope();
 
             match send_queue.mode {
@@ -2320,8 +2217,6 @@ pub mod IPCHandlers {
                         };
                         debug_assert!(json_buf.data.len() + nread <= json_buf.data.capacity());
                         // libuv wrote `nread` bytes at `data[old_len..]` via the
-                        // slice returned from `on_read_alloc`; only the count is
-                        // forwarded.
                         json_buf.notify_written(nread);
                     });
 

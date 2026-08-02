@@ -29,8 +29,6 @@
 #include "root.h"
 #include "DOMException.h"
 
-#include "Exception.h"
-
 namespace WebCore {
 
 // This array needs to be kept in sync with the ExceptionCode enumeration.

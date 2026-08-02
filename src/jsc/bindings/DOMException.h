@@ -34,8 +34,6 @@
 
 namespace WebCore {
 
-class Exception;
-
 class DOMException : public RefCounted<DOMException> {
 public:
     static Ref<DOMException> create(ExceptionCode, const String& message = emptyString());

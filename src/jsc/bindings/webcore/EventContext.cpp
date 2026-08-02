@@ -28,8 +28,6 @@
 #include "config.h"
 #include "EventContext.h"
 
-#include "EventNames.h"
-
 namespace WebCore {
 
 EventContext::~EventContext() = default;

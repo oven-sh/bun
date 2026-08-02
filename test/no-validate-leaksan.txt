@@ -460,7 +460,7 @@ test/js/node/tls/node-tls-connect.test.ts
 test/bundler/native-plugin.test.ts
 
 # Slow
-test/js/bun/typescript/type-export.test.ts 
+test/js/bun/typescript/type-export.test.ts
 
 # Worker termination exception in PropertyCallback
 test/js/node/test/parallel/test-worker-message-port-transfer-terminate.js

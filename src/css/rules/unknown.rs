@@ -25,13 +25,13 @@ impl UnknownAtRule {
 
         if !self.prelude.v.is_empty() {
             dest.write_char(b' ')?;
-            self.prelude.to_css(dest, false)?;
+            self.prelude.to_css(dest)?;
         }
 
         if let Some(block) = &self.block {
             dest.block(|d| {
                 d.newline()?;
-                block.to_css(d, false)
+                block.to_css(d)
             })
         } else {
             dest.write_char(b';')

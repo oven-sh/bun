@@ -471,7 +471,7 @@ impl ParsedComponent {
                 },
                 |d, c| c.to_css(d),
             ),
-            ParsedComponent::TokenList(t) => t.to_css(dest, false),
+            ParsedComponent::TokenList(t) => t.to_css(dest),
         }
     }
 

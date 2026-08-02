@@ -1049,7 +1049,7 @@ impl TarballStream {
             // leaves `tarball_stream = None` so `HiveArray::put`'s
             // `drop_in_place<NetworkTask>` (1e76047) does not double-free a
             // dangling Box. Before 1e76047 the dangling `Some` was harmless
-            // (overwritten on next `get()`); now it use-after-frees.
+            // (overwritten on next `claim()`); now it use-after-frees.
             debug_assert!(
                 (*network).tarball_stream.as_deref().map(std::ptr::from_ref)
                     == Some(this.cast_const()),

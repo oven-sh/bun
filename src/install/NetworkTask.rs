@@ -45,7 +45,7 @@ pub struct NetworkTask {
     //
     // `MaybeUninit` because the slot comes from `HiveArrayFallback`
     // as *uninitialized* memory (often zero-page on first mmap, but not
-    // guaranteed — `get()`'s heap fallback is `Box::new_uninit()`) and is
+    // guaranteed — `claim()`'s heap fallback is `Box::new_uninit()`) and is
     // overwritten by plain `=` in `for_manifest`/`for_tarball`.
     // `MaybeUninit<T>` is the spec-correct mapping for that semantic — unlike
     // `ManuallyDrop<T>`, it suppresses `T`'s validity invariant, so
@@ -907,7 +907,7 @@ impl NetworkTask {
         if !self.streaming_extract_task.is_null() {
             // ARENA: returned to `preallocated_resolve_tasks` pool, not freed.
             // SAFETY: `streaming_extract_task` was obtained from this same
-            // `preallocated_resolve_tasks` pool via `get()` and is not aliased
+            // `preallocated_resolve_tasks` pool via `get_init()` and is not aliased
             // (cleared immediately below); `put()` runs `Task::drop` on the
             // slot — the Task was fully initialized via
             // `enqueue::create_extract_task_for_streaming` so this is sound.
@@ -949,7 +949,7 @@ impl NetworkTask {
     ///
     /// # Safety
     /// `slot` must be the unique handle to a `HiveArrayFallback<NetworkTask>`
-    /// slot returned by `get()`; its prior contents are treated as garbage
+    /// slot returned by `claim()`; its prior contents are treated as garbage
     /// (no destructors run).
     pub(crate) unsafe fn write_init(
         slot: *mut NetworkTask,

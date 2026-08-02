@@ -14,24 +14,21 @@ use css_values::ident::DashedIdent;
 use bun_io::Write;
 
 /// Options that control how CSS is serialized to a string.
-pub struct PrinterOptions<'a> {
+pub struct PrinterOptions {
     /// Whether to minify the CSS, i.e. remove white space.
     pub minify: bool,
-    /// An optional project root path, used to generate relative paths for sources used in CSS module hashes.
-    pub project_root: Option<&'a [u8]>,
     /// Targets to output the CSS for.
     pub targets: Targets,
 }
 
-impl<'a> PrinterOptions<'a> {
-    pub fn default() -> PrinterOptions<'a> {
+impl PrinterOptions {
+    pub fn default() -> PrinterOptions {
         Self::default_with_minify(false)
     }
 
-    pub(crate) fn default_with_minify(minify: bool) -> PrinterOptions<'a> {
+    pub(crate) fn default_with_minify(minify: bool) -> PrinterOptions {
         PrinterOptions {
             minify,
-            project_root: None,
             targets: Targets {
                 browsers: None,
                 ..Targets::default()
@@ -40,7 +37,7 @@ impl<'a> PrinterOptions<'a> {
     }
 }
 
-impl<'a> Default for PrinterOptions<'a> {
+impl Default for PrinterOptions {
     fn default() -> Self {
         Self::default()
     }
@@ -234,7 +231,7 @@ impl<'a> Printer<'a> {
         arena: &'a Bump,
         scratchbuf: BumpVec<'a, u8>,
         dest: &'a mut dyn Write,
-        options: &PrinterOptions<'a>,
+        options: &PrinterOptions,
         import_info: Option<ImportInfo<'a>>,
         local_names: Option<&'a css::LocalsResultsMap>,
         symbols: &'a SymbolMap,

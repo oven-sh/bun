@@ -23,31 +23,15 @@ impl<'a> CssModule<'a> {
         bump: &'a Bump,
         config: &'a Config,
         sources: &'a Vec<Box<[u8]>>,
-        project_root: Option<&[u8]>,
         references: &'a mut CssModuleReferences<'a>,
     ) -> CssModule<'a> {
         // TODO: this is BAAAAAAAAAAD we are going to remove it
         let hashes = 'hashes: {
             let mut hashes = BumpVec::with_capacity_in(sources.len(), bump);
             for path in sources.iter() {
-                let mut alloced = false;
-                let source: &[u8] = 'source: {
-                    // Make paths relative to project root so hashes are stable
-                    if let Some(root) = project_root {
-                        if bun_paths::is_absolute(root) {
-                            alloced = true;
-                            break 'source bump.alloc_slice_copy(
-                                bun_paths::resolve_path::relative(root, path.as_ref()),
-                            );
-                        }
-                    }
-                    break 'source path.as_ref();
-                };
-                // `source` is arena-allocated, bulk-freed on bump.reset()
-                let _ = alloced;
                 hashes.push(hash(
                     bump,
-                    format_args!("{}", bstr::BStr::new(source)),
+                    format_args!("{}", bstr::BStr::new(path.as_ref())),
                     matches!(config.pattern.segments.at(0), Segment::Hash),
                 ));
             }

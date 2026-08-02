@@ -23,8 +23,6 @@
 
 #include "JSDOMConvertEnumeration.h"
 #include "JSDOMConvertStrings.h"
-// #include "JSFetchRequestCredentials.h"
-// #include "JSWorkerType.h"
 #include <JavaScriptCore/JSCInlines.h>
 
 namespace WebCore {

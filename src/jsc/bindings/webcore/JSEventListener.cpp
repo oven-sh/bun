@@ -21,11 +21,7 @@
 #include "JSEventListener.h"
 
 #include "BunProcess.h"
-// #include "BeforeUnloadEvent.h"
-// #include "ContentSecurityPolicy.h"
 #include "EventNames.h"
-// #include "Frame.h"
-// #include "HTMLElement.h"
 #include "JSDOMConvertNullable.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMGlobalObject.h"

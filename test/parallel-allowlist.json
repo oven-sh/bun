@@ -345,6 +345,7 @@
     "js/web/fetch/fetch.stream.test.ts",
     "js/web/fetch/fetch.test.ts",
     "js/web/fetch/fetch.tls.test.ts",
+    "js/web/request/request-clone-leak.test.ts",
     "js/web/streams/streams-leak.test.ts",
     "js/web/workers/structuredClone-classes.test.ts",
     "js/workerd/html-rewriter-leak.test.ts",

@@ -1803,15 +1803,17 @@ pub struct RuntimeHooks {
     /// path. The caller gates the call on `vm.standalone_module_graph`.
     pub load_standalone_sourcemap:
         fn(path: &[u8]) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>>,
-    /// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent)`.
+    /// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent, next_test_id)`.
     /// Walks the active test file's
     /// scope tree and emits `reportTestFoundWithLocation` for every test
     /// discovered before the inspector connected. `Jest` / `DescribeScope`
     /// live in `bun_runtime::test_runner` (forward-dep cycle), so the body is
     /// hoisted to the high tier; low-tier `Bun__TestReporterAgentEnable`
-    /// dispatches here. No-op when `bun test` isn't running.
+    /// dispatches here. `next_test_id` / the return value thread
+    /// `TestReporterAgent::next_test_id` through by value; no-op returns it
+    /// unchanged.
     pub retroactively_report_discovered_tests:
-        unsafe fn(agent: *mut crate::debugger::TestReporterHandle),
+        unsafe fn(agent: *mut crate::debugger::TestReporterHandle, next_test_id: i32) -> i32,
     /// Cancel every `TimeoutObject` / `ImmediateObject` still in the calling
     /// thread's `timer::All` heap so their JS pins and in-heap `+1` refs drop
     /// before the GC sweep. `timer::All` lives in `bun_runtime` (forward-dep);
@@ -2905,6 +2907,43 @@ impl crate::ipc::SendQueueOwner for IPCInstance {
     }
     fn kind(&self) -> crate::ipc::SendQueueOwnerKind {
         crate::ipc::SendQueueOwnerKind::VirtualMachine
+    }
+}
+
+/// Caller intent for runtime module resolution.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ResolveMode {
+    Esm,
+    Require,
+    /// `require.resolve()`: returns the bare specifier for Node builtins.
+    RequireResolve,
+}
+
+impl ResolveMode {
+    #[inline]
+    pub fn is_esm(self) -> bool {
+        matches!(self, Self::Esm)
+    }
+
+    #[inline]
+    pub fn import_kind(self) -> bun_ast::ImportKind {
+        match self {
+            Self::Esm => bun_ast::ImportKind::Stmt,
+            Self::Require => bun_ast::ImportKind::Require,
+            Self::RequireResolve => bun_ast::ImportKind::RequireResolve,
+        }
+    }
+
+    /// Fold the two-bool encoding the C++ FFI boundary passes.
+    #[inline]
+    pub fn from_ffi_bools(is_esm: bool, is_user_require_resolve: bool) -> Self {
+        if is_esm {
+            Self::Esm
+        } else if is_user_require_resolve {
+            Self::RequireResolve
+        } else {
+            Self::Require
+        }
     }
 }
 
@@ -4182,7 +4221,7 @@ impl VirtualMachine {
         specifier: bun_core::String,
         source: bun_core::String,
         query_string: Option<&mut bun_core::String>,
-        is_esm: bool,
+        mode: ResolveMode,
     ) -> JsResult<()> {
         Self::resolve_maybe_needs_trailing_slash::<true>(
             res,
@@ -4190,8 +4229,7 @@ impl VirtualMachine {
             specifier,
             source,
             query_string,
-            is_esm,
-            false,
+            mode,
         )
     }
 
@@ -4202,20 +4240,13 @@ impl VirtualMachine {
         specifier: bun_core::String,
         source: bun_core::String,
         query_string: Option<&mut bun_core::String>,
-        is_esm: bool,
-        is_user_require_resolve: bool,
+        mode: ResolveMode,
     ) -> JsResult<()> {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         if IS_A_FILE_PATH && specifier.length() > MAX_LEN {
             let specifier_utf8 = specifier.to_utf8();
             let source_utf8 = source.to_utf8();
-            let import_kind = if is_esm {
-                bun_ast::ImportKind::Stmt
-            } else if is_user_require_resolve {
-                bun_ast::ImportKind::RequireResolve
-            } else {
-                bun_ast::ImportKind::Require
-            };
+            let import_kind = mode.import_kind();
             let printed = crate::ResolveMessage::fmt(
                 specifier_utf8.slice(),
                 source_utf8.slice(),
@@ -4268,11 +4299,13 @@ impl VirtualMachine {
             bun_ast::Target::Bun,
             Default::default(),
         ) {
-            *res = ErrorableString::ok(if is_user_require_resolve && hardcoded.node_builtin {
-                specifier.dupe_ref()
-            } else {
-                bun_core::String::init(hardcoded.path.as_bytes())
-            });
+            *res = ErrorableString::ok(
+                if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
+                    specifier.dupe_ref()
+                } else {
+                    bun_core::String::init(hardcoded.path.as_bytes())
+                },
+            );
             return Ok(());
         }
 
@@ -4339,18 +4372,12 @@ impl VirtualMachine {
             &mut result,
             specifier_utf8.slice(),
             normalize_source(source_utf8.slice()),
-            is_esm,
+            mode.is_esm(),
             IS_A_FILE_PATH,
         );
         if let Err(err_) = resolve_result {
             let err = err_;
-            let import_kind = if is_esm {
-                bun_ast::ImportKind::Stmt
-            } else if is_user_require_resolve {
-                bun_ast::ImportKind::RequireResolve
-            } else {
-                bun_ast::ImportKind::Require
-            };
+            let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
             let msg = log
                 .msgs

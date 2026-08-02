@@ -43,8 +43,6 @@
 
 namespace WebCore {
 
-class EventTarget;
-
 using EventListenerVector = Vector<RefPtr<RegisteredEventListener>, 1, CrashOnOverflow, 2>;
 
 class EventListenerMap {
@@ -63,9 +61,6 @@ public:
     WEBCORE_EXPORT EventListenerVector* find(const AtomString& eventType);
     const EventListenerVector* find(const AtomString& eventType) const { return const_cast<EventListenerMap*>(this)->find(eventType); }
     Vector<AtomString> eventTypes() const;
-
-    void removeFirstEventListenerCreatedFromMarkup(const AtomString& eventType);
-    void copyEventListenersNotCreatedFromMarkupToTarget(EventTarget*);
 
     template<typename Visitor> void visitJSEventListeners(Visitor&);
     Lock& lock() { return m_lock; }

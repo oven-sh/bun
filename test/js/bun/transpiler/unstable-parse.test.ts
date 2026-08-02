@@ -337,6 +337,17 @@ describe("Bun.Transpiler.unstable_parse", () => {
       expect(root.stmts[0].decls[0].value.value).toBe("a\uD800b\uDC00c");
     });
 
+    test("large UTF-16 string literal does not hit apply-arg cap", () => {
+      // > 0x1000 units to exercise the readString16 chunking path.
+      const n = 20000;
+      const lit = Buffer.alloc(n * 6, "\\u20AC").toString();
+      const { root } = ts.unstable_parse(`const s = "${lit}";`, { format: "raw" });
+      const v = root.stmts[0].decls[0].value.value;
+      expect(v.length).toBe(n);
+      expect(v[0]).toBe("\u20AC");
+      expect(v[n - 1]).toBe("\u20AC");
+    });
+
     test("empty strings do not alias their pool neighbor", () => {
       const src = `const r = /foo/; const s = "";`;
       const { root } = ts.unstable_parse(src, { format: "raw" });

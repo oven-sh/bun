@@ -43,9 +43,14 @@ export function unstableParse(this: Transpiler, code: any, opts: any) {
     if (s !== undefined) return s;
     const base = stringsOffset + off;
     const n = len >>> 1;
-    const units = new $Array(n);
-    for (let i = 0; i < n; i++) units[i] = dv.getUint16(base + i * 2, true);
-    s = String.fromCharCode.$apply(null, units);
+    // Chunked to stay under JSC's apply-argument cap (src/node-fallbacks/buffer.js does the same).
+    s = "";
+    for (let i = 0; i < n; ) {
+      const end = i + 0x1000 < n ? i + 0x1000 : n;
+      const units = new $Array(end - i);
+      for (let j = 0; i < end; i++, j++) units[j] = dv.getUint16(base + i * 2, true);
+      s += String.fromCharCode.$apply(null, units);
+    }
     string16Cache.$set(off, s);
     return s;
   };

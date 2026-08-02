@@ -14,7 +14,6 @@
 #include <cstdlib>
 #include <termios.h>
 #include <sys/ioctl.h>
-#include <sys/socket.h>
 #else
 #include <uv.h>
 #include <windows.h>

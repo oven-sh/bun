@@ -2858,6 +2858,72 @@ describe("bundler", () => {
       expect(out).not.toContain("require_foo\u2014bar");
     },
   });
+  // https://github.com/oven-sh/bun/issues/36564
+  // `const req = createRequire(import.meta.url)` resolves relative to the
+  // current module, so calls with a static string must be bundled like
+  // require(). The entry lives in /src while the output is /out.js, so an
+  // unbundled runtime lookup would fail to find the files.
+  itBundled("edgecase/CreateRequireImportMetaUrl", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import { createRequire } from "module";
+        const require = createRequire(import.meta.url);
+        const data = require("./data.json");
+        const util = require("./util.cjs");
+        console.log(JSON.stringify(data), util.add(1, 2));
+      `,
+      "/src/data.json": `{ "hello": "world" }`,
+      "/src/util.cjs": /* js */ `
+        module.exports.add = (a, b) => a + b;
+      `,
+    },
+    target: "bun",
+    run: { stdout: `{"hello":"world"} 3` },
+  });
+  itBundled("edgecase/CreateRequireImportMetaUrlCjsFormat", {
+    // With CJS output format the visit pass inlines import.meta.url to a
+    // string, which must not defeat the createRequire detection.
+    files: {
+      "/src/entry.js": /* js */ `
+        import { createRequire } from "module";
+        const require2 = createRequire(import.meta.url);
+        console.log(require2("./data.json").value);
+      `,
+      "/src/data.json": `{ "value": "cjs-ok" }`,
+    },
+    target: "node",
+    format: "cjs",
+    run: { stdout: "cjs-ok" },
+  });
+  itBundled("edgecase/CreateRequireNodeModuleAliased", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import { createRequire as cr } from "node:module";
+        const myRequire = cr(import.meta.filename);
+        console.log(myRequire("./data.json").value);
+      `,
+      "/src/data.json": `{ "value": 42 }`,
+    },
+    target: "node",
+    run: { stdout: "42" },
+  });
+  itBundled("edgecase/CreateRequireDynamicArgumentUntouched", {
+    files: {
+      // A non-string argument keeps calling the binding at runtime; the target
+      // file sits next to the output so the runtime lookup still resolves.
+      "/src/entry.js": /* js */ `
+        import { createRequire } from "module";
+        const require2 = createRequire(import.meta.url);
+        const name = "./dy" + "namic.cjs";
+        console.log(require2(name).x);
+      `,
+      "/dynamic.cjs": /* js */ `
+        module.exports.x = "dyn";
+      `,
+    },
+    target: "bun",
+    run: { stdout: "dyn" },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

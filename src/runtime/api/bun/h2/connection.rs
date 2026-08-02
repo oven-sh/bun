@@ -33,6 +33,22 @@ pub struct PendingLocalSettings {
     pub settings: Settings,
 }
 
+/// What to do with an assembling header block once HPACK decoding completes. Decoding always
+/// happens (§4.3: the connection-scoped HPACK table must stay in sync); this decides whether the
+/// decoded fields are surfaced to the embedder or the stream is reset instead.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum HeaderBlockDisposition {
+    /// Surface each field via `on_header` and finalize normally.
+    #[default]
+    Deliver,
+    /// The embedder refused the stream (`can_open_stream() == false`, node's maxSessionMemory):
+    /// answer with RST_STREAM(ENHANCE_YOUR_CALM) after decoding.
+    Refused,
+    /// HEADERS arrived on a closed/half-closed-remote stream: answer with
+    /// RST_STREAM(STREAM_CLOSED) after decoding.
+    StreamClosed,
+}
+
 /// Per-stream protocol state tracked by the engine.
 pub struct Stream {
     pub state: State,
@@ -252,13 +268,9 @@ pub struct Connection {
     /// (a trailer section), which RFC 9113 §8.1 forbids from carrying pseudo-headers and which
     /// must not be held to the request pseudo-header requirements of §8.3.1.
     header_is_request: bool,
-    /// HEADERS arrived on a closed/half-closed-remote stream: the block is still decoded so the
-    /// connection-scoped HPACK table stays in sync (§4.3), then refused with RST_STREAM
-    /// (STREAM_CLOSED) instead of being dispatched.
-    header_stream_closed: bool,
-    /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory): the
-    /// block is decoded for HPACK sync (§4.3), then answered with RST_STREAM(ENHANCE_YOUR_CALM).
-    header_stream_refused: bool,
+    /// What to do with the assembling header block once decoded (§4.3 always decodes it so the
+    /// connection-scoped HPACK table stays in sync; this decides whether the fields are surfaced).
+    header_disposition: HeaderBlockDisposition,
     /// A locally-detected connection error already tore the session down: ignore further input.
     terminated: bool,
     /// PING/SETTINGS ACKs queued behind a non-reading peer (nghttp2's
@@ -304,8 +316,7 @@ impl Connection {
             header_target: 0,
             header_push_parent: 0,
             header_is_request: false,
-            header_stream_closed: false,
-            header_stream_refused: false,
+            header_disposition: HeaderBlockDisposition::Deliver,
             terminated: false,
             obq_ack_pending: 0,
             enc_buf: Vec::new(),
@@ -919,7 +930,11 @@ impl Connection {
             return true;
         }
         let refused = is_new && self.is_server && !sink.can_open_stream();
-        let mut stream_closed = false;
+        let mut disposition = if refused {
+            HeaderBlockDisposition::Refused
+        } else {
+            HeaderBlockDisposition::Deliver
+        };
         if !refused {
             let cur_state = self
                 .streams
@@ -963,7 +978,7 @@ impl Connection {
                         );
                         return true;
                     }
-                    stream_closed = true;
+                    disposition = HeaderBlockDisposition::StreamClosed;
                 }
             }
         }
@@ -989,8 +1004,7 @@ impl Connection {
         // looks "new" (the engine only tracks inbound-created streams), so without this gate it
         // would be misclassified as a request. PUSH_PROMISE sets the flag itself.
         self.header_is_request = self.is_server && is_new;
-        self.header_stream_closed = stream_closed;
-        self.header_stream_refused = refused;
+        self.header_disposition = disposition;
         if !end_headers {
             self.continuation_stream = hdr.stream_id;
             return false;
@@ -1035,8 +1049,7 @@ impl Connection {
             sink.on_push_promise(push_parent, target);
         }
         let block = std::mem::take(&mut self.header_block);
-        let stream_closed = std::mem::take(&mut self.header_stream_closed);
-        let stream_refused = std::mem::take(&mut self.header_stream_refused);
+        let disposition = std::mem::take(&mut self.header_disposition);
         let mut off = 0usize;
         let mut fatal = false;
         // RFC 9113 §10.5.1: enforce SETTINGS_MAX_HEADER_LIST_SIZE (uncompressed size: name + value
@@ -1050,7 +1063,7 @@ impl Connection {
         // RFC 9113 §8.1: a trailer section is the final header block on the stream — it must
         // carry END_STREAM and must not contain pseudo-header fields.
         let is_trailer = push_parent == 0
-            && !stream_closed
+            && disposition != HeaderBlockDisposition::StreamClosed
             && self
                 .streams
                 .get(&target)
@@ -1079,7 +1092,7 @@ impl Connection {
                     }
                     // HEADERS on a closed stream: decode for HPACK-table sync only (§4.3); the
                     // fields are never surfaced.
-                    if stream_closed || stream_refused {
+                    if disposition != HeaderBlockDisposition::Deliver {
                         continue;
                     }
                     // RFC 9113 §8.2.1/§8.2.2: connection-specific fields, a pseudo-header following a
@@ -1181,23 +1194,26 @@ impl Connection {
         if fatal {
             return true;
         }
-        if stream_refused {
-            // node (node_http2.cc, Http2Session::OnBeginHeadersCallback): a stream refused for
-            // the session memory budget is answered with RST_STREAM(ENHANCE_YOUR_CALM), which is
-            // what node's own test-http2-max-session-memory asserts.
-            self.send_rst_stream(sink, target, ErrorCode::EnhanceYourCalm);
-            sink.on_stream_rejected(target);
-            return false;
-        }
-        if stream_closed {
-            // §5.1: HEADERS on a closed/half-closed-remote stream is a stream error of type
-            // STREAM_CLOSED. The block was decoded above purely for HPACK-table sync.
-            self.send_rst_stream(sink, target, ErrorCode::StreamClosed);
-            if let Some(s) = self.streams.get_mut(&target) {
-                s.state = State::Closed;
+        match disposition {
+            HeaderBlockDisposition::Refused => {
+                // node (node_http2.cc, Http2Session::OnBeginHeadersCallback): a stream refused for
+                // the session memory budget is answered with RST_STREAM(ENHANCE_YOUR_CALM), which is
+                // what node's own test-http2-max-session-memory asserts.
+                self.send_rst_stream(sink, target, ErrorCode::EnhanceYourCalm);
+                sink.on_stream_rejected(target);
+                return false;
             }
-            sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
-            return false;
+            HeaderBlockDisposition::StreamClosed => {
+                // §5.1: HEADERS on a closed/half-closed-remote stream is a stream error of type
+                // STREAM_CLOSED. The block was decoded above purely for HPACK-table sync.
+                self.send_rst_stream(sink, target, ErrorCode::StreamClosed);
+                if let Some(s) = self.streams.get_mut(&target) {
+                    s.state = State::Closed;
+                }
+                sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
+                return false;
+            }
+            HeaderBlockDisposition::Deliver => {}
         }
         // RFC 9113 §8.3.1 (nghttp2_http_on_request_headers): a request block needs exactly one
         // non-empty :method, :scheme and :path plus an :authority or Host; plain CONNECT omits
@@ -1684,8 +1700,7 @@ impl Connection {
         self.header_target = promised;
         self.header_push_parent = hdr.stream_id;
         self.header_is_request = true;
-        self.header_stream_closed = false;
-        self.header_stream_refused = false;
+        self.header_disposition = HeaderBlockDisposition::Deliver;
         if !end_headers {
             self.continuation_stream = hdr.stream_id;
             return false;

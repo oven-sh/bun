@@ -90,12 +90,12 @@ impl PendingConnect {
         // session is kept alive by the ref `this` holds for the duration of this
         // fn — `session_mut` centralises the backref upgrade.
         let s = session_mut(session);
-        if s.closed || s.pending.is_empty() {
+        if s.is_closed() || s.pending.is_empty() {
             // Every waiter was aborted while DNS was in flight; don't open a
             // connection nobody will use. `pc_mut` upgrades the owned C
             // handle; `cancel()` consumes it.
             this.pc_mut().cancel();
-            if !s.closed {
+            if !s.is_closed() {
                 Self::fail_session(session, crate::Error::Aborted);
             }
             return;
@@ -147,7 +147,7 @@ impl PendingConnect {
         // Caller guarantees `session` is live (held by an intrusive ref) —
         // `session_mut` centralises the backref upgrade.
         let s = session_mut(session);
-        s.closed = true;
+        s.mark_closed();
         if let Some(ctx) = super::client_context::ClientContext::get() {
             super::client_context::ClientContext::as_mut(ctx).unregister(s);
         }

@@ -13,7 +13,7 @@ use bstr::BStr;
 use bun_uws::quic;
 
 use super::client_context::ClientContext;
-use super::client_session::{ClientSession, session_mut, stream_mut, stream_ref};
+use super::client_session::{ClientSession, SessionState, session_mut, stream_mut, stream_ref};
 use super::encode;
 use super::stream::Stream;
 use crate::h2_client::dispatch::{is_malformed_response_field, is_malformed_response_value};
@@ -96,10 +96,10 @@ extern "C" fn on_hsk_done(qs: *mut quic::Socket, ok: c_int) {
         session.pending.len()
     );
     if ok == 0 {
-        session.closed = true;
+        session.mark_closed();
         return;
     }
-    session.handshake_done = true;
+    session.state = SessionState::Established;
     for _ in 0..session.pending.len() {
         qs.make_stream();
     }
@@ -121,7 +121,7 @@ extern "C" fn on_goaway(qs: *mut quic::Socket) {
         BStr::new(&session.hostname),
         session.port,
     );
-    session.closed = true;
+    session.mark_closed();
 }
 
 extern "C" fn on_conn_close(qs: *mut quic::Socket) {
@@ -129,7 +129,7 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
     let Some(session) = session_of(qs) else {
         return;
     };
-    session.closed = true;
+    session.mark_closed();
     session.qsocket = None;
     let mut buf = [0u8; 256];
     let st = qs.status(&mut buf);
@@ -150,7 +150,7 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
         debug_assert!(stream_ref(stream).qstream.is_none());
         session.retry_or_fail(
             stream,
-            if session.handshake_done {
+            if session.state == SessionState::Draining {
                 crate::Error::ConnectionClosed
             } else {
                 crate::Error::HTTP3HandshakeFailed

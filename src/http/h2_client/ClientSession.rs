@@ -31,6 +31,22 @@ type u31 = u32;
 #[allow(non_camel_case_types)]
 type u24 = u32;
 
+/// Connection-establishment progress. Monotonic: the leader's `attach()` runs synchronously
+/// before any `on_data` can fire (so `PrefaceSent` precedes `SettingsReceived`), and
+/// `dispatch_frame` rejects any non-SETTINGS frame while `< SettingsReceived` (so
+/// `GoawayReceived` never precedes it).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Phase {
+    /// Client connection preface not yet queued.
+    Init,
+    /// Preface + initial SETTINGS queued; awaiting the server's SETTINGS.
+    PrefaceSent,
+    /// Server's first SETTINGS processed; streams may be opened.
+    SettingsReceived,
+    /// GOAWAY received; no new streams.
+    GoawayReceived,
+}
+
 #[derive(bun_ptr::CellRefCounted)]
 pub struct ClientSession {
     /// Ref holders: the socket-ext tag while the session is the ActiveSocket
@@ -77,9 +93,7 @@ pub struct ClientSession {
     /// frame arrives so the real MAX_CONCURRENT_STREAMS cap can be honoured.
     pub(crate) pending_attach: Vec<*mut HTTPClient<'static>>, // BACKREF: client owns itself; session only borrows
 
-    pub(crate) preface_sent: bool,
-    pub(crate) settings_received: bool,
-    pub(crate) goaway_received: bool,
+    pub(crate) phase: Phase,
     /// Set when the HPACK encoder's dynamic table has diverged from the
     /// server's view (writeRequest failed mid-encode). Existing siblings whose
     /// HEADERS already went out are unaffected, but no new stream may be
@@ -253,9 +267,7 @@ impl ClientSession {
             next_stream_id: 1,
             expecting_continuation: 0,
             pending_attach: Vec::new(),
-            preface_sent: false,
-            settings_received: false,
-            goaway_received: false,
+            phase: Phase::Init,
             encoder_poisoned: false,
             delivering: false,
             stream_progressed: false,
@@ -280,7 +292,7 @@ impl ClientSession {
     }
 
     pub(crate) fn has_headroom(&self) -> bool {
-        !self.goaway_received
+        self.phase < Phase::GoawayReceived
             && !self.encoder_poisoned
             && self.fatal_error.is_none()
             && self.streams.count() < self.remote_max_concurrent_streams as usize
@@ -312,7 +324,7 @@ impl ClientSession {
         // MAX_CONCURRENT_STREAMS isn't known and a non-replayable body
         // shouldn't risk a REFUSED_STREAM. The leader bypasses adopt() and
         // attaches directly so the preface still goes out.
-        if self.delivering || !self.settings_received {
+        if self.delivering || self.phase < Phase::SettingsReceived {
             self.pending_attach.push(client.as_erased_ptr().as_ptr());
             self.rearm_timeout();
             return;
@@ -344,7 +356,7 @@ impl ClientSession {
     }
 
     fn drain_pending(&mut self) {
-        if !self.settings_received || self.pending_attach.is_empty() {
+        if self.phase < Phase::SettingsReceived || self.pending_attach.is_empty() {
             return;
         }
         let waiters = core::mem::take(&mut self.pending_attach);
@@ -367,7 +379,7 @@ impl ClientSession {
     /// confuse the next request.
     pub(crate) fn can_pool(&self) -> bool {
         self.streams.count() == 0
-            && !self.goaway_received
+            && self.phase < Phase::GoawayReceived
             && !self.encoder_poisoned
             && self.fatal_error.is_none()
             && self.expecting_continuation == 0
@@ -432,7 +444,7 @@ impl ClientSession {
         client.flags.protocol = Protocol::Http2;
         client.allow_retry = false;
 
-        if !self.preface_sent {
+        if self.phase == Phase::Init {
             encode::write_preface(self);
         }
 

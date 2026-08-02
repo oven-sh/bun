@@ -2,7 +2,7 @@
 //! preface, HEADERS/CONTINUATION serialisation via HPACK, and DATA framing
 //! under both flow-control windows. Free functions over `&mut ClientSession`.
 
-use super::client_session::ClientSession;
+use super::client_session::{ClientSession, Phase};
 use super::stream::Stream;
 use super::{LOCAL_INITIAL_WINDOW_SIZE, LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_HIGH_WATER};
 use crate::HTTPClient;
@@ -37,7 +37,7 @@ pub(crate) fn write_preface(session: &mut ClientSession) {
     // open it to match the per-stream window so the first response isn't
     // throttled before our first WINDOW_UPDATE.
     session.write_window_update(0, LOCAL_INITIAL_WINDOW_SIZE - wire::DEFAULT_WINDOW_SIZE);
-    session.preface_sent = true;
+    session.phase = Phase::PrefaceSent;
 }
 
 #[inline]

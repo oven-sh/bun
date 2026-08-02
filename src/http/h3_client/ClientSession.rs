@@ -1,7 +1,7 @@
 //! One QUIC connection to an origin. Owns its UDP endpoint via quic.c and
 //! multiplexes `Stream`s, each bound 1:1 to an `HTTPClient`. The `qsocket`
 //! pointer becomes dangling after `callbacks.onConnClose`, so every accessor
-//! checks `closed` first.
+//! checks `is_closed()` first.
 
 use core::cell::Cell;
 use core::ptr::NonNull;
@@ -20,6 +20,22 @@ use crate::{HTTPClient, HeaderResult, Protocol};
 
 use crate::h3_client::h3_client;
 
+/// Lifecycle of a pooled HTTP/3 session. `Draining` vs `Failed` preserves whether the QUIC
+/// handshake ever completed, which `on_conn_close` needs to pick the error for requests that
+/// never got a stream.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SessionState {
+    /// DNS and/or QUIC handshake in flight; `qsocket` may still be `None`.
+    Connecting,
+    /// `on_hsk_done(ok)` fired; lsquic streams can be created.
+    Established,
+    /// Unusable for new requests after the handshake succeeded (GOAWAY, conn_close, retry
+    /// poisoning). In-flight streams may still complete.
+    Draining,
+    /// Unusable and the handshake never completed (hsk failure, DNS failure, aborted early).
+    Failed,
+}
+
 #[derive(bun_ptr::CellRefCounted)]
 pub struct ClientSession {
     /// Ref holders: the `ClientContext.sessions` registry while listed (1), the
@@ -34,8 +50,7 @@ pub struct ClientSession {
     pub(crate) hostname: Vec<u8>,
     pub(crate) port: u16,
     pub(crate) reject_unauthorized: bool,
-    pub(crate) handshake_done: bool,
-    pub(crate) closed: bool,
+    pub(crate) state: SessionState,
     pub(crate) registry_index: u32,
 
     /// Requests waiting for `onStreamOpen` to hand them a stream. Order is
@@ -58,15 +73,29 @@ impl ClientSession {
             hostname,
             port,
             reject_unauthorized,
-            handshake_done: false,
-            closed: false,
+            state: SessionState::Connecting,
             registry_index: u32::MAX,
             pending: Vec::new(),
         }))
     }
 
+    /// Unusable for new requests (`qsocket` may be dangling).
+    #[inline]
+    pub(crate) fn is_closed(&self) -> bool {
+        matches!(self.state, SessionState::Draining | SessionState::Failed)
+    }
+
+    /// Monotonic transition into a closed state, preserving whether the handshake ever completed.
+    #[inline]
+    pub(crate) fn mark_closed(&mut self) {
+        self.state = match self.state {
+            SessionState::Established | SessionState::Draining => SessionState::Draining,
+            SessionState::Connecting | SessionState::Failed => SessionState::Failed,
+        };
+    }
+
     pub(crate) fn matches(&self, hostname: &[u8], port: u16, reject_unauthorized: bool) -> bool {
-        !self.closed
+        !self.is_closed()
             && self.port == port
             && self.reject_unauthorized == reject_unauthorized
             && strings::eql_long(&self.hostname, hostname, true)
@@ -86,27 +115,25 @@ impl ClientSession {
     }
 
     pub(crate) fn has_headroom(&self) -> bool {
-        if self.closed {
-            return false;
+        match self.state {
+            SessionState::Draining | SessionState::Failed => false,
+            // Before handshake nothing has had make_stream called yet, so cap optimistically
+            // at the default MAX_STREAMS.
+            SessionState::Connecting => self.pending.len() < 64,
+            // After handshake every pending entry has had make_stream called, so lsquic's
+            // n_avail_streams already accounts for them — comparing against pending.len would
+            // double-subtract. `Established` implies `qsocket` is set.
+            SessionState::Established => {
+                self.qsocket_mut().is_some_and(|qs| qs.streams_avail() > 0)
+            }
         }
-        let Some(qs) = self.qsocket_mut() else {
-            return self.pending.len() < 64;
-        };
-        // After handshake every pending entry has had make_stream called, so
-        // lsquic's n_avail_streams already accounts for them — comparing
-        // against pending.len would double-subtract. Before handshake nothing
-        // is counted yet, so cap optimistically at the default MAX_STREAMS.
-        if !self.handshake_done {
-            return self.pending.len() < 64;
-        }
-        qs.streams_avail() > 0
     }
 
     /// Queue `client` for a stream on this connection. The lsquic stream is
     /// created asynchronously, so the request goes into `pending` until
     /// `onStreamOpen` pops it.
     pub(crate) fn enqueue(&mut self, client: &mut HTTPClient) {
-        debug_assert!(!self.closed);
+        debug_assert!(!self.is_closed());
         client.h3 = None;
         client.flags.protocol = Protocol::Http3;
         client.allow_retry = false;
@@ -117,8 +144,8 @@ impl ClientSession {
         self.pending.push(stream);
         self.ref_();
 
-        if self.handshake_done {
-            // handshake_done implies qsocket is Some and valid.
+        if self.state == SessionState::Established {
+            // Established implies qsocket is Some and valid.
             self.qsocket_mut().unwrap().make_stream();
         }
     }
@@ -231,7 +258,7 @@ impl ClientSession {
         client_mut(client_ptr).flags.h3_retried = true;
         // The old session is dead from our perspective; make sure connect()
         // can't pick it again.
-        self.closed = true;
+        self.mark_closed();
         let port = self.port;
         let host: Vec<u8> = self.hostname.clone();
         bun_core::scoped_log!(

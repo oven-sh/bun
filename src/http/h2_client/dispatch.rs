@@ -3,7 +3,7 @@
 //! lifecycle and delivery; everything that interprets bytes off the wire lives
 //! here.
 
-use super::client_session::{ClientSession, stream_mut};
+use super::client_session::{ClientSession, Phase, stream_mut};
 use super::stream::{State as StreamState, Stream};
 use super::{LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_CONTROL_LIMIT};
 use crate::h2_frame_parser as wire;
@@ -106,8 +106,8 @@ fn dispatch_frame(
     // RFC 9113 §3.4: the server connection preface is a SETTINGS frame and
     // MUST be the first frame. Without this, GOAWAY-before-SETTINGS leaves
     // coalesced waiters in `pending_attach` forever (drainPending is gated
-    // on settings_received and maybeRelease won't run while it's non-empty).
-    if !session.settings_received && frame_type != FT_SETTINGS {
+    // on Phase::SettingsReceived and maybeRelease won't run while it's non-empty).
+    if session.phase < Phase::SettingsReceived && frame_type != FT_SETTINGS {
         session.fatal_error = Some(crate::Error::HTTP2ProtocolError);
         return;
     }
@@ -206,7 +206,7 @@ fn dispatch_frame(
                 0,
                 &[],
             );
-            session.settings_received = true;
+            session.phase = session.phase.max(Phase::SettingsReceived);
         }
         FT_WINDOW_UPDATE => {
             if length != 4 {
@@ -511,7 +511,7 @@ fn dispatch_frame(
                 session.fatal_error = Some(crate::Error::HTTP2FrameSizeError);
                 return;
             }
-            session.goaway_received = true;
+            session.phase = Phase::GoawayReceived;
             session.goaway_last_stream_id =
                 wire::UInt31WithReserved::from_bytes(&payload[0..4]).uint31();
             let code: u32 = wire::u32_from_bytes(&payload[4..8]);

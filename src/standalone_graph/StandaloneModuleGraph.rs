@@ -1604,7 +1604,9 @@ pub(crate) fn inject(
                 // the JS bundle after the original signature.  Strip the old
                 // .codesign and sign the modified file so the signature
                 // covers the entire standalone binary.
-                let _ = ohos_sign::sign_selfsign_inplace_with_strip(out_path);
+                if let Err(err) = ohos_sign::sign_selfsign_inplace_with_strip(out_path) {
+                    bun_core::pretty_errorln!("<red>error<r>: ohos self-sign {}: {}", out_path.display(), err);
+                }
             }
             return cloned_executable_fd;
         }
@@ -2133,14 +2135,21 @@ pub fn to_executable(
             fd.close();
         }
 
-        // OHOS: compiled binaries need a .codesign section to execute.
+        // OHOS: compiled binaries need a .codesign section to execute. The
+        // base bun binary carries a signature, and appending the JS bundle
+        // invalidates it while the stale .codesign section remains — so
+        // has_codesign() would report true and skip the re-sign, leaving an
+        // invalid signature the kernel rejects. Strip and re-sign
+        // unconditionally (same as the inject() path above).
         #[cfg(target_env = "ohos")]
         {
             if !outfile.is_empty() {
                 if let Some(signed_path) = core::str::from_utf8(outfile).ok() {
                     let p = std::path::Path::new(signed_path);
-                    if p.exists() && !ohos_sign::has_codesign(&std::fs::read(p).unwrap_or_default()) {
-                        let _ = ohos_sign::sign_selfsign_inplace(p);
+                    if p.exists() {
+                        if let Err(err) = ohos_sign::sign_selfsign_inplace_with_strip(p) {
+                            bun_core::pretty_errorln!("<red>error<r>: ohos self-sign {}: {}", p.display(), err);
+                        }
                     }
                 }
             }

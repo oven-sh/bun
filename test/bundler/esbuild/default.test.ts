@@ -1654,7 +1654,9 @@ describe.concurrent("bundler", () => {
       `,
     },
     run: {
-      stdout: "c\ng\ne\nf\nd\nc\n",
+      // Unbundled, g.ts throws a TDZ ReferenceError reading `c`. The bundle
+      // lowers `const` to `var`, so the first read observes `undefined`.
+      stdout: "undefined\ng\ne\nf\nd\nc\n",
     },
   });
   itBundled("default/ThisOutsideFunctionRenamedToExports", {

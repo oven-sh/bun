@@ -93,8 +93,7 @@ pub(crate) fn ast_to_json(ast: &ast::Ast<'_>, buf: &mut Vec<u8>) -> Result<(), S
     Ok(())
 }
 
-/// WHATWG "maximal subpart of an ill-formed subsequence" length at a
-/// multi-byte lead, so `str()`'s FFFD count matches `TextDecoder` (raw mode).
+/// WHATWG maximal-subpart length at a multi-byte lead (so FFFD count matches `TextDecoder`).
 fn utf8_maximal_subpart(s: &[u8]) -> usize {
     let (lo2, hi2, width) = match s[0] {
         0xC2..=0xDF => (0x80, 0xBF, 2),

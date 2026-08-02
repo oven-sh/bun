@@ -237,7 +237,10 @@ describe("timeout kills the process", () => {
     expect(proc.exitCode).toBe(null);
     expect(proc.signalCode).toBe(isWindows ? "SIGKILL" : "SIGHUP");
     const timeEnd = Date.now();
-    expect(timeEnd - timeStart).toBeGreaterThan(100); // make sure it actually waits
+    // The timeout deadline is CLOCK_MONOTONIC at nanosecond precision, so by the
+    // time spawnSync returns at least 100ms have elapsed. Date.now() truncates to
+    // whole milliseconds, so floor(end) - floor(start) can equal exactly 100.
+    expect(timeEnd - timeStart).toBeGreaterThanOrEqual(100); // make sure it actually waits
     expect(timeEnd - timeStart).toBeLessThan(200); // make sure it's terminating early
     const result = proc.stdout.toString("utf-8");
     expect(result).toBe("");

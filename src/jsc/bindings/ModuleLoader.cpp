@@ -516,6 +516,31 @@ extern "C" void Bun__onFulfillAsyncModule(
     }
 }
 
+// Returns true when the canonical builtin-module key already has a live cached
+// instance in any of the module caches. The runtime resolver consults this
+// before running plugin `onResolve` for builtin specifiers so that a plugin
+// registered after the builtin was first loaded cannot redirect the key and
+// fork module identity.
+extern "C" bool Bun__isBuiltinModuleCached(Zig::GlobalObject* globalObject, const uint8_t* keyPtr, size_t keyLen, uint32_t tag)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto keyString = WTF::String::fromUTF8(std::span { reinterpret_cast<const char*>(keyPtr), keyLen });
+
+    if (auto* entry = globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromString(vm, keyString))) {
+        if (entry->status() >= JSC::ModuleRegistryEntry::Status::Fetched)
+            return true;
+    }
+
+    if (tag & SyntheticModuleType::InternalModuleRegistryFlag) {
+        constexpr auto mask = SyntheticModuleType::InternalModuleRegistryFlag - 1;
+        auto field = static_cast<InternalModuleRegistry::Field>(tag & mask);
+        if (!globalObject->internalModuleRegistry()->internalField(field).get().isUndefined())
+            return true;
+    }
+
+    return false;
+}
+
 JSValue fetchBuiltinModuleWithoutResolution(
     Zig::GlobalObject* globalObject,
     BunString* specifier,

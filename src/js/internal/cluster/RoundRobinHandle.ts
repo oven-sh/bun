@@ -37,6 +37,8 @@ export default class RoundRobinHandle {
         // Currently, net module only supports `ipv6Only` option in `flags`.
         ipv6Only: !!(flags & UV_TCP_IPV6ONLY),
         backlog,
+        // Workers bind this port directly; open the reuse group for them.
+        reusePort: true,
       });
     } else
       this.server.listen({

@@ -1295,6 +1295,28 @@ describe("node:http", () => {
     const err = await promise;
     expect(err.code).toBe("EADDRINUSE");
   });
+
+  // https://github.com/oven-sh/bun/issues/15560
+  test("listen(port, 'localhost') reports EADDRINUSE instead of silently binding the other loopback family", async () => {
+    const a = createServer();
+    const b = createServer();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        a.on("error", reject);
+        a.listen(0, "localhost", () => resolve());
+      });
+      const port = a.address().port;
+
+      const err = await new Promise<NodeJS.ErrnoException>((resolve, reject) => {
+        b.on("error", resolve);
+        b.listen(port, "localhost", () => reject(new Error(`second listen bound ${JSON.stringify(b.address())}`)));
+      });
+      expect(err.code).toBe("EADDRINUSE");
+    } finally {
+      b.close();
+      a.close();
+    }
+  });
 });
 
 describe("node https server", async () => {

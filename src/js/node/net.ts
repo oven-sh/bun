@@ -4032,7 +4032,8 @@ function listenInCluster(
       hostname,
       exclusive,
       ipv6Only,
-      reusePort,
+      // Workers share the port via SO_REUSEPORT; matches _http_server.ts.
+      true /* reusePort */,
       readableAll,
       writableAll,
       tls,

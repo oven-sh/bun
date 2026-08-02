@@ -2159,7 +2159,6 @@ fn parse_websocket_header(bytes: [u8; 2]) -> ParsedHeader {
     let header = WebsocketHeader::from_slice(bytes);
     let opcode = header.opcode();
     let payload_len = header.len() as usize;
-    let is_data_frame = matches!(opcode, Opcode::Text | Opcode::Binary);
     let mut parsed = ParsedHeader {
         opcode,
         payload_len,
@@ -2169,8 +2168,8 @@ fn parse_websocket_header(bytes: [u8; 2]) -> ParsedHeader {
         next: ReceiveState::Fail,
     };
 
-    // A server must not mask data frames it sends to a client.
-    if header.mask() && is_data_frame {
+    // RFC 6455 §5.1: a server must not mask any frame it sends to a client.
+    if header.mask() {
         parsed.next = ReceiveState::NeedMask;
         return parsed;
     }

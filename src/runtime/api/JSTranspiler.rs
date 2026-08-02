@@ -1422,7 +1422,8 @@ impl JSTranspiler {
                             raw_format = true;
                         } else {
                             return Err(global.throw_invalid_arguments(format_args!(
-                                "unstable_parse: format must be \"raw\""
+                                "unstable_parse: format must be \"raw\", got \"{}\"",
+                                String::from_utf8_lossy(fmt.slice())
                             )));
                         }
                     }
@@ -1478,6 +1479,7 @@ impl JSTranspiler {
             if crate::api::js_transpiler_ast::ast_to_tape(&parse_result.ast, &mut tape).is_err() {
                 return Err(global.throw_stack_overflow());
             }
+            tape.shrink_to_fit();
             let ab = jsc::ArrayBuffer::from_owned_bytes(
                 tape.into_boxed_slice(),
                 jsc::JSType::ArrayBuffer,

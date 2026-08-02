@@ -1223,7 +1223,10 @@ impl<'a> TapeWriter<'a> {
             return id;
         }
         let id = self.key_names.len();
-        debug_assert!(id <= u8::MAX as usize);
+        assert!(
+            id <= u8::MAX as usize,
+            "unstable_parse tape: key table exceeds 255 entries"
+        );
         let id = id as u8;
         self.key_ids.insert(name, id);
         self.key_names.push(name);
@@ -1257,7 +1260,9 @@ impl<'a> TapeWriter<'a> {
 
     #[inline]
     fn end_node(&mut self, off: u32) -> u32 {
-        let n = ((self.buf.len() as u32 - off - 4) / 12) as u16;
+        let payload = self.buf.len() as u32 - off - 4;
+        debug_assert!(payload % 12 == 0);
+        let n = (payload / 12) as u16;
         self.buf[off as usize..off as usize + 2].copy_from_slice(&n.to_le_bytes());
         off
     }

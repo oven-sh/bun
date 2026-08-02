@@ -324,6 +324,9 @@ describe("Bun.Transpiler.unstable_parse", () => {
       expect(root.stmts.map((s: any) => s.kind)).toEqual(["s_expr", "s_expr", "s_expr"]);
       expect([...root.stmts][1].value.name).toBe("b");
       expect(root.stmts).toBe(root.stmts);
+      expect(root.stmts[""]).toBeUndefined();
+      expect("" in root.stmts).toBe(false);
+      expect(root.stmts["0.0"]).toBeUndefined();
     });
 
     test("node proxy ownKeys / spread", () => {
@@ -337,6 +340,31 @@ describe("Bun.Transpiler.unstable_parse", () => {
 
     test("invalid format throws", () => {
       expect(() => ts.unstable_parse(`1`, { format: "bogus" })).toThrow('format must be "raw"');
+    });
+
+    test("parse errors throw in raw mode", () => {
+      expect(() => ts.unstable_parse("const x = ", { format: "raw" })).toThrow("Unexpected end of file");
+    });
+
+    test("accepts Uint8Array in raw mode", () => {
+      const { root } = ts.unstable_parse(new TextEncoder().encode("let y = 7"), { format: "raw" });
+      expect(root.stmts[0].decls[0].value.value).toBe(7);
+    });
+
+    test("proxies reject mutation", () => {
+      const { root } = ts.unstable_parse(`const x = 1`, { format: "raw" });
+      expect(() => {
+        root.stmts[0].kind = "x";
+      }).toThrow();
+      expect(() => {
+        delete root.stmts[0].loc;
+      }).toThrow();
+      expect(() => {
+        root.stmts[0] = null;
+      }).toThrow();
+      expect(() => {
+        Object.defineProperty(root.stmts[0], "kind", { value: "x" });
+      }).toThrow();
     });
 
     test("visit() walks the tree by kind", () => {
@@ -359,7 +387,19 @@ describe("Bun.Transpiler.unstable_parse", () => {
       });
       expect(calls).toEqual(["f", "f"]);
       expect(idents).toEqual(["a", "f", "f"]);
-      expect(nodeCount).toBeGreaterThan(12);
+      expect(nodeCount).toBe(20);
+    });
+
+    test("visit() does not mis-dispatch on helper nodes", () => {
+      const { visit } = ts.unstable_parse(`try { a() } catch (e) { b() }`, { format: "raw" });
+      const kinds: string[] = [];
+      visit({
+        enter(n: any) {
+          if (typeof n.kind === "string") kinds.push(n.kind);
+        },
+      });
+      expect(kinds.length).toBeGreaterThan(0);
+      for (const k of kinds) expect(k).toMatch(/^(s_|e_|b_)/);
     });
 
     test("visit() handler returning false skips children", () => {

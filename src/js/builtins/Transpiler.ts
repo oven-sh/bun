@@ -25,11 +25,10 @@ export function unstableParse(this: Transpiler, code: any, opts: any) {
   const arrayCache = new $Map<number, any>();
 
   const readString = (off: number, len: number): string => {
-    const key = off * 0x100000000 + len;
-    let s = stringCache.$get(key);
+    let s = stringCache.$get(off);
     if (s !== undefined) return s;
     s = decoder.decode(bytes.subarray(stringsOffset + off, stringsOffset + off + len));
-    stringCache.$set(key, s);
+    stringCache.$set(off, s);
     return s;
   };
 
@@ -131,6 +130,15 @@ export function unstableParse(this: Transpiler, code: any, opts: any) {
       }
       return undefined;
     },
+    set() {
+      return false;
+    },
+    defineProperty() {
+      return false;
+    },
+    deleteProperty() {
+      return false;
+    },
   };
 
   const nodeAt = (off: number): any => {
@@ -149,7 +157,7 @@ export function unstableParse(this: Transpiler, code: any, opts: any) {
       if (prop === "toJSON") return toJSON;
       if (typeof prop === "string") {
         const i = +prop;
-        if (i >= 0 && (i | 0) === i) {
+        if (i >= 0 && (i | 0) === i && "" + i === prop) {
           const count = dv.getUint32(off, true);
           if (i >= count) return undefined;
           return decodePayload(off + 4 + i * 12, 0);
@@ -161,7 +169,7 @@ export function unstableParse(this: Transpiler, code: any, opts: any) {
       if (prop === "length" || prop === "__off" || prop === "toJSON") return true;
       if (typeof prop === "string") {
         const i = +prop;
-        if (i >= 0 && (i | 0) === i) return i < dv.getUint32(target.__off, true);
+        if (i >= 0 && (i | 0) === i && "" + i === prop) return i < dv.getUint32(target.__off, true);
       }
       return Reflect.has(target, prop);
     },
@@ -179,12 +187,21 @@ export function unstableParse(this: Transpiler, code: any, opts: any) {
       }
       if (typeof prop === "string") {
         const i = +prop;
-        if (i >= 0 && (i | 0) === i) {
+        if (i >= 0 && (i | 0) === i && "" + i === prop) {
           if (i >= dv.getUint32(off, true)) return undefined;
           return { enumerable: true, configurable: true, writable: false, value: decodePayload(off + 4 + i * 12, 0) };
         }
       }
       return Reflect.getOwnPropertyDescriptor(target, prop);
+    },
+    set() {
+      return false;
+    },
+    defineProperty() {
+      return false;
+    },
+    deleteProperty() {
+      return false;
     },
   };
 
@@ -202,8 +219,11 @@ export function unstableParse(this: Transpiler, code: any, opts: any) {
   const visitNode = (off: number, visitors: any, enter: any): void => {
     const n = dv.getUint16(off, true);
     let p = off + 4;
-    const kind = readString(dv.getUint32(p + 4, true), dv.getUint32(p + 8, true));
-    const fn = visitors[kind] ?? enter;
+    let fn = enter;
+    if (dv.getUint8(p) === 0 && dv.getUint8(p + 1) === 5) {
+      const kind = readString(dv.getUint32(p + 4, true), dv.getUint32(p + 8, true));
+      fn = visitors[kind] ?? enter;
+    }
     if (fn !== undefined && fn.$call(undefined, nodeAt(off)) === false) return;
     for (let i = 0; i < n; i++, p += 12) {
       const ty = dv.getUint8(p + 1);

@@ -2642,7 +2642,11 @@ declare module "bun" {
     unstable_parse(
       code: Bun.StringOrBuffer,
       options: { loader?: JavaScriptLoader; format: "raw" },
-    ): { buffer: ArrayBuffer; root: UnstableAST };
+    ): {
+      buffer: ArrayBuffer;
+      root: UnstableAST;
+      visit: (visitors: Record<string, (node: UnstableASTNode) => boolean | void>) => void;
+    };
     unstable_parse(code: Bun.StringOrBuffer, options: { loader?: JavaScriptLoader }): UnstableAST;
   }
 

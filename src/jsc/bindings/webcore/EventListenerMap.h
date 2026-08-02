@@ -37,6 +37,7 @@
 #include <memory>
 #include <wtf/Assertions.h>
 #include <wtf/Forward.h>
+#include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/Threading.h>
 #include <wtf/text/AtomString.h>
@@ -71,6 +72,18 @@ public:
     Lock& lock() { return m_lock; }
 
 private:
+    struct Entry {
+        AtomString type;
+        EventListenerVector listeners;
+        // Lazy superset of (jsFunction | useCapture | isAttribute) keys in
+        // `listeners`: a miss proves no duplicate, a hit falls back to a scan.
+        std::unique_ptr<HashSet<uintptr_t>> callbackIndex;
+    };
+
+    static constexpr unsigned callbackIndexThreshold = 16;
+
+    Entry* findEntry(const AtomString& eventType);
+
     void releaseAssertOrSetThreadUID()
     {
         if (!m_threadUID) {
@@ -83,7 +96,7 @@ private:
         RELEASE_ASSERT(Thread::mayBeGCThread());
     }
 
-    Vector<std::pair<AtomString, EventListenerVector>, 0, CrashOnOverflow, 4> m_entries;
+    Vector<Entry, 0, CrashOnOverflow, 4> m_entries;
     Lock m_lock;
     uint32_t m_threadUID { 0 };
 };
@@ -93,7 +106,7 @@ void EventListenerMap::visitJSEventListeners(Visitor& visitor)
 {
     Locker locker { m_lock };
     for (auto& entry : m_entries) {
-        for (auto& eventListener : entry.second)
+        for (auto& eventListener : entry.listeners)
             eventListener->callback().visitJSFunction(visitor);
     }
 }

@@ -26,13 +26,10 @@ class CookieMap : public RefCounted<CookieMap> {
 public:
     ~CookieMap();
 
-    // Define a simple struct to hold the key-value pair
-
     static ExceptionOr<Ref<CookieMap>> create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& init, bool throwOnInvalidCookieString = true);
 
     std::optional<String> get(const String& name) const;
-    Vector<KeyValuePair<String, String>> getAll() const;
-    Vector<Ref<Cookie>> getAllChanges() const { return m_modifiedCookies; }
+    Vector<Ref<Cookie>> getAllChanges() const;
 
     bool has(const String& name) const;
 
@@ -54,7 +51,8 @@ public:
 
     private:
         Ref<CookieMap> m_target;
-        size_t m_index { 0 };
+        size_t m_modifiedIndex { 0 };
+        size_t m_originalIndex { 0 };
     };
 
     Iterator createIterator() { return Iterator { *this }; }
@@ -62,13 +60,18 @@ public:
 
 private:
     CookieMap();
-    CookieMap(Vector<Ref<Cookie>>&& cookies);
     CookieMap(Vector<KeyValuePair<String, String>>&& cookies);
 
-    void removeInternal(const String& name);
+    void removeOriginal(const String& name);
+    void setModified(const String& name, RefPtr<Cookie>&&);
 
+    // Ordered storage; removed originals are tombstoned (null key) so indices stay valid.
     Vector<KeyValuePair<String, String>> m_originalCookies;
-    Vector<Ref<Cookie>> m_modifiedCookies;
+    Vector<RefPtr<Cookie>> m_modifiedCookies;
+
+    // Name -> index. Originals may repeat a name (get() = first, remove() evicts all).
+    HashMap<String, Vector<size_t>> m_originalIndex;
+    HashMap<String, size_t> m_modifiedIndex;
 };
 
 } // namespace WebCore

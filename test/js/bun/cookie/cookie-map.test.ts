@@ -261,8 +261,8 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     // Get changes
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
-        "foo=bar; Path=/; Secure; HttpOnly; Partitioned; SameSite=Lax",
         "name=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
+        "foo=bar; Path=/; Secure; HttpOnly; Partitioned; SameSite=Lax",
       ]
     `);
   });
@@ -372,8 +372,7 @@ describe("iterator", () => {
     for (const key of map.keys()) {
       map.delete(key);
     }
-    // expect(map.size).toBe(0);
-    expect(map.size).toBe(500); // FormData works this way, but not Set. maybe we should work like Set.
+    expect(map.size).toBe(0);
   });
   test("delete in a loop with predefined entries", () => {
     const entries: [string, string][] = [];
@@ -398,8 +397,7 @@ describe("iterator", () => {
     for (const key of map.keys()) {
       map.delete(key);
     }
-    // expect(map.size).toBe(0);
-    expect(map.size).toBe(500); // FormData works this way, but not Set. maybe we should work like Set.
+    expect(map.size).toBe(0);
   });
   test("basic iterator", () => {
     const cookies = new Bun.CookieMap({ a: "b", c: "d" });
@@ -464,5 +462,137 @@ describe("invalid delete usage", () => {
       // @ts-ignore
       v2.delete(v2);
     }).toThrow("Cookie name is required");
+  });
+});
+
+describe("delete() validates before mutating", () => {
+  test.each([
+    ["path", { path: "/;bad" }, "Invalid cookie path"],
+    ["domain", { domain: "bad domain" }, "Invalid cookie domain"],
+  ])("an invalid %s leaves a parsed entry in place and queues no Set-Cookie", (_, options, message) => {
+    const map = new Bun.CookieMap("session=tok; other=1");
+    expect(() => map.delete("session", options)).toThrow(message);
+    expect(map.toJSON()).toEqual({ session: "tok", other: "1" });
+    expect(map.has("session")).toBe(true);
+    expect(map.size).toBe(2);
+    expect(map.toSetCookieHeaders()).toEqual([]);
+  });
+
+  test.each([
+    ["path", { path: "/;bad" }, "Invalid cookie path"],
+    ["domain", { domain: "bad domain" }, "Invalid cookie domain"],
+  ])("an invalid %s leaves a set() entry in place", (_, options, message) => {
+    const map = new Bun.CookieMap();
+    map.set("session", "tok");
+    expect(() => map.delete({ name: "session", ...options })).toThrow(message);
+    expect(map.get("session")).toBe("tok");
+    expect(map.toSetCookieHeaders()).toEqual(["session=tok; Path=/; SameSite=Lax"]);
+  });
+
+  test("set() that throws on invalid options does not mutate the map", () => {
+    const map = new Bun.CookieMap("x=1");
+    expect(() => map.set("y", "v", { domain: "bad domain" })).toThrow("Invalid cookie domain");
+    expect(() => map.set("x", "replaced", { path: "/;bad" })).toThrow("Invalid cookie path");
+    expect([...map.entries()]).toEqual([["x", "1"]]);
+    expect(map.toSetCookieHeaders()).toEqual([]);
+  });
+});
+
+describe("delete() accepts any existing key", () => {
+  test("a name the Cookie-header parser accepted but isValidCookieName rejects is evicted without throwing", () => {
+    const map = new Bun.CookieMap("a b=1; ok=2");
+    expect(map.get("a b")).toBe("1");
+    expect(() => map.delete("a b")).not.toThrow();
+    expect(map.has("a b")).toBe(false);
+    expect([...map.entries()]).toEqual([["ok", "2"]]);
+    // No well-formed Set-Cookie tombstone can be emitted for such a name.
+    expect(map.toSetCookieHeaders()).toEqual([]);
+  });
+
+  test.each(["\u0001ctl", "x\u007f", "é", "name\u00a0"])(
+    "deleting a parsed cookie with unwritable name %j evicts it without throwing",
+    raw => {
+      const map = new Bun.CookieMap(`${raw}=1; ok=2`);
+      expect(map.get(raw)).toBe("1");
+      expect(() => map.delete(raw)).not.toThrow();
+      expect(map.toJSON()).toEqual({ ok: "2" });
+      expect(map.toSetCookieHeaders()).toEqual([]);
+    },
+  );
+
+  test("an unwritable name with an invalid path still throws without mutating", () => {
+    const map = new Bun.CookieMap("a b=1; ok=2");
+    expect(() => map.delete("a b", { path: "/;bad" })).toThrow("Invalid cookie path");
+    expect(map.get("a b")).toBe("1");
+    expect(map.toSetCookieHeaders()).toEqual([]);
+  });
+
+  test("deleting a writable name still queues a Set-Cookie tombstone", () => {
+    const map = new Bun.CookieMap("good=1");
+    map.delete("good");
+    expect(map.has("good")).toBe(false);
+    expect(map.toSetCookieHeaders()).toEqual(["good=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax"]);
+  });
+
+  test("set()/new Cookie() keep rejecting unwritable names", () => {
+    const map = new Bun.CookieMap();
+    expect(() => map.set("a b", "1")).toThrow("Invalid cookie name");
+    expect(() => new Bun.Cookie("a b", "1")).toThrow("Invalid cookie name");
+  });
+});
+
+describe("hashed lookup", () => {
+  test("repeated set()/delete() on one name reuses the Set-Cookie slot", () => {
+    const map = new Bun.CookieMap();
+    for (let i = 0; i < 1000; i++) map.set("x", String(i));
+    expect(map.toSetCookieHeaders()).toEqual(["x=999; Path=/; SameSite=Lax"]);
+    for (let i = 0; i < 1000; i++) map.delete("x");
+    expect(map.toSetCookieHeaders()).toEqual(["x=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax"]);
+    map.set("x", "v");
+    expect(map.toSetCookieHeaders()).toEqual(["x=v; Path=/; SameSite=Lax"]);
+  });
+
+  test("get()/set()/delete() stay correct over many keys", () => {
+    const N = 2000;
+    const map = new Bun.CookieMap();
+    for (let i = 0; i < N; i++) map.set("c" + i, "v" + i);
+    const mismatches: string[] = [];
+    for (let i = 0; i < N; i++) {
+      const got = map.get("c" + i);
+      if (got !== "v" + i) mismatches.push(`c${i}=${got}`);
+    }
+    expect(mismatches).toEqual([]);
+    for (let i = 0; i < N; i++) map.delete("c" + i);
+    expect(map.size).toBe(0);
+    expect(map.toSetCookieHeaders().length).toBe(N);
+  });
+
+  test("duplicate names in a Cookie header: get() returns the first, delete() evicts all", () => {
+    const map = new Bun.CookieMap("dup=first; k=v; dup=second");
+    expect(map.get("dup")).toBe("first");
+    expect(map.size).toBe(3);
+    map.delete("dup");
+    expect(map.has("dup")).toBe(false);
+    expect([...map.entries()]).toEqual([["k", "v"]]);
+    expect(map.size).toBe(1);
+  });
+
+  test("iteration, toJSON and toSetCookieHeaders skip entries removed mid-sequence", () => {
+    const map = new Bun.CookieMap("a=1; b=2; c=3");
+    map.set("d", "4");
+    map.delete("b");
+    map.set("e", "5");
+    expect([...map.entries()]).toEqual([
+      ["d", "4"],
+      ["e", "5"],
+      ["a", "1"],
+      ["c", "3"],
+    ]);
+    expect(map.toJSON()).toEqual({ a: "1", c: "3", d: "4", e: "5" });
+    expect(map.toSetCookieHeaders()).toEqual([
+      "d=4; Path=/; SameSite=Lax",
+      "b=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
+      "e=5; Path=/; SameSite=Lax",
+    ]);
   });
 });

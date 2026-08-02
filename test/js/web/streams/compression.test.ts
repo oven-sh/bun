@@ -437,6 +437,43 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     },
   );
 
+  // Native-sink backpressure: when the HTTP response sink's socket buffer fills
+  // (slow client), the transform arm's writeBytes returns a pending promise and
+  // the writable side parks on m_nativeSinkReadyPromise. Without that, a fast
+  // source with a stalled client fills the sink buffer unboundedly.
+  test("CompressionStream -> native HTTP sink applies backpressure to a stalled client", async () => {
+    let pulls = 0;
+    // Incompressible data so the gzipped output is ~as large as the input.
+    const chunk = crypto.getRandomValues(new Uint8Array(64 * 1024));
+    const TOTAL = 500;
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        const body = new ReadableStream({
+          pull(c) {
+            pulls++;
+            c.enqueue(chunk.slice());
+            if (pulls >= TOTAL) c.close();
+          },
+        });
+        return new Response(body.pipeThrough(new CompressionStream("gzip")));
+      },
+    });
+    const res = await fetch(server.url);
+    const reader = res.body!.getReader();
+    await reader.read();
+    // Let the server's pull loop run until it either parks on backpressure or
+    // runs away to TOTAL.
+    for (let i = 0; i < 40; i++) await Bun.sleep(1);
+    const pullsWhileStalled = pulls;
+    while (!(await reader.read()).done) {}
+    // Without backpressure the pull loop reaches TOTAL while the client is
+    // stalled; with it, pulls stay bounded by the socket + sink buffer
+    // (~a few MB / 64KB ≈ tens of pulls).
+    expect(pullsWhileStalled).toBeLessThan(TOTAL);
+    expect(pulls).toBe(TOTAL);
+  });
+
   // readable highWaterMark is 1 (matching Node.js and Chromium), so a single
   // write completes before any reader is attached.
   test("a single write completes without a reader attached", async () => {

@@ -7978,20 +7978,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Handle import paths after the whole file has been visited because we need
             // symbol usage counts to be able to remove unused type-only imports in
             // TypeScript code.
-            loop {
-                let mut kept_import_equals = false;
-                let mut removed_import_equals = false;
-
-                let begin = parts_end;
+            let parts_begin = parts_end;
+            let mut kept_import_equals = false;
+            let mut removed_import_equals = false;
+            {
                 // Potentially remove some statements, then filter out parts to remove any
                 // with no statements
-                for idx in begin..parts.len() {
-                    // A shallow bitwise copy leaves `parts[idx]` intact so the outer
-                    // multi-pass loop (which restarts at `begin = parts_end`) re-scans
-                    // real data on the next iteration. `mem::take` would zero the slot
-                    // and degrade this to a single pass, so use `ptr::read`; the
-                    // duplicate is non-owning (paired with `ptr::write`/`forget`
-                    // below to avoid double-drop of arena-backed Vec fields).
+                for idx in parts_begin..parts.len() {
                     // SAFETY: idx < parts.len(); Part fields are arena/bump-backed
                     // (Borrowed-origin BabyLists, raw stmt slices), so the bitwise copy is
                     // a valid non-owning duplicate.
@@ -8066,19 +8059,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .append_slice(self.import_records_for_current_part.as_slice());
                         }
 
-                        // Wipe the source slot's heap-backed maps so a multi-pass
-                        // re-scan of `idx` never aliases the compacted survivor.
-                        // SAFETY: `idx < parts.len()`; field-only write, `part` owns the old bits.
-                        unsafe {
-                            let src = parts.as_mut_ptr().add(idx);
-                            core::ptr::write(&raw mut (*src).symbol_uses, Default::default());
-                            core::ptr::write(
-                                &raw mut (*src).import_symbol_property_uses,
-                                Default::default(),
-                            );
-                        }
-                        // SAFETY: bitwise overwrite — the old slot value is intentionally not
-                        // dropped (its fields are arena-owned, so abandoning it does not leak).
+                        // SAFETY: `parts_end <= idx < parts.len()`; bitwise overwrite
+                        // of arena-owned data, paired with the `ptr::read` above.
                         unsafe {
                             core::ptr::write(
                                 parts.as_mut_ptr().add(parts_end),
@@ -8087,38 +8069,58 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         };
                         parts_end += 1;
                     } else {
-                        // Filtered out; free the global-heap maps and clear the
-                        // alias in `parts[idx]` so a re-scan never sees freed handles.
                         drop(core::mem::take(&mut part.symbol_uses));
                         drop(core::mem::take(&mut part.import_symbol_property_uses));
-                        // SAFETY: `idx < parts.len()`; field-only write, old bits just freed above.
-                        unsafe {
-                            let slot = parts.as_mut_ptr().add(idx);
-                            core::ptr::write(&raw mut (*slot).symbol_uses, Default::default());
-                            core::ptr::write(
-                                &raw mut (*slot).import_symbol_property_uses,
-                                Default::default(),
-                            );
-                        }
-                        // `part` is `ManuallyDrop`; falls out of scope without dropping.
                         let _ = part;
                     }
                 }
 
-                // We need to iterate multiple times if an import-equals statement was
-                // removed and there are more import-equals statements that may be removed
-                if !kept_import_equals || !removed_import_equals {
-                    break;
-                }
+                // SAFETY: `parts_end <= parts.len()`; tail slots may alias kept parts
+                // (the loop did `ptr::read` without clearing the source), so use
+                // `set_len`, which runs no destructors.
+                unsafe { parts.set_len(parts_end) };
             }
 
-            // leave the first part in there for namespace export when bundling
-            // `truncate` would drop slots that may alias kept parts (the loop
-            // above did `ptr::read` without clearing the source), so use
-            // `set_len`, which runs no destructors.
-            // SAFETY: `parts_end <= parts.len()`; tail slots are abandoned
-            // (arena-/process-lifetime).
-            unsafe { parts.set_len(parts_end) };
+            // Removing one import-equals can make another unused, so iterate to a
+            // fixed point. `ImportScanner::scan` is not idempotent, so subsequent
+            // passes use a dedicated scan that only repeats the import-equals check.
+            while kept_import_equals && removed_import_equals {
+                kept_import_equals = false;
+                removed_import_equals = false;
+                parts_end = parts_begin;
+                for idx in parts_begin..parts.len() {
+                    // SAFETY: idx < parts.len(); see the matching `ptr::read` in the
+                    // first pass above for the ownership contract.
+                    let mut part = core::mem::ManuallyDrop::new(unsafe {
+                        core::ptr::read(&raw const parts[idx])
+                    });
+                    let result = ImportScanner::scan_for_unused_ts_import_equals(
+                        self,
+                        part.stmts.slice_mut(),
+                    );
+                    kept_import_equals = kept_import_equals || result.kept_import_equals;
+                    removed_import_equals = removed_import_equals || result.removed_import_equals;
+                    part.stmts = bun_ast::StoreSlice::new_mut(result.stmts);
+                    if !part.stmts.is_empty() {
+                        // SAFETY: `parts_end <= idx < parts.len()`; bitwise overwrite
+                        // of arena-owned data, paired with the `ptr::read` above.
+                        unsafe {
+                            core::ptr::write(
+                                parts.as_mut_ptr().add(parts_end),
+                                core::mem::ManuallyDrop::into_inner(part),
+                            )
+                        };
+                        parts_end += 1;
+                    } else {
+                        drop(core::mem::take(&mut part.symbol_uses));
+                        drop(core::mem::take(&mut part.import_symbol_property_uses));
+                        let _ = part;
+                    }
+                }
+                // SAFETY: `parts_end <= parts.len()`; tail slots are abandoned
+                // (arena-/process-lifetime).
+                unsafe { parts.set_len(parts_end) };
+            }
 
             // Do a second pass for exported items now that imported items are filled out.
             // This isn't done for HMR because it already deletes all `.s_export_clause`s

@@ -645,38 +645,8 @@ impl<'a> ImportScanner<'a> {
 
                     // Remove unused import-equals statements, since those likely
                     // correspond to types instead of values
-                    if st.was_ts_import_equals && !st.is_export && st.decls.len_u32() > 0 {
-                        let decl = &st.decls.slice()[0];
-
-                        // Skip to the underlying reference
-                        let mut value: Option<Expr> = decl.value;
-                        if decl.value.is_some() {
-                            while let js_ast::ExprData::EDot(dot) = value.unwrap().data {
-                                value = Some(dot.target);
-                            }
-                        }
-
-                        // Is this an identifier reference and not a require() call?
-                        if let Some(val) = value {
-                            if let js_ast::ExprData::EIdentifier(id) = val.data {
-                                // Is this import statement unused?
-                                if let js_ast::b::B::BIdentifier(b_id) = decl.binding.data {
-                                    let b_id_ref = b_id.r#ref;
-                                    if p.symbols[b_id_ref.inner_index() as usize].use_count_estimate
-                                        == 0
-                                    {
-                                        p.ignore_usage(id.ref_);
-
-                                        scanner.removed_import_equals = true;
-                                        continue;
-                                    } else {
-                                        scanner.kept_import_equals = true;
-                                    }
-                                } else {
-                                    scanner.kept_import_equals = true;
-                                }
-                            }
-                        }
+                    if scanner.check_for_unused_ts_import_equals(p, &st) {
+                        continue;
                     }
                 }
                 js_ast::StmtData::SExportDefault(mut st) => {
@@ -809,5 +779,69 @@ impl<'a> ImportScanner<'a> {
         }
 
         Ok(scanner)
+    }
+
+    // Returns true if this is an unused TypeScript import-equals statement to drop.
+    fn check_for_unused_ts_import_equals<'p, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+        &mut self,
+        p: &mut P<'p, TYPESCRIPT, SCAN_ONLY>,
+        st: &S::Local,
+    ) -> bool {
+        if !st.was_ts_import_equals || st.is_export || st.decls.len_u32() == 0 {
+            return false;
+        }
+        let decl = &st.decls.slice()[0];
+
+        // Skip to the underlying reference
+        let mut value: Option<Expr> = decl.value;
+        if decl.value.is_some() {
+            while let js_ast::ExprData::EDot(dot) = value.unwrap().data {
+                value = Some(dot.target);
+            }
+        }
+
+        // Is this an identifier reference and not a require() call?
+        let Some(val) = value else { return false };
+        let js_ast::ExprData::EIdentifier(id) = val.data else {
+            return false;
+        };
+
+        // Is this import statement unused?
+        if let js_ast::b::B::BIdentifier(b_id) = decl.binding.data {
+            if p.symbols[b_id.r#ref.inner_index() as usize].use_count_estimate == 0 {
+                p.ignore_usage(id.ref_);
+                self.removed_import_equals = true;
+                return true;
+            }
+        }
+        self.kept_import_equals = true;
+        false
+    }
+
+    // Idempotent subset of `scan` for the multi-pass loop in `to_ast`.
+    pub(crate) fn scan_for_unused_ts_import_equals<
+        'p,
+        const TYPESCRIPT: bool,
+        const SCAN_ONLY: bool,
+    >(
+        p: &mut P<'p, TYPESCRIPT, SCAN_ONLY>,
+        stmts: &'a mut [Stmt],
+    ) -> ImportScanner<'a> {
+        let mut scanner = ImportScanner::default();
+        let mut stmts_end: usize = 0;
+
+        for i in 0..stmts.len() {
+            let stmt = stmts[i];
+            if let js_ast::StmtData::SLocal(st) = stmt.data {
+                if scanner.check_for_unused_ts_import_equals(p, &st) {
+                    continue;
+                }
+            }
+            stmts[stmts_end] = stmt;
+            stmts_end += 1;
+        }
+
+        scanner.stmts = &mut stmts[0..stmts_end];
+        scanner
     }
 }

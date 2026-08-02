@@ -118,7 +118,7 @@ impl<'a> Default for Options<'a> {
             keep_names: true,
             ignore_dce_annotations: false,
             preserve_unused_imports_ts: false,
-            use_define_for_class_fields: false,
+            use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
             features: RuntimeFeatures::default(),
             tree_shaking: false,
@@ -247,6 +247,10 @@ impl<'a> Options<'a> {
             hasher.update(b"no_dce");
         }
 
+        if !self.use_define_for_class_fields {
+            hasher.update(b"udfcf=0");
+        }
+
         self.features.hash_for_runtime_transpiler(hasher);
     }
 
@@ -265,7 +269,7 @@ impl<'a> Options<'a> {
             keep_names: true,
             ignore_dce_annotations: false,
             preserve_unused_imports_ts: false,
-            use_define_for_class_fields: false,
+            use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
             features: RuntimeFeatures::default(),
             tree_shaking: false,

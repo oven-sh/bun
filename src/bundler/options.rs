@@ -1083,9 +1083,7 @@ pub enum SourceMapOption {
     Linked,
 }
 
-/// What `--compile` resolved to for this bundle: a native executable,
-/// a self-contained HTML file, or neither. Executable and StandaloneHtml
-/// are mutually exclusive.
+/// What `--compile` resolved to for this bundle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CompileMode {
     #[default]

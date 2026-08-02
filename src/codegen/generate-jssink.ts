@@ -1144,8 +1144,9 @@ pub extern "C" fn ${name}__memoryCost(this: &${name}) -> usize {
 
 `;
 
-    // ZIG_DECL void ${name}__finalize(void* sinkPtr) — called from JS${name}::~JS${name}.
-    // C++ caller null-checks `m_sinkPtr` before calling.
+    // ZIG_DECL void ${name}__finalize(void* sinkPtr) — called from
+    // JS${name}::~JS${name} and from ${name}__doClose. C++ caller null-checks
+    // `m_sinkPtr` / `ptr` before calling.
     symbols.push(`${name}__finalize`);
     templ += `#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]

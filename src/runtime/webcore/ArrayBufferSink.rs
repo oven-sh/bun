@@ -73,7 +73,9 @@ impl ArrayBufferSink {
     // `Box<Self>` contract applies only to generate-classes.ts classes.
     /// # Safety
     /// `this` must be the m_ctx payload allocated via `heap::alloc` in
-    /// init/JSSink, called from JSC lazy sweep on the mutator thread.
+    /// init/JSSink. Called from (a) `~JSArrayBufferSink` during lazy sweep
+    /// and (b) synchronously from `${name}__doClose` (prototype `.close()`),
+    /// on the mutator thread in both cases.
     // Forwards `this` to `destroy` without dereferencing it here;
     // not_unsafe_ptr_arg_deref is a false positive on this forwarding wrapper.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]

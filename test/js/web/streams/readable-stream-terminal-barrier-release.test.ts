@@ -96,10 +96,11 @@ test("ReadableStream releases source-only WriteBarriers once terminal", async ()
   expect(exitCode).toBe(0);
 });
 
-// readableStreamCancel's Direct arm used to leave m_closed false (onClose early-returned
-// because the stream was already Closed), so a captured controller could still reach
-// writeToDirectSink after cancel. With m_closed set, the bound methods throw.
-test("direct controller write() after reader.cancel() throws closed", async () => {
+// readableStreamCancel's Direct arm must not set m_closed: a producer whose async pull()
+// outlives a consumer-side cancel() still holds the bound controller, and its late
+// write()/end() are no-ops that do not throw (Bun v1.3.x behavior). #36703 briefly made
+// this throw; this test pins the non-throwing contract.
+test("direct controller write() after reader.cancel() does not throw", async () => {
   let ctrl: any;
   let pullStarted = Promise.withResolvers<void>();
   const rs = new ReadableStream({
@@ -115,5 +116,6 @@ test("direct controller write() after reader.cancel() throws closed", async () =
   reader.read().catch(() => {});
   await pullStarted.promise;
   await reader.cancel();
-  expect(() => ctrl.write("after-cancel")).toThrow(/closed/);
+  expect(ctrl.write("after-cancel")).toBe("after-cancel".length);
+  expect(() => ctrl.end()).not.toThrow();
 });

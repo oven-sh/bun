@@ -255,7 +255,9 @@ impl PosixBufferedReader {
     }
 
     pub fn close(&mut self) {
-        // SAFETY: `self` is live; the raw entry keeps the done dispatch protector-free.
+        // SAFETY: `self` is live. Note: this `&mut self` receiver still carries
+        // a protector across the (maybe-freeing) done dispatch — pre-existing
+        // on the parent chain, tracked with the raw-dispatch follow-up.
         unsafe { Self::close_handle(std::ptr::from_mut(self)) };
     }
 
@@ -343,7 +345,9 @@ impl PosixBufferedReader {
             || self.flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING)
         {
             if self.flags.contains(PosixFlags::CLOSE_HANDLE) {
-                // SAFETY: `self` is live; the raw entry keeps the done dispatch protector-free.
+                // SAFETY: `self` is live. Note: this `&mut self` receiver still carries
+                // a protector across the (maybe-freeing) done dispatch — pre-existing
+                // on the parent chain, tracked with the raw-dispatch follow-up.
                 unsafe { Self::close_handle(std::ptr::from_mut(self)) };
             }
             return;
@@ -498,7 +502,9 @@ impl PosixBufferedReader {
             self.handle = PollOrFd::Fd(fd);
         }
         if !self.flags.contains(PosixFlags::IS_PAUSED) {
-            // SAFETY: `self` is live; the raw entry keeps the error dispatch protector-free.
+            // SAFETY: `self` is live. Note: this `&mut self` receiver still carries
+            // a protector across the (maybe-freeing) error dispatch — pre-existing
+            // on the parent chain, tracked with the raw-dispatch follow-up.
             unsafe { Self::register_poll(std::ptr::from_mut(self)) };
         }
 
@@ -524,7 +530,9 @@ impl PosixBufferedReader {
         if self.flags.contains(PosixFlags::POLLABLE)
             && !matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_watching())
         {
-            // SAFETY: `self` is live; the raw entry keeps the error dispatch protector-free.
+            // SAFETY: `self` is live. Note: this `&mut self` receiver still carries
+            // a protector across the (maybe-freeing) error dispatch — pre-existing
+            // on the parent chain, tracked with the raw-dispatch follow-up.
             unsafe { Self::register_poll(std::ptr::from_mut(self)) };
         }
     }
@@ -655,13 +663,22 @@ impl PosixBufferedReader {
     }
 
     /// Closes the handle so the child cannot put more bytes in the pipe, then
-    /// reports what was buffered. Tail position: `done()` may free `parent`.
-    /// Callers must already have handed the overflowing chunk to the consumer.
-    fn stop_for_max_buffer(parent: &mut PosixBufferedReader) {
-        parent.close_without_reporting();
-        if !parent.flags.contains(PosixFlags::IS_DONE) {
-            // SAFETY: `parent` is live; `done`'s dispatch runs after this borrow ends.
-            unsafe { Self::done(std::ptr::from_mut(parent)) };
+    /// reports what was buffered. Raw (not `&mut`) like [`Self::done`]: the
+    /// `done` dispatch may free the parent embedding `*this`, so no receiver
+    /// protector may be live around it. Callers must already have handed the
+    /// overflowing chunk to the consumer.
+    ///
+    /// # Safety
+    /// `this` is the live reader.
+    unsafe fn stop_for_max_buffer(this: *mut PosixBufferedReader) {
+        // SAFETY: caller contract; the borrow ends at `;`, before the dispatch.
+        let already_done = unsafe {
+            (*this).close_without_reporting();
+            (*this).flags.contains(PosixFlags::IS_DONE)
+        };
+        if !already_done {
+            // SAFETY: caller contract; no borrow of `*this` is live.
+            unsafe { Self::done(this) };
         }
     }
 
@@ -820,7 +837,8 @@ impl PosixBufferedReader {
 
                         if over_budget {
                             // SAFETY: caller contract; tail position.
-                            Self::stop_for_max_buffer(unsafe { &mut *this });
+                            // SAFETY: caller contract; the raw entry keeps the dispatch protector-free.
+                            unsafe { Self::stop_for_max_buffer(this) };
                             return;
                         }
                     }
@@ -909,7 +927,8 @@ impl PosixBufferedReader {
 
                         if over_budget {
                             // SAFETY: caller contract; tail position.
-                            Self::stop_for_max_buffer(unsafe { &mut *this });
+                            // SAFETY: caller contract; the raw entry keeps the dispatch protector-free.
+                            unsafe { Self::stop_for_max_buffer(this) };
                             return;
                         }
                     }
@@ -984,8 +1003,6 @@ impl PosixBufferedReader {
     /// through `on_read_chunk` may mutate but never frees `*this`, and no
     /// borrow of `*this` is held across any dispatch; `on_error()` / `done()`
     /// are tail-positioned because they may free the parent.
-    // PERF: `file_type` is a runtime arg (adt_const_params is unstable); `sys_fn`
-    // is generic so it still monomorphizes — profile if hot.
     unsafe fn read_with_fn(
         this: *mut PosixBufferedReader,
         file_type: FileType,

@@ -59,7 +59,7 @@ fn create_buffer_with_ctx(
     }
 }
 
-// ── DOM-call C++ put helpers (generated in ZigLazyStaticFunctions-inlines.h) ──
+// ── DOM-call C++ put helpers (defined in ZigGeneratedCode.cpp) ──
 #[allow(non_snake_case)]
 unsafe extern "C" {
     fn FFI__ptr__put(global: *mut JSGlobalObject, value: JSValue);
@@ -110,10 +110,9 @@ unsafe extern "C" {
     fn Bun__FFI__CStringConstructor(global: *const JSGlobalObject) -> JSValue;
 }
 
-// DOMJIT fast-path descriptor + slow-path host fn, represented here as a const
-// descriptor. The `DOMEffect.forRead(.TypedArrayProperties)` argument is consumed
-// by the C++ codegen, not the runtime descriptor; it lives in the generated
-// `ZigLazyStaticFunctions-inlines.h` already.
+// DOMJIT slow-path host fn, represented here as a const descriptor. The DOMJIT
+// signature (effect/type filters) lives on the C++ side in `ZigGeneratedCode.cpp`,
+// currently commented out there, so `FFI__ptr__put` installs a plain host fn.
 const DOM_CALL: DomCall = DomCall {
     class_name: "FFI",
     function_name: "ptr",
@@ -148,10 +147,9 @@ pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
 pub mod reader {
     use super::*;
 
-    // Same DOMCall shape as `DOM_CALL` above. The
-    // `DOMEffect.forRead(.World)` argument is encoded on the C++ side
-    // (generated `Reader__*__put` in ZigLazyStaticFunctions-inlines.h); the
-    // runtime descriptor here only needs the `put` extern.
+    // Same DOMCall shape as `DOM_CALL` above: the C++ side is the
+    // `Reader__*__put` helpers in `ZigGeneratedCode.cpp`; the runtime
+    // descriptor here only needs the `put` extern.
     const DOM_CALLS: &[(&str, DomCall)] = &[
         (
             "u8",
@@ -431,9 +429,9 @@ pub mod reader {
         JSValue::from_uint64_no_truncate(global_object, value)
     }
 
-    // The DOMJIT fast-path (no type checks) readers — called directly from
-    // JIT code — live on the C++ side (generated
-    // `ZigLazyStaticFunctions-inlines.h`); only the slow paths above are here.
+    // The DOMJIT fast-path (no type checks) readers are currently disabled
+    // (commented-out wrappers in `ZigGeneratedCode.cpp`); only the slow paths
+    // above are live.
 }
 
 pub(crate) fn ptr(global_this: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JSValue {

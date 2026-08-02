@@ -1109,6 +1109,21 @@ impl<const SSL: bool> NewSocket<SSL> {
             )
         } else {
             debug_assert!(errno >= 0);
+            // On Windows the async connect-error path (loop.c's SEMI_SOCKET
+            // SO_ERROR read, context.c's recv probe) delivers raw WSA codes
+            // (WSAECONNRESET = 10054, WSAEADDRINUSE = 10048). The whitelist
+            // below is keyed on SystemErrno discriminants, so normalize first;
+            // WSA codes are >= WSABASEERR (10000) and so disjoint from both
+            // the SystemErrno discriminant space and the MSVC CRT errno values
+            // the synchronous path passes in.
+            #[cfg(windows)]
+            let errno: c_int = if errno >= 10000 {
+                sys::SystemErrno::init(errno as u32)
+                    .map(|e| e as c_int)
+                    .unwrap_or(sys::SystemErrno::ECONNREFUSED as c_int)
+            } else {
+                errno
+            };
             // Unix-path connect errors keep their real code (a non-socket file
             // is ENOTSOCK, a permission-denied path is EACCES, a missing one is
             // ENOENT, an inexpressible path is EINVAL); everything else stays
@@ -1142,16 +1157,23 @@ impl<const SSL: bool> NewSocket<SSL> {
             } else {
                 BunString::static_("ECONNREFUSED")
             };
+            // Node on Windows reports libuv's negative errno (e.g. -4077 for
+            // ECONNRESET), not the POSIX-style discriminant the whitelist is
+            // keyed on. Rewrite every recognized code to its UV_* value so
+            // `err.errno` matches Node; the default arm stays ECONNREFUSED.
             #[cfg(windows)]
             let errno_ = {
-                let mut errno_ = errno_;
-                if errno_ == sys::SystemErrno::ENOENT as c_int {
-                    errno_ = sys::SystemErrno::UV_ENOENT as c_int;
+                use sys::SystemErrno as S;
+                match errno_ {
+                    x if x == S::ENOENT as c_int => S::UV_ENOENT as c_int,
+                    x if x == S::ENOTSOCK as c_int => S::UV_ENOTSOCK as c_int,
+                    x if x == S::EACCES as c_int => S::UV_EACCES as c_int,
+                    x if x == S::EINVAL as c_int => S::UV_EINVAL as c_int,
+                    x if x == S::ECONNRESET as c_int => S::UV_ECONNRESET as c_int,
+                    x if x == S::EADDRINUSE as c_int => S::UV_EADDRINUSE as c_int,
+                    x if x == S::EADDRNOTAVAIL as c_int => S::UV_EADDRNOTAVAIL as c_int,
+                    _ => S::UV_ECONNREFUSED as c_int,
                 }
-                if errno_ == sys::SystemErrno::ECONNREFUSED as c_int {
-                    errno_ = sys::SystemErrno::UV_ECONNREFUSED as c_int;
-                }
-                errno_
             };
             SystemError {
                 errno: -errno_,

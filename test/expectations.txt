@@ -89,12 +89,10 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/js/web/streams/streams-leak.test.ts [ LEAK ] # Absolute memory usage remains relatively constant when reading and writing to a pipe
 [ ASAN ] test/cli/run/require-cache.test.ts [ LEAK ] # files transpiled and loaded don't leak file paths > via require()
 
-# Windows-only gaps in named-pipe / socket teardown for ported Node net tests
-# (these pass on Linux and macOS): half-close (FIN) handling on named pipes,
-# RST delivery surfacing as ECONNRESET, and EADDRINUSE on a second listen on
-# the same pipe path.
+# Windows-only gap in named-pipe half-close: WindowsNamedPipe::shutdown() /
+# on_read_error(EOF) issue a full uv_close instead of uv_shutdown, so the
+# final write after the peer half-closes is lost. Passes on Linux and macOS.
 [ WINDOWS ] test/js/node/test/parallel/test-net-pingpong.js [ FAIL ] # named-pipe half-close (FIN) handling
-[ WINDOWS ] test/js/node/test/parallel/test-net-pipe-connect-errors.js [ FAIL ] # named-pipe connect errors are not mapped to ENOENT/EACCES on Windows yet
 [ WINDOWS ] test/js/node/test/parallel/test-net-server-listen-path.js [ FAIL ] # EADDRINUSE not reported for a second listen on the same pipe path
 
 # Same Windows half-close + client-RST gap over a node:http server: the server
@@ -104,12 +102,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # server.close() (via `await using`) waits forever. The assertion itself passes;
 # only the teardown hangs. Passes on Linux and macOS.
 
-# The localAddress/localPort bind-before-connect and the SO_ERROR read on a
-# connecting socket that was reset during establishment are implemented in the
-# POSIX (kqueue/epoll + BSD socket) connect path; Windows connects through
-# libuv and needs its own implementation of both.
-[ WINDOWS ] test/js/node/test/parallel/test-net-client-bind-twice.js [ FAIL ] # localAddress/localPort binding not implemented for the libuv connect path
-[ WINDOWS ] test/js/node/test/parallel/test-net-server-reset.js [ FAIL ] # connect-time RST reports ECONNREFUSED instead of ECONNRESET on the libuv path
 # Cluster workers sharing a listen port behave differently on Linux, where
 # SO_REUSEPORT load-balances across the workers' own listeners instead of the
 # primary distributing accepted connections; the upstream test's expectations

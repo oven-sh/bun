@@ -40,7 +40,14 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     let identifier_count = strings_lens.len();
     let is_valid_string_id =
         |id: StringID| (id.0 as usize) < identifier_count || id.0 >= StringID::STAR_NAMESPACE.0;
-    if !buffer.iter().copied().all(is_valid_string_id)
+    // The 4th slot of each ImportInfo* record is a bitcast FetchParameters
+    // (None/Javascript/Webassembly/Json sentinels at u32::MAX-3..=u32::MAX, or
+    // a real StringID for HostDefined), so the buffer check accepts that wider
+    // sentinel range. The per-slot usage below never indexes those slots into
+    // the identifiers array.
+    let is_valid_buffer_slot =
+        |id: StringID| (id.0 as usize) < identifier_count || id.0 >= RequestedModuleValue::Json.0;
+    if !buffer.iter().copied().all(is_valid_buffer_slot)
         || !requested_modules_keys
             .iter()
             .copied()
@@ -158,6 +165,7 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
                     buffer[i + 1],
                     buffer[i + 2],
                     buffer[i],
+                    analyze::FetchParameters(buffer[i + 3].0).to_script_fetch_parameters_type(),
                 ),
                 RecordKind::ImportInfoSingleTypeScript => module_record
                     .add_import_entry_single_type_script(
@@ -165,12 +173,14 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
                         buffer[i + 1],
                         buffer[i + 2],
                         buffer[i],
+                        analyze::FetchParameters(buffer[i + 3].0).to_script_fetch_parameters_type(),
                     ),
                 RecordKind::ImportInfoNamespace => module_record.add_import_entry_namespace(
                     identifiers,
                     buffer[i + 1],
                     buffer[i + 2],
                     buffer[i],
+                    analyze::FetchParameters(buffer[i + 3].0).to_script_fetch_parameters_type(),
                 ),
                 RecordKind::ImportInfoNamespaceDefer => module_record
                     .add_import_entry_namespace_defer(
@@ -178,6 +188,7 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
                         buffer[i + 1],
                         buffer[i + 2],
                         buffer[i],
+                        analyze::FetchParameters(buffer[i + 3].0).to_script_fetch_parameters_type(),
                     ),
                 RecordKind::ExportInfoIndirect => {
                     if buffer[i + 1] == StringID::STAR_NAMESPACE {
@@ -321,6 +332,7 @@ unsafe extern "C" {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
     fn JSC_JSModuleRecord__addImportEntrySingleTypeScript(
         module_record: *mut JSModuleRecord,
@@ -328,6 +340,7 @@ unsafe extern "C" {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
     fn JSC_JSModuleRecord__addImportEntryNamespace(
         module_record: *mut JSModuleRecord,
@@ -335,6 +348,7 @@ unsafe extern "C" {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
     fn JSC_JSModuleRecord__addImportEntryNamespaceDefer(
         module_record: *mut JSModuleRecord,
@@ -342,6 +356,7 @@ unsafe extern "C" {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
 }
 impl JSModuleRecord {
@@ -430,6 +445,7 @@ trait JSModuleRecordExt {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
     fn add_import_entry_single_type_script(
         self,
@@ -437,6 +453,7 @@ trait JSModuleRecordExt {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
     fn add_import_entry_namespace(
         self,
@@ -444,6 +461,7 @@ trait JSModuleRecordExt {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
     fn add_import_entry_namespace_defer(
         self,
@@ -451,6 +469,7 @@ trait JSModuleRecordExt {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
 }
 impl JSModuleRecordExt for *mut JSModuleRecord {
@@ -571,10 +590,18 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     ) {
         // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe {
-            JSC_JSModuleRecord__addImportEntrySingle(self, ia, import_name, local_name, module_name)
+            JSC_JSModuleRecord__addImportEntrySingle(
+                self,
+                ia,
+                import_name,
+                local_name,
+                module_name,
+                module_request_type,
+            )
         }
     }
     #[inline]
@@ -584,6 +611,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     ) {
         // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe {
@@ -593,6 +621,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
                 import_name,
                 local_name,
                 module_name,
+                module_request_type,
             )
         }
     }
@@ -603,6 +632,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     ) {
         // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe {
@@ -612,6 +642,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
                 import_name,
                 local_name,
                 module_name,
+                module_request_type,
             )
         }
     }
@@ -622,6 +653,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     ) {
         // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe {
@@ -631,6 +663,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
                 import_name,
                 local_name,
                 module_name,
+                module_request_type,
             )
         }
     }

@@ -80,10 +80,10 @@ impl RecordKind {
 
     pub fn len(self) -> crate::Result<usize> {
         match self {
-            Self::IMPORT_INFO_SINGLE => Ok(3),
-            Self::IMPORT_INFO_SINGLE_TYPE_SCRIPT => Ok(3),
-            Self::IMPORT_INFO_NAMESPACE => Ok(3),
-            Self::IMPORT_INFO_NAMESPACE_DEFER => Ok(3),
+            Self::IMPORT_INFO_SINGLE => Ok(4),
+            Self::IMPORT_INFO_SINGLE_TYPE_SCRIPT => Ok(4),
+            Self::IMPORT_INFO_NAMESPACE => Ok(4),
+            Self::IMPORT_INFO_NAMESPACE_DEFER => Ok(4),
             Self::EXPORT_INFO_INDIRECT => Ok(3),
             Self::EXPORT_INFO_LOCAL => Ok(3),
             Self::EXPORT_INFO_NAMESPACE => Ok(2),

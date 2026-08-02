@@ -48,7 +48,10 @@ bun_core::declare_scope!(cache, visible);
 /// bindings from the compiled bytecode after the module-loader rewrite, so the
 /// record no longer carries them; blobs written in the old numbering must not
 /// be read back.
-const EXPECTED_VERSION: u32 = 24;
+/// Version 25: ImportInfo* records carry a 4th FetchParameters slot so the
+/// ImportEntry's moduleRequestType matches JSC's after WebKit 90b2ecf79ae3
+/// keyed m_loadedModules on (specifier, type).
+const EXPECTED_VERSION: u32 = 25;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

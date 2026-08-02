@@ -102,10 +102,10 @@ pub mod analyze_transpiled_module {
     impl RecordKind {
         pub(crate) fn len(self) -> usize {
             match self {
-                Self::ImportInfoSingle => 3,
-                Self::ImportInfoSingleTypeScript => 3,
-                Self::ImportInfoNamespace => 3,
-                Self::ImportInfoNamespaceDefer => 3,
+                Self::ImportInfoSingle => 4,
+                Self::ImportInfoSingleTypeScript => 4,
+                Self::ImportInfoNamespace => 4,
+                Self::ImportInfoNamespaceDefer => 4,
                 Self::ExportInfoIndirect => 3,
                 Self::ExportInfoLocal => 3,
                 Self::ExportInfoNamespace => 2,
@@ -164,6 +164,18 @@ pub mod analyze_transpiled_module {
         #[inline]
         pub(crate) fn host_defined(value: StringID) -> Self {
             Self(value.0)
+        }
+        /// Map to JSC's `ScriptFetchParameters::Type` enum (None=0, JavaScript=1,
+        /// WebAssembly=2, JSON=3, HostDefined=4). `None` becomes `JavaScript`
+        /// to match `NodesAnalyzeModule.cpp`'s no-attributes default.
+        #[inline]
+        pub fn to_script_fetch_parameters_type(self) -> u8 {
+            match self {
+                Self::None | Self::Javascript => 1,
+                Self::Webassembly => 2,
+                Self::Json => 3,
+                _ => 4,
+            }
         }
     }
 
@@ -243,7 +255,12 @@ pub mod analyze_transpiled_module {
         keys: Vec<StringID>,
         values: Vec<FetchParameters>,
         phases: Vec<ModulePhase>,
-        index: HashMap<(StringID, ModulePhase), usize>,
+        /// Dedup key: `(specifier, ScriptFetchParameters::Type, phase)` —
+        /// matches JSC's `ModuleAnalyzer::appendRequestedModule`, which keys
+        /// on `ModuleMapKey { specifier, attributes->type() }` per phase
+        /// (WebKit 90b2ecf79ae3). Two HostDefined attributes with different
+        /// strings collapse to one entry, same as JSC.
+        index: HashMap<(StringID, u8, ModulePhase), usize>,
     }
     impl RequestedModules {
         fn keys(&self) -> &[StringID] {
@@ -255,17 +272,18 @@ pub mod analyze_transpiled_module {
         fn phases(&self) -> &[ModulePhase] {
             &self.phases
         }
-        /// Returns `true` if `(key, phase)` was already present.
+        /// Returns `true` if `(key, type-of-value, phase)` was already present.
         fn insert_if_absent(
             &mut self,
             key: StringID,
             value: FetchParameters,
             phase: ModulePhase,
         ) -> bool {
-            if self.index.contains_key(&(key, phase)) {
+            let type_key = value.to_script_fetch_parameters_type();
+            if self.index.contains_key(&(key, type_key, phase)) {
                 return true;
             }
-            self.index.insert((key, phase), self.keys.len());
+            self.index.insert((key, type_key, phase), self.keys.len());
             self.keys.push(key);
             self.values.push(value);
             self.phases.push(phase);
@@ -283,8 +301,15 @@ pub mod analyze_transpiled_module {
             }
             if touched {
                 self.index.clear();
-                for (i, (&k, &p)) in self.keys.iter().zip(self.phases.iter()).enumerate() {
-                    self.index.insert((k, p), i);
+                for (i, ((&k, &v), &p)) in self
+                    .keys
+                    .iter()
+                    .zip(self.values.iter())
+                    .zip(self.phases.iter())
+                    .enumerate()
+                {
+                    self.index
+                        .insert((k, v.to_script_fetch_parameters_type(), p), i);
                 }
             }
         }
@@ -351,6 +376,7 @@ pub mod analyze_transpiled_module {
             module_name: StringID,
             import_name: StringID,
             local_name: StringID,
+            fetch_parameters: FetchParameters,
             only_used_as_type: bool,
         ) {
             self.add_record(
@@ -359,23 +385,44 @@ pub mod analyze_transpiled_module {
                 } else {
                     RecordKind::ImportInfoSingle
                 },
-                &[module_name, import_name, local_name],
+                &[
+                    module_name,
+                    import_name,
+                    local_name,
+                    StringID(fetch_parameters.0),
+                ],
             );
         }
-        pub fn add_import_info_namespace(&mut self, module_name: StringID, local_name: StringID) {
+        pub fn add_import_info_namespace(
+            &mut self,
+            module_name: StringID,
+            local_name: StringID,
+            fetch_parameters: FetchParameters,
+        ) {
             self.add_record(
                 RecordKind::ImportInfoNamespace,
-                &[module_name, StringID::STAR_NAMESPACE, local_name],
+                &[
+                    module_name,
+                    StringID::STAR_NAMESPACE,
+                    local_name,
+                    StringID(fetch_parameters.0),
+                ],
             );
         }
         pub(crate) fn add_import_info_namespace_defer(
             &mut self,
             module_name: StringID,
             local_name: StringID,
+            fetch_parameters: FetchParameters,
         ) {
             self.add_record(
                 RecordKind::ImportInfoNamespaceDefer,
-                &[module_name, StringID::STAR_NAMESPACE, local_name],
+                &[
+                    module_name,
+                    StringID::STAR_NAMESPACE,
+                    local_name,
+                    StringID(fetch_parameters.0),
+                ],
             );
         }
         pub(crate) fn add_export_info_indirect(
@@ -449,7 +496,8 @@ pub mod analyze_transpiled_module {
             import_record_path: StringID,
             fetch_parameters: FetchParameters,
         ) {
-            // jsc only records the attributes of the first import with the given import_record_path. so only put if not exists.
+            // JSC dedupes by (specifier, ScriptFetchParameters::Type) per phase;
+            // insert_if_absent mirrors that.
             self.requested_modules.insert_if_absent(
                 import_record_path,
                 fetch_parameters,
@@ -5790,10 +5838,10 @@ pub(crate) mod __gated_printer {
                         // so we re-borrow it between `name_for_symbol` calls instead of holding
                         // a single long-lived `mi` across the whole block. `irp_id` is Copy.
                         let import_record_path = &record.path.text;
-                        let irp_id = {
+                        use analyze_transpiled_module::FetchParameters as FP;
+                        let (irp_id, fetch_parameters) = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let irp_id = mi.str(import_record_path);
-                            use analyze_transpiled_module::FetchParameters as FP;
                             let fetch_parameters: FP = if IS_BUN_PLATFORM {
                                 if let Some(loader) = record.loader {
                                     use bun_ast::Loader;
@@ -5833,7 +5881,7 @@ pub(crate) mod __gated_printer {
                                 analyze_transpiled_module::ModulePhase::Evaluation
                             };
                             mi.request_module_with_phase(irp_id, fetch_parameters, phase);
-                            irp_id
+                            (irp_id, fetch_parameters)
                         };
 
                         if let Some(name) = &s.default_name {
@@ -5841,7 +5889,13 @@ pub(crate) mod __gated_printer {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
                             let default_id = mi.str(b"default");
-                            mi.add_import_info_single(irp_id, default_id, local_name_id, false);
+                            mi.add_import_info_single(
+                                irp_id,
+                                default_id,
+                                local_name_id,
+                                fetch_parameters,
+                                false,
+                            );
                         }
 
                         for item in slice_of(s.items).iter() {
@@ -5849,7 +5903,13 @@ pub(crate) mod __gated_printer {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
                             let alias_id = mi.str(item.alias.slice());
-                            mi.add_import_info_single(irp_id, alias_id, local_name_id, false);
+                            mi.add_import_info_single(
+                                irp_id,
+                                alias_id,
+                                local_name_id,
+                                fetch_parameters,
+                                false,
+                            );
                         }
 
                         if record
@@ -5860,9 +5920,17 @@ pub(crate) mod __gated_printer {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
                             if phase_defer {
-                                mi.add_import_info_namespace_defer(irp_id, local_name_id);
+                                mi.add_import_info_namespace_defer(
+                                    irp_id,
+                                    local_name_id,
+                                    fetch_parameters,
+                                );
                             } else {
-                                mi.add_import_info_namespace(irp_id, local_name_id);
+                                mi.add_import_info_namespace(
+                                    irp_id,
+                                    local_name_id,
+                                    fetch_parameters,
+                                );
                             }
                         }
                     }

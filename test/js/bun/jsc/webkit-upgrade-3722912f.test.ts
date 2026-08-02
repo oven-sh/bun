@@ -60,4 +60,40 @@ describe.concurrent("WebKit 3722912ff800 upgrade", () => {
     expect(JSON.parse(stdout)).toEqual({ a: 1, b: 2, c: 3, ns: { a: 1, b: 2, c: 3 } });
     expect(exitCode).toBe(0);
   });
+
+  test("typed import attributes resolve through BunTranspiledModule (--isolate) (90b2ecf79ae3)", async () => {
+    // Upstream 90b2ecf79ae3 keys m_loadedModules on (specifier, type) and
+    // ModuleAnalyzer::appendRequestedModule dedupes on that pair. Bun only
+    // takes the BunTranspiledModule path under `bun test --isolate`, so
+    // exercise it explicitly: without the ImportEntry/RequestedModules type
+    // threading this rejects with "Imports different between
+    // parseFromSourceCode and fallbackParse" in debug and null-derefs
+    // in release.
+    using dir = tempDir("wk-typed-import", {
+      "d.json": `{"ok":true}`,
+      "typed.test.ts": `
+        import j from "./d.json" with { type: "json" };
+        import t from "./d.json" with { type: "text" };
+        import * as ns from "./d.json" with { type: "json" };
+        import { test, expect } from "bun:test";
+        test("typed", () => {
+          expect(j).toEqual({ ok: true });
+          expect(JSON.parse(t as string)).toEqual({ ok: true });
+          expect(ns.default).toEqual({ ok: true });
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "typed.test.ts"],
+      env: { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("Imports different");
+    expect(stdout).toBeDefined();
+    expect(exitCode).toBe(0);
+  });
 });

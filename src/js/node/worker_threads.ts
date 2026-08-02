@@ -1,6 +1,5 @@
 // import type { Readable, Writable } from "node:stream";
 // import type { WorkerOptions } from "node:worker_threads";
-declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
@@ -754,29 +753,29 @@ function receiveMessageOnPort(port: MessagePort) {
 
 // TODO: parent port emulation is not complete
 function fakeParentPort() {
+  // Inside a node:worker_threads worker the Web Worker globals
+  // (self/addEventListener/postMessage/...) are not on globalThis, so reach
+  // the backing global EventTarget through direct native bindings instead.
+  const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
+  const addEventListener = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionAddEventListener", 2);
+  const removeEventListener = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionRemoveEventListener", 2);
+  const dispatchEvent = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionDispatchEvent", 1);
+
   const fake = Object.create(MessagePort.prototype);
+
   Object.defineProperty(fake, "onmessage", {
-    get() {
-      return self.onmessage;
-    },
-    set(value) {
-      self.onmessage = value;
-    },
+    get: $newCppFunction("ZigGlobalObject.cpp", "jsFunctionGetGlobalOnMessage", 0),
+    set: $newCppFunction("ZigGlobalObject.cpp", "jsFunctionSetGlobalOnMessage", 1),
   });
 
   Object.defineProperty(fake, "onmessageerror", {
-    get() {
-      return self.onmessageerror;
-    },
-    set(value) {
-      self.onmessageerror = value;
-    },
+    get: $newCppFunction("ZigGlobalObject.cpp", "jsFunctionGetGlobalOnMessageError", 0),
+    set: $newCppFunction("ZigGlobalObject.cpp", "jsFunctionSetGlobalOnMessageError", 1),
   });
 
-  const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
   Object.defineProperty(fake, "postMessage", {
     value(...args: [any, any]) {
-      return postMessage.$apply(null, args);
+      return postMessage.$apply(undefined, args);
     },
   });
 
@@ -807,20 +806,24 @@ function fakeParentPort() {
   });
 
   Object.defineProperty(fake, "addEventListener", {
-    value: self.addEventListener.bind(self),
+    value: addEventListener,
   });
 
   Object.defineProperty(fake, "removeEventListener", {
-    value: self.removeEventListener.bind(self),
+    value: removeEventListener,
+  });
+
+  Object.defineProperty(fake, "dispatchEvent", {
+    value: dispatchEvent,
   });
 
   Object.defineProperty(fake, "removeListener", {
-    value: self.removeEventListener.bind(self),
+    value: removeEventListener,
     enumerable: false,
   });
 
   Object.defineProperty(fake, "addListener", {
-    value: self.addEventListener.bind(self),
+    value: addEventListener,
     enumerable: false,
   });
 

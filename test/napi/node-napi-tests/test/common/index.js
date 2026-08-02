@@ -339,25 +339,28 @@ let knownGlobals = [
 ];
 
 if (typeof Bun === "object") {
+  // Property accesses: worker_threads workers don't have the Web Worker
+  // globals (addEventListener, postMessage, onmessage, ...), and a bare
+  // identifier reference would throw there.
   knownGlobals.push(
-    addEventListener,
-    alert,
-    confirm,
-    dispatchEvent,
-    postMessage,
-    prompt,
-    removeEventListener,
-    Bun,
-    reportError,
-    BuildError,
-    BuildMessage,
-    HTMLRewriter,
-    ResolveError,
-    ResolveMessage,
-    ErrorEvent,
-    Worker,
-    onmessage,
-    onerror,
+    global.addEventListener,
+    global.alert,
+    global.confirm,
+    global.dispatchEvent,
+    global.postMessage,
+    global.prompt,
+    global.removeEventListener,
+    global.Bun,
+    global.reportError,
+    global.BuildError,
+    global.BuildMessage,
+    global.HTMLRewriter,
+    global.ResolveError,
+    global.ResolveMessage,
+    global.ErrorEvent,
+    global.Worker,
+    global.onmessage,
+    global.onerror,
   );
 }
 

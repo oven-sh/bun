@@ -2,7 +2,6 @@
 
 /* Source for ZigGlobalObject.lut.h
 @begin bunGlobalObjectTable
-  addEventListener                jsFunctionAddEventListener                           Function 2
   alert                           WebCore__alert                                       Function 1
   atob                            functionATOB                                         Function 1
   btoa                            functionBTOA                                         Function 1
@@ -10,12 +9,9 @@
   clearInterval                   functionClearInterval                                Function 1
   clearTimeout                    functionClearTimeout                                 Function 1
   confirm                         WebCore__confirm                                     Function 1
-  dispatchEvent                   jsFunctionDispatchEvent                              Function 1
   fetch                           constructBunFetchObject                              PropertyCallback
-  postMessage                     jsFunctionPostMessage                                Function 1
   prompt                          WebCore__prompt                                      Function 1
   queueMicrotask                  functionQueueMicrotask                               Function 1
-  removeEventListener             jsFunctionRemoveEventListener                        Function 2
   reportError                     functionReportError                                  Function 1
   setImmediate                    functionSetImmediate                                 Function 1
   setInterval                     functionSetInterval                                  Function 1

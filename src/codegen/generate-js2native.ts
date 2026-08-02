@@ -249,7 +249,8 @@ export function getJS2NativeCPP() {
     "\n" + "namespace JS2NativeGenerated {",
     "using namespace Bun;",
     "using namespace JSC;",
-    "using namespace WebCore;" + "\n",
+    "using namespace WebCore;",
+    "using namespace Zig;" + "\n",
     ...nativeCallStrings,
     ...wrapperCallStrings,
     ...nativeCalls

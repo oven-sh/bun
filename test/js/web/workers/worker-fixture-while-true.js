@@ -1,4 +1,5 @@
+const { parentPort } = require("node:worker_threads");
 let i = 0;
 while (true) {
-  postMessage({ i: i++ });
+  parentPort.postMessage({ i: i++ });
 }

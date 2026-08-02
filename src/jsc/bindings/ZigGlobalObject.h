@@ -153,7 +153,7 @@ public:
     }
 
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure);
-    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId);
+    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId, bool isNodeWorker = false);
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable);
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId, const JSC::GlobalObjectMethodTable* methodTable);
 
@@ -364,6 +364,10 @@ public:
     }
 #endif
     bool isThreadLocalDefaultGlobalObject = false;
+    // Set by Zig__GlobalObject__create before finishCreation() when this
+    // global backs a node:worker_threads worker. Gates the Web Worker
+    // globals (self/postMessage/addEventListener/...) in addBuiltinGlobals.
+    bool m_isNodeWorker = false;
 
     JSObject* subtleCrypto() { return m_subtleCryptoObject.getInitializedOnMainThread(this); }
 
@@ -904,6 +908,16 @@ inline void* bunVM(Zig::GlobalObject* globalObject)
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNotImplemented);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateFunctionThatMasqueradesAsUndefined);
+
+namespace Zig {
+JSC_DECLARE_HOST_FUNCTION(jsFunctionAddEventListener);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionRemoveEventListener);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionDispatchEvent);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionGetGlobalOnMessage);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetGlobalOnMessage);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionGetGlobalOnMessageError);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetGlobalOnMessageError);
+} // namespace Zig
 
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);

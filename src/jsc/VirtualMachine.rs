@@ -2910,6 +2910,49 @@ impl crate::ipc::SendQueueOwner for IPCInstance {
     }
 }
 
+/// Caller intent for runtime module resolution. Replaces the
+/// `(is_esm, is_user_require_resolve)` bool pair so the nonsensical
+/// `(true, true)` combination is unrepresentable inside Rust.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ResolveMode {
+    /// ESM `import` / `import()` / `import.meta.resolve`.
+    Esm,
+    /// CommonJS `require()`.
+    Require,
+    /// `require.resolve()`. Node returns the bare specifier for builtins here
+    /// (`require.resolve("fs") === "fs"`), unlike `require("fs")`.
+    RequireResolve,
+}
+
+impl ResolveMode {
+    #[inline]
+    pub fn is_esm(self) -> bool {
+        matches!(self, Self::Esm)
+    }
+
+    #[inline]
+    pub fn import_kind(self) -> bun_ast::ImportKind {
+        match self {
+            Self::Esm => bun_ast::ImportKind::Stmt,
+            Self::Require => bun_ast::ImportKind::Require,
+            Self::RequireResolve => bun_ast::ImportKind::RequireResolve,
+        }
+    }
+
+    /// Fold the two-bool FFI encoding C++ passes. When both are set (no valid
+    /// meaning), `Esm` wins, matching the previous open-coded mapping.
+    #[inline]
+    pub fn from_ffi_bools(is_esm: bool, is_user_require_resolve: bool) -> Self {
+        if is_esm {
+            Self::Esm
+        } else if is_user_require_resolve {
+            Self::RequireResolve
+        } else {
+            Self::Require
+        }
+    }
+}
+
 /// Output slot for module resolution: the resolver result plus the resolved path and query string.
 #[derive(Default)]
 pub struct ResolveFunctionResult {
@@ -4184,7 +4227,7 @@ impl VirtualMachine {
         specifier: bun_core::String,
         source: bun_core::String,
         query_string: Option<&mut bun_core::String>,
-        is_esm: bool,
+        mode: ResolveMode,
     ) -> JsResult<()> {
         Self::resolve_maybe_needs_trailing_slash::<true>(
             res,
@@ -4192,8 +4235,7 @@ impl VirtualMachine {
             specifier,
             source,
             query_string,
-            is_esm,
-            false,
+            mode,
         )
     }
 
@@ -4204,20 +4246,13 @@ impl VirtualMachine {
         specifier: bun_core::String,
         source: bun_core::String,
         query_string: Option<&mut bun_core::String>,
-        is_esm: bool,
-        is_user_require_resolve: bool,
+        mode: ResolveMode,
     ) -> JsResult<()> {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         if IS_A_FILE_PATH && specifier.length() > MAX_LEN {
             let specifier_utf8 = specifier.to_utf8();
             let source_utf8 = source.to_utf8();
-            let import_kind = if is_esm {
-                bun_ast::ImportKind::Stmt
-            } else if is_user_require_resolve {
-                bun_ast::ImportKind::RequireResolve
-            } else {
-                bun_ast::ImportKind::Require
-            };
+            let import_kind = mode.import_kind();
             let printed = crate::ResolveMessage::fmt(
                 specifier_utf8.slice(),
                 source_utf8.slice(),
@@ -4270,11 +4305,13 @@ impl VirtualMachine {
             bun_ast::Target::Bun,
             Default::default(),
         ) {
-            *res = ErrorableString::ok(if is_user_require_resolve && hardcoded.node_builtin {
-                specifier.dupe_ref()
-            } else {
-                bun_core::String::init(hardcoded.path.as_bytes())
-            });
+            *res = ErrorableString::ok(
+                if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
+                    specifier.dupe_ref()
+                } else {
+                    bun_core::String::init(hardcoded.path.as_bytes())
+                },
+            );
             return Ok(());
         }
 
@@ -4341,18 +4378,12 @@ impl VirtualMachine {
             &mut result,
             specifier_utf8.slice(),
             normalize_source(source_utf8.slice()),
-            is_esm,
+            mode.is_esm(),
             IS_A_FILE_PATH,
         );
         if let Err(err_) = resolve_result {
             let err = err_;
-            let import_kind = if is_esm {
-                bun_ast::ImportKind::Stmt
-            } else if is_user_require_resolve {
-                bun_ast::ImportKind::RequireResolve
-            } else {
-                bun_ast::ImportKind::Require
-            };
+            let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
             let msg = log
                 .msgs

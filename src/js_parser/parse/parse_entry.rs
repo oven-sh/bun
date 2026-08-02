@@ -15,7 +15,8 @@ use crate::defines::Define;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, WrapMode,
+    Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, StatementScope,
+    WrapMode,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -414,7 +415,7 @@ impl<'a> Parser<'a> {
 
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
-            is_module_scope: true,
+            scope: StatementScope::Module,
             ..Default::default()
         };
 
@@ -695,7 +696,7 @@ impl<'a> Parser<'a> {
 
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
-            is_module_scope: true,
+            scope: StatementScope::Module,
             ..Default::default()
         };
         let mut parse_tracer = bun_core::perf::trace("JSParser::parse");
@@ -894,8 +895,7 @@ impl<'a> Parser<'a> {
                                 let _local = S::Local {
                                     kind: local.kind,
                                     is_export: local.is_export,
-                                    was_ts_import_equals: local.was_ts_import_equals,
-                                    was_commonjs_export: local.was_commonjs_export,
+                                    origin: local.origin,
                                     decls: G::DeclList::init_one(G::Decl {
                                         binding: decl.binding,
                                         value: decl.value,

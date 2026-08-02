@@ -127,8 +127,9 @@ impl Default for Result {
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
     pub struct ResultFlags: u8 {
+        // Bits 0..=1 encode [`ExternalKind`]; write via `set_external_kind`.
         const IS_EXTERNAL = 1 << 0;
-        const IS_EXTERNAL_AND_REWRITE_IMPORT_PATH = 1 << 1;
+        const REWRITE_IMPORT_PATH = 1 << 1;
         const IS_STANDALONE_MODULE = 1 << 2;
         // This is true when the package was loaded from within the node_modules directory.
         const IS_FROM_NODE_MODULES = 1 << 3;
@@ -138,23 +139,43 @@ bitflags::bitflags! {
     }
 }
 
-// Convenience accessors with field-style names.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExternalKind {
+    #[default]
+    NotExternal,
+    External,
+    /// External, and the import specifier should be rewritten to the resolved path.
+    ExternalRewritePath,
+}
+
 impl ResultFlags {
     #[inline]
     pub fn is_external(self) -> bool {
         self.contains(Self::IS_EXTERNAL)
     }
     #[inline]
-    pub(crate) fn set_is_external(&mut self, v: bool) {
-        self.set(Self::IS_EXTERNAL, v)
+    pub fn external_kind(self) -> ExternalKind {
+        debug_assert!(
+            !self.contains(Self::REWRITE_IMPORT_PATH) || self.contains(Self::IS_EXTERNAL)
+        );
+        if !self.contains(Self::IS_EXTERNAL) {
+            ExternalKind::NotExternal
+        } else if self.contains(Self::REWRITE_IMPORT_PATH) {
+            ExternalKind::ExternalRewritePath
+        } else {
+            ExternalKind::External
+        }
     }
     #[inline]
-    pub fn is_external_and_rewrite_import_path(self) -> bool {
-        self.contains(Self::IS_EXTERNAL_AND_REWRITE_IMPORT_PATH)
-    }
-    #[inline]
-    pub(crate) fn set_is_external_and_rewrite_import_path(&mut self, v: bool) {
-        self.set(Self::IS_EXTERNAL_AND_REWRITE_IMPORT_PATH, v)
+    pub(crate) fn set_external_kind(&mut self, kind: ExternalKind) {
+        self.set(
+            Self::IS_EXTERNAL,
+            !matches!(kind, ExternalKind::NotExternal),
+        );
+        self.set(
+            Self::REWRITE_IMPORT_PATH,
+            matches!(kind, ExternalKind::ExternalRewritePath),
+        );
     }
     #[inline]
     pub(crate) fn is_standalone_module(self) -> bool {

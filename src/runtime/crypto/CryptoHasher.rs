@@ -1196,15 +1196,6 @@ pub struct StaticCryptoHasher<H: StaticHasher> {
     pub(crate) digested: Cell<bool>,
 }
 
-impl<H: StaticHasher> Default for StaticCryptoHasher<H> {
-    fn default() -> Self {
-        Self {
-            hashing: JsCell::new(H::init()),
-            digested: Cell::new(false),
-        }
-    }
-}
-
 impl<H: StaticHasher> StaticCryptoHasher<H> {
     /// `pub const digest = host_fn.wrapInstanceMethod(ThisHasher, "digest_", false);`
     ///

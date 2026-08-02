@@ -1345,6 +1345,11 @@ pub struct DependencyGroup {
     pub field: &'static [u8],
     pub behavior: Behavior,
 }
+impl Default for DependencyGroup {
+    fn default() -> Self {
+        Self::DEPENDENCIES
+    }
+}
 impl DependencyGroup {
     pub const DEPENDENCIES: Self = Self {
         prop: b"dependencies",

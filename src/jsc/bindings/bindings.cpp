@@ -6016,7 +6016,7 @@ CPP_DECL void JSC__VM__setControlFlowProfiler(JSC::VM* vm, bool isEnabled)
 
 CPP_DECL void JSC__VM__performOpportunisticallyScheduledTasks(JSC::VM* vm, double until)
 {
-    vm->performOpportunisticallyScheduledTasks(ApproximateTime::now() + Seconds(until), {});
+    vm->performOpportunisticallyScheduledTasks(MonotonicTime::now() + Seconds(until), {});
 }
 
 extern "C" EncodedJSValue JSC__createError(JSC::JSGlobalObject* globalObject, const BunString* str)

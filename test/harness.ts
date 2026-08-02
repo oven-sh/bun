@@ -1841,7 +1841,10 @@ export function libcPathForDlopen() {
         case "glibc":
           return "libc.so.6";
         case "musl":
-          return "/usr/lib/libc.so";
+          // Use bare SONAME so the system dynamic linker resolves the path.
+          // This works on Alpine (musl maps libc.so to the already-loaded libc)
+          // and OHOS (the linker finds libc in its default search path).
+          return "libc.so";
       }
     case "darwin":
       return "libc.dylib";

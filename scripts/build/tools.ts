@@ -264,8 +264,8 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
  * LLVM version constraint. Any version in the same major.minor range is
  * accepted (e.g. Alpine 3.23 ships 21.1.2 while we target 21.1.8).
  */
-export const LLVM_VERSION = "21.1.8";
-const LLVM_MAJOR = "21";
+export const LLVM_VERSION = "22.1.4";
+const LLVM_MAJOR = "22";
 const LLVM_MINOR = "1";
 const LLVM_VERSION_RANGE = `>=${LLVM_MAJOR}.${LLVM_MINOR}.0 <${LLVM_MAJOR}.${LLVM_MINOR}.99`;
 
@@ -332,6 +332,8 @@ function llvmInstallHint(os: OS): string {
   if (os === "darwin") return `Install with: brew install llvm@${LLVM_MAJOR}`;
   if (os === "linux")
     return `Install with: apt install clang-${LLVM_MAJOR} lld-${LLVM_MAJOR}  (or equivalent for your distro)`;
+  if (os === "ohos")
+    return `Install LLVM ${LLVM_VERSION} and provide --ohos-sysroot and --ohos-sdk-root`;
   if (os === "windows") return `Install LLVM ${LLVM_VERSION} from https://github.com/llvm/llvm-project/releases`;
   return "";
 }

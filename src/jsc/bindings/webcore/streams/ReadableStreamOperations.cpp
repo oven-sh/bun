@@ -851,7 +851,7 @@ static IterationRecord getIteratorAsync(JSC::VM& vm, JSGlobalObject* globalObjec
         }
         IterationRecord syncRecord = iteratorDirect(globalObject, syncIterator);
         RETURN_IF_EXCEPTION(scope, {});
-        auto* asyncFromSyncIterator = JSAsyncFromSyncIterator::create(vm, globalObject->asyncFromSyncIteratorStructure(), asObject(syncRecord.iterator), syncRecord.nextMethod, IterationMode::Generic);
+        auto* asyncFromSyncIterator = JSAsyncFromSyncIterator::create(vm, globalObject->asyncFromSyncIteratorStructure(), asObject(syncRecord.iterator), syncRecord.nextMethod);
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, iteratorDirect(globalObject, asyncFromSyncIterator));
     }

@@ -957,6 +957,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
+ "ohos_sign",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1676,6 +1677,7 @@ dependencies = [
  "getrandom",
  "libc",
  "lol_html",
+ "ohos_sign",
  "rust-argon2",
  "scopeguard",
  "sha3",
@@ -1890,6 +1892,7 @@ dependencies = [
  "bun_windows_sys",
  "enumset",
  "libc",
+ "ohos_sign",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1982,6 +1985,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
+ "ohos_sign",
  "scopeguard",
  "strum",
  "thiserror",
@@ -2008,6 +2012,7 @@ dependencies = [
  "enumset",
  "libc",
  "memchr",
+ "ohos_sign",
  "rustix",
  "scopeguard",
  "strum",
@@ -2911,6 +2916,10 @@ checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
 ]
+
+[[package]]
+name = "ohos_sign"
+version = "0.0.0"
 
 [[package]]
 name = "once_cell"

@@ -1,6 +1,5 @@
 #include "root.h"
 #include "wtf-bindings.h"
-#include "BunTTYState.h"
 #include <wtf/StackBounds.h>
 #include <wtf/StackCheck.h>
 #include <wtf/StackTrace.h>
@@ -27,6 +26,9 @@ static int orig_termios_fd = -1;
 static struct termios orig_termios;
 static std::atomic<int> orig_termios_spinlock;
 static std::once_flag reset_once_flag;
+
+static int current_tty_mode = 0;
+static struct termios orig_tty_termios;
 
 int uv__tcsetattr(int fd, int how, const struct termios* term)
 {
@@ -107,27 +109,19 @@ extern "C" void Bun__atexit(void (*func)(void));
 extern "C" volatile sig_atomic_t bun_stdio_modified[3];
 #endif
 
-extern "C" size_t Bun__ttyStateSize()
+extern "C" int Bun__ttySetMode(int fd, int mode)
 {
-    return sizeof(BunTTYState);
-}
-
 #if !OS(WINDOWS)
-// Port of libuv's uv_tty_set_mode(), with `state` standing in for the
-// per-handle fields of uv_tty_t. The file statics above are only the
-// uv_tty_reset_mode() snapshot, which is process-wide in libuv too.
-static int ttySetMode(int fd, int mode, BunTTYState& state)
-{
     struct termios tmp;
     int expected;
     int rc;
 
-    if (state.mode == mode)
+    if (current_tty_mode == mode)
         return 0;
 
-    if (state.mode == 0 && mode != 0) {
+    if (current_tty_mode == 0 && mode != 0) {
         do {
-            rc = tcgetattr(fd, &state.orig_termios);
+            rc = tcgetattr(fd, &orig_tty_termios);
         } while (rc == -1 && errno == EINTR);
 
         if (rc == -1)
@@ -139,14 +133,14 @@ static int ttySetMode(int fd, int mode, BunTTYState& state)
         } while (!atomic_compare_exchange_strong(&orig_termios_spinlock, &expected, 1));
 
         if (orig_termios_fd == -1) {
-            orig_termios = state.orig_termios;
+            orig_termios = orig_tty_termios;
             orig_termios_fd = fd;
         }
 
         atomic_store(&orig_termios_spinlock, 0);
     }
 
-    tmp = state.orig_termios;
+    tmp = orig_tty_termios;
     switch (mode) {
     case 0: // normal
         break;
@@ -194,28 +188,13 @@ static int ttySetMode(int fd, int mode, BunTTYState& state)
     /* Apply changes after draining */
     rc = uv__tcsetattr(fd, TCSADRAIN, &tmp);
     if (rc == 0) {
-        state.mode = mode;
+        current_tty_mode = mode;
     }
 
     return rc;
-}
-#endif
-
-extern "C" int Bun__ttySetMode(int fd, int mode, void* rawState)
-{
-#if !OS(WINDOWS)
-    // Copied in and out so callers can hand us an unaligned byte buffer: the
-    // JS streams keep theirs in a Uint8Array.
-    BunTTYState state;
-    memcpy(&state, rawState, sizeof(state));
-    int rc = ttySetMode(fd, mode, state);
-    memcpy(rawState, &state, sizeof(state));
-    return rc;
 #else
-    UNUSED_PARAM(fd);
-    UNUSED_PARAM(mode);
-    UNUSED_PARAM(rawState);
     return 0;
+
 #endif
 }
 

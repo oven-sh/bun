@@ -631,8 +631,17 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // would add --target which breaks cross-compiles. cfg.hostCc (not cfg.cc):
   // when cross-compiling for windows, cc is clang-cl and defaults to a
   // *-windows-msvc triple — host tools must stay plain clang.
+  // Post-link sign for OHOS host: HarmonyOS rejects unsigned ELFs at exec.
+  // Uses binary-sign-tool (from ohos-sdk build dep, always available at build
+  // time) — ohos-selfsign is compiled later inside the same ninja graph and
+  // cannot be used here.
+  const hostCcCmd =
+    `${q(cfg.hostCc)} $flags -o $out $in` +
+    ` && { command -v binary-sign-tool >/dev/null 2>&1` +
+    ` && binary-sign-tool sign -selfSign 1 -inFile $out -outFile $out.signed >/dev/null 2>&1` +
+    ` && mv -f $out.signed $out && chmod +x $out; :; }`;
   n.rule("dep_host_cc", {
-    command: `${q(cfg.hostCc)} $flags -o $out $in`,
+    command: hostCcCmd,
     description: "host-cc $out",
   });
 
@@ -1400,14 +1409,22 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
     env[envKey] = cfg.msvcLinker;
   }
 
-  // Cross-compile (Android): cargo's default `cc` linker can't handle the
-  // foreign ELF objects. Use our clang as the linker driver and pass
+  // Cross-compile (Android / OHOS): cargo's default `cc` linker can't handle
+  // the foreign ELF objects. Use our clang as the linker driver and pass
   // --target/--sysroot through, same as the C/C++ deps do via globalFlags.
   // The cdylib output also wants -lunwind, which lives in the NDK's
   // bundled clang resource dir (not the sysroot), so we add that -L too.
   if (cfg.crossTarget !== undefined && spec.rustTarget !== undefined) {
     const envKey = `CARGO_TARGET_${spec.rustTarget.toUpperCase().replace(/-/g, "_")}_LINKER`;
-    env[envKey] = cfg.cc;
+    // OHOS native (host==target==aarch64-unknown-linux-ohos): use the signing
+    // linker wrapper so build-script binaries are signed synchronously after
+    // each link. Unsigned ELFs trip OHOS's "Permission denied" exec guard.
+    const ohosLinker = process.env.OHOS_BUN_SIGNING_LINKER;
+    if (cfg.ohos && ohosLinker !== undefined) {
+      env[envKey] = ohosLinker;
+    } else {
+      env[envKey] = cfg.cc;
+    }
     const linkArgs = [`-Clink-arg=--target=${cfg.crossTarget}`];
     if (cfg.sysroot !== undefined) linkArgs.push(`-Clink-arg=--sysroot=${cfg.sysroot}`);
     if (cfg.androidNdkRuntimeDir !== undefined) {

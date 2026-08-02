@@ -437,17 +437,52 @@ mod elf {
         if vaddr_ptr.is_null() {
             return None;
         }
-        // SAFETY: read unaligned u64 vaddr.
-        let vaddr = unsafe { core::ptr::read_unaligned(vaddr_ptr) };
-        if vaddr == 0 {
+        // SAFETY: read unaligned u64 link-time vaddr.
+        let link_vaddr = unsafe { core::ptr::read_unaligned(vaddr_ptr) };
+        if link_vaddr == 0 {
             return None;
         }
-        // BUN_COMPILED.size holds the virtual address of the appended data.
-        // The kernel mapped it via PT_LOAD, so we can dereference directly.
-        // Format at target: [u64 payload_len][payload bytes]
-        // Synthesize a `*mut u8` directly so the provenance carries write
-        // permission for the in-place bytecode mutation done by JSC.
-        let target = vaddr as *mut u8;
+
+        // PIE binary: ASLR shifts the load base at runtime, so the link-time
+        // vaddr is not the runtime address.  Read /proc/self/maps to find the
+        // first file-backed mapping at file offset 0 (the ELF header PT_LOAD),
+        // whose start address is the PIE load base.  On OHOS (hmdfs/tmpfs) the
+        // header segment is mapped `r--p` (not `r-xp` as on glibc Linux), so
+        // the scan matches on offset+path instead of execute permission.
+        let load_base: usize = {
+            let mut base = 0usize;
+            if let Ok(maps) = std::fs::read_to_string("/proc/self/maps") {
+                for line in maps.lines() {
+                    let mut cols = line.split_whitespace();
+                    let Some(addr_range) = cols.next() else { continue };
+                    let _perms = cols.next();
+                    let Some(file_off) = cols.next() else { continue };
+                    cols.next(); // dev
+                    let inode_str = cols.next().unwrap_or("0");
+                    let path = cols.next().unwrap_or("");
+                    if file_off == "00000000"
+                        && inode_str != "0"
+                        && !path.is_empty()
+                        && !path.starts_with('[')
+                    {
+                        if let Some(start_hex) = addr_range.split('-').next() {
+                            if let Ok(b) = usize::from_str_radix(start_hex, 16) {
+                                base = b;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            base
+        };
+        if load_base == 0 {
+            return None;
+        }
+
+        // runtime_addr = load_base + link_vaddr (PIE relocation).
+        let runtime_addr = load_base.wrapping_add(link_vaddr as usize);
+        let target = runtime_addr as *mut u8;
         // SAFETY: target points to 8-byte little-endian length prefix.
         let payload_len =
             u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });
@@ -1561,6 +1596,16 @@ pub(crate) fn inject(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
+            #[cfg(target_env = "ohos")]
+            {
+                let out_str = unsafe { core::str::from_utf8_unchecked(zname.as_bytes()) };
+                let out_path = std::path::Path::new(out_str);
+                // The base bun binary is already signed, but we've appended
+                // the JS bundle after the original signature.  Strip the old
+                // .codesign and sign the modified file so the signature
+                // covers the entire standalone binary.
+                let _ = ohos_sign::sign_selfsign_inplace_with_strip(out_path);
+            }
             return cloned_executable_fd;
         }
         _ => {
@@ -2087,6 +2132,20 @@ pub fn to_executable(
         if fd != Fd::INVALID {
             fd.close();
         }
+
+        // OHOS: compiled binaries need a .codesign section to execute.
+        #[cfg(target_env = "ohos")]
+        {
+            if !outfile.is_empty() {
+                if let Some(signed_path) = core::str::from_utf8(outfile).ok() {
+                    let p = std::path::Path::new(signed_path);
+                    if p.exists() && !ohos_sign::has_codesign(&std::fs::read(p).unwrap_or_default()) {
+                        let _ = ohos_sign::sign_selfsign_inplace(p);
+                    }
+                }
+            }
+        }
+
         Ok(CompileResult::Success)
     }
 }

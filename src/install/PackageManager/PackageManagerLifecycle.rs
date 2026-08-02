@@ -402,7 +402,30 @@ impl PackageManager {
             parent = bun_paths::dirname(dir);
         }
 
+        // OHOS: prepend bun's directory to PATH and set NODE=bun so
+        // lifecycle scripts resolve `node` to `bun` and use its process.dlopen
+        // (which auto-signs .node ELF files before loading).
+        #[cfg(target_env = "ohos")]
+        {
+            let bun_dir_bytes = bun_core::self_exe_path().ok()
+                .and_then(|exe| bun_paths::dirname(exe.as_bytes()));
+            if let Some(bun_dir) = bun_dir_bytes {
+                let current_path = path.slice();
+                let mut ohos_path = EnvPath::init_capacity(
+                    bun_dir.len() + 1 + current_path.len() + 1 + original_path.len(),
+                )?;
+                ohos_path.append(bun_dir)?;
+                ohos_path.append(current_path)?;
+                ohos_path.append(original_path.as_slice())?;
+                path = ohos_path;
+            }
+        }
+        #[cfg(not(target_env = "ohos"))]
         path.append(original_path.as_slice())?;
+        #[cfg(target_env = "ohos")]
+        if let Ok(bun_exe) = bun_core::self_exe_path() {
+            let _ = script_env.put(b"NODE", bun_exe.as_bytes());
+        }
         script_env.put(b"PATH", path.slice())?;
 
         // Ownership transfers to `LifecycleScriptSubprocess`, which

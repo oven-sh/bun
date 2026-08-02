@@ -2103,10 +2103,26 @@ mod posix_impl {
         }
     }
     pub fn fstat(fd: Fd) -> Maybe<Stat> {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(all(
+            any(target_os = "linux", target_os = "android"),
+            not(target_env = "ohos")
+        ))]
         {
             return super::linux_syscall::fstat(fd)
                 .map_err(|e| Error::from_code_int(e, Tag::fstat));
+        }
+        #[cfg(target_env = "ohos")]
+        {
+            // OHOS seccomp blocks fstat(2) on pipe fds with EACCES.
+            // Return a zeroed stat instead of crashing the caller so that
+            // spawn child processes with pipe stdio survive initialization.
+            match super::linux_syscall::fstat(fd) {
+                Ok(s) => return Ok(s),
+                Err(e) if e as i32 == libc::EACCES => {
+                    return Ok(unsafe { core::mem::zeroed() });
+                }
+                Err(e) => return Err(Error::from_code_int(e, Tag::fstat)),
+            }
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
@@ -2155,18 +2171,18 @@ mod posix_impl {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     mod linux_statx {
         // glibc: libc 0.2.x exposes the full surface directly.
-        #[cfg(all(target_os = "linux", not(target_env = "musl")))]
+        #[cfg(all(target_os = "linux", not(any(target_env = "musl", target_env = "ohos"))))]
         pub(super) use libc::{
             STATX_ATIME, STATX_BLOCKS, STATX_BTIME, STATX_CTIME, STATX_GID, STATX_INO, STATX_MODE,
             STATX_MTIME, STATX_NLINK, STATX_SIZE, STATX_TYPE, STATX_UID, statx,
         };
 
-        // musl/Android: `libc` gates `statx`/`STATX_*` behind a build-script
+        // musl/Android/OHOS: `libc` gates `statx`/`STATX_*` behind a build-script
         // `musl_v1_2_3` cfg that cross-compiles can't trigger, and bionic's
         // `statx()` wrapper requires API 30. Define the kernel-ABI struct +
         // bits ourselves and dispatch via raw `syscall` — works on every
         // Linux ABI.
-        #[cfg(any(target_env = "musl", target_os = "android"))]
+        #[cfg(any(target_env = "musl", target_env = "ohos", target_os = "android"))]
         mod raw {
             #![allow(non_camel_case_types)]
             use core::ffi::{c_char, c_int, c_uint};
@@ -2242,7 +2258,7 @@ mod posix_impl {
                 unsafe { libc::syscall(libc::SYS_statx, dirfd, path, flags, mask, buf) as c_int }
             }
         }
-        #[cfg(any(target_env = "musl", target_os = "android"))]
+        #[cfg(any(target_env = "musl", target_env = "ohos", target_os = "android"))]
         pub(super) use raw::*;
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -2646,18 +2662,64 @@ mod posix_impl {
             return Err(err_with(Tag::getcwd));
         }
         // SAFETY: on success `getcwd` returns `buf`'s pointer NUL-terminated.
-        Ok(unsafe { libc::strlen(p) })
+        let len = unsafe { libc::strlen(p) };
+        // OHOS (hmdfs/tmpfs): the kernel returns the cached path even after
+        // the cwd directory has been deleted via rmdir — getcwd never fails.
+        // A stat(".") probe surfaces ENOENT so callers detect deleted-cwd.
+        #[cfg(target_env = "ohos")]
+        {
+            let mut st: libc::stat = unsafe { core::mem::zeroed() };
+            // SAFETY: "." is a valid NUL-terminated path literal.
+            if unsafe { libc::stat(b".\0".as_ptr().cast(), &mut st) } < 0 {
+                return Err(Error::from_code(E::ENOENT, Tag::getcwd));
+            }
+        }
+        Ok(len)
     }
 
     // ── link/perm/time/access group ──
     pub fn link(src: &ZStr, dest: &ZStr) -> Maybe<()> {
-        check_p!(
-            // SAFETY: both `ZStr`s are valid NUL-terminated C strings.
-            unsafe { libc::link(src.as_ptr(), dest.as_ptr()) },
-            Tag::link,
-            src
-        );
-        Ok(())
+        // OHOS: the kernel refuses the bare `linkat` syscall with EACCES, and
+        // ohos-compat-shim works around that by interposing the *libc symbol*
+        // `linkat`. musl implements `link(a, b)` as a direct
+        // `syscall(SYS_linkat, AT_FDCWD, a, AT_FDCWD, b, 0)`, so it never
+        // reaches that symbol and never gets the workaround — hardlinks fail
+        // with EACCES no matter how the shim is configured (verified: setting
+        // OHOS_COMPAT_SHIM_ENABLE changes nothing, because the interposer is
+        // simply never called). Routing through `linkat` fixes it: measured
+        // on-device, the libc `linkat` symbol succeeds where both `link()` and
+        // the raw syscall return EACCES, and stripping the shim from
+        // LD_PRELOAD makes `linkat` fail too — confirming the symbol
+        // interposition is what makes hardlinks work here at all.
+        #[cfg(target_env = "ohos")]
+        {
+            check_p!(
+                // SAFETY: both `ZStr`s are valid NUL-terminated C strings;
+                // AT_FDCWD makes both paths resolve exactly as `link` would.
+                unsafe {
+                    libc::linkat(
+                        libc::AT_FDCWD,
+                        src.as_ptr(),
+                        libc::AT_FDCWD,
+                        dest.as_ptr(),
+                        0,
+                    )
+                },
+                Tag::link,
+                src
+            );
+            return Ok(());
+        }
+        #[cfg(not(target_env = "ohos"))]
+        {
+            check_p!(
+                // SAFETY: both `ZStr`s are valid NUL-terminated C strings.
+                unsafe { libc::link(src.as_ptr(), dest.as_ptr()) },
+                Tag::link,
+                src
+            );
+            Ok(())
+        }
     }
     pub fn linkat(src_dir: impl AsFd, src: &ZStr, dest_dir: impl AsFd, dest: &ZStr) -> Maybe<()> {
         let src_dir = src_dir.as_fd();
@@ -2794,14 +2856,38 @@ mod posix_impl {
     }
     pub fn fchmodat(dir: impl AsFd, path: &ZStr, mode: Mode, flags: i32) -> Maybe<()> {
         let dir = dir.as_fd();
-        check_p!(
-            // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
-            // valid NUL-terminated C string.
-            unsafe { libc::fchmodat(dir.native(), path.as_ptr(), mode as libc::mode_t, flags) },
-            Tag::fchmodat,
-            path
-        );
-        Ok(())
+        #[cfg(target_env = "ohos")]
+        {
+            // OHOS seccomp blocks fchmodat2 (syscall 452) which newer glibc
+            // uses internally for fchmodat(). Call SYS_fchmodat (53 on aarch64)
+            // directly so seccomp doesn't SIGSYS us.
+            let rc = unsafe {
+                libc::syscall(
+                    libc::SYS_fchmodat as libc::c_long,
+                    dir.native() as libc::c_long,
+                    path.as_ptr() as libc::c_long,
+                    mode as libc::c_long,
+                    flags as libc::c_long,
+                )
+            };
+            if rc != 0 {
+                let errno = crate::linux::errno();
+                return Err(Error::from_code_int(errno, Tag::fchmodat)
+                    .with_path(path.as_bytes()));
+            }
+            Ok(())
+        }
+        #[cfg(not(target_env = "ohos"))]
+        {
+            check_p!(
+                // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
+                // valid NUL-terminated C string.
+                unsafe { libc::fchmodat(dir.native(), path.as_ptr(), mode as libc::mode_t, flags) },
+                Tag::fchmodat,
+                path
+            );
+            Ok(())
+        }
     }
     /// `lchmod` is BSD/Darwin-only; Linux: `fchmodat(.., AT_SYMLINK_NOFOLLOW)`.
     pub fn lchmod(path: &ZStr, mode: Mode) -> Maybe<()> {
@@ -2910,8 +2996,22 @@ mod posix_impl {
         let rc = unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) };
         Ok(rc == 0)
     }
+    /// Clamp a `timespec` so `tv_sec` is non-negative — some filesystems
+    /// (notably OHOS FUSE) reject or silently truncate pre-epoch timestamps.
+    #[cfg(target_env = "ohos")]
+    fn clamp_timespec(ts: libc::timespec) -> libc::timespec {
+        libc::timespec {
+            tv_sec: if ts.tv_sec < 0 { 0 } else { ts.tv_sec },
+            tv_nsec: if ts.tv_sec < 0 { 0 } else { ts.tv_nsec },
+        }
+    }
+    #[cfg(not(target_env = "ohos"))]
+    fn clamp_timespec(ts: libc::timespec) -> libc::timespec {
+        ts
+    }
+
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
-        let ts = [atime.to_timespec(), mtime.to_timespec()];
+        let ts = [clamp_timespec(atime.to_timespec()), clamp_timespec(mtime.to_timespec())];
         check!(
             // SAFETY: `fd` is a live descriptor; `ts` is a 2-element stack
             // array and `futimens` reads exactly two `timespec`s.
@@ -2921,7 +3021,7 @@ mod posix_impl {
         Ok(())
     }
     pub fn utimens(path: &ZStr, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
-        let ts = [atime.to_timespec(), mtime.to_timespec()];
+        let ts = [clamp_timespec(atime.to_timespec()), clamp_timespec(mtime.to_timespec())];
         check_p!(
             // SAFETY: `path` is NUL-terminated (`ZStr`); `ts` is a 2-element
             // stack array and `utimensat` reads exactly two `timespec`s.
@@ -2932,7 +3032,7 @@ mod posix_impl {
         Ok(())
     }
     pub fn lutimens(path: &ZStr, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
-        let ts = [atime.to_timespec(), mtime.to_timespec()];
+        let ts = [clamp_timespec(atime.to_timespec()), clamp_timespec(mtime.to_timespec())];
         check_p!(
             // SAFETY: `path` is NUL-terminated (`ZStr`); `ts` is a 2-element
             // stack array and `utimensat` reads exactly two `timespec`s.
@@ -3044,6 +3144,29 @@ mod posix_impl {
     pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
         let rc = check!(safe_libc::lseek(fd.native(), offset, whence), Tag::lseek);
         Ok(rc)
+    }
+    /// Version of `lseek` that treats `ESPIPE` (illegal seek on pipes/sockets)
+    /// as a successful no-op, returning `Ok(0)`. On OHOS the kernel returns
+    /// ESPIPE whenever `lseek` is called on a non-seekable fd such as a pipe;
+    /// this veneer lets callers that only need best-effort seeking (e.g. the
+    /// shell's output reporting) avoid crashing with "Illegal seek".
+    pub fn lseek_allow_espipe(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
+        #[cfg(target_env = "ohos")]
+        {
+            let rc = safe_libc::lseek(fd.native(), offset, whence);
+            if rc < 0 {
+                let raw_errno = crate::last_errno();
+                if raw_errno == libc::ESPIPE as i32 {
+                    return Ok(0);
+                }
+                return Err(Error::from_code_int(raw_errno, Tag::lseek));
+            }
+            Ok(rc)
+        }
+        #[cfg(not(target_env = "ohos"))]
+        {
+            lseek(fd, offset, whence)
+        }
     }
     pub fn chdir(path: &ZStr) -> Maybe<()> {
         // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
@@ -3438,6 +3561,8 @@ mod posix_impl {
     /// `bun.sys.canUseMemfd()` — false on non-Linux; on Linux, false when
     /// `BUN_FEATURE_FLAG_DISABLE_MEMFD` is set or once `memfd_create` has
     /// returned ENOSYS/EPERM/EACCES.
+    /// OHOS: memfd_create verified available on 2026-06-07 (falls under this
+    /// same target_os = "linux" arm; no separate guard needed there).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[inline]
     pub fn can_use_memfd() -> bool {
@@ -5386,9 +5511,9 @@ pub mod linux {
     // `time_t == c_long == i64` on every libc, so spell it `i64` on musl to
     // sidestep the deprecation without changing layout. The `const _` below
     // guards the layout-identical-to-`libc::timespec` invariant.
-    #[cfg(target_env = "musl")]
+    #[cfg(any(target_env = "musl", target_env = "ohos"))]
     type time_t = i64;
-    #[cfg(not(target_env = "musl"))]
+    #[cfg(not(any(target_env = "musl", target_env = "ohos")))]
     type time_t = libc::time_t;
 
     /// kernel-shaped timespec (`sec`/`nsec`, no `tv_` prefix).
@@ -6200,10 +6325,35 @@ pub mod RTLD {
     pub const LOCAL: i32 = 0;
 }
 
+
+/// C-compatible entry point for `dlopen` — called from C++ as `Bun__dlopen`.
+/// OHOS: if dlopen fails with EPERM (unsigned .node/.so), sign and retry.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__dlopen(path: *const c_char, flags: c_int) -> *mut c_void {
+    // SAFETY: caller guarantees `path` is a valid NUL-terminated C string.
+    let z = unsafe { ZStr::from_c_ptr(path) };
+    dlopen(z, flags).unwrap_or(core::ptr::null_mut())
+}
+
 /// `dlopen(filename, flags)`. Windows → `LoadLibraryExW` (UTF-8 → UTF-16).
 pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_env = "ohos")))]
     {
+        // SAFETY: filename is NUL-terminated.
+        let p = unsafe { libc::dlopen(filename.as_ptr(), flags) };
+        if p.is_null() { None } else { Some(p) }
+    }
+    #[cfg(target_env = "ohos")]
+    {
+        fn ensure_signed(path: &ZStr) {
+            let path_str = core::str::from_utf8(path.as_bytes()).unwrap_or("");
+            let p = std::path::Path::new(path_str);
+            if ohos_sign::has_codesign(&std::fs::read(p).unwrap_or_default()) {
+                return;
+            }
+            let _ = ohos_sign::sign_selfsign_inplace(p);
+        }
+        ensure_signed(filename);
         // SAFETY: filename is NUL-terminated.
         let p = unsafe { libc::dlopen(filename.as_ptr(), flags) };
         if p.is_null() { None } else { Some(p) }

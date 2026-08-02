@@ -72,9 +72,20 @@ Structure* createStructure(VM& vm, JSGlobalObject* globalObject)
 
 static JSC::Symbol* createTypeofSymbol(VM& vm, uint8_t reactVersion)
 {
-    if (reactVersion == 0)
-        return JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.element"_s));
-    return JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.transitional.element"_s));
+    // Cache symbols so they are identical to what Symbol.for() returns.
+    // Without caching, JSC::Symbol::create(vm, privateName) creates a new
+    // Symbol* every call, and if Symbol.for() has previously cached a
+    // different Symbol* for the same key, === equality checks in
+    // React's isValidElement will fail.
+    static JSC::Symbol* cached[2] = { nullptr, nullptr };
+    int idx = (reactVersion == 0) ? 0 : 1;
+    if (!cached[idx]) {
+        if (reactVersion == 0)
+            cached[idx] = JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.element"_s));
+        else
+            cached[idx] = JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.transitional.element"_s));
+    }
+    return cached[idx];
 }
 
 extern "C" JSC::EncodedJSValue JSReactElement__create(

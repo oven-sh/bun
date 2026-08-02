@@ -897,7 +897,7 @@ impl JSValue {
         E::from_js_value(self, global, property_name)
     }
     pub fn as_string(self) -> *mut JSString {
-        debug_assert!(self.is_string_literal());
+        debug_assert!(self.is_string());
         JSC__JSValue__asString(self)
     }
     /// `jsTypeString()` — calls `JSC::jsTypeStringForValue`, returning the

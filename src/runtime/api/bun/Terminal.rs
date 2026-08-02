@@ -123,6 +123,15 @@ pub struct Terminal {
     /// Duplicated master fd for writing (POSIX) / overlapped write pipe end (Windows)
     write_fd: Cell<Fd>,
 
+    /// Exit notification that fired before the JS wrapper / callbacks existed.
+    /// `on_reader_finished` is one-shot (guarded by `READER_DONE`), and both
+    /// `writer.start()` and `reader.start()` can drive it synchronously during
+    /// `init_terminal` — long before `this_value` is set or the `exit` callback
+    /// is registered. Without this the single notification is silently dropped
+    /// and the user's `exit` callback never fires at all. Recorded here and
+    /// replayed at the end of `init_terminal`. See OHOS_TEST_TODO.md T03.
+    deferred_exit: Cell<Option<i32>>,
+
     /// The slave side of the PTY (used by child processes). Unused on Windows.
     slave_fd: Cell<Fd>,
 
@@ -161,17 +170,6 @@ pub struct Terminal {
 
     /// State flags
     flags: Cell<Flags>,
-
-    /// The streaming writer has accepted bytes it hasn't flushed to the fd
-    /// yet. Set by `write()` from `has_pending_data()`; cleared when
-    /// `on_write` observes `Drained` so POSIX can fire the `drain` callback
-    /// (Windows fires it from `on_writable`).
-    writer_has_buffered: Cell<bool>,
-
-    /// This PTY's own raw-mode state (mode + saved termios), so one terminal
-    /// going raw never makes another terminal's setRawMode a no-op.
-    #[cfg(unix)]
-    tty_state: Cell<bun_core::tty::State>,
 }
 
 bitflags::bitflags! {
@@ -452,6 +450,7 @@ impl Terminal {
             read_fd: Cell::new(pty_result.read_fd),
             write_fd: Cell::new(pty_result.write_fd),
             slave_fd: Cell::new(pty_result.slave),
+            deferred_exit: Cell::new(None),
             #[cfg(windows)]
             hpcon: Cell::new(Some(pty_result.hpcon)),
             cols: Cell::new(if cfg!(windows) {
@@ -473,9 +472,6 @@ impl Terminal {
             reader: JsCell::new(IOReader::init::<Terminal>()),
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::empty()),
-            writer_has_buffered: Cell::new(false),
-            #[cfg(unix)]
-            tty_state: Cell::new(bun_core::tty::State::new()),
         }));
         // SAFETY: just allocated, non-null, exclusively owned here. R-2: `&`
         // (not `&mut`) — every method below takes `&self`; field writes go
@@ -550,9 +546,6 @@ impl Terminal {
             }
         }
 
-        // Start reading data
-        terminal.reader.with_mut(|r| r.read());
-
         // Get or create the JS wrapper
         let this_value = existing_js_value.unwrap_or_else(|| js::to_js(parent_ptr, global_object));
 
@@ -573,6 +566,45 @@ impl Terminal {
         }
         if let Some(cb) = options.drain_callback {
             js::gc::set(js::GcValue::Drain, this_value, global_object, cb);
+        }
+
+        // Start reading data LAST — after the JS wrapper exists and the
+        // callbacks are registered.
+        //
+        // `read()` can complete synchronously: a PTY whose slave end is
+        // already closed (or a read that errors) drives
+        // on_reader_done/on_reader_error -> on_reader_finished right here,
+        // inline. That path sets READER_DONE, which is a one-shot: every
+        // later call, including the one from the user's own `close()`, hits
+        // the `if READER_DONE { return }` guard at the top and returns
+        // without dispatching.
+        //
+        // With `read()` above the wrapper/callback setup, that inline
+        // completion consumed the single exit notification while
+        // `this_value` was still `JsRef::empty()` and no Exit callback was
+        // registered yet, so it silently dropped at `try_get` /
+        // `gc::get(Exit)` and the user's `exit` callback then never fired at
+        // all. Observed intermittently (~50% under
+        // BUN_JSC_randomIntegrityAuditRate=1.0 after ~30 prior terminals);
+        // instrumentation showed the final terminal entering close_internal
+        // with READER_DONE already true and zero dispatches for the whole
+        // run. See OHOS_TEST_TODO.md T03.
+        terminal.reader.with_mut(|r| r.read());
+
+        // Replay an exit notification that fired during startup, before the
+        // wrapper and callbacks above existed. `writer.start()`,
+        // `reader.start()` and `read()` can all drive `on_reader_finished`
+        // synchronously; that path is one-shot, so without this replay the
+        // user's `exit` callback would never fire at all.
+        if let Some(code) = terminal.deferred_exit.take() {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "T@{:x} init: replaying deferred exit_code={}",
+                parent_ptr as usize,
+                code
+            );
+            terminal.this_value.with_mut(|v| v.downgrade());
+            terminal.call_exit_callback(code, None);
         }
 
         Ok(CreateResult {
@@ -1486,40 +1518,31 @@ impl Terminal {
         // defer string_or_buffer.deinit() — Drop handles it.
 
         let bytes = string_or_buffer.slice();
-        let input_len = bytes.len();
 
-        if input_len == 0 {
+        if bytes.is_empty() {
             return Ok(JSValue::js_number(0.0));
         }
 
-        // Suppress drain firing from the synchronous on_write calls that
-        // StreamingWriter::write() makes while we still hold the `with_mut`
-        // borrow; it is restored from `has_pending_data()` immediately after.
-        let had_buffered = self.writer_has_buffered.replace(false);
-        let (write_result, has_pending) = self.writer.with_mut(|w| {
-            let r = w.write(bytes);
-            (r, w.has_pending_data())
-        });
-        self.writer_has_buffered.set(has_pending);
-        // A second write() can drain what an earlier one buffered; on_write saw
-        // the cleared flag, so fire drain here (outside `with_mut`).
-        #[cfg(unix)]
-        if had_buffered && !has_pending {
-            self.on_writer_ready();
-        }
-        #[cfg(not(unix))]
-        let _ = had_buffered;
-
-        // StreamingWriter::write() buffers any bytes it couldn't flush
-        // synchronously, so the full input has been accepted on every non-error
-        // return. The per-arm counts are sync-flushed bytes (and on a buffered
-        // writer can even exceed `input_len` when prior data drains), so
-        // returning them would make callers re-send an already-queued tail.
+        // Write using the streaming writer
+        let write_result = self.writer.with_mut(|w| w.write(bytes));
         match write_result {
+            bun_io::WriteResult::Done(amt) => Ok(JSValue::js_number(
+                i32::try_from(amt).expect("int cast") as f64,
+            )),
+            bun_io::WriteResult::Wrote(amt) => Ok(JSValue::js_number(
+                i32::try_from(amt).expect("int cast") as f64,
+            )),
+            // On Windows the streaming writer buffers and returns .pending=0; the
+            // bytes were accepted, so report bytes.len to match POSIX semantics.
+            bun_io::WriteResult::Pending(amt) => {
+                let n = if cfg!(windows) { bytes.len() } else { amt };
+                Ok(JSValue::js_number(
+                    i32::try_from(n).expect("int cast") as f64
+                ))
+            }
             bun_io::WriteResult::Err(err) => {
                 Err(global_object.throw_value(err.to_js(global_object)))
             }
-            _ => Ok(JSValue::js_number(input_len as f64)),
         }
     }
 
@@ -1638,8 +1661,7 @@ impl Terminal {
         #[cfg(unix)]
         {
             // Use the existing TTY mode function
-            let mut state = self.tty_state.get();
-            let tty_result = state.set_mode(
+            let tty_result = bun_core::tty::set_mode(
                 self.master_fd.get().native(),
                 if enabled {
                     bun_core::tty::Mode::Raw
@@ -1647,7 +1669,6 @@ impl Terminal {
                     bun_core::tty::Mode::Normal
                 },
             );
-            self.tty_state.set(state);
             if tty_result != 0 {
                 return Err(global_object.throw(format_args!("Failed to set raw mode")));
             }
@@ -1810,17 +1831,9 @@ impl Terminal {
     }
 
     fn on_write(&self, amount: usize, status: WriteStatus) {
-        bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
-        let _ = amount;
-        // POSIX: `PosixStreamingWriter` never dispatches `on_ready`; detect the
-        // buffered→drained transition here instead. Windows fires the drain
-        // callback from `on_writable`, so skip to avoid double-firing.
-        #[cfg(unix)]
-        if status == WriteStatus::Drained && self.writer_has_buffered.replace(false) {
-            self.on_writer_ready();
-        }
-        #[cfg(not(unix))]
         let _ = status;
+        bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
+        let _ = self;
     }
 
     // IOReader callbacks
@@ -1850,8 +1863,23 @@ impl Terminal {
         // EOF from master - downgrade to weak ref to allow GC
         // Skip JS interactions if already finalized (happens when close() is called during finalize)
         if !self.flags.get().contains(Flags::FINALIZED) {
-            self.this_value.with_mut(|v| v.downgrade());
-            self.call_exit_callback(exit_code, None);
+            if self.this_value.get().is_empty() {
+                // Fired from inside `init_terminal`, before the JS wrapper
+                // exists. Dispatching now would drop the notification (there
+                // is nothing to call), and `READER_DONE` is already set above
+                // so nothing will ever retry. Stash it; `init_terminal`
+                // replays it once the callbacks are registered.
+                self.deferred_exit.set(Some(exit_code));
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "T@{:x}   -> DEFERRED exit_code={} (wrapper not ready yet)",
+                    std::ptr::from_ref(self) as usize,
+                    exit_code,
+                );
+            } else {
+                self.this_value.with_mut(|v| v.downgrade());
+                self.call_exit_callback(exit_code, None);
+            }
         }
         self.deref_();
     }

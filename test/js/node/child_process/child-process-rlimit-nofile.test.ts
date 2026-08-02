@@ -17,13 +17,20 @@ import { promisify } from "node:util";
 
 const execFileP = promisify(execFile);
 
+// OHOS: the sandbox's /bin/sh is mksh whose ulimit builtin is a complete
+// no-op here (both setting and reading return empty/no change — verified
+// directly: `ulimit -Sn 256; ulimit -Sn` prints nothing and children see
+// the unchanged limit). zsh's works. Use zsh on OHOS, /bin/sh elsewhere.
+const SHELL = process.platform === "openharmony" ? "/usr/bin/zsh" : "/bin/sh";
+
 test(
   "child process inherits a sane RLIMIT_NOFILE (capped at 1<<20)",
   { skip: process.platform === "win32" },
   async () => {
-    const inner = `console.log(require("child_process").execFileSync("/bin/sh", ["-c", "ulimit -Sn"]).toString().trim())`;
+    // NB: `inner` is eval'd inside the child runtime, where `SHELL` is not in scope -- inline the literal path.
+    const inner = `console.log(require("child_process").execFileSync("${SHELL}", ["-c", "ulimit -Sn"]).toString().trim())`;
     const { stdout } = await execFileP(
-      "/bin/sh",
+      SHELL,
       ["-c", `ulimit -Sn 256 && exec "$1" -e "$2"`, "sh", process.execPath, inner],
       { env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" } },
     );

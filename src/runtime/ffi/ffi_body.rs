@@ -572,23 +572,67 @@ impl CompileC {
             }
             #[cfg(target_arch = "aarch64")]
             {
-                if dir_exists(b"/usr/include/aarch64-linux-gnu") {
-                    let _ =
-                        CACHED_DEFAULT_SYSTEM_INCLUDE_DIR.set(bun_core::ZBox::from_vec_with_nul(
-                            b"/usr/include/aarch64-linux-gnu".to_vec(),
-                        ));
-                } else if dir_exists(b"/usr/include") {
-                    let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR
-                        .set(bun_core::ZBox::from_vec_with_nul(b"/usr/include".to_vec()));
+                #[cfg(target_env = "ohos")]
+                {
+                    // OHOS: system headers and libc are in the OHOS sysroot.
+                    // Try environment variable first, then known CI paths.
+                    if let Some(sysroot) = std::env::var("OHOS_SYSROOT")
+                        .ok()
+                        .or_else(|| std::env::var("OHOS_SDK_ROOT").ok())
+                    {
+                        let sysroot = sysroot.as_bytes();
+                        let mut include_path = sysroot.to_vec();
+                        include_path.extend_from_slice(b"/usr/include");
+                        let include_z = ZBox::from_bytes(&include_path);
+                        if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), &include_z).unwrap_or(false) {
+                            let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR
+                                .set(bun_core::ZBox::from_vec_with_nul(include_path.to_vec()));
+                        }
+                        let mut lib_path = sysroot.to_vec();
+                        lib_path.extend_from_slice(b"/usr/lib");
+                        let lib_z = ZBox::from_bytes(&lib_path);
+                        if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), &lib_z).unwrap_or(false) {
+                            let _ = CACHED_DEFAULT_SYSTEM_LIBRARY_DIR
+                                .set(bun_core::ZBox::from_vec_with_nul(lib_path.to_vec()));
+                        }
+                    }
+                    // Fallback: check device paths
+                    if CACHED_DEFAULT_SYSTEM_INCLUDE_DIR.get().is_none() {
+                        if dir_exists(b"/system/include") {
+                            let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR
+                                .set(bun_core::ZBox::from_vec_with_nul(b"/system/include".to_vec()));
+                        }
+                    }
+                    if CACHED_DEFAULT_SYSTEM_LIBRARY_DIR.get().is_none() {
+                        if dir_exists(b"/system/lib64") {
+                            let _ = CACHED_DEFAULT_SYSTEM_LIBRARY_DIR
+                                .set(bun_core::ZBox::from_vec_with_nul(b"/system/lib64".to_vec()));
+                        } else if dir_exists(b"/system/lib") {
+                            let _ = CACHED_DEFAULT_SYSTEM_LIBRARY_DIR
+                                .set(bun_core::ZBox::from_vec_with_nul(b"/system/lib".to_vec()));
+                        }
+                    }
                 }
+                #[cfg(not(target_env = "ohos"))]
+                {
+                    if dir_exists(b"/usr/include/aarch64-linux-gnu") {
+                        let _ =
+                            CACHED_DEFAULT_SYSTEM_INCLUDE_DIR.set(bun_core::ZBox::from_vec_with_nul(
+                                b"/usr/include/aarch64-linux-gnu".to_vec(),
+                            ));
+                    } else if dir_exists(b"/usr/include") {
+                        let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR
+                            .set(bun_core::ZBox::from_vec_with_nul(b"/usr/include".to_vec()));
+                    }
 
-                if dir_exists(b"/usr/lib/aarch64-linux-gnu") {
-                    let _ = CACHED_DEFAULT_SYSTEM_LIBRARY_DIR.set(
-                        bun_core::ZBox::from_vec_with_nul(b"/usr/lib/aarch64-linux-gnu".to_vec()),
-                    );
-                } else if dir_exists(b"/usr/lib64") {
-                    let _ = CACHED_DEFAULT_SYSTEM_LIBRARY_DIR
-                        .set(bun_core::ZBox::from_vec_with_nul(b"/usr/lib64".to_vec()));
+                    if dir_exists(b"/usr/lib/aarch64-linux-gnu") {
+                        let _ = CACHED_DEFAULT_SYSTEM_LIBRARY_DIR.set(
+                            bun_core::ZBox::from_vec_with_nul(b"/usr/lib/aarch64-linux-gnu".to_vec()),
+                        );
+                    } else if dir_exists(b"/usr/lib64") {
+                        let _ = CACHED_DEFAULT_SYSTEM_LIBRARY_DIR
+                            .set(bun_core::ZBox::from_vec_with_nul(b"/usr/lib64".to_vec()));
+                    }
                 }
             }
         }

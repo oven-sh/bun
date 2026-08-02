@@ -1205,7 +1205,7 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
 #endif
 };
 
-extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
+extern "C" void Bun__reportFatalExceptionInHandler(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
 extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int isRejection)
 {
@@ -1252,10 +1252,12 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
         if (auto ex = scope.exception()) {
-            (void)scope.tryClearException();
-            // if an exception is thrown in the uncaughtException handler, we abort
-            Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
-            Bun__Process__exit(lexicalGlobalObject, 1);
+            // A throw from the capture callback is fatal, same as one from an
+            // 'uncaughtException' listener: report it and exit without running
+            // 'exit' listeners.
+            if (scope.tryClearException()) {
+                Bun__reportFatalExceptionInHandler(lexicalGlobalObject, JSValue::encode(JSValue(ex)));
+            }
         }
     } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
         wrapped.emit(uncaughtExceptionIdent, args);

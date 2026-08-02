@@ -561,7 +561,7 @@ impl ByteStream {
         // No pull view = C++ adapter Owned handoff; view = native-readable's metered copy below.
         if buffer.is_empty() {
             if !self.buffer.get().is_empty() {
-                debug_assert!(self.value().is_empty());
+                debug_assert!(self.pending_value.get().get().is_none());
                 debug_assert_eq!(self.offset.get(), 0);
                 let owned = self.buffer.replace(Vec::new());
                 self.signal_drained();
@@ -646,7 +646,6 @@ impl ByteStream {
 
     fn on_cancel(&self) {
         bun_jsc::mark_binding!();
-        let view = self.value();
         if self.buffer.get().capacity() > 0 {
             self.buffer.with_mut(|b| {
                 b.clear();
@@ -656,7 +655,7 @@ impl ByteStream {
         self.done.set(true);
         self.pending_value.with_mut(|pv| pv.deinit());
 
-        if !view.is_empty() {
+        if self.pending.get().state == streams::PendingState::Pending {
             self.pending_buffer.set(Self::empty_pending_buffer());
             self.pending.with_mut(|p| {
                 p.result.release();

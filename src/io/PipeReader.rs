@@ -255,7 +255,8 @@ impl PosixBufferedReader {
     }
 
     pub fn close(&mut self) {
-        self.close_handle();
+        // SAFETY: `self` is live; the raw entry keeps the done dispatch protector-free.
+        unsafe { Self::close_handle(std::ptr::from_mut(self)) };
     }
 
     /// Explicit teardown that does **not** fire `on_reader_done` (unlike
@@ -342,7 +343,8 @@ impl PosixBufferedReader {
             || self.flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING)
         {
             if self.flags.contains(PosixFlags::CLOSE_HANDLE) {
-                self.close_handle();
+                // SAFETY: `self` is live; the raw entry keeps the done dispatch protector-free.
+                unsafe { Self::close_handle(std::ptr::from_mut(self)) };
             }
             return;
         }
@@ -352,48 +354,102 @@ impl PosixBufferedReader {
         self._buffer.shrink_to_fit();
     }
 
-    fn close_handle(&mut self) {
-        if self.flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING) {
-            self.flags.remove(PosixFlags::CLOSED_WITHOUT_REPORTING);
-            self.done();
+    /// # Safety
+    /// `this` is the live reader. Raw (not `&mut self`): the `done` it can
+    /// reach dispatches `on_reader_done`, which may drop the last reference to
+    /// the struct embedding `*this` — a free must never run under a live
+    /// receiver protector.
+    unsafe fn close_handle(this: *mut Self) {
+        // SAFETY: caller contract; borrows end at each `;`.
+        let deferred_report =
+            unsafe { (*this).flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING) };
+        if deferred_report {
+            // SAFETY: caller contract; borrow ends before the (maybe-freeing) done.
+            unsafe {
+                (*this).flags.remove(PosixFlags::CLOSED_WITHOUT_REPORTING);
+                Self::done(this);
+            }
             return;
         }
 
-        if self.flags.contains(PosixFlags::CLOSE_HANDLE) {
-            let owner = std::ptr::from_mut(self).cast::<c_void>();
-            self.handle.close(
-                Some(owner),
-                // SAFETY: ctx == &mut PosixBufferedReader (this fn's `self`).
-                Some(|ctx: *mut c_void| unsafe { (*ctx.cast::<PosixBufferedReader>()).done() }),
-            );
+        // SAFETY: caller contract; the `handle` borrow is scoped to the call.
+        // The close callback receives the same raw pointer, so its `done` also
+        // runs without a receiver borrow.
+        unsafe {
+            if (*this).flags.contains(PosixFlags::CLOSE_HANDLE) {
+                (*this).handle.close(
+                    Some(this.cast::<c_void>()),
+                    // SAFETY: ctx is the live reader raw pointer passed above.
+                    Some(|ctx: *mut c_void| Self::done(ctx.cast::<PosixBufferedReader>())),
+                );
+            }
         }
     }
 
-    pub(crate) fn done(&mut self) {
-        if !matches!(self.handle, PollOrFd::Closed) && self.flags.contains(PosixFlags::CLOSE_HANDLE)
-        {
-            self.close_handle();
-            return;
-        } else if self.flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING) {
-            self.flags.remove(PosixFlags::CLOSED_WITHOUT_REPORTING);
+    /// # Safety
+    /// Same contract as [`Self::close_handle`]: `this` is live, and the
+    /// terminal `on_reader_done` dispatch may free the parent embedding
+    /// `*this`, so it runs with no `&Self`/`&mut Self` live.
+    pub(crate) unsafe fn done(this: *mut Self) {
+        // SAFETY: caller contract; borrows end at each `;`.
+        unsafe {
+            if !matches!((*this).handle, PollOrFd::Closed)
+                && (*this).flags.contains(PosixFlags::CLOSE_HANDLE)
+            {
+                Self::close_handle(this);
+                return;
+            } else if (*this).flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING) {
+                (*this).flags.remove(PosixFlags::CLOSED_WITHOUT_REPORTING);
+            }
+            // `finish`'s receiver borrow ends when it returns, before the dispatch.
+            (*this).finish();
         }
-        self.finish();
-        self.vtable.on_reader_done();
+        // Copy the (Copy) vtable out so no borrow of `*this` spans the
+        // callback, which may free the parent.
+        // SAFETY: caller contract.
+        let vtable = unsafe { (*this).vtable };
+        vtable.on_reader_done();
     }
 
-    pub fn on_error(&mut self, err: sys::Error) {
-        self.vtable.on_reader_error(err);
+    /// # Safety
+    /// `this` is live; `on_reader_error` may free the parent embedding
+    /// `*this`, so it runs with no borrow of `*this` live.
+    pub unsafe fn on_error(this: *mut Self, err: sys::Error) {
+        // SAFETY: caller contract; the (Copy) vtable is copied out first.
+        let vtable = unsafe { (*this).vtable };
+        vtable.on_reader_error(err);
     }
 
     /// Returns `false` when registration failed and `on_reader_error` was
     /// dispatched. That callback may drop the last reference to the struct
-    /// embedding `self` (the shell `PipeReader` does exactly that), so the
-    /// caller must not touch `self` again after a `false` return.
-    pub(crate) fn register_poll(&mut self) -> bool {
+    /// embedding `*this` (the shell `PipeReader` does exactly that), so the
+    /// caller must not touch `this` again after a `false` return.
+    ///
+    /// # Safety
+    /// `this` is the live reader; the error dispatch runs with no borrow of
+    /// `*this` live, so the free is never under a receiver protector.
+    pub(crate) unsafe fn register_poll(this: *mut Self) -> bool {
+        // SAFETY: caller contract; `try_register_poll`'s receiver borrow ends
+        // when it returns — before the dispatch below.
+        match unsafe { (*this).try_register_poll() } {
+            Ok(()) => true,
+            Err(err) => {
+                // SAFETY: caller contract; (Copy) vtable copied out, no borrow
+                // of `*this` spans the (maybe-freeing) callback.
+                let vtable = unsafe { (*this).vtable };
+                vtable.on_reader_error(err);
+                false
+            }
+        }
+    }
+
+    /// Registration proper; returns the error instead of dispatching it so
+    /// [`Self::register_poll`] can dispatch outside this frame's protector.
+    fn try_register_poll(&mut self) -> Result<(), sys::Error> {
         // pause() may land from inside on_read_chunk's JS re-entry while the
         // loop's own re-arm is still ahead on the stack.
         if self.flags.contains(PosixFlags::IS_PAUSED) {
-            return true;
+            return Ok(());
         }
         // Hoist vtable-derived scalars and
         // normalize self.handle to Poll before taking the single &mut borrow,
@@ -404,7 +460,7 @@ impl PosixBufferedReader {
 
         if let PollOrFd::Fd(fd) = self.handle {
             if !self.flags.contains(PosixFlags::POLLABLE) {
-                return true;
+                return Ok(());
             }
             self.handle = PollOrFd::Poll(FilePollRef::init(
                 ev,
@@ -413,7 +469,7 @@ impl PosixBufferedReader {
             ));
         }
         let Some(poll) = self.handle.get_poll_mut() else {
-            return true;
+            return Ok(());
         };
         poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
 
@@ -424,11 +480,8 @@ impl PosixBufferedReader {
         }
 
         match poll.register_with_fd(lp.cast(), FilePollKind::Readable, poll.fd()) {
-            sys::Result::Err(err) => {
-                self.vtable.on_reader_error(err);
-                false
-            }
-            sys::Result::Ok(()) => true,
+            sys::Result::Err(err) => Err(err),
+            sys::Result::Ok(()) => Ok(()),
         }
     }
 
@@ -445,7 +498,8 @@ impl PosixBufferedReader {
             self.handle = PollOrFd::Fd(fd);
         }
         if !self.flags.contains(PosixFlags::IS_PAUSED) {
-            self.register_poll();
+            // SAFETY: `self` is live; the raw entry keeps the error dispatch protector-free.
+            unsafe { Self::register_poll(std::ptr::from_mut(self)) };
         }
 
         sys::Result::Ok(())
@@ -470,7 +524,8 @@ impl PosixBufferedReader {
         if self.flags.contains(PosixFlags::POLLABLE)
             && !matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_watching())
         {
-            self.register_poll();
+            // SAFETY: `self` is live; the raw entry keeps the error dispatch protector-free.
+            unsafe { Self::register_poll(std::ptr::from_mut(self)) };
         }
     }
 
@@ -525,7 +580,7 @@ impl PosixBufferedReader {
                 }
                 bun_core::Pollable::NotReady => {
                     // SAFETY: caller contract; borrow scoped to the call.
-                    unsafe { (*this).register_poll() };
+                    unsafe { Self::register_poll(this) };
                 }
             },
         }
@@ -605,7 +660,8 @@ impl PosixBufferedReader {
     fn stop_for_max_buffer(parent: &mut PosixBufferedReader) {
         parent.close_without_reporting();
         if !parent.flags.contains(PosixFlags::IS_DONE) {
-            parent.done();
+            // SAFETY: `parent` is live; `done`'s dispatch runs after this borrow ends.
+            unsafe { Self::done(std::ptr::from_mut(parent)) };
         }
     }
 
@@ -727,7 +783,7 @@ impl PosixBufferedReader {
                             unsafe {
                                 (*this).close_without_reporting();
                                 if !(*this).flags.contains(PosixFlags::IS_DONE) {
-                                    (*this).done();
+                                    Self::done(this);
                                 }
                             }
                             return;
@@ -771,7 +827,7 @@ impl PosixBufferedReader {
                     sys::Result::Err(err) => {
                         if !err.is_retry() {
                             // SAFETY: caller contract; `on_error` is the tail.
-                            unsafe { (*this).on_error(err) };
+                            unsafe { Self::on_error(this, err) };
                             return;
                         }
                         // EAGAIN - fall through to register for next poll
@@ -810,7 +866,7 @@ impl PosixBufferedReader {
                             unsafe {
                                 (*this).close_without_reporting();
                                 if !(*this).flags.contains(PosixFlags::IS_DONE) {
-                                    (*this).done();
+                                    Self::done(this);
                                 }
                             }
                             return;
@@ -860,7 +916,7 @@ impl PosixBufferedReader {
                     (sys::Result::Err(err), _) => {
                         if !err.is_retry() {
                             // SAFETY: caller contract; `on_error` is the tail.
-                            unsafe { (*this).on_error(err) };
+                            unsafe { Self::on_error(this, err) };
                             return;
                         }
                         got_retry = true;
@@ -871,7 +927,7 @@ impl PosixBufferedReader {
             // Register for next poll cycle unless we got HUP
             if !received_hup {
                 // SAFETY: caller contract; borrow scoped to the call.
-                unsafe { (*this).register_poll() };
+                unsafe { Self::register_poll(this) };
                 return;
             }
 
@@ -893,7 +949,7 @@ impl PosixBufferedReader {
             // An explicit EAGAIN proves the HUP is stale, so re-arm.
             if got_retry {
                 // SAFETY: caller contract; borrow scoped to the call.
-                unsafe { (*this).register_poll() };
+                unsafe { Self::register_poll(this) };
                 return;
             }
             // Otherwise we just returned from user JS; re-poll the fd to see
@@ -914,7 +970,7 @@ impl PosixBufferedReader {
                     // No data and no HUP: a writer exists. Go back to the
                     // event loop instead of blocking in read().
                     // SAFETY: caller contract; borrow scoped to the call.
-                    unsafe { (*this).register_poll() };
+                    unsafe { Self::register_poll(this) };
                     return;
                 }
             }
@@ -985,7 +1041,7 @@ impl PosixBufferedReader {
                                 // SAFETY: caller contract; `done()` is the tail.
                                 unsafe {
                                     if !(*this).flags.contains(PosixFlags::IS_DONE) {
-                                        (*this).done();
+                                        Self::done(this);
                                     }
                                 }
                                 return;
@@ -1038,7 +1094,7 @@ impl PosixBufferedReader {
                                     // re-arm may have freed the struct embedding
                                     // `*this`; the drained head must not be
                                     // delivered.
-                                    if !unsafe { (*this).register_poll() } {
+                                    if !unsafe { Self::register_poll(this) } {
                                         return;
                                     }
                                 }
@@ -1059,7 +1115,7 @@ impl PosixBufferedReader {
                                 );
                             }
                             // SAFETY: caller contract; `on_error` is the tail.
-                            unsafe { (*this).on_error(err) };
+                            unsafe { Self::on_error(this, err) };
                             return;
                         }
                     }
@@ -1145,7 +1201,7 @@ impl PosixBufferedReader {
                                     (*this)._buffer = buffer;
                                 }
                                 if !(*this).flags.contains(PosixFlags::IS_DONE) {
-                                    (*this).done();
+                                    Self::done(this);
                                 }
                             }
                             return;
@@ -1159,12 +1215,12 @@ impl PosixBufferedReader {
                                 );
                             } else {
                                 // SAFETY: caller contract; borrow scoped to the call.
-                                unsafe { (*this).register_poll() };
+                                unsafe { Self::register_poll(this) };
                             }
                             return;
                         }
                         // SAFETY: caller contract; `on_error` is the tail.
-                        unsafe { (*this).on_error(err) };
+                        unsafe { Self::on_error(this, err) };
                         return;
                     }
                 }
@@ -1219,7 +1275,7 @@ impl PosixBufferedReader {
                                 (*this)._buffer = buffer;
                             }
                             if !(*this).flags.contains(PosixFlags::IS_DONE) {
-                                (*this).done();
+                                Self::done(this);
                             }
                         }
                         return;
@@ -1271,12 +1327,12 @@ impl PosixBufferedReader {
                             );
                         } else {
                             // SAFETY: caller contract; borrow scoped to the call.
-                            unsafe { (*this).register_poll() };
+                            unsafe { Self::register_poll(this) };
                         }
                         return;
                     }
                     // SAFETY: caller contract; `on_error` is the tail.
-                    unsafe { (*this).on_error(err) };
+                    unsafe { Self::on_error(this, err) };
                     return;
                 }
             }
@@ -1533,9 +1589,17 @@ impl WindowsBufferedReader {
         self.vtable.on_reader_done();
     }
 
-    pub fn on_error(&mut self, err: sys::Error) {
-        self.finish();
-        self.vtable.on_reader_error(err);
+    /// # Safety
+    /// `this` is live; raw for parity with the POSIX entry so the
+    /// (maybe-freeing) error dispatch runs under no receiver protector.
+    pub unsafe fn on_error(this: *mut Self, err: sys::Error) {
+        // SAFETY: caller contract; `finish`'s receiver borrow ends when it
+        // returns, and the (Copy) vtable is copied out before the dispatch.
+        let vtable = unsafe {
+            (*this).finish();
+            (*this).vtable
+        };
+        vtable.on_reader_error(err);
     }
 
     fn get_read_buffer_with_stable_memory_address(&mut self, suggested_size: usize) -> &mut [u8] {
@@ -2089,7 +2153,9 @@ impl WindowsBufferedReader {
 
     fn on_read(&mut self, amount: sys::Result<usize>, slice: &mut [u8], has_more: ReadState) {
         if let sys::Result::Err(err) = amount {
-            self.on_error(err);
+            // SAFETY: live reader; the raw entry keeps the (maybe-freeing) error
+            // dispatch under no receiver protector.
+            unsafe { Self::on_error(std::ptr::from_mut(self), err) };
             return;
         }
         let amount_result = match amount {

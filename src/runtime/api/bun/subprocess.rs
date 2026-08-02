@@ -1596,7 +1596,10 @@ pub mod testing_apis {
         {
             let _ = Readable::pipe_reader_mut(pipe).reader.stop_reading();
         }
-        Readable::pipe_reader_mut(pipe).reader.on_error(fake_err);
+        let reader = &raw mut Readable::pipe_reader_mut(pipe).reader;
+        // SAFETY: live pipe reader; `on_error` is the raw entry so the
+        // (maybe-freeing) error dispatch runs under no receiver protector.
+        unsafe { bun_io::BufferedReader::on_error(reader, fake_err) };
         Ok(JSValue::TRUE)
     }
 }

@@ -1589,9 +1589,6 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    // `Subprocess::ipc()` centralises the single unsafe `JsCell` deref;
-    // `ipc_data` is inline in the freshly-boxed Subprocess and no other borrow
-    // is live (single JS thread).
     if let Some(ipc_data) = subprocess.ipc() {
         #[cfg(unix)]
         {

@@ -388,7 +388,6 @@ impl CronJobBase for CronRegisterJob {
     }
 
     /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] note.
-    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] note.
     unsafe fn advance_state(this: *mut Self) {
         // SAFETY: shared read of a Copy field; the borrow ends at this statement.
         let state = unsafe { (*this).state };
@@ -1205,7 +1204,6 @@ impl CronJobBase for CronRemoveJob {
         JobAction::Advance
     }
 
-    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] note.
     /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] note.
     unsafe fn advance_state(this: *mut Self) {
         // SAFETY: shared read of a Copy field; the borrow ends at this statement.

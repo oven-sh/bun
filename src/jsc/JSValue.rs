@@ -2181,11 +2181,8 @@ struct SerializedScriptValueExternal {
 pub type ForEachCallback =
     extern "C" fn(vm: *mut crate::VM, global: &JSGlobalObject, ctx: *mut c_void, next: JSValue);
 
-/// Kind of property key observed by [`ForEachPropertyCallback`].
-///
-/// A JSC private name is always a symbol, so `PrivateSymbol` implies symbol.
-/// Discriminants match the `uint8_t` produced by
-/// `JSC__JSValue__forEachProperty*` in `bindings.cpp`.
+/// Kind of property key observed by [`ForEachPropertyCallback`]. Discriminants
+/// must match `PropertyKeyKind` in `bindings.cpp`.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PropertyKeyKind {

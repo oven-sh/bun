@@ -5145,8 +5145,7 @@ extern "C" void JSGlobalObject__throwStackOverflow(JSC::JSGlobalObject* globalOb
     throwStackOverflowError(globalObject, scope);
 }
 
-// Matches `bun_jsc::PropertyKeyKind` (`#[repr(u8)]`). A private name is always
-// a symbol, so `(isSymbol=false, isPrivate=true)` is unreachable.
+// Must match `bun_jsc::PropertyKeyKind` (`#[repr(u8)]`).
 enum class PropertyKeyKind : uint8_t {
     String = 0,
     Symbol = 1,

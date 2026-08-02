@@ -1297,10 +1297,16 @@ static void rsisBegin(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamInt
     auto* stream = op->m_stream.get();
     stream->materializeIfNeeded(globalObject);
     RETURN_IF_EXCEPTION(scope, );
+    auto* reader = acquireReadableStreamDefaultReader(globalObject, stream);
+    RETURN_IF_EXCEPTION(scope, );
+    op->m_reader.set(vm, op, reader);
+    reader->m_pipeOperation.set(vm, reader, op);
     // Byte-producing native transform + native JSSink: attach the sink to the transform so its
     // transform arms write coder output straight to the sink (no JSUint8Array per chunk). The
     // pump below still runs to drain any already-queued chunk, wait for done, and call end().
-    if (auto* ts = nativeByteTransformBehind(stream)) {
+    // Attached only after the reader is acquired so a failed second attempt (stream already
+    // locked) cannot overwrite the first pump's attachment.
+    if (auto* ts = nativeByteTransformBehind(stream); ts && !ts->m_nativeSinkPtr) {
         if (auto* sinkCtrl = dynamicDowncast<WebCore::JSReadableSinkControllerBase>(op->m_sink.get())) {
             if (void* sinkPtr = sinkCtrl->wrapped()) {
                 ts->m_nativeSinkPtr = sinkPtr;
@@ -1310,10 +1316,6 @@ static void rsisBegin(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamInt
             }
         }
     }
-    auto* reader = acquireReadableStreamDefaultReader(globalObject, stream);
-    RETURN_IF_EXCEPTION(scope, );
-    op->m_reader.set(vm, op, reader);
-    reader->m_pipeOperation.set(vm, reader, op);
     JSValue many = readableStreamDefaultReaderReadMany(globalObject, reader);
     RETURN_IF_EXCEPTION(scope, );
     if (auto* manyPromise = dynamicDowncast<JSPromise>(many)) {

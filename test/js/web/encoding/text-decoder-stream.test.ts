@@ -105,6 +105,20 @@ import { readableStreamFromArray } from "harness";
     });
   }
 
+  test("encoding attribute is stable after close/abort/cancel", async () => {
+    for (const terminate of [
+      (s: TextDecoderStream) => s.writable.getWriter().close(),
+      (s: TextDecoderStream) => s.writable.getWriter().abort(),
+      (s: TextDecoderStream) => s.readable.getReader().cancel(),
+    ]) {
+      const s = new TextDecoderStream("utf-16le");
+      expect(s.encoding).toBe("utf-16le");
+      await terminate(s).catch(() => {});
+      expect(s.encoding).toBe("utf-16le");
+      expect(s.fatal).toBe(false);
+    }
+  });
+
   for (const falseValue of [false, 0, "", undefined, null]) {
     test(`setting fatal to '${falseValue}' should set the attribute to false`, () => {
       const stream = new TextDecoderStream("utf-8", { fatal: falseValue });

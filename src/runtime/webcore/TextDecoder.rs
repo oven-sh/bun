@@ -671,8 +671,9 @@ pub extern "C" fn TextDecoder__createForStream(
     fatal: bool,
     ignore_bom: bool,
     out_utf8_fast_path: *mut bool,
+    out_encoding_label: *mut bun_core::String,
 ) -> *mut TextDecoder {
-    // SAFETY: `out_utf8_fast_path` is a stack bool on the caller's frame.
+    // SAFETY: both out-params are stack locals on the caller's frame.
     unsafe { *out_utf8_fast_path = false };
     let encoding = if label.is_undefined() {
         EncodingLabel::Utf8
@@ -698,6 +699,8 @@ pub extern "C" fn TextDecoder__createForStream(
             }
         }
     };
+    // SAFETY: as above; the label borrows a 'static byte slice (no refcount).
+    unsafe { *out_encoding_label = bun_core::String::static_(encoding.get_label()) };
     if matches!(encoding, EncodingLabel::Utf8) && !fatal {
         // SAFETY: as above.
         unsafe { *out_utf8_fast_path = true };
@@ -718,17 +721,6 @@ pub extern "C" fn TextDecoder__destroyForStream(this: *mut TextDecoder) {
         // freed (the C++ cell clears its pointer before calling).
         unsafe { bun_core::heap::destroy(this) };
     }
-}
-
-/// The canonical encoding name for the `encoding` prototype getter. The
-/// return borrows a `'static` label, so the C++ side holds no refcount.
-#[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextDecoder__encodingLabelForStream(
-    this: *const TextDecoder,
-) -> bun_core::String {
-    // SAFETY: `this` is the live decoder owned by the calling JS cell.
-    bun_core::String::static_(unsafe { &*this }.encoding.get_label())
 }
 
 /// The TextDecoderStream transform/flush step. `stream = true` for a mid-

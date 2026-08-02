@@ -472,25 +472,22 @@ fn get_changed_files(
     // Find the git repository root so we can make the paths git prints
     // absolute (git prints paths relative to the repo toplevel with these
     // commands).
-    let git_root: Box<[u8]> = match run_git(
-        git_path,
-        top_level_dir,
-        &[b"rev-parse", b"--show-toplevel"],
-    ) {
-        GitResult::SpawnFailed => return Err(GitError::GitFailed),
-        GitResult::ExitError { stderr } => {
-            if !stderr.is_empty() {
-                Output::err_generic(
-                    "--changed: {s}",
-                    (BStr::new(strings::trim(&stderr, b" \r\n\t")),),
-                );
-            } else {
-                Output::err_generic("--changed requires running inside a git repository", ());
+    let git_root: Box<[u8]> =
+        match run_git(git_path, top_level_dir, &[b"rev-parse", b"--show-toplevel"]) {
+            GitResult::SpawnFailed => return Err(GitError::GitFailed),
+            GitResult::ExitError { stderr } => {
+                if !stderr.is_empty() {
+                    Output::err_generic(
+                        "--changed: {s}",
+                        (BStr::new(strings::trim(&stderr, b" \r\n\t")),),
+                    );
+                } else {
+                    Output::err_generic("--changed requires running inside a git repository", ());
+                }
+                return Err(GitError::GitFailed);
             }
-            return Err(GitError::GitFailed);
-        }
-        GitResult::Ok { stdout } => Box::<[u8]>::from(strings::trim(&stdout, b" \r\n\t")),
-    };
+            GitResult::Ok { stdout } => Box::<[u8]>::from(strings::trim(&stdout, b" \r\n\t")),
+        };
 
     let mut set = StringSet::new();
 
@@ -577,8 +574,12 @@ pub(crate) enum GitResult {
     /// already been reported; callers should not print a second
     /// "not a git repo" style message.
     SpawnFailed,
-    ExitError { stderr: Vec<u8> },
-    Ok { stdout: Vec<u8> },
+    ExitError {
+        stderr: Vec<u8>,
+    },
+    Ok {
+        stdout: Vec<u8>,
+    },
 }
 
 fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {

@@ -48,7 +48,7 @@ extern "C" fn node_module_paths_js_value(
     };
     let mut buf = bun_paths::path_buffer_pool::get();
 
-    let full_path: &[u8] = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+    let mut full_path: &[u8] = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
         bun_paths::fs::FileSystem::instance().top_level_dir(),
         &mut **buf,
         &[base_path],
@@ -63,6 +63,16 @@ extern "C" fn node_module_paths_js_value(
             1
         }
     };
+    // Node's `_nodeModulePaths` starts with `path.resolve(from)`, which never
+    // leaves a trailing separator past the root. `join_abs_string_buf` preserves
+    // one when the input (or `top_level_dir` after `process.chdir`) carries it,
+    // and the reverse-split below would then emit an empty segment as a
+    // duplicate `...//node_modules` entry.
+    while full_path.len() > root_index
+        && Platform::AUTO.is_separator(full_path[full_path.len() - 1])
+    {
+        full_path = &full_path[..full_path.len() - 1];
+    }
     let mut root_path: &[u8] = &full_path[0..root_index];
     if full_path.len() > root_path.len() {
         // Manual backwards-split iteration: we need both the remaining buffer

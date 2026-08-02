@@ -45,6 +45,7 @@
 #include "wtf/BitVector.h"
 #include "wtf/FastBitVector.h"
 #include "wtf/Vector.h"
+#include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <atomic>
 #include "wtf/LazyRef.h"
@@ -218,7 +219,7 @@ public:
     // Live statement wrappers on this connection. close() finalizes each one
     // and nulls its stmt pointer, like better-sqlite3's CloseHandles() and
     // node:sqlite's FinalizeStatements().
-    WTF::Vector<WebCore::JSSQLStatement*> statements;
+    WTF::HashSet<WebCore::JSSQLStatement*> statements;
 
     void release()
     {
@@ -477,7 +478,7 @@ public:
         JSSQLStatement* ptr = new (NotNull, JSC::allocateCell<JSSQLStatement>(globalObject->vm())) JSSQLStatement(structure, *globalObject, stmt, version_db, memorySizeChange);
         if (version_db) {
             ++version_db->reference_count;
-            version_db->statements.append(ptr);
+            version_db->statements.add(ptr);
         }
         ptr->finishCreation(globalObject->vm());
         return ptr;
@@ -2881,7 +2882,7 @@ void JSSQLStatement::finishCreation(VM& vm)
 JSSQLStatement::~JSSQLStatement()
 {
     if (this->version_db) {
-        this->version_db->statements.removeFirst(this);
+        this->version_db->statements.remove(this);
     }
     if (this->stmt) {
         sqlite3_finalize(this->stmt);

@@ -803,6 +803,29 @@ export const defines: Flag[] = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const linkerFlags: Flag[] = [
+  // ─── Force-include weakly-referenced archive members ───
+  // IntlCanonicalize.o defines Bun__canonicalizeLocaleID, which only
+  // libJavaScriptCore.a references and only weakly. In CI's split link the
+  // bun C++ objects are archived, and a weak ref never pulls an archive
+  // member, so without this the symbol stays null and JSC falls back to
+  // uloc_canonicalize. Local full builds pass the .o directly and don't
+  // need it, but it's harmless there.
+  {
+    flag: "-Wl,-u,_Bun__canonicalizeLocaleID",
+    when: c => c.darwin,
+    desc: "Pull IntlCanonicalize.o from the C++ archive (Mach-O underscore prefix)",
+  },
+  {
+    flag: "-Wl,-u,Bun__canonicalizeLocaleID",
+    when: c => c.unix && !c.darwin,
+    desc: "Pull IntlCanonicalize.o from the C++ archive",
+  },
+  {
+    flag: "/include:Bun__canonicalizeLocaleID",
+    when: c => c.windows,
+    desc: "Pull IntlCanonicalize.o from the C++ archive",
+  },
+
   // ─── Sanitizers ───
   {
     flag: "-fsanitize=address",

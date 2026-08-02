@@ -2802,11 +2802,15 @@ where
         // unconditional. `Box::into_raw` (not `heap::release`) keeps raw-owner
         // provenance for the `deinit()` dealloc — a `&mut self`-derived tag
         // there would be Stacked-Borrows UB. JSC-handle Drops are no-ops past
-        // `is_shutting_down()`, so the synchronous free is safe then.
+        // `is_shutting_down()`; `TERMINATED` means `app.close()` already ran,
+        // so `NewApp::destroy` can't orphan a keep-alive socket.
         let this = unsafe { &mut *this_ptr };
         this.js_value.finalize();
         this.deinit_if_we_can();
-        if this.flags.contains(ServerFlags::DEINIT_SCHEDULED) && this.vm().is_shutting_down() {
+        if this.flags.contains(ServerFlags::DEINIT_SCHEDULED)
+            && this.flags.contains(ServerFlags::TERMINATED)
+            && this.vm().is_shutting_down()
+        {
             Self::deinit(this_ptr);
         }
     }

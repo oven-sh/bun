@@ -95,3 +95,36 @@ test.skipIf(!isASAN || isWindows)(
   // the debug binary.
   30_000,
 );
+
+// Graceful stop() leaves the keep-alive socket in the uws app's socket group.
+// A NewApp::destroy at lastChanceToFinalize would unlink that group from the
+// loop and orphan the socket, so the synchronous deinit path above is gated
+// on TERMINATED (set only by an abrupt stop or an app.close() that already
+// drained the group).
+test.skipIf(!isASAN || isWindows)(
+  "gracefully-stopped Bun.serve does not orphan a keep-alive socket at VM teardown",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+          await (await fetch(server.url)).text();
+          server.stop();
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  },
+  30_000,
+);

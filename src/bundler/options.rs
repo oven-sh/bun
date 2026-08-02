@@ -1083,26 +1083,6 @@ pub enum SourceMapOption {
     Linked,
 }
 
-/// What `--compile` resolved to for this bundle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum CompileMode {
-    #[default]
-    None,
-    Executable,
-    StandaloneHtml,
-}
-
-impl CompileMode {
-    #[inline]
-    pub const fn is_executable(self) -> bool {
-        matches!(self, CompileMode::Executable)
-    }
-    #[inline]
-    pub const fn is_standalone_html(self) -> bool {
-        matches!(self, CompileMode::StandaloneHtml)
-    }
-}
-
 impl SourceMapOption {
     pub fn from_api(source_map: Option<api::SourceMapMode>) -> SourceMapOption {
         match source_map.unwrap_or(api::SourceMapMode::None) {
@@ -1135,6 +1115,26 @@ bun_core::comptime_string_map! {
         b"external" => SourceMapOption::External,
         b"linked" => SourceMapOption::Linked,
     };
+}
+
+/// What `--compile` resolved to for this bundle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CompileMode {
+    #[default]
+    None,
+    Executable,
+    StandaloneHtml,
+}
+
+impl CompileMode {
+    #[inline]
+    pub const fn is_executable(self) -> bool {
+        matches!(self, CompileMode::Executable)
+    }
+    #[inline]
+    pub const fn is_standalone_html(self) -> bool {
+        matches!(self, CompileMode::StandaloneHtml)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

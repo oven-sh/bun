@@ -214,6 +214,7 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     const HAS_CONSTRUCT: bool = true;
     const HAS_FLUSH_FROM_JS: bool = true;
     const START_TAG: Option<streams::StartTag> = Some(streams::StartTag::ArrayBufferSink);
+    const THROW_ON_WRITE_AFTER_END: bool = true;
 
     fn memory_cost(&self) -> usize {
         Self::memory_cost(self)

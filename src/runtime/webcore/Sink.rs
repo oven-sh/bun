@@ -263,6 +263,8 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     /// Mirrors `@hasField(streams.Start, abi_name)` — selects the
     /// `Start::from_js_with_tag` branch in `JSSink::js_start`.
     const START_TAG: Option<streams::StartTag> = None;
+    /// `js_write` throws `ERR_STREAM_WRITE_AFTER_END` when `done()` is true.
+    const THROW_ON_WRITE_AFTER_END: bool = false;
 
     fn memory_cost(&self) -> usize;
     fn finalize(&mut self);
@@ -381,6 +383,11 @@ impl<T: JsSinkType> JSSink<T> {
 
         if let Some(err) = this.sink.get_pending_error() {
             return Err(global.throw_value(err));
+        }
+
+        if T::THROW_ON_WRITE_AFTER_END && this.sink.done() {
+            return Err(bun_jsc::ErrorCode::ERR_STREAM_WRITE_AFTER_END
+                .throw(global, format_args!("write after end")));
         }
 
         if frame.arguments_count() == 0 {

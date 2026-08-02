@@ -49,11 +49,6 @@ DOMWrapperWorld::~DOMWrapperWorld()
     // static_cast<JSVMClientData*>(clientData)->forgetWorld(*this);
 }
 
-void DOMWrapperWorld::clearWrappers()
-{
-    m_wrappers.clear();
-}
-
 DOMWrapperWorld& normalWorld(JSC::VM& vm)
 {
     VM::ClientData* clientData = vm.clientData;

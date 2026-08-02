@@ -1,6 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import { resolveObjectURL } from "node:buffer";
+import { domainToASCII } from "node:url";
 
 describe("url", () => {
   it("URL throws", () => {
@@ -258,6 +259,101 @@ describe("url", () => {
     expect(params.get("second")).toBe("replaced");
     expect(params.get("third")).toBeNull();
   });
+
+  // https://url.spec.whatwg.org/#concept-domain-to-ascii
+  // "xn--a-ecp" decodes to U+0061 U+2488 (DIGIT ONE FULL STOP), which is not a
+  // valid IDNA label, so "domain to ASCII" (and therefore the host parser) must
+  // fail on it. Node and browsers reject it.
+  describe("invalid Punycode (xn--) labels in special-scheme hosts", () => {
+    const invalidHosts = [
+      "xn--a-ecp.example",
+      "sub.xn--a-ecp.example",
+      "XN--A-ECP.example",
+      "xn--a-ecp.xn--fiqs8s",
+      // decodes to U+200D ZWJ: ICU UIDNA_ERROR_CONTEXTJ
+      "xn--0ug",
+      // not decodable as Punycode at all
+      "xn--pokxncvks",
+      // empty ACE label
+      "xn--",
+      // percent-encoded "x": takes URLParser's percent-decoding slow path
+      "%78n--a-ecp.example",
+      "%78n--0ug",
+    ] as const;
+
+    for (const scheme of ["http", "https", "ws", "wss", "ftp", "file"] as const) {
+      it(`${scheme}: the constructor rejects an invalid xn-- label`, () => {
+        expect(() => new URL(`${scheme}://xn--a-ecp.example/`)).toThrow("cannot be parsed as a URL");
+        expect(() => new URL(`${scheme}://xn--a-ecp.example/`)).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_URL" }),
+        );
+      });
+    }
+
+    for (const host of invalidHosts) {
+      const input = `http://${host}/`;
+      it(`${JSON.stringify(input)} is rejected`, () => {
+        expect(() => new URL(input)).toThrow("cannot be parsed as a URL");
+        expect(URL.canParse(input)).toBe(false);
+        expect(URL.parse(input)).toBeNull();
+      });
+    }
+
+    it("the href setter throws and the host/hostname setters are a no-op", () => {
+      const url = new URL("http://ok.example/p?q#f");
+      expect(() => {
+        url.href = "http://xn--a-ecp.example/";
+      }).toThrow("cannot be parsed as a URL");
+      url.host = "xn--a-ecp.example";
+      url.hostname = "xn--a-ecp.example";
+      expect(url.href).toBe("http://ok.example/p?q#f");
+    });
+
+    it("a base URL with an invalid xn-- label is rejected", () => {
+      expect(() => new URL("//xn--a-ecp.example/x", "http://ok.example/")).toThrow("cannot be parsed as a URL");
+      expect(() => new URL("http://ok.example/", "http://xn--a-ecp.example/")).toThrow("cannot be parsed as a URL");
+      expect(URL.canParse("/x", "http://xn--a-ecp.example/")).toBe(false);
+    });
+
+    it("valid ACE labels and non-ACE ASCII hosts still parse", () => {
+      const accepted = {
+        "http://xn--bcher-kva.de/": "xn--bcher-kva.de",
+        "http://XN--BCHER-KVA.DE/": "xn--bcher-kva.de",
+        "http://xn--fiqs8s/": "xn--fiqs8s",
+        "http://xn--nxasmm1c/": "xn--nxasmm1c",
+        "http://xn--e1afmkfd.xn--p1ai/": "xn--e1afmkfd.xn--p1ai",
+        // "axn--a-ecp" merely contains "xn--"; it is not an ACE label
+        "http://axn--a-ecp.example/": "axn--a-ecp.example",
+        "http://ab--cd.example/": "ab--cd.example",
+        "http://a_b.example/": "a_b.example",
+        "http://r4---sn-a5mlrn7s.gevideo.com/": "r4---sn-a5mlrn7s.gevideo.com",
+        "http://-sn--a5mlrn7s-.gevideo.com/": "-sn--a5mlrn7s-.gevideo.com",
+      };
+      expect(Object.fromEntries(Object.keys(accepted).map(input => [input, new URL(input).hostname]))).toEqual(
+        accepted,
+      );
+    });
+
+    it("opaque hosts of non-special schemes are not IDNA-validated", () => {
+      expect(new URL("foo://xn--a-ecp.example/").hostname).toBe("xn--a-ecp.example");
+      expect(new URL("foo://XN--A-ECP.example/").hostname).toBe("XN--A-ECP.example");
+    });
+
+    it("blob: origin re-parses the inner URL with the same host validation", () => {
+      // The origin of a blob: URL is the origin of its parsed path; an invalid
+      // inner host makes that parse fail, which yields an opaque ("null") origin.
+      expect(new URL("blob:http://xn--a-ecp.example/foo").origin).toBe("null");
+      expect(new URL("blob:http://xn--bcher-kva.de/foo").origin).toBe("http://xn--bcher-kva.de");
+      expect(new URL("blob:http://ok.example/foo").origin).toBe("http://ok.example");
+    });
+
+    it("a host with an ACE label longer than ICU's stack buffer still parses", () => {
+      // 3017 code units forces the U_BUFFER_OVERFLOW_ERROR retry in Bun::domainToASCII.
+      const host = "xn--bcher-kva." + Buffer.alloc(3000, "a").toString() + ".de";
+      expect(new URL(`http://${host}/`).hostname).toBe(host);
+      expect(URL.canParse(`http://${host}/`)).toBe(true);
+    });
+  });
 });
 
 describe("url.searchParams lazy href sync", () => {
@@ -457,4 +553,43 @@ describe("object URL prefix check", () => {
       signalCode: null,
     });
   }, 60_000);
+});
+
+// Unicode 16.0 UTS #46 reclassified several codepoints from "disallowed" to
+// "mapped"/"ignored"; the bundled ICU predates that. The uts46.nrm override in
+// bun_icu_decompress.cpp only applies on Linux/Windows (udata hook platforms).
+describe.skipIf(!(isLinux || isWindows))("IDNA UTS #46 Unicode 16.0 mappings", () => {
+  it("maps late-casefolded capitals instead of rejecting them", () => {
+    expect(
+      [
+        "https://\u04C0/", // CYRILLIC LETTER PALOCHKA
+        "https://\u10AC/", // GEORGIAN CAPITAL LETTER NAR
+        "https://a\u10B5/", // a + GEORGIAN CAPITAL LETTER KHAR
+        "https://\u2132/", // TURNED CAPITAL F
+        "https://\u2183/", // ROMAN NUMERAL REVERSED ONE HUNDRED
+        "https://\u1874\u10A0/", // MONGOLIAN LETTER ... + GEORGIAN CAPITAL AN
+        "https://\uA846\u3002\u2183\u0FB5\uB1AE-/", // WPT IdnaTestV2 "V3 (ignored)" case
+      ].map(href => new URL(href).hostname),
+    ).toEqual(["xn--s5a", "xn--3kj", "xn--a-hws", "xn--73g", "xn--r5g", "xn--h9e436h", "xn--fc9a.xn----qmg097k469k"]);
+  });
+
+  it("ignores format controls reclassified in Unicode 16.0", () => {
+    expect(
+      [
+        "https://a\u180Eb/", // MONGOLIAN VOWEL SEPARATOR
+        "https://a\u2061b/", // FUNCTION APPLICATION
+        "https://a\u3164b/", // HANGUL FILLER
+      ].map(href => new URL(href).hostname),
+    ).toEqual(["ab", "ab", "ab"]);
+  });
+
+  it("node:url domainToASCII applies the same mapping", () => {
+    expect(domainToASCII("\u10AC")).toBe("xn--3kj");
+    expect(domainToASCII("\u2183")).toBe("xn--r5g");
+  });
+
+  it("still maps pre-existing UTS #46 cases", () => {
+    expect(new URL("https://M\u00FCnchen.de/").hostname).toBe("xn--mnchen-3ya.de");
+    expect(new URL("https://\u0391/").hostname).toBe("xn--mxa");
+  });
 });

@@ -25,6 +25,7 @@
 
 #include "URLDecomposition.h"
 
+#include "BunIDNA.h"
 #include <wtf/text/StringToIntegerConversion.h>
 
 namespace WebCore {
@@ -38,7 +39,7 @@ String URLDecomposition::origin() const
     if (fullURL.protocolIsBlob()) {
         const String& path = fullURL.path().toString();
         const URL subUrl { URL {}, path };
-        if (subUrl.isValid()) {
+        if (subUrl.isValid() && Bun::urlHostIsValidIDNA(subUrl)) {
             if (subUrl.protocolIsInHTTPFamily() or subUrl.protocolIsInFTPFamily() or subUrl.protocolIs("ws"_s) or subUrl.protocolIs("wss"_s) or subUrl.protocolIsFile())
                 return subUrl.protocolHostAndPort();
         }
@@ -136,7 +137,7 @@ void URLDecomposition::setHost(StringView value)
                 fullURL.setHostAndPort(value.left(separator + 1 + portLength));
         }
     }
-    if (fullURL.isValid())
+    if (fullURL.isValid() && Bun::urlHostIsValidIDNA(fullURL))
         setFullURL(fullURL);
 }
 
@@ -153,7 +154,7 @@ void URLDecomposition::setHostname(StringView host)
     if (fullURL.hasOpaquePath())
         return;
     fullURL.setHost(host);
-    if (fullURL.isValid())
+    if (fullURL.isValid() && Bun::urlHostIsValidIDNA(fullURL))
         setFullURL(fullURL);
 }
 

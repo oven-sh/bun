@@ -320,7 +320,11 @@ impl<'a> CopyFile<'a> {
             PathOrFileDescriptor::Path(_)
         );
         let fallback_cap = |remain: usize| -> SizeType {
-            if unknown_size { MAX_SIZE } else { remain as SizeType }
+            if unknown_size {
+                MAX_SIZE
+            } else {
+                remain as SizeType
+            }
         };
 
         // defer { this.read_len = @truncate(total_written); }

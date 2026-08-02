@@ -86,6 +86,43 @@ describe("Intl.NumberFormat", () => {
 // ---------------------------------------------------------------------------
 
 describe("Intl.DateTimeFormat", () => {
+  test("resolvedOptions() omits dayPeriod for a bare 12-hour pattern", () => {
+    // The AM/PM marker ('a' in the ICU pattern) is governed by hourCycle/hour12,
+    // not the dayPeriod option. A 12-hour formatter that never asked for dayPeriod
+    // must not report one, and round-tripping resolvedOptions() must reproduce the
+    // same output. https://tc39.es/ecma402/#sec-initializedatetimeformat
+    const t = Date.UTC(2026, 0, 1, 10, 5);
+    const opts = { timeZone: "UTC", hour: "numeric", minute: "2-digit" } as const;
+    const a = new Intl.DateTimeFormat("en-US", opts);
+    const ro = a.resolvedOptions();
+    const b = new Intl.DateTimeFormat("en-US", ro);
+    expect({
+      dayPeriod: ro.dayPeriod,
+      hourCycle: ro.hourCycle,
+      original: a.format(t),
+      roundTrip: b.format(t),
+    }).toEqual({
+      dayPeriod: undefined,
+      hourCycle: "h12",
+      original: "10:05 AM",
+      roundTrip: "10:05 AM",
+    });
+
+    expect(
+      new Intl.DateTimeFormat("en-US", { timeZone: "UTC", hour: "2-digit", hourCycle: "h11" }).resolvedOptions()
+        .dayPeriod,
+    ).toBeUndefined();
+
+    // When dayPeriod *is* requested it must still be reported.
+    expect(
+      new Intl.DateTimeFormat("en-US", { timeZone: "UTC", hour: "numeric", dayPeriod: "long" }).resolvedOptions()
+        .dayPeriod,
+    ).toBe("long");
+
+    // formatToParts still labels the AM/PM marker as type "dayPeriod" (ECMA-402 Table 16).
+    expect(a.formatToParts(t).find(p => p.value === "AM")?.type).toBe("dayPeriod");
+  });
+
   snapshotIf("default", () => {
     const out: Record<string, string> = {};
     for (const loc of LOCALES) out[loc] = new Intl.DateTimeFormat(loc, { timeZone: "UTC" }).format(0);

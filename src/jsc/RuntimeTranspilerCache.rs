@@ -48,7 +48,11 @@ bun_core::declare_scope!(cache, visible);
 /// bindings from the compiled bytecode after the module-loader rewrite, so the
 /// record no longer carries them; blobs written in the old numbering must not
 /// be read back.
-const EXPECTED_VERSION: u32 = 24;
+/// Version 25: Property access on multi-property object literals folds under
+/// minify_syntax ({a:1,b:2}.b -> 2), tagged-template tags and shorthand
+/// __proto__ are handled correctly, and the UTF-16 key compare in that fold
+/// decodes before comparing. See #3463.
+const EXPECTED_VERSION: u32 = 25;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

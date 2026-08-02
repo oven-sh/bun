@@ -41,8 +41,7 @@ fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
     if !s.is_utf16 {
         s.data == other
     } else {
-        let s16 = s.slice16();
-        s16.len() == other.len() && s16.iter().zip(other).all(|(&c, &b)| c == b as u16)
+        bun_core::strings::utf16_eql_string(s.slice16(), other)
     }
 }
 
@@ -458,23 +457,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::ExprData::EObject(obj) => {
                     if FeatureFlags::INLINE_PROPERTIES_IN_TRANSPILER {
-                        if p.options.features.minify_syntax {
-                            // Rewrite a property access like this:
-                            //   { f: () => {} }.f
-                            // To:
-                            //   () => {}
-                            //
-                            // To avoid thinking too much about edgecases, only do this for:
-                            //   1) Objects with a single property
-                            //   2) Not a method, not a computed property
-                            if obj.properties.len_u32() == 1
-                                && !identifier_opts.is_delete_target()
-                                && identifier_opts.assign_target() == js_ast::AssignTarget::None
-                                && !identifier_opts.is_call_target()
-                            {
+                        if p.options.features.minify_syntax
+                            && !identifier_opts.is_delete_target()
+                            && identifier_opts.assign_target() == js_ast::AssignTarget::None
+                            && !identifier_opts.is_call_target()
+                            && !identifier_opts.is_template_tag()
+                        {
+                            let len = obj.properties.len_u32() as usize;
+
+                            // "{ f: v }.f" → "v"; the sole value is returned, so no side-effect gate.
+                            if len == 1 {
                                 let prop: &G::Property = &obj.properties.slice()[0];
                                 if let (Some(value), Some(key)) = (prop.value, prop.key) {
                                     if prop.flags.len() == 0
+                                        && prop.kind == js_ast::g::PropertyKind::Normal
                                         && matches!(key.data, js_ast::ExprData::EString(_))
                                         && e_string_eql_bytes(
                                             &key.data
@@ -486,6 +482,75 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     {
                                         return Some(value);
                                     }
+                                }
+                            }
+
+                            // "{a: 1, b: 2, c: 3}.b" → "2" when every dropped value is side-effect free.
+                            let mut replace: Option<Expr> = None;
+                            let mut has_proto_null = false;
+                            let mut is_unsafe = false;
+
+                            for i in 0..len {
+                                let prop: &G::Property = obj.properties.at(i);
+                                let kind = prop.kind;
+                                let flags = prop.flags;
+                                let key = prop.key;
+                                let value = prop.value;
+
+                                // Spreads, getters/setters, methods, and computed keys make the access non-static.
+                                if kind != js_ast::g::PropertyKind::Normal
+                                    || flags.contains(Flags::Property::IsComputed)
+                                    || flags.contains(Flags::Property::IsMethod)
+                                    || flags.contains(Flags::Property::IsSpread)
+                                {
+                                    is_unsafe = true;
+                                    break;
+                                }
+
+                                let (Some(key), Some(value)) = (key, value) else {
+                                    is_unsafe = true;
+                                    break;
+                                };
+                                let js_ast::ExprData::EString(key_str) = key.data else {
+                                    is_unsafe = true;
+                                    break;
+                                };
+
+                                if e_string_eql_bytes(&key_str, b"__proto__")
+                                    && !flags.contains(Flags::Property::WasShorthand)
+                                {
+                                    // Colon-form `__proto__:` sets [[Prototype]] (Annex B.3.1), not an own property.
+                                    if matches!(value.data, js_ast::ExprData::ENull(_)) {
+                                        has_proto_null = true;
+                                    }
+                                    if !p.expr_can_be_removed_if_unused(&value) {
+                                        is_unsafe = true;
+                                        break;
+                                    }
+                                    continue;
+                                }
+
+                                if !p.expr_can_be_removed_if_unused(&value) {
+                                    is_unsafe = true;
+                                    break;
+                                }
+
+                                // Later duplicate keys win
+                                if e_string_eql_bytes(&key_str, name) {
+                                    replace = Some(value);
+                                }
+                            }
+
+                            if !is_unsafe {
+                                if let Some(value) = replace {
+                                    return Some(value);
+                                }
+                                // A miss may resolve via Object.prototype unless __proto__ was nulled.
+                                if has_proto_null {
+                                    return Some(Expr {
+                                        data: js_ast::ExprData::EUndefined(E::Undefined),
+                                        loc: target.loc,
+                                    });
                                 }
                             }
                         }

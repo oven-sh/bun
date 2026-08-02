@@ -63,6 +63,105 @@ describe("bundler", () => {
     minifySyntax: true,
     target: "bun",
   });
+  // https://github.com/oven-sh/bun/issues/3463
+  itBundled("minify/InlineObjectLiteralPropertyAccess", {
+    files: {
+      "/entry.js": /* js */ `
+        capture({a: 1, b: 2, c: 3}.c);
+        capture({a: 1, b: 2, c: 3}["a"]);
+        capture({"a": 1, b: 2, c: 3}.a);
+        capture({a: 1, a: 4}.a);
+        capture({a: () => 1, b: () => 2}.a);
+        capture({__proto__: null, a: 1}.a);
+        capture({__proto__: null, a: 1}.missing);
+        capture({__proto__: null}.__proto__);
+        capture({a: 1, c: 3}.missing);
+        capture({}.missing);
+        capture({a: sideEffect()}.a);
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    capture: ["3", "1", "1", "4", "()=>1", "1", "void 0", "void 0", "{a:1,c:3}.missing", "{}.missing", "sideEffect()"],
+  });
+  itBundled("minify/InlineObjectLiteralPropertyAccessUnsafe", {
+    files: {
+      "/entry.js": /* js */ `
+        const bound = globalThis;
+        capture({a: 1, c: unbound}.a);
+        capture({a: 1, c: bound}.a);
+        capture({a: 1, [k]: 2, c: 3}.c);
+        capture({a: 1, ...spread, c: 3}.c);
+        capture({a: 1, get c() { return 2; }}.a);
+        capture({a: 1, set c(v) {}}.a);
+        capture({a: 1, c() { return 2; }}.a);
+        capture({a: 1, 5: 2, c: 3}.c);
+        capture({a: 1, b: 2}.a = 5);
+        id({a: bound, b: 2}.a\`tag\`);
+        id({a: bound, b: 2}["a"]\`tag\`);
+        id({a: bound}.a\`tag\`);
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    capture: [
+      "{a:1,c:unbound}.a",
+      "1",
+      "{a:1,[k]:2,c:3}.c",
+      "{a:1,...spread,c:3}.c",
+      "{a:1,get c(){return 2}}.a",
+      "{a:1,set c(v){}}.a",
+      "{a:1,c(){return 2}}.a",
+      "{a:1,5:2,c:3}.c",
+      "{a:1,b:2}.a=5",
+    ],
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Both `.a` and `["a"]` tags must keep the object literal (the bracket form is rewritten to dot).
+      expect(code).toContain("id({a:bound,b:2}.a`tag`);id({a:bound,b:2}.a`tag`)");
+      expect(code).toContain("id({a:bound}.a`tag`)");
+    },
+  });
+  itBundled("minify/InlineObjectLiteralPropertyAccessRuntime", {
+    files: {
+      "/entry.js": /* js */ `
+        var hits = 0;
+        const eff = (v) => { hits++; return v; };
+        const __proto__ = 42;
+        const f = function () { return this.marker; };
+        console.log(JSON.stringify([
+          {a: 1, b: 2, c: 3}.c,
+          {a: 1, b: 2, c: 3}["a"],
+          {a: 1, a: 4}.a,
+          {__proto__: null, a: 1}.a,
+          {__proto__: null, a: 1}.missing,
+          {a: 1, c: 3}.missing,
+          {a: eff(7), c: 3}.c,
+          {a: 1, get c() { return 9; }}.a,
+          {__proto__: null, __proto__}.__proto__,
+          {a: f, b: 2, marker: "OBJ"}.a\`x\`,
+          {__proto__: null, "\\u00e9": 1}.é,
+          {__proto__: null, "caf\\u00e9": 1}.café,
+          {__proto__: null, "\\u00c3\\u00a9": 1}.é,
+        ]));
+        console.log("hits=" + hits);
+        (function () {
+          "use strict";
+          const obj = { fn: function () { return this; } };
+          console.log(JSON.stringify([
+            (null ?? obj.fn)\`x\` === undefined,
+            (0 || obj.fn)\`x\` === undefined,
+            (1 && obj.fn)\`x\` === undefined,
+            (1 ? obj.fn : 2)\`x\` === undefined,
+            (0 ? 2 : obj.fn)\`x\` === undefined,
+            (0, obj.fn)\`x\` === undefined,
+          ]));
+        })();
+      `,
+    },
+    minifySyntax: true,
+    run: { stdout: '[3,1,4,1,null,null,3,1,42,"OBJ",1,1,null]\nhits=1\n[true,true,true,true,true,true]' },
+  });
   itBundled("minify/StringAdditionFolding", {
     files: {
       "/entry.js": /* js */ `

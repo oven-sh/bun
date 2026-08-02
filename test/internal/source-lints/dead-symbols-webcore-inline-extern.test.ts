@@ -33,7 +33,10 @@ test("dead extern C wrappers and cascaded methods do not reappear", () => {
     ["src/jsc/bindings/InspectorLifecycleAgent.cpp", /Bun__LifecycleAgentReportReload|::reportReload\b/],
     ["src/jsc/bindings/InspectorLifecycleAgent.h", /void reportReload\(/],
     ["src/jsc/bindings/InspectorBunFrontendDevServerAgent.cpp", /notifyClientErrorReported|notifyGraphUpdate/],
-    ["src/jsc/bindings/InspectorBunFrontendDevServerAgent.h", /clientErrorReported|graphUpdate|BunFrontendDevServerAgent__notify/],
+    [
+      "src/jsc/bindings/InspectorBunFrontendDevServerAgent.h",
+      /clientErrorReported|graphUpdate|BunFrontendDevServerAgent__notify/,
+    ],
     ["src/jsc/bindings/highway_strings.cpp", /ScanCharFrequencyImpl|highway_char_frequency/],
     ["src/jsc/bindings/JSS3File.cpp", /JSS3File__hasInstance|customHasInstance/],
   ];
@@ -43,7 +46,10 @@ test("dead extern C wrappers and cascaded methods do not reappear", () => {
 
 test("commented-out DOMJIT/BINDING_INTEGRITY blocks in webcore do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
-    ["src/jsc/bindings/webcore/JSTextEncoder.cpp", /jsTextEncoderEncodeWithoutTypeCheck|DOMJITSignatureForJSTextEncoder/],
+    [
+      "src/jsc/bindings/webcore/JSTextEncoder.cpp",
+      /jsTextEncoderEncodeWithoutTypeCheck|DOMJITSignatureForJSTextEncoder/,
+    ],
     ["src/jsc/bindings/webcore/JSURLSearchParams.cpp", /BINDING_INTEGRITY|_ZTVN7WebCore15URLSearchParamsE/],
     ["src/jsc/bindings/webcore/JSErrorEvent.cpp", /BINDING_INTEGRITY|_ZTVN7WebCore10ErrorEventE/],
     ["src/jsc/bindings/webcore/JSDOMException.cpp", /BINDING_INTEGRITY|_ZTVN7WebCore12DOMExceptionE/],

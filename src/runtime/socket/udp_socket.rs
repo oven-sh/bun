@@ -1,5 +1,7 @@
 use core::cell::Cell;
-use core::ffi::{c_char, c_int, c_void};
+#[cfg(not(windows))]
+use core::ffi::c_char;
+use core::ffi::{c_int, c_void};
 
 use bun_core::{String as BunString, ZigStringSlice};
 use bun_io::KeepAlive;

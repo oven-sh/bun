@@ -8518,8 +8518,7 @@ pub mod net {
                         addr: u32::from_ne_bytes(v4.octets()),
                         ..sockaddr_in::ZEROED
                     };
-                    // SAFETY: `sockaddr_storage` is sized and aligned to hold a
-                    // `sockaddr_in`; both are POD and cannot overlap.
+                    // SAFETY: `sockaddr_storage` holds a POD `sockaddr_in`; they cannot overlap.
                     unsafe {
                         core::ptr::copy_nonoverlapping(
                             (&raw const inner).cast::<u8>(),

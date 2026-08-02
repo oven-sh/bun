@@ -8,9 +8,7 @@ use sys::{AF_INET, AF_INET6, pton};
 mod sys {
     use core::ffi::{c_char, c_int, c_void};
 
-    // dep-graph: bun_string < bun_sys, so the canonical `bun_sys::posix::AF` is
-    // out of reach; this is a thin libc/ws2def passthrough. Hardcoding a BSD
-    // fallback would be wrong (FreeBSD AF_INET6 == 28).
+    // A thin libc/ws2def passthrough: bun_string sits below bun_sys, so `bun_sys::posix::AF` is out of reach.
     pub(super) const AF_INET: c_int = 2;
     #[cfg(not(windows))]
     pub(super) const AF_INET6: c_int = libc::AF_INET6 as c_int;
@@ -32,8 +30,7 @@ mod sys {
         #[cfg(not(windows))]
         {
             debug_assert_eq!(src.last(), Some(&0));
-            // SAFETY: `src` is NUL-terminated per the assert; `dst` is the
-            // 4 bytes of an `in_addr`.
+            // SAFETY: `src` is NUL-terminated per the assert; `dst` is an `in_addr`.
             unsafe { inet_aton(src.as_ptr().cast(), dst.as_mut_ptr().cast()) != 0 }
         }
     }
@@ -42,8 +39,7 @@ mod sys {
     pub(super) fn pton(af: c_int, src: &[u8], dst: &mut [u8]) -> bool {
         debug_assert_eq!(src.last(), Some(&0));
         debug_assert!(dst.len() >= if af == AF_INET6 { 16 } else { 4 });
-        // SAFETY: per the asserts above — a NUL-terminated source and a
-        // destination large enough for the address family.
+        // SAFETY: per the asserts above.
         unsafe { ares_inet_pton(af, src.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0 }
     }
 }
@@ -58,10 +54,7 @@ pub fn is_ip_address(input: &[u8]) -> bool {
     pton(AF_INET, &buf[..=input.len()], &mut dst) || pton(AF_INET6, &buf[..=input.len()], &mut dst)
 }
 
-/// `ares_inet_pton(AF_INET6, …) > 0`.
-/// Must be a strict parse, not a `contains(':')` heuristic: on Windows a
-/// unix-socket path like `C:/Windows/Temp/…` contains a colon and the old
-/// heuristic mis-bracketed it as `unix://[C:/…]`, which fails URL parsing.
+/// A strict parse, never a `contains(':')` heuristic — that mis-bracketed Windows paths like `C:/Windows/Temp/…` as `unix://[C:/…]`.
 pub fn is_ipv6_address(input: &[u8]) -> bool {
     let mut buf = [0u8; 512];
     if input.len() >= buf.len() {
@@ -78,8 +71,7 @@ pub fn to_ip_address(input: &[u8]) -> Option<IpAddr> {
     if input.is_empty() || input.len() >= buf.len() {
         return None;
     }
-    // A `%zone` suffix belongs to a numeric v6 host; the zone itself is the
-    // caller's business (getaddrinfo resolves it).
+    // A `%zone` suffix belongs to a numeric v6 host; resolving the zone is the caller's business.
     let head = input.iter().position(|b| *b == b'%').unwrap_or(input.len());
     buf[..head].copy_from_slice(&input[..head]);
     let mut v6 = [0u8; 16];

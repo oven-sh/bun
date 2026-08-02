@@ -1,4 +1,4 @@
-//! Source location for CSS `url()` values and printer errors.
+//! Source location for the CSS Modules `composes` property and printer errors.
 
 use crate::SourceLocation;
 

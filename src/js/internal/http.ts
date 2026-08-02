@@ -43,8 +43,6 @@ const {
 };
 
 const kDeprecatedReplySymbol = Symbol("deprecatedReply");
-const kPath = Symbol("path");
-const kOptions = Symbol("options");
 const abortedSymbol = Symbol("aborted");
 
 const headerStateSymbol = Symbol("headerState");
@@ -577,9 +575,7 @@ export {
   kHandle,
   kInternalSocketData,
   kNeedDrain,
-  kOptions,
   kOutHeaders,
-  kPath,
   kPendingCallbacks,
   kProxyConfig,
   kRealListen,

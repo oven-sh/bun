@@ -44,7 +44,8 @@
  * Runtime toggles (comma-separated symbol names):
  *   OHOS_COMPAT_SHIM_DISABLE — turn OFF a default-on interceptor
  *                              (close_range, getpwuid_r, tmpfile, getcwd,
- *                               fchmodat2, linkat, symlinkat)
+ *                               fchmodat2, linkat, symlinkat, splice,
+ *                               epoll_pipe)
  *
  * Deliberately NOT implemented: pthread_cancel (musl stub is a no-op;
  * emulating cancellation needs cooperative checkpoints in the target
@@ -58,6 +59,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <limits.h>
+#include <pthread.h>
 #include <pwd.h>
 #include <sched.h>
 #include <setjmp.h>
@@ -66,6 +68,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/epoll.h>
+#include <sys/ioctl.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -119,6 +123,7 @@ enum {
 	SD_LINKAT      = 1 << 5,
 	SD_SYMLINKAT   = 1 << 6,
 	SD_SPLICE      = 1 << 7,
+	SD_EPOLL_PIPE  = 1 << 8,
 };
 
 static int g_disable_mask = -1;
@@ -145,6 +150,8 @@ static void parse_toggle_masks(void)
 		d |= SD_SYMLINKAT;
 	if (env_list_has("OHOS_COMPAT_SHIM_DISABLE", "splice"))
 		d |= SD_SPLICE;
+	if (env_list_has("OHOS_COMPAT_SHIM_DISABLE", "epoll_pipe"))
+		d |= SD_EPOLL_PIPE;
 	g_disable_mask = d; /* set last: non-negative value doubles as "done" */
 }
 
@@ -167,6 +174,8 @@ static int shim_disabled(const char *name)
 		return !!(g_disable_mask & SD_SYMLINKAT);
 	if (strcmp(name, "splice") == 0)
 		return !!(g_disable_mask & SD_SPLICE);
+	if (strcmp(name, "epoll_pipe") == 0)
+		return !!(g_disable_mask & SD_EPOLL_PIPE);
 	return 0;
 }
 
@@ -474,6 +483,12 @@ int close_range(unsigned int first, unsigned int last, unsigned int flags)
  * section below (after syscall(), which needs to call it here). */
 static int fc2_dispatch(int dirfd, const char *path, mode_t mode, int flags);
 
+/* Forward-declared: ep_shim_ctl_done() lives in the epoll_pipe section
+ * below — it runs the registry bookkeeping after a successful real
+ * epoll_ctl(), no matter which entry symbol carried the call. */
+static int ep_shim_ctl_done(int rc, int epfd, int op, int fd,
+			    struct epoll_event *ev);
+
 /* syscall() override — dispatches the small set of raw-syscall-numbers
  * this file intercepts (currently close_range and fchmodat2 — see each
  * one's own section); every other number passes straight through to the
@@ -503,6 +518,17 @@ long syscall(long number, ...)
 
 	if (number == __NR_fchmodat2 && !shim_disabled("fchmodat2")) {
 		return fc2_dispatch((int)a0, (const char *)a1, (mode_t)a2, (int)a3);
+	}
+
+	/* Bun's Rust event loop (src/sys/linux_syscall.rs) issues epoll_ctl
+	 * as a raw syscall(SYS_epoll_ctl, ...) rather than the libc symbol,
+	 * so the epoll_ctl() override below never sees those calls. Route
+	 * them through the same registry bookkeeping here. cr_real_syscall
+	 * is libc's syscall(): libc-convention return, errno set on -1. */
+	if (number == __NR_epoll_ctl && !shim_disabled("epoll_pipe")) {
+		return ep_shim_ctl_done(
+			(int)cr_real_syscall(__NR_epoll_ctl, a0, a1, a2, a3, 0, 0),
+			(int)a0, (int)a1, (int)a2, (struct epoll_event *)a3);
 	}
 
 	return cr_real_syscall(number, a0, a1, a2, a3, a4, a5);
@@ -1110,6 +1136,333 @@ ssize_t splice(int fd_in, off_t *off_in, int fd_out, off_t *off_out,
 
 	errno = saved;
 	return rc;
+}
+
+/* ==================================================================== */
+/*  epoll/poll pipe-readiness repair (OHOS_TEST_STATUS.md T50)          */
+/* ==================================================================== */
+/*
+ * Third pipe defect on HarmonyOS, distinct from the two splice() ones
+ * above: a shell-created pipe (e.g. `cat big | bun script.js`) can lose
+ * its read-readiness *state* entirely. Bytes sit in the pipe buffer
+ * (FIONREAD reports them), but poll() and epoll_wait() -- even a freshly
+ * created epoll instance registering the fd for the first time -- report
+ * the fd as not-readable, and stay wrong after bytes are drained. Node.js
+ * as the reader hangs the same way, so this is a kernel pipe-state bug,
+ * not a Bun one. The repro rate tracks system load (near 100% under
+ * memory pressure, sporadic when idle).
+ *
+ * Bun cannot avoid the affected object -- the shell owns the write end --
+ * so this shim repairs readiness in userspace:
+ *
+ *   epoll_ctl(ADD/MOD)  remember (epfd, fd, event) for FIFO fds whose
+ *                       mask asks for EPOLLIN; DEL forgets. Calls arrive
+ *                       both via the libc symbol (usockets) and via raw
+ *                       syscall(SYS_epoll_ctl) (Bun's Rust event loop) --
+ *                       the syscall() override above funnels the latter
+ *                       into the same bookkeeping.
+ *   epoll_wait/pwait    when any pipe is registered on this epfd, clamp
+ *                       long timeouts to EP_PIPE_POLL_MS and, on an empty
+ *                       return, FIONREAD each registered pipe and
+ *                       synthesize EPOLLIN with the registered udata for
+ *                       those with bytes pending.
+ *   poll/ppoll          after the real call, patch revents for FIFO fds
+ *                       that asked for POLLIN, reported nothing, yet
+ *                       have bytes pending (covers is_readable paths).
+ *   close               drop registry entries naming the closing fd
+ *                       (whether it was an epfd or a pipe), so a reused
+ *                       fd number never inherits stale udata.
+ *
+ * EOF: the corrupted kernel never delivers EPOLLHUP either, so after the
+ * last byte is drained the reader would still wait forever. When a
+ * pipe's FIONREAD transitions had-data -> empty, one final EPOLLIN is
+ * synthesized: at EOF the read returns 0 (correct), otherwise it is a
+ * single harmless EAGAIN wakeup.
+ *
+ * EPOLLONESHOT: a synthesized event is delivered without the kernel
+ * having fired, so the entry is marked disarmed and gets no further
+ * synthesized events until the next MOD re-arms it -- mirroring kernel
+ * semantics from the caller's point of view.
+ *
+ * This is a workaround, not a cure; the kernel bug should be reported to
+ * the platform side (fd0-reader3/fd0-reader4 probes as evidence).
+ * OHOS_COMPAT_SHIM_DISABLE=epoll_pipe turns the whole interceptor off.
+ */
+
+#define EP_PIPE_POLL_MS 250
+#define EP_REG_MAX 64
+
+typedef struct {
+	int used;
+	int epfd;
+	int fd;
+	struct epoll_event ev;	/* registration mask + udata */
+	int disarmed;		/* ONESHOT: synthesized event delivered */
+	int had_data;		/* FIONREAD was non-zero at last check */
+} ep_pipe_reg_t;
+
+static ep_pipe_reg_t g_ep_pipes[EP_REG_MAX];
+static pthread_mutex_t g_ep_pipes_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static int ep_pipe_active(void)
+{
+	return !shim_disabled("epoll_pipe");
+}
+
+/* All registry mutations happen under g_ep_pipes_lock; Bun runs one
+ * epoll instance per event-loop thread, so epoll_ctl for different epfds
+ * really can arrive concurrently. */
+
+static void ep_reg_update_locked(int epfd, int fd, const struct epoll_event *ev)
+{
+	int free_slot = -1, i;
+	for (i = 0; i < EP_REG_MAX; i++) {
+		if (!g_ep_pipes[i].used) {
+			if (free_slot < 0)
+				free_slot = i;
+			continue;
+		}
+		if (g_ep_pipes[i].epfd == epfd && g_ep_pipes[i].fd == fd) {
+			g_ep_pipes[i].ev = *ev;
+			g_ep_pipes[i].disarmed = 0;
+			/* had_data deliberately kept: a MOD re-arm right
+			 * after the reader drained the pipe must not lose
+			 * the pending EOF transition. */
+			return;
+		}
+	}
+	if (free_slot < 0)
+		return;	/* full: this pipe just never gets repaired */
+	g_ep_pipes[free_slot].used = 1;
+	g_ep_pipes[free_slot].epfd = epfd;
+	g_ep_pipes[free_slot].fd = fd;
+	g_ep_pipes[free_slot].ev = *ev;
+	g_ep_pipes[free_slot].disarmed = 0;
+	g_ep_pipes[free_slot].had_data = 0;
+}
+
+static void ep_reg_del_locked(int epfd, int fd)
+{
+	int i;
+	for (i = 0; i < EP_REG_MAX; i++)
+		if (g_ep_pipes[i].used && g_ep_pipes[i].epfd == epfd &&
+		    g_ep_pipes[i].fd == fd)
+			g_ep_pipes[i].used = 0;
+}
+
+static void ep_reg_forget_fd_locked(int fd)
+{
+	int i;
+	for (i = 0; i < EP_REG_MAX; i++)
+		if (g_ep_pipes[i].used &&
+		    (g_ep_pipes[i].fd == fd || g_ep_pipes[i].epfd == fd))
+			g_ep_pipes[i].used = 0;
+}
+
+static int ep_reg_any_locked(int epfd)
+{
+	int i;
+	for (i = 0; i < EP_REG_MAX; i++)
+		if (g_ep_pipes[i].used && g_ep_pipes[i].epfd == epfd)
+			return 1;
+	return 0;
+}
+
+/* Registry bookkeeping after a real epoll_ctl(), shared by the libc
+ * symbol override and the syscall(SYS_epoll_ctl) dispatcher. */
+static int ep_shim_ctl_done(int rc, int epfd, int op, int fd,
+			    struct epoll_event *ev)
+{
+	if (rc != 0 || !ep_pipe_active())
+		return rc;
+	pthread_mutex_lock(&g_ep_pipes_lock);
+	if (op == EPOLL_CTL_DEL) {
+		ep_reg_del_locked(epfd, fd);
+	} else if (ev && (ev->events & EPOLLIN) && splice_fd_is_fifo(fd)) {
+		ep_reg_update_locked(epfd, fd, ev);
+	} else {
+		/* No EPOLLIN requested, or not a pipe: make sure a
+		 * recycled fd number doesn't stay tracked from a previous
+		 * registration. */
+		ep_reg_del_locked(epfd, fd);
+	}
+	pthread_mutex_unlock(&g_ep_pipes_lock);
+	return rc;
+}
+
+typedef int (*epoll_ctl_fn)(int, int, int, struct epoll_event *);
+
+int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)
+{
+	static epoll_ctl_fn real = NULL;
+	if (!real)
+		real = (epoll_ctl_fn)dlsym(RTLD_NEXT, "epoll_ctl");
+	if (!real) {
+		errno = ENOSYS;
+		return -1;
+	}
+	return ep_shim_ctl_done(real(epfd, op, fd, event), epfd, op, fd, event);
+}
+
+/* Clamp long waits to the poll interval when this epfd has pipes under
+ * repair; short and zero (nonblocking) timeouts pass through. */
+static int ep_shim_clamp_timeout(int epfd, int timeout)
+{
+	int any;
+	if (timeout == 0 || !ep_pipe_active())
+		return timeout;
+	if (timeout > 0 && timeout <= EP_PIPE_POLL_MS)
+		return timeout;
+	pthread_mutex_lock(&g_ep_pipes_lock);
+	any = ep_reg_any_locked(epfd);
+	pthread_mutex_unlock(&g_ep_pipes_lock);
+	return any ? EP_PIPE_POLL_MS : timeout;
+}
+
+/* After an empty real wait, synthesize EPOLLIN for registered pipes with
+ * bytes pending (plus the one-shot drained/EOF wakeup described above). */
+static int ep_shim_after_wait(int rc, int epfd, struct epoll_event *events,
+			      int maxevents)
+{
+	int i, n = 0;
+	if (rc != 0 || maxevents <= 0 || !ep_pipe_active())
+		return rc;
+	pthread_mutex_lock(&g_ep_pipes_lock);
+	for (i = 0; i < EP_REG_MAX && n < maxevents; i++) {
+		int avail = 0;
+		if (!g_ep_pipes[i].used || g_ep_pipes[i].epfd != epfd ||
+		    g_ep_pipes[i].disarmed)
+			continue;
+		if (ioctl(g_ep_pipes[i].fd, FIONREAD, &avail) != 0) {
+			/* fd is gone; the kernel drops closed fds from the
+			 * epoll set too, so stop tracking it here. */
+			g_ep_pipes[i].used = 0;
+			continue;
+		}
+		if (avail > 0) {
+			g_ep_pipes[i].had_data = 1;
+		} else if (g_ep_pipes[i].had_data) {
+			g_ep_pipes[i].had_data = 0;
+		} else {
+			continue;
+		}
+		if (g_ep_pipes[i].ev.events & EPOLLONESHOT)
+			g_ep_pipes[i].disarmed = 1;
+		events[n].events = EPOLLIN;
+		events[n].data = g_ep_pipes[i].ev.data;
+		n++;
+	}
+	pthread_mutex_unlock(&g_ep_pipes_lock);
+	return n;
+}
+
+typedef int (*epoll_wait_fn)(int, struct epoll_event *, int, int);
+typedef int (*epoll_pwait_fn)(int, struct epoll_event *, int, int,
+			      const sigset_t *);
+
+int epoll_wait(int epfd, struct epoll_event *events, int maxevents,
+	       int timeout)
+{
+	static epoll_wait_fn real = NULL;
+	if (!real)
+		real = (epoll_wait_fn)dlsym(RTLD_NEXT, "epoll_wait");
+	if (!real) {
+		errno = ENOSYS;
+		return -1;
+	}
+	timeout = ep_shim_clamp_timeout(epfd, timeout);
+	return ep_shim_after_wait(real(epfd, events, maxevents, timeout),
+				  epfd, events, maxevents);
+}
+
+int epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
+		int timeout, const sigset_t *sigmask)
+{
+	static epoll_pwait_fn real = NULL;
+	if (!real)
+		real = (epoll_pwait_fn)dlsym(RTLD_NEXT, "epoll_pwait");
+	if (!real) {
+		errno = ENOSYS;
+		return -1;
+	}
+	timeout = ep_shim_clamp_timeout(epfd, timeout);
+	return ep_shim_after_wait(real(epfd, events, maxevents, timeout, sigmask),
+				  epfd, events, maxevents);
+}
+
+/* poll/ppoll: the real call already blocked for the full timeout, so all
+ * that is left is correcting the lie -- FIFO fds that asked for POLLIN,
+ * reported nothing, yet have bytes pending. No timeout clamping here. */
+static int ep_shim_patch_pollfds(struct pollfd *fds, nfds_t nfds, int rc)
+{
+	nfds_t i;
+	if (rc < 0 || !ep_pipe_active())
+		return rc;
+	for (i = 0; i < nfds; i++) {
+		int avail = 0;
+		if (fds[i].fd < 0 || !(fds[i].events & POLLIN) ||
+		    fds[i].revents != 0)
+			continue;
+		if (!splice_fd_is_fifo(fds[i].fd))
+			continue;
+		if (ioctl(fds[i].fd, FIONREAD, &avail) == 0 && avail > 0) {
+			fds[i].revents = POLLIN;
+			rc++;	/* poll's rc counts fds with revents set */
+		}
+	}
+	return rc;
+}
+
+typedef int (*poll_fn)(struct pollfd *, nfds_t, int);
+typedef int (*ppoll_fn)(struct pollfd *, nfds_t, const struct timespec *,
+			const sigset_t *);
+
+int poll(struct pollfd *fds, nfds_t nfds, int timeout)
+{
+	static poll_fn real = NULL;
+	if (!real)
+		real = (poll_fn)dlsym(RTLD_NEXT, "poll");
+	if (!real) {
+		errno = ENOSYS;
+		return -1;
+	}
+	return ep_shim_patch_pollfds(fds, nfds, real(fds, nfds, timeout));
+}
+
+int ppoll(struct pollfd *fds, nfds_t nfds, const struct timespec *timeout,
+	  const sigset_t *sigmask)
+{
+	static ppoll_fn real = NULL;
+	if (!real)
+		real = (ppoll_fn)dlsym(RTLD_NEXT, "ppoll");
+	if (!real) {
+		errno = ENOSYS;
+		return -1;
+	}
+	return ep_shim_patch_pollfds(fds, nfds,
+				     real(fds, nfds, timeout, sigmask));
+}
+
+typedef int (*close_fn)(int);
+
+int close(int fd)
+{
+	static close_fn real = NULL;
+	if (!real)
+		real = (close_fn)dlsym(RTLD_NEXT, "close");
+	if (!real) {
+		errno = ENOSYS;
+		return -1;
+	}
+	/* Forget before the real close: afterwards the number can be
+	 * handed out again at any moment. Covers the fd both as a
+	 * registered pipe and as an epfd with pipes under repair. */
+	if (fd >= 0 && ep_pipe_active()) {
+		pthread_mutex_lock(&g_ep_pipes_lock);
+		ep_reg_forget_fd_locked(fd);
+		pthread_mutex_unlock(&g_ep_pipes_lock);
+	}
+	return real(fd);
 }
 
 int linkat(int olddirfd, const char *oldpath, int newdirfd,

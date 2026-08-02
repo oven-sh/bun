@@ -1,7 +1,7 @@
 import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isASAN, isPosix, randomPort, tempDir } from "harness";
+import { bunEnv, bunExe, isPosix, randomPort, tempDir } from "harness";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
@@ -17,11 +17,7 @@ const anyPathname = expect.stringMatching(/^\/[a-z0-9-]+$/);
 const randomSocketPathFn = (tempdir: string) => (): string =>
   join(tempdir, Math.random().toString(36).substring(2, 15) + ".sock");
 
-// On release-asan the first case ("bun --inspect") hangs reading stderr for the
-// listening URL and exhausts the file's 270s budget (build 87834). Skip the
-// websocket suite there so the http-metadata, unix-socket and error.stack tests
-// still run; previously the whole file was removed on ASAN in expectations.txt.
-describe.skipIf(isASAN)("websocket", () => {
+describe("websocket", () => {
   const tests = [
     {
       args: ["--inspect"],

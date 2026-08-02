@@ -21,10 +21,10 @@ jobs:
           bun-version: "1.2.18"
 
       - name: Install dependencies (root)
-        run: bun install
+        run: bun ci
 
       - name: Install dependencies
-        run: bun install
+        run: bun ci
         working-directory: packages/bun-vscode
 
       - name: Set Version
@@ -32,7 +32,7 @@ jobs:
         working-directory: packages/bun-vscode
 
       - name: Build (inspector protocol)
-        run: bun install && bun run build
+        run: bun ci && bun run build
         working-directory: packages/bun-inspector-protocol
 
       - name: Build (vscode extension)

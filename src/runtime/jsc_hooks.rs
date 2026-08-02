@@ -3178,7 +3178,6 @@ fn transpile_source_code_inner(
                 if written_len > 1024 * 1024 * 2 || unsafe { &*jsc_vm }.smol {
                     *printer =
                         bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
-                    printer.ctx.append_null_byte = false;
                 }
 
                 // (fd close handled by `_fd_guard` registered above; spec
@@ -4441,8 +4440,7 @@ unsafe fn transpile_file(
         let mut p = cell.get();
         if p.is_null() {
             let writer = bun_js_printer::BufferWriter::init();
-            let mut bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
-            bp.ctx.append_null_byte = false;
+            let bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
             p = bun_core::heap::into_raw(bp);
             cell.set(p);
         }
@@ -4630,8 +4628,7 @@ unsafe fn transpile_virtual_module(
         let mut p = cell.get();
         if p.is_null() {
             let writer = bun_js_printer::BufferWriter::init();
-            let mut bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
-            bp.ctx.append_null_byte = false;
+            let bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
             p = bun_core::heap::into_raw(bp);
             cell.set(p);
         }

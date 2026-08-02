@@ -2966,8 +2966,7 @@ fn specifier_cache_resolver_buf() -> *mut bun_paths::PathBuffer {
 fn ensure_source_code_printer() {
     if SOURCE_CODE_PRINTER.get().is_none() {
         let writer = bun_js_printer::BufferWriter::init();
-        let mut printer = Box::new(bun_js_printer::BufferPrinter::init(writer));
-        printer.ctx.append_null_byte = false;
+        let printer = Box::new(bun_js_printer::BufferPrinter::init(writer));
         SOURCE_CODE_PRINTER.set(NonNull::new(bun_core::heap::into_raw(printer)));
     }
 }

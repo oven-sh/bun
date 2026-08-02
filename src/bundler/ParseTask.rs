@@ -191,7 +191,6 @@ pub(crate) struct ResultError {
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Step {
     Pending,
-    ReadFile,
     Parse,
     Resolve,
 }

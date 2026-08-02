@@ -51,8 +51,6 @@ use bun_ast::ImportRecordFlags;
 
 use bun_sourcemap as SourceMap;
 
-pub use bun_options_types::schema::api::CssInJsBehavior;
-
 // ──────────────────────────────────────────────────────────────────────────
 // renamer — defined in `renamer.rs`. The five former leak sites
 // have been replaced with `bumpalo::Bump`-backed allocation (PORTING.md §Forbidden);
@@ -1018,7 +1016,6 @@ pub struct Options<'a> {
     pub indent: Indentation,
     // allocator dropped — global mimalloc (this is an AST crate but Options.allocator is the global default)
     pub source_map_handler: Option<SourceMapHandler<'a>>,
-    pub css_import_behavior: CssInJsBehavior,
     pub target: bun_ast::Target,
 
     pub runtime_transpiler_cache: Option<RuntimeTranspilerCacheRef>,
@@ -1038,7 +1035,6 @@ pub struct Options<'a> {
     pub minify_syntax: bool,
     pub print_dce_annotations: bool,
 
-    pub transform_only: bool,
     pub inline_require_and_import_errors: bool,
     pub has_run_symbol_renamer: bool,
 
@@ -1095,7 +1091,6 @@ impl<'a> Default for Options<'a> {
             hmr_ref: Ref::NONE,
             indent: Indentation::default(),
             source_map_handler: None,
-            css_import_behavior: CssInJsBehavior::Facade,
             target: bun_ast::Target::Browser,
             runtime_transpiler_cache: None,
             module_info: None,
@@ -1109,7 +1104,6 @@ impl<'a> Default for Options<'a> {
             minify_identifiers: false,
             minify_syntax: false,
             print_dce_annotations: true,
-            transform_only: false,
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
             require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
@@ -6909,8 +6903,6 @@ pub struct BufferWriter {
     /// reslice on read (`written()` / `written_without_trailing_zero()`). Avoids the O(n)
     /// `to_vec().into_boxed_slice()` copy the previous port did on every `done()`.
     pub(crate) written_len: usize,
-    // `done()` appends a NUL terminator when `append_null_byte` is true.
-    pub append_null_byte: bool,
     pub append_newline: bool,
 }
 
@@ -6932,7 +6924,6 @@ impl BufferWriter {
         BufferWriter {
             buffer: MutableString::init_empty(),
             written_len: 0,
-            append_null_byte: false,
             append_newline: false,
         }
     }
@@ -6946,7 +6937,6 @@ impl BufferWriter {
         BufferWriter {
             buffer: MutableString::init(capacity).unwrap_or_else(|_| MutableString::init_empty()),
             written_len: 0,
-            append_null_byte: false,
             append_newline: false,
         }
     }
@@ -7013,17 +7003,6 @@ impl BufferWriter {
         if self.append_newline {
             self.append_newline = false;
             self.buffer.append_char(b'\n')?;
-        }
-
-        if self.append_null_byte {
-            // Append a NUL unless the buffer already ends with one; the NUL is
-            // *included* in `written` (consumers strip it via
-            // `written_without_trailing_zero`).
-            //
-            // For an *empty* buffer we still append the NUL.
-            if self.buffer.list.last().copied() != Some(0) {
-                self.buffer.append_char(0)?;
-            }
         }
         self.written_len = self.buffer.list.len();
         Ok(())

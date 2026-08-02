@@ -1109,13 +1109,14 @@ impl<const SSL: bool> NewSocket<SSL> {
             )
         } else {
             debug_assert!(errno >= 0);
-            // On Windows the async connect-error path (loop.c's SEMI_SOCKET
-            // SO_ERROR read, context.c's recv probe) delivers raw WSA codes
-            // (WSAECONNRESET = 10054, WSAEADDRINUSE = 10048). The whitelist
-            // below is keyed on SystemErrno discriminants, so normalize first;
-            // WSA codes are >= WSABASEERR (10000) and so disjoint from both
-            // the SystemErrno discriminant space and the MSVC CRT errno values
-            // the synchronous path passes in.
+            // On Windows this sees either SystemErrno discriminants (Rust
+            // callers) or raw WSA codes (loop.c's SEMI_SOCKET SO_ERROR read,
+            // context.c's recv probe: WSAECONNRESET = 10054,
+            // WSAEADDRINUSE = 10048). WSA codes are >= WSABASEERR (10000),
+            // disjoint from the discriminant space, and are normalized here so
+            // the whitelist below compares one numbering. The remaining
+            // uSockets UCRT-numbered literals (ECONNREFUSED/ECONNABORTED) are
+            // not in the whitelist and correctly fall through to ECONNREFUSED.
             #[cfg(windows)]
             let errno: c_int = if errno >= 10000 {
                 sys::SystemErrno::init(errno as u32)
@@ -1158,23 +1159,11 @@ impl<const SSL: bool> NewSocket<SSL> {
                 BunString::static_("ECONNREFUSED")
             };
             // Node on Windows reports libuv's negative errno (e.g. -4077 for
-            // ECONNRESET), not the POSIX-style discriminant the whitelist is
-            // keyed on. Rewrite every recognized code to its UV_* value so
-            // `err.errno` matches Node; the default arm stays ECONNREFUSED.
+            // ECONNRESET); the whitelist above guarantees `errno_` is a
+            // discriminant the canonical table covers.
             #[cfg(windows)]
-            let errno_ = {
-                use sys::SystemErrno as S;
-                match errno_ {
-                    x if x == S::ENOENT as c_int => S::UV_ENOENT as c_int,
-                    x if x == S::ENOTSOCK as c_int => S::UV_ENOTSOCK as c_int,
-                    x if x == S::EACCES as c_int => S::UV_EACCES as c_int,
-                    x if x == S::EINVAL as c_int => S::UV_EINVAL as c_int,
-                    x if x == S::ECONNRESET as c_int => S::UV_ECONNRESET as c_int,
-                    x if x == S::EADDRINUSE as c_int => S::UV_EADDRINUSE as c_int,
-                    x if x == S::EADDRNOTAVAIL as c_int => S::UV_EADDRNOTAVAIL as c_int,
-                    _ => S::UV_ECONNREFUSED as c_int,
-                }
-            };
+            let errno_ = -sys::windows::libuv::e_discriminant_to_uv(errno_ as u16)
+                .unwrap_or(sys::windows::libuv::UV_ECONNREFUSED);
             SystemError {
                 errno: -errno_,
                 message: BunString::static_("Failed to connect").into(),

@@ -394,6 +394,31 @@ describe("CompressionStream and DecompressionStream", () => {
       await writer.close();
       await drained;
     });
+
+    // Async-codec × native-sink: deliverAsync's m_nativeSinkPtr arm. The other
+    // >128KB tests drain via Response().arrayBuffer() (no native sink); the
+    // other Bun.serve tests enqueue ≤64KB (below the async threshold).
+    test("CompressionStream('gzip') -> native HTTP response sink handles a single >128KB chunk", async () => {
+      const big = randomBytes(256 * 1024);
+      await using server = Bun.serve({
+        port: 0,
+        fetch() {
+          const body = new ReadableStream({
+            start(c) {
+              c.enqueue(big.slice());
+              c.close();
+            },
+          });
+          return new Response(body.pipeThrough(new CompressionStream("gzip")));
+        },
+      });
+      const res = await fetch(server.url);
+      const out = Buffer.from(
+        await new Response(res.body!.pipeThrough(new DecompressionStream("gzip"))).arrayBuffer(),
+      );
+      expect(out.byteLength).toBe(big.byteLength);
+      expect(Buffer.compare(out, Buffer.from(big.buffer))).toBe(0);
+    });
   });
 });
 

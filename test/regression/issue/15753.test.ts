@@ -7,11 +7,11 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
 
-// Build a minimal ELF64-LE shared object whose PT_DYNAMIC carries the given
-// DT_NEEDED soname. e_machine is EM_NONE so glibc's loader rejects it before
-// touching the (absent) hash/sym tables; musl ignores e_machine but fails at
-// DT_NEEDED resolution when the soname does not exist. Bun's pre-dlopen walk
-// does not consult e_machine.
+// Build a minimal ELF64-LE image whose PT_DYNAMIC carries the given DT_NEEDED
+// soname. e_type is ET_NONE so both glibc and musl reject it at header
+// validation (musl: map_library's e_type check; glibc: open_verify) before
+// touching the absent hash/sym tables. Bun's pre-dlopen DT_NEEDED walk only
+// checks magic/class/endian, so it still parses the dynamic section.
 function minimalElfSharedObject(needed: string): Buffer {
   const strtabBody = "\0" + needed + "\0";
   const strtab = Buffer.from(strtabBody, "latin1");
@@ -33,8 +33,8 @@ function minimalElfSharedObject(needed: string): Buffer {
 
   // Elf64_Ehdr
   buf.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0], 0); // magic, ELFCLASS64, LE, v1
-  buf.writeUInt16LE(3, 16); // e_type = ET_DYN
-  buf.writeUInt16LE(0, 18); // e_machine = EM_NONE (see comment above)
+  buf.writeUInt16LE(0, 16); // e_type = ET_NONE (see comment above)
+  buf.writeUInt16LE(0, 18); // e_machine = EM_NONE
   buf.writeUInt32LE(1, 20); // e_version
   buf.writeBigUInt64LE(0n, 24); // e_entry
   buf.writeBigUInt64LE(BigInt(phOff), 32); // e_phoff
@@ -123,10 +123,6 @@ describe.skipIf(!isLinux)("issue #15753: glibc addon on musl throws instead of s
   );
 
   test("non-glibc DT_NEEDED is not rejected by the check", async () => {
-    // The soname must not match musl's reserved-name shortcut (lib + one of
-    // c./pthread./rt./m./dl./util./xnet.) or the musl loader would satisfy it
-    // from the already-loaded libc and then segfault in sysv_lookup on the
-    // stub's absent hash table.
     const { stdout, stderr, exitCode } = await tryDlopen(
       minimalElfSharedObject("libbun-issue-15753-nonexistent.so.0"),
       true,

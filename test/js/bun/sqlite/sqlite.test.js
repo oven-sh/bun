@@ -1549,7 +1549,7 @@ it("close(true) finalizes outstanding prepared statements instead of throwing", 
   db.exec("INSERT INTO foo (name) VALUES ('foo')");
   const prepared = db.prepare("SELECT * FROM foo");
   expect(() => db.close(true)).not.toThrow();
-  expect(() => prepared.all()).toThrow("Database has closed");
+  expect(() => prepared.all()).toThrow("Statement has finalized");
 });
 
 it("close(true) finalizes query() statements created after the cache filled up (#36572)", () => {
@@ -1572,7 +1572,7 @@ it("close(true) finalizes query() statements past the cache limit that are still
   }
   expect(() => db.close(true)).not.toThrow();
   for (const stmt of statements) {
-    expect(() => stmt.all()).toThrow(/Database has closed|Statement has finalized/);
+    expect(() => stmt.all()).toThrow("Statement has finalized");
   }
 });
 
@@ -1632,7 +1632,7 @@ it("should dispose even if a prepared statement is still live", () => {
       prepared = db.prepare("SELECT * FROM foo");
     }
   }).not.toThrow();
-  expect(() => prepared.get()).toThrow("Database has closed");
+  expect(() => prepared.get()).toThrow("Statement has finalized");
 });
 
 it("should dispose", () => {
@@ -1742,7 +1742,7 @@ it("#13082", async () => {
   const results = await Promise.allSettled(runs);
   for (const result of results) {
     expect(result.status).toBe("rejected");
-    expect(result.reason.message).toBe("Database has closed");
+    expect(result.reason.message).toBe("Statement has finalized");
   }
 });
 

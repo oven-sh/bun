@@ -1070,13 +1070,23 @@ impl error::IntoErrnoInt for bun_windows_sys::NTSTATUS {
     }
 }
 
+/// `Exchange` and `NoReplace` are mutually exclusive at the kernel level.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum RenameMode {
+    #[default]
+    Normal,
+    /// Linux `RENAME_EXCHANGE` / macOS `RENAME_SWAP`.
+    Exchange,
+    /// Linux `RENAME_NOREPLACE` / macOS `RENAME_EXCL`.
+    NoReplace,
+}
+
 /// Flags for [`renameat2`].
 /// On Linux maps to `RENAME_EXCHANGE`/`RENAME_NOREPLACE`; on macOS maps to
 /// `RENAME_SWAP`/`RENAME_EXCL`/`RENAME_NOFOLLOW_ANY`.
 #[derive(Clone, Copy, Default)]
 pub struct Renameat2Flags {
-    pub exchange: bool,
-    pub exclude: bool,
+    pub mode: RenameMode,
     pub nofollow: bool,
 }
 
@@ -1088,11 +1098,10 @@ impl Renameat2Flags {
         #[cfg(target_os = "macos")]
         {
             // <sys/stdio.h>: RENAME_SWAP=2, RENAME_EXCL=4, RENAME_NOFOLLOW_ANY=0x10
-            if self.exchange {
-                flags |= 2;
-            }
-            if self.exclude {
-                flags |= 4;
+            match self.mode {
+                RenameMode::Normal => {}
+                RenameMode::Exchange => flags |= 2,
+                RenameMode::NoReplace => flags |= 4,
             }
             if self.nofollow {
                 flags |= 0x10;
@@ -1100,20 +1109,19 @@ impl Renameat2Flags {
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            if self.exchange {
-                flags |= libc::RENAME_EXCHANGE as u32;
+            match self.mode {
+                RenameMode::Normal => {}
+                RenameMode::Exchange => flags |= libc::RENAME_EXCHANGE as u32,
+                RenameMode::NoReplace => flags |= libc::RENAME_NOREPLACE as u32,
             }
-            if self.exclude {
-                flags |= libc::RENAME_NOREPLACE as u32;
-            }
+            let _ = self.nofollow;
         }
         #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         {
-            if self.exchange {
-                flags |= 1;
-            }
-            if self.exclude {
-                flags |= 2;
+            match self.mode {
+                RenameMode::Normal => {}
+                RenameMode::Exchange => flags |= 1,
+                RenameMode::NoReplace => flags |= 2,
             }
             let _ = self.nofollow;
         }
@@ -9239,7 +9247,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
                 to_dir_fd,
                 to,
                 Renameat2Flags {
-                    exclude: true,
+                    mode: RenameMode::NoReplace,
                     ..Default::default()
                 },
             ) {
@@ -9265,7 +9273,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
                         to_dir_fd,
                         to,
                         Renameat2Flags {
-                            exchange: true,
+                            mode: RenameMode::Exchange,
                             ..Default::default()
                         },
                     ) {

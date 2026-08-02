@@ -46,6 +46,31 @@ module.exports = debugMode => {
       }
     },
 
+    test_v8_uint32_value_valueof() {
+      let ran = false;
+      nativeModule.perform_uint32_value({
+        valueOf() {
+          ran = true;
+          return 9;
+        },
+      });
+      console.log("valueOf ran =", ran);
+
+      ran = false;
+      try {
+        nativeModule.perform_uint32_value({
+          valueOf() {
+            ran = true;
+            throw new Error("vo");
+          },
+        });
+        console.log("did not throw");
+      } catch (e) {
+        console.log(`threw: ${e.message}`);
+      }
+      console.log("valueOf ran =", ran);
+    },
+
     test_v8_object_get_set_exceptions() {
       for (const key of [0, "key"]) {
         for (const access of ["get", "set"]) {

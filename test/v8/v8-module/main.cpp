@@ -1271,6 +1271,19 @@ void test_v8_value_type_checks(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+void perform_uint32_value(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Maybe<uint32_t> result = info[0]->Uint32Value(context);
+  if (result.IsNothing()) {
+    printf("Uint32Value = Nothing\n");
+  } else {
+    printf("Uint32Value = %" PRIu32 "\n", result.FromJust());
+  }
+  fflush(stdout);
+  return ok(info);
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -1330,6 +1343,7 @@ void initialize(Local<Object> exports, Local<Value> module,
                   perform_object_set_by_key);
   NODE_SET_METHOD(exports, "test_v8_value_type_checks",
                   test_v8_value_type_checks);
+  NODE_SET_METHOD(exports, "perform_uint32_value", perform_uint32_value);
 
   // without this, node hits a UAF deleting the Global
   // (Context::GetIsolate was removed in V8 14.6; the module initializer runs

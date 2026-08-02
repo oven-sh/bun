@@ -28,10 +28,6 @@
 
 namespace WebCore {
 
-EventPath::EventPath(Node& originalTarget, Event& event)
-{
-}
-
 // https://dom.spec.whatwg.org/#dom-event-composedpath
 // Any node whose depth computed in EventPath::buildPath is greater than the context object is excluded.
 // Because we can exit out of a closed shadow tree and re-enter another closed shadow tree via a slot,
@@ -78,13 +74,13 @@ EventPath::EventPath(const Vector<EventTarget*>& targets)
 {
     m_path = targets.map([&](auto* target) {
         ASSERT(target);
-        return EventContext { EventContext::Type::Normal, nullptr, target, *targets.begin(), 0 };
+        return EventContext { nullptr, target, *targets.begin(), 0 };
     });
 }
 
 EventPath::EventPath(EventTarget& target)
 {
-    m_path = { EventContext { EventContext::Type::Normal, nullptr, &target, &target, 0 } };
+    m_path = { EventContext { nullptr, &target, &target, 0 } };
 }
 
 }

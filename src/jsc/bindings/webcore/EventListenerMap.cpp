@@ -160,47 +160,4 @@ EventListenerVector* EventListenerMap::find(const AtomString& eventType)
     return nullptr;
 }
 
-static void removeFirstListenerCreatedFromMarkup(EventListenerVector& listenerVector)
-{
-    bool foundListener = listenerVector.removeFirstMatching([](const auto& registeredListener) {
-        if (JSEventListener::wasCreatedFromMarkup(registeredListener->callback())) {
-            registeredListener->markAsRemoved();
-            return true;
-        }
-        return false;
-    });
-    ASSERT_UNUSED(foundListener, foundListener);
-}
-
-void EventListenerMap::removeFirstEventListenerCreatedFromMarkup(const AtomString& eventType)
-{
-    releaseAssertOrSetThreadUID();
-    Locker locker { m_lock };
-
-    for (unsigned i = 0; i < m_entries.size(); ++i) {
-        if (m_entries[i].first == eventType) {
-            removeFirstListenerCreatedFromMarkup(m_entries[i].second);
-            if (m_entries[i].second.isEmpty())
-                m_entries.removeAt(i);
-            return;
-        }
-    }
-}
-
-static void copyListenersNotCreatedFromMarkupToTarget(const AtomString& eventType, EventListenerVector& listenerVector, EventTarget* target)
-{
-    for (auto& registeredListener : listenerVector) {
-        // Event listeners created from markup have already been transfered to the shadow tree during cloning.
-        if (JSEventListener::wasCreatedFromMarkup(registeredListener->callback()))
-            continue;
-        target->addEventListener(eventType, registeredListener->callback(), registeredListener->useCapture());
-    }
-}
-
-void EventListenerMap::copyEventListenersNotCreatedFromMarkupToTarget(EventTarget* target)
-{
-    for (auto& entry : m_entries)
-        copyListenersNotCreatedFromMarkupToTarget(entry.first, entry.second, target);
-}
-
 } // namespace WebCore

@@ -2,14 +2,10 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { ConnectionType, createClient, ctx, isEnabled } from "../test-utils";
 
 describe.skipIf(!isEnabled)("Valkey: PING Command", () => {
-  // PING is stateless, so one connection can serve every test here. When this
-  // file runs on its own (and in CI, which spawns one process per file)
-  // test-utils' beforeAll has already connected `ctx.redis` and the guard is a
-  // no-op. When the whole unit/ directory runs in one process, a sibling's
-  // afterAll may have already closed `ctx.redis`, so reconnect once rather
-  // than depending on file order.
+  // PING is stateless and writes no keys, so one connection serves the whole
+  // file. test-utils' beforeAll normally provides a connected `ctx.redis`; the
+  // guard only fires when an earlier file in the same process has closed it.
   beforeEach(() => {
-    ctx.id++;
     if (!ctx.redis?.connected) {
       ctx.redis = createClient(ConnectionType.TCP);
     }

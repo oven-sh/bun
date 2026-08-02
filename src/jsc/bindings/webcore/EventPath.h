@@ -28,11 +28,7 @@ namespace WebCore {
 
 class EventPath {
 public:
-    explicit EventPath(const Vector<EventTarget*>&);
     explicit EventPath(EventTarget&);
-
-    bool isEmpty() const { return m_path.isEmpty(); }
-    size_t size() const { return m_path.size(); }
 
     Vector<Ref<EventTarget>> computePathUnclosedToTarget(const EventTarget&) const;
 

@@ -29,9 +29,6 @@
 namespace WebCore {
 
 // https://dom.spec.whatwg.org/#dom-event-composedpath
-// Any node whose depth computed in EventPath::buildPath is greater than the context object is excluded.
-// Because we can exit out of a closed shadow tree and re-enter another closed shadow tree via a slot,
-// we decrease the *allowed depth* whenever we moved to a "shallower" (closer-to-document) tree.
 Vector<Ref<EventTarget>> EventPath::computePathUnclosedToTarget(const EventTarget& target) const
 {
     Vector<Ref<EventTarget>> path;
@@ -68,14 +65,6 @@ Vector<Ref<EventTarget>> EventPath::computePathUnclosedToTarget(const EventTarge
         appendTargetWithLesserDepth(m_path[i], currentDepthAllowed);
 
     return path;
-}
-
-EventPath::EventPath(const Vector<EventTarget*>& targets)
-{
-    m_path = targets.map([&](auto* target) {
-        ASSERT(target);
-        return EventContext { target, 0 };
-    });
 }
 
 EventPath::EventPath(EventTarget& target)

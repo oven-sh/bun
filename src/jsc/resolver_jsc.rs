@@ -63,11 +63,7 @@ extern "C" fn node_module_paths_js_value(
             1
         }
     };
-    // Node's `_nodeModulePaths` starts with `path.resolve(from)`, which never
-    // leaves a trailing separator past the root. `join_abs_string_buf` preserves
-    // one when the input (or `top_level_dir` after `process.chdir`) carries it,
-    // and the reverse-split below would then emit an empty segment as a
-    // duplicate `...//node_modules` entry.
+    // Node begins with `path.resolve(from)`: no trailing separator past root.
     while full_path.len() > root_index
         && Platform::AUTO.is_separator(full_path[full_path.len() - 1])
     {

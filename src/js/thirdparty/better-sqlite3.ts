@@ -270,6 +270,7 @@ function Database(filenameGiven, options) {
   let isOpen = true;
   let defaultSafeIntegers = false;
   const statements = new Set();
+  const statementFinalizer = new FinalizationRegistry(ref => statements.delete(ref));
   const self = this;
   const trace =
     verbose == null
@@ -294,7 +295,9 @@ function Database(filenameGiven, options) {
     if (typeof source !== "string") throw new TypeError("Expected first argument to be a string");
     const stmt = db.prepare(source, undefined, 0);
     if (defaultSafeIntegers) stmt.safeIntegers(true);
-    statements.add(new WeakRef(stmt));
+    const ref = new WeakRef(stmt);
+    statements.add(ref);
+    statementFinalizer.register(stmt, ref);
     return new Statement(stmt, this, source, trace);
   };
 

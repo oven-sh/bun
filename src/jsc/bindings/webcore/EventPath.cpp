@@ -23,7 +23,6 @@
 
 #include "Event.h"
 #include "EventContext.h"
-#include "EventNames.h"
 #include <wtf/Vector.h>
 
 namespace WebCore {

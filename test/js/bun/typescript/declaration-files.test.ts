@@ -56,6 +56,8 @@ export declare namespace NS {
 type LocalOnly = number;
 declare const hidden: LocalOnly;
 export { LocalOnly, hidden };
+export { Alias };
+export type { Shape };
 `,
     "index.ts": `import * as api from "./api.d.ts";
 console.log(JSON.stringify(Object.keys(api).sort()));

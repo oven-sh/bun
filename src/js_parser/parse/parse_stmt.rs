@@ -940,6 +940,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let export_clause = p.parse_export_clause()?;
+        if Self::IS_TYPESCRIPT_ENABLED
+            && p.options.typescript_declaration_file
+            && opts.is_module_scope
+            && !p.dts_suppress_type_name_recording
+        {
+            // A clause export wins over a synthesized one for the same name
+            // (see `dts_export_clause_aliases`).
+            for item in export_clause.clauses.iter() {
+                p.dts_export_clause_aliases.put(item.alias.slice(), true)?;
+            }
+        }
         if p.lexer.is_contextual_keyword(b"from") {
             p.lexer.expect_contextual_keyword(b"from")?;
             let parsed_path = p.parse_path()?;

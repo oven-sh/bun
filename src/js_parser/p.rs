@@ -356,6 +356,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Overloaded `export default function f(): void;` signatures must
     /// produce only one synthesized default export.
     pub(crate) dts_emitted_default_export: bool,
+    /// Aliases exported by module-scope export clauses; synthesized bindings
+    /// for these names stay non-exported so the clause is the sole export.
+    pub(crate) dts_export_clause_aliases: StringBoolMap,
 
     // This is the reference to the generated function argument for the namespace,
     // which is different than the reference to the namespace itself:
@@ -4587,7 +4590,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.current_scope().members.contains_key(name) {
                 continue;
             }
-            let is_export = self.dts_type_names.get(name).copied().unwrap_or(false);
+            let is_export = self.dts_type_names.get(name).copied().unwrap_or(false)
+                && !self.dts_export_clause_aliases.contains_key(name);
             let ref_ =
                 self.declare_symbol(js_ast::symbol::Kind::Hoisted, bun_ast::Loc::EMPTY, name)?;
             let decl = G::Decl {
@@ -8891,6 +8895,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             dts_type_name_order: Vec::new(),
             dts_suppress_type_name_recording: false,
             dts_emitted_default_export: false,
+            dts_export_clause_aliases: StringBoolMap::default(),
             enclosing_namespace_arg_ref: None,
             jsx_imports: crate::JSXImportSymbols::default(),
             react_refresh: ReactRefresh::default(),

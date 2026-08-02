@@ -2910,17 +2910,12 @@ impl crate::ipc::SendQueueOwner for IPCInstance {
     }
 }
 
-/// Caller intent for runtime module resolution. Replaces the
-/// `(is_esm, is_user_require_resolve)` bool pair so the nonsensical
-/// `(true, true)` combination is unrepresentable inside Rust.
+/// Caller intent for runtime module resolution.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ResolveMode {
-    /// ESM `import` / `import()` / `import.meta.resolve`.
     Esm,
-    /// CommonJS `require()`.
     Require,
-    /// `require.resolve()`. Node returns the bare specifier for builtins here
-    /// (`require.resolve("fs") === "fs"`), unlike `require("fs")`.
+    /// `require.resolve()`: returns the bare specifier for Node builtins.
     RequireResolve,
 }
 
@@ -2939,8 +2934,7 @@ impl ResolveMode {
         }
     }
 
-    /// Fold the two-bool FFI encoding C++ passes. When both are set (no valid
-    /// meaning), `Esm` wins, matching the previous open-coded mapping.
+    /// Fold the two-bool encoding the C++ FFI boundary passes.
     #[inline]
     pub fn from_ffi_bools(is_esm: bool, is_user_require_resolve: bool) -> Self {
         if is_esm {

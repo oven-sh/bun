@@ -1062,7 +1062,13 @@ impl Subprocess<'_> {
             self.close_readable_pipes();
         }
 
+        let mut stdin_stream_error = JSValue::ZERO;
         if let Some(pipe_ptr) = stdin {
+            stdin_stream_error = bun_ptr::BackRef::from(pipe_ptr)
+                .take_stream_error()
+                .unwrap_or(JSValue::ZERO);
+            stdin_stream_error.ensure_still_alive();
+
             self.weak_file_sink_stdin_ptr.set(None);
             self.update_flags(|f| f.insert(Flags::HAS_STDIN_DESTRUCTOR_CALLED));
 
@@ -1153,6 +1159,8 @@ impl Subprocess<'_> {
                 {
                     let waitpid_value: JSValue = if let Status::Err(err) = status {
                         err.to_js(global_this)
+                    } else if !stdin_stream_error.is_empty() {
+                        stdin_stream_error
                     } else {
                         JSValue::UNDEFINED
                     };
@@ -1178,6 +1186,8 @@ impl Subprocess<'_> {
 
                     // SAFETY: event_loop points into the live VM.
                     unsafe { (*event_loop).run_callback(callback, global_this, this_value, &args) };
+                } else if !stdin_stream_error.is_empty() {
+                    let _ = bun_jsc::JSPromise::rejected_promise(global_this, stdin_stream_error);
                 }
             }
         }

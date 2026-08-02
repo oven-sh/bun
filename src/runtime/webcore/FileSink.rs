@@ -61,6 +61,9 @@ pub struct FileSink {
     /// Currently, only used when `stdin` in `Bun.spawn` is a ReadableStream.
     pub(crate) readable_stream: JsCell<readable_stream::Strong>,
 
+    /// Producer error from the stdin ReadableStream pump, for `Subprocess::on_process_exit`.
+    pub stream_error: JsCell<bun_jsc::strong::Optional>,
+
     /// Strong reference to the JS wrapper object to prevent GC from collecting it
     /// while an async operation is pending. This is set when endFromJS returns a
     /// pending Promise and cleared when the operation completes.
@@ -963,6 +966,7 @@ impl FileSink {
         // `Blob::get_writer`).
         self.readable_stream.set(readable_stream::Strong::default());
         self.pending.set(streams::WritablePending::default());
+        self.stream_error.with_mut(|r| r.deinit());
         self.js_sink_ref.with_mut(|r| r.deinit());
         // SAFETY: `&mut self` carries write provenance over the whole
         // allocation; this is the last use of `self` in `finalize`.
@@ -1451,6 +1455,7 @@ impl FileSink {
             auto_flusher: JsCell::new(AutoFlusher::default()),
             run_pending_later: FlushPendingTask::default(),
             readable_stream: JsCell::new(readable_stream::Strong::default()),
+            stream_error: JsCell::new(bun_jsc::strong::Optional::empty()),
             js_sink_ref: JsCell::new(bun_jsc::strong::Optional::empty()),
         }
     }
@@ -1500,15 +1505,20 @@ impl FileSink {
     }
 
     /// Does not ref or unref.
-    fn handle_reject_stream(&self, global_this: &JSGlobalObject, _err: JSValue) {
+    fn handle_reject_stream(&self, global_this: &JSGlobalObject, err: JSValue) {
         if let Some(stream) = self.readable_stream.get().get(global_this).as_mut() {
             stream.abort(global_this);
             self.readable_stream.set(readable_stream::Strong::default());
         }
 
+        self.stream_error.with_mut(|s| s.set(global_this, err));
         if !self.done.get() {
             self.writer.with_mut(|w| w.close());
         }
+    }
+
+    pub fn take_stream_error(&self) -> Option<JSValue> {
+        self.stream_error.with_mut(|s| s.try_swap())
     }
 }
 
@@ -1649,6 +1659,9 @@ impl FileSink {
                         // These don't ref().
                         // SAFETY: `js_promise` is non-null (`as_any_promise`).
                         let result = unsafe { (*js_promise).result(global_this.vm()) };
+                        // `handle_reject_stream` owns delivering `result`; don't also report it.
+                        // SAFETY: `js_promise` is non-null (`as_any_promise`).
+                        unsafe { (*js_promise).set_handled() };
                         self.handle_reject_stream(global_this, result);
                     }
                 }

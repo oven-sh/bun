@@ -266,59 +266,135 @@ describe("spawn stdin ReadableStream", () => {
     expect(text.trim().split("\n").length).toBe(2);
   });
 
-  test("ReadableStream error handling", async () => {
-    const stream = new ReadableStream({
-      async start(controller) {
-        controller.enqueue("before error\n");
-        // Give time for the data to be consumed
-        await Bun.sleep(10);
-        controller.error(new Error("Stream error"));
-      },
-    });
-
-    await using proc = spawn({
-      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
-      stdin: stream,
-      stdout: "pipe",
-      env: bunEnv,
-    });
-
-    const text = await proc.stdout.text();
-    // Process should receive data before the error
-    expect(text).toBe("before error\n");
-
-    // Process should exit normally (the stream error happens after data is sent)
-    expect(await proc.exited).toBe(0);
-  });
-
-  test("erroring the stdin ReadableStream does not surface an unhandled rejection", async () => {
-    // Regression: once ReadableStream locked-state detection works, the FileSink
-    // teardown's stream.cancel() reaches readableStreamCancel, which returns a
-    // rejected promise for an already-errored stream. That promise must be marked
-    // handled, otherwise the stored error surfaces as an uncaught rejection in the
-    // parent process. Run it in a child so a stray rejection lands on its stderr.
+  // When the user's ReadableStream producer fails mid-stream (controller.error()),
+  // the child's stdin pipe is closed and the child sees EOF on the bytes delivered
+  // so far. The producer's error must still surface: it is delivered as the fourth
+  // `error` argument to onExit(proc, exitCode, signalCode, error). When no onExit
+  // handler is registered it is reported as an unhandled rejection instead, the
+  // same as an un-caught stream.pipeTo(sink). proc.exited stays truthful (resolves
+  // to the real exit code). Previously the pump's .then() rejection handler
+  // swallowed the error and the truncation was silent.
+  //
+  // The FileSink teardown's own stream.cancel() on the already-errored stream
+  // yields a rejected promise too; that one is internal and stays handled
+  // (markCancelResultHandled in ReadableStream.cpp), so exactly one report
+  // reaches the user and it carries the producer's reason verbatim.
+  async function expectStdinStreamErrorSurfaces(source: "start" | "pull", withOnExit: boolean) {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-        let uncaught = 0;
-        process.on("unhandledRejection", () => { uncaught++; });
-        const stream = new ReadableStream({
+        const reasons = [];
+        process.on("unhandledRejection", r => { reasons.push(String(r?.message ?? r)); });
+        const stream = new ReadableStream(${
+          source === "start"
+            ? `{
           async start(controller) {
-            controller.enqueue("hi\\n");
+            controller.enqueue("before error\\n");
             await Bun.sleep(10);
             controller.error(new Error("stdin stream boom"));
           },
+        }`
+            : `{
+          async pull(controller) {
+            this.n = (this.n ?? 0) + 1;
+            if (this.n <= 2) { controller.enqueue("chunk" + this.n + "\\n"); await Bun.sleep(10); return; }
+            controller.error(new Error("stdin stream boom"));
+          },
+        }`
         });
+        let onExitArgs = null;
+        let exitedRejection = null;
         const child = Bun.spawn({
           cmd: [process.execPath, "-e", "process.stdin.pipe(process.stdout)"],
           stdin: stream,
-          stdout: "ignore",
+          stdout: "pipe",
+          ${withOnExit ? `onExit(proc, code, signal, err) { onExitArgs = [code, signal, String(err?.message ?? err)]; },` : ``}
         });
+        const out = await child.stdout.text();
+        const code = await child.exited.catch(e => { exitedRejection = String(e?.message ?? e); return -1; });
+        // The no-onExit fallback creates its rejected promise inside
+        // on_process_exit; the tracker reports it on a later event-loop turn.
+        for (let i = 0; i < 10; i++) await Bun.sleep(0);
+        console.log(JSON.stringify({ out, code, onExitArgs, exitedRejection, reasons }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The handler intercepts the report; nothing leaks to stderr.
+    expect(stderr).not.toContain("stdin stream boom");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      out: source === "start" ? "before error\n" : "chunk1\nchunk2\n",
+      code: 0,
+      onExitArgs: withOnExit ? [0, null, "stdin stream boom"] : null,
+      exitedRejection: null,
+      reasons: withOnExit ? [] : ["stdin stream boom"],
+    });
+    expect(exitCode).toBe(0);
+  }
+
+  test("ReadableStream error mid-stream surfaces via onExit error arg (start)", async () => {
+    await expectStdinStreamErrorSurfaces("start", true);
+  });
+
+  test("ReadableStream error mid-stream surfaces via onExit error arg (pull)", async () => {
+    await expectStdinStreamErrorSurfaces("pull", true);
+  });
+
+  test("ReadableStream error mid-stream with no onExit surfaces as unhandledRejection (start)", async () => {
+    await expectStdinStreamErrorSurfaces("start", false);
+  });
+
+  test("ReadableStream error mid-stream with no onExit surfaces as unhandledRejection (pull)", async () => {
+    await expectStdinStreamErrorSurfaces("pull", false);
+  });
+
+  // When the producer errors while a chunk is still backpressured in the pipe,
+  // the pump's abrupt-completion path calls sink.close() -> FileSink::end()
+  // (which sets `done`) before the pump promise rejection lands. The error must
+  // still be stored for onExit rather than falling back to unhandledRejection.
+  test("ReadableStream error with a backpressured write surfaces via onExit", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const reasons = [];
+        process.on("unhandledRejection", r => { reasons.push(String(r?.message ?? r)); });
+        const chunk = Buffer.alloc(256 * 1024, "x");
+        const { promise: errored, resolve: markErrored } = Promise.withResolvers();
+        let n = 0;
+        const stream = new ReadableStream({
+          async pull(c) {
+            n++;
+            if (n === 1) { c.enqueue(chunk); await Bun.sleep(0); return; }
+            c.error(new Error("stdin stream boom"));
+            markErrored();
+          },
+        });
+        let onExitArgs = null;
+        const child = Bun.spawn({
+          // Child never reads stdin, so the 256 KiB chunk cannot drain.
+          cmd: [process.execPath, "-e", "setTimeout(() => {}, 1e9)"],
+          stdin: stream,
+          stdout: "ignore",
+          onExit(proc, code, signal, err) { onExitArgs = String(err?.message ?? err); },
+        });
+        await errored;
+        // One task turn so the pump's rejection microtask chain from c.error()
+        // reaches handle_reject_stream before the child is killed.
+        await Bun.sleep(0);
+        child.kill();
         await child.exited;
-        await Bun.sleep(50);
-        console.log("uncaught=" + uncaught);
+        // Give the unhandled-rejection tracker enough turns to report any stray
+        // rejection so asserting reasons: [] below is meaningful.
+        for (let i = 0; i < 10; i++) await Bun.sleep(0);
+        console.log(JSON.stringify({ onExitArgs, reasons }));
         `,
       ],
       env: bunEnv,
@@ -328,7 +404,10 @@ describe("spawn stdin ReadableStream", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("stdin stream boom");
-    expect(stdout.trim()).toBe("uncaught=0");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      onExitArgs: "stdin stream boom",
+      reasons: [],
+    });
     expect(exitCode).toBe(0);
   });
 

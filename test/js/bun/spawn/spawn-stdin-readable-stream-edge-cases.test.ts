@@ -28,17 +28,23 @@ describe("spawn stdin ReadableStream edge cases", () => {
       },
     });
 
+    const { promise: onExit, resolve } = Promise.withResolvers<unknown>();
     const proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
       env: bunEnv,
+      onExit(_proc, _code, _signal, err) {
+        resolve(err);
+      },
     });
 
     const text = await proc.stdout.text();
     // Should receive data before the exception
     expect(text).toContain("chunk 1\n");
     expect(text).toContain("chunk 2\n");
+    // The pull exception is delivered as onExit's error argument.
+    expect(((await onExit) as Error)?.message).toBe("Pull error");
   });
 
   test("ReadableStream writing after process closed", async () => {
@@ -447,33 +453,28 @@ describe("spawn stdin ReadableStream edge cases", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  test("ReadableStream with spawn options variations", async () => {
-    // Test with different spawn configurations
-    const configs = [
-      { stdout: "pipe", stderr: "ignore" },
-      { stdout: "pipe", stderr: "pipe" },
-      { stdout: "pipe", stderr: "inherit" },
-    ];
+  test.concurrent.each([
+    { stdout: "pipe", stderr: "ignore" } as const,
+    { stdout: "pipe", stderr: "pipe" } as const,
+    { stdout: "pipe", stderr: "inherit" } as const,
+  ])("ReadableStream with spawn options variations: stderr=$stderr", async config => {
+    const stream = new ReadableStream({
+      async pull(controller) {
+        await Bun.sleep(0);
+        controller.enqueue("test input");
+        controller.close();
+      },
+    });
 
-    for (const config of configs) {
-      const stream = new ReadableStream({
-        async pull(controller) {
-          await Bun.sleep(0);
-          controller.enqueue("test input");
-          controller.close();
-        },
-      });
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+      stdin: stream,
+      ...config,
+      env: bunEnv,
+    });
 
-      const proc = spawn({
-        cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
-        stdin: stream,
-        ...config,
-        env: bunEnv,
-      });
-
-      const stdout = await proc.stdout.text();
-      expect(stdout).toBe("test input");
-      expect(await proc.exited).toBe(0);
-    }
+    const stdout = await proc.stdout.text();
+    expect(stdout).toBe("test input");
+    expect(await proc.exited).toBe(0);
   });
 });

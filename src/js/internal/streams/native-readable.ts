@@ -143,8 +143,7 @@ function read(this: NativeReadable, maxToRead: number) {
       this[kHasResized] = true;
       this[kHighWaterMark] = Math.min(this[kHighWaterMark], result);
     } else if (typeof result === "number" && result < 0) {
-      // Start::ReadyOwned: the source meters via the pull view's size, so keep
-      // the view at Readable's own hwm and don't grow it.
+      // Start::ReadyOwned: don't grow the pull view past Readable's hwm.
       this[kHasResized] = true;
     }
     if ($isTypedArrayView(result) && result.byteLength > 0) {

@@ -365,11 +365,7 @@ impl ByteStream {
         if self.pending.get().state == streams::PendingState::Pending {
             debug_assert!(self.buffer.get().is_empty());
 
-            // The pending pull came without a view (C++ native-source adapter):
-            // hand the chunk off as its own allocation. `signal_drained` stays
-            // gated by the view-copy branch below so the producer is not
-            // resumed ahead of node:stream Readable's buffer (which that path
-            // meters via the view size).
+            // Pending pull with no view parked (C++ adapter): Owned handoff.
             if self.pending_value.get().get().is_none() {
                 let is_done = self.has_received_last_chunk.get();
                 let result = match stream {
@@ -562,10 +558,8 @@ impl ByteStream {
         bun_jsc::mark_binding!();
         debug_assert!(self.buffer_action.get().is_none());
 
-        // The C++ native-source adapter passes no pull view (`Start::ReadyOwned`
-        // → `m_sourceOwnsChunks`); hand off `self.buffer` as the chunk directly.
-        // native-readable.ts passes a view and meters via the copy path below so
-        // node:stream Readable's over-eager `_read` stays bounded.
+        // No pull view (C++ adapter, `m_sourceOwnsChunks`): Owned handoff.
+        // With a view (native-readable.ts): metered copy-into-view below.
         if buffer.is_empty() {
             if !self.buffer.get().is_empty() {
                 debug_assert!(self.value().is_empty());
@@ -586,8 +580,6 @@ impl ByteStream {
                 }
                 return streams::Result::Done;
             }
-            // No pull view: `on_data` dispatches on `pending_value` being empty
-            // to resolve with `Owned` instead of copying into a view.
             return streams::Result::Pending(self.pending.as_ptr());
         }
 

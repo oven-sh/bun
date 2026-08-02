@@ -249,8 +249,8 @@ impl Ls {
         }
         for &ch in &flag[1..] {
             match ch {
-                b'a' => opts.show_all = true,
-                b'A' => opts.show_almost_all = true,
+                b'a' => opts.dotfiles = DotfileMode::All,
+                b'A' => opts.dotfiles = DotfileMode::AlmostAll,
                 b'd' => opts.list_directories = true,
                 b'l' => opts.long_listing = true,
                 b'R' => opts.recursive = true,
@@ -513,19 +513,11 @@ impl ShellLsTask {
     }
 
     fn should_skip_entry(&self, name: &[u8]) -> bool {
-        if self.opts.show_all {
-            return false;
+        match self.opts.dotfiles {
+            DotfileMode::All => false,
+            DotfileMode::AlmostAll => name == b"." || name == b"..",
+            DotfileMode::Hide => name.first() == Some(&b'.'),
         }
-        // Show all directory entries whose name begin with a dot (`.`), EXCEPT
-        // `.` and `..`.
-        if self.opts.show_almost_all {
-            if name == b"." || name == b".." {
-                return true;
-            }
-        } else if name.first() == Some(&b'.') {
-            return true;
-        }
-        false
     }
 
     // TODO more complex output like multi-column
@@ -761,14 +753,22 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {
     }
 }
 
+/// `-a` vs `-A`; the last one on the command line wins (GNU coreutils).
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum DotfileMode {
+    #[default]
+    Hide,
+    /// `-A`, `--almost-all` — show dotfiles but skip `.` and `..`.
+    AlmostAll,
+    /// `-a`, `--all` — show everything including `.` and `..`.
+    All,
+}
+
 /// Only the fields actually consulted are kept; the rest are recognised by
 /// `parse_flag` but not stored.
 #[derive(Clone, Copy, Default)]
 pub struct Opts {
-    /// `-a`, `--all` — do not ignore entries starting with `.`
-    pub(crate) show_all: bool,
-    /// `-A`, `--almost-all` — like `-a` but skip `.` and `..`
-    pub(crate) show_almost_all: bool,
+    pub(crate) dotfiles: DotfileMode,
     /// `-d`, `--directory` — list directories themselves, not their contents
     pub(crate) list_directories: bool,
     /// `-l` — use a long listing format

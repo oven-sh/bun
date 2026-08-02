@@ -868,12 +868,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             .debug
             .offline_mode_setting
             .unwrap_or(OfflineMode::Online);
-        b.resolver.opts.prefer_offline_install = offline == OfflineMode::Offline;
-        // resolver's forward-decl `BundleOptions` lacks
-        // `prefer_latest_install`; only the bundler-side mirror carries it.
+        b.resolver.opts.install_preference = offline;
         b.options.global_cache = ctx.debug.global_cache;
-        b.options.prefer_offline_install = offline == OfflineMode::Offline;
-        b.options.prefer_latest_install = offline == OfflineMode::Latest;
+        b.options.install_preference = offline;
         b.resolver.env_loader = ::core::ptr::NonNull::new(b.env);
 
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;

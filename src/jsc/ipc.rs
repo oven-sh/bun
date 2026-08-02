@@ -252,23 +252,8 @@ pub enum IPCDecodeError {
     /// Format could not be recognized. Report an error and close the socket.
     #[error("InvalidFormat")]
     InvalidFormat,
-    // —— bun.JSError variants ——
-    #[error("JSError")]
-    JSError,
-    #[error("JSTerminated")]
-    JSTerminated,
     #[error("OutOfMemory")]
     OutOfMemory,
-}
-
-impl From<JsError> for IPCDecodeError {
-    fn from(e: JsError) -> Self {
-        match e {
-            JsError::Thrown => IPCDecodeError::JSError,
-            JsError::Terminated => IPCDecodeError::JSTerminated,
-            JsError::OutOfMemory => IPCDecodeError::OutOfMemory,
-        }
-    }
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -372,7 +357,17 @@ mod advanced {
                 }
 
                 let message = &data[HEADER_LENGTH..][..message_len as usize];
-                let deserialized = JSValue::deserialize(message, global)?;
+                let deserialized = match JSValue::deserialize(message, global) {
+                    Ok(v) => v,
+                    Err(JsError::Thrown) | Err(JsError::Terminated) => {
+                        // Malformed structured-clone bytes from the peer throw a TypeError
+                        // inside deserialize(). Clear it so it is not reported as this
+                        // process's own uncaught exception; the caller closes the channel.
+                        global.clear_exception();
+                        return Err(IPCDecodeError::InvalidFormat);
+                    }
+                    Err(JsError::OutOfMemory) => return Err(IPCDecodeError::OutOfMemory),
+                };
 
                 Ok(DecodeIPCMessageResult {
                     bytes_consumed: HEADER_LENGTH_U32 + message_len,
@@ -1916,11 +1911,7 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
                         log!("hit NotEnoughBytes");
                         return;
                     }
-                    Err(
-                        IPCDecodeError::InvalidFormat
-                        | IPCDecodeError::JSError
-                        | IPCDecodeError::JSTerminated,
-                    ) => {
+                    Err(IPCDecodeError::InvalidFormat) => {
                         send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
                         return;
                     }
@@ -1958,11 +1949,7 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
                             log!("hit NotEnoughBytes");
                             return;
                         }
-                        Err(
-                            IPCDecodeError::InvalidFormat
-                            | IPCDecodeError::JSError
-                            | IPCDecodeError::JSTerminated,
-                        ) => {
+                        Err(IPCDecodeError::InvalidFormat) => {
                             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
                             return;
                         }
@@ -2002,11 +1989,7 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
                         log!("hit NotEnoughBytes2");
                         return;
                     }
-                    Err(
-                        IPCDecodeError::InvalidFormat
-                        | IPCDecodeError::JSError
-                        | IPCDecodeError::JSTerminated,
-                    ) => {
+                    Err(IPCDecodeError::InvalidFormat) => {
                         send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
                         return;
                     }
@@ -2168,11 +2151,7 @@ pub mod IPCHandlers {
                                 log!("hit NotEnoughBytes3");
                                 return;
                             }
-                            Err(
-                                IPCDecodeError::InvalidFormat
-                                | IPCDecodeError::JSError
-                                | IPCDecodeError::JSTerminated,
-                            ) => {
+                            Err(IPCDecodeError::InvalidFormat) => {
                                 send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
                                 return;
                             }
@@ -2216,11 +2195,7 @@ pub mod IPCHandlers {
                                     log!("hit NotEnoughBytes3");
                                     return;
                                 }
-                                Err(
-                                    IPCDecodeError::InvalidFormat
-                                    | IPCDecodeError::JSError
-                                    | IPCDecodeError::JSTerminated,
-                                ) => {
+                                Err(IPCDecodeError::InvalidFormat) => {
                                     send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
                                     return;
                                 }

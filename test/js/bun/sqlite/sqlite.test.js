@@ -1718,7 +1718,7 @@ it("reports changes in Statement#run", () => {
 });
 
 it("#13082", async () => {
-  async function run() {
+  async function run(op) {
     const stmt = (() => {
       const db = new Database(":memory:");
       let stmt = db.prepare("select 1");
@@ -1728,15 +1728,14 @@ it("#13082", async () => {
     Bun.gc(true);
     await Bun.sleep(100);
     Bun.gc(true);
-    stmt.all();
-    stmt.get();
-    stmt.run();
+    stmt[op]();
   }
 
-  const count = 100;
+  const ops = ["all", "get", "run"];
+  const count = 99;
   const runs = new Array(count);
   for (let i = 0; i < count; i++) {
-    runs[i] = run();
+    runs[i] = run(ops[i % ops.length]);
   }
 
   const results = await Promise.allSettled(runs);

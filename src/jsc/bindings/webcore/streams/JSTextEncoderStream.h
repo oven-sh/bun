@@ -18,7 +18,6 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static JSTextEncoderStream* create(JSC::VM&, JSC::Structure*);
-    static void destroy(JSC::JSCell*);
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
@@ -36,12 +35,13 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
-    // the Rust TextEncoderStreamEncoder (lone-surrogate buffering); freed by destroy().
+    // the Rust TextEncoderStreamEncoder (lone-surrogate state + reusable scratch). Freed
+    // eagerly at ClearAlgorithms; a vm.heap.addFinalizer registered in the constructor is
+    // the idempotent fallback for an abandoned stream.
     void* m_encoder { nullptr };
 
 private:
     JSTextEncoderStream(JSC::VM&, JSC::Structure*);
-    ~JSTextEncoderStream();
 };
 
 using JSTextEncoderStreamConstructor = JSStreamConstructor<JSTextEncoderStream>;

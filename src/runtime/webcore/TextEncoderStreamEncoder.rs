@@ -13,6 +13,10 @@ bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
 #[bun_jsc::JsClass]
 pub struct TextEncoderStreamEncoder {
     pending_lead_surrogate: Cell<Option<u16>>,
+    /// Reusable output buffer for the native-sink path so a
+    /// `ByteStream → TextEncoderStream → JSSink` chain allocates nothing per
+    /// chunk. Borrowed only after user-JS coercion has run.
+    scratch: core::cell::RefCell<Vec<u8>>,
 }
 
 impl TextEncoderStreamEncoder {
@@ -47,23 +51,29 @@ impl TextEncoderStreamEncoder {
     }
 
     fn encode_latin1(&self, global: &JSGlobalObject, input: &[u8]) -> JSValue {
+        if input.is_empty() {
+            return JSUint8Array::create_empty(global);
+        }
+        let mut buffer = Vec::new();
+        self.encode_latin1_into(input, &mut buffer);
+        JSUint8Array::from_bytes(global, buffer.into())
+    }
+
+    fn encode_latin1_into(&self, input: &[u8], buffer: &mut Vec<u8>) {
         bun_output::scoped_log!(
             TextEncoderStreamEncoder,
             "encodeLatin1: \"{}\"",
             bstr::BStr::new(input)
         );
-
         if input.is_empty() {
-            return JSUint8Array::create_empty(global);
+            return;
         }
 
-        let prepend_replacement_len: usize = 'prepend_replacement: {
-            if self.pending_lead_surrogate.take().is_some() {
-                // no latin1 surrogate pairs
-                break 'prepend_replacement 3;
-            }
-
-            break 'prepend_replacement 0;
+        let prepend_replacement_len: usize = if self.pending_lead_surrogate.take().is_some() {
+            // no latin1 surrogate pairs
+            3
+        } else {
+            0
         };
         // In a previous benchmark, counting the length took about as much time as allocating the buffer.
         //
@@ -72,7 +82,7 @@ impl TextEncoderStreamEncoder {
         // 278.00 ms   13.0%    278.00 ms           simdutf::arm64::implementation::utf8_length_from_latin1(char const*, unsigned long) const
         //
         //
-        let mut buffer: Vec<u8> = Vec::with_capacity(input.len() + prepend_replacement_len);
+        buffer.reserve(input.len() + prepend_replacement_len);
         if prepend_replacement_len > 0 {
             buffer.extend_from_slice(&[0xef, 0xbf, 0xbd]);
         }
@@ -82,7 +92,7 @@ impl TextEncoderStreamEncoder {
             // SAFETY: copy_latin1_into_utf8 writes initialized bytes into the spare capacity and
             // returns the number written; fill_spare commits exactly that many.
             let result = unsafe {
-                bun_core::vec::fill_spare(&mut buffer, 0, |spare| {
+                bun_core::vec::fill_spare(buffer, 0, |spare| {
                     let r = strings::copy_latin1_into_utf8(spare, remain);
                     (r.written as usize, r)
                 })
@@ -98,19 +108,30 @@ impl TextEncoderStreamEncoder {
         debug_assert!(
             buffer.len() == (simdutf::length::utf8::from::latin1(input) + prepend_replacement_len)
         );
-
-        JSUint8Array::from_bytes(global, buffer.into())
     }
 
     fn encode_utf16(&self, global: &JSGlobalObject, input: &[u16]) -> JSValue {
+        if input.is_empty() {
+            return JSUint8Array::create_empty(global);
+        }
+        let mut buf = Vec::new();
+        if self.encode_utf16_into(input, &mut buf).is_err() {
+            return global.throw_out_of_memory_value();
+        }
+        if buf.is_empty() {
+            return JSUint8Array::create_empty(global);
+        }
+        JSUint8Array::from_bytes(global, buf.into())
+    }
+
+    fn encode_utf16_into(&self, input: &[u16], buf: &mut Vec<u8>) -> Result<(), ()> {
         bun_output::scoped_log!(
             TextEncoderStreamEncoder,
             "encodeUTF16: \"{}\"",
             bun_core::fmt::utf16(input)
         );
-
         if input.is_empty() {
-            return JSUint8Array::create_empty(global);
+            return Ok(());
         }
 
         #[derive(Clone, Copy)]
@@ -148,10 +169,8 @@ impl TextEncoderStreamEncoder {
 
                     remain = &remain[1..];
                     if remain.is_empty() {
-                        return JSUint8Array::from_bytes_copy(
-                            global,
-                            &sequence[0..converted.utf8_width() as usize],
-                        );
+                        buf.extend_from_slice(&sequence[0..converted.utf8_width() as usize]);
+                        return Ok(());
                     }
 
                     break 'prepend Some(Prepend::from_sequence(sequence, converted.utf8_width()));
@@ -164,7 +183,7 @@ impl TextEncoderStreamEncoder {
 
         let length = simdutf::length::utf8::from::utf16::le(remain);
 
-        let mut buf: Vec<u8> = Vec::with_capacity(
+        buf.reserve(
             length
                 + match prepend {
                     Some(pre) => pre.len as usize,
@@ -179,7 +198,7 @@ impl TextEncoderStreamEncoder {
         // SAFETY: simdutf writes initialized bytes into the spare capacity and returns the
         // count; on non-SUCCESS we commit 0 and fall through to the slow path.
         let result = unsafe {
-            bun_core::vec::fill_spare(&mut buf, 0, |spare| {
+            bun_core::vec::fill_spare(buf, 0, |spare| {
                 let r = simdutf::convert::utf16::to::utf8::with_errors::le(remain, spare);
                 (
                     if r.status == simdutf::Status::SUCCESS {
@@ -192,25 +211,15 @@ impl TextEncoderStreamEncoder {
             })
         };
 
-        if result.status == simdutf::Status::SUCCESS {
-            JSUint8Array::from_bytes(global, buf.into())
-        } else {
+        if result.status != simdutf::Status::SUCCESS {
             // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
-            let lead_surrogate = match strings::to_utf8_list_with_type_bun::<true>(&mut buf, remain)
-            {
-                Ok(v) => v,
-                Err(_) => return global.throw_out_of_memory_value(),
-            };
-
+            let lead_surrogate =
+                strings::to_utf8_list_with_type_bun::<true>(buf, remain).map_err(|_| ())?;
             if let Some(pending_lead) = lead_surrogate {
                 self.pending_lead_surrogate.set(Some(pending_lead));
-                if buf.is_empty() {
-                    return JSUint8Array::create_empty(global);
-                }
             }
-
-            JSUint8Array::from_bytes(global, buf.into())
         }
+        Ok(())
     }
 
     #[bun_jsc::host_fn(method)]
@@ -278,4 +287,92 @@ pub extern "C" fn TextEncoderStreamEncoder__flushForStream(
 ) -> JSValue {
     // SAFETY: as in `__encodeForStream`.
     unsafe { &*this }.flush_body(global)
+}
+
+unsafe extern "C" {
+    fn Bun__JSSink__writeBytesById(
+        sink_id: u8,
+        sink_ptr: *mut core::ffi::c_void,
+        global: &JSGlobalObject,
+        ptr: *const u8,
+        len: usize,
+    ) -> JSValue;
+}
+
+/// Cap on the reusable scratch buffer so a single huge chunk doesn't pin
+/// that much memory for the life of the encoder.
+const SCRATCH_CAP: usize = 64 * 1024;
+
+/// Native-sink transform step: encodes `chunk` into the encoder's reusable
+/// scratch buffer and writes it straight to the sink, so a
+/// `ByteStream → TextEncoderStream → JSSink` chain allocates no
+/// `JSUint8Array` per chunk. Returns the sink's `write_bytes` result (a
+/// number; negative means backpressure), `undefined` for an empty output, or
+/// `JSValue::zero` with the exception pending on `global`.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
+    this: *mut TextEncoderStreamEncoder,
+    global: &JSGlobalObject,
+    chunk: JSValue,
+    sink_id: u8,
+    sink_ptr: *mut core::ffi::c_void,
+) -> JSValue {
+    let Ok(str) = chunk.get_zig_string(global) else {
+        return JSValue::ZERO;
+    };
+    // SAFETY: `this` is the live encoder owned by the calling JS cell; taken
+    // after the coercion so no user JS runs while the borrow is live.
+    let this = unsafe { &*this };
+    let mut scratch = this.scratch.borrow_mut();
+    scratch.clear();
+    if str.is_16bit() {
+        if this
+            .encode_utf16_into(str.utf16_slice_aligned(), &mut scratch)
+            .is_err()
+        {
+            return global.throw_out_of_memory_value();
+        }
+    } else {
+        this.encode_latin1_into(str.slice(), &mut scratch);
+    }
+    if scratch.is_empty() {
+        return JSValue::UNDEFINED;
+    }
+    // SAFETY: `sink_ptr` is a live JSSink of type `sink_id` (the C++ caller
+    // null-checks it before attaching); the sink copies what it needs.
+    let wrote = unsafe {
+        Bun__JSSink__writeBytesById(sink_id, sink_ptr, global, scratch.as_ptr(), scratch.len())
+    };
+    if scratch.capacity() > SCRATCH_CAP {
+        *scratch = Vec::new();
+    }
+    wrote
+}
+
+/// Native-sink flush step; see `__encodeIntoSink` for the return contract.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
+    this: *mut TextEncoderStreamEncoder,
+    global: &JSGlobalObject,
+    sink_id: u8,
+    sink_ptr: *mut core::ffi::c_void,
+) -> JSValue {
+    // SAFETY: as in `__encodeForStream`.
+    let this = unsafe { &*this };
+    if this.pending_lead_surrogate.get().is_none() {
+        return JSValue::UNDEFINED;
+    }
+    const REPLACEMENT: [u8; 3] = [0xef, 0xbf, 0xbd];
+    // SAFETY: as in `__encodeIntoSink`.
+    unsafe {
+        Bun__JSSink__writeBytesById(
+            sink_id,
+            sink_ptr,
+            global,
+            REPLACEMENT.as_ptr(),
+            REPLACEMENT.len(),
+        )
+    }
 }

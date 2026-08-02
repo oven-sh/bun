@@ -33,9 +33,6 @@ const SafePromisePrototypeFinally = $Promise.prototype.finally;
 
 const constants_zlib = $processBindingConstants.zlib;
 
-const kValidateChunk = Symbol("kValidateChunk");
-const kDestroyOnSyncError = Symbol("kDestroyOnSyncError");
-
 function tryTransferToNativeReadable(stream, options) {
   const ptr = stream.$bunNativePtr;
   if (!ptr || ptr === -1) {
@@ -191,7 +188,7 @@ function handleKnownInternalErrors(cause: Error | null): Error | null {
 
 const noop = () => {};
 
-function newWritableStreamFromStreamWritable(streamWritable, options = kEmptyObject) {
+function newWritableStreamFromStreamWritable(streamWritable) {
   // Not using the internal/streams/utils isWritableNodeStream utility
   // here because it will return false if streamWritable is a Duplex
   // whose writable option is false. For a Duplex that is not writable,
@@ -268,34 +265,20 @@ function newWritableStreamFromStreamWritable(streamWritable, options = kEmptyObj
       },
 
       write(chunk) {
-        try {
-          options[kValidateChunk]?.(chunk);
-          if (!streamWritable.writableObjectMode && isAnyArrayBuffer(chunk)) {
-            chunk = new Uint8Array(chunk);
+        if (!streamWritable.writableObjectMode && isAnyArrayBuffer(chunk)) {
+          chunk = new Uint8Array(chunk);
+        }
+        const needDrainBefore = streamWritable.writableNeedDrain;
+        if (needDrainBefore || !streamWritable.write(chunk)) {
+          backpressurePromise = PromiseWithResolvers();
+          // write() may set writableNeedDrain; the post-write value is
+          // what decides whether we resolve immediately.
+          if (!streamWritable.writableNeedDrain) {
+            backpressurePromise.resolve();
           }
-          const needDrainBefore = streamWritable.writableNeedDrain;
-          if (needDrainBefore || !streamWritable.write(chunk)) {
-            backpressurePromise = PromiseWithResolvers();
-            // write() may set writableNeedDrain; the post-write value is
-            // what decides whether we resolve immediately.
-            if (!streamWritable.writableNeedDrain) {
-              backpressurePromise.resolve();
-            }
-            return SafePromisePrototypeFinally.$call(backpressurePromise.promise, () => {
-              backpressurePromise = undefined;
-            });
-          }
-        } catch (error) {
-          // When the kDestroyOnSyncError flag is set (e.g. for
-          // CompressionStream), a sync throw must also destroy the
-          // stream so the readable side is errored too. Without this
-          // the readable side hangs forever. This replicates the
-          // TransformStream semantics: error both sides on any throw
-          // in the transform path.
-          if (options[kDestroyOnSyncError]) {
-            destroyer(streamWritable, error);
-          }
-          throw error;
+          return SafePromisePrototypeFinally.$call(backpressurePromise.promise, () => {
+            backpressurePromise = undefined;
+          });
         }
       },
 
@@ -634,14 +617,8 @@ function newReadableWritablePairFromDuplex(duplex, options = kEmptyObject) {
     return { readable, writable };
   }
 
-  const writableOptions = {
-    __proto__: null,
-    [kValidateChunk]: options[kValidateChunk],
-    [kDestroyOnSyncError]: options[kDestroyOnSyncError],
-  };
-
   const writable = isWritable(duplex)
-    ? newWritableStreamFromStreamWritable(duplex, writableOptions)
+    ? newWritableStreamFromStreamWritable(duplex)
     : new WritableStream();
 
   if (!isWritable(duplex)) writable.close();
@@ -847,7 +824,5 @@ export default {
   newStreamReadableFromReadableStream,
   newReadableWritablePairFromDuplex,
   newStreamDuplexFromReadableWritablePair,
-  kValidateChunk,
-  kDestroyOnSyncError,
   _ReadableFromWeb: ReadableFromWeb,
 };

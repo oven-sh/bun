@@ -1,7 +1,7 @@
 // JSTransformStream — the TransformStream instance cell, and the C++ base of the
 // native TransformerKind specializations (JSCompressionStream, JSDecompressionStream,
-// JSTextEncoderStream, JSTextDecoderStream). Destructible so those subclasses can
-// free their Rust state; this base's destructor is trivial.
+// JSTextEncoderStream, JSTextDecoderStream). The subclasses free their native state
+// eagerly at ClearAlgorithms with vm.heap.addFinalizer as a fallback; no destroy().
 #pragma once
 
 #include "root.h"
@@ -9,20 +9,17 @@
 
 #include "JSDOMGlobalObject.h"
 #include "StreamConstructor.h"
-#include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/JSPromise.h>
 
 namespace WebCore {
 
-class JSTransformStream : public JSC::JSDestructibleObject {
+class JSTransformStream : public JSC::JSNonFinalObject {
 public:
-    using Base = JSC::JSDestructibleObject;
+    using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
 
     // Internal (non-user) allocation entry point (setUpNativeTransformStream).
     static JSTransformStream* create(JSC::VM&, JSC::Structure*);
-    static void destroy(JSC::JSCell*);
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
@@ -30,8 +27,7 @@ public:
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit: m_readable, m_writable, m_controller,
-    // m_backpressureChangePromise, m_pendingWriteChunk.
+    // visitChildrenImpl MUST visit every WriteBarrier field below.
     DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
@@ -59,6 +55,10 @@ public:
     bool m_backpressure : 1 { false };
     // [[Detached]] (transferable streams are not implemented; the slot exists)
     bool m_detached : 1 { false };
+    // Native transform/flush arm is on the stack (coder pointer live); a re-entrant
+    // ClearAlgorithms defers the eager free to the arm's epilogue instead.
+    bool m_nativeStateInUse : 1 { false };
+    bool m_nativeStateReleasePending : 1 { false };
 
     // Native byte-producing subclasses only: when `readStreamIntoSink` attaches a
     // native JSSink controller to this transform, the transform arms write coder

@@ -26,7 +26,7 @@
 #include <JavaScriptCore/TopExceptionScope.h>
 
 // TextDecoder.rs
-extern "C" void* TextDecoder__createForStream(JSC::JSGlobalObject*, JSC::EncodedJSValue label, bool fatal, bool ignoreBOM);
+extern "C" void* TextDecoder__createForStream(JSC::JSGlobalObject*, JSC::EncodedJSValue label, bool fatal, bool ignoreBOM, bool* outUtf8FastPath);
 extern "C" void TextDecoder__destroyForStream(void*);
 extern "C" BunString TextDecoder__encodingLabelForStream(const void*);
 extern "C" JSC::EncodedJSValue TextDecoder__decodeForStream(void*, JSC::JSGlobalObject*, const uint8_t* input, size_t inputLen, bool stream);
@@ -153,10 +153,12 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextDecoderStreamConst
         ignoreBOM = ignoreBOMValue.toBoolean(lexicalGlobalObject);
     }
 
-    // Validates label (WebIDL DOMString coercion — may run user JS).
-    void* decoder = TextDecoder__createForStream(lexicalGlobalObject, JSValue::encode(label), fatal, ignoreBOM);
+    // Validates label (WebIDL DOMString coercion — may run user JS). For utf-8 + !fatal no
+    // Rust decoder is allocated: the transform/flush arms use streamingUTF8Decode instead.
+    bool utf8FastPath = false;
+    void* decoder = TextDecoder__createForStream(lexicalGlobalObject, JSValue::encode(label), fatal, ignoreBOM, &utf8FastPath);
     RETURN_IF_EXCEPTION(scope, {});
-    ASSERT(decoder);
+    ASSERT(utf8FastPath == !decoder);
 
     auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
     if (scope.exception()) [[unlikely]] {
@@ -167,6 +169,12 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextDecoderStreamConst
     stream->m_decoder = decoder;
     stream->m_fatal = fatal;
     stream->m_ignoreBOM = ignoreBOM;
+    if (utf8FastPath)
+        stream->m_utf8State.bomSeen = ignoreBOM;
+    else
+        vm.heap.addFinalizer(stream, static_cast<JSC::Heap::CFinalizer>([](JSCell* cell) {
+            TextDecoder__destroyForStream(std::exchange(static_cast<JSTextDecoderStream*>(cell)->m_decoder, nullptr));
+        }));
 
     setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::TextDecoder);
     RETURN_IF_EXCEPTION(scope, {});
@@ -199,8 +207,10 @@ JSC_DEFINE_HOST_FUNCTION(jsTextDecoderStreamPrototype_inspectCustom, (JSGlobalOb
     if (!thisObject) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextDecoderStream"_s);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    BunString label = TextDecoder__encodingLabelForStream(thisObject->m_decoder);
-    data->putDirect(vm, Identifier::fromString(vm, "encoding"_s), Bun::toJS(lexicalGlobalObject, label), 0);
+    JSValue encodingLabel = thisObject->m_decoder
+        ? Bun::toJS(lexicalGlobalObject, TextDecoder__encodingLabelForStream(thisObject->m_decoder))
+        : jsNontrivialString(vm, "utf-8"_s);
+    data->putDirect(vm, Identifier::fromString(vm, "encoding"_s), encodingLabel, 0);
     data->putDirect(vm, Identifier::fromString(vm, "fatal"_s), jsBoolean(thisObject->m_fatal), 0);
     data->putDirect(vm, Identifier::fromString(vm, "ignoreBOM"_s), jsBoolean(thisObject->m_ignoreBOM), 0);
     data->putDirect(vm, Identifier::fromString(vm, "readable"_s), thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined(), 0);
@@ -223,17 +233,6 @@ const ClassInfo JSTextDecoderStream::s_info = { "TextDecoderStream"_s, &Base::s_
 JSTextDecoderStream::JSTextDecoderStream(VM& vm, Structure* structure)
     : Base(vm, structure)
 {
-}
-
-JSTextDecoderStream::~JSTextDecoderStream()
-{
-    if (auto* decoder = std::exchange(m_decoder, nullptr))
-        TextDecoder__destroyForStream(decoder);
-}
-
-void JSTextDecoderStream::destroy(JSCell* cell)
-{
-    static_cast<JSTextDecoderStream*>(cell)->~JSTextDecoderStream();
 }
 
 JSTextDecoderStream* JSTextDecoderStream::create(VM& vm, Structure* structure)
@@ -294,6 +293,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_encoding, (JSGlobalO
     const auto* stream = dynamicDowncast<JSTextDecoderStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, scope, "TextDecoderStream"_s, "encoding"_s);
+    if (!stream->m_decoder)
+        return JSValue::encode(jsNontrivialString(vm, "utf-8"_s));
     BunString label = TextDecoder__encodingLabelForStream(stream->m_decoder);
     return JSValue::encode(Bun::toJS(lexicalGlobalObject, label));
 }
@@ -376,7 +377,13 @@ static JSPromise* decodeAndEnqueue(JSGlobalObject* globalObject, JSTextDecoderSt
     JSValue thrown;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        JSValue decoded = JSValue::decode(TextDecoder__decodeForStream(stream->m_decoder, globalObject, input, inputLen, streaming));
+        JSValue decoded;
+        if (stream->m_decoder) {
+            decoded = JSValue::decode(TextDecoder__decodeForStream(stream->m_decoder, globalObject, input, inputLen, streaming));
+        } else {
+            auto* s = streamingUTF8Decode(globalObject, std::span<const uint8_t> { input, inputLen }, stream->m_utf8State, /* flush */ !streaming);
+            decoded = s ? JSValue(s) : jsUndefined();
+        }
         if (!catchScope.exception() && decoded.isString() && asString(decoded)->length())
             transformStreamDefaultControllerEnqueue(globalObject, controller, decoded);
         if (catchScope.exception()) [[unlikely]]

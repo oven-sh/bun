@@ -77,13 +77,13 @@ static JSPromise* performFlushAlgorithm(JSC::VM& vm, JSGlobalObject* globalObjec
     case TransformerKind::Identity:
         break;
     case TransformerKind::TextEncoder:
-        RELEASE_AND_RETURN(scope, textEncoderStreamFlush(globalObject, uncheckedDowncast<JSTextEncoderStream>(controller->m_algorithmContext.get()), controller));
+        RELEASE_AND_RETURN(scope, runNativeArm<JSTextEncoderStream>(controller->m_algorithmContext.get(), [&](auto* s) { return textEncoderStreamFlush(globalObject, s, controller); }));
     case TransformerKind::TextDecoder:
-        RELEASE_AND_RETURN(scope, textDecoderStreamFlush(globalObject, uncheckedDowncast<JSTextDecoderStream>(controller->m_algorithmContext.get()), controller));
+        RELEASE_AND_RETURN(scope, runNativeArm<JSTextDecoderStream>(controller->m_algorithmContext.get(), [&](auto* s) { return textDecoderStreamFlush(globalObject, s, controller); }));
     case TransformerKind::Compression:
-        RELEASE_AND_RETURN(scope, compressionStreamFlush(globalObject, uncheckedDowncast<JSCompressionStream>(controller->m_algorithmContext.get()), controller));
+        RELEASE_AND_RETURN(scope, runNativeArm<JSCompressionStream>(controller->m_algorithmContext.get(), [&](auto* s) { return compressionStreamFlush(globalObject, s, controller); }));
     case TransformerKind::Decompression:
-        RELEASE_AND_RETURN(scope, decompressionStreamFlush(globalObject, uncheckedDowncast<JSDecompressionStream>(controller->m_algorithmContext.get()), controller));
+        RELEASE_AND_RETURN(scope, runNativeArm<JSDecompressionStream>(controller->m_algorithmContext.get(), [&](auto* s) { return decompressionStreamFlush(globalObject, s, controller); }));
     }
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
@@ -101,31 +101,6 @@ static JSPromise* performCancelAlgorithm(JSC::VM& vm, JSGlobalObject* globalObje
         }
     }
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
-}
-
-JSTransformStream* createTransformStream(JSGlobalObject* globalObject, TransformerKind kind, JSCell* algorithmContext, double writableHighWaterMark, JSObject* writableSizeAlgorithm, double readableHighWaterMark, JSObject* readableSizeAlgorithm)
-{
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(writableHighWaterMark >= 0);
-    ASSERT(readableHighWaterMark >= 0);
-    auto* domGlobalObject = defaultGlobalObject(globalObject);
-
-    auto* stream = JSTransformStream::create(vm, WebCore::getDOMStructure<JSTransformStream>(vm, *domGlobalObject));
-    auto* startPromise = JSPromise::create(vm, globalObject->promiseStructure());
-    initializeTransformStream(globalObject, stream, startPromise, writableHighWaterMark, writableSizeAlgorithm, readableHighWaterMark, readableSizeAlgorithm);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    auto* controller = JSTransformStreamDefaultController::create(vm, WebCore::getDOMStructure<JSTransformStreamDefaultController>(vm, *domGlobalObject));
-    controller->m_transformerKind = kind;
-    if (algorithmContext)
-        controller->m_algorithmContext.set(vm, controller, algorithmContext);
-    setUpTransformStreamDefaultController(vm, stream, controller);
-
-    // The internal kinds' start algorithm is trivial.
-    resolvePromise(globalObject, startPromise, jsUndefined());
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    return stream;
 }
 
 void setUpNativeTransformStream(JSGlobalObject* globalObject, JSTransformStream* stream, TransformerKind kind)

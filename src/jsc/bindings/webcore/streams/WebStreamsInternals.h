@@ -434,8 +434,6 @@ void writableStreamDefaultControllerWrite(JSC::JSGlobalObject*, JSWritableStream
 
 // TransformStreamOperations.cpp
 
-// The internal-creation parallel of createReadableStream.
-JSTransformStream* createTransformStream(JSC::JSGlobalObject*, TransformerKind, JSC::JSCell* algorithmContext, double writableHighWaterMark = 1, JSC::JSObject* writableSizeAlgorithm = nullptr, double readableHighWaterMark = 0, JSC::JSObject* readableSizeAlgorithm = nullptr); // userJS: yes — TransformStreamOperations.cpp
 // Initializes an already-allocated JSTransformStream SUBCLASS as a TransformStream with the
 // given native transformer kind (writable/readable HWM = 1/1, no size algorithms, trivial
 // start). The controller's algorithmContext is `stream` itself.
@@ -459,6 +457,22 @@ void transformStreamDefaultControllerClearAlgorithms(JSTransformStreamDefaultCon
 // A sanctioned takeAbruptCompletion catch site (catches the readable-side enqueue's abrupt
 // completion, errors the writable, then throws stream.[[readable]].[[storedError]]).
 void transformStreamDefaultControllerEnqueue(JSC::JSGlobalObject*, JSTransformStreamDefaultController*, JSC::JSValue chunk); // userJS: yes; throws — JSTransformStreamDefaultController.cpp
+void nativeTransformReleaseState(JSTransformStream*); // userJS: no — JSTransformStreamDefaultController.cpp
+
+// Brackets a native transform/flush arm so a re-entrant ClearAlgorithms (reached via a
+// reader.cancel() inside the arm's chunk coercion) defers nativeTransformReleaseState
+// until control unwinds back here.
+template<typename JSStream, typename Arm>
+JSC::JSPromise* runNativeArm(JSC::JSCell* context, Arm&& arm)
+{
+    auto* stream = uncheckedDowncast<JSStream>(context);
+    stream->m_nativeStateInUse = true;
+    JSC::JSPromise* result = arm(stream);
+    stream->m_nativeStateInUse = false;
+    if (stream->m_nativeStateReleasePending) [[unlikely]]
+        nativeTransformReleaseState(stream);
+    return result;
+}
 void transformStreamDefaultControllerError(JSC::JSGlobalObject*, JSTransformStreamDefaultController*, JSC::JSValue error); // userJS: yes — JSTransformStreamDefaultController.cpp
 JSC::JSPromise* transformStreamDefaultControllerPerformTransform(JSC::JSGlobalObject*, JSTransformStreamDefaultController*, JSC::JSValue chunk); // userJS: yes (user transform) — JSTransformStreamDefaultController.cpp
 void transformStreamDefaultControllerTerminate(JSC::JSGlobalObject*, JSTransformStreamDefaultController*); // userJS: yes — JSTransformStreamDefaultController.cpp

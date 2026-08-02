@@ -224,11 +224,6 @@ JSTransformStream::JSTransformStream(VM& vm, Structure* structure)
 {
 }
 
-void JSTransformStream::destroy(JSCell* cell)
-{
-    static_cast<JSTransformStream*>(cell)->~JSTransformStream();
-}
-
 void JSTransformStream::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
@@ -302,6 +297,7 @@ void JSTransformStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_backpressureChangePromise, "backpressureChangePromise"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pendingWriteChunk, "pendingWriteChunk"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_nativeSinkCell, "nativeSinkCell"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_nativeSinkReadyPromise, "nativeSinkReadyPromise"_s);
 }
 
 // Prototype host functions

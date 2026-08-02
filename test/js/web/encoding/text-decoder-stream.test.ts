@@ -191,6 +191,48 @@ test("TextDecoderStream accepts undefined and null options", () => {
   expect(new TextDecoderStream("utf-8", { fatal: true }).fatal).toBe(true);
 });
 
+// utf-8 non-fatal fast path (shared with Body.textStream()): a leading BOM is
+// stripped by default, preserved with ignoreBOM, and maximal-subpart
+// replacement matches TextDecoder.
+test("utf-8 fast path: BOM stripping matches ignoreBOM", async () => {
+  const bom = new Uint8Array([0xef, 0xbb, 0xbf, 0x41]);
+  for (const [ignoreBOM, expected] of [
+    [false, "A"],
+    [true, "\uFEFFA"],
+  ] as const) {
+    const out = await Bun.readableStreamToArray(
+      readableStreamFromArray([bom]).pipeThrough(new TextDecoderStream("utf-8", { ignoreBOM })),
+    );
+    expect(out.join("")).toBe(expected);
+  }
+});
+
+test("utf-8 fast path: malformed-sequence replacement matches TextDecoder", async () => {
+  // Overlong / surrogate-range sequences: each byte is its own maximal subpart.
+  const cases: Array<[number[], string]> = [
+    [[0xf0, 0x8f, 0x92], "\uFFFD\uFFFD\uFFFD"],
+    [[0xe0, 0x80], "\uFFFD\uFFFD"],
+    [[0xf0, 0x9f, 0x41], "\uFFFDA"],
+  ];
+  for (const [bytes, expected] of cases) {
+    const td = new TextDecoder("utf-8");
+    expect(td.decode(new Uint8Array(bytes))).toBe(expected);
+    const out = await Bun.readableStreamToArray(
+      readableStreamFromArray([new Uint8Array(bytes)]).pipeThrough(new TextDecoderStream()),
+    );
+    expect(out.join("")).toBe(expected);
+  }
+});
+
+test("utf-8 fast path: a split BOM across chunks is stripped", async () => {
+  const out = await Bun.readableStreamToArray(
+    readableStreamFromArray([new Uint8Array([0xef]), new Uint8Array([0xbb, 0xbf, 0x42])]).pipeThrough(
+      new TextDecoderStream(),
+    ),
+  );
+  expect(out.join("")).toBe("B");
+});
+
 // The transform/flush arm runs the native decoder directly, so monkeypatching
 // TextDecoder.prototype.decode no longer reaches it.
 test("TextDecoderStream does not call a patched TextDecoder.prototype.decode", async () => {

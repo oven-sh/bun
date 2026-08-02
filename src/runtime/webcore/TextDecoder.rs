@@ -658,13 +658,22 @@ impl TextDecoder {
 /// Validates `label` (WebIDL DOMString coercion — may run user JS) and
 /// returns a fresh decoder configured for the matching encoding. Returns null
 /// with an exception pending on `global` on a bad label.
+///
+/// For the overwhelmingly common `utf-8` + non-fatal case the C++ side uses
+/// the inline `StreamingUTF8DecodeState` instead of this decoder, so no
+/// `TextDecoder` is allocated: `*out_utf8_fast_path` is set and null is
+/// returned with no exception.
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn TextDecoder__createForStream(
     global: &JSGlobalObject,
     label: JSValue,
     fatal: bool,
     ignore_bom: bool,
+    out_utf8_fast_path: *mut bool,
 ) -> *mut TextDecoder {
+    // SAFETY: `out_utf8_fast_path` is a stack bool on the caller's frame.
+    unsafe { *out_utf8_fast_path = false };
     let encoding = if label.is_undefined() {
         EncodingLabel::Utf8
     } else {
@@ -689,6 +698,11 @@ pub extern "C" fn TextDecoder__createForStream(
             }
         }
     };
+    if matches!(encoding, EncodingLabel::Utf8) && !fatal {
+        // SAFETY: as above.
+        unsafe { *out_utf8_fast_path = true };
+        return core::ptr::null_mut();
+    }
     let mut decoder = TextDecoder::default();
     decoder.fatal = fatal;
     decoder.ignore_bom = ignore_bom;

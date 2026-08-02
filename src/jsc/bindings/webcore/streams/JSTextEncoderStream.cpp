@@ -29,6 +29,8 @@ extern "C" void* TextEncoderStreamEncoder__createForStream();
 extern "C" void TextEncoderStreamEncoder__destroyForStream(void*);
 extern "C" JSC::EncodedJSValue TextEncoderStreamEncoder__encodeForStream(void*, JSC::JSGlobalObject*, JSC::EncodedJSValue chunk);
 extern "C" JSC::EncodedJSValue TextEncoderStreamEncoder__flushForStream(void*, JSC::JSGlobalObject*);
+extern "C" JSC::EncodedJSValue TextEncoderStreamEncoder__encodeIntoSink(void*, JSC::JSGlobalObject*, JSC::EncodedJSValue chunk, uint8_t sinkId, void* sinkPtr);
+extern "C" JSC::EncodedJSValue TextEncoderStreamEncoder__flushIntoSink(void*, JSC::JSGlobalObject*, uint8_t sinkId, void* sinkPtr);
 
 namespace WebCore {
 
@@ -135,6 +137,9 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextEncoderStreamConst
     RETURN_IF_EXCEPTION(scope, {});
     auto* stream = JSTextEncoderStream::create(vm, structure);
     stream->m_encoder = TextEncoderStreamEncoder__createForStream();
+    vm.heap.addFinalizer(stream, static_cast<JSC::Heap::CFinalizer>([](JSCell* cell) {
+        TextEncoderStreamEncoder__destroyForStream(std::exchange(static_cast<JSTextEncoderStream*>(cell)->m_encoder, nullptr));
+    }));
 
     setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::TextEncoder);
     RETURN_IF_EXCEPTION(scope, {});
@@ -186,17 +191,6 @@ const ClassInfo JSTextEncoderStream::s_info = { "TextEncoderStream"_s, &Base::s_
 JSTextEncoderStream::JSTextEncoderStream(VM& vm, Structure* structure)
     : Base(vm, structure)
 {
-}
-
-JSTextEncoderStream::~JSTextEncoderStream()
-{
-    if (auto* encoder = std::exchange(m_encoder, nullptr))
-        TextEncoderStreamEncoder__destroyForStream(encoder);
-}
-
-void JSTextEncoderStream::destroy(JSCell* cell)
-{
-    static_cast<JSTextEncoderStream*>(cell)->~JSTextEncoderStream();
 }
 
 JSTextEncoderStream* JSTextEncoderStream::create(VM& vm, Structure* structure)
@@ -297,26 +291,42 @@ static void enqueueIfNonEmptyView(JSGlobalObject* globalObject, JSTransformStrea
 }
 
 // Abrupt completions from encode (ToString runs user JS) OR enqueue become a rejected
-// promise — a transform algorithm must never throw synchronously into ProcessWrite/ProcessClose.
+// promise — a transform algorithm must never throw synchronously into
+// ProcessWrite/ProcessClose. When a native JSSink is attached (m_nativeSinkPtr), the
+// encoder writes straight to it via its reusable scratch buffer (no JSUint8Array).
 static JSPromise* encodeAndEnqueue(JSGlobalObject* globalObject, JSTextEncoderStream* stream, JSTransformStreamDefaultController* controller, JSValue chunk, bool flush)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thrown;
+    bool sinkBackpressure = false;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        JSValue buffer = JSValue::decode(flush
-                ? TextEncoderStreamEncoder__flushForStream(stream->m_encoder, globalObject)
-                : TextEncoderStreamEncoder__encodeForStream(stream->m_encoder, globalObject, JSValue::encode(chunk)));
-        if (!catchScope.exception() && !buffer.isEmpty())
-            enqueueIfNonEmptyView(globalObject, controller, buffer);
+        if (void* sinkPtr = stream->m_nativeSinkPtr) {
+            JSValue wrote = JSValue::decode(flush
+                    ? TextEncoderStreamEncoder__flushIntoSink(stream->m_encoder, globalObject, stream->m_nativeSinkId, sinkPtr)
+                    : TextEncoderStreamEncoder__encodeIntoSink(stream->m_encoder, globalObject, JSValue::encode(chunk), stream->m_nativeSinkId, sinkPtr));
+            if (!catchScope.exception() && wrote.isNumber() && wrote.asNumber() < 0)
+                sinkBackpressure = true;
+        } else {
+            JSValue buffer = JSValue::decode(flush
+                    ? TextEncoderStreamEncoder__flushForStream(stream->m_encoder, globalObject)
+                    : TextEncoderStreamEncoder__encodeForStream(stream->m_encoder, globalObject, JSValue::encode(chunk)));
+            if (!catchScope.exception() && !buffer.isEmpty())
+                enqueueIfNonEmptyView(globalObject, controller, buffer);
+        }
         if (catchScope.exception()) [[unlikely]]
             thrown = takeAbruptCompletion(globalObject, catchScope);
     }
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!thrown.isEmpty())
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
+    if (sinkBackpressure) {
+        auto* ready = JSPromise::create(vm, globalObject->promiseStructure());
+        stream->m_nativeSinkReadyPromise.set(vm, stream, ready);
+        return ready;
+    }
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 

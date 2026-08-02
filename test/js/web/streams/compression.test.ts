@@ -383,8 +383,6 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     const reader = cs.readable.getReader();
 
     const writeError = writer.write(42).catch(e => e);
-    // Without the kDestroyOnSyncError handling the readable side hangs
-    // forever here.
     const readError = reader.read().catch(e => e);
 
     const [we, re] = await Promise.all([writeError, readError]);

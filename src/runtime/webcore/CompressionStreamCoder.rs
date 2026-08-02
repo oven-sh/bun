@@ -9,8 +9,6 @@
 //! bottom of this file; the TransformStream machinery already handles
 //! backpressure, so this layer is a pure `bytes in → bytes out` pump.
 
-#![allow(clippy::not_unsafe_ptr_arg_deref)]
-
 use core::ffi::c_int;
 use core::ptr::{self, NonNull};
 
@@ -217,35 +215,39 @@ impl CompressionStreamCoder {
         let mut out = Vec::<u8>::new();
         match &mut self.backend {
             Backend::Deflate(s) => {
-                let flush = if finish {
-                    zlib::FlushValue::Finish
-                } else {
-                    zlib::FlushValue::NoFlush
-                };
-                s.next_in = input.as_ptr();
-                s.avail_in = input.len() as u32;
+                // `avail_in` is `uInt`; clamp and refill so a ≥4 GiB chunk
+                // isn't silently truncated by the `as u32` cast.
+                let mut remaining = input;
                 loop {
+                    let take = remaining.len().min(u32::MAX as usize);
+                    let tail = remaining.len() > take;
+                    let flush = if finish && !tail {
+                        zlib::FlushValue::Finish
+                    } else {
+                        zlib::FlushValue::NoFlush
+                    };
+                    s.next_in = remaining.as_ptr();
+                    s.avail_in = take as u32;
                     out.reserve(CHUNK);
                     let spare = out.spare_capacity_mut();
                     s.next_out = spare.as_mut_ptr().cast();
                     s.avail_out = spare.len() as u32;
                     let before = s.avail_out;
                     // SAFETY: `s` was initialized by `deflateInit2_`; next_in/
-                    // avail_in borrow `input`, next_out/avail_out borrow the
-                    // Vec's spare capacity for this one call.
+                    // avail_in borrow `remaining`, next_out/avail_out borrow
+                    // the Vec's spare capacity for this one call.
                     let rc = unsafe { zlib::deflate(&raw mut **s, flush) };
                     let written = (before - s.avail_out) as usize;
                     // SAFETY: deflate wrote exactly `written` bytes.
                     unsafe { out.set_len(out.len() + written) };
+                    let consumed = take - s.avail_in as usize;
+                    remaining = &remaining[consumed..];
                     match rc {
                         zlib::ReturnCode::Ok | zlib::ReturnCode::BufError => {}
                         zlib::ReturnCode::StreamEnd => break,
                         _ => return Err(CodecError::Message("deflate failed")),
                     }
-                    if s.avail_out != 0 {
-                        // All input consumed and the codec has no more output
-                        // for this chunk.
-                        debug_assert_eq!(s.avail_in, 0);
+                    if s.avail_out != 0 && remaining.is_empty() {
                         break;
                     }
                 }
@@ -268,14 +270,17 @@ impl CompressionStreamCoder {
                 if input.is_empty() && (self.ended || !finish) {
                     return Ok(out);
                 }
-                let flush = if finish {
-                    zlib::FlushValue::Finish
-                } else {
-                    zlib::FlushValue::NoFlush
-                };
-                s.next_in = input.as_ptr();
-                s.avail_in = input.len() as u32;
+                let mut remaining = input;
                 loop {
+                    let take = remaining.len().min(u32::MAX as usize);
+                    let tail = remaining.len() > take;
+                    let flush = if finish && !tail {
+                        zlib::FlushValue::Finish
+                    } else {
+                        zlib::FlushValue::NoFlush
+                    };
+                    s.next_in = remaining.as_ptr();
+                    s.avail_in = take as u32;
                     out.reserve(CHUNK);
                     let spare = out.spare_capacity_mut();
                     s.next_out = spare.as_mut_ptr().cast();
@@ -287,16 +292,18 @@ impl CompressionStreamCoder {
                     let written = (before - s.avail_out) as usize;
                     // SAFETY: inflate wrote exactly `written` bytes.
                     unsafe { out.set_len(out.len() + written) };
+                    let consumed = take - s.avail_in as usize;
+                    remaining = &remaining[consumed..];
                     match rc {
                         zlib::ReturnCode::Ok => {}
                         zlib::ReturnCode::BufError => {
-                            if finish {
+                            if finish && !tail {
                                 return Err(CodecError::Message("unexpected end of file"));
                             }
                         }
                         zlib::ReturnCode::StreamEnd => {
                             self.ended = true;
-                            if s.avail_in != 0 {
+                            if !remaining.is_empty() {
                                 if gzip {
                                     // SAFETY: `s` is an initialized inflate stream.
                                     if unsafe { zlib::inflateReset(&raw mut **s) }
@@ -316,8 +323,7 @@ impl CompressionStreamCoder {
                         }
                         _ => return Err(CodecError::Message("inflate failed")),
                     }
-                    if s.avail_out != 0 {
-                        debug_assert_eq!(s.avail_in, 0);
+                    if s.avail_out != 0 && remaining.is_empty() {
                         if finish && !self.ended {
                             return Err(CodecError::Message("unexpected end of file"));
                         }
@@ -551,6 +557,7 @@ pub extern "C" fn CompressionStreamCoder__create(
 }
 
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCoder) {
     if !this.is_null() {
         // SAFETY: `this` was returned by `CompressionStreamCoder__create` and
@@ -563,6 +570,7 @@ pub extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCo
 /// `JSValue::zero` with a `TypeError` thrown on `global` on failure.
 /// `input` may be null iff `input_len == 0`.
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn CompressionStreamCoder__transform(
     this: *mut CompressionStreamCoder,
     global: &JSGlobalObject,
@@ -627,6 +635,7 @@ unsafe extern "C" {
 /// `undefined` for an empty output, or `JSValue::zero` with an exception
 /// pending on `global` on codec failure.
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn CompressionStreamCoder__transformInto(
     this: *mut CompressionStreamCoder,
     global: &JSGlobalObject,

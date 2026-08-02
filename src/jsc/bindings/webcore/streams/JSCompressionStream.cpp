@@ -202,6 +202,9 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCompressionStreamConst
     auto* stream = JSCompressionStream::create(vm, structure);
     stream->m_coder = coder;
     stream->m_format = *format;
+    vm.heap.addFinalizer(stream, static_cast<JSC::Heap::CFinalizer>([](JSCell* cell) {
+        CompressionStreamCoder__destroy(std::exchange(static_cast<JSCompressionStream*>(cell)->m_coder, nullptr));
+    }));
 
     setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::Compression);
     RETURN_IF_EXCEPTION(scope, {});
@@ -217,17 +220,6 @@ const ClassInfo JSCompressionStream::s_info = { "CompressionStream"_s, &Base::s_
 JSCompressionStream::JSCompressionStream(VM& vm, Structure* structure)
     : Base(vm, structure)
 {
-}
-
-JSCompressionStream::~JSCompressionStream()
-{
-    if (auto* coder = std::exchange(m_coder, nullptr))
-        CompressionStreamCoder__destroy(coder);
-}
-
-void JSCompressionStream::destroy(JSCell* cell)
-{
-    static_cast<JSCompressionStream*>(cell)->~JSCompressionStream();
 }
 
 JSCompressionStream* JSCompressionStream::create(VM& vm, Structure* structure)
@@ -444,6 +436,9 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDecompressionStreamCon
     auto* stream = JSDecompressionStream::create(vm, structure);
     stream->m_coder = coder;
     stream->m_format = *format;
+    vm.heap.addFinalizer(stream, static_cast<JSC::Heap::CFinalizer>([](JSCell* cell) {
+        CompressionStreamCoder__destroy(std::exchange(static_cast<JSDecompressionStream*>(cell)->m_coder, nullptr));
+    }));
 
     setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::Decompression);
     RETURN_IF_EXCEPTION(scope, {});
@@ -459,17 +454,6 @@ const ClassInfo JSDecompressionStream::s_info = { "DecompressionStream"_s, &Base
 JSDecompressionStream::JSDecompressionStream(VM& vm, Structure* structure)
     : Base(vm, structure)
 {
-}
-
-JSDecompressionStream::~JSDecompressionStream()
-{
-    if (auto* coder = std::exchange(m_coder, nullptr))
-        CompressionStreamCoder__destroy(coder);
-}
-
-void JSDecompressionStream::destroy(JSCell* cell)
-{
-    static_cast<JSDecompressionStream*>(cell)->~JSDecompressionStream();
 }
 
 JSDecompressionStream* JSDecompressionStream::create(VM& vm, Structure* structure)

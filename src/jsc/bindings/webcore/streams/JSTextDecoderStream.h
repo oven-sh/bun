@@ -18,7 +18,6 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static JSTextDecoderStream* create(JSC::VM&, JSC::Structure*);
-    static void destroy(JSC::JSCell*);
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
@@ -36,14 +35,18 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
-    // the Rust TextDecoder (encoding state, BOM / partial-sequence buffering); freed by destroy().
+    // the Rust TextDecoder (encoding state, BOM / partial-sequence buffering). Null for
+    // the utf-8 non-fatal fast path, which uses m_utf8State instead. Freed eagerly at
+    // ClearAlgorithms; a vm.heap.addFinalizer registered in the constructor (non-utf8
+    // only) is the idempotent fallback for an abandoned stream.
     void* m_decoder { nullptr };
+    // utf-8 non-fatal fast path (shared with Body.textStream()).
+    Bun::WebStreams::StreamingUTF8DecodeState m_utf8State;
     bool m_fatal { false };
     bool m_ignoreBOM { false };
 
 private:
     JSTextDecoderStream(JSC::VM&, JSC::Structure*);
-    ~JSTextDecoderStream();
 };
 
 using JSTextDecoderStreamConstructor = JSStreamConstructor<JSTextDecoderStream>;

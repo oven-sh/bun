@@ -19,7 +19,6 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static JSCompressionStream* create(JSC::VM&, JSC::Structure*);
-    static void destroy(JSC::JSCell*);
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
@@ -37,13 +36,14 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
-    // the Rust CompressionStreamCoder; freed by destroy().
+    // the Rust CompressionStreamCoder. Freed eagerly at ClearAlgorithms (post-flush /
+    // error / cancel); a vm.heap.addFinalizer registered in the constructor is the
+    // idempotent fallback for an abandoned stream.
     void* m_coder { nullptr };
     Bun::WebStreams::CompressionFormat m_format { Bun::WebStreams::CompressionFormat::Deflate };
 
 private:
     JSCompressionStream(JSC::VM&, JSC::Structure*);
-    ~JSCompressionStream();
 };
 
 using JSCompressionStreamConstructor = JSStreamConstructor<JSCompressionStream>;
@@ -54,7 +54,6 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static JSDecompressionStream* create(JSC::VM&, JSC::Structure*);
-    static void destroy(JSC::JSCell*);
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
@@ -77,7 +76,6 @@ public:
 
 private:
     JSDecompressionStream(JSC::VM&, JSC::Structure*);
-    ~JSDecompressionStream();
 };
 
 using JSDecompressionStreamConstructor = JSStreamConstructor<JSDecompressionStream>;

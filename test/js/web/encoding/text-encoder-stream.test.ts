@@ -163,3 +163,26 @@ test("cancelling the readable inside the chunk's toString() rejects the write in
   await expect(writePromise).rejects.toBeInstanceOf(TypeError);
   await writer.abort("bye"); // must settle
 });
+
+// Native-sink output path: when the readable is consumed by a native JSSink
+// (here HTTPResponseSink via Bun.serve), the encoder writes into a reusable
+// scratch buffer and straight to the sink's m_sinkPtr instead of wrapping each
+// chunk in a JSUint8Array.
+test("TextEncoderStream -> native HTTP response sink round-trips (incl. split surrogate)", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      const body = new ReadableStream({
+        start(c) {
+          c.enqueue("I \u{1F499} ");
+          c.enqueue(leading);
+          c.enqueue(trailing + " streams");
+          c.close();
+        },
+      });
+      return new Response(body.pipeThrough(new TextEncoderStream()));
+    },
+  });
+  const text = await (await fetch(server.url)).text();
+  expect(text).toBe("I \u{1F499} \u{1F499} streams");
+});

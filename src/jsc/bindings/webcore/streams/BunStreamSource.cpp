@@ -1003,6 +1003,22 @@ static void rsisRunCatching(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStr
         rsisAbrupt(vm, globalObject, op, thrown);
 }
 
+// Detach the native byte transform from this sink. Called BEFORE sink end()/close()
+// so a re-entrant transform write cannot see a freed m_sinkPtr. Idempotent.
+static void rsisDetachNativeTransform(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
+{
+    auto* ts = op->m_nativeTransform.get();
+    if (!ts)
+        return;
+    ts->m_nativeSinkPtr = nullptr;
+    ts->m_nativeSinkCell.clear();
+    if (auto* ready = ts->m_nativeSinkReadyPromise.get()) {
+        ts->m_nativeSinkReadyPromise.clear();
+        resolvePromise(globalObject, ready, jsUndefined());
+    }
+    op->m_nativeTransform.clear();
+}
+
 // The pump's `finally`: release the reader (unless the throw path orphaned it) and detach.
 static void rsisFinally(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
 {
@@ -1019,15 +1035,7 @@ static void rsisFinally(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamI
         reader->m_pipeOperation.clear();
         op->m_reader.clear();
     }
-    if (auto* ts = op->m_nativeTransform.get()) {
-        ts->m_nativeSinkPtr = nullptr;
-        ts->m_nativeSinkCell.clear();
-        if (auto* ready = ts->m_nativeSinkReadyPromise.get()) {
-            ts->m_nativeSinkReadyPromise.clear();
-            resolvePromise(globalObject, ready, jsUndefined());
-        }
-        op->m_nativeTransform.clear();
-    }
+    rsisDetachNativeTransform(globalObject, op);
     op->m_sink.clear();
     op->m_pendingBatch.clear();
     op->m_waitingOnSink = false;
@@ -1049,6 +1057,7 @@ static void rsisFinish(JSGlobalObject* globalObject, JSReadStreamIntoSinkOperati
     auto scope = DECLARE_THROW_SCOPE(vm);
     op->m_didClose = true;
     auto* result = op->m_result.get();
+    rsisDetachNativeTransform(globalObject, op);
     JSValue endResult = rsisSinkEnd(vm, globalObject, op);
     RETURN_IF_EXCEPTION(scope, );
     rsisFinally(vm, globalObject, op);
@@ -1066,6 +1075,7 @@ static void rsisAbrupt(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIn
     if (auto* stream = op->m_stream.get())
         publicStreamCancelIgnoringResult(vm, globalObject, stream, error);
     JSValue rejectionValue = error;
+    rsisDetachNativeTransform(globalObject, op);
     if (op->m_sink && !op->m_didClose) {
         op->m_didClose = true;
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

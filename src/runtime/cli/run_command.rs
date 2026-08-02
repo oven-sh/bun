@@ -2550,10 +2550,7 @@ impl RunCommand {
             bstr::BStr::new(target_name),
             bstr::BStr::new(fs_top_level_dir),
         );
-        let preserve_symlinks_main = ctx.runtime_options.preserve_symlinks_main
-            || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
-                .get()
-                .unwrap_or(false);
+        let preserve_symlinks_main = ctx.runtime_options.preserve_symlinks_main_enabled();
         let resolution: ::core::result::Result<bun_resolver::Result, bun_resolver::Error> = {
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
@@ -2609,7 +2606,7 @@ impl RunCommand {
                         {
                             // The preserve-mode resolver kept the link path,
                             // but the entry must be realpathed.
-                            Self::realpath_entry(path.text)
+                            bun_sys::realpath_by_open(path.text)
                                 .unwrap_or_else(|| path.text.to_vec().into_boxed_slice())
                         } else {
                             path.text.to_vec().into_boxed_slice()
@@ -2775,26 +2772,6 @@ impl RunCommand {
         Ok(false)
     }
 
-    /// Canonicalize an entry-point path (open + `get_fd_path`) without going
-    /// through the resolver, whose preserve-symlinks mode shapes its shared
-    /// caches. `None` when the path can't be opened or is too long; the
-    /// caller falls back to the resolved spelling.
-    fn realpath_entry(path: &[u8]) -> Option<Box<[u8]>> {
-        let mut buf = PathBuffer::uninit();
-        if path.len() >= buf.len() {
-            return None;
-        }
-        buf[..path.len()].copy_from_slice(path);
-        buf[path.len()] = 0;
-        // SAFETY: `buf[path.len()] == 0` written above.
-        let z = bun_core::ZStr::from_buf(&buf[..], path.len());
-        let fd = bun_sys::open(z, bun_sys::O::RDONLY, 0).ok()?;
-        let mut out = PathBuffer::uninit();
-        let resolved = bun_sys::get_fd_path(fd, &mut out);
-        let _ = bun_sys::close(fd);
-        resolved.ok().map(|p| p.to_vec().into_boxed_slice())
-    }
-
     /// Fast-path file probe: if `target` resolves to an existing regular file,
     /// duplicate its absolute path and boot the VM. Returns `false` if the
     /// path does not exist / is a directory, so the caller can fall through to
@@ -2897,10 +2874,7 @@ impl RunCommand {
         // Re-derive the canonical absolute path from the open fd (resolves
         // symlinks). With --preserve-symlinks-main / NODE_PRESERVE_SYMLINKS_MAIN,
         // keep the link path as the entry's identity instead (matching Node).
-        let preserve_symlinks_main = ctx.runtime_options.preserve_symlinks_main
-            || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
-                .get()
-                .unwrap_or(false);
+        let preserve_symlinks_main = ctx.runtime_options.preserve_symlinks_main_enabled();
         let absolute_script_path: Box<[u8]> = if preserve_symlinks_main {
             let mut cwd_buf = PathBuffer::uninit();
             let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {

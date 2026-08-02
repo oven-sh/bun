@@ -594,6 +594,16 @@ pub struct HeapProf {
     pub dir: Box<[u8]>,
 }
 
+impl RuntimeOptions {
+    /// `--preserve-symlinks-main` or `NODE_PRESERVE_SYMLINKS_MAIN=1`.
+    pub fn preserve_symlinks_main_enabled(&self) -> bool {
+        self.preserve_symlinks_main
+            || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
+                .get()
+                .unwrap_or(false)
+    }
+}
+
 impl Default for RuntimeOptions {
     // See `ContextData::default` — folded into the single startup call site.
     #[inline(always)]

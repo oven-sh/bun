@@ -7684,6 +7684,25 @@ fn get_fd_path_freebsd_linuxulator<'a>(
     Ok(&mut out.0[..len])
 }
 
+/// Canonicalize `path` by opening it read-only and deriving the fd's
+/// absolute path via [`get_fd_path`]. `None` when the path is too long or
+/// cannot be opened.
+pub fn realpath_by_open(path: &[u8]) -> Option<Box<[u8]>> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    if path.len() >= buf.len() {
+        return None;
+    }
+    buf[..path.len()].copy_from_slice(path);
+    buf[path.len()] = 0;
+    // SAFETY: `buf[path.len()] == 0` written above.
+    let z = ZStr::from_buf(&buf[..], path.len());
+    let fd = open(z, O::RDONLY, 0).ok()?;
+    let mut out = bun_paths::path_buffer_pool::get();
+    let resolved = get_fd_path(fd, &mut out);
+    let _ = close(fd);
+    resolved.ok().map(|p| p.to_vec().into_boxed_slice())
+}
+
 /// fd → absolute path. Linux: readlink `/proc/self/fd/N`;
 /// macOS: `fcntl(F_GETPATH)`; Windows: `GetFinalPathNameByHandle`.
 pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a mut [u8]> {

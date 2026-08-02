@@ -3988,25 +3988,18 @@ impl VirtualMachine {
         slice
     }
 
-    /// Canonicalize the entry point's path (open + `get_fd_path`) without
-    /// going through the resolver, whose preserve-symlinks mode shapes its
-    /// shared caches. `None` when the path can't be opened or is too long;
-    /// the caller falls back to the resolved spelling.
+    /// Canonicalize the entry point's path without going through the
+    /// resolver, whose preserve-symlinks mode shapes its shared caches.
+    /// `None` when the path can't be opened; the caller falls back to the
+    /// resolved spelling.
     fn realpath_for_main(&mut self, path: &[u8]) -> Option<&'static [u8]> {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        if path.len() >= buf.len() {
-            return None;
-        }
-        buf[..path.len()].copy_from_slice(path);
-        buf[path.len()] = 0;
-        // SAFETY: `buf[path.len()] == 0` written above.
-        let z = bun_core::ZStr::from_buf(&buf[..], path.len());
-        let fd = bun_sys::open(z, bun_sys::O::RDONLY, 0).ok()?;
-        let mut out = bun_paths::path_buffer_pool::get();
-        let resolved = bun_sys::get_fd_path(fd, &mut out);
-        let _ = bun_sys::close(fd);
-        let resolved = resolved.ok()?;
-        Some(self.dupe_resolved_path(resolved))
+        let boxed = bun_sys::realpath_by_open(path)?;
+        // SAFETY: `boxed`'s heap allocation has a stable address for as long
+        // as the owning `Box` lives in `resolved_path_dups` (drained in
+        // `destroy()`).
+        let slice: &'static [u8] = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&*boxed) };
+        self.resolved_path_dups.push(boxed);
+        Some(slice)
     }
 
     /// Note: `is_a_file_path` is a runtime
@@ -4111,10 +4104,7 @@ impl VirtualMachine {
         // `DirInfo` entries, and the dir cache is keyed by path only.
         let main_preserve: Option<bool> = (source == MAIN_FILE_NAME).then(|| {
             bun_options_types::context::try_get()
-                .is_some_and(|c| c.runtime_options.preserve_symlinks_main)
-                || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
-                    .get()
-                    .unwrap_or(false)
+                .is_some_and(|c| c.runtime_options.preserve_symlinks_main_enabled())
         });
 
         // A `loop`

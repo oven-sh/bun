@@ -221,6 +221,18 @@ public:
     std::atomic<uint64_t> version;
     size_t reference_count;
     WTF::HashSet<WebCore::JSSQLStatement*> statements;
+    // close(false) with live db.prepare() statements: JS-visible closed, sqlite3_close deferred until they drain.
+    bool closed = false;
+
+    sqlite3* handle() const { return closed ? nullptr : db; }
+
+    void closeIfDrained()
+    {
+        if (closed && db && !sqlite3_next_stmt(db, nullptr)) {
+            sqlite3_close_v2(db);
+            db = nullptr;
+        }
+    }
 
     void release()
     {
@@ -240,7 +252,7 @@ DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(VersionSqlite3);
 
 static ASCIILiteral finalizedMessage(VersionSqlite3* versionDB)
 {
-    return versionDB && !versionDB->db ? "Database has closed"_s : "Statement has finalized"_s;
+    return versionDB && !versionDB->handle() ? "Database has closed"_s : "Statement has finalized"_s;
 }
 
 class SQLiteSingleton {
@@ -954,7 +966,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
 
     // Property reads on `target` can run JS that finalizes `stmt` (statement.finalize() / db.close()); re-validate after each.
     const auto& statementStillAlive = [&]() -> bool {
-        if (statement ? statement->stmt != stmt : versionDB->db != db) [[unlikely]] {
+        if (statement ? statement->stmt != stmt : versionDB->handle() != db) [[unlikely]] {
             if (!scope.exception())
                 throwException(globalObject, scope, createError(globalObject, statement ? finalizedMessage(versionDB) : "Database has closed"_s));
             return false;
@@ -1163,7 +1175,7 @@ static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JS
         } else {
             value = array->getDirectIndex(lexicalGlobalObject, i);
             RETURN_IF_EXCEPTION(scope, {});
-            if (statement ? statement->stmt != stmt : versionDB->db != db) [[unlikely]] {
+            if (statement ? statement->stmt != stmt : versionDB->handle() != db) [[unlikely]] {
                 throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, statement ? finalizedMessage(versionDB) : "Database has closed"_s));
                 return {};
             }
@@ -1360,7 +1372,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
     }
 
     // Read after toWTFString: a user toString() may have closed the database.
-    sqlite3* db = versionDB->db;
+    sqlite3* db = versionDB->handle();
     if (!db) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Can't do this on a closed database"_s));
         return {};
@@ -1404,7 +1416,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
     auto extensionString = extension.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    sqlite3* db = versionDB->db;
+    sqlite3* db = versionDB->handle();
     if (!db) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Can't do this on a closed database"_s));
         return {};
@@ -1463,7 +1475,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
     }
-    sqlite3* db = versionDB->db;
+    sqlite3* db = versionDB->handle();
 
     if (!db) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));
@@ -1544,7 +1556,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
 
                 SQLiteBindingsMap bindings { static_cast<uint16_t>(count > -1 ? count : 0), strict };
                 JSC::JSValue reb = rebindStatement(lexicalGlobalObject, bindingsAliveScope.value(), scope, db, versionDB, sql.stmt, bindings, safeIntegers, nullptr);
-                if (versionDB->db != db) [[unlikely]] {
+                if (versionDB->handle() != db) [[unlikely]] {
                     sql.stmt = nullptr; // close() during binding already finalized it via the sqlite3_next_stmt() sweep
                     if (!scope.exception())
                         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));
@@ -1623,7 +1635,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementIsInTransactionFunction, (JSC::JSGlobalOb
         return {};
     }
 
-    sqlite3* db = versionDB->db;
+    sqlite3* db = versionDB->handle();
 
     if (!db) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));
@@ -1663,7 +1675,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
         return {};
     }
 
-    sqlite3* db = versionDB->db;
+    sqlite3* db = versionDB->handle();
     if (!db) {
         throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Cannot use a closed database"_s));
         return {};
@@ -1847,12 +1859,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
     bool force = (throwOnError.isEmpty() || throwOnError.isUndefined()) ? false : throwOnError.toBoolean(lexicalGlobalObject);
 
     sqlite3* db = versionDB->db;
-    // no-op if already closed
-    if (!db) {
+    // no-op if already closed; close(true) after close(false) still force-finalizes whatever was kept
+    if (!db || (versionDB->closed && !force)) {
         return JSValue::encode(jsUndefined());
     }
 
-    // close(false) keeps db.prepare() statements usable and lets sqlite3_close_v2() defer; everything else is finalized now.
+    // close(false) keeps db.prepare() statements usable and defers sqlite3_close until they drain; everything else is finalized now.
     WTF::HashSet<sqlite3_stmt*> kept;
     for (auto* statement : versionDB->statements) {
         if (!statement->stmt)
@@ -1869,6 +1881,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
         if (!kept.contains(stmt))
             sqlite3_finalize(stmt);
         stmt = next;
+    }
+
+    versionDB->closed = true;
+    if (!kept.isEmpty()) {
+        return JSValue::encode(jsUndefined());
     }
 
     int statusCode = force ? sqlite3_close(db) : sqlite3_close_v2(db);
@@ -1920,7 +1937,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
         return {};
     }
 
-    sqlite3* db = versionDB->db;
+    sqlite3* db = versionDB->handle();
     // no-op if already closed
     if (!db) {
         return JSValue::encode(jsUndefined());
@@ -2849,6 +2866,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionFinalize, (JSC::JSGlobalObject * 
     if (castedThis->stmt) {
         sqlite3_finalize(castedThis->stmt);
         castedThis->stmt = nullptr;
+        if (castedThis->version_db)
+            castedThis->version_db->closeIfDrained();
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
@@ -2873,6 +2892,8 @@ JSSQLStatement::~JSSQLStatement()
     }
     if (this->stmt) {
         sqlite3_finalize(this->stmt);
+        if (this->version_db)
+            this->version_db->closeIfDrained();
     }
 
     if (auto* columnNames = this->columnNames.get()) {

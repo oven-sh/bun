@@ -1579,6 +1579,64 @@ it("close(false) leaves prepare() statements usable but finalizes query() statem
   insert.finalize();
 });
 
+it("prepare() statements kept past close(false) report changes and real errors, and survive schema changes", () => {
+  using dir = tempDir("sqlite-close-deferred", {});
+  const file = path.join(String(dir), "x.sqlite");
+  const db = new Database(file);
+  db.exec("CREATE TABLE t (b UNIQUE)");
+  const insert = db.prepare("INSERT INTO t VALUES (?)");
+  db.close(false);
+  expect(insert.run(1)).toEqual({ changes: 1, lastInsertRowid: 1 });
+  expect(() => insert.run(1)).toThrow("UNIQUE constraint failed: t.b");
+  {
+    using other = new Database(file);
+    other.exec("CREATE TABLE u (x)");
+  }
+  expect(insert.run(2)).toEqual({ changes: 1, lastInsertRowid: 2 });
+  // close(true) after close(false) force-finalizes what was kept and releases the file
+  db.close(true);
+  expect(() => insert.run(3)).toThrow("Database has closed");
+  rmSync(file);
+  expect(existsSync(file)).toBe(false);
+});
+
+it("close(false) releases the file once the last prepare() statement is finalized", () => {
+  using dir = tempDir("sqlite-close-drain", {});
+  const file = path.join(String(dir), "x.sqlite");
+  const db = new Database(file);
+  db.exec("CREATE TABLE t (a)");
+  const a = db.prepare("SELECT a FROM t");
+  const b = db.prepare("SELECT a + 1 FROM t");
+  db.close(false);
+  a.finalize();
+  expect(b.all()).toEqual([]);
+  b.finalize();
+  rmSync(file);
+  expect(existsSync(file)).toBe(false);
+});
+
+it("WAL is checkpointed at exit for a database closed with close(false) while a prepare() statement is live", async () => {
+  using dir = tempDir("sqlite-close-wal", {});
+  const file = path.join(String(dir), "x.sqlite");
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Database } = require("bun:sqlite");
+       const db = new Database(process.argv[1]);
+       db.exec("PRAGMA journal_mode=WAL; CREATE TABLE t (a); INSERT INTO t VALUES (1)");
+       const sel = db.prepare("SELECT * FROM t");
+       sel.get();
+       db.close();`,
+      file,
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  expect(await proc.exited).toBe(0);
+  expect(existsSync(file + "-wal") ? statSync(file + "-wal").size : 0).toBe(0);
+});
+
 it("query() cache evicts least-recently-used statements past MAX_QUERY_CACHE_SIZE", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE foo (a INTEGER)");

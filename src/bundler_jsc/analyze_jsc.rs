@@ -40,11 +40,8 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     let identifier_count = strings_lens.len();
     let is_valid_string_id =
         |id: StringID| (id.0 as usize) < identifier_count || id.0 >= StringID::STAR_NAMESPACE.0;
-    // The 4th slot of each ImportInfo* record is a bitcast FetchParameters
-    // (None/Javascript/Webassembly/Json sentinels at u32::MAX-3..=u32::MAX, or
-    // a real StringID for HostDefined), so the buffer check accepts that wider
-    // sentinel range. The per-slot usage below never indexes those slots into
-    // the identifiers array.
+    // ImportInfo* slot [i+3] is a bitcast FetchParameters, so the buffer check
+    // accepts the wider sentinel range (>= Json = u32::MAX-3).
     let is_valid_buffer_slot =
         |id: StringID| (id.0 as usize) < identifier_count || id.0 >= RequestedModuleValue::Json.0;
     if !buffer.iter().copied().all(is_valid_buffer_slot)

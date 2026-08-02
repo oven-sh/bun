@@ -165,9 +165,8 @@ pub mod analyze_transpiled_module {
         pub(crate) fn host_defined(value: StringID) -> Self {
             Self(value.0)
         }
-        /// Map to JSC's `ScriptFetchParameters::Type` enum (None=0, JavaScript=1,
-        /// WebAssembly=2, JSON=3, HostDefined=4). `None` becomes `JavaScript`
-        /// to match `NodesAnalyzeModule.cpp`'s no-attributes default.
+        /// JSC `ScriptFetchParameters::Type` value. `None` maps to `JavaScript`
+        /// (NodesAnalyzeModule's no-attribute default).
         #[inline]
         pub fn to_script_fetch_parameters_type(self) -> u8 {
             match self {
@@ -255,11 +254,8 @@ pub mod analyze_transpiled_module {
         keys: Vec<StringID>,
         values: Vec<FetchParameters>,
         phases: Vec<ModulePhase>,
-        /// Dedup key: `(specifier, ScriptFetchParameters::Type, phase)` —
-        /// matches JSC's `ModuleAnalyzer::appendRequestedModule`, which keys
-        /// on `ModuleMapKey { specifier, attributes->type() }` per phase
-        /// (WebKit 90b2ecf79ae3). Two HostDefined attributes with different
-        /// strings collapse to one entry, same as JSC.
+        /// Keyed on `(specifier, ScriptFetchParameters::Type, phase)` per
+        /// JSC's `ModuleAnalyzer::appendRequestedModule` (WebKit 90b2ecf79ae3).
         index: HashMap<(StringID, u8, ModulePhase), usize>,
     }
     impl RequestedModules {

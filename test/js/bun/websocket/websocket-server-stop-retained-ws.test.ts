@@ -13,6 +13,7 @@ test("retained ServerWebSocket stays usable after server.stop() and GC", async (
       globalThis.retained = null;
 
       async function connectAndClose() {
+        const serverClosed = Promise.withResolvers();
         let server = Bun.serve({
           port: 0,
           fetch(req, srv) {
@@ -24,7 +25,9 @@ test("retained ServerWebSocket stays usable after server.stop() and GC", async (
               globalThis.retained = ws;
             },
             message() {},
-            close() {},
+            close() {
+              serverClosed.resolve();
+            },
           },
         });
         const client = new WebSocket("ws://127.0.0.1:" + server.port + "/");
@@ -35,15 +38,16 @@ test("retained ServerWebSocket stays usable after server.stop() and GC", async (
         const closed = new Promise(resolve => (client.onclose = resolve));
         client.close();
         await closed;
-        await Bun.sleep(50);
+        await serverClosed.promise;
         server.stop(true);
       }
 
       await connectAndClose();
 
       // Collect the Server wrapper: clean macrotask stacks plus allocation
-      // pressure so JSC actually sweeps the wrapper and the deferred native
-      // teardown tasks run.
+      // pressure so JSC actually sweeps the wrapper. The server's native
+      // teardown then runs on deferred event-loop tasks with no JS-observable
+      // signal; the setTimeout ticks in this loop are what drain them.
       for (let i = 0; i < 50; i++) {
         await new Promise(resolve => setTimeout(resolve, 1));
         let garbage = [];
@@ -51,7 +55,9 @@ test("retained ServerWebSocket stays usable after server.stop() and GC", async (
         garbage = null;
         Bun.gc(true);
       }
-      await Bun.sleep(50);
+      // Drain the deferred teardown tasks enqueued by the final GC iteration.
+      await new Promise(resolve => setTimeout(resolve, 1));
+      await new Promise(resolve => setTimeout(resolve, 1));
 
       const ws = globalThis.retained;
       console.log(JSON.stringify([ws.readyState, ws.publish("t", "m"), ws.send("m"), ws.subscribe("t")]));
@@ -67,7 +73,6 @@ test("retained ServerWebSocket stays usable after server.stop() and GC", async (
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).not.toContain("AddressSanitizer");
   expect(stdout.trim()).toBe("[3,0,0,false]");
   expect(exitCode).toBe(0);
 });

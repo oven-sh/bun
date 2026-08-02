@@ -128,11 +128,7 @@ struct InterruptRequest {
 
 void Isolate::RequestInterrupt(InterruptCallback callback, void* data)
 {
-    // V8 allows this from any thread. queueMicrotaskCallback is not thread-safe
-    // (LazyProperty init allocates a JSFunction; vm.queueMicrotask appends to an
-    // unlocked Deque the JS thread drains), so only deliver when the caller
-    // already holds the API lock. A cross-thread call is a no-op for now; wiring
-    // through a locked pending list + wake is follow-up work.
+    // queueMicrotaskCallback is not thread-safe; V8 allows this from any thread.
     if (!vm().currentThreadIsHoldingAPILock()) [[unlikely]]
         return;
     auto* request = new InterruptRequest { this, callback, data };

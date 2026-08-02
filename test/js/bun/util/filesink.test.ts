@@ -2,6 +2,7 @@ import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
+import { spawn as cpSpawn } from "node:child_process";
 import { join } from "node:path";
 
 describe("FileSink", () => {
@@ -522,6 +523,90 @@ it.skipIf(!isPosix)("does not leak native FileSink when a pending write fails (E
   // One straggler whose JS wrapper has not yet been finalized is acceptable;
   // more than that indicates a native leak.
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
+});
+
+// On Windows `Bun.file(fd).writer()` on a borrowed fd set `owns_fd = false`
+// and the writer's `end()` early-returned without calling `close()`, so
+// `on_close` never fired and the `must_be_kept_alive_until_eof` self-ref taken
+// on the first pending write was never released: every iteration leaked one
+// native FileSink for the rest of the process. For pipe/tty fds the fd is now
+// dup'd before `uv_pipe_open` so the writer owns (and closes) its own handle;
+// for file fds `end()` now lets `close()` run since the File close path
+// already honours `!owns_fd`. In both cases the caller's fd must stay open.
+// Runs in a subprocess so the native live counter starts from a known baseline
+// and the parent can drain the pipe.
+describe.skipIf(!isWindows).each([
+  ["pipe", "3"],
+  ["file", "fileFd"],
+])("does not leak native FileSink for a borrowed %s fd on Windows", (kind, fdExpr) => {
+  it("releases the keep-alive ref and leaves the caller's fd open", async () => {
+    const dir = tmpdirSync();
+    const childSrc = /* js */ `
+      const { fileSinkInternals } = require("bun:internal-for-testing");
+      const fs = require("node:fs");
+
+      const iterations = 8;
+      const tmpPath = ${JSON.stringify(join(dir, "borrowed"))};
+      const fileFd = fs.openSync(tmpPath, "w");
+      try {
+        async function once() {
+          const w = Bun.file(${fdExpr}).writer();
+          const p = w.write("x");
+          if (p && typeof p.then === "function") await p;
+          await Promise.resolve(w.end()).catch(() => {});
+        }
+
+        // Warm up so any one-off allocations are in the baseline.
+        await once();
+        Bun.gc(true);
+        const baseline = fileSinkInternals.liveCount();
+
+        for (let i = 0; i < iterations; i++) await once();
+
+        for (let i = 0; i < 50; i++) {
+          Bun.gc(true);
+          if (fileSinkInternals.liveCount() <= baseline) break;
+          await Bun.sleep(10);
+        }
+        const leaked = fileSinkInternals.liveCount() - baseline;
+
+        // The caller's fd must still be open after the writer's end().
+        let fdOpen = true;
+        try { fs.fstatSync(${fdExpr}); } catch { fdOpen = false; }
+
+        process.stdout.write(JSON.stringify({ leaked, fdOpen, iterations }));
+      } finally {
+        fs.closeSync(fileFd);
+        try { fs.unlinkSync(tmpPath); } catch {}
+      }
+    `;
+
+    // child_process.spawn gives the child a named-pipe fd 3 on Windows;
+    // draining it here keeps the child's writes from ever blocking.
+    const cp = cpSpawn(bunExe(), ["--no-install", "-e", childSrc], {
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe", "pipe"],
+    });
+    cp.stdio[3]!.on("data", () => {});
+    let stdout = "";
+    let stderr = "";
+    cp.stdout!.on("data", d => (stdout += d));
+    cp.stderr!.on("data", d => (stderr += d));
+    const code = await new Promise<number>((resolve, reject) => {
+      cp.on("error", reject);
+      cp.on("close", c => resolve(c ?? -1));
+    });
+
+    expect(stderr).toBe("");
+    const { leaked, fdOpen, iterations } = JSON.parse(stdout);
+    // Without the fix every iteration leaks one native FileSink (leaked ==
+    // iterations). One straggler whose JS wrapper has not yet been finalized
+    // is acceptable.
+    expect(fdOpen).toBe(true);
+    expect(leaked).toBeLessThanOrEqual(1);
+    expect(leaked).toBeLessThan(iterations);
+    expect(code).toBe(0);
+  });
 });
 
 it("start() without path/fd on an already-open writer does not crash", async () => {

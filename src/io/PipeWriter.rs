@@ -2478,7 +2478,9 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         self.is_done = true;
 
         if !self.has_pending_data() {
-            if !self.owns_fd {
+            if !self.owns_fd && !matches!(self.source, Some(Source::File(_) | Source::SyncFile(_)))
+            {
+                // Pipe/Tty close() would uv_close the caller's handle; File honours !owns_fd.
                 return;
             }
             self.close();

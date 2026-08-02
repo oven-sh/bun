@@ -395,7 +395,7 @@ impl PostgresSQLConnection {
             );
         });
         if interval != 0 {
-            // SAFETY: place projection through `self` keeps whole-struct provenance; the fire path recovers the container from this pointer.
+            // whole-struct provenance: the fire path recovers the container from this pointer.
             let t = core::ptr::addr_of!(self.timer)
                 .cast::<EventLoopTimer>()
                 .cast_mut();
@@ -504,7 +504,7 @@ impl PostgresSQLConnection {
                 i64::from(self.max_lifetime_interval_ms),
             );
         });
-        // SAFETY: place projection through `self` keeps whole-struct provenance; the fire path recovers the container from this pointer.
+        // whole-struct provenance: the fire path recovers the container from this pointer.
         let t = core::ptr::addr_of!(self.max_lifetime_timer)
             .cast::<EventLoopTimer>()
             .cast_mut();

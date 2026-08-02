@@ -135,3 +135,10 @@ test/napi/napi.test.ts
 # whose NapiClass::finishCreation (NapiClass.cpp:120) leaves an exception
 # unchecked at defineOwnNonIndexProperty. Moved here from expectations.txt.
 test/cli/run/require-cache.test.ts
+
+# The inspector's Runtime.evaluate / inspectee spawn hits an unchecked
+# getOwnNonIndexPropertyNames -> JSObjectInlines::get scope. Moved here from
+# expectations.txt; the websocket describe is separately skipIf(isASAN) for a
+# WebSocket connect failure on ASAN, so http-metadata / unix-socket /
+# error.stack run on ASAN without validateExceptionChecks.
+test/cli/inspect/inspect.test.ts

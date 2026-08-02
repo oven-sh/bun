@@ -4579,6 +4579,72 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         stmts: &mut BumpVec<'a, Stmt>,
     ) -> Result<(), crate::Error> {
+        // Clause exports defer to real exported declarations: a redundant
+        // `export type { Foo }` next to a real `export class Foo {}` must not
+        // duplicate the exported name.
+        let mut real_export_names = StringBoolMap::default();
+        for stmt in stmts.iter() {
+            match &stmt.data {
+                js_ast::StmtData::SClass(class) if class.is_export => {
+                    if let Some(name) = class.class.class_name {
+                        real_export_names.put(self.load_name_from_ref(name.ref_), true)?;
+                    }
+                }
+                js_ast::StmtData::SFunction(func)
+                    if func.func.flags.contains(js_ast::flags::Function::IsExport) =>
+                {
+                    if let Some(name) = func.func.name {
+                        real_export_names.put(self.load_name_from_ref(name.ref_), true)?;
+                    }
+                }
+                js_ast::StmtData::SEnum(data) if data.is_export => {
+                    real_export_names.put(self.load_name_from_ref(data.name.ref_), true)?;
+                }
+                js_ast::StmtData::SNamespace(data) if data.is_export => {
+                    real_export_names.put(self.load_name_from_ref(data.name.ref_), true)?;
+                }
+                js_ast::StmtData::SLocal(local) if local.is_export => {
+                    for decl in local.decls.slice() {
+                        if let js_ast::b::B::BIdentifier(bind) = &decl.binding.data {
+                            real_export_names.put(self.load_name_from_ref(bind.r#ref), true)?;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if real_export_names.count() > 0 {
+            for stmt in stmts.iter_mut() {
+                match &mut stmt.data {
+                    js_ast::StmtData::SExportClause(data) => {
+                        let items = data.items.slice_mut();
+                        let len = items.len();
+                        let mut end = 0usize;
+                        for i in 0..len {
+                            if !real_export_names.contains_key(items[i].alias.slice()) {
+                                items.swap(end, i);
+                                end += 1;
+                            }
+                        }
+                        data.items.truncate(end);
+                    }
+                    js_ast::StmtData::SExportFrom(data) => {
+                        let items = data.items.slice_mut();
+                        let len = items.len();
+                        let mut end = 0usize;
+                        for i in 0..len {
+                            if !real_export_names.contains_key(items[i].alias.slice()) {
+                                items.swap(end, i);
+                                end += 1;
+                            }
+                        }
+                        data.items.truncate(end);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         // A type-only default export produces a stub only when nothing else
         // exports "default": a real default export (class/interface
         // declaration merging) or a clause alias (`export { X as default }`,

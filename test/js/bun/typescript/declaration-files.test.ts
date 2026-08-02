@@ -94,16 +94,21 @@ export interface B {}
 export type * from "./types.d.mts";
 export interface Star {}
 export * as Star from "./types.d.mts";
+export class Real {
+  constructor() {}
+}
+export type { Real };
 `,
     "main.ts": `import * as m from "./index.d.mts";
-console.log(JSON.stringify(Object.keys(m).sort()), typeof m.Star);
+console.log(JSON.stringify(Object.keys(m).sort()), typeof m.Star, typeof m.Real);
 `,
   });
   const { stdout, stderr, exitCode } = await run(dir, "main.ts");
   expect(stderr).toBe("");
-  const [keys, starType] = stdout.trim().split(" ");
-  expect(JSON.parse(keys)).toEqual(["A", "B", "Star"]);
+  const [keys, starType, realType] = stdout.trim().split(" ");
+  expect(JSON.parse(keys)).toEqual(["A", "B", "Real", "Star"]);
   expect(starType).toBe("object");
+  expect(realType).toBe("function");
   expect(exitCode).toBe(0);
 });
 

@@ -24,7 +24,7 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //     reclaim, or a `&mut self` prep method invoked as
 //     `unsafe { (*ptr).prep() }` (DEAD).
 //   - Convert the type's touched state to `Cell`/`JsCell` and its methods to
-//     `&self` (REENTRANT) — exemplars: `src/jsc/ipc.rs` (SendQueue),
+//     `&self` (REENTRANT) — exemplars: `src/runtime/ipc.rs` (SendQueue),
 //     `src/runtime/socket/UpgradedDuplex.rs`, `src/io/PipeReader.rs`'s raw
 //     `read`/`on_poll` entry chain.
 //

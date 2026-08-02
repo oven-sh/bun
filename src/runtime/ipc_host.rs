@@ -205,7 +205,6 @@ pub(crate) fn emit_handle_ipc_message(
                 }
             }
         }
-        // mutable); `get_ipc_instance` writes `self.ipc` on first call.
         let vm = global_this.bun_vm().as_mut();
         let Some(ipc) = get_ipc_instance(vm) else {
             return Ok(JSValue::UNDEFINED);
@@ -236,7 +235,6 @@ pub(crate) fn emit_handle_ipc_message(
 #[bun_jsc::host_fn(export = "Bun__Process__send")]
 fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
-    // mutable); `get_ipc_instance` writes `self.ipc` on first call.
     let vm = global.bun_vm().as_mut();
     // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance` (or
     // `None`); the instance is heap-allocated, not embedded in `vm`.

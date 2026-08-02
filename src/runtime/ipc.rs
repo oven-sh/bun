@@ -29,30 +29,15 @@ use bun_uws;
 // (`IPCSerialize` / `IPCParse`) are declared once in `bun_jsc::cpp` and called
 // through that module's safe wrappers; no local extern block needed.
 
-// ──────────────────────────────────────────────────────────────────────────
-// SendQueue ownership (§Layering / Dispatch).
-//
-// `SendQueue.owner` is logically either a `*Subprocess` (parent side)
-// or a `*VirtualMachine` (child side). `Subprocess` lives in `bun_runtime`
-// (tier-6), so the concrete type cannot be named here. Instead of a hand-
-// rolled fn-pointer table, the owner is stored as a raw `*mut dyn` trait
-// object: `IPCInstance` (this crate) and `Subprocess` (`bun_runtime`) both
-// impl [`SendQueueOwner`], and the SendQueue is embedded inline in each, so
-// the pointer is a BACKREF (cleared before the owner drops).
-//
-// The JS host fns that need the concrete `Subprocess` / `Listener` types
-// (`do_send`, `emit_handle_ipc_message`, `Bun__Process__send`) live in
-// `bun_runtime::ipc_host`, which can name those types directly without a
-// runtime-registered hook table.
-// ──────────────────────────────────────────────────────────────────────────
+// `SendQueue.owner` is a [`SendQueueOwner`] enum over the two concrete owner
+// types (`Subprocess`, parent side; `ipc_host::IPCInstance`, child side) —
+// both nameable in this crate — stored as a BACKREF cleared before the owner
+// drops.
 
 // TODO: rewrite this code.
 /// Queue for messages sent between parent and child processes in an IPC environment. node:cluster sends json serialized messages
 /// to describe different events it performs. It will send a message with an incrementing sequence number and then call a callback
 /// when a message is received with an 'ack' property of the same sequence number.
-/// Note: moved down from `bun_runtime::node::node_cluster_binding` (cycle-break per
-/// docs/PORTING.md) — `SendQueue` stores one inline so the struct must live at this tier.
-/// All field accesses + dispatch methods need only `bun_jsc`/`bun_collections` symbols.
 pub struct InternalMsgHolder {
     pub seq: i32,
 

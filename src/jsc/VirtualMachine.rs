@@ -1732,8 +1732,6 @@ pub struct RuntimeHooks {
     /// (forward-dep cycle), so [`uncaught_exception`] reaches it through this
     /// slot instead of the linker.
     pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: u8),
-    /// `node_cluster_binding.handleInternalMessageChild(global, data)`.
-    /// `node_cluster_binding.child_singleton.deinit()`.
     /// `onBeforePrint()` for the `bun:test` runner, which lives in `bun_runtime`;
     /// `console.log` calls this so the test reporter can flush its line state
     /// before user output interleaves with it. No-op when `bun test` isn't
@@ -2789,7 +2787,6 @@ pub struct Options {
     pub is_main_thread: bool,
 }
 
-/// State of the child-side IPC channel: enabled-but-waiting for a JS listener, or fully initialized.
 /// Inherited IPC channel recorded at env load; consumed by `bun_runtime`'s
 /// `ipc_host::get_ipc_instance` when JS first attaches a listener.
 #[derive(Clone, Copy)]

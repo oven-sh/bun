@@ -48,6 +48,7 @@ pub mod wtf;
 // `bun_core ↔ bun_string` dep cycle. The `bun_string` crate is now a
 // one-line re-export shim over this module.
 // ──────────────────────────────────────────────────────────────────────────
+pub mod ip_address;
 pub mod string;
 pub use ::bstr::{BStr, BString, ByteSlice};
 pub use string::string_joiner::StringJoiner;
@@ -1154,8 +1155,8 @@ pub use crate::string::immutable::{
     ends_with_char_or_is_zero_length, eql_any_comptime, eql_comptime, eql_comptime_utf16,
     format_escapes, has_prefix, has_prefix_case_insensitive, has_prefix_comptime,
     has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, index_of_t,
-    is_all_whitespace, is_ip_address, is_npm_package_name, is_npm_package_name_ignore_length,
-    is_on_char_boundary, is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_t,
+    is_all_whitespace, is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
+    is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_t,
     length_of_leading_whitespace_ascii, memmem, order, order_t, percent_encode_write, sort_asc,
     sort_desc, split, starts_with_case_insensitive_ascii, starts_with_char, str_utf8,
     to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix, trim_prefix_comptime,

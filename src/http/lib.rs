@@ -1817,22 +1817,23 @@ impl<'a> HTTPClient<'a> {
                 // configured regardless, so the helper is called unconditionally
                 // below with `null` SNI in the IP case.
                 let mut owned: Vec<u8>; // drops on scope exit
-                let host_z: *const core::ffi::c_char = if !strings::is_ip_address(raw_hostname) {
-                    // SAFETY: TEMP_HOSTNAME only accessed from HTTP thread
-                    let temp = scratch::temp_hostname();
-                    if raw_hostname.len() < temp.len() {
-                        temp[..raw_hostname.len()].copy_from_slice(raw_hostname);
-                        temp[raw_hostname.len()] = 0;
-                        temp.as_ptr().cast::<core::ffi::c_char>()
+                let host_z: *const core::ffi::c_char =
+                    if !bun_core::ip_address::is_ip_address(raw_hostname) {
+                        // SAFETY: TEMP_HOSTNAME only accessed from HTTP thread
+                        let temp = scratch::temp_hostname();
+                        if raw_hostname.len() < temp.len() {
+                            temp[..raw_hostname.len()].copy_from_slice(raw_hostname);
+                            temp[raw_hostname.len()] = 0;
+                            temp.as_ptr().cast::<core::ffi::c_char>()
+                        } else {
+                            owned = Vec::with_capacity(raw_hostname.len() + 1);
+                            owned.extend_from_slice(raw_hostname);
+                            owned.push(0);
+                            owned.as_ptr().cast::<core::ffi::c_char>()
+                        }
                     } else {
-                        owned = Vec::with_capacity(raw_hostname.len() + 1);
-                        owned.extend_from_slice(raw_hostname);
-                        owned.push(0);
-                        owned.as_ptr().cast::<core::ffi::c_char>()
-                    }
-                } else {
-                    core::ptr::null()
-                };
+                        core::ptr::null()
+                    };
 
                 // SAFETY: `ssl_ptr` was null-checked above and is the live SSL
                 // handle for this just-opened socket.

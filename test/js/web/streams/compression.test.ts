@@ -536,7 +536,10 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     let pulls = 0;
     // Incompressible data so the gzipped output is ~as large as the input.
     const chunk = crypto.getRandomValues(new Uint8Array(64 * 1024));
-    const TOTAL = 500;
+    // Backpressure parks after ~tens of pulls (a few MB of socket+sink buffer /
+    // 64KB); 200 is enough headroom to distinguish "parked" from "ran away"
+    // without pushing ~32MB through gzip+HTTP under debug+ASAN.
+    const TOTAL = 200;
     await using server = Bun.serve({
       port: 0,
       fetch() {

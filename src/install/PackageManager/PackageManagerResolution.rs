@@ -28,8 +28,9 @@ pub fn resolve_from_disk_cache(
     this: &mut PackageManager,
     package_name: &[u8],
     version: &dependency::Version,
+    version_buf: &[u8],
 ) -> Option<PackageID> {
-    this.resolve_from_disk_cache(package_name, version)
+    this.resolve_from_disk_cache(package_name, version, version_buf)
 }
 
 #[inline]
@@ -135,6 +136,12 @@ impl PackageManager {
                 continue;
             }
             let name: &[u8] = entry.name.slice_u8();
+            // Entries are named by `cached_npm_package_folder_name_print`
+            // minus the `<package>@` prefix: `<version>`, then `@@<registry
+            // host>` for non-default registries, then the `@@@<cache
+            // version>` suffix. Trim from the first `@@` so the version
+            // parses; `path_for_cached_npm_path` reconstructs the full name.
+            let name = &name[..strings::index_of(name, b"@@").unwrap_or(name.len())];
             let sliced = SlicedString::init(name, name);
             let parsed = semver::Version::parse(sliced);
             if !parsed.valid || parsed.wildcard != semver::query::Wildcard::None {
@@ -166,11 +173,15 @@ impl PackageManager {
         &mut self,
         package_name: &[u8],
         version: &dependency::Version,
+        version_buf: &[u8],
     ) -> Option<PackageID> {
-        if version.tag != dependency::Tag::Npm {
-            // only npm supported right now
-            // tags are more ambiguous
-            return None;
+        match version.tag {
+            dependency::Tag::Npm => {}
+            // Offline, "latest" means the newest stable version in the cache.
+            // Other dist tags stay ambiguous and go to the registry.
+            dependency::Tag::DistTag
+                if version.dist_tag().tag.slice(version_buf) == b"latest" => {}
+            _ => return None,
         }
 
         let mut tags_buf: Vec<u8> = Vec::new();
@@ -194,13 +205,19 @@ impl PackageManager {
             // closure is not antisymmetric and may panic since Rust 1.81.
             installed_versions.sort_by(|a, b| semver::Version::order_fn(tags_slice, *b, *a));
         }
-        let npm_query = version.npm();
+        let npm_query = version.try_npm();
         for installed_version in installed_versions.iter().copied() {
-            if npm_query.version.satisfies(
-                installed_version,
-                self.lockfile.buffers.string_bytes.as_slice(),
-                tags_buf.as_slice(),
-            ) {
+            let matches = match npm_query {
+                Some(npm) => npm.version.satisfies(
+                    installed_version,
+                    self.lockfile.buffers.string_bytes.as_slice(),
+                    tags_buf.as_slice(),
+                ),
+                // "latest": the list is sorted descending, so the first
+                // non-prerelease version is the newest stable one.
+                None => !installed_version.tag.has_pre(),
+            };
+            if matches {
                 let mut buf = PathBuffer::uninit();
                 let npm_package_path = match super::path_for_cached_npm_path(
                     self,

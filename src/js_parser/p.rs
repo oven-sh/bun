@@ -4777,15 +4777,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match &mut binding.data {
             js_ast::b::B::BMissing(_) => {}
             js_ast::b::B::BIdentifier(bind) => {
-                // Declaration files keep module-scope `declare` bindings as
-                // real symbols; the statement becomes a `var` in parse_stmt.
-                if !opts.is_typescript_declare
-                    || (opts.is_namespace_scope && opts.is_export)
-                    || (Self::IS_TYPESCRIPT_ENABLED
-                        && self.options.typescript_declaration_file
-                        && opts.is_module_scope
-                        && !self.dts_suppress_type_name_recording)
-                {
+                if !opts.is_typescript_declare || (opts.is_namespace_scope && opts.is_export) {
                     bind.r#ref = self.declare_symbol(
                         kind,
                         binding.loc,

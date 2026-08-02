@@ -2055,15 +2055,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // inside a namespace with an "export var" statement containing all
                 // of the declared bindings. That "export var" statement will later
                 // cause identifiers to be transformed into property accesses.
-                //
-                // Declaration files reuse the conversion at module scope so
-                // `declare const x` leaves a real (undefined) binding.
-                if (opts.is_namespace_scope && opts.is_export)
-                    || (Self::IS_TYPESCRIPT_ENABLED
-                        && p.options.typescript_declaration_file
-                        && opts.is_module_scope
-                        && !p.dts_suppress_type_name_recording)
-                {
+                if opts.is_namespace_scope && opts.is_export {
                     let mut decls: G::DeclList = bun_alloc::AstAlloc::vec();
                     match &stmt.data {
                         js_ast::StmtData::SLocal(local) => {
@@ -2083,12 +2075,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return Ok(Some(p.s(
                             S::Local {
                                 kind: js_ast::LocalKind::KVar,
-                                is_export: opts.is_export,
+                                is_export: true,
                                 decls,
                                 ..Default::default()
                             },
                             loc,
                         )));
+                    }
+                }
+
+                // Declaration files record `declare var/let/const` names so
+                // `synthesize_declaration_file_bindings` emits them alongside
+                // every other type-only declaration form (one dedup site).
+                if Self::IS_TYPESCRIPT_ENABLED
+                    && p.options.typescript_declaration_file
+                    && opts.is_module_scope
+                    && !p.dts_suppress_type_name_recording
+                {
+                    if let js_ast::StmtData::SLocal(local) = &stmt.data {
+                        let mut _decls = bun_alloc::ArenaVec::<G::Decl>::with_capacity_in(
+                            local.decls.len_u32() as usize,
+                            p.arena,
+                        );
+                        for decl in local.decls.slice() {
+                            Self::extract_decls_for_binding(decl.binding, &mut _decls)?;
+                        }
+                        for decl in _decls.iter() {
+                            if let js_ast::b::B::BIdentifier(bind) = &decl.binding.data {
+                                let name = p.load_name_from_ref(bind.r#ref);
+                                p.record_declaration_file_type_name(name, opts.is_export)?;
+                            }
+                        }
                     }
                 }
 

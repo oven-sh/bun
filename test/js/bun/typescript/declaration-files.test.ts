@@ -58,6 +58,7 @@ declare const hidden: LocalOnly;
 export { LocalOnly, hidden };
 export { Alias };
 export type { Shape };
+export { version };
 `,
     "index.ts": `import * as api from "./api.d.ts";
 console.log(JSON.stringify(Object.keys(api).sort()));

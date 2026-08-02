@@ -357,6 +357,10 @@ void us_socket_group_close_all_ex(us_socket_group_r group, int also_listeners) n
  * (see close_all_ex). */
 int us_loop_close_all_groups(us_loop_r loop) nonnull_fn_decl;
 
+/* Windows process-exit: closesocket() every still-open fd so ExitProcess
+ * doesn't RST the peer. No dispatch, no free. No-op on POSIX. */
+void us_loop_close_fds_for_exit(us_loop_r loop) nonnull_fn_decl;
+
 unsigned short us_socket_group_timestamp(us_socket_group_r group) nonnull_fn_decl;
 struct us_loop_t *us_socket_group_loop(us_socket_group_r group) nonnull_fn_decl __attribute((returns_nonnull));
 void *us_socket_group_ext(us_socket_group_r group) nonnull_fn_decl;

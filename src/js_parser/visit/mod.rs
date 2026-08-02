@@ -1079,33 +1079,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         param_props + fields_to_lower,
                         self.arena,
                     );
-                    let mut param_prop_decls = BumpVec::<G::Property>::new_in(self.arena);
+                    let mut class_body = BumpVec::<G::Property>::with_capacity_in(
+                        class.properties.len() + param_props,
+                        self.arena,
+                    );
 
-                    let args_len = func_args.len();
-                    for arg_idx in 0..args_len {
-                        // borrowck: copy the scalars out before `&mut self` calls.
-                        let (id_ref, bind_loc) = {
-                            let arg = &func_args[arg_idx];
-                            if !arg.is_typescript_ctor_field {
-                                continue;
-                            }
-                            match arg.binding.data {
-                                BData::BIdentifier(id) => (id.r#ref, arg.binding.loc),
-                                _ => continue,
-                            }
+                    for arg in func_args.iter() {
+                        let BData::BIdentifier(id) = arg.binding.data else {
+                            continue;
                         };
-
-                        // SAFETY: original_name is an arena-owned slice valid for 'a.
+                        if !arg.is_typescript_ctor_field {
+                            continue;
+                        }
+                        let (id_ref, bind_loc) = (id.r#ref, arg.binding.loc);
                         let name: &'a [u8] = self.symbols[id_ref.inner_index() as usize]
                             .original_name
                             .slice();
-                        let arg_ident = self.new_expr(
-                            E::Identifier {
-                                ref_: id_ref,
-                                ..Default::default()
-                            },
-                            bind_loc,
-                        );
+                        let arg_ident =
+                            self.new_expr(E::Identifier::init(id_ref), bind_loc);
                         let this_target = self.new_expr(E::This {}, bind_loc);
                         let dot = self.new_expr(
                             E::Dot {
@@ -1125,33 +1116,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .unwrap_or(id_ref);
                             self.symbols[field_symbol_ref.inner_index() as usize]
                                 .set_must_not_be_renamed(true);
-                            let field_ident = self.new_expr(
-                                E::Identifier {
-                                    ref_: field_symbol_ref,
-                                    ..Default::default()
-                                },
-                                bind_loc,
-                            );
-                            param_prop_decls.push(G::Property {
+                            let field_ident =
+                                self.new_expr(E::Identifier::init(field_symbol_ref), bind_loc);
+                            class_body.push(G::Property {
                                 key: Some(field_ident),
                                 ..Default::default()
                             });
                         }
                     }
 
-                    let old_props: bun_ast::StoreSlice<G::Property> = class.properties;
-                    let old_props_len = old_props.len();
-                    let mut class_body = BumpVec::<G::Property>::with_capacity_in(
-                        old_props_len + param_prop_decls.len(),
-                        self.arena,
-                    );
-                    for decl in param_prop_decls.drain(..) {
-                        class_body.push(decl);
-                    }
-                    for i in 0..old_props_len {
-                        // SAFETY: in-bounds; arena-owned; no Drop on Property.
-                        let prop: G::Property =
-                            unsafe { core::ptr::read(old_props.as_ptr().add(i)) };
+                    for slot in class.properties.slice_mut().iter_mut() {
+                        let prop = core::mem::take(slot);
                         if !is_lowerable_field(&prop) {
                             class_body.push(prop);
                             continue;
@@ -1195,27 +1170,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
-                    // `StoreRef` -> separate Store alloc, not the slice `ptr::read` moved.
                     if let Some(mut cf) = constructor_function {
                         let old_body: &[Stmt] = cf.func.body.stmts.slice();
-                        let mut super_end: usize = 0;
-                        if class.extends.is_some() {
-                            for (index, stmt) in old_body.iter().enumerate() {
-                                let is_super = matches!(
-                                    &stmt.data,
-                                    StmtData::SExpr(se)
-                                        if matches!(
-                                            &se.value.data,
-                                            ExprData::ECall(call)
-                                                if matches!(call.target.data, ExprData::ESuper(_))
-                                        )
-                                );
-                                if is_super {
-                                    super_end = index + 1;
-                                    break;
-                                }
-                            }
-                        }
+                        let super_end = if class.extends.is_some() {
+                            old_body
+                                .iter()
+                                .position(|s| {
+                                    matches!(&s.data, StmtData::SExpr(se)
+                                        if matches!(&se.value.data, ExprData::ECall(c)
+                                            if matches!(c.target.data, ExprData::ESuper(_))))
+                                })
+                                .map_or(0, |i| i + 1)
+                        } else {
+                            0
+                        };
                         let mut stmts = BumpVec::<Stmt>::with_capacity_in(
                             old_body.len() + injected.len(),
                             self.arena,

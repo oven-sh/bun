@@ -783,6 +783,230 @@ it("db.query()", () => {
   db.close();
 });
 
+describe("Statement.iterate() busy guard", () => {
+  const busy = "This statement is busy executing a query";
+
+  function makeDb() {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE t (a INTEGER)");
+    for (let i = 0; i < 3; i++) db.exec(`INSERT INTO t VALUES (${i})`);
+    return db;
+  }
+
+  it("using the same statement inside its own iterate() loop throws instead of restarting the cursor", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t ORDER BY a");
+
+    const seen = [];
+    let throws = 0;
+    for (const row of s.iterate()) {
+      seen.push(row.a);
+      expect(() => s.get()).toThrow(TypeError);
+      expect(() => s.get()).toThrow(busy);
+      throws++;
+    }
+
+    // The rejected get() calls did not disturb the iteration.
+    expect(seen).toEqual([0, 1, 2]);
+    expect(throws).toBe(3);
+    db.close();
+  });
+
+  it("every operation that touches the cursor throws while the statement is being iterated", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t ORDER BY a");
+
+    for (const _row of s.iterate()) {
+      expect(() => s.get()).toThrow(busy);
+      expect(() => s.all()).toThrow(busy);
+      expect(() => s.values()).toThrow(busy);
+      expect(() => s.raw()).toThrow(busy);
+      expect(() => s.run()).toThrow(busy);
+      expect(() => s.columnTypes).toThrow(busy);
+      expect(() => s.iterate().next()).toThrow(busy);
+      // Operations that do not touch the cursor stay usable.
+      expect(s.toString()).toBe("SELECT a FROM t ORDER BY a");
+      expect(s.columnNames).toEqual(["a"]);
+      break;
+    }
+
+    // Once the loop exits, the statement is fully usable again.
+    expect(s.all()).toEqual([{ a: 0 }, { a: 1 }, { a: 2 }]);
+    db.close();
+  });
+
+  it("a second iterate() on the same statement throws instead of interleaving rows", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t ORDER BY a");
+
+    const a = s.iterate()[Symbol.iterator]();
+    expect(a.next().value).toEqual({ a: 0 });
+
+    const b = s.iterate()[Symbol.iterator]();
+    expect(() => b.next()).toThrow(busy);
+
+    // The rejected iterator did not disturb the live one.
+    expect(a.next().value).toEqual({ a: 1 });
+    expect(a.next().value).toEqual({ a: 2 });
+    expect(a.next().done).toBe(true);
+    db.close();
+  });
+
+  it("breaking out of iterate() resets the cursor for the next iteration", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t ORDER BY a");
+
+    for (const row of s.iterate()) {
+      expect(row).toEqual({ a: 0 });
+      break;
+    }
+
+    // A leaked cursor would resume at the second row here.
+    expect(Array.from(s.iterate())).toEqual([{ a: 0 }, { a: 1 }, { a: 2 }]);
+    db.close();
+  });
+
+  it("an exception thrown from the loop body releases the statement", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t ORDER BY a");
+
+    expect(() => {
+      for (const _row of s.iterate()) {
+        throw new Error("boom");
+      }
+    }).toThrow("boom");
+
+    // A leaked cursor would resume at the second row here.
+    expect(Array.from(s.iterate())).toEqual([{ a: 0 }, { a: 1 }, { a: 2 }]);
+    expect(s.all()).toEqual([{ a: 0 }, { a: 1 }, { a: 2 }]);
+    db.close();
+  });
+
+  it("a separately prepared statement for the same SQL is independent", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t ORDER BY a");
+    const other = db.prepare("SELECT a FROM t ORDER BY a");
+
+    const pairs = [];
+    for (const row of s.iterate()) {
+      pairs.push([row.a, other.get().a]);
+    }
+
+    expect(pairs).toEqual([
+      [0, 0],
+      [1, 0],
+      [2, 0],
+    ]);
+    db.close();
+  });
+
+  it("iterate() with bound parameters enforces the same guard and releases on break", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t WHERE a >= $min ORDER BY a");
+
+    const seen = [];
+    for (const row of s.iterate({ $min: 1 })) {
+      seen.push(row.a);
+      expect(() => s.get({ $min: 0 })).toThrow(busy);
+      break;
+    }
+    expect(seen).toEqual([1]);
+
+    expect(s.all({ $min: 0 })).toEqual([{ a: 0 }, { a: 1 }, { a: 2 }]);
+    expect(Array.from(s.iterate({ $min: 0 }))).toEqual([{ a: 0 }, { a: 1 }, { a: 2 }]);
+    db.close();
+  });
+
+  it("array destructuring of iterate() (which calls .return()) releases the statement", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t ORDER BY a");
+
+    // Destructuring pulls one row then calls .return() on the unfinished iterator.
+    const [first] = s.iterate();
+    expect(first).toEqual({ a: 0 });
+
+    // A leaked cursor would resume at the second row here.
+    expect(Array.from(s.iterate())).toEqual([{ a: 0 }, { a: 1 }, { a: 2 }]);
+    expect(s.all()).toEqual([{ a: 0 }, { a: 1 }, { a: 2 }]);
+    db.close();
+  });
+
+  it("iterating the Statement directly via Symbol.iterator enforces the same guard and releases on break", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t ORDER BY a");
+
+    for (const row of s) {
+      expect(row).toEqual({ a: 0 });
+      expect(() => s.get()).toThrow(busy);
+      break;
+    }
+
+    // A leaked cursor would resume at the second row here.
+    expect(Array.from(s)).toEqual([{ a: 0 }, { a: 1 }, { a: 2 }]);
+    db.close();
+  });
+
+  it("finalize() inside the loop body ends the iteration without crashing", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t ORDER BY a");
+
+    const seen = [];
+    expect(() => {
+      for (const row of s.iterate()) {
+        seen.push(row.a);
+        s.finalize();
+      }
+    }).toThrow("Statement has finalized");
+
+    // The one row stepped before the statement went away was still yielded.
+    expect(seen).toEqual([0]);
+    db.close();
+  });
+
+  // For a write statement abandoned after SQLITE_ROW, the sqlite3_reset() that releases the
+  // iterator is what commits the implicit transaction, and SQLite documents that it can fail
+  // even though every prior sqlite3_step() succeeded: https://www.sqlite.org/c3ref/reset.html
+  it("breaking out of an iterated INSERT ... RETURNING surfaces the commit failure", () => {
+    const db = new Database(":memory:");
+    db.exec("PRAGMA foreign_keys = ON");
+    db.exec("CREATE TABLE parent (id INTEGER PRIMARY KEY)");
+    db.exec(
+      "CREATE TABLE child (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED)",
+    );
+
+    // No parent 999 exists, but the FK is deferred, so the first step still yields the row.
+    const s = db.prepare("INSERT INTO child (id, pid) VALUES (1, 999) RETURNING id");
+
+    const seen = [];
+    let err = null;
+    try {
+      for (const row of s.iterate()) {
+        seen.push(row);
+        break;
+      }
+    } catch (e) {
+      err = e;
+    }
+
+    // iterate() already handed back the "inserted" row...
+    expect(seen).toEqual([{ id: 1 }]);
+    // ...but the commit failed and must be reported, not swallowed: the row is not there.
+    expect(err).toBeInstanceOf(SQLiteError);
+    expect({ code: err?.code, message: err?.message }).toEqual({
+      code: "SQLITE_CONSTRAINT_FOREIGNKEY",
+      message: "FOREIGN KEY constraint failed",
+    });
+    expect(db.prepare("SELECT * FROM child").all()).toEqual([]);
+
+    // The failed commit released the cursor rather than bricking the statement: once the
+    // parent row exists, the same statement runs to completion.
+    db.exec("INSERT INTO parent (id) VALUES (999)");
+    expect(s.get()).toEqual({ id: 1 });
+    expect(db.prepare("SELECT id, pid FROM child").all()).toEqual([{ id: 1, pid: 999 }]);
+    db.close();
+  });
+});
+
 it("db.run()", () => {
   const db = Database.open(":memory:");
 

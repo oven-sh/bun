@@ -457,7 +457,7 @@ pub(crate) fn writable_stream(
                     if sink.end_promise.has_value() {
                         sink.end_promise.reject(global, Ok(js_err))?;
                     }
-                    if !sink.done {
+                    if !sink.state.is_done() {
                         sink.abort();
                     }
                 }
@@ -720,8 +720,7 @@ impl S3UploadStreamWrapper {
                         crate::webcore::streams::SourceHandle::ByteStream(_)
                             | crate::webcore::streams::SourceHandle::FileReader(_)
                     );
-                    sink.ended = true;
-                    sink.done = true;
+                    sink.state = crate::webcore::streams::NetworkSinkState::Done;
                     sink.pending.result = crate::webcore::streams::Writable::Done;
                     sink.pending.run();
                     if sink.flush_promise.has_value() {
@@ -1059,7 +1058,7 @@ pub(crate) fn upload_stream(
                     | crate::webcore::streams::Writable::Err(_) => {
                         byte_stream.sink.set(crate::webcore::SinkHandle::None);
                         sink.source.clear();
-                        if !sink.ended {
+                        if !sink.state.is_ended() {
                             let _ = sink.end(None);
                         }
                         ctx.handle_resolve_stream();
@@ -1071,7 +1070,7 @@ pub(crate) fn upload_stream(
             if has_last {
                 byte_stream.sink.set(crate::webcore::SinkHandle::None);
                 sink.source.clear();
-                if !sink.ended {
+                if !sink.state.is_ended() {
                     let _ = sink.end(None);
                 }
                 ctx.handle_resolve_stream();
@@ -1122,7 +1121,7 @@ pub(crate) fn upload_stream(
     // returned). `handle_resolve_stream` destroys the sink, so re-borrow from
     // `ctx.sink` rather than the `sink` reference taken before assign_to_stream.
     if let Some(sink) = ctx.sink_mut() {
-        if !sink.ended {
+        if !sink.state.is_ended() {
             let _ = sink.end(None);
         }
     }

@@ -241,7 +241,7 @@ fn on_open(ctx: *mut HTTPClient) {
 
         // SAFETY: `ssl_ptr` is the live SSL handle from the tunnel's SSLWrapper.
         let ssl = unsafe { &mut *ssl_ptr.as_ptr() };
-        if bun_core::is_ip_address(_hostname) {
+        if bun_core::ip_address::is_ip_address(_hostname) {
             // SNI is null (IP literal — no SNI).
             crate::configure_http_client_with_alpn(ssl, core::ptr::null(), AlpnOffer::H1);
         } else {

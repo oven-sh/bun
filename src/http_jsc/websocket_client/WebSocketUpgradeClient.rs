@@ -830,7 +830,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // NUL-terminated CString that outlives this call.
                     bun_http::configure_http_client_with_alpn(
                         unsafe { &mut *handle },
-                        if strings::is_ip_address(me.hostname.as_bytes()) {
+                        if bun_core::ip_address::is_ip_address(me.hostname.as_bytes()) {
                             core::ptr::null()
                         } else {
                             me.hostname.as_ptr()

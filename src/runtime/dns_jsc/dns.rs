@@ -324,7 +324,7 @@ fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBackend) -> &
             return b"localhost";
         } else if name.ends_with(b".local")
             // https://github.com/c-ares/c-ares/pull/463
-            || strings::is_ipv6_address(name)
+            || bun_core::ip_address::is_ipv6_address(name)
             // getaddrinfo() is inconsistent with ares_getaddrinfo() when using localhost
             || name == b"localhost"
         {
@@ -2572,7 +2572,7 @@ pub mod internal {
             // Null host: fall through to getaddrinfo(NULL, service) on the work pool.
             return false;
         };
-        if strings::to_ip_address(host.as_bytes()).is_some() {
+        if bun_core::ip_address::to_ip_address(host.as_bytes()).is_some() {
             return false;
         }
 

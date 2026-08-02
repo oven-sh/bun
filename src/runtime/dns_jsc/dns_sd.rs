@@ -678,7 +678,7 @@ pub(crate) fn lookup(
 
     // mDNSResponder answers names; numeric hosts are a parse and AI_V4MAPPED/AI_ALL need getaddrinfo's semantics.
     if getaddrinfo_only_flags(query.options.flags)
-        || strings::to_ip_address(query.name.as_ref()).is_some()
+        || bun_core::ip_address::to_ip_address(query.name.as_ref()).is_some()
     {
         return lib_c::lookup(this, query, global_this);
     }

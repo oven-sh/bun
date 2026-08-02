@@ -1844,8 +1844,6 @@ pub use exact_size_matcher::ExactSizeMatcher;
 
 pub const UNICODE_REPLACEMENT: u32 = 0xFFFD;
 
-pub use super::ip_address::{ares_inet_pton, is_ip_address, is_ipv6_address, to_ip_address};
-
 pub fn left_has_any_in_right(to_check: &[&[u8]], against: &[&[u8]]) -> bool {
     for check in to_check {
         for item in against {

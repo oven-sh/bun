@@ -1124,7 +1124,8 @@ impl Display for URLFormatter<'_> {
         )?;
 
         if let Some(hostname) = self.hostname {
-            let needs_brackets = hostname[0] != b'[' && strings::is_ipv6_address(hostname);
+            let needs_brackets =
+                hostname[0] != b'[' && crate::ip_address::is_ipv6_address(hostname);
             if needs_brackets {
                 write!(f, "[{}]", bstr::BStr::new(hostname))?;
             } else {

@@ -1,29 +1,35 @@
 //! IP-address parsing shared by URL/host handling and the DNS backends.
 
-use core::ffi::c_int;
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-// Uses `ares_inet_pton`, the vendored
-// c-ares implementation. Do NOT call the system `inet_pton` here: on Windows that
-// resolves into ws2_32.dll and fails with WSANOTINITIALISED whenever it runs before
-// `WSAStartup()`, which URL/host parsing can. c-ares' impl is pure C, no preconditions.
-unsafe extern "C" {
-    pub fn ares_inet_pton(
-        af: c_int,
-        src: *const core::ffi::c_char,
-        dst: *mut core::ffi::c_void,
-    ) -> c_int;
-}
+use sys::{AF_INET, AF_INET6, pton};
 
-// dep-graph: bun_string < bun_sys, so cannot import the canonical
-// `bun_sys::posix::AF`. Keep a thin libc/ws2def passthrough instead. The
-// previous hand-rolled cfg ladder hardcoded `10` for the BSD fallback, which
-// is wrong (FreeBSD AF_INET6 == 28); routing through `libc` fixes that.
-const AF_INET: c_int = 2;
-#[cfg(not(windows))]
-const AF_INET6: c_int = libc::AF_INET6 as c_int;
-#[cfg(windows)]
-const AF_INET6: c_int = 23; // ws2def.h
+/// The one place this module touches C: the vendored c-ares `inet_pton`, which is pure C with no preconditions — unlike ws2_32's, which fails with WSANOTINITIALISED whenever it runs before `WSAStartup()`, as URL/host parsing can.
+mod sys {
+    use core::ffi::{c_char, c_int, c_void};
+
+    // dep-graph: bun_string < bun_sys, so the canonical `bun_sys::posix::AF` is
+    // out of reach; this is a thin libc/ws2def passthrough. Hardcoding a BSD
+    // fallback would be wrong (FreeBSD AF_INET6 == 28).
+    pub(super) const AF_INET: c_int = 2;
+    #[cfg(not(windows))]
+    pub(super) const AF_INET6: c_int = libc::AF_INET6 as c_int;
+    #[cfg(windows)]
+    pub(super) const AF_INET6: c_int = 23; // ws2def.h
+
+    unsafe extern "C" {
+        fn ares_inet_pton(af: c_int, src: *const c_char, dst: *mut c_void) -> c_int;
+    }
+
+    /// Safe wrapper: `src` is NUL-terminated by construction and `dst` is sized for the family.
+    pub(super) fn pton(af: c_int, src: &[u8], dst: &mut [u8]) -> bool {
+        debug_assert_eq!(src.last(), Some(&0));
+        debug_assert!(dst.len() >= if af == AF_INET6 { 16 } else { 4 });
+        // SAFETY: per the asserts above — a NUL-terminated source and a
+        // destination large enough for the address family.
+        unsafe { ares_inet_pton(af, src.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0 }
+    }
+}
 
 pub fn is_ip_address(input: &[u8]) -> bool {
     let mut buf = [0u8; 512];
@@ -32,11 +38,7 @@ pub fn is_ip_address(input: &[u8]) -> bool {
     }
     buf[..input.len()].copy_from_slice(input);
     let mut dst = [0u8; 28];
-    // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
-    unsafe {
-        ares_inet_pton(AF_INET, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0
-            || ares_inet_pton(AF_INET6, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0
-    }
+    pton(AF_INET, &buf[..=input.len()], &mut dst) || pton(AF_INET6, &buf[..=input.len()], &mut dst)
 }
 
 /// `ares_inet_pton(AF_INET6, …) > 0`.
@@ -50,8 +52,7 @@ pub fn is_ipv6_address(input: &[u8]) -> bool {
     }
     buf[..input.len()].copy_from_slice(input);
     let mut dst = [0u8; 28];
-    // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
-    unsafe { ares_inet_pton(AF_INET6, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0 }
+    pton(AF_INET6, &buf[..=input.len()], &mut dst)
 }
 
 /// Parses what the platform resolver treats as a numeric host: dotted-quad, IPv6 (an optional `%zone` is stripped, not validated), and the `inet_aton` shorthand `getaddrinfo` accepts but `is_ip_address` rejects (`127.1`, `2130706433`, `0x7f000001`, `0177.0.0.1`).

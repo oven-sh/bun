@@ -34,9 +34,6 @@ pub use write::Write;
 // `bun_core::strings` (the alias in lib.rs); `immutable` is the module name.
 #[path = "immutable.rs"]
 pub mod immutable;
-
-#[path = "ip_address.rs"]
-pub mod ip_address;
 use crate::strings;
 
 // Unicode ID-Start/ID-Continue two-stage tables.

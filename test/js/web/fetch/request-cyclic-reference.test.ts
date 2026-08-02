@@ -1,7 +1,15 @@
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
 
+// In CI these files run under `bun test --parallel --isolate`, where one
+// worker process runs several test files against the same JSC VM. heapStats()
+// is VM-wide, so assert on the delta rather than an absolute count to avoid
+// counting ReadableStreams left over from the previous file in this worker.
+const streamCount = () => heapStats().objectTypeCounts.ReadableStream || 0;
+
 test("stream should not leak when request is cyclic reference to itself", async () => {
+  Bun.gc(true);
+  const baseline = streamCount();
   function leak() {
     const stream = new ReadableStream({
       pull(controller) {},
@@ -16,10 +24,12 @@ test("stream should not leak when request is cyclic reference to itself", async 
 
   await Bun.sleep(0);
   Bun.gc(true);
-  expect(heapStats().objectTypeCounts.ReadableStream || 0).toBeLessThanOrEqual(100);
+  expect(streamCount() - baseline).toBeLessThanOrEqual(100);
 });
 
 test("stream should not leak when creating a stream contained in another request", async () => {
+  Bun.gc(true);
+  const baseline = streamCount();
   var req1: Request | null = null;
   var req2: Request | null = null;
   function leak() {
@@ -42,5 +52,5 @@ test("stream should not leak when creating a stream contained in another request
 
   await Bun.sleep(0);
   Bun.gc(true);
-  expect(heapStats().objectTypeCounts.ReadableStream || 0).toBeLessThanOrEqual(100);
+  expect(streamCount() - baseline).toBeLessThanOrEqual(100);
 });

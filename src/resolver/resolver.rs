@@ -5619,13 +5619,17 @@ impl<'a> Resolver<'a> {
         } else {
             return None;
         };
-        let stem = &path[..path.len() - ext.len()];
+        let stem_len = path.len() - ext.len();
+        let mut buf = bun_paths::path_buffer_pool::get();
         for declaration_ext in declaration_exts {
-            let mut candidate = Vec::with_capacity(stem.len() + declaration_ext.len());
-            candidate.extend_from_slice(stem);
-            candidate.extend_from_slice(declaration_ext);
+            let total_len = stem_len + declaration_ext.len();
+            if total_len > buf.len() {
+                return None;
+            }
+            buf[..stem_len].copy_from_slice(&path[..stem_len]);
+            buf[stem_len..total_len].copy_from_slice(declaration_ext);
             // No further recursion: ".ts"/".mts"/".cts" never match above.
-            if let Some(result) = self.load_as_file(&candidate, extension_order) {
+            if let Some(result) = self.load_as_file(&buf[..total_len], extension_order) {
                 return Some(result);
             }
         }

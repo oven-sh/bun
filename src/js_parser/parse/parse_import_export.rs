@@ -207,7 +207,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "import { type xx as yy } from 'mod'"
                     // "import { type if as yy } from 'mod'"
                     // "import { type 'xx' as yy } from 'mod'"
-                    if p.options.typescript_declaration_file {
+                    if p.options.typescript_declaration_file && !p.dts_suppress_type_name_recording
+                    {
                         // Declaration files keep type-only specifiers as
                         // runtime imports.
                         let inner_alias_loc = p.lexer.loc();
@@ -429,7 +430,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // "export { type default as if } from 'path'"
                         // "export { type xx as 'yy' }"
                         // "export { type 'xx' } from 'mod'"
-                        if p.options.typescript_declaration_file {
+                        if p.options.typescript_declaration_file
+                            && !p.dts_suppress_type_name_recording
+                        {
                             // Declaration files keep type-only specifiers as
                             // runtime exports.
                             let inner_loc = p.lexer.loc();

@@ -270,7 +270,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_typescript_declare: opts.is_typescript_declare,
                 ..ParseStatementOptions::default()
             };
-            stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut _opts)?;
+            // Ambient bodies are dropped wholesale; declaration-file mode must
+            // not retain type-only specifiers (and their import records) here.
+            let old_suppress = p.dts_suppress_type_name_recording;
+            if opts.is_typescript_declare {
+                p.dts_suppress_type_name_recording = true;
+            }
+            let body = p.parse_stmts_up_to(T::TCloseBrace, &mut _opts);
+            p.dts_suppress_type_name_recording = old_suppress;
+            stmts = body?;
             p.lexer.next()?;
         }
         let has_non_local_export_declare_inside_namespace =

@@ -128,11 +128,14 @@ test.concurrent("declaration sibling resolution covers .js, .mjs and .cjs specif
 `,
     "c.d.cts": `export type CType = 2;
 `,
+    "d.d.mts": `export type DType = 4;
+`,
     // ".js" maps to a ".d.ts" sibling, or falls back to ".d.mts" when no
-    // ".d.ts" exists; ".cjs" maps to ".d.cts".
+    // ".d.ts" exists; ".mjs" maps to ".d.mts"; ".cjs" maps to ".d.cts".
     "wrapper.d.ts": `export { AType } from "./a.js";
 export { BType } from "./b.js";
 export { CType } from "./c.cjs";
+export { DType } from "./d.mjs";
 `,
     "main.ts": `import * as m from "./wrapper.d.ts";
 console.log(JSON.stringify(Object.keys(m).sort()));
@@ -140,7 +143,7 @@ console.log(JSON.stringify(Object.keys(m).sort()));
   });
   const { stdout, stderr, exitCode } = await run(dir, "main.ts");
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual(["AType", "BType", "CType"]);
+  expect(JSON.parse(stdout.trim())).toEqual(["AType", "BType", "CType", "DType"]);
   expect(exitCode).toBe(0);
 });
 
@@ -269,7 +272,7 @@ console.log(JSON.stringify([typeof lib, Object.keys(esm).sort(), Object.keys(wra
   const [libType, esmKeys, wrapperKeys] = JSON.parse(stdout.trim());
   expect(libType).toBe("undefined");
   expect(esmKeys).toEqual(["Bar", "Foo"]);
-  expect(wrapperKeys).toContain("HelperType");
+  expect(wrapperKeys).toEqual(["HelperType"]);
   expect(exitCode).toBe(0);
 });
 

@@ -1115,6 +1115,7 @@ describe("--preserve-symlinks", () => {
       "shared/lib/where.mjs": `export default import.meta.url;\n`,
       "shared/main.mjs": `import v from "./gen/dep.mjs";\nconsole.log(v);\n`,
       "shared/mainjs.js": `import v from "./gen/dep.mjs";\nconsole.log(v);\n`,
+      "shared/worker.mjs": `import v from "./gen/dep.mjs";\nconsole.log(v);\n`,
       "app/gen/dep.mjs": `export default "RESOLVED-FROM-APP-GEN";\n`,
       "app/gen/dep.cjs": `module.exports = "RESOLVED-FROM-APP-GEN";\n`,
       "app/node_modules/somepkg/package.json": `{ "name": "somepkg", "version": "1.0.0", "type": "module", "main": "index.mjs" }`,
@@ -1123,6 +1124,7 @@ describe("--preserve-symlinks", () => {
       "app/main-relative.cjs": `console.log(require("./lib/relative.cjs"));\n`,
       "app/main-bare.mjs": `import v from "./lib/bare.mjs";\nconsole.log(v);\n`,
       "app/main-where.mjs": `import url from "./lib/where.mjs";\nconsole.log(url);\n`,
+      "app/main-worker.mjs": `import { Worker } from "worker_threads";\nconst w = new Worker("./worker-sym.mjs");\nw.on("error", e => { console.error(e.message); process.exit(1); });\nw.on("exit", c => process.exit(c));\n`,
     });
     mkdirSync(join(dir, "app", "lib"));
     for (const f of ["relative.mjs", "relative.cjs", "bare.mjs", "where.mjs"]) {
@@ -1130,6 +1132,7 @@ describe("--preserve-symlinks", () => {
     }
     symlinkSync(join(dir, "shared", "main.mjs"), join(dir, "app", "main-sym.mjs"), "file");
     symlinkSync(join(dir, "shared", "mainjs.js"), join(dir, "app", "mainsym.js"), "file");
+    symlinkSync(join(dir, "shared", "worker.mjs"), join(dir, "app", "worker-sym.mjs"), "file");
     return dir;
   }
 
@@ -1221,6 +1224,14 @@ describe("--preserve-symlinks", () => {
     const withoutMain = await run(join(dir, "app"), ["--preserve-symlinks", "main-sym.mjs"]);
     expect(withoutMain.stderr).toContain("Cannot find module './gen/dep.mjs'");
     expect(withoutMain.exitCode).not.toBe(0);
+  });
+
+  it.concurrent("--preserve-symlinks-main applies to a Worker's entry point", async () => {
+    const dir = makeTree();
+    const { stdout, stderr, exitCode } = await run(join(dir, "app"), ["--preserve-symlinks-main", "main-worker.mjs"]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("RESOLVED-FROM-APP-GEN\n");
+    expect(exitCode).toBe(0);
   });
 
   it.concurrent(

@@ -1740,7 +1740,19 @@ unsafe fn resolve_entry_point_specifier<'s>(
     // `filename_store` (`Path<'static>`), NOT `resolved_entry_point` itself —
     // copy the slice out and let `resolved_entry_point` drop on the stack.
     match resolved_entry_point.path_const() {
-        Some(entry_path) => Some(entry_path.text),
+        Some(entry_path) => {
+            // Node applies --preserve-symlinks-main to a worker's entry too:
+            // recover the link spelling that `set_realpath` stashed in
+            // `pretty`. (With --preserve-symlinks off and -main on, the
+            // resolver above ran in realpath mode.)
+            let preserve_main = bun_options_types::context::try_get()
+                .is_some_and(|c| c.runtime_options.preserve_symlinks_main_enabled());
+            if preserve_main && entry_path.is_symlink && !entry_path.pretty.is_empty() {
+                Some(entry_path.pretty)
+            } else {
+                Some(entry_path.text)
+            }
+        }
         None => {
             *error_message = BunString::static_(b"Worker entry point is missing");
             None

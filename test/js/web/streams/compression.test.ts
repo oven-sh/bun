@@ -441,21 +441,31 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Backpressure: the readable has highWaterMark 0, so the first write stays
-  // pending until a reader pulls. Once a read drains the output, the write
-  // settles.
-  test("a write completes once the readable side is drained", async () => {
+  // readable highWaterMark is 1 (matching Node.js and Chromium), so a single
+  // write completes before any reader is attached.
+  test("a single write completes without a reader attached", async () => {
+    const cs = new CompressionStream("gzip");
+    const writer = cs.writable.getWriter();
+    await writer.write(new Uint8Array(1024));
+    void writer.close();
+    const out = await Array.fromAsync(cs.readable);
+    expect(out.length).toBeGreaterThan(0);
+  });
+
+  // Backpressure still kicks in once the readable queue is full.
+  test("a second write stays pending until the readable side is drained", async () => {
     const cs = new CompressionStream("gzip");
     const writer = cs.writable.getWriter();
     const reader = cs.readable.getReader();
 
-    const write = writer.write(new Uint8Array(1024));
-    const raced = await Promise.race([write.then(() => "done"), Bun.sleep(0).then(() => "pending")]);
+    await writer.write(new Uint8Array(1024));
+    const second = writer.write(new Uint8Array(1024));
+    const raced = await Promise.race([second.then(() => "done"), Bun.sleep(0).then(() => "pending")]);
     expect(raced).toBe("pending");
 
     const { value } = await reader.read();
     expect(value!.byteLength).toBeGreaterThan(0);
-    await write;
+    await second;
 
     void writer.close();
     while (!(await reader.read()).done) {}

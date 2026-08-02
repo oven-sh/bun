@@ -204,3 +204,66 @@ test("TextEncoderStream -> native HTTP response sink: flush emits FFFD for a dan
   const text = await (await fetch(server.url)).text();
   expect(text).toBe("a\uFFFD");
 });
+
+// Each encoder/decoder owns its own reusable scratch buffer; a chain of them
+// must not let one stage observe another's buffer before the bytes are copied.
+test("TextEncoderStream -> TextDecoderStream -> TextEncoderStream round-trips many chunks without corruption", async () => {
+  const chunks = [
+    "ascii-only-1",
+    "mañana café ", // latin-1 non-ascii
+    "\u{1F499}".repeat(50), // surrogate pairs (BMP-out)
+    "x".repeat(8000), // larger than one internal CHUNK span
+    leading, // split surrogate across chunk boundary
+    trailing + "tail",
+    "\u{1F1EE}\u{1F1F3}zz", // regional indicators
+    Buffer.alloc(3000, "日").toString(), // 3-byte utf8
+    "",
+    "end",
+  ];
+  const expected = new TextEncoder().encode(chunks.join(""));
+
+  const src = new ReadableStream<string>({
+    start(c) {
+      for (const s of chunks) c.enqueue(s);
+      c.close();
+    },
+  });
+
+  const out = Buffer.from(
+    await new Response(
+      src
+        .pipeThrough(new TextEncoderStream())
+        .pipeThrough(new TextDecoderStream())
+        .pipeThrough(new TextEncoderStream()),
+    ).arrayBuffer(),
+  );
+
+  expect(out.byteLength).toBe(expected.byteLength);
+  expect(Buffer.compare(out, Buffer.from(expected))).toBe(0);
+});
+
+test("TextEncoderStream -> TextDecoderStream -> TextEncoderStream -> native HTTP sink round-trips", async () => {
+  const chunks = ["hello ", "\u{1F499}".repeat(200), leading, trailing, " world"];
+  const expected = new TextEncoder().encode(chunks.join(""));
+
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      const body = new ReadableStream<string>({
+        start(c) {
+          for (const s of chunks) c.enqueue(s);
+          c.close();
+        },
+      });
+      return new Response(
+        body
+          .pipeThrough(new TextEncoderStream())
+          .pipeThrough(new TextDecoderStream())
+          .pipeThrough(new TextEncoderStream()),
+      );
+    },
+  });
+  const out = Buffer.from(await (await fetch(server.url)).arrayBuffer());
+  expect(out.byteLength).toBe(expected.byteLength);
+  expect(Buffer.compare(out, Buffer.from(expected))).toBe(0);
+});

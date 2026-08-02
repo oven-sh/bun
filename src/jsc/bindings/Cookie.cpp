@@ -1,6 +1,5 @@
 #include "Cookie.h"
 #include "EncodeURIComponent.h"
-#include "JSCookie.h"
 #include "helpers.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/WallTime.h>

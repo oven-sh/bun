@@ -14,8 +14,7 @@ use js_lexer::T;
 use crate::parser::fs;
 use crate::parser::{
     AwaitOrYield, DeferredTsDecorators, LexicalDecl, ParseStatementOptions, ParsedPath, Ref,
-    StatementScope,
-    StmtList,
+    StatementScope, StmtList,
 };
 use crate::typescript;
 use bun_ast::{ImportKind, ImportRecordFlags, ImportRecordTag};

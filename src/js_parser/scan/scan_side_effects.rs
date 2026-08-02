@@ -81,7 +81,8 @@ impl SideEffects {
                     }
                     Op::Code::BinLogicalOr => {
                         if let Some(effects) = SideEffects::to_boolean(p, &e.right.data) {
-                            if !effects.value && effects.side_effects == SideEffects::NoSideEffects {
+                            if !effects.value && effects.side_effects == SideEffects::NoSideEffects
+                            {
                                 // "if (anything || falsyNoSideEffects)" => "if (anything)"
                                 *expr = e.left;
                                 continue;

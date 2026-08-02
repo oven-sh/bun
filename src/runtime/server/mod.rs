@@ -1797,6 +1797,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // for the server's lifetime); single-threaded JS context, no aliasing `&mut`.
         let vm = unsafe { &mut *self.vm_mut() };
 
+        if vm.is_shutting_down() {
+            // No more ticks; `finalize()` frees via `DEINIT_SCHEDULED` instead.
+            return;
+        }
+
         if !self.flags.contains(ServerFlags::TERMINATED) {
             // App.close can cause finalizers to run.
             // scheduleDeinit can be called inside a finalizer.
@@ -1947,13 +1952,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     // ─── deinit ──────────────────────────────────────────────────────────────
     /// Tear down the uws app handles and free the boxed server. Only called
-    /// from `schedule_deinit`'s task or synchronously on listen-failure.
+    /// from `schedule_deinit`'s task, on listen-failure, or from `finalize()` at VM shutdown.
     ///
     /// # Safety
     /// `this` must be the unique owning pointer to a heap-allocated `NewServer`
     /// produced by [`Self::init`]; no other reference may be live, and `this`
     /// must not be used after this returns.
-    fn deinit(this: *mut Self) {
+    pub(super) fn deinit(this: *mut Self) {
         httplog!("deinit");
         // SAFETY: `this` was heap-allocated in `init()` and is uniquely owned here.
         let this_ref = unsafe { &mut *this };

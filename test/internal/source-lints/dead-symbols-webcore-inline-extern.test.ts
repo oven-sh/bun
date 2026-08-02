@@ -22,7 +22,7 @@ test("#includes of deleted webcore/bindings headers do not reappear", () => {
     ["src/jsc/bindings/webcore/EventTargetHeaders.h", /#include "Node\.h"/],
     ["src/jsc/bindings/webcore/JSMessageEventCustom.cpp", /#include "JSDOMWindow\.h"/],
     ["src/jsc/bindings/webcore/JSMessageEvent.cpp", /#include "JSServiceWorker\.h"|#include "JSWindowProxy\.h"/],
-    ["src/jsc/bindings/webcore/JSEventTargetCustom.cpp", /JSDOMWindow\.h|JSWindowProxy\.h/],
+    ["src/jsc/bindings/webcore/JSEventTargetCustom.cpp", /"JSDOMWindow\.h"|"JSWindowProxy\.h"/],
   ];
   const found = checks.filter(([f, re]) => re.test(src(f))).map(([f, re]) => `${f}: ${re.source}`);
   expect(found).toEqual([]);

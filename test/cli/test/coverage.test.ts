@@ -43,7 +43,9 @@ test("coverage report generation scales with ranges, not bytes", () => {
   // release lanes where `plain` is a few tens of ms; macOS 26 arm64 sees ~500ms
   // of JSC ControlFlowProfiler overhead here, so use a higher floor on darwin.
   const floor = isMacOS ? 250 : 150;
-  expect(covered, `plain=${plain.toFixed(0)}ms covered=${covered.toFixed(0)}ms`).toBeLessThan(Math.max(plain, floor) * 3);
+  expect(covered, `plain=${plain.toFixed(0)}ms covered=${covered.toFixed(0)}ms`).toBeLessThan(
+    Math.max(plain, floor) * 3,
+  );
 });
 
 test("coverage crash", () => {

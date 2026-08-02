@@ -564,6 +564,8 @@ impl<'a> Coordinator<'a> {
                 self.account_crash(idx, status);
             }
             Output::flush();
+            // SAFETY: fresh root derivation — `account_crash` can reach `bail_out`, which retags the slots.
+            let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
             w.inflight = None;
             if panicked {
                 self.abort_on_worker_panic(idx, status);

@@ -287,10 +287,9 @@ impl StatWatcherScheduler {
 
     /// Schedule a task to set the timer in the main thread
     fn schedule_timer_update(this: *mut Self) {
-        // SAFETY: `this` is the live ref'd scheduler (write provenance for
-        // `set_timer`), kept alive across the hop by the watcher's RefPtr.
         let holder = Box::new(StatWatcherTimerUpdate {
-            // SAFETY: `this` is the live ref'd scheduler; write provenance for `set_timer`.
+            // SAFETY: `this` is the live ref'd scheduler (write provenance for
+            // `set_timer`), kept alive across the hop by the watcher's RefPtr.
             scheduler: unsafe { ParentRef::from_raw_mut(this) },
         });
         // SAFETY: `vm` is the live per-thread VM (JSC_BORROW).

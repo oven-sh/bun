@@ -4779,8 +4779,7 @@ pub(super) fn finalize_bundle(
                     let route_bundle_index = 'rbi: {
                         let first = current_bundle!().requests.first;
                         if !first.is_null() {
-                            // SAFETY: first is an intrusive list node valid while current_bundle.requests holds it
-                            // SAFETY: `data` was initialized by `defer_request`.
+                            // SAFETY: `first` is a live intrusive node held by current_bundle.requests; `data` was initialized by `defer_request`.
                             break 'rbi unsafe { (*first).data.assume_init_ref() }
                                 .route_bundle_index;
                         }

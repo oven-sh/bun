@@ -383,7 +383,6 @@ impl FileResponseStream {
         // SAFETY: `read()` dispatches `on_read_chunk`/`on_reader_done` back
         // into this object through the parent pointer, so no cell borrow
         // spans it.
-        // SAFETY: as the drive site above.
         unsafe { BufferedReader::read(self.reader.as_ptr()) };
         true
     }

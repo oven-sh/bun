@@ -107,6 +107,37 @@ pub(crate) fn convert_stmts_for_chunk(
                         continue 'stmt_loop;
                     }
 
+                    match LinkerContext::jsx_import_rewrite_for(
+                        chunk,
+                        source_index,
+                        s.import_record_index,
+                    ) {
+                        None => {}
+                        Some(crate::chunk::JsxImportRewrite::Drop) => continue 'stmt_loop,
+                        Some(crate::chunk::JsxImportRewrite::Items(items)) => {
+                            let items = bump.alloc_slice_fill_iter(items.iter().map(|it| {
+                                bun_ast::ClauseItem {
+                                    alias: it.alias,
+                                    alias_loc: it.alias_loc,
+                                    name: it.name,
+                                    original_name: it.original_name,
+                                }
+                            }));
+                            stmt = Stmt::alloc(
+                                S::Import {
+                                    namespace_ref: s.namespace_ref,
+                                    items: items.into(),
+                                    import_record_index: s.import_record_index,
+                                    is_single_line: s.is_single_line,
+                                    default_name: s.default_name,
+                                    star_name_loc: s.star_name_loc,
+                                    phase_defer: s.phase_defer,
+                                },
+                                stmt.loc,
+                            );
+                        }
+                    }
+
                     // Make sure these don't end up in the wrapper closure
                     if should_extract_esm_stmts_for_wrap {
                         stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);

@@ -795,9 +795,25 @@ impl<'a> LinkerContext<'a> {
             self.check_for_memory_corruption();
         }
 
+        hoist_external_jsx_imports(self, &mut chunks);
+
         self.graph.symbols.follow_all();
 
         Ok(chunks)
+    }
+
+    #[inline]
+    pub(crate) fn jsx_import_rewrite_for(
+        chunk: &Chunk,
+        source_index: u32,
+        import_record_index: u32,
+    ) -> Option<&crate::chunk::JsxImportRewrite> {
+        match &chunk.content {
+            crate::chunk::Content::Javascript(js) if !js.jsx_import_rewrites.is_empty() => js
+                .jsx_import_rewrites
+                .get(&((u64::from(source_index) << 32) | u64::from(import_record_index))),
+            _ => None,
+        }
     }
 
     pub(crate) fn tree_shaking_and_code_splitting(&mut self) -> Result<(), AllocError> {
@@ -2875,6 +2891,136 @@ use bun_ast::{DependencyList, ImportItemStatus, PartSymbolUseMap};
 // unqualified uses in `advance_import_tracker` / `match_import_with_export`
 // below resolve unchanged.
 pub(crate) use crate::bundle_v2::{ImportTrackerIterator, ImportTrackerStatus};
+
+/// Collapse per-file synthetic JSX-runtime imports into one per chunk (#3029).
+///
+/// Runs serially after chunks are computed and before `follow_all` / the
+/// renamer fan-out: per chunk, groups `WAS_INJECTED_FOR_JSX_RUNTIME` external
+/// import records by path, `symbols.merge`s duplicate `(path, alias)` refs so
+/// the renamer assigns one name, and records a [`JsxImportRewrite`] per
+/// `(source, record)` for `convert_stmts_for_chunk` to apply. The first live
+/// record per path survives with its items rewritten to the union of aliases
+/// the chunk needs; the rest are dropped.
+///
+/// [`JsxImportRewrite`]: crate::chunk::JsxImportRewrite
+pub(crate) fn hoist_external_jsx_imports(c: &mut LinkerContext<'_>, chunks: &mut [Chunk]) {
+    if !c.options.output_format.keep_es6_import_export_syntax() {
+        return;
+    }
+
+    let all_parts = c.graph.ast.items_parts();
+    let all_import_records = c.graph.ast.items_import_records();
+
+    struct PerPath {
+        survivor_key: u64,
+        // Small, fixed set: jsx / jsxs / jsxDEV / Fragment / createElement.
+        items: Vec<(bun_ast::StoreStr, Ref)>,
+        drops: Vec<u64>,
+    }
+
+    for chunk in chunks.iter_mut() {
+        let crate::chunk::Content::Javascript(js) = &mut chunk.content else {
+            continue;
+        };
+
+        let mut by_path: Vec<(&[u8], PerPath)> = Vec::new();
+
+        for &source_index in js.files_in_chunk_order.iter() {
+            let import_records = all_import_records[source_index as usize].as_slice();
+            let parts_live = &c.graph.parts_live[source_index as usize];
+            for (part_index, part) in all_parts[source_index as usize]
+                .as_slice()
+                .iter()
+                .enumerate()
+            {
+                if !parts_live.is_set(part_index) {
+                    continue;
+                }
+                for &rec_idx in part.import_record_indices.slice() {
+                    let record = &import_records[rec_idx as usize];
+                    if !record
+                        .flags
+                        .contains(bun_ast::ImportRecordFlags::WAS_INJECTED_FOR_JSX_RUNTIME)
+                        || record.source_index.is_valid()
+                    {
+                        continue;
+                    }
+
+                    let Some(bun_ast::StmtData::SImport(import)) =
+                        part.stmts.slice().first().map(|s| s.data)
+                    else {
+                        continue;
+                    };
+                    if import.import_record_index != rec_idx {
+                        continue;
+                    }
+
+                    let path = record.path.text;
+                    let entry = match by_path.iter_mut().find(|(p, _)| *p == path) {
+                        Some((_, e)) => e,
+                        None => {
+                            by_path.push((
+                                path,
+                                PerPath {
+                                    survivor_key: (u64::from(source_index) << 32)
+                                        | u64::from(rec_idx),
+                                    items: Vec::new(),
+                                    drops: Vec::new(),
+                                },
+                            ));
+                            &mut by_path.last_mut().unwrap().1
+                        }
+                    };
+
+                    let key = (u64::from(source_index) << 32) | u64::from(rec_idx);
+                    if key != entry.survivor_key {
+                        entry.drops.push(key);
+                    }
+
+                    for item in import.items.slice() {
+                        let Some(ref_) = item.name.ref_.to_nullable() else {
+                            continue;
+                        };
+                        let alias = item.alias.slice();
+                        match entry.items.iter().find(|(a, _)| a.slice() == alias) {
+                            Some(&(_, first)) => {
+                                let _ = c.graph.symbols.merge(ref_, first);
+                            }
+                            None => entry.items.push((item.alias, ref_)),
+                        }
+                    }
+                }
+            }
+        }
+
+        for (_, entry) in by_path {
+            if entry.drops.is_empty() {
+                continue;
+            }
+            let items: Box<[bun_ast::ClauseItem]> = entry
+                .items
+                .into_iter()
+                .map(|(alias, ref_)| bun_ast::ClauseItem {
+                    alias,
+                    alias_loc: Loc::EMPTY,
+                    name: bun_ast::LocRef {
+                        ref_,
+                        loc: Loc::EMPTY,
+                    },
+                    original_name: bun_ast::StoreStr::EMPTY,
+                })
+                .collect();
+            js.jsx_import_rewrites.insert(
+                entry.survivor_key,
+                crate::chunk::JsxImportRewrite::Items(items),
+            );
+            for key in entry.drops {
+                js.jsx_import_rewrites
+                    .insert(key, crate::chunk::JsxImportRewrite::Drop);
+            }
+        }
+    }
+}
 
 /// Field-wise eq for `ImportTracker`.
 #[inline]

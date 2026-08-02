@@ -1265,6 +1265,12 @@ impl EntryPoint {
     }
 }
 
+/// See [`hoist_external_jsx_imports`](crate::linker_context_mod::hoist_external_jsx_imports).
+pub(crate) enum JsxImportRewrite {
+    Drop,
+    Items(Box<[bun_ast::ClauseItem]>),
+}
+
 #[derive(Default)]
 pub struct JavaScriptChunk {
     pub(crate) files_in_chunk_order: Box<[IndexInt]>,
@@ -1278,6 +1284,13 @@ pub struct JavaScriptChunk {
     pub(crate) imports_from_other_chunks: ImportsFromOtherChunks,
     pub(crate) cross_chunk_prefix_stmts: Vec<Stmt>,
     pub(crate) cross_chunk_suffix_stmts: Vec<Stmt>,
+
+    /// `(source_index << 32) | import_record_index` → rewrite. Populated
+    /// serially by [`hoist_external_jsx_imports`]; read-only during the
+    /// `convert_stmts_for_chunk` worker fan-out.
+    ///
+    /// [`hoist_external_jsx_imports`]: crate::linker_context_mod::hoist_external_jsx_imports
+    pub(crate) jsx_import_rewrites: bun_collections::HashMap<u64, JsxImportRewrite>,
 
     /// Indexes to CSS chunks. Currently this will only ever be zero or one
     /// items long, but smarter css chunking will allow multiple js entry points

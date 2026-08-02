@@ -1800,6 +1800,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             import_record
                 .flags
                 .set(bun_ast::ImportRecordFlags::IS_INTERNAL, is_internal);
+            import_record.flags.set(
+                bun_ast::ImportRecordFlags::WAS_INJECTED_FOR_JSX_RUNTIME,
+                !is_internal,
+            );
         }
         // Render the sanitized-identifier formatter into the bump arena (same
         // pattern as `transpose_require` above).

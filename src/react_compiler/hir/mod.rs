@@ -752,6 +752,8 @@ pub enum InstructionValue {
     UnaryExpression {
         operator: UnaryOperator,
         value: Place,
+        /// Parse-time flags from the visited `E::Unary`, restored at codegen.
+        bun_flags: bun_ast::E::UnaryFlags,
         loc: Option<SourceLocation>,
     },
     TypeCastExpression {

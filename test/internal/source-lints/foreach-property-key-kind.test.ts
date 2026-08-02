@@ -32,5 +32,7 @@ test("forEachProperty callback uses PropertyKeyKind, not an (is_symbol, is_priva
   const jsvalue = src("src/jsc/JSValue.rs");
   const bindings = src("src/jsc/bindings/bindings.cpp");
   expect(jsvalue).toMatch(/pub enum PropertyKeyKind \{\s*String = 0,\s*Symbol = 1,\s*PrivateSymbol = 2,\s*\}/);
-  expect(bindings).toMatch(/enum class PropertyKeyKind : uint8_t \{\s*String = 0,\s*Symbol = 1,\s*PrivateSymbol = 2,\s*\}/);
+  expect(bindings).toMatch(
+    /enum class PropertyKeyKind : uint8_t \{\s*String = 0,\s*Symbol = 1,\s*PrivateSymbol = 2,\s*\}/,
+  );
 });

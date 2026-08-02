@@ -124,8 +124,9 @@ fn protocol_for_pending(_q: &QueryState) -> DNSServiceProtocol {
     PROTOCOL_IPV4 | PROTOCOL_IPV6
 }
 
+/// Real time: this timer lives in the real heap (`allow_fake_timers() == false`), so it must never read the mocked clock.
 fn now_ms() -> i64 {
-    bun::timespec::now(bun::TimespecMockMode::AllowMockedTime).ms()
+    bun::timespec::now(bun::TimespecMockMode::ForceRealTime).ms()
 }
 
 /// Per-query state shared by the JS `dns.lookup` path and the internal connect path.
@@ -520,7 +521,7 @@ impl SharedConnection {
         if armed != 0 && armed <= deadline {
             return;
         }
-        let now = bun::timespec::now(bun::TimespecMockMode::AllowMockedTime);
+        let now = bun::timespec::now(bun::TimespecMockMode::ForceRealTime);
         let next = now.add_ms((deadline - now.ms()).max(1));
         let state = crate::jsc_hooks::runtime_state();
         // SAFETY: this thread's live RuntimeState; the timer slot is valid until `destroy`.

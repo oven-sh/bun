@@ -1,5 +1,5 @@
 import { dnsSdReplay } from "bun:internal-for-testing";
-import { expect, test } from "bun:test";
+import { expect, jest, test } from "bun:test";
 import dns from "dns";
 import { bunEnv, bunExe, isMacOS } from "harness";
 
@@ -122,7 +122,8 @@ test.skipIf(!isMacOS)("interleaved NXDOMAIN and multi-record lookups all settle"
       `
         const { lookup } = require("dns").promises;
         const base = "www.example.com";
-        if (!(await lookup(base, { all: true }).catch(() => null))) { console.log(JSON.stringify({ skipped: true })); process.exit(0); }
+        const nxProbe = await lookup("nx-probe-" + Math.random().toString(36).slice(2) + ".example").then(() => "resolved", e => e.code);
+        if (nxProbe !== "ENOTFOUND" || !(await lookup(base, { all: true }).catch(() => null))) { console.log(JSON.stringify({ skipped: true, nxProbe })); process.exit(0); }
         const letters = [...base].flatMap((c, k) => (c === "." ? [] : [k]));
         const spell = i => [...base].map((c, k) => ((i >> letters.indexOf(k)) & 1 && c !== "." ? c.toUpperCase() : c)).join("");
         let nx = 0, ok = 0, other = [];
@@ -165,4 +166,21 @@ test.skipIf(!isMacOS)("dns_sd query state: readiness and early-out coverage", ()
   // A later reply for the same query clears MoreComing.
   expect(dnsSdReplay(both, ["4:add:more", "6:nsr"])).toEqual({ ready: true, hasDeadline: false, results: 1 });
   expect(dnsSdReplay(1, ["4:timeout"])).toEqual({ ready: true, hasDeadline: false, results: 0 });
+});
+
+// The early-out timer is exempt from fake timers, so it must read real time too; a mocked clock would arm it in the past and spin.
+test.skipIf(!isMacOS)("lookups complete under jest.useFakeTimers()", async () => {
+  jest.useFakeTimers();
+  try {
+    const results = await Promise.all([
+      dns.promises.lookup("localhost", { all: true }),
+      dns.promises.lookup("www.example.com", { all: true }).catch(e => e.code),
+      dns.promises.lookup("nx-" + Math.random().toString(36).slice(2) + ".example").catch(e => e.code),
+    ]);
+    expect(results[0]).toEqual(expect.arrayContaining([{ address: "127.0.0.1", family: 4 }]));
+    expect(Array.isArray(results[1]) || typeof results[1] === "string").toBe(true);
+    expect(typeof results[2]).toBe("string");
+  } finally {
+    jest.useRealTimers();
+  }
 });

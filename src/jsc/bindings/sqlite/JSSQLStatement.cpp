@@ -384,16 +384,15 @@ static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
 class SQLiteBindingsMap {
 public:
     SQLiteBindingsMap() = default;
-    SQLiteBindingsMap(uint16_t count = 0, bool trimLeadingPrefix = false)
+    SQLiteBindingsMap(unsigned count = 0, bool trimLeadingPrefix = false)
     {
         this->trimLeadingPrefix = trimLeadingPrefix;
         hasLoadedNames = false;
         reset(count);
     }
 
-    void reset(uint16_t count = 0)
+    void reset(unsigned count = 0)
     {
-        ASSERT(count <= std::numeric_limits<uint16_t>::max());
         if (this->count != count) {
             hasLoadedNames = false;
             bindingNames.clear();
@@ -451,7 +450,7 @@ public:
     }
 
     Vector<Identifier> bindingNames;
-    uint16_t count = 0;
+    unsigned count = 0;
     bool hasLoadedNames : 1 = false;
     bool isOnlyIndexed : 1 = false;
     bool trimLeadingPrefix : 1 = false;
@@ -1532,7 +1531,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
             if (bindingsAliveScope.value().isObject()) {
                 int count = sqlite3_bind_parameter_count(sql.stmt);
 
-                SQLiteBindingsMap bindings { static_cast<uint16_t>(count > -1 ? count : 0), strict };
+                SQLiteBindingsMap bindings { static_cast<unsigned>(count > -1 ? count : 0), strict };
                 JSC::JSValue reb = rebindStatement(lexicalGlobalObject, bindingsAliveScope.value(), scope, db, sql.stmt, bindings, safeIntegers, nullptr);
                 RETURN_IF_EXCEPTION(scope, {});
 

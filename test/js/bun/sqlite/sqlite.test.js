@@ -2295,3 +2295,50 @@ it("exec/run with an embedded NUL byte in the SQL string does not hang", async (
     exitCode: 0,
   });
 });
+
+it("binds statements with more than 65535 parameters without truncating the count", () => {
+  const N = 65537; // uint16_t wraps this to 1
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE t(a)");
+
+  let sel;
+  try {
+    sel = db.prepare("SELECT count(*) c FROM t WHERE a IN (" + Array(N).fill("?").join(",") + ")");
+  } catch (e) {
+    // macOS system libsqlite3 may be built with SQLITE_MAX_VARIABLE_NUMBER below
+    // 65537; the truncation this test guards against can't occur there.
+    expect(e.message).toContain("too many SQL variables");
+    db.close();
+    return;
+  }
+
+  expect(sel.paramsCount).toBe(N);
+
+  // Before the fix the parameter count was stored in a uint16_t, so the arity
+  // check compared against N % 65536 == 1: the correct count was rejected and a
+  // single value was accepted, leaving ?2..?N bound to NULL.
+  expect(() => sel.get([999])).toThrow(`SQLite query expected ${N} values, received 1`);
+
+  db.run("INSERT INTO t VALUES (999)");
+  const values = Array(N).fill(0);
+  values[N - 1] = 999;
+  expect(sel.get(values)).toEqual({ c: 1 });
+
+  const ins = db.prepare("INSERT INTO t(a) VALUES " + Array(N).fill("(?)").join(","));
+  expect(() => ins.run([42])).toThrow(`SQLite query expected ${N} values, received 1`);
+  expect(ins.run(Array(N).fill(42)).changes).toBe(N);
+  expect(db.query("SELECT count(*) c FROM t WHERE a IS NULL").get()).toEqual({ c: 0 });
+
+  // Numbered parameters: a lone ?70000 makes sqlite3_bind_parameter_count return
+  // 70000 through the same truncated field (previously reported as 70000 % 65536
+  // = 4464 required values).
+  const M = 70000;
+  const numbered = db.prepare(`SELECT ?${M} AS v`);
+  expect(numbered.paramsCount).toBe(M);
+  expect(() => numbered.get([7])).toThrow(`SQLite query expected ${M} values, received 1`);
+  const numberedValues = Array(M).fill(null);
+  numberedValues[M - 1] = 7;
+  expect(numbered.get(numberedValues)).toEqual({ v: 7 });
+
+  db.close();
+});

@@ -1408,7 +1408,7 @@ pub(crate) fn is_allowed_host_header(
     } else {
         host
     };
-    if strings::is_ip_address(ip) {
+    if bun_core::ip_address::is_ip_address(ip) {
         return true;
     }
     if let Some(crate::server::server_config::Address::Tcp {

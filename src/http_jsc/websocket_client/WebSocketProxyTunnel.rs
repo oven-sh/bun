@@ -35,7 +35,6 @@ use core::ptr;
 use core::ptr::NonNull;
 
 use bun_boringssl as boringssl;
-use bun_core::strings;
 use bun_io::StreamBuffer;
 use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
 use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
@@ -246,7 +245,7 @@ impl WebSocketProxyTunnel {
         if let Some(ssl_ptr) = ssl {
             // SAFETY: `this` is live; field projection covers only `sni_hostname`.
             if let Some(hostname) = unsafe { (*this).sni_hostname.as_deref() } {
-                if !strings::is_ip_address(hostname) {
+                if !bun_core::ip_address::is_ip_address(hostname) {
                     // Set SNI hostname
                     let hostname_z = bun_core::ZBox::from_vec_with_nul(hostname.to_vec());
                     // Route through bun_http's

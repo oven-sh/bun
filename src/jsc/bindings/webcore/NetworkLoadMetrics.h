@@ -65,11 +65,6 @@ class NetworkLoadMetrics {
 
 public:
     WEBCORE_EXPORT NetworkLoadMetrics();
-    WEBCORE_EXPORT NetworkLoadMetrics(MonotonicTime&& redirectStart, MonotonicTime&& fetchStart, MonotonicTime&& domainLookupStart, MonotonicTime&& domainLookupEnd, MonotonicTime&& connectStart, MonotonicTime&& secureConnectionStart, MonotonicTime&& connectEnd, MonotonicTime&& requestStart, MonotonicTime&& responseStart, MonotonicTime&& responseEnd, MonotonicTime&& workerStart, String&& protocol, uint16_t redirectCount, bool complete, bool cellular, bool expensive, bool constrained, bool multipath, bool isReusedConnection, bool failsTAOCheck, bool hasCrossOriginRedirect, PrivacyStance, uint64_t responseBodyBytesReceived, uint64_t responseBodyDecodedSize, RefPtr<AdditionalNetworkLoadMetricsForWebInspector>&&);
-
-    WEBCORE_EXPORT static const NetworkLoadMetrics& emptyMetrics();
-
-    WEBCORE_EXPORT NetworkLoadMetrics isolatedCopy() const;
 
     bool isComplete() const { return complete; }
     bool isCellular() const { return cellular; }
@@ -80,8 +75,6 @@ public:
     bool doesFailTAOCheck() const { return failsTAOCheck; }
     bool crossOriginRedirect() const { return hasCrossOriginRedirect; }
     void markComplete() { complete = true; }
-
-    void updateFromFinalMetrics(const NetworkLoadMetrics&);
 
     // https://www.w3.org/TR/resource-timing-2/#attribute-descriptions
     MonotonicTime redirectStart;
@@ -121,9 +114,6 @@ public:
 struct AdditionalNetworkLoadMetricsForWebInspector : public RefCounted<AdditionalNetworkLoadMetricsForWebInspector> {
 
     static Ref<AdditionalNetworkLoadMetricsForWebInspector> create() { return adoptRef(*new AdditionalNetworkLoadMetricsForWebInspector()); }
-    WEBCORE_EXPORT static Ref<AdditionalNetworkLoadMetricsForWebInspector> create(NetworkLoadPriority&&, String&& remoteAddress, String&& connectionIdentifier, String&& tlsProtocol, String&& tlsCipher, HTTPHeaderMap&& requestHeaders, uint64_t requestHeaderBytesSent, uint64_t responseHeaderBytesReceived, uint64_t requestBodyBytesSent, bool isProxyConnection);
-    Ref<AdditionalNetworkLoadMetricsForWebInspector> isolatedCopy() const;
-    Ref<AdditionalNetworkLoadMetricsForWebInspector> isolatedCopy();
 
     NetworkLoadPriority priority { NetworkLoadPriority::Unknown };
 
@@ -143,7 +133,6 @@ struct AdditionalNetworkLoadMetricsForWebInspector : public RefCounted<Additiona
 
 private:
     AdditionalNetworkLoadMetricsForWebInspector() {}
-    AdditionalNetworkLoadMetricsForWebInspector(NetworkLoadPriority&&, String&& remoteAddress, String&& connectionIdentifier, String&& tlsProtocol, String&& tlsCipher, HTTPHeaderMap&& requestHeaders, uint64_t requestHeaderBytesSent, uint64_t responseHeaderBytesReceived, uint64_t requestBodyBytesSent, bool isProxyConnection);
 };
 
 #if PLATFORM(COCOA)

@@ -109,8 +109,6 @@ public:
 
     ExtendedDOMClientIsoSubspaces& clientSubspaces() { return *m_clientSubspaces.get(); }
 
-    Vector<JSC::IsoSubspace*>& outputConstraintSpaces() { return m_outputConstraintSpaces; }
-
     JSC::GCClient::IsoSubspace& domBuiltinConstructorSpace() { return m_domBuiltinConstructorSpace; }
 
     // Constructed eagerly so the concurrent GC marker
@@ -119,12 +117,6 @@ public:
     // LazyProperty::initLater ~90 times (stores a tagged function pointer),
     // so there is no startup cost worth deferring.
     WebCore::HTTPHeaderIdentifiers& httpHeaderIdentifiers() { return m_httpHeaderIdentifiers; }
-
-    template<typename Func> void forEachOutputConstraintSpace(const Func& func)
-    {
-        for (auto* space : m_outputConstraintSpaces)
-            func(*space);
-    }
 
     void* bunVM;
     Bun::JSCTaskScheduler deferredWorkTimer;
@@ -178,7 +170,6 @@ private:
     JSC::GCClient::IsoSubspace m_domNamespaceObjectSpace;
 
     std::unique_ptr<ExtendedDOMClientIsoSubspaces> m_clientSubspaces;
-    Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
 
     WebCore::HTTPHeaderIdentifiers m_httpHeaderIdentifiers;
 };

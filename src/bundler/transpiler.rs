@@ -700,6 +700,9 @@ impl<'a> Transpiler<'a> {
                     }
                     self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                     self.options.experimental_decorators = tsconfig.experimental_decorators;
+                    if let Some(v) = tsconfig.use_define_for_class_fields {
+                        self.options.use_define_for_class_fields = v;
+                    }
                 }
             }
         }
@@ -949,6 +952,7 @@ pub struct ParseOptions<'a, 'b> {
     pub set_breakpoint_on_first_line: bool,
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
+    pub use_define_for_class_fields: bool,
     pub remove_cjs_module_wrapper: bool,
 
     pub dont_bundle_twice: bool,
@@ -1116,7 +1120,7 @@ fn resolver_bundle_options_subset(
         main_fields_is_default: src.transform_options.main_fields.is_empty(),
         mark_builtins_as_external: src.mark_builtins_as_external,
         polyfill_node_globals: src.polyfill_node_globals,
-        prefer_offline_install: src.prefer_offline_install,
+        install_preference: src.install_preference,
         preserve_symlinks: src.preserve_symlinks,
         rewrite_jest_for_tests: src.rewrite_jest_for_tests,
         tsconfig_override: src.tsconfig_override.clone(),
@@ -1128,7 +1132,7 @@ fn resolver_bundle_options_subset(
         output_dir: src.output_dir.clone(),
         root_dir: src.root_dir.clone(),
         public_path: src.public_path.clone(),
-        compile: src.compile,
+        compile: src.compile_mode.is_executable(),
         supports_multiple_outputs: src.supports_multiple_outputs,
         tree_shaking: src.tree_shaking,
         allow_runtime: src.allow_runtime,
@@ -1540,7 +1544,7 @@ impl<'a> Transpiler<'a> {
                     keep_names: true,
                     ignore_dce_annotations: self.options.ignore_dce_annotations,
                     preserve_unused_imports_ts: false,
-                    use_define_for_class_fields: false,
+                    use_define_for_class_fields: this_parse.use_define_for_class_fields,
                     suppress_warnings_about_weird_code: true,
                     features: js_ast::RuntimeFeatures::default(),
                     tree_shaking: self.options.tree_shaking,
@@ -2853,6 +2857,8 @@ impl<'a> Transpiler<'a> {
                 let dirname_fd = resolve_result.dirname_fd;
                 let emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata();
                 let experimental_decorators = resolve_result.flags.experimental_decorators();
+                let use_define_for_class_fields =
+                    resolve_result.flags.use_define_for_class_fields();
                 // `MacroRemap` (StringArrayHashMap of StringArrayHashMap) has
                 // no nested `Clone` impl (the inner clone is fallible).
                 // Rebuild the outer map, deep-cloning
@@ -2881,6 +2887,7 @@ impl<'a> Transpiler<'a> {
                     jsx,
                     emit_decorator_metadata,
                     experimental_decorators,
+                    use_define_for_class_fields,
                     virtual_source: None,
                     replace_exports: Default::default(),
                     inject_jest_globals: false,

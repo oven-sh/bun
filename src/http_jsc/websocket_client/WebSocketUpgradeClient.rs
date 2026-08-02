@@ -830,7 +830,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // NUL-terminated CString that outlives this call.
                     bun_http::configure_http_client_with_alpn(
                         unsafe { &mut *handle },
-                        if strings::is_ip_address(me.hostname.as_bytes()) {
+                        if bun_core::ip_address::is_ip_address(me.hostname.as_bytes()) {
                             core::ptr::null()
                         } else {
                             me.hostname.as_ptr()
@@ -1307,7 +1307,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         remain_buf: &[u8],
     ) {
         let mut upgrade_header = picohttp::Header::ZERO;
-        let mut connection_header = picohttp::Header::ZERO;
+        let mut connection_header_seen = false;
+        let mut connection_has_upgrade = false;
         let mut websocket_accept_header = picohttp::Header::ZERO;
         let mut protocol_header_seen = false;
 
@@ -1323,13 +1324,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
         for header in response.headers.list {
             match header.name().len() {
                 len if len == b"Connection".len() => {
-                    if connection_header.name().is_empty()
-                        && strings::eql_case_insensitive_ascii_ignore_length(
-                            header.name(),
-                            b"Connection",
-                        )
-                    {
-                        connection_header = *header;
+                    if strings::eql_case_insensitive_ascii_ignore_length(
+                        header.name(),
+                        b"Connection",
+                    ) {
+                        connection_header_seen = true;
+                        connection_has_upgrade |=
+                            HeaderValueIterator::init(header.value()).any(|t| {
+                                strings::eql_case_insensitive_ascii_check_length(t, b"upgrade")
+                            });
                     }
                 }
                 len if len == b"Upgrade".len() => {
@@ -1524,12 +1527,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        if connection_header
-            .name()
-            .len()
-            .min(connection_header.value().len())
-            == 0
-        {
+        if !connection_header_seen {
             // SAFETY: no `&mut Self` is live across this call.
             unsafe { Self::terminate(this, ErrorCode::MissingConnectionHeader) };
             return;
@@ -1553,7 +1551,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        if !strings::eql_case_insensitive_ascii(connection_header.value(), b"Upgrade", true) {
+        if !connection_has_upgrade {
             // SAFETY: no `&mut Self` is live across this call.
             unsafe { Self::terminate(this, ErrorCode::InvalidConnectionHeader) };
             return;

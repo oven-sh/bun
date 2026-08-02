@@ -884,7 +884,11 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.options.output_format = config.format;
         transpiler.options.bytecode = config.bytecode;
-        transpiler.options.compile = config.compile.is_some();
+        transpiler.options.compile_mode = if config.compile.is_some() {
+            options::CompileMode::Executable
+        } else {
+            options::CompileMode::None
+        };
 
         // For compile mode, set the public_path to the target-specific base path
         // This ensures embedded resources like yoga.wasm are correctly found
@@ -919,7 +923,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
         transpiler.options.tree_shaking_override = config.tree_shaking;
         transpiler.options.css_chunking = config.css_chunking;
-        transpiler.options.compile_to_standalone_html = 'brk: {
+        let compile_to_standalone_html = 'brk: {
             if config.compile.is_none() || config.target != bun_ast::Target::Browser {
                 break 'brk false;
             }
@@ -932,8 +936,8 @@ impl CompletionStruct for JSBundleCompletionTask {
             config.entry_points.count() > 0
         };
         // When compiling to standalone HTML, don't use the bun executable compile path
-        if transpiler.options.compile_to_standalone_html {
-            transpiler.options.compile = false;
+        if compile_to_standalone_html {
+            transpiler.options.compile_mode = options::CompileMode::StandaloneHtml;
             config.compile = None;
         }
         // `BundleOptions.{banner,footer}` are `Cow<'static, [u8]>`; clone into
@@ -966,7 +970,7 @@ impl CompletionStruct for JSBundleCompletionTask {
                 Some(unsafe { &*core::ptr::from_ref(&config.optimize_imports) });
         }
 
-        if transpiler.options.compile {
+        if transpiler.options.compile_mode.is_executable() {
             // Emitting DCE annotations is nonsensical in --compile.
             transpiler.options.emit_dce_annotations = false;
         }

@@ -101,8 +101,7 @@ fn find_path_inner(
         request,
         cur_path,
         None,
-        false,
-        true,
+        crate::virtual_machine::ResolveMode::RequireResolve,
     ) {
         Ok(()) => {}
         Err(JsError::Thrown) => {

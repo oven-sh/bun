@@ -429,7 +429,7 @@ impl<'a> URL<'a> {
     }
 
     pub fn is_ip_address(&self) -> bool {
-        strings::is_ip_address(self.hostname)
+        bun_core::ip_address::is_ip_address(self.hostname)
     }
 
     pub fn has_valid_port(&self) -> bool {

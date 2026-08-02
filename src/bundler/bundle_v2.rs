@@ -2268,6 +2268,9 @@ pub mod bv2_impl {
                             // However, doing this means we tell them all the resolve errors
                             // Rather than just the first one.
                             record.path.is_disabled = true;
+                            record
+                                .flags
+                                .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
                         }
                         let source: Option<&bun_ast::Source> = Some(
                             &self.graph.input_files.items_source()
@@ -6119,6 +6122,9 @@ pub mod bv2_impl {
                             // However, doing this means we tell them all the resolve errors
                             // Rather than just the first one.
                             import_record.path.is_disabled = true;
+                            import_record
+                                .flags
+                                .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
 
                             if err == _resolver::Error::ModuleNotFound {
                                 let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
@@ -6253,7 +6259,8 @@ pub mod bv2_impl {
                 };
 
                 if resolve_result.flags.is_external() {
-                    if resolve_result.flags.is_external_and_rewrite_import_path()
+                    if resolve_result.flags.external_kind()
+                        == bun_resolver::ExternalKind::ExternalRewritePath
                         && !strings::eql_long(
                             resolve_result.path_pair.primary.text,
                             import_record.path.text,

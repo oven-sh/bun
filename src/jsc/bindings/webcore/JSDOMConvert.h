@@ -41,7 +41,6 @@
 #include "JSDOMConvertOptional.h"
 #include "JSDOMConvertRecord.h"
 #include "JSDOMConvertSequences.h"
-#include "JSDOMConvertSerializedScriptValue.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMConvertUnion.h"
 

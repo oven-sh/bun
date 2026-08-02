@@ -1240,9 +1240,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         if output_kind == options::OutputKind::EntryPoint
                             && side == options::Side::Server
                         {
-                            extra.is_route = true;
-                            extra.fully_static = !static_route_visitor
-                                .has_transitive_use_client(chunk.entry_point.source_index());
+                            extra.route = if static_route_visitor
+                                .has_transitive_use_client(chunk.entry_point.source_index())
+                            {
+                                BakeRouteKind::Route
+                            } else {
+                                BakeRouteKind::FullyStaticRoute
+                            };
                         }
 
                         break 'brk extra;
@@ -1290,4 +1294,4 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
 use crate::EntryPoint;
 use crate::options::SourceMapOption;
-use crate::output_file::BakeExtra;
+use crate::output_file::{BakeExtra, BakeRouteKind};

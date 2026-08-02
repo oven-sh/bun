@@ -181,13 +181,6 @@ mod _impl {
         pub struct UserInfoOptions {
             pub(crate) encoding: BunString,
         }
-        impl Default for UserInfoOptions {
-            fn default() -> Self {
-                Self {
-                    encoding: BunString::empty(),
-                }
-            }
-        }
     }
 
     pub(crate) fn create_node_os_binding(global: &JSGlobalObject) -> JsResult<JSValue> {

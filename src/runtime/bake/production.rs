@@ -1136,7 +1136,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                         route.r#type.get(),
                         pt.output_file(main_file_route_index)
                             .bake_extra
-                            .fully_static,
+                            .route
+                            .is_fully_static(),
                     )
                     .bits(),
                 ),

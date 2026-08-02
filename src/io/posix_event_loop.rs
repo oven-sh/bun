@@ -27,8 +27,6 @@ fn loop_sub_active(loop_: &mut Loop, value: u32) {
     loop_.active = loop_.active.saturating_sub(value);
 }
 
-bun_core::declare_scope!(KeepAlive, visible);
-
 #[cfg(not(windows))]
 use bun_sys::syslog;
 
@@ -556,15 +554,6 @@ impl FilePoll {
             fd
         );
         poll
-    }
-
-    /// Allow a poll to keep the process alive.
-    pub fn ref_(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.flags.contains(Flags::Closed) {
-            return;
-        }
-        syslog!("ref");
-        self.enable_keeping_process_alive(event_loop_ctx);
     }
 
     pub fn register(&mut self, loop_: &mut Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {

@@ -192,10 +192,10 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
         return {};                                                                                                      \
     }
 
-#define CHECK_PREPARED                                                                                                          \
-    if (castedThis->stmt == nullptr || castedThis->version_db == nullptr) [[unlikely]] {                                        \
+#define CHECK_PREPARED                                                                                              \
+    if (castedThis->stmt == nullptr || castedThis->version_db == nullptr) [[unlikely]] {                            \
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, finalizedMessage(castedThis))); \
-        return {};                                                                                                              \
+        return {};                                                                                                  \
     }
 
 namespace WebCore {

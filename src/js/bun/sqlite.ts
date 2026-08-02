@@ -529,7 +529,9 @@ class Database implements SqliteTypes.Database {
   }
 
   [kPrepareOwned](query: string, flags: number) {
-    return new Statement(SQL.prepare(this.#handle, query, undefined, flags, this.#internalFlags | kOwnedByDatabaseFlag));
+    return new Statement(
+      SQL.prepare(this.#handle, query, undefined, flags, this.#internalFlags | kOwnedByDatabaseFlag),
+    );
   }
 
   static MAX_QUERY_CACHE_SIZE = 20;

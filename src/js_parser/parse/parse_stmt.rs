@@ -826,11 +826,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// bound to undefined. Synthesized at the end of the parse pass so
     /// overloads and declaration merging with a real default export emit
     /// exactly one.
-    fn dts_default_export_stub(
-        p: &mut Self,
-        loc: bun_ast::Loc,
-        _default_loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    fn dts_default_export_stub(p: &mut Self, loc: bun_ast::Loc) -> Result<Stmt> {
         p.dts_needs_default_export_stub = true;
         Ok(p.s(S::TypeScript {}, loc))
     }
@@ -1235,7 +1231,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 && opts.is_module_scope
                                 && !p.dts_suppress_type_name_recording
                             {
-                                return Self::dts_default_export_stub(p, loc, default_loc);
+                                return Self::dts_default_export_stub(p, loc);
                             }
                             return Ok(stmt);
                         }
@@ -1298,7 +1294,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     && opts.is_module_scope
                                     && !p.dts_suppress_type_name_recording
                                 {
-                                    return Self::dts_default_export_stub(p, loc, default_loc);
+                                    return Self::dts_default_export_stub(p, loc);
                                 }
                                 return Ok(stmt);
                             }

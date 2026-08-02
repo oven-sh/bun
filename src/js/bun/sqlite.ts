@@ -108,6 +108,7 @@ interface CppSQLStatement {
   columns: string[];
   columnsCount: number;
   paramsCount: number;
+  remainingSQL: string;
   columnTypes: string[];
   declaredTypes: (string | null)[];
   safeIntegers: boolean;

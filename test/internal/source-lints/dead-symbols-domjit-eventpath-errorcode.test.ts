@@ -44,7 +44,10 @@ test("webcore EventPath/EventContext/EventListenerMap dead members do not reappe
   const checks: Array<[string, RegExp]> = [
     ["src/jsc/bindings/webcore/EventListenerMap.h", /removeFirstEventListenerCreatedFromMarkup/],
     ["src/jsc/bindings/webcore/EventListenerMap.h", /copyEventListenersNotCreatedFromMarkupToTarget/],
-    ["src/jsc/bindings/webcore/EventListenerMap.cpp", /removeFirstListenerCreatedFromMarkup|copyListenersNotCreatedFromMarkupToTarget/],
+    [
+      "src/jsc/bindings/webcore/EventListenerMap.cpp",
+      /removeFirstListenerCreatedFromMarkup|copyListenersNotCreatedFromMarkupToTarget/,
+    ],
     ["src/jsc/bindings/webcore/EventPath.h", /eventTargetRespectingTargetRules/],
     ["src/jsc/bindings/webcore/EventPath.h", /\bbuildPath\b|\bcontextAt\b/],
     ["src/jsc/bindings/webcore/EventPath.h", /EventPath\(Node& origin, Event&\)/],
@@ -61,7 +64,10 @@ test("webcore EventPath/EventContext/EventListenerMap dead members do not reappe
 test("misc C++ bindings dead declarations do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
     ["src/jsc/bindings/ErrorCode.h", /^JSC::JSValue toJS\(JSC::JSGlobalObject\*, ErrorCode\);/m],
-    ["src/jsc/bindings/ErrorCode.h", /CRYPTO_JWK_UNSUPPORTED_CURVE\(JSC::ThrowScope&, JSC::JSGlobalObject\*, const WTF::String&\)/],
+    [
+      "src/jsc/bindings/ErrorCode.h",
+      /CRYPTO_JWK_UNSUPPORTED_CURVE\(JSC::ThrowScope&, JSC::JSGlobalObject\*, const WTF::String&\)/,
+    ],
     ["src/jsc/bindings/ErrorCode.cpp", /INVALID_FILE_URL_HOST\([^)]*const ASCIILiteral platform\)/],
     ["src/jsc/bindings/ErrorCode.cpp", /ERR_INVALID_ARG_TYPE\([^)]*const ZigString\* arg_name_string/],
     ["src/jsc/bindings/DOMException.h", /create\(const Exception&\)/],
@@ -79,7 +85,10 @@ test("misc C++ bindings dead declarations do not reappear", () => {
     ["src/jsc/bindings/JSCommonJSModule.h", /\bidOrDot\b/],
     ["src/jsc/bindings/ImportMetaObject.h", /\bcreateRequireFunction\b/],
     ["src/jsc/bindings/Sink.h", /\bnumberOfSinkIDs\b/],
-    ["src/jsc/bindings/ProcessBindingTTYWrap.cpp", /^JSC::EncodedJSValue Process_functionInternalGetWindowSize\(JSC::JSGlobalObject/m],
+    [
+      "src/jsc/bindings/ProcessBindingTTYWrap.cpp",
+      /^JSC::EncodedJSValue Process_functionInternalGetWindowSize\(JSC::JSGlobalObject/m,
+    ],
   ];
   const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);

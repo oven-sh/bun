@@ -194,6 +194,7 @@ using namespace JSC;
     macro(toNamespacedPath) \
     macro(transform) \
     macro(type) \
+    macro(unstableParseNative) \
     macro(updateRef) \
     macro(url) \
     macro(validated) \

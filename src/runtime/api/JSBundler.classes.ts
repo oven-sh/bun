@@ -28,8 +28,13 @@ export default [
         length: 2,
       },
       unstable_parse: {
+        builtin: "transpilerUnstableParseCodeGenerator",
+        length: 2,
+      },
+      unstableParse: {
         fn: "unstableParse",
         length: 2,
+        privateSymbol: "unstableParseNative",
       },
     },
   }),

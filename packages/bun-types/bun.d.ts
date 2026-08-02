@@ -2629,6 +2629,21 @@ declare module "bun" {
      * ```
      */
     unstable_parse(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): UnstableAST;
+    /**
+     * Parse to a compact binary tape and return a lazy reader over it. `root`
+     * exposes the same shape as the object-mode result but decodes fields from
+     * `buffer` on access, so large files don't pay the full materialization
+     * cost up front. `JSON.stringify(root)` materializes the whole tree.
+     *
+     * **Unstable.** Both the node shapes and the buffer encoding may change in
+     * any patch release.
+     * @experimental
+     */
+    unstable_parse(
+      code: Bun.StringOrBuffer,
+      options: { loader?: JavaScriptLoader; format: "raw" },
+    ): { buffer: ArrayBuffer; root: UnstableAST };
+    unstable_parse(code: Bun.StringOrBuffer, options: { loader?: JavaScriptLoader }): UnstableAST;
   }
 
   /**

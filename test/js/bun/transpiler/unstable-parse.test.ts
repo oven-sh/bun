@@ -285,4 +285,101 @@ describe("Bun.Transpiler.unstable_parse", () => {
     const round = JSON.parse(JSON.stringify(ast));
     expect(round).toEqual(ast);
   });
+
+  describe("format: raw", () => {
+    test("returns buffer + lazy root", () => {
+      const { buffer, root } = ts.unstable_parse(`const x = 1 + 2`, { format: "raw" });
+      expect(buffer).toBeInstanceOf(ArrayBuffer);
+      expect(new DataView(buffer).getUint32(0, true)).toBe(0x42554e41);
+      expect(root.kind).toBe("ast");
+      expect(root.stmts[0].kind).toBe("s_local");
+      expect(root.stmts[0].decls[0].value.op).toBe("bin_add");
+      expect(root.stmts[0].decls[0].value.left.value).toBe(1);
+    });
+
+    test("toJSON matches object mode", () => {
+      const src =
+        `import def, { a as b } from "pkg";\n` +
+        `export function f(a, b = 5) { try { return a?.b[0] + \`x\${b}y\` } catch (e) {} }\n` +
+        `const { x = 1.5, ...y } = { a: /re/g, b: "héllo 🎉" };\n` +
+        `for (const k of [1, 2]) if (k) break; else continue;`;
+      const obj = ts.unstable_parse(src);
+      const { root } = ts.unstable_parse(src, { format: "raw" });
+      expect(JSON.parse(JSON.stringify(root))).toEqual(obj);
+    });
+
+    test("loader in options object", () => {
+      const { root } = js.unstable_parse(`const x: number = 1`, { loader: "ts", format: "raw" });
+      expect(root.stmts[0].kind).toBe("s_local");
+      // options object without `format` falls through to the JSON path:
+      const ast = js.unstable_parse(`const x: number = 1`, { loader: "ts" });
+      expect(ast.stmts[0].kind).toBe("s_local");
+      expect(ast.buffer).toBeUndefined();
+    });
+
+    test("array proxy behaves like an array", () => {
+      const { root } = ts.unstable_parse(`a; b; c;`, { format: "raw" });
+      expect(Array.isArray(root.stmts)).toBe(true);
+      expect(root.stmts.length).toBe(3);
+      expect(root.stmts.map((s: any) => s.kind)).toEqual(["s_expr", "s_expr", "s_expr"]);
+      expect([...root.stmts][1].value.name).toBe("b");
+      expect(root.stmts).toBe(root.stmts);
+    });
+
+    test("node proxy ownKeys / spread", () => {
+      const { root } = ts.unstable_parse(`const x = 1`, { format: "raw" });
+      const decl = root.stmts[0].decls[0];
+      expect(Object.keys(decl.binding)).toEqual(["kind", "loc", "name"]);
+      expect({ ...decl.binding }).toEqual({ kind: "b_identifier", loc: 6, name: "x" });
+      expect("name" in decl.binding).toBe(true);
+      expect("nope" in decl.binding).toBe(false);
+    });
+
+    test("invalid format throws", () => {
+      expect(() => ts.unstable_parse(`1`, { format: "bogus" })).toThrow('format must be "raw"');
+    });
+
+    test("visit() walks the tree by kind", () => {
+      const { visit } = ts.unstable_parse(
+        `function f(a) { return a + 1 } const x = f(2) * f(3);`,
+        { format: "raw" },
+      );
+      const calls: string[] = [];
+      const idents: string[] = [];
+      let nodeCount = 0;
+      visit({
+        enter() {
+          nodeCount++;
+        },
+        e_call(n: any) {
+          calls.push(n.target.name);
+          nodeCount++;
+        },
+        e_identifier(n: any) {
+          idents.push(n.name);
+          nodeCount++;
+        },
+      });
+      expect(calls).toEqual(["f", "f"]);
+      expect(idents).toEqual(["a", "f", "f"]);
+      expect(nodeCount).toBeGreaterThan(12);
+    });
+
+    test("visit() handler returning false skips children", () => {
+      const { visit } = ts.unstable_parse(
+        `function skip() { callee() } target()`,
+        { format: "raw" },
+      );
+      const calls: string[] = [];
+      visit({
+        s_function() {
+          return false;
+        },
+        e_call(n: any) {
+          calls.push(n.target.name);
+        },
+      });
+      expect(calls).toEqual(["target"]);
+    });
+  });
 });

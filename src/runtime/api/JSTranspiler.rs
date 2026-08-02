@@ -1412,9 +1412,25 @@ impl JSTranspiler {
         let code = code_holder.slice();
         args.eat();
 
+        let mut raw_format = false;
         let loader: Option<Loader> = 'brk: {
             if let Some(arg) = args.next() {
                 args.eat();
+                if arg.is_object() {
+                    if let Some(fmt) = arg.get_optional_slice(global, b"format")? {
+                        if fmt.slice() == b"raw" {
+                            raw_format = true;
+                        } else {
+                            return Err(global.throw_invalid_arguments(format_args!(
+                                "unstable_parse: format must be \"raw\""
+                            )));
+                        }
+                    }
+                    if let Some(l) = arg.get_truthy(global, "loader")? {
+                        break 'brk loader_from_js(global, l)?;
+                    }
+                    break 'brk None;
+                }
                 break 'brk loader_from_js(global, arg)?;
             }
             break 'brk None;
@@ -1455,6 +1471,21 @@ impl JSTranspiler {
 
         if (log_ref.warnings + log_ref.errors) > 0 {
             return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
+        }
+
+        if raw_format {
+            let mut tape = Vec::<u8>::new();
+            if crate::api::js_transpiler_ast::ast_to_tape(&parse_result.ast, &mut tape).is_err() {
+                return Err(global.throw_stack_overflow());
+            }
+            let ab = jsc::ArrayBuffer::from_owned_bytes(
+                tape.into_boxed_slice(),
+                jsc::JSType::ArrayBuffer,
+            )
+            .to_js_unchecked(global)?;
+            let obj = JSValue::create_empty_object(global, 1);
+            obj.put(global, "buffer", ab);
+            return Ok(obj);
         }
 
         let mut json = Vec::<u8>::new();

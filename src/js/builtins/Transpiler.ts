@@ -1,0 +1,235 @@
+interface Transpiler {
+  $unstableParseNative(code: any, opts: any): any;
+}
+
+export function unstableParse(this: Transpiler, code: any, opts: any) {
+  const result = this.$unstableParseNative(code, opts);
+  if (!result || !(result.buffer instanceof ArrayBuffer) || result.root !== undefined) {
+    return result;
+  }
+
+  const buffer: ArrayBuffer = result.buffer;
+  const dv = new DataView(buffer);
+  if (dv.getUint32(0, true) !== 0x42554e41) throw new TypeError("unstable_parse: bad buffer magic");
+  const version = dv.getUint32(4, true);
+  if (version !== 1) throw new TypeError("unstable_parse: unsupported buffer version " + version);
+  const rootOffset = dv.getUint32(8, true);
+  const stringsOffset = dv.getUint32(12, true);
+  const keyTableLen = dv.getUint32(20, true);
+  const keyTableOffset = stringsOffset - keyTableLen * 8;
+
+  const bytes = new Uint8Array(buffer);
+  const decoder = new TextDecoder();
+  const stringCache = new $Map<number, string>();
+  const nodeCache = new $Map<number, any>();
+  const arrayCache = new $Map<number, any>();
+
+  const readString = (off: number, len: number): string => {
+    const key = off * 0x100000000 + len;
+    let s = stringCache.$get(key);
+    if (s !== undefined) return s;
+    s = decoder.decode(bytes.subarray(stringsOffset + off, stringsOffset + off + len));
+    stringCache.$set(key, s);
+    return s;
+  };
+
+  const keyNames = new $Array(keyTableLen);
+  for (let i = 0; i < keyTableLen; i++) {
+    const base = keyTableOffset + i * 8;
+    keyNames[i] = readString(dv.getUint32(base, true), dv.getUint32(base + 4, true));
+  }
+
+  // base points at {u8 keyOrTy, u8 ty?, u16 pad, u32 lo, u32 hi}; tyAt is the
+  // byte offset of the type tag within that 12-byte slot (1 for node fields,
+  // 0 for array elements).
+  const decodePayload = (base: number, tyAt: number): any => {
+    const ty = dv.getUint8(base + tyAt);
+    switch (ty) {
+      case 0:
+        return null;
+      case 1:
+        return false;
+      case 2:
+        return true;
+      case 3:
+        return dv.getInt32(base + 4, true);
+      case 4:
+        return dv.getFloat64(base + 4, true);
+      case 5:
+        return readString(dv.getUint32(base + 4, true), dv.getUint32(base + 8, true));
+      case 6:
+        return nodeAt(dv.getUint32(base + 4, true));
+      case 7:
+        return arrayAt(dv.getUint32(base + 4, true));
+      default:
+        return undefined;
+    }
+  };
+
+  const ownKeysOf = (off: number): string[] => {
+    const n = dv.getUint16(off, true);
+    const keys = new $Array(n);
+    for (let i = 0; i < n; i++) keys[i] = keyNames[dv.getUint8(off + 4 + i * 12)];
+    return keys;
+  };
+
+  const jsonify = (v: any): any => {
+    if (v === null || typeof v !== "object") return v;
+    const off = v.__off;
+    if (typeof off !== "number") return v;
+    if ($isArray(v)) {
+      const n = dv.getUint32(off, true);
+      const out = new $Array(n);
+      for (let i = 0; i < n; i++) out[i] = jsonify(decodePayload(off + 4 + i * 12, 0));
+      return out;
+    }
+    const out: Record<string, unknown> = {};
+    const n = dv.getUint16(off, true);
+    let p = off + 4;
+    for (let i = 0; i < n; i++, p += 12) out[keyNames[dv.getUint8(p)]] = jsonify(decodePayload(p, 1));
+    return out;
+  };
+
+  function toJSON(this: { __off: number }) {
+    return jsonify(this);
+  }
+
+  const nodeHandler: ProxyHandler<{ __off: number }> = {
+    get(target, prop) {
+      if (prop === "__off") return target.__off;
+      if (prop === "toJSON") return toJSON;
+      if (typeof prop !== "string") return undefined;
+      const off = target.__off;
+      const n = dv.getUint16(off, true);
+      let p = off + 4;
+      for (let i = 0; i < n; i++, p += 12) {
+        if (keyNames[dv.getUint8(p)] === prop) return decodePayload(p, 1);
+      }
+      return undefined;
+    },
+    has(target, prop) {
+      if (prop === "toJSON" || prop === "__off") return true;
+      if (typeof prop !== "string") return false;
+      const off = target.__off;
+      const n = dv.getUint16(off, true);
+      let p = off + 4;
+      for (let i = 0; i < n; i++, p += 12) {
+        if (keyNames[dv.getUint8(p)] === prop) return true;
+      }
+      return false;
+    },
+    ownKeys(target) {
+      return ownKeysOf(target.__off);
+    },
+    getOwnPropertyDescriptor(target, prop) {
+      if (typeof prop !== "string") return undefined;
+      const off = target.__off;
+      const n = dv.getUint16(off, true);
+      let p = off + 4;
+      for (let i = 0; i < n; i++, p += 12) {
+        if (keyNames[dv.getUint8(p)] === prop) {
+          return { enumerable: true, configurable: true, writable: false, value: decodePayload(p, 1) };
+        }
+      }
+      return undefined;
+    },
+  };
+
+  const nodeAt = (off: number): any => {
+    let p = nodeCache.$get(off);
+    if (p !== undefined) return p;
+    p = new Proxy({ __off: off }, nodeHandler);
+    nodeCache.$set(off, p);
+    return p;
+  };
+
+  const arrayHandler: ProxyHandler<any[] & { __off: number }> = {
+    get(target, prop, recv) {
+      const off = target.__off;
+      if (prop === "length") return dv.getUint32(off, true);
+      if (prop === "__off") return off;
+      if (prop === "toJSON") return toJSON;
+      if (typeof prop === "string") {
+        const i = +prop;
+        if (i >= 0 && (i | 0) === i) {
+          const count = dv.getUint32(off, true);
+          if (i >= count) return undefined;
+          return decodePayload(off + 4 + i * 12, 0);
+        }
+      }
+      return Reflect.get(target, prop, recv);
+    },
+    has(target, prop) {
+      if (prop === "length" || prop === "__off" || prop === "toJSON") return true;
+      if (typeof prop === "string") {
+        const i = +prop;
+        if (i >= 0 && (i | 0) === i) return i < dv.getUint32(target.__off, true);
+      }
+      return Reflect.has(target, prop);
+    },
+    ownKeys(target) {
+      const count = dv.getUint32(target.__off, true);
+      const keys = new $Array(count + 1);
+      for (let i = 0; i < count; i++) keys[i] = "" + i;
+      keys[count] = "length";
+      return keys;
+    },
+    getOwnPropertyDescriptor(target, prop) {
+      const off = target.__off;
+      if (prop === "length") {
+        return { enumerable: false, configurable: false, writable: true, value: dv.getUint32(off, true) };
+      }
+      if (typeof prop === "string") {
+        const i = +prop;
+        if (i >= 0 && (i | 0) === i) {
+          if (i >= dv.getUint32(off, true)) return undefined;
+          return { enumerable: true, configurable: true, writable: false, value: decodePayload(off + 4 + i * 12, 0) };
+        }
+      }
+      return Reflect.getOwnPropertyDescriptor(target, prop);
+    },
+  };
+
+  const arrayAt = (off: number): any => {
+    let p = arrayCache.$get(off);
+    if (p !== undefined) return p;
+    const target: any = [];
+    target.__off = off;
+    p = new Proxy(target, arrayHandler);
+    arrayCache.$set(off, p);
+    return p;
+  };
+
+  // Walks every node reachable from the root's stmts. For each node, calls
+  // `visitors[node.kind]` (or `visitors.enter` if no specific handler). A
+  // handler returning `false` skips that node's children.
+  const visitNode = (off: number, visitors: any, enter: any): void => {
+    const n = dv.getUint16(off, true);
+    let p = off + 4;
+    const kind = readString(dv.getUint32(p + 4, true), dv.getUint32(p + 8, true));
+    const fn = visitors[kind] ?? enter;
+    if (fn !== undefined && fn.$call(undefined, nodeAt(off)) === false) return;
+    for (let i = 0; i < n; i++, p += 12) {
+      const ty = dv.getUint8(p + 1);
+      if (ty === 6) {
+        visitNode(dv.getUint32(p + 4, true), visitors, enter);
+      } else if (ty === 7) {
+        const aoff = dv.getUint32(p + 4, true);
+        const count = dv.getUint32(aoff, true);
+        let ap = aoff + 4;
+        for (let j = 0; j < count; j++, ap += 12) {
+          if (dv.getUint8(ap) === 6) visitNode(dv.getUint32(ap + 4, true), visitors, enter);
+        }
+      }
+    }
+  };
+
+  const visit = (visitors: any) => {
+    const enter = visitors.enter;
+    const stmts = nodeAt(rootOffset).stmts;
+    const count = stmts.length;
+    for (let i = 0; i < count; i++) visitNode(stmts[i].__off, visitors, enter);
+  };
+
+  return { buffer, root: nodeAt(rootOffset), visit };
+}

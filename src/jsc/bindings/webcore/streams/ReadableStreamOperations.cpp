@@ -447,9 +447,7 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
             pendingRead->fulfill(vm, doneResult);
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
-        // m_closed is NOT set here: a write()/end() captured by an in-flight pull() must not
-        // throw after a consumer-side cancel (Bun v1.3.x behavior). onClose early-returns on
-        // stream state, and handleError's callees all tolerate the cleared source below.
+        // m_closed stays false: a late write()/end() from an in-flight pull() must not throw.
         directStreamControllerClearSource(controller);
         sourceCancelPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
         break;

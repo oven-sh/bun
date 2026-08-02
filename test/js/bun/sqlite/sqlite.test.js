@@ -1549,7 +1549,55 @@ it("close(true) finalizes outstanding prepared statements instead of throwing", 
   db.exec("INSERT INTO foo (name) VALUES ('foo')");
   const prepared = db.prepare("SELECT * FROM foo");
   expect(() => db.close(true)).not.toThrow();
-  expect(() => prepared.all()).toThrow("Statement has finalized");
+  expect(() => prepared.all()).toThrow("Database has closed");
+});
+
+it("close(false) leaves prepare() statements usable but finalizes query() statements", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (a INTEGER)");
+  db.exec("INSERT INTO foo VALUES (1), (2), (3)");
+  const select = db.prepare("SELECT a FROM foo ORDER BY a");
+  const insert = db.prepare("INSERT INTO foo VALUES (?)");
+  const iter = select.iterate();
+  expect(iter.next().value).toEqual({ a: 1 });
+  const owned = [];
+  for (let i = 0; i <= Database.MAX_QUERY_CACHE_SIZE + 2; i++) {
+    owned.push(db.query(`SELECT a + ${i} AS v FROM foo`));
+  }
+
+  db.close(false);
+
+  expect([...iter]).toEqual([{ a: 2 }, { a: 3 }]);
+  expect(() => insert.run(4)).not.toThrow();
+  expect(select.all()).toEqual([{ a: 1 }, { a: 2 }, { a: 3 }, { a: 4 }]);
+  for (const stmt of owned) {
+    expect(() => stmt.all()).toThrow("Database has closed");
+  }
+  expect(() => db.prepare("SELECT 1")).toThrow("Cannot use a closed database");
+  expect(() => db.query("SELECT 1")).toThrow("Cannot use a closed database");
+  select.finalize();
+  insert.finalize();
+});
+
+it("query() cache evicts least-recently-used statements past MAX_QUERY_CACHE_SIZE", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (a INTEGER)");
+  const cachedCount = Symbol.for("Bun.Database.cache.count");
+  const first = db.query("SELECT a + 0 FROM foo");
+  const second = db.query("SELECT a + 1 FROM foo");
+  for (let i = 2; i < Database.MAX_QUERY_CACHE_SIZE; i++) db.query(`SELECT a + ${i} FROM foo`);
+  expect(db[cachedCount]).toBe(Database.MAX_QUERY_CACHE_SIZE);
+  // touch `first` so `second` becomes the LRU entry
+  expect(db.query("SELECT a + 0 FROM foo")).toBe(first);
+  const overflow = db.query(`SELECT a + ${Database.MAX_QUERY_CACHE_SIZE} FROM foo`);
+  expect(db[cachedCount]).toBe(Database.MAX_QUERY_CACHE_SIZE);
+  expect(db.query("SELECT a + 0 FROM foo")).toBe(first);
+  expect(db.query(`SELECT a + ${Database.MAX_QUERY_CACHE_SIZE} FROM foo`)).toBe(overflow);
+  expect(db.query("SELECT a + 1 FROM foo")).not.toBe(second);
+  // the evicted statement still works until close()
+  expect(second.all()).toEqual([]);
+  db.close();
+  expect(() => second.all()).toThrow("Database has closed");
 });
 
 it("close(true) finalizes query() statements created after the cache filled up (#36572)", () => {
@@ -1572,7 +1620,7 @@ it("close(true) finalizes query() statements past the cache limit that are still
   }
   expect(() => db.close(true)).not.toThrow();
   for (const stmt of statements) {
-    expect(() => stmt.all()).toThrow("Statement has finalized");
+    expect(() => stmt.all()).toThrow("Database has closed");
   }
 });
 
@@ -1609,15 +1657,25 @@ it("close() should NOT throw an error if the database is in use", () => {
   expect(() => db.close()).not.toThrow("database is locked");
 });
 
-it("close() releases the database file so it can be deleted immediately (#36572)", () => {
+it("close(true) releases the database file so it can be deleted immediately (#36572)", () => {
   using dir = tempDir("sqlite-close-unlink", {});
   const file = path.join(String(dir), "x.sqlite");
   const db = new Database(file);
   db.exec("CREATE TABLE t (a INTEGER)");
   db.prepare("SELECT a FROM t").all();
+  db.close(true);
+  // On Windows rmSync throws EBUSY if the statement kept the file handle open past close(true).
+  rmSync(file);
+  expect(existsSync(file)).toBe(false);
+});
+
+it("close() releases the database file when only query() statements are outstanding (#36572)", () => {
+  using dir = tempDir("sqlite-close-unlink-query", {});
+  const file = path.join(String(dir), "x.sqlite");
+  const db = new Database(file);
+  db.exec("CREATE TABLE t (a INTEGER)");
+  for (let i = 0; i <= Database.MAX_QUERY_CACHE_SIZE; i++) db.query(`SELECT a + ${i} FROM t`).all();
   db.close();
-  // On Windows this throws EBUSY if the statement above kept the
-  // connection (and the file handle) open past close().
   rmSync(file);
   expect(existsSync(file)).toBe(false);
 });
@@ -1632,7 +1690,7 @@ it("should dispose even if a prepared statement is still live", () => {
       prepared = db.prepare("SELECT * FROM foo");
     }
   }).not.toThrow();
-  expect(() => prepared.get()).toThrow("Statement has finalized");
+  expect(() => prepared.get()).toThrow("Database has closed");
 });
 
 it("should dispose", () => {
@@ -1738,11 +1796,8 @@ it("#13082", async () => {
     runs[i] = run(ops[i % ops.length]);
   }
 
-  const results = await Promise.allSettled(runs);
-  for (const result of results) {
-    expect(result.status).toBe("rejected");
-    expect(result.reason.message).toBe("Statement has finalized");
-  }
+  // close(false) leaves prepare() statements usable even after the Database wrapper is collected
+  await Promise.all(runs);
 });
 
 // The internal SQL.run / SQL.prepare / SQL.isInTransaction helpers used to

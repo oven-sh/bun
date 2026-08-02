@@ -3,6 +3,7 @@ import type * as SqliteTypes from "bun:sqlite";
 
 const kSafeIntegersFlag = 1 << 1;
 const kStrictFlag = 1 << 2;
+const kOwnedByDatabaseFlag = 1 << 3;
 
 const defineProperties = Object.defineProperties;
 const toStringTag = Symbol.toStringTag;
@@ -426,9 +427,7 @@ class Database implements SqliteTypes.Database {
 
   #internalFlags = 0;
   #handle;
-  #cachedQueriesKeys: string[] = [];
-  #cachedQueriesLengths: number[] = [];
-  #cachedQueriesValues: Statement[] = [];
+  #queryCache: Map<string, Statement> = new Map();
   filename;
   #hasClosed = false;
   get handle() {
@@ -520,12 +519,10 @@ class Database implements SqliteTypes.Database {
     return SQL.close(this.#handle, throwOnError);
   }
   clearQueryCache() {
-    for (let item of this.#cachedQueriesValues) {
-      item?.finalize?.();
+    for (const stmt of this.#queryCache.values()) {
+      stmt?.finalize?.();
     }
-    this.#cachedQueriesKeys.length = 0;
-    this.#cachedQueriesValues.length = 0;
-    this.#cachedQueriesLengths.length = 0;
+    this.#queryCache.clear();
   }
 
   run(query, ...params) {
@@ -548,10 +545,22 @@ class Database implements SqliteTypes.Database {
     return new Statement(SQL.prepare(this.#handle, query, params, flags || 0, this.#internalFlags));
   }
 
+  #prepareOwned(query: string) {
+    return new Statement(
+      SQL.prepare(
+        this.#handle,
+        query,
+        undefined,
+        constants.SQLITE_PREPARE_PERSISTENT,
+        this.#internalFlags | kOwnedByDatabaseFlag,
+      ),
+    );
+  }
+
   static MAX_QUERY_CACHE_SIZE = 20;
 
   get [cachedCount]() {
-    return this.#cachedQueriesKeys.length;
+    return this.#queryCache.size;
   }
 
   query(query) {
@@ -563,35 +572,23 @@ class Database implements SqliteTypes.Database {
       throw new Error("SQL query cannot be empty.");
     }
 
-    const willCache = this.#cachedQueriesKeys.length < Database.MAX_QUERY_CACHE_SIZE;
-
-    // this list should be pretty small
-    let index = this.#cachedQueriesLengths.indexOf(query.length);
-    while (index !== -1) {
-      if (this.#cachedQueriesKeys[index] !== query) {
-        index = this.#cachedQueriesLengths.indexOf(query.length, index + 1);
-        continue;
-      }
-
-      const stmt = this.#cachedQueriesValues[index];
-      if (stmt.isFinalized) {
-        return (this.#cachedQueriesValues[index] = this.prepare(
-          query,
-          undefined,
-          willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0,
-        ));
-      }
+    const cache = this.#queryCache;
+    let stmt = cache.get(query);
+    if (stmt !== undefined) {
+      // LRU: re-insert so the most recently used key is last
+      cache.delete(query);
+      if (stmt.isFinalized) stmt = this.#prepareOwned(query);
+      cache.set(query, stmt);
       return stmt;
     }
 
-    var stmt = this.prepare(query, undefined, willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0);
-
-    if (willCache) {
-      this.#cachedQueriesKeys.push(query);
-      this.#cachedQueriesLengths.push(query.length);
-      this.#cachedQueriesValues.push(stmt);
+    stmt = this.#prepareOwned(query);
+    const max = Database.MAX_QUERY_CACHE_SIZE;
+    if (max > 0) {
+      // evicted statements stay usable; close() still finalizes them via kOwnedByDatabaseFlag
+      if (cache.size >= max) cache.delete(cache.keys().next().value);
+      cache.set(query, stmt);
     }
-
     return stmt;
   }
 

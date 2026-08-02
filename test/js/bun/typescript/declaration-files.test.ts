@@ -134,12 +134,15 @@ test.concurrent("declaration sibling resolution covers .js, .mjs and .cjs specif
 `,
     "d.d.mts": `export type DType = 4;
 `,
-    // ".js" maps to a ".d.ts" sibling, or falls back to ".d.mts" when no
-    // ".d.ts" exists; ".mjs" maps to ".d.mts"; ".cjs" maps to ".d.cts".
+    "e.d.ts": `export type EType = 5;
+`,
+    // ".js" and ".jsx" map to a ".d.ts" sibling, or fall back to ".d.mts"
+    // when no ".d.ts" exists; ".mjs" maps to ".d.mts"; ".cjs" maps to ".d.cts".
     "wrapper.d.ts": `export { AType } from "./a.js";
 export { BType } from "./b.js";
 export { CType } from "./c.cjs";
 export { DType } from "./d.mjs";
+export { EType } from "./e.jsx";
 `,
     "main.ts": `import * as m from "./wrapper.d.ts";
 console.log(JSON.stringify(Object.keys(m).sort()));
@@ -147,7 +150,7 @@ console.log(JSON.stringify(Object.keys(m).sort()));
   });
   const { stdout, stderr, exitCode } = await run(dir, "main.ts");
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual(["AType", "BType", "CType", "DType"]);
+  expect(JSON.parse(stdout.trim())).toEqual(["AType", "BType", "CType", "DType", "EType"]);
   expect(exitCode).toBe(0);
 });
 

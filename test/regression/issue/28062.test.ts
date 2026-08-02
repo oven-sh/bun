@@ -4,7 +4,7 @@
 // never delete it; otherwise the winner's install fails with ENOENT opening
 // the cache dir it just published.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { rm, mkdir, writeFile } from "fs/promises";
+import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, tempDir, VerdaccioRegistry } from "harness";
 import { join } from "path";
 

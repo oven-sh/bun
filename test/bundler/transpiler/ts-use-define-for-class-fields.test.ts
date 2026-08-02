@@ -118,6 +118,27 @@ describe("tsconfig compilerOptions.useDefineForClassFields", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("false: computed non-literal key preserves field source order", async () => {
+    using dir = tempDir("udfcf-computed-dyn", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
+      "index.ts": `
+        const order: string[] = [];
+        const K = Symbol();
+        class C {
+          a = (order.push("a"), 1);
+          [K]: any = (order.push("K"), this.a);
+          b = (order.push("b"), 2);
+        }
+        const c: any = new C();
+        process.stdout.write(JSON.stringify({ order, K: c[K] }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ order: ["a", "K", "b"], K: 1 });
+    expect(exitCode).toBe(0);
+  });
+
   for (const explicit of [true, false]) {
     test.concurrent(`${explicit ? "true" : "unset"}: keeps native class-field ([[Define]]) semantics`, async () => {
       using dir = tempDir("udfcf-define", {

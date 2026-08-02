@@ -1040,38 +1040,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
 
                 // useDefineForClassFields: false => instance field -> `this.x = init` in ctor.
-                let is_lowerable_field = |prop: &G::Property| -> bool {
-                    if use_define
-                        || prop.kind != PropertyKind::Normal
-                        || prop.flags.contains(flags::Property::IsMethod)
-                        || prop.flags.contains(flags::Property::IsStatic)
-                        || prop.value.is_some()
-                    {
-                        return false;
-                    }
-                    match prop.key.map(|k| k.data) {
-                        None => false,
-                        Some(
-                            ExprData::EPrivateIdentifier(_)
-                            | ExprData::EString(_)
-                            | ExprData::ENumber(_),
-                        ) => true,
-                        _ => {
-                            !prop.flags.contains(flags::Property::IsComputed)
-                                && prop.initializer.is_none()
-                        }
-                    }
+                let is_instance_field = |p: &G::Property| {
+                    p.kind == PropertyKind::Normal
+                        && !p.flags.contains(flags::Property::IsMethod)
+                        && !p.flags.contains(flags::Property::IsStatic)
+                        && p.value.is_none()
+                        && p.key.is_some()
                 };
+                // Partial lowering would reorder a native `[K] = init` before its
+                // lowered siblings, so keep native semantics when one is present.
+                let lower_fields = !use_define
+                    && !class.properties.slice().iter().any(|p| {
+                        is_instance_field(p)
+                            && p.initializer.is_some()
+                            && p.flags.contains(flags::Property::IsComputed)
+                            && !matches!(
+                                p.key.map(|k| k.data),
+                                Some(ExprData::EString(_) | ExprData::ENumber(_))
+                            )
+                    });
 
-                let fields_to_lower = if use_define {
-                    0
-                } else {
+                let fields_to_lower = if lower_fields {
                     class
                         .properties
                         .slice()
                         .iter()
-                        .filter(|p| is_lowerable_field(p))
+                        .filter(|p| is_instance_field(p))
                         .count()
+                } else {
+                    0
                 };
 
                 if param_props > 0 || fields_to_lower > 0 {
@@ -1126,7 +1123,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     for slot in class.properties.slice_mut().iter_mut() {
                         let prop = core::mem::take(slot);
-                        if !is_lowerable_field(&prop) {
+                        if !lower_fields || !is_instance_field(&prop) {
                             class_body.push(prop);
                             continue;
                         }

@@ -254,10 +254,8 @@ where
         {
             NewRequestContext::<S, SSL_, DBG_, H3_>::on_buffered_body_chunk(ctx, chunk, last);
         }
-        RespLike::to_any_response(resp).on_data(
-            handler::<ThisServer, SSL, DBG, H3>,
-            std::ptr::from_ref::<Self>(self).cast_mut(),
-        );
+        RespLike::to_any_response(resp)
+            .on_data(handler::<ThisServer, SSL, DBG, H3>, self.as_ctx_ptr());
     }
     #[inline]
     fn on_start_buffering_callback(this: *mut c_void) {

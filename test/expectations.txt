@@ -26,20 +26,23 @@
 # ships ClangCL. Runs everywhere else.
 [ WINDOWS ] test/bundler/native-plugin.test.ts [ SKIP ] # node-gyp needs a ClangCL toolset the Windows agents do not have
 
-# Verbatim node v26.3.0 test asserting a FinalizationRegistry callback fires
+# Verbatim node v26.3.0 tests asserting a FinalizationRegistry callback fires
 # within ONE globalThis.gc() + ONE setImmediate after the connect callback's
 # closure is unreferenced. The FinalizationRegistry spec gives no timing
 # guarantee for cleanup callbacks; JSC schedules them via DeferredWorkTimer
 # with no defined ordering relative to the immediate queue. The connect
-# listener IS removed (verified: listenerCount("secureConnect") === 0 in
-# done()) and the object IS collected (test passes 70/70 on darwin and
-# glibc Linux); on alpine x64 the FR callback delivery slips past the single
-# setImmediate after this PR's added module loads at process startup shift
-# the heap layout. The robust fix is gcUntil() rather than a single tick,
-# but the file is a verbatim upstream port. Quarantined on the failing
-# linux-x64-musl matrix only; still runs everywhere else (build 63145:
-# alpine 3.23 x64 + x64-baseline only).
+# listener IS removed (verified listenerCount 0 in done(): "secureConnect"
+# for tls, "connect" for net) and the object IS collected (both pass on
+# darwin and glibc Linux); on alpine x64 the FR callback delivery slips past
+# the single setImmediate, so the assertion reds the lane on ~half of PR
+# builds. The robust fix is gcUntil() rather than a single tick, but these
+# are verbatim upstream ports we do not edit. Quarantined on the failing
+# linux-x64-musl matrix only (alpine 3.23 x64 + x64-baseline); still runs
+# everywhere else. Both twins share the identical onGC + gc() + setImmediate
+# pattern: the tls one was quarantined first (build 63145), the net one has
+# been failing intermittently since ~2026-06-28 (e.g. builds 66653, 66657).
 [ LINUX-X64-MUSL ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # JSC FinalizationRegistry callback delivery vs setImmediate timing on musl x64
+[ LINUX-X64-MUSL ] test/js/node/test/parallel/test-net-connect-memleak.js [ FLAKY ] # JSC FinalizationRegistry callback delivery vs setImmediate timing on musl x64
 
 # Both tests mock _handle.setKeepAlive and assert it receives SECONDS
 # (libuv's uv_tcp_keepalive convention). In Bun, _handle is the public

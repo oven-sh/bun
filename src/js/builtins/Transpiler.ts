@@ -39,9 +39,7 @@ export function unstableParse(this: Transpiler, code: any, opts: any) {
     keyNames[i] = readString(dv.getUint32(base, true), dv.getUint32(base + 4, true));
   }
 
-  // base points at {u8 keyOrTy, u8 ty?, u16 pad, u32 lo, u32 hi}; tyAt is the
-  // byte offset of the type tag within that 12-byte slot (1 for node fields,
-  // 0 for array elements).
+  // tyAt: byte offset of the type tag (1 for node fields, 0 for array elements).
   const decodePayload = (base: number, tyAt: number): any => {
     const ty = dv.getUint8(base + tyAt);
     switch (ty) {
@@ -200,9 +198,7 @@ export function unstableParse(this: Transpiler, code: any, opts: any) {
     return p;
   };
 
-  // Walks every node reachable from the root's stmts. For each node, calls
-  // `visitors[node.kind]` (or `visitors.enter` if no specific handler). A
-  // handler returning `false` skips that node's children.
+  // Dispatches on node.kind; a handler returning false skips children.
   const visitNode = (off: number, visitors: any, enter: any): void => {
     const n = dv.getUint16(off, true);
     let p = off + 4;

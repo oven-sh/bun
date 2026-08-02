@@ -1115,14 +1115,7 @@ impl<'a> Writer<'a> {
     }
 }
 
-// ─── raw tape format ───────────────────────────────────────────────────────
-//
-// Header (24 bytes LE): magic, version, rootOffset, stringsOffset, stringsLen,
-// keyTableLen. Key table (keyTableLen × {u32 off, u32 len}) sits immediately
-// before the strings region, so its offset is `stringsOffset - keyTableLen*8`.
-// Node: u16 nFields, u16 pad, nFields × 12-byte {u8 key, u8 ty, u16 pad, u32
-// lo, u32 hi}. Array: u32 count, count × 12-byte {u8 ty, u8 pad[3], u32 lo,
-// u32 hi}. All record starts are 4-byte aligned.
+// ─── raw tape format (LE, 4-aligned; see src/js/builtins/Transpiler.ts) ────
 
 const TAPE_MAGIC: u32 = 0x4255_4E41; // "BUNA"
 const TAPE_VERSION: u32 = 1;
@@ -1137,8 +1130,7 @@ const TY_STR: u8 = 5;
 const TY_NODE: u8 = 6;
 const TY_ARRAY: u8 = 7;
 
-/// One field/element payload. `NODE`/`ARRAY` offsets are byte offsets from the
-/// start of the buffer.
+/// One field/element payload; node/array offsets are absolute byte offsets.
 #[derive(Clone, Copy)]
 struct Val {
     ty: u8,

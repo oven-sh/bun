@@ -583,7 +583,7 @@ impl MultiPartUpload {
                 self.rollback_multi_part_request()?;
             } else {
                 // single file upload no need to rollback
-                MultiPartUpload::deref_(std::ptr::from_ref::<Self>(self).cast_mut());
+                MultiPartUpload::deref_(self.root_ptr());
             }
         }
         Ok(())
@@ -623,7 +623,7 @@ impl MultiPartUpload {
             // single file upload no need to commit
             // The deref must run after the callback:
             let r = (self.callback)(S3UploadResult::Success, self.callback_context.get());
-            MultiPartUpload::deref_(std::ptr::from_ref::<Self>(self).cast_mut());
+            MultiPartUpload::deref_(self.root_ptr());
             r
         } else {
             Ok(())
@@ -1067,8 +1067,7 @@ impl MultiPartUpload {
         // we may call done inside processBuffered so we ensure that we keep a ref until we are done
         // SAFETY: `self` is the live IntrusiveRc allocation; `ScopedRef` bumps the count
         // and derefs on every exit path.
-        let _deref_guard =
-            unsafe { bun_ptr::ScopedRef::new(std::ptr::from_ref::<Self>(self).cast_mut()) };
+        let _deref_guard = unsafe { bun_ptr::ScopedRef::new(self.root_ptr()) };
 
         if self.state.get() == State::WaitStreamCheck && chunk.is_empty() && is_last {
             // we do this because stream will close if the file dont exists and we dont wanna to send an empty part in this case

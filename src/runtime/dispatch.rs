@@ -190,7 +190,7 @@ pub(crate) enum RunTaskResult {
 // Keeping `run_task` out-of-line lets `tick_queue_with_count` stay a tight
 // drain-loop wrapper (front-clustered via `src/startup.order`), and the cold
 // Shell*/Bake* clusters are further hoisted into [`run_task_cold`] so this
-// pages.
+// hot dispatcher stays off their pages.
 #[inline(never)]
 pub(crate) fn run_task(
     task: Task,
@@ -584,7 +584,7 @@ pub(crate) fn run_task(
 /// Shell* / Bake* (and, when they land, Install*) tags are never seen during
 /// `bun <file>` startup or the `dot` benchmark, but their per-arm bodies pull
 /// in `bun_shell` / `bun_bake` call sites that LLVM otherwise interleaves with
-/// `#[cold]` boundary lets lld place this whole cluster after the
+/// the hot arms. The `#[cold]` boundary lets lld place this whole cluster after the
 /// front-clustered startup window (see `src/startup.order`).
 ///
 /// Returns `()` — none of the cold arms can fail or early-return; the caller
@@ -1346,6 +1346,7 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             true
         }
         // Re-queued by the caller; the box stays reachable from the
+        // static-rooted VM queue, because running these callbacks
         // is not generally safe at shutdown (e.g. `AsyncModule::on_done`,
         // `dns::Holder::run` call straight into JS).
         _ => false,

@@ -114,7 +114,10 @@ impl GarbageCollectionController {
         let interval = self.repeat_interval();
         Self::arm(
             VirtualMachine::get_mut_ptr(),
-            self.gc_repeating_timer.as_ptr(),
+            // whole-struct provenance: from_field_ptr recovers the container on fire
+            core::ptr::addr_of!(self.gc_repeating_timer)
+                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                .cast_mut(),
             interval,
         );
     }
@@ -158,7 +161,14 @@ impl GarbageCollectionController {
             this.gc_repeating_timer_fast.set(true);
         }
         let interval = this.repeat_interval();
-        Self::arm(vm, this.gc_repeating_timer.as_ptr(), interval);
+        Self::arm(
+            vm,
+            // whole-struct provenance: from_field_ptr recovers the container on fire
+            core::ptr::addr_of!(this.gc_repeating_timer)
+                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                .cast_mut(),
+            interval,
+        );
     }
 }
 

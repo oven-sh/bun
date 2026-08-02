@@ -31,6 +31,7 @@ pub trait AnyTaskJobCtx: Sized {
     fn then(&mut self, global: &JSGlobalObject) -> JsResult<()>;
 }
 
+/// Heap-allocated offload job; created via [`AnyTaskJob::create`] and freed in
 /// `run_from_js` (or on `init` failure). `ctx` is `pub` so callers can read
 /// e.g. a `JSPromiseStrong` field after scheduling.
 #[repr(C)]

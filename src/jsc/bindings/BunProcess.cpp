@@ -1166,6 +1166,13 @@ bool isSignalName(WTF::String input)
 
 extern "C" void Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalObject)
 {
+    // Lazily allocated in onDidChangeListeners. Null means no signal listener
+    // has been registered yet, so there is nothing to dispatch; SigintWatcher
+    // can forward SIGINT here in that state when no vm context is registered
+    // to be interrupted.
+    if (!signalNumberToNameMap) [[unlikely]]
+        return;
+
     Process* process = globalObject->processObject();
 
     String signalName = signalNumberToNameMap->get(signalNumber);

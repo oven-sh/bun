@@ -93,19 +93,25 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     RefPtr fetcher(NodeVMScriptFetcher::create(vm, dynamicImportCallback, moduleWrapper));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    WTF::String identifier = identifierValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
     SourceOrigin sourceOrigin { {}, *fetcher };
 
     WTF::String sourceText = sourceTextValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(WTF::move(sourceText), sourceOrigin, String {}, SourceTaintedOrigin::Untainted,
+    // The identifier is the module's only debugging handle (there is no file
+    // behind it), so thread it through as the source-provider URL the way
+    // vm.Script threads filename, matching Node's stack frames.
+    Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(WTF::move(sourceText), sourceOrigin, String { identifier }, SourceTaintedOrigin::Untainted,
         TextPosition { OrdinalNumber::fromZeroBasedInt(lineOffset), OrdinalNumber::fromZeroBasedInt(columnOffset) }, SourceProviderSourceType::Module);
 
-    SourceCode sourceCode(WTF::move(sourceProvider), lineOffset, columnOffset);
-
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    WTF::String identifier = identifierValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    // JSC's module program line base is one less than its program base for an
+    // identical SourceCode, so bias firstLine by one to match Node's 1-based
+    // lineOffset convention (lineOffset 10 reports line 11, as vm.Script does).
+    SourceCode sourceCode(WTF::move(sourceProvider), lineOffset + 1, columnOffset);
     NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(
         vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), WTF::move(identifier), contextValue,
         WTF::move(sourceCode), moduleWrapper, initializeImportMeta);

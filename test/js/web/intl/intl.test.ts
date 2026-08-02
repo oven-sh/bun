@@ -283,6 +283,8 @@ describe("Intl.Locale canonicalization", () => {
     // libicucore canonicalizes "" to the process default locale, which would
     // leak into the result as e.g. "sr-Latn-US-u-va-posix".
     expect(new Intl.Locale("und").toString()).toBe("und");
+    expect(new Intl.Locale("und-u-ca-gregory").toString()).toBe("und-u-ca-gregory");
+    expect(new Intl.Locale("und-x-private").toString()).toBe("und-x-private");
     expect(new Intl.Locale("und", { language: "sh" }).toString()).toBe("sr-Latn");
   });
 

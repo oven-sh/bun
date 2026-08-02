@@ -617,9 +617,7 @@ function newReadableWritablePairFromDuplex(duplex, options = kEmptyObject) {
     return { readable, writable };
   }
 
-  const writable = isWritable(duplex)
-    ? newWritableStreamFromStreamWritable(duplex)
-    : new WritableStream();
+  const writable = isWritable(duplex) ? newWritableStreamFromStreamWritable(duplex) : new WritableStream();
 
   if (!isWritable(duplex)) writable.close();
 

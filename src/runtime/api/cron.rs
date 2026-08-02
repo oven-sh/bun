@@ -82,16 +82,16 @@ trait CronJobBase: Sized {
     /// The job's state-machine enum.
     type State: Copy;
     // The state constants / slots feed the platform-specific `prepare_*`
-    // defaults below, so each is used only on the targets that path builds on.
-    #[allow(dead_code, reason = "used by the crontab (linux/bsd) default")]
+    // defaults below, so each exists only on the targets that path builds on.
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
     const READING_CRONTAB: Self::State;
-    #[allow(dead_code, reason = "used by the launchctl (macOS) default")]
+    #[cfg(target_os = "macos")]
     const BOOTING_OUT: Self::State;
-    #[allow(dead_code, reason = "used by the platform-specific prepare defaults")]
+    #[cfg(not(windows))]
     fn set_state(&mut self, state: Self::State);
-    #[allow(dead_code, reason = "used by the crontab (linux/bsd) default")]
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
     fn stdout_reader_slot(&mut self) -> &mut OutputReader;
-    #[allow(dead_code, reason = "used by the launchctl (macOS) default")]
+    #[cfg(target_os = "macos")]
     fn title_bytes(&self) -> &[u8];
 
     /// `None` records the error (for the caller to `finish`). `this_ptr` is
@@ -279,14 +279,19 @@ bun_io::impl_buffered_reader_parent! {
 
 impl CronJobBase for CronRegisterJob {
     type State = RegisterState;
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
     const READING_CRONTAB: RegisterState = RegisterState::ReadingCrontab;
+    #[cfg(target_os = "macos")]
     const BOOTING_OUT: RegisterState = RegisterState::BootingOut;
+    #[cfg(not(windows))]
     fn set_state(&mut self, state: RegisterState) {
         self.state = state;
     }
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
     fn stdout_reader_slot(&mut self) -> &mut OutputReader {
         &mut self.stdout_reader
     }
+    #[cfg(target_os = "macos")]
     fn title_bytes(&self) -> &[u8] {
         self.title.as_bytes()
     }
@@ -1116,14 +1121,19 @@ bun_io::impl_buffered_reader_parent! {
 
 impl CronJobBase for CronRemoveJob {
     type State = RemoveState;
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
     const READING_CRONTAB: RemoveState = RemoveState::ReadingCrontab;
+    #[cfg(target_os = "macos")]
     const BOOTING_OUT: RemoveState = RemoveState::BootingOut;
+    #[cfg(not(windows))]
     fn set_state(&mut self, state: RemoveState) {
         self.state = state;
     }
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
     fn stdout_reader_slot(&mut self) -> &mut OutputReader {
         &mut self.stdout_reader
     }
+    #[cfg(target_os = "macos")]
     fn title_bytes(&self) -> &[u8] {
         self.title.as_bytes()
     }

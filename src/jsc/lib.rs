@@ -178,8 +178,6 @@ pub mod deprecated_strong;
 pub mod dom_url;
 #[path = "Exception.rs"]
 pub mod exception;
-#[path = "ipc.rs"]
-pub mod ipc;
 #[path = "JSArray.rs"]
 pub mod js_array;
 #[path = "JSBigInt.rs"]
@@ -518,8 +516,6 @@ pub mod event_loop_handle;
 pub mod ffi;
 #[path = "JSCScheduler.rs"]
 pub mod jsc_scheduler;
-#[path = "JSONLineBuffer.rs"]
-pub mod json_line_buffer;
 #[path = "ProcessAutoKiller.rs"]
 pub mod process_auto_killer;
 #[path = "WorkTask.rs"]

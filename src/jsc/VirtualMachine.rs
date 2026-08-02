@@ -13,7 +13,6 @@ use bun_uws as uws;
 
 use crate::counters::Counters;
 use crate::event_loop::EventLoop;
-use crate::ipc::IPC; // scoped logger static for `bun_core::scoped_log!(IPC, ...)`
 use crate::module_loader::{self as ModuleLoader, FetchFlags};
 use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
@@ -310,7 +309,7 @@ pub struct VirtualMachine {
     pub(crate) gc_controller: crate::GarbageCollectionController,
     // BACKREF — WebWorker owns the VM. Real type: `*const bun_runtime::webcore::WebWorker`.
     pub worker: Option<*const c_void>,
-    pub ipc: Option<IPCInstanceUnion>,
+    pub pending_ipc: Option<PendingIpc>,
     pub hot_reload_counter: u32,
 
     pub debugger: Option<Box<crate::debugger::Debugger>>,
@@ -1734,9 +1733,7 @@ pub struct RuntimeHooks {
     /// slot instead of the linker.
     pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: u8),
     /// `node_cluster_binding.handleInternalMessageChild(global, data)`.
-    pub handle_ipc_internal_child: unsafe fn(global: *mut JSGlobalObject, data: JSValue),
     /// `node_cluster_binding.child_singleton.deinit()`.
-    pub ipc_child_singleton_deinit: fn(),
     /// `onBeforePrint()` for the `bun:test` runner, which lives in `bun_runtime`;
     /// `console.log` calls this so the test reporter can flush its line state
     /// before user output interleaves with it. No-op when `bun test` isn't
@@ -2099,7 +2096,7 @@ impl VirtualMachine {
             // all-zero bytes decode as `Some(false)` — for TLS that would
             // silently disable certificate verification. Write `None` explicitly.
             addr_of_mut!((*vm).default_tls_reject_unauthorized).write(None);
-            addr_of_mut!((*vm).ipc).write(None);
+            addr_of_mut!((*vm).pending_ipc).write(None);
             // Non-zero-valid container fields: `Vec`/`Box`/`HashMap`/
             // `ArrayHashMap` all carry a `NonNull` (dangling when empty), and
             // `URL` is a struct of `&[u8]` references — all-zero bytes violate
@@ -2793,112 +2790,12 @@ pub struct Options {
 }
 
 /// State of the child-side IPC channel: enabled-but-waiting for a JS listener, or fully initialized.
-pub enum IPCInstanceUnion {
-    /// IPC is put in this "enabled but not started" state when IPC is
-    /// detected but the client JavaScript has not yet done `.on("message")`.
-    Waiting {
-        fd: bun_sys::Fd,
-        mode: crate::ipc::Mode,
-    },
-    Initialized(*mut IPCInstance),
-}
-
-/// Child-side IPC channel: the send queue plus the global object it dispatches incoming messages into.
-pub struct IPCInstance {
-    pub global_this: core::cell::Cell<*mut JSGlobalObject>,
-    /// Embedded per-VM group on `RareData.spawn_ipc_group`; this is just a
-    /// borrowed handle so the isolation swap can skip it.
-    #[cfg(unix)]
-    pub(crate) group: *mut uws::SocketGroup,
-    pub data: core::ptr::NonNull<crate::ipc::SendQueue>,
-}
-
-impl IPCInstance {
-    pub fn new(v: IPCInstance) -> *mut IPCInstance {
-        bun_core::heap::into_raw(Box::new(v))
-    }
-
-    #[inline]
-    pub fn data(&self) -> &crate::ipc::SendQueue {
-        // SAFETY: `data` is an owned ref; live until `deinit`.
-        unsafe { self.data.as_ref() }
-    }
-
-    /// Only reached from the `get_ipc_instance` error path.
-    ///
-    /// # Safety
-    /// `this` must have been produced by `IPCInstance::new` (heap::alloc) and
-    /// not yet freed or aliased.
-    pub(crate) unsafe fn deinit(this: *mut IPCInstance) {
-        // SAFETY: caller contract — `this` is a live heap::alloc'd box; the
-        // SendQueue ref is owned by it and released here after detaching.
-        unsafe {
-            let sq = (*this).data.as_ptr();
-            (*sq).detach();
-            <crate::ipc::SendQueue as bun_ptr::CellRefCounted>::deref(sq);
-            drop(bun_core::heap::take(this));
-        }
-    }
-
-    /// Dispatches a decoded IPC message (and optional handle) to the JS `process` listeners.
-    pub fn handle_ipc_message(&self, message: &crate::ipc::DecodedIPCMessage, handle: JSValue) {
-        crate::mark_binding!();
-        let global_this = self.global_this.get();
-        // SAFETY: VM singleton + its event loop are process-lifetime.
-        let event_loop = VirtualMachine::get().event_loop_mut();
-
-        match *message {
-            // In future versions we can read this in order to detect version mismatches,
-            // or disable future optimizations if the subprocess is old.
-            crate::ipc::DecodedIPCMessage::Version(v) => {
-                bun_core::scoped_log!(IPC, "Parent IPC version is {}", v);
-            }
-            crate::ipc::DecodedIPCMessage::Data(data) => {
-                bun_core::scoped_log!(IPC, "Received IPC message from parent");
-                event_loop.enter();
-                // `global_this` is the live VM global; `JSGlobalObject` is an
-                // opaque ZST handle so `opaque_ref` is the centralised
-                // zero-byte deref proof (panics on null).
-                Process__emitMessageEvent(JSGlobalObject::opaque_ref(global_this), data, handle);
-                event_loop.exit();
-            }
-            crate::ipc::DecodedIPCMessage::Internal(data) => {
-                bun_core::scoped_log!(IPC, "Received IPC internal message from parent");
-                event_loop.enter();
-                if let Some(hooks) = runtime_hooks() {
-                    // SAFETY: hook fn is supplied by `bun_runtime` at startup;
-                    // `global_this` is the live VM global.
-                    unsafe { (hooks.handle_ipc_internal_child)(global_this, data) };
-                }
-                event_loop.exit();
-            }
-        }
-    }
-
-    /// Tears down the IPC channel and emits the disconnect events on `process`.
-    pub(crate) fn handle_ipc_close(&self) {
-        bun_core::scoped_log!(IPC, "IPCInstance#handleIPCClose");
-        // SAFETY: VM singleton is process-lifetime.
-        let vm = VirtualMachine::get().as_mut();
-        let event_loop = vm.event_loop_mut();
-        if let Some(hooks) = runtime_hooks() {
-            (hooks.ipc_child_singleton_deinit)();
-        }
-        event_loop.enter();
-        Process__emitDisconnectEvent(vm.global());
-        event_loop.exit();
-        // Group is embedded in RareData and shared with subprocess IPC; nothing
-        // to free here.
-        vm.channel_ref.disable();
-    }
-}
-
-// `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle, so
-// `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*` and C++
-// mutating VM/process state through it is interior mutation invisible to Rust.
-unsafe extern "C" {
-    safe fn Process__emitMessageEvent(global: &JSGlobalObject, value: JSValue, handle: JSValue);
-    safe fn Process__emitDisconnectEvent(global: &JSGlobalObject);
+/// Inherited IPC channel recorded at env load; consumed by `bun_runtime`'s
+/// `ipc_host::get_ipc_instance` when JS first attaches a listener.
+#[derive(Clone, Copy)]
+pub struct PendingIpc {
+    pub fd: bun_sys::Fd,
+    pub advanced: bool,
 }
 
 /// Caller intent for runtime module resolution.
@@ -3254,12 +3151,11 @@ impl VirtualMachine {
         if let Some(idx) = map.map.get_index(b"NODE_CHANNEL_FD") {
             let (_, kv) = map.map.swap_remove_at(idx);
             let fd_s = kv.value;
-            let mode = map
+            let advanced = map
                 .map
                 .get_index(b"NODE_CHANNEL_SERIALIZATION_MODE")
                 .map(|i| map.map.swap_remove_at(i).1)
-                .and_then(|v| crate::ipc::Mode::from_string(&v.value))
-                .unwrap_or(crate::ipc::Mode::Json);
+                .is_some_and(|v| &v.value[..] == b"advanced");
             // Accept only
             // non-negative values that fit in i31 (i.e. `0..=i32::MAX`).
             // Parsing as `u32` then `as i32` would silently wrap values in
@@ -3268,7 +3164,12 @@ impl VirtualMachine {
                 .ok()
                 .filter(|&n| n >= 0)
             {
-                Some(fd) => self.init_ipc_instance(bun_sys::Fd::from_uv(fd), mode),
+                Some(fd) => {
+                    self.pending_ipc = Some(PendingIpc {
+                        fd: bun_sys::Fd::from_uv(fd),
+                        advanced,
+                    })
+                }
                 None => bun_core::warn!(
                     "Failed to parse IPC channel number '{}'",
                     bstr::BStr::new(&fd_s[..])
@@ -4717,17 +4618,6 @@ impl VirtualMachine {
                 ),
                 None => (core::ptr::null_mut(), core::ptr::null_mut()),
             };
-            #[cfg(unix)]
-            let skip_process_ipc: *mut uws::SocketGroup = match &self.ipc {
-                Some(IPCInstanceUnion::Initialized(inst)) => {
-                    // SAFETY: `inst` was produced by `IPCInstance::new` and is
-                    // live for as long as `self.ipc` holds it.
-                    unsafe { (**inst).group }
-                }
-                _ => core::ptr::null_mut(),
-            };
-            #[cfg(not(unix))]
-            let skip_process_ipc: *mut uws::SocketGroup = core::ptr::null_mut();
             // SAFETY: process-global usockets loop is live.
             let loop_ = unsafe { &mut *uws::Loop::get() };
             let mut maybe_group = loop_.internal_loop_data.head;
@@ -4735,7 +4625,7 @@ impl VirtualMachine {
                 // SAFETY: `group` is a live `us_socket_group_t` linked in the loop.
                 let next = unsafe { (*group.as_ptr()).next };
                 let g = group.as_ptr();
-                if g != skip_spawn_ipc && g != skip_process_ipc && g != skip_test_parallel_ipc {
+                if g != skip_spawn_ipc && g != skip_test_parallel_ipc {
                     // SAFETY: see above.
                     unsafe { (*g).close_all() };
                 }
@@ -4813,12 +4703,6 @@ impl VirtualMachine {
         VMHolder::set_cached_global_object(Some(new_global));
         self.regular_event_loop.global = NonNull::new(new_global);
         self.macro_event_loop.global = NonNull::new(new_global);
-        if let Some(IPCInstanceUnion::Initialized(inst)) = self.ipc {
-            // SAFETY: `inst` was produced by `IPCInstance::new` and stays live
-            // until `IPCInstance::deinit`; repoint at the new global so
-            // `Process__emitMessageEvent` doesn't dispatch on a freed cell.
-            unsafe { (*inst).global_this.set(new_global) };
-        }
         if let Some(rare) = self.rare_data.as_deref_mut() {
             for hook in rare.cleanup_hooks.iter_mut() {
                 if hook.global_this == old_global {
@@ -6463,123 +6347,6 @@ impl VirtualMachine {
             source_map: Some(map),
             prefetched_source_code: None,
         })
-    }
-
-    /// Records the inherited IPC fd/mode in the waiting state until JS attaches a listener.
-    pub(crate) fn init_ipc_instance(&mut self, fd: bun_sys::Fd, mode: crate::ipc::Mode) {
-        bun_core::scoped_log!(IPC, "initIPCInstance {:?}", fd);
-        self.ipc = Some(IPCInstanceUnion::Waiting { fd, mode });
-    }
-
-    /// Returns the initialized IPC instance, lazily creating it from the waiting fd/mode.
-    pub fn get_ipc_instance(&mut self) -> Option<*mut IPCInstance> {
-        let (fd, mode) = match self.ipc.as_ref()? {
-            IPCInstanceUnion::Initialized(inst) => return Some(*inst),
-            IPCInstanceUnion::Waiting { fd, mode } => (*fd, *mode),
-        };
-
-        bun_core::scoped_log!(IPC, "getIPCInstance {:?}", fd);
-
-        self.event_loop_mut().ensure_waker();
-
-        #[cfg(not(windows))]
-        let instance: *mut IPCInstance = {
-            let loop_ = self.uws_loop();
-            let group: *mut uws::SocketGroup = self.rare_data().spawn_ipc_group(loop_);
-
-            // Box the instance first so `data.owner` can name its final
-            // address.
-            let send_queue =
-                crate::ipc::SendQueue::new(mode, None, crate::ipc::SocketUnion::Uninitialized);
-            let instance = IPCInstance::new(IPCInstance {
-                global_this: core::cell::Cell::new(self.global),
-                group,
-                // SAFETY: `SendQueue::new` returns a non-null owned ref.
-                data: unsafe { core::ptr::NonNull::new_unchecked(send_queue) },
-            });
-            // SAFETY: `send_queue` is the live SendQueue just allocated;
-            // `instance` was just boxed.
-            unsafe {
-                (*send_queue).set_owner(crate::ipc::SendQueueOwner::Instance(
-                    core::ptr::NonNull::new_unchecked(instance),
-                ))
-            };
-
-            self.ipc = Some(IPCInstanceUnion::Initialized(instance));
-
-            // SAFETY: `group` is the live per-VM SocketGroup; `send_queue` is
-            // the freshly-allocated SendQueue (root raw pointer, stored in the
-            // socket ext slot for the socket's lifetime).
-            let socket = unsafe {
-                crate::ipc::Socket::from_fd::<crate::ipc::SendQueue>(
-                    &mut *group,
-                    uws::SocketKind::SpawnIpc,
-                    fd,
-                    send_queue,
-                    true,
-                )
-            };
-            let Some(socket) = socket else {
-                // SAFETY: `instance` was produced by `IPCInstance::new`
-                // (heap::alloc) above and is not yet aliased.
-                unsafe { IPCInstance::deinit(instance) };
-                self.ipc = None;
-                bun_core::warn!("Unable to start IPC socket");
-                return None;
-            };
-            socket.set_timeout(0);
-
-            // SAFETY: `send_queue` is live (owned by `instance`).
-            unsafe {
-                (*send_queue)
-                    .socket
-                    .set(crate::ipc::SocketUnion::Open(socket))
-            };
-
-            instance
-        };
-
-        #[cfg(windows)]
-        let instance: *mut IPCInstance = {
-            let send_queue =
-                crate::ipc::SendQueue::new(mode, None, crate::ipc::SocketUnion::Uninitialized);
-            let instance = IPCInstance::new(IPCInstance {
-                global_this: core::cell::Cell::new(self.global),
-                // SAFETY: `SendQueue::new` returns a non-null owned ref.
-                data: unsafe { core::ptr::NonNull::new_unchecked(send_queue) },
-            });
-            // SAFETY: `send_queue` is the live SendQueue just allocated;
-            // `instance` was just boxed.
-            unsafe {
-                (*send_queue).set_owner(crate::ipc::SendQueueOwner::Instance(
-                    core::ptr::NonNull::new_unchecked(instance),
-                ))
-            };
-
-            self.ipc = Some(IPCInstanceUnion::Initialized(instance));
-
-            // `windows_configure_client` STORES the `*mut SendQueue` in
-            // `uv_handle_t.data` for the pipe's lifetime; `send_queue` is the
-            // allocation's root raw pointer.
-            // SAFETY: `send_queue` is the live SendQueue owned by `instance`.
-            if let Err(_) =
-                unsafe { crate::ipc::SendQueue::windows_configure_client(send_queue, fd) }
-            {
-                // SAFETY: `instance` was produced by `IPCInstance::new`
-                // (heap::alloc) above and is not yet aliased.
-                unsafe { IPCInstance::deinit(instance) };
-                self.ipc = None;
-                bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
-                return None;
-            }
-
-            instance
-        };
-
-        // SAFETY: `instance` is the live boxed IPCInstance.
-        unsafe { (*instance).data().write_version_packet(self.global()) };
-
-        Some(instance)
     }
 
     /// To satisfy the interface from NewHotReloader().

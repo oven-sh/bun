@@ -4,16 +4,16 @@
 //   at all. It should happen in the protocol before it reaches JS.
 // - We should not be creating JSFunction's in process.nextTick.
 
+use crate::ipc::{Handle, IsInternal, SerializeAndSendResult};
 use bun_core::String as BunString;
-use bun_jsc::ipc::{Handle, IsInternal, SerializeAndSendResult};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, StrongOptional};
 
 use crate::api::bun::subprocess::Subprocess;
 
-// Struct moved to `bun_jsc::ipc` (cycle-break per docs/PORTING.md) —
+// Struct lives in `crate::ipc` —
 // `SendQueue` stores one inline so it must live at that tier. Re-exported here so
 // existing `bun_runtime` paths (`node_cluster_binding::InternalMsgHolder`) keep working.
-pub use bun_jsc::ipc::InternalMsgHolder;
+pub use crate::ipc::InternalMsgHolder;
 
 bun_output::declare_scope!(IPC, visible);
 
@@ -58,7 +58,7 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
     let vm = global.bun_vm().as_mut();
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global; sole &mut on JS thread.
 
-    if vm.ipc.is_none() {
+    if !crate::ipc_host::has_ipc(vm) {
         return Ok(JSValue::FALSE);
     }
     if message.is_undefined() {
@@ -94,7 +94,7 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
         );
     }
 
-    let ipc_instance = vm.get_ipc_instance().unwrap();
+    let ipc_instance = crate::ipc_host::get_ipc_instance(vm).unwrap();
     // SAFETY: `get_ipc_instance` returns a live owned IPCInstance pointer; sole &mut on JS thread.
     let ipc_instance = unsafe { &mut *ipc_instance };
 

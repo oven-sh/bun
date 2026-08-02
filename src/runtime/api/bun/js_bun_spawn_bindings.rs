@@ -3,13 +3,13 @@ use core::ffi::{CStr, c_char};
 use core::ptr::NonNull;
 use std::io::Write as _;
 
+use crate::ipc as IPC;
 #[cfg(not(windows))]
 use bun_core::StackCheck;
 use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
 use bun_core::{String as BunString, ZStr, strings};
 use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf::MaxBuf;
-use bun_jsc::ipc as IPC;
 use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
     JsResult, SystemError,
@@ -74,46 +74,9 @@ impl TerminalCreateResult {
     }
 }
 
-#[unsafe(no_mangle)]
-fn __bun_subprocess_ipc_global_this(
-    subprocess: core::ptr::NonNull<core::ffi::c_void>,
-) -> *const JSGlobalObject {
-    // SAFETY: `subprocess` is the live backref stored by `subprocess_ipc_owner`; the Subprocess holds a ref on its SendQueue and detaches before it is freed.
-    unsafe { subprocess.cast::<SubprocessT<'static>>().as_ref() }
-        .global_this
-        .as_ptr()
-}
-#[unsafe(no_mangle)]
-fn __bun_subprocess_ipc_handle_close(subprocess: core::ptr::NonNull<core::ffi::c_void>) {
-    // SAFETY: `subprocess` is the live backref stored by `subprocess_ipc_owner`; the Subprocess holds a ref on its SendQueue and detaches before it is freed.
-    SubprocessT::handle_ipc_close(unsafe { subprocess.cast::<SubprocessT<'static>>().as_ref() });
-}
-#[unsafe(no_mangle)]
-fn __bun_subprocess_ipc_handle_message(
-    subprocess: core::ptr::NonNull<core::ffi::c_void>,
-    msg: &IPC::DecodedIPCMessage,
-    handle: JSValue,
-) {
-    // SAFETY: `subprocess` is the live backref stored by `subprocess_ipc_owner`; the Subprocess holds a ref on its SendQueue and detaches before it is freed.
-    SubprocessT::handle_ipc_message(
-        unsafe { subprocess.cast::<SubprocessT<'static>>().as_ref() },
-        msg,
-        handle,
-    );
-}
-#[unsafe(no_mangle)]
-fn __bun_subprocess_ipc_this_jsvalue(subprocess: core::ptr::NonNull<core::ffi::c_void>) -> JSValue {
-    // SAFETY: `subprocess` is the live backref stored by `subprocess_ipc_owner`; the Subprocess holds a ref on its SendQueue and detaches before it is freed.
-    unsafe { subprocess.cast::<SubprocessT<'static>>().as_ref() }
-        .this_value
-        .get()
-        .try_get()
-        .unwrap_or(JSValue::ZERO)
-}
-
 #[inline]
 fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> Option<IPC::SendQueueOwner> {
-    core::ptr::NonNull::new(ptr.cast::<core::ffi::c_void>()).map(IPC::SendQueueOwner::Subprocess)
+    core::ptr::NonNull::new(ptr.cast::<SubprocessT<'static>>()).map(IPC::SendQueueOwner::Subprocess)
 }
 
 bun_output::declare_scope!(Subprocess, hidden);

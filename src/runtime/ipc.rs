@@ -2,19 +2,19 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 
-use crate::JsCell;
+use bun_jsc::JsCell;
 
-use crate as jsc;
-use crate::js_value::Protected;
 use crate::json_line_buffer::JSONLineBuffer;
-#[cfg(windows)]
-use crate::virtual_machine::VirtualMachine;
-use crate::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, Task};
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{Output, handle_oom};
 use bun_core::{String as BunString, strings};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
+use bun_jsc as jsc;
+use bun_jsc::js_value::Protected;
+#[cfg(windows)]
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, Task};
 use bun_sys::Fd;
 use bun_sys::FdExt;
 #[cfg(windows)]
@@ -26,7 +26,7 @@ use bun_sys::windows::libuv::{UvHandle as _, UvStream as _};
 use bun_uws;
 
 // `bun.cpp.*` — generated C++ dispatch shims for IPC handle (de)serialization
-// (`IPCSerialize` / `IPCParse`) are declared once in `crate::cpp` and called
+// (`IPCSerialize` / `IPCParse`) are declared once in `bun_jsc::cpp` and called
 // through that module's safe wrappers; no local extern block needed.
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -58,10 +58,10 @@ pub struct InternalMsgHolder {
 
     // TODO: move this to an Array or a JS Object or something which doesn't
     // individually create a Strong for every single IPC message...
-    pub callbacks: bun_collections::ArrayHashMap<i32, crate::StrongOptional>,
-    pub worker: crate::StrongOptional,
-    pub cb: crate::StrongOptional,
-    pub(crate) messages: Vec<crate::StrongOptional>,
+    pub callbacks: bun_collections::ArrayHashMap<i32, bun_jsc::StrongOptional>,
+    pub worker: bun_jsc::StrongOptional,
+    pub cb: bun_jsc::StrongOptional,
+    pub(crate) messages: Vec<bun_jsc::StrongOptional>,
 }
 
 impl Default for InternalMsgHolder {
@@ -69,8 +69,8 @@ impl Default for InternalMsgHolder {
         Self {
             seq: 0,
             callbacks: bun_collections::ArrayHashMap::default(),
-            worker: crate::StrongOptional::empty(),
-            cb: crate::StrongOptional::empty(),
+            worker: bun_jsc::StrongOptional::empty(),
+            cb: bun_jsc::StrongOptional::empty(),
             messages: Vec::new(),
         }
     }
@@ -83,7 +83,7 @@ impl InternalMsgHolder {
 
     pub(crate) fn enqueue(&mut self, message: JSValue, global: &JSGlobalObject) {
         self.messages
-            .push(crate::StrongOptional::create(message, global));
+            .push(bun_jsc::StrongOptional::create(message, global));
     }
 
     pub fn dispatch(
@@ -222,12 +222,8 @@ bun_core::comptime_string_map! {
 }
 
 impl Mode {
-    pub(crate) fn from_string(s: &[u8]) -> Option<Mode> {
-        MODE_MAP.get(s).copied()
-    }
-
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mode>> {
-        use crate::ComptimeStringMapExt as _;
+        use bun_jsc::ComptimeStringMapExt as _;
         if !value.is_string() {
             return Ok(None);
         }
@@ -536,7 +532,7 @@ mod json {
         // when the WTFStringImpl refcount hits zero — i.e. *during* `deref()` —
         // so the freed-flag check must follow it on every exit path.
         let mut str = str;
-        let parsed = crate::bun_string_jsc::to_js_by_parse_json(&mut str, global_this);
+        let parsed = bun_jsc::bun_string_jsc::to_js_by_parse_json(&mut str, global_this);
         str.deref();
         if is_ascii && !was_ascii_string_freed {
             panic!(
@@ -864,21 +860,8 @@ pub struct SendQueue {
 
 #[derive(Copy, Clone)]
 pub enum SendQueueOwner {
-    Subprocess(core::ptr::NonNull<c_void>),
-    Instance(core::ptr::NonNull<crate::virtual_machine::IPCInstance>),
-}
-
-unsafe extern "Rust" {
-    fn __bun_subprocess_ipc_global_this(
-        subprocess: core::ptr::NonNull<c_void>,
-    ) -> *const JSGlobalObject;
-    fn __bun_subprocess_ipc_handle_close(subprocess: core::ptr::NonNull<c_void>);
-    fn __bun_subprocess_ipc_handle_message(
-        subprocess: core::ptr::NonNull<c_void>,
-        msg: &DecodedIPCMessage,
-        handle: JSValue,
-    );
-    fn __bun_subprocess_ipc_this_jsvalue(subprocess: core::ptr::NonNull<c_void>) -> JSValue;
+    Subprocess(core::ptr::NonNull<crate::api::bun::subprocess::Subprocess<'static>>),
+    Instance(core::ptr::NonNull<crate::ipc_host::IPCInstance>),
 }
 
 impl SendQueueOwner {
@@ -894,36 +877,41 @@ impl SendQueueOwner {
     fn global_this(self) -> *const JSGlobalObject {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
-            SendQueueOwner::Subprocess(p) => unsafe { __bun_subprocess_ipc_global_this(p) },
-            // SAFETY: as above — an attached owner is live.
-            SendQueueOwner::Instance(i) => unsafe { i.as_ref().global_this.get() },
+            SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.global_this.as_ptr(),
+            SendQueueOwner::Instance(_) => core::ptr::from_ref(
+                bun_jsc::virtual_machine::VirtualMachine::get()
+                    .as_mut()
+                    .global(),
+            ),
         }
     }
 
     fn handle_ipc_close(self) {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
-            SendQueueOwner::Subprocess(p) => unsafe { __bun_subprocess_ipc_handle_close(p) },
+            SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_close(),
             // SAFETY: as above — an attached owner is live.
-            SendQueueOwner::Instance(i) => unsafe { i.as_ref().handle_ipc_close() },
+            SendQueueOwner::Instance(i) => unsafe { i.as_ref() }.handle_ipc_close(),
         }
     }
 
     fn handle_ipc_message(self, msg: &DecodedIPCMessage, handle: JSValue) {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
-            SendQueueOwner::Subprocess(p) => unsafe {
-                __bun_subprocess_ipc_handle_message(p, msg, handle)
-            },
+            SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_message(msg, handle),
             // SAFETY: as above — an attached owner is live.
-            SendQueueOwner::Instance(i) => unsafe { i.as_ref().handle_ipc_message(msg, handle) },
+            SendQueueOwner::Instance(i) => unsafe { i.as_ref() }.handle_ipc_message(msg, handle),
         }
     }
 
     fn this_jsvalue(self) -> JSValue {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
-            SendQueueOwner::Subprocess(p) => unsafe { __bun_subprocess_ipc_this_jsvalue(p) },
+            SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }
+                .this_value
+                .get()
+                .try_get()
+                .unwrap_or(JSValue::ZERO),
             SendQueueOwner::Instance(_) => JSValue::ZERO,
         }
     }
@@ -1274,9 +1262,9 @@ impl SendQueue {
             let mut warning =
                 BunString::static_(b"Handle did not reach the receiving process correctly");
             let mut warning_name = BunString::static_(b"SentHandleNotReceivedWarning");
-            if let Ok(warning_js) = crate::bun_string_jsc::transfer_to_js(&mut warning, global) {
+            if let Ok(warning_js) = bun_jsc::bun_string_jsc::transfer_to_js(&mut warning, global) {
                 if let Ok(warning_name_js) =
-                    crate::bun_string_jsc::transfer_to_js(&mut warning_name, global)
+                    bun_jsc::bun_string_jsc::transfer_to_js(&mut warning_name, global)
                 {
                     let _ = global.emit_warning(
                         warning_js,
@@ -1667,9 +1655,9 @@ impl SendQueue {
         }
         // The event-loop exit is handled by `_scope` drop.
     }
-    fn get_global_this(&self) -> crate::GlobalRef {
+    fn get_global_this(&self) -> bun_jsc::GlobalRef {
         let owner = self.owner_ref().expect("SendQueue used after detach");
-        crate::GlobalRef::from(JSGlobalObject::opaque_ref(owner.global_this()))
+        bun_jsc::GlobalRef::from(JSGlobalObject::opaque_ref(owner.global_this()))
     }
 
     /// # Safety
@@ -1722,7 +1710,7 @@ impl SendQueue {
     pub(crate) unsafe fn windows_configure_client(
         this: *mut Self,
         pipe_fd: Fd,
-    ) -> Result<(), crate::CrateError> {
+    ) -> Result<(), bun_jsc::CrateError> {
         log!("configureClient");
         let ipc_pipe: *mut uv::Pipe =
             bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
@@ -1860,7 +1848,7 @@ fn handle_ipc_message(
                     if !cmd.is_cell() {
                         break 'handle_message;
                     }
-                    let cmd_str = match crate::bun_string_jsc::from_js(cmd, global_this) {
+                    let cmd_str = match bun_jsc::bun_string_jsc::from_js(cmd, global_this) {
                         Ok(s) => s,
                         Err(e) => {
                             let _ = global_this.take_exception(e);
@@ -2265,7 +2253,7 @@ pub fn ipc_serialize(
     handle: JSValue,
 ) -> JsResult<JSValue> {
     // `[[ZIG_EXPORT(zero_is_throw)]]`
-    crate::cpp::IPCSerialize(global_object, message, handle)
+    bun_jsc::cpp::IPCSerialize(global_object, message, handle)
 }
 
 #[track_caller]
@@ -2276,5 +2264,5 @@ pub(crate) fn ipc_parse(
     fd: JSValue,
 ) -> JsResult<JSValue> {
     // `[[ZIG_EXPORT(zero_is_throw)]]`
-    crate::cpp::IPCParse(global_object, target, serialized, fd)
+    bun_jsc::cpp::IPCParse(global_object, target, serialized, fd)
 }

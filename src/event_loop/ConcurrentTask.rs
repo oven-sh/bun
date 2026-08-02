@@ -138,7 +138,7 @@ pub mod task_tag {
         RuntimeTranspilerStore,
         S3HttpDownloadStreamingTask,
         S3HttpSimpleTask,
-        SendQueueDeferred,        // bun_jsc::ipc::SendQueue (close / after-close hop)
+        SendQueueDeferred,        // bun_runtime::ipc::SendQueue (close / after-close hop)
         ServerAllConnectionsClosedTask,
         ShellAsync,
         ShellAsyncSubprocessDone,

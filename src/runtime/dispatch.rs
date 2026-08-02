@@ -259,7 +259,7 @@ pub(crate) fn run_task(
         task_tag::SendQueueDeferred => {
             // SAFETY: §Dispatch — the queued pointer is the SendQueue root and
             // the task owns a ref for its duration; `run_deferred` releases it.
-            unsafe { bun_jsc::ipc::SendQueue::run_deferred(cast_ptr!(bun_jsc::ipc::SendQueue)) };
+            unsafe { crate::ipc::SendQueue::run_deferred(cast_ptr!(crate::ipc::SendQueue)) };
         }
         task_tag::AsyncModule => {
             // SAFETY: `AsyncModule::done` boxed it; the arm consumes the box.
@@ -1284,8 +1284,8 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
         task_tag::SendQueueDeferred => {
             // SAFETY: `task.ptr` is the SendQueue root queued with a held ref.
             unsafe {
-                bun_jsc::ipc::SendQueue::release_deferred_unrun(
-                    task.ptr.cast::<bun_jsc::ipc::SendQueue>(),
+                crate::ipc::SendQueue::release_deferred_unrun(
+                    task.ptr.cast::<crate::ipc::SendQueue>(),
                 )
             };
             true

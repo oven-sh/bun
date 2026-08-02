@@ -21,6 +21,7 @@ export function unstableParse(this: Transpiler, code: any, opts: any) {
   const bytes = new Uint8Array(buffer);
   const decoder = new TextDecoder();
   const stringCache = new $Map<number, string>();
+  const string16Cache = new $Map<number, string>();
   const nodeCache = new $Map<number, any>();
   const arrayCache = new $Map<number, any>();
 
@@ -29,6 +30,19 @@ export function unstableParse(this: Transpiler, code: any, opts: any) {
     if (s !== undefined) return s;
     s = decoder.decode(bytes.subarray(stringsOffset + off, stringsOffset + off + len));
     stringCache.$set(off, s);
+    return s;
+  };
+
+  // Per-code-unit decode so lone surrogates survive (matches object-mode `str16`).
+  const readString16 = (off: number, len: number): string => {
+    let s = string16Cache.$get(off);
+    if (s !== undefined) return s;
+    const base = stringsOffset + off;
+    const n = len >>> 1;
+    const units = new $Array(n);
+    for (let i = 0; i < n; i++) units[i] = dv.getUint16(base + i * 2, true);
+    s = String.fromCharCode.$apply(null, units);
+    string16Cache.$set(off, s);
     return s;
   };
 
@@ -58,6 +72,8 @@ export function unstableParse(this: Transpiler, code: any, opts: any) {
         return nodeAt(dv.getUint32(base + 4, true));
       case 7:
         return arrayAt(dv.getUint32(base + 4, true));
+      case 8:
+        return readString16(dv.getUint32(base + 4, true), dv.getUint32(base + 8, true));
       default:
         return undefined;
     }

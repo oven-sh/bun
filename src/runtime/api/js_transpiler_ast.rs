@@ -1136,6 +1136,7 @@ const TY_F64: u8 = 4;
 const TY_STR: u8 = 5;
 const TY_NODE: u8 = 6;
 const TY_ARRAY: u8 = 7;
+const TY_STR16: u8 = 8;
 
 /// One field/element payload; node/array offsets are absolute byte offsets.
 #[derive(Clone, Copy)]
@@ -1263,8 +1264,12 @@ impl<'a> TapeWriter<'a> {
         v
     }
 
+    /// Store raw UTF-16 LE code units; `to_utf8_alloc` would replace lone surrogates with U+FFFD.
     fn intern_str16(&mut self, s: &[u16]) -> (u32, u32) {
-        let bytes = strings::to_utf8_alloc(s);
+        let mut bytes = Vec::with_capacity(s.len() * 2);
+        for &u in s {
+            bytes.extend_from_slice(&u.to_le_bytes());
+        }
         self.intern_str(&bytes)
     }
 
@@ -1452,7 +1457,11 @@ impl<'a> TapeWriter<'a> {
         }
         if s.is_utf16 {
             let (lo, hi) = self.intern_str16(s.slice16());
-            Val { ty: TY_STR, lo, hi }
+            Val {
+                ty: TY_STR16,
+                lo,
+                hi,
+            }
         } else {
             self.v_str(s.slice8())
         }

@@ -301,11 +301,19 @@ describe("Bun.Transpiler.unstable_parse", () => {
       const src =
         `import def, { a as b } from "pkg";\n` +
         `export function f(a, b = 5) { try { return a?.b[0] + \`x\${b}y\` } catch (e) {} }\n` +
-        `const { x = 1.5, ...y } = { a: /re/g, b: "héllo 🎉" };\n` +
+        `const { x = 1.5, ...y } = { a: /re/g, b: "héllo 🎉", c: "\\uD800x\\uDC00" };\n` +
         `for (const k of [1, 2]) if (k) break; else continue;`;
       const obj = ts.unstable_parse(src);
       const { root } = ts.unstable_parse(src, { format: "raw" });
       expect(JSON.parse(JSON.stringify(root))).toEqual(obj);
+    });
+
+    test("lone surrogates round-trip in both modes", () => {
+      const src = `const s = "a\\uD800b\\uDC00c";`;
+      const obj = ts.unstable_parse(src);
+      const { root } = ts.unstable_parse(src, { format: "raw" });
+      expect(obj.stmts[0].decls[0].value.value).toBe("a\uD800b\uDC00c");
+      expect(root.stmts[0].decls[0].value.value).toBe("a\uD800b\uDC00c");
     });
 
     test("loader in options object", () => {

@@ -58,6 +58,8 @@ export const cares: Dependency = {
     commit: CARES_COMMIT,
   }),
 
+  patches: ["patches/cares/accept-rdata-compression.patch"],
+
   build: cfg => ({
     kind: "direct",
     pic: true,

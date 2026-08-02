@@ -118,7 +118,7 @@ describe("tsconfig compilerOptions.useDefineForClassFields", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("false: computed non-literal key preserves field source order", async () => {
+  test.concurrent("false: computed non-literal key keeps the class native", async () => {
     using dir = tempDir("udfcf-computed-dyn", {
       "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
       "index.ts": `
@@ -130,12 +130,16 @@ describe("tsconfig compilerOptions.useDefineForClassFields", () => {
           b = (order.push("b"), 2);
         }
         const c: any = new C();
-        process.stdout.write(JSON.stringify({ order, K: c[K] }));
+        let called = 0;
+        const key = () => (called++, "k");
+        class D { [key()]: any; a = 1; }
+        new D();
+        process.stdout.write(JSON.stringify({ order, K: c[K], called }));
       `,
     });
     const { stdout, stderr, exitCode } = await run(String(dir));
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ order: ["a", "K", "b"], K: 1 });
+    expect(JSON.parse(stdout)).toEqual({ order: ["a", "K", "b"], K: 1, called: 1 });
     expect(exitCode).toBe(0);
   });
 

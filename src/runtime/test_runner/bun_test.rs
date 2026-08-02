@@ -1590,11 +1590,6 @@ pub enum StepResult {
     Waiting { timeout: Timespec },
     Complete,
 }
-impl Default for StepResult {
-    fn default() -> Self {
-        StepResult::Waiting { timeout: Timespec::EPOCH }
-    }
-}
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Advance {

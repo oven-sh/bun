@@ -163,7 +163,7 @@ impl<'a> TestRunner<'a> {
         if active_file.phase == bun_test::Phase::Execution {
             if let Some(group) = active_file.execution.active_group_ref() {
                 let mut latest: Option<bun_core::Timespec> = None;
-                for seq in group.sequences_const(&active_file.execution) {
+                for seq in group.sequences(&active_file.execution) {
                     let Some(entry) = seq.active_entry else { continue };
                     // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
                     let ts = unsafe { entry.as_ref() }.timespec;

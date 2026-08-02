@@ -122,11 +122,8 @@ const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const owner_symbol = Symbol("owner_symbol");
 
-// The `clientHandle[kServerSocket] = handle` write in onconnection is the only
-// use: it is a GC edge that keeps the native Listener reachable while an
-// accepted socket's handle is alive. Without it the Listener can be finalized
-// with sockets still in its group, and Listener::finalize -> close_all fires
-// the JS on_close callback during the GC sweep (asserts in AllocatingScope).
+// Write-only by design: the onconnection write is a GC edge keeping the
+// native Listener reachable via accepted socket handles (see a93d2fa48e).
 const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");

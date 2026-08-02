@@ -21,12 +21,10 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorBunFrontendDevServerAgent);
 
 InspectorBunFrontendDevServerAgent::InspectorBunFrontendDevServerAgent(JSC::JSGlobalObject& globalObject)
     : InspectorAgentBase("BunFrontendDevServer"_s)
-    // , m_globalobject(globalObject)
     , m_backendDispatcher(BunFrontendDevServerBackendDispatcher::create(globalObject.inspectorController().backendDispatcher(), this))
     , m_frontendDispatcher(makeUnique<BunFrontendDevServerFrontendDispatcher>(const_cast<FrontendRouter&>(globalObject.inspectorController().frontendRouter())))
     , m_enabled(false)
 {
-    UNUSED_PARAM(globalObject);
 }
 
 InspectorBunFrontendDevServerAgent::~InspectorBunFrontendDevServerAgent() = default;

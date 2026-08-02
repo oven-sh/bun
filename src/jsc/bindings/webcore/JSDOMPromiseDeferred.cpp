@@ -27,12 +27,8 @@
 #include "JSDOMPromiseDeferred.h"
 
 // #include "DOMWindow.h"
-// #include "EventLoop.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMPromise.h"
-// #include "JSDOMWindow.h"
-// #include "ScriptController.h"
-// #include "WorkerGlobalScope.h"
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/JSONObject.h>

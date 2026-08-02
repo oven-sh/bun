@@ -36,13 +36,14 @@ test("dead extern C wrappers and cascaded methods do not reappear", () => {
     ["src/jsc/bindings/TextCodecWrapper.cpp", /Bun__isEncodingSupported|Bun__getCanonicalEncodingName/],
     ["src/jsc/bindings/InspectorLifecycleAgent.cpp", /Bun__LifecycleAgentReportReload|::reportReload\b/],
     ["src/jsc/bindings/InspectorLifecycleAgent.h", /void reportReload\(/],
-    ["src/jsc/bindings/InspectorBunFrontendDevServerAgent.cpp", /notifyClientErrorReported|notifyGraphUpdate/],
+    ["src/jsc/bindings/InspectorBunFrontendDevServerAgent.cpp", /notifyClientErrorReported|notifyGraphUpdate|m_globalobject/],
     [
       "src/jsc/bindings/InspectorBunFrontendDevServerAgent.h",
-      /clientErrorReported|graphUpdate|BunFrontendDevServerAgent__notify/,
+      /clientErrorReported|graphUpdate|\bBunFrontendDevServerAgent__notify/,
     ],
     ["src/jsc/bindings/highway_strings.cpp", /ScanCharFrequencyImpl|highway_char_frequency/],
-    ["src/jsc/bindings/JSS3File.cpp", /JSS3File__hasInstance|customHasInstance/],
+    ["src/jsc/bindings/JSS3File.cpp", /JSS3File__hasInstance|customHasInstance|BUN__createJSS3File\b|\bconstructS3File\b/],
+    ["src/jsc/bindings/JSS3File.h", /\bconstructS3File\b/],
   ];
   const found = checks.filter(([f, re]) => re.test(src(f))).map(([f, re]) => `${f}: ${re.source}`);
   expect(found).toEqual([]);
@@ -76,8 +77,8 @@ test("dead InlineBlob struct and S3File hasInstance do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
     ["src/runtime/webcore/Blob.rs", /pub struct Inline \{|impl Inline \{/],
     ["src/runtime/webcore/Body.rs", /InlineBlob/],
-    ["src/runtime/server/RequestContext.rs", /\.InlineBlob,/],
-    ["src/runtime/webcore/S3File.rs", /JSS3File__hasInstance|fn has_instance\b/],
+    ["src/runtime/server/RequestContext.rs", /InlineBlob/],
+    ["src/runtime/webcore/S3File.rs", /JSS3File__hasInstance|fn has_instance\b|JSS3File__construct|fn construct_internal\b/],
     ["src/runtime/webcore/streams.rs", /pub fn get\(&self\) -> \*mut JSPromise/],
     ["src/runtime/webcore/FileReader.rs", /pub const TAG: readable_stream::Tag/],
   ];

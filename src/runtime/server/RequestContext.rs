@@ -4149,8 +4149,6 @@ where
 
                 let total = bytes.len() + chunk.len();
                 'getter: {
-                    // TODO: small-body fast path via InlineBlob is not
-                    // implemented; always build an InternalBlob.
                     // Vec aborts on OOM (repo-wide abort-on-OOM policy).
                     bytes.reserve_exact(total.saturating_sub(bytes.len()));
                     bytes.extend_from_slice(chunk);

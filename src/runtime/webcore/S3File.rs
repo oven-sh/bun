@@ -1,4 +1,3 @@
-use crate::node::types::PathLikeExt as _;
 use crate::node::{PathLike, PathOrBlob};
 use crate::webcore::blob::store::{S3Ext as _, StoreExt as _, StoreRef};
 use crate::webcore::blob::{self, Blob, BlobExt};
@@ -859,47 +858,13 @@ pub(crate) fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSVal
     BUN__createJSS3FileUnsafely(global, this.cast::<core::ffi::c_void>())
 }
 
-fn construct_internal(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob> {
-    // SAFETY: bun_vm() returns the live VM raw ptr.
-    let vm = global.bun_vm();
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
-
-    let Some(path) = PathLike::from_js(global, &mut args)? else {
-        return Err(global.throw_invalid_arguments(format_args!("Expected file path string")));
-    };
-    construct_s3_file_internal(global, path, args.next_eat())
-}
-
-// Hand-written ABI shim: returns `*mut Blob` (codegen constructor contract),
-// which `#[bun_jsc::host_fn]` does not model; the exported symbol name is wired below.
-fn construct(global: &JSGlobalObject, callframe: &CallFrame) -> *mut Blob {
-    match construct_internal(global, callframe) {
-        Ok(b) => b,
-        Err(JsError::Thrown) => core::ptr::null_mut(),
-        Err(JsError::OutOfMemory) => {
-            let _ = global.throw_out_of_memory_value();
-            core::ptr::null_mut()
-        }
-        Err(JsError::Terminated) => core::ptr::null_mut(),
-    }
-}
-
 // Symbols exported with C linkage and JSC calling convention.
 // JSS3File__presign     -> raw shim wrapping get_presign_url (method-with-context)
-// JSS3File__construct   -> construct
 // JSS3File__bucket      -> get_bucket
 // JSS3File__stat        -> raw shim wrapping get_stat (method-with-context)
 
 pub(crate) mod exports {
     use super::*;
-
-    /// Bare ctor, not routed through `toJSHostFn` (returns a nullable
-    /// `*mut Blob`, not `JSValue`).
-    #[unsafe(no_mangle)]
-    #[bun_jsc::host_call]
-    fn JSS3File__construct(global: &JSGlobalObject, callframe: &CallFrame) -> *mut Blob {
-        super::construct(global, callframe)
-    }
 
     /// Getter (JSC calling convention; takes `*Blob, *JSGlobalObject`,
     /// returns JSValue).

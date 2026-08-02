@@ -1237,18 +1237,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             e_.value = SideEffects::simplify_boolean(p, e_.value);
                         }
 
-                        let side_effects = SideEffects::to_boolean(p, &e_.value.data);
-                        if side_effects.ok
-                            && (side_effects.side_effects == SideEffects::NoSideEffects
-                                || p.expr_can_be_removed_if_unused(&e_.value))
-                        {
-                            *e = p.new_expr(
-                                E::Boolean {
-                                    value: !side_effects.value,
-                                },
-                                expr.loc,
-                            );
-                            return;
+                        if let Some(side_effects) = SideEffects::to_boolean(p, &e_.value.data) {
+                            if side_effects.side_effects == SideEffects::NoSideEffects
+                                || p.expr_can_be_removed_if_unused(&e_.value)
+                            {
+                                *e = p.new_expr(
+                                    E::Boolean {
+                                        value: !side_effects.value,
+                                    },
+                                    expr.loc,
+                                );
+                                return;
+                            }
                         }
 
                         if p.options.features.minify_syntax {
@@ -1468,68 +1468,65 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         e_.test = SideEffects::simplify_boolean(p, e_.test);
 
-        let side_effects = SideEffects::to_boolean(p, &e_.test.data);
-
-        if !side_effects.ok {
+        let Some(side_effects) = SideEffects::to_boolean(p, &e_.test.data) else {
             p.visit_expr(&mut e_.yes);
             p.visit_expr(&mut e_.no);
-        } else {
-            // Mark the control flow as dead if the branch is never taken
-            if side_effects.value {
-                // "true ? live : dead"
-                p.visit_expr(&mut e_.yes);
-                let old = p.is_control_flow_dead;
-                p.is_control_flow_dead = true;
-                p.visit_expr(&mut e_.no);
-                p.is_control_flow_dead = old;
+            return;
+        };
 
-                if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                    *e = SideEffects::simplify_unused_expr(p, e_.test)
-                        .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
-                        .join_with_comma(e_.yes);
-                    return;
-                }
+        // Mark the control flow as dead if the branch is never taken
+        if side_effects.value {
+            // "true ? live : dead"
+            p.visit_expr(&mut e_.yes);
+            let old = p.is_control_flow_dead;
+            p.is_control_flow_dead = true;
+            p.visit_expr(&mut e_.no);
+            p.is_control_flow_dead = old;
 
-                // "(1 ? fn : 2)()" => "fn()"
-                // "(1 ? this.fn : 2)" => "this.fn"
-                // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-                if is_call_target && e_.yes.has_value_for_this_in_call() {
-                    *e = p
-                        .new_expr(E::Number::new(0.0), e_.test.loc)
-                        .join_with_comma(e_.yes);
-                    return;
-                }
-
-                *e = e_.yes;
-                return;
-            } else {
-                // "false ? dead : live"
-                let old = p.is_control_flow_dead;
-                p.is_control_flow_dead = true;
-                p.visit_expr(&mut e_.yes);
-                p.is_control_flow_dead = old;
-                p.visit_expr(&mut e_.no);
-
-                // "(a, false) ? b : c" => "a, c"
-                if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                    *e = SideEffects::simplify_unused_expr(p, e_.test)
-                        .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
-                        .join_with_comma(e_.no);
-                    return;
-                }
-
-                // "(1 ? fn : 2)()" => "fn()"
-                // "(1 ? this.fn : 2)" => "this.fn"
-                // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-                if is_call_target && e_.no.has_value_for_this_in_call() {
-                    *e = p
-                        .new_expr(E::Number::new(0.0), e_.test.loc)
-                        .join_with_comma(e_.no);
-                    return;
-                }
-                *e = e_.no;
+            if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
+                *e = SideEffects::simplify_unused_expr(p, e_.test)
+                    .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
+                    .join_with_comma(e_.yes);
                 return;
             }
+
+            // "(1 ? fn : 2)()" => "fn()"
+            // "(1 ? this.fn : 2)" => "this.fn"
+            // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
+            if is_call_target && e_.yes.has_value_for_this_in_call() {
+                *e = p
+                    .new_expr(E::Number::new(0.0), e_.test.loc)
+                    .join_with_comma(e_.yes);
+                return;
+            }
+
+            *e = e_.yes;
+        } else {
+            // "false ? dead : live"
+            let old = p.is_control_flow_dead;
+            p.is_control_flow_dead = true;
+            p.visit_expr(&mut e_.yes);
+            p.is_control_flow_dead = old;
+            p.visit_expr(&mut e_.no);
+
+            // "(a, false) ? b : c" => "a, c"
+            if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
+                *e = SideEffects::simplify_unused_expr(p, e_.test)
+                    .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
+                    .join_with_comma(e_.no);
+                return;
+            }
+
+            // "(1 ? fn : 2)()" => "fn()"
+            // "(1 ? this.fn : 2)" => "this.fn"
+            // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
+            if is_call_target && e_.no.has_value_for_this_in_call() {
+                *e = p
+                    .new_expr(E::Number::new(0.0), e_.test.loc)
+                    .join_with_comma(e_.no);
+                return;
+            }
+            *e = e_.no;
         }
     }
 

@@ -396,9 +396,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let vm = VirtualMachine::get().as_mut();
 
     let mut upgraded_connection = false;
-    let mut force_http2 = false;
-    let mut force_http3 = false;
-    let mut force_http1 = false;
+    let mut forced_protocol: Option<http::Protocol> = None;
 
     if callframe.arguments_count() == 0 {
         let err = ctx.to_type_error(
@@ -834,11 +832,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         let str =
                             bun_core::OwnedString::new(protocol_val.to_bun_string(global_this)?);
                         if str.eql_comptime(b"http2") || str.eql_comptime(b"h2") {
-                            force_http2 = true;
+                            forced_protocol = Some(http::Protocol::Http2);
                         } else if str.eql_comptime(b"http3") || str.eql_comptime(b"h3") {
-                            force_http3 = true;
+                            forced_protocol = Some(http::Protocol::Http3);
                         } else if str.eql_comptime(b"http1.1") || str.eql_comptime(b"h1") {
-                            force_http1 = true;
+                            forced_protocol = Some(http::Protocol::Http1_1);
                         } else {
                             return Err(global_this.throw_invalid_arguments(
                                 format_args!("fetch: 'protocol' must be \"http2\", \"h2\", \"http3\", \"h3\", \"http1.1\", or \"h1\""),
@@ -2093,9 +2091,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ssl_config: ssl_config.take(),
         hostname: hostname.take(),
         upgraded_connection,
-        force_http2,
-        force_http3,
-        force_http1,
+        forced_protocol,
         is_node_http_client: ALLOW_GET_BODY,
         compress,
         check_server_identity: if check_server_identity.is_empty_or_undefined_or_null() {

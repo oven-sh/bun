@@ -319,7 +319,6 @@ JSC_DECLARE_HOST_FUNCTION(jsSQLStatementIsInTransactionFunction);
 
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction);
 
-JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunction);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll);

@@ -61,16 +61,6 @@ public:
     static MockWithImplementationCleanupData* create(JSC::JSGlobalObject* globalObject, JSMockFunction* fn, JSValue impl, JSValue tail, JSValue fallback);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
-    static std::array<JSValue, numberOfInternalFields> initialValues()
-    {
-        return { {
-            jsUndefined(),
-            jsUndefined(),
-            jsUndefined(),
-            jsUndefined(),
-        } };
-    }
-
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
 

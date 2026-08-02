@@ -399,6 +399,36 @@ void create_function_with_data(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(f);
 }
 
+// Creates `n` FunctionTemplate+Function pairs (each with a fresh string as
+// data) and `n` ObjectTemplate instances with internal fields. Returns the
+// last Function so JS can verify that m_data round-trips. Used by
+// test_v8_templates_under_gc under BUN_JSC_collectContinuously=1.
+void create_many_templates(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  int n = static_cast<int>(info[0].As<Number>()->Value());
+  Local<ObjectTemplate> ot = ObjectTemplate::New(isolate);
+  ot->SetInternalFieldCount(2);
+  Local<Function> last;
+  for (int i = 0; i < n; i++) {
+    std::string s = std::to_string(i);
+    Local<String> data =
+        String::NewFromUtf8(isolate, s.c_str()).ToLocalChecked();
+    Local<FunctionTemplate> ft =
+        FunctionTemplate::New(isolate, return_data_callback, data);
+    last = ft->GetFunction(context).ToLocalChecked();
+    Local<Object> obj = ot->NewInstance(context).ToLocalChecked();
+    obj->SetInternalField(0, data);
+    Local<Value> field = obj->GetInternalField(0).As<Value>();
+    if (!field->StrictEquals(data)) {
+      info.GetReturnValue().Set(
+          String::NewFromUtf8(isolate, "FIELD MISMATCH").ToLocalChecked());
+      return;
+    }
+  }
+  info.GetReturnValue().Set(last);
+}
+
 void print_values_from_js(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   printf("%d arguments\n", info.Length());
@@ -1294,6 +1324,7 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_object_template", test_v8_object_template);
   NODE_SET_METHOD(exports, "create_function_with_data",
                   create_function_with_data);
+  NODE_SET_METHOD(exports, "create_many_templates", create_many_templates);
   NODE_SET_METHOD(exports, "print_values_from_js", print_values_from_js);
   NODE_SET_METHOD(exports, "return_this", return_this);
   NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);

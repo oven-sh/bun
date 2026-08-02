@@ -27,6 +27,23 @@ module.exports = debugMode => {
       console.log(f());
     },
 
+    test_v8_templates_under_gc() {
+      const inner = 500;
+      for (let round = 0; round < 20; round++) {
+        const fn = nativeModule.create_many_templates(inner);
+        if (typeof fn !== "function") {
+          throw new Error(`round ${round}: create_many_templates returned '${fn}' instead of a function`);
+        }
+        const got = fn();
+        const expected = String(inner - 1);
+        if (got !== expected) {
+          throw new Error(`round ${round}: fn() returned '${got}' instead of '${expected}'`);
+        }
+        if (process.isBun) Bun.gc(true);
+      }
+      console.log("ok");
+    },
+
     print_native_function() {
       nativeModule.print_values_from_js(nativeModule.create_function_with_data());
     },

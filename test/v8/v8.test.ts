@@ -279,6 +279,32 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("keeps the data parameter alive", async () => {
       await checkSameOutput("test_v8_function_template");
     });
+
+    // shim::FunctionTemplate and shim::InternalFieldObject initialize their WriteBarrier members
+    // in the constructor's member initializer list (before finishCreation()), so they must use
+    // JSC::WriteBarrierEarlyInit. Run the construction paths in a tight loop while the concurrent
+    // collector thread is running so allocation overlaps GC marking. collectContinuously is very
+    // slow on Windows CI and the code path is identical on POSIX.
+    it.skipIf(isWindows)(
+      "survives concurrent GC while constructing FunctionTemplate/InternalFieldObject",
+      async () => {
+        const proc = spawn({
+          cmd: [bunExe(), join(directories.bunRelease, "main.js"), "test_v8_templates_under_gc", "[]", "null"],
+          cwd: directories.bunRelease,
+          env: {
+            ...bunEnv,
+            BUN_JSC_collectContinuously: "1",
+          },
+          stdio: ["inherit", "pipe", "pipe"],
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        // strip debug-build scoped log lines, same as checkSameOutput does
+        const stripped = out.replaceAll(/^\[\w+\].+$/gm, "").trim();
+        expect(stripped, `stderr:\n${err}`).toBe("ok");
+        expect(exitCode).toBe(0);
+      },
+      120_000,
+    );
   });
 
   describe("Function", () => {

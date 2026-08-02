@@ -753,8 +753,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {
     }
 }
 
-/// `-a`/`-A` are alternatives of a single policy; the last flag on the
-/// command line wins (matches GNU coreutils).
+/// `-a` vs `-A`; the last one on the command line wins (GNU coreutils).
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum DotfileMode {
     #[default]

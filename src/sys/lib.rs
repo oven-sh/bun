@@ -1070,9 +1070,7 @@ impl error::IntoErrnoInt for bun_windows_sys::NTSTATUS {
     }
 }
 
-/// The exchange/no-replace axis of [`Renameat2Flags`]. `Exchange` and
-/// `NoReplace` are mutually exclusive: `renameat2(2)` on Linux and
-/// `renameatx_np` on macOS both reject the combination with `EINVAL`.
+/// `Exchange` and `NoReplace` are mutually exclusive at the kernel level.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum RenameMode {
     #[default]

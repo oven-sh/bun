@@ -41,6 +41,19 @@
 # alpine 3.23 x64 + x64-baseline only).
 [ LINUX-X64-MUSL ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # JSC FinalizationRegistry callback delivery vs setImmediate timing on musl x64
 
+# Same onGC()/FinalizationRegistry class as test-tls-connect-memleak above: a
+# single ClientRequest is registered with onGC(), setInterval(global.gc, 300)
+# is the only driver, and the test hangs until the FinalizationRegistry
+# callback fires. After the double-response branch the request IS collectable
+# (only cycles remain: socket._httpMessage <-> req, req.res <-> res.req; same
+# as Node, which does not clear them either), and the file passes on every
+# other lane and 400+ times locally on Windows 2019 with the exact CI binary.
+# On the 4-core Windows CI VMs it timed out 4/4 retries (build 75597
+# windows-x64-baseline) after a code-layout shift landed on main. The
+# deterministic twin in test/js/node/http/node-http-client-request-gc.test.ts
+# covers this path on every lane including Windows.
+[ WINDOWS ] test/js/node/test/parallel/test-http-client-leaky-with-double-response.js [ TIMEOUT ] # single onGC() FinalizationRegistry delivery not guaranteed under JSC conservative GC on the 4-core Windows CI VMs
+
 # Both tests mock _handle.setKeepAlive and assert it receives SECONDS
 # (libuv's uv_tcp_keepalive convention). In Bun, _handle is the public
 # Bun.Socket whose setKeepAlive is documented in MILLISECONDS, so net.ts

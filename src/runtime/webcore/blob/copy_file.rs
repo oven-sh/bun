@@ -319,10 +319,8 @@ impl<'a> CopyFile<'a> {
             self.destination_file_store.pathlike,
             PathOrFileDescriptor::Path(_)
         );
-        let fallback_cap = if unknown_size {
-            MAX_SIZE
-        } else {
-            remain as SizeType
+        let fallback_cap = |remain: usize| -> SizeType {
+            if unknown_size { MAX_SIZE } else { remain as SizeType }
         };
 
         // defer { this.read_len = @truncate(total_written); }
@@ -343,7 +341,7 @@ impl<'a> CopyFile<'a> {
                 src_fd,
                 dest_fd,
                 bun_opened_dest,
-                fallback_cap,
+                fallback_cap(remain),
                 &mut total_written,
             ) {
                 bun_sys::Result::Err(err) => {
@@ -408,7 +406,7 @@ impl<'a> CopyFile<'a> {
                         src_fd,
                         dest_fd,
                         bun_opened_dest,
-                        fallback_cap,
+                        fallback_cap(remain),
                         &mut total_written,
                     ) {
                         bun_sys::Result::Err(err) => {
@@ -455,7 +453,7 @@ impl<'a> CopyFile<'a> {
                             src_fd,
                             dest_fd,
                             bun_opened_dest,
-                            fallback_cap,
+                            fallback_cap(remain),
                             &mut total_written,
                         ) {
                             bun_sys::Result::Err(err) => {

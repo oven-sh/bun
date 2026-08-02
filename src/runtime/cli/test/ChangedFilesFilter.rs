@@ -570,9 +570,7 @@ fn get_changed_files(
 }
 
 pub(crate) enum GitResult {
-    /// The git process could not be spawned at all. The failure has
-    /// already been reported; callers should not print a second
-    /// "not a git repo" style message.
+    /// `run_git` has already reported the spawn error.
     SpawnFailed,
     ExitError {
         stderr: Vec<u8>,

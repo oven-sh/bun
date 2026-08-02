@@ -498,7 +498,12 @@ const IS_UV_FS_COPYFILE_DISABLED =
       await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: fallbackEnv, stdout: "pipe", stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect({ stdout, resolved: stderr, head: fs.readFileSync(dst).subarray(0, 15).toString(), size: fs.statSync(dst).size }).toEqual({
+      expect({
+        stdout,
+        resolved: stderr,
+        head: fs.readFileSync(dst).subarray(0, 15).toString(),
+        size: fs.statSync(dst).size,
+      }).toEqual({
         stdout: "",
         resolved: String(size),
         head: "AAAAAAAAAASSSSS",

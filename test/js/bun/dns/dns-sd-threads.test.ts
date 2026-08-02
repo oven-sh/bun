@@ -166,6 +166,17 @@ test.skipIf(!isMacOS)("dns_sd query state: readiness and early-out coverage", ()
   // A later reply for the same query clears MoreComing.
   expect(dnsSdReplay(both, ["4:add:more", "6:nsr"])).toEqual({ ready: true, hasDeadline: false, results: 1 });
   expect(dnsSdReplay(1, ["4:timeout"])).toEqual({ ready: true, hasDeadline: false, results: 0 });
+  // An early-out give-up followed by the unsuppressed reissue starts fresh: not ready until its own replies arrive.
+  expect(dnsSdReplay(both, ["4:nsr", "6:nsr:more", "giveup", "retry"])).toEqual({
+    ready: false,
+    hasDeadline: false,
+    results: 0,
+  });
+  expect(dnsSdReplay(both, ["4:nsr", "6:nsr:more", "giveup", "retry", "6:add", "4:nsr"])).toEqual({
+    ready: true,
+    hasDeadline: false,
+    results: 1,
+  });
 });
 
 // The early-out timer is exempt from fake timers, so it must read real time too; a mocked clock would arm it in the past and spin.

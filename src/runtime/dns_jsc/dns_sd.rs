@@ -129,6 +129,22 @@ fn now_ms() -> i64 {
     bun::timespec::now(bun::TimespecMockMode::ForceRealTime).ms()
 }
 
+/// Once decisive answers are in: nothing dangling, waiting on stragglers since `ms` (a silent family or `MoreComing`), or gave up.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Stragglers {
+    None,
+    Since(i64),
+    GaveUp,
+}
+
+/// SuppressUnusable lifecycle: an all-empty `Suppressed` answer earns exactly one `Reissued` (unsuppressed) attempt.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Attempt {
+    Plain,
+    Suppressed,
+    Reissued,
+}
+
 /// Per-query state shared by the JS `dns.lookup` path and the internal connect path.
 pub(crate) struct QueryState {
     pub(crate) sd_ref: DNSServiceRef,
@@ -141,12 +157,8 @@ pub(crate) struct QueryState {
     awaiting_more: bool,
     /// Protocol bits with no reply yet; any family-tagged callback clears its bit.
     pub(crate) pending_proto: DNSServiceProtocol,
-    /// Answers arrived while something was outstanding; starts the early-out (also clears an orphaned `awaiting_more`).
-    partial_at_ms: Option<i64>,
-    gave_up_on_pending: bool,
-    /// Issued with SuppressUnusable: an all-empty answer is retried once without it.
-    used_suppress: bool,
-    retried: bool,
+    stragglers: Stragglers,
+    attempt: Attempt,
     /// Kept so `finish()` can reissue the query for the retry.
     hostname: bun::ZBox,
     callback: Option<GetAddrInfoReply>,
@@ -161,19 +173,29 @@ impl QueryState {
             saw_timeout: false,
             awaiting_more: false,
             pending_proto: protocol,
-            partial_at_ms: None,
-            gave_up_on_pending: false,
-            used_suppress: false,
-            retried: false,
+            stragglers: Stragglers::None,
+            attempt: Attempt::Plain,
             hostname: bun::ZBox::from_bytes(b""),
             callback: None,
         }
     }
 
+    /// Back to a fresh in-flight state for the unsuppressed reissue.
+    pub(crate) fn reset_for_retry(&mut self, protocol: DNSServiceProtocol) {
+        self.attempt = Attempt::Reissued;
+        self.awaiting_more = false;
+        self.stragglers = Stragglers::None;
+        self.pending_proto = protocol;
+    }
+
+    /// What `on_early_out` does to a query whose deadline passed.
+    pub(crate) fn give_up_on_stragglers(&mut self) {
+        self.stragglers = Stragglers::GaveUp;
+    }
+
     /// A suppressed query that returned nothing at all gets one unsuppressed retry.
     fn should_retry_unsuppressed(&self) -> bool {
-        self.used_suppress
-            && !self.retried
+        self.attempt == Attempt::Suppressed
             && self.results.is_empty()
             && self.sd_error == 0
             && !self.saw_timeout
@@ -217,11 +239,11 @@ impl QueryState {
         {
             self.sd_error = error_code;
         }
-        if self.only_stragglers_left() {
-            self.partial_at_ms.get_or_insert_with(now_ms);
-        } else {
-            self.partial_at_ms = None;
-        }
+        self.stragglers = match (self.only_stragglers_left(), self.stragglers) {
+            (false, _) => Stragglers::None,
+            (true, Stragglers::None) => Stragglers::Since(now_ms()),
+            (true, current) => current,
+        };
     }
 
     /// Everything decisive is in (answers, or every family reported) but a silent family or dangling `MoreComing` remains.
@@ -232,16 +254,16 @@ impl QueryState {
 
     pub(crate) fn is_ready(&self) -> bool {
         self.sd_error != 0
-            || self.gave_up_on_pending
+            || self.stragglers == Stragglers::GaveUp
             || (self.pending_proto == 0 && !self.awaiting_more)
     }
 
     /// Deadline for giving up on stragglers (a silent second family, or a dangling `MoreComing`).
     pub(crate) fn early_out_deadline_ms(&self) -> Option<i64> {
-        if self.gave_up_on_pending || !self.only_stragglers_left() {
-            return None;
+        match self.stragglers {
+            Stragglers::Since(t) if self.only_stragglers_left() => Some(t + SECOND_FAMILY_EXTRA_MS),
+            _ => None,
         }
-        self.partial_at_ms.map(|t| t + SECOND_FAMILY_EXTRA_MS)
     }
 
     /// EAI_* status for a completed query with no results.
@@ -399,7 +421,11 @@ impl SharedConnection {
         // SAFETY: `owner` is the caller's live request, tracked here until `finish()`.
         let q = unsafe { owner.query() };
         q.sd_ref = sub;
-        q.used_suppress = suppress != 0;
+        q.attempt = if suppress != 0 {
+            Attempt::Suppressed
+        } else {
+            Attempt::Plain
+        };
         q.hostname = bun::ZBox::from_bytes(hostname.as_bytes());
         q.callback = Some(callback);
         self.inflight.push(owner);
@@ -552,7 +578,7 @@ impl SharedConnection {
             let ready = conn.take_ready(|q| {
                 let due = q.early_out_deadline_ms().is_some_and(|d| d <= now);
                 if due {
-                    q.gave_up_on_pending = true;
+                    q.give_up_on_stragglers();
                 }
                 due
             });
@@ -615,10 +641,7 @@ impl SharedConnection {
         let Some(callback) = q.callback else {
             return false;
         };
-        q.retried = true;
-        q.awaiting_more = false;
-        q.partial_at_ms = None;
-        q.pending_proto = protocol;
+        q.reset_for_retry(protocol);
         let Some(sub) = this.issue(protocol, 0, &hostname, callback, inf.context()) else {
             return false;
         };

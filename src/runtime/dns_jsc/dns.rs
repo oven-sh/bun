@@ -2759,7 +2759,7 @@ pub mod internal {
         Ok(object)
     }
 
-    /// `bun:internal-for-testing`: replay synthetic replies ("4:add", "6:nsr:more", ...) through dns_sd::QueryState.
+    /// `bun:internal-for-testing`: replay synthetic replies ("4:add", "6:nsr:more", "giveup", "retry") through dns_sd::QueryState.
     pub(crate) fn dns_sd_replay_for_testing(
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -2782,6 +2782,14 @@ pub mod internal {
             for i in 0..len {
                 let spec = args[1].get_index(global, i as u32)?.to_slice(global)?;
                 let spec = spec.slice();
+                if spec == b"giveup" {
+                    q.give_up_on_stragglers();
+                    continue;
+                }
+                if spec == b"retry" {
+                    q.reset_for_retry(args[0].to_int32() as u32);
+                    continue;
+                }
                 let mut sa: SockaddrStorage = bun_core::ffi::zeroed();
                 sa.ss_family = if spec.first() == Some(&b'6') {
                     netc::AF_INET6

@@ -789,7 +789,9 @@ impl<'a> CopyFile<'a> {
                 return;
             }
 
-            if stat.st_size != 0 {
+            // BSD fstat on a pipe reports bytes currently buffered in st_size;
+            // only a regular-file st_size is a length.
+            if stat.st_size != 0 && bun_sys::S::ISREG(stat.st_mode as _) {
                 self.max_length = (SizeType::try_from(stat.st_size)
                     .expect("int cast")
                     .min(self.max_length))
@@ -801,7 +803,6 @@ impl<'a> CopyFile<'a> {
                 }
 
                 if PREALLOCATE_SUPPORTED
-                    && bun_sys::S::ISREG(stat.st_mode as _)
                     && self.max_length > PREALLOCATE_LENGTH
                     && self.max_length != MAX_SIZE
                 {

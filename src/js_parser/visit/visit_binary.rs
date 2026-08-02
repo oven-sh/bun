@@ -134,8 +134,7 @@ impl BinaryExpressionVisitor {
         // Mark the control flow as dead if the branch is never taken
         match e_.op {
             Op::Code::BinLogicalOr => {
-                let side_effects = SideEffects::to_boolean(p, &e_.left.data);
-                if side_effects.ok && side_effects.value {
+                if SideEffects::to_boolean(p, &e_.left.data).is_some_and(|k| k.value) {
                     // "true || dead"
                     let old = p.is_control_flow_dead;
                     p.is_control_flow_dead = true;
@@ -146,8 +145,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinLogicalAnd => {
-                let side_effects = SideEffects::to_boolean(p, &e_.left.data);
-                if side_effects.ok && !side_effects.value {
+                if SideEffects::to_boolean(p, &e_.left.data).is_some_and(|k| !k.value) {
                     // "false && dead"
                     let old = p.is_control_flow_dead;
                     p.is_control_flow_dead = true;
@@ -158,8 +156,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinNullishCoalescing => {
-                let side_effects = SideEffects::to_null_or_undefined(p, &e_.left.data);
-                if side_effects.ok && !side_effects.value {
+                if SideEffects::to_null_or_undefined(p, &e_.left.data).is_some_and(|k| !k.value) {
                     // "notNullOrUndefined ?? dead"
                     let old = p.is_control_flow_dead;
                     p.is_control_flow_dead = true;
@@ -361,8 +358,8 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinNullishCoalescing => {
-                let null_or_undefined = SideEffects::to_null_or_undefined(p, &e_.left.data);
-                if null_or_undefined.ok {
+                if let Some(null_or_undefined) = SideEffects::to_null_or_undefined(p, &e_.left.data)
+                {
                     if !null_or_undefined.value {
                         return e_.left;
                     } else if null_or_undefined.side_effects == SideEffects::NoSideEffects {
@@ -384,30 +381,29 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinLogicalOr => {
-                let side_effects = SideEffects::to_boolean(p, &e_.left.data);
-                if side_effects.ok && side_effects.value {
-                    return e_.left;
-                } else if side_effects.ok && side_effects.side_effects == SideEffects::NoSideEffects
-                {
-                    // "(0 || fn)()" => "fn()"
-                    // "(0 || this.fn)" => "this.fn"
-                    // "(0 || this.fn)()" => "(0, this.fn)()"
-                    if is_call_target && e_.right.has_value_for_this_in_call() {
-                        return Expr::join_with_comma(
-                            Expr {
-                                data: prefill::data::ZERO,
-                                loc: e_.left.loc,
-                            },
-                            e_.right,
-                        );
-                    }
+                if let Some(side_effects) = SideEffects::to_boolean(p, &e_.left.data) {
+                    if side_effects.value {
+                        return e_.left;
+                    } else if side_effects.side_effects == SideEffects::NoSideEffects {
+                        // "(0 || fn)()" => "fn()"
+                        // "(0 || this.fn)" => "this.fn"
+                        // "(0 || this.fn)()" => "(0, this.fn)()"
+                        if is_call_target && e_.right.has_value_for_this_in_call() {
+                            return Expr::join_with_comma(
+                                Expr {
+                                    data: prefill::data::ZERO,
+                                    loc: e_.left.loc,
+                                },
+                                e_.right,
+                            );
+                        }
 
-                    return e_.right;
+                        return e_.right;
+                    }
                 }
             }
             Op::Code::BinLogicalAnd => {
-                let side_effects = SideEffects::to_boolean(p, &e_.left.data);
-                if side_effects.ok {
+                if let Some(side_effects) = SideEffects::to_boolean(p, &e_.left.data) {
                     if !side_effects.value {
                         return e_.left;
                     } else if side_effects.side_effects == SideEffects::NoSideEffects {

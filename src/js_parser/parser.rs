@@ -1567,12 +1567,37 @@ pub struct ParseClassOptions<'a> {
     pub(crate) is_type_script_declare: bool,
 }
 
+/// Tracks which kind of statement list the parser is currently inside.
+/// `Module` and `Namespace` are mutually exclusive (a namespace body is never
+/// the module scope), so a single tri-state replaces the former pair of bools.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum StatementScope {
+    /// Any nested block/function body. ESM import/export are disallowed here.
+    #[default]
+    Nested,
+    /// Top-level module statement list.
+    Module,
+    /// Inside a TypeScript `namespace`/`module` block.
+    Namespace,
+}
+
+impl StatementScope {
+    #[inline]
+    pub(crate) fn is_module(self) -> bool {
+        matches!(self, Self::Module)
+    }
+    #[inline]
+    pub(crate) fn is_namespace(self) -> bool {
+        matches!(self, Self::Namespace)
+    }
+}
+
 #[derive(Default, Clone, Copy)]
 pub struct ParseStatementOptions<'a> {
     pub(crate) ts_decorators: Option<DeferredTsDecorators<'a>>,
     pub(crate) lexical_decl: LexicalDecl,
-    pub(crate) is_module_scope: bool,
-    pub(crate) is_namespace_scope: bool,
+    pub(crate) scope: StatementScope,
     pub(crate) is_export: bool,
     pub(crate) is_using_statement: bool,
     /// For "export default" pseudo-statements,
@@ -1587,6 +1612,17 @@ impl<'a> ParseStatementOptions<'a> {
             return false;
         };
         !decs.values.is_empty()
+    }
+
+    /// ESM import/export declarations are only legal at module scope or inside
+    /// a TypeScript `declare namespace` block.
+    #[inline]
+    pub(crate) fn allows_esm_import_export(&self) -> bool {
+        match self.scope {
+            StatementScope::Module => true,
+            StatementScope::Namespace => self.is_typescript_declare,
+            StatementScope::Nested => false,
+        }
     }
 }
 

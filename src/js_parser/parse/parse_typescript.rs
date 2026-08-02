@@ -4,7 +4,7 @@ use bun_collections::VecExt;
 use crate::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
-use crate::parser::{FnOrArrowDataParse, ParseStatementOptions, Ref, ScopeOrder};
+use crate::parser::{FnOrArrowDataParse, ParseStatementOptions, Ref, ScopeOrder, StatementScope};
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::expr::EFlags;
 use bun_ast::flags;
@@ -250,7 +250,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let mut _opts = ParseStatementOptions {
                 is_export: true,
-                is_namespace_scope: true,
+                scope: StatementScope::Namespace,
                 is_typescript_declare: opts.is_typescript_declare,
                 ..ParseStatementOptions::default()
             };
@@ -263,7 +263,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             p.lexer.expect(T::TOpenBrace)?;
             let mut _opts = ParseStatementOptions {
-                is_namespace_scope: true,
+                scope: StatementScope::Namespace,
                 is_typescript_declare: opts.is_typescript_declare,
                 ..ParseStatementOptions::default()
             };
@@ -398,7 +398,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || opts.is_typescript_declare
         {
             p.pop_and_discard_scope(scope_index);
-            if opts.is_module_scope {
+            if opts.scope.is_module() {
                 p.local_type_names.put(name_text, true)?;
             }
             return Ok(p.s(S::TypeScript {}, loc));
@@ -733,7 +733,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect(T::TCloseBrace)?;
 
         if opts.is_typescript_declare {
-            if opts.is_namespace_scope && opts.is_export {
+            if opts.scope.is_namespace() && opts.is_export {
                 p.has_non_local_export_declare_inside_namespace = true;
             }
 

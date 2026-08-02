@@ -394,9 +394,7 @@ describe("Bun.Transpiler.unstable_parse", () => {
       const { visit } = ts.unstable_parse(`try { a() } catch (e) { b() }`, { format: "raw" });
       const kinds: string[] = [];
       const lookups: PropertyKey[] = [];
-      // A bad `visitNode` would read a helper node's first field (`loc`/`binding`)
-      // as a kind and do `visitors["loc"]`, silently falling back to `enter`.
-      // Trap every lookup so that mis-dispatch fails the test directly.
+      // Trap lookups: a bad `visitNode` would do `visitors["loc"]` then fall back to `enter`.
       visit(
         new Proxy(
           {

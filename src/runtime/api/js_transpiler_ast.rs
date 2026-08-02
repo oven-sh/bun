@@ -1200,9 +1200,7 @@ struct TapeWriter<'a> {
     symbols: &'a [Symbol],
     import_records: &'a [ImportRecord],
     stack: StackCheck,
-    /// Set when any offset/length would no longer fit in `u32`; checked at
-    /// each recursive entry and after `write_root` so a wrapped offset is
-    /// never returned to JS.
+    /// Sticky `TAPE_MAX_LEN` breach; rechecked at recursive entries and in `ast_to_tape`.
     overflow: bool,
 }
 

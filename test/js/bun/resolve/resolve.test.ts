@@ -1101,3 +1101,120 @@ it.skipIf(isWindows)("reports a resolution error for an absolute specifier of th
   expect(stdout).toBe("ResolveMessage ERR_MODULE_NOT_FOUND\n");
   expect(exitCode).toBe(0);
 });
+
+describe("--preserve-symlinks", () => {
+  // A shared library outside the app, symlinked into it. With the flag, the
+  // link path stays the module's identity (as in Node), so specifiers inside
+  // the library resolve from the app.
+  function makeTree() {
+    const dir = tempDirWithFiles("preserve-symlinks", {
+      "package.json": `{ "name": "root", "version": "1.0.0" }`,
+      "shared/lib/relative.mjs": `import dep from "../gen/dep.mjs";\nexport default dep;\n`,
+      "shared/lib/relative.cjs": `module.exports = require("../gen/dep.cjs");\n`,
+      "shared/lib/bare.mjs": `import pkg from "somepkg";\nexport default pkg;\n`,
+      "shared/lib/where.mjs": `export default import.meta.url;\n`,
+      "shared/main.mjs": `import v from "./gen/dep.mjs";\nconsole.log(v);\n`,
+      "app/gen/dep.mjs": `export default "RESOLVED-FROM-APP-GEN";\n`,
+      "app/gen/dep.cjs": `module.exports = "RESOLVED-FROM-APP-GEN";\n`,
+      "app/node_modules/somepkg/package.json": `{ "name": "somepkg", "version": "1.0.0", "type": "module", "main": "index.mjs" }`,
+      "app/node_modules/somepkg/index.mjs": `export default "RESOLVED-FROM-APP-NODE-MODULES";\n`,
+      "app/main-relative.mjs": `import v from "./lib/relative.mjs";\nconsole.log(v);\n`,
+      "app/main-relative.cjs": `console.log(require("./lib/relative.cjs"));\n`,
+      "app/main-bare.mjs": `import v from "./lib/bare.mjs";\nconsole.log(v);\n`,
+      "app/main-where.mjs": `import url from "./lib/where.mjs";\nconsole.log(url);\n`,
+    });
+    mkdirSync(join(dir, "app", "lib"));
+    for (const f of ["relative.mjs", "relative.cjs", "bare.mjs", "where.mjs"]) {
+      symlinkSync(join(dir, "shared", "lib", f), join(dir, "app", "lib", f), "file");
+    }
+    symlinkSync(join(dir, "shared", "main.mjs"), join(dir, "app", "main-sym.mjs"), "file");
+    return dir;
+  }
+
+  async function run(cwd: string, args: string[], env: Record<string, string | undefined> = bunEnv) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it.concurrent("relative specifier in a symlinked ESM module resolves from the link's directory", async () => {
+    const dir = makeTree();
+    const { stdout, stderr, exitCode } = await run(join(dir, "app"), ["--preserve-symlinks", "main-relative.mjs"]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("RESOLVED-FROM-APP-GEN\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("relative specifier in a symlinked CJS module resolves from the link's directory", async () => {
+    const dir = makeTree();
+    const { stdout, stderr, exitCode } = await run(join(dir, "app"), ["--preserve-symlinks", "main-relative.cjs"]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("RESOLVED-FROM-APP-GEN\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("bare specifier in a symlinked module resolves against the consumer's node_modules", async () => {
+    const dir = makeTree();
+    const { stdout, stderr, exitCode } = await run(join(dir, "app"), [
+      "--preserve-symlinks",
+      "--no-install",
+      "main-bare.mjs",
+    ]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("RESOLVED-FROM-APP-NODE-MODULES\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("import.meta.url keeps the link path with the flag and the real path without it", async () => {
+    const dir = makeTree();
+    const withFlag = await run(join(dir, "app"), ["--preserve-symlinks", "main-where.mjs"]);
+    expect(withFlag.stdout.trim()).toEndWith("/app/lib/where.mjs");
+    expect(withFlag.exitCode).toBe(0);
+
+    const withoutFlag = await run(join(dir, "app"), ["main-where.mjs"]);
+    expect(withoutFlag.stdout.trim()).toEndWith("/shared/lib/where.mjs");
+    expect(withoutFlag.exitCode).toBe(0);
+  });
+
+  it.concurrent("NODE_PRESERVE_SYMLINKS=1 behaves like the flag", async () => {
+    const dir = makeTree();
+    const { stdout, stderr, exitCode } = await run(join(dir, "app"), ["main-relative.mjs"], {
+      ...bunEnv,
+      NODE_PRESERVE_SYMLINKS: "1",
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toBe("RESOLVED-FROM-APP-GEN\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("--preserve-symlinks-main keeps a symlinked entry point's link path", async () => {
+    const dir = makeTree();
+    const withMain = await run(join(dir, "app"), ["--preserve-symlinks-main", "main-sym.mjs"]);
+    expect(withMain.stderr).toBe("");
+    expect(withMain.stdout).toBe("RESOLVED-FROM-APP-GEN\n");
+    expect(withMain.exitCode).toBe(0);
+
+    // Without -main the entry is still realpathed (Node behavior), so its
+    // relative import resolves from shared/ and fails.
+    const withoutMain = await run(join(dir, "app"), ["--preserve-symlinks", "main-sym.mjs"]);
+    expect(withoutMain.exitCode).not.toBe(0);
+  });
+
+  it.concurrent("bun build --preserve-symlinks resolves through file symlinks", async () => {
+    const dir = makeTree();
+    const { stdout, stderr, exitCode } = await run(join(dir, "app"), [
+      "build",
+      "main-relative.mjs",
+      "--preserve-symlinks",
+    ]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("RESOLVED-FROM-APP-GEN");
+    expect(exitCode).toBe(0);
+  });
+});

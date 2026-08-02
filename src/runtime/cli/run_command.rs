@@ -2861,8 +2861,32 @@ impl RunCommand {
         });
 
         // Re-derive the canonical absolute path from the open fd (resolves
-        // symlinks).
-        let absolute_script_path: Box<[u8]> = {
+        // symlinks). With --preserve-symlinks-main / NODE_PRESERVE_SYMLINKS_MAIN,
+        // keep the link path as the entry's identity instead (matching Node).
+        let preserve_symlinks_main = ctx.runtime_options.preserve_symlinks_main
+            || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
+                .get()
+                .unwrap_or(false);
+        let absolute_script_path: Box<[u8]> = if preserve_symlinks_main {
+            let mut cwd_buf = PathBuffer::uninit();
+            let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {
+                let _ = bun_sys::close(fd);
+                return false;
+            };
+            let cwd_len = cwd.as_bytes().len();
+            cwd_buf[cwd_len] = paths::SEP;
+            let mut abs_buf = PathBuffer::uninit();
+            let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+                &cwd_buf[..cwd_len + 1],
+                &mut abs_buf.0,
+                &[&script_name_buf[..open_len]],
+            );
+            if joined.is_empty() {
+                let _ = bun_sys::close(fd);
+                return false;
+            }
+            joined.to_vec().into_boxed_slice()
+        } else {
             let resolved = match bun_sys::get_fd_path(fd, &mut script_name_buf) {
                 Ok(p) => p,
                 Err(_) => {

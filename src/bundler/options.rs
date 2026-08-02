@@ -1664,7 +1664,7 @@ impl<'a> BundleOptions<'a> {
             origin: bun_url::OwnedURL::from_href(Box::default()),
             output_dir_handle: None,
             root_dir: Box::default(),
-            preserve_symlinks: false,
+            preserve_symlinks: transform.preserve_symlinks.unwrap_or(false),
             preserve_extensions: false,
             production: false,
             output_format: Format::Esm,

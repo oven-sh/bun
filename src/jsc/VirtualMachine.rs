@@ -4082,6 +4082,17 @@ impl VirtualMachine {
             top_level_dir
         };
 
+        // Node applies --preserve-symlinks-main / NODE_PRESERVE_SYMLINKS_MAIN
+        // (not --preserve-symlinks) to the entry point, which is resolved from
+        // the synthetic main module here (workers included).
+        let main_preserve_override: Option<bool> = (source == MAIN_FILE_NAME).then(|| {
+            bun_options_types::context::try_get()
+                .is_some_and(|c| c.runtime_options.preserve_symlinks_main)
+                || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
+                    .get()
+                    .unwrap_or(false)
+        });
+
         // A `loop`
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
@@ -4093,12 +4104,20 @@ impl VirtualMachine {
                 bun_ast::ImportKind::Require
             };
             let global_cache = self.transpiler.resolver.opts.global_cache;
-            match self.transpiler.resolver.resolve_and_auto_install(
-                source_to_use,
-                normalized_specifier,
-                import_kind,
-                global_cache,
-            ) {
+            let resolved = {
+                let saved_preserve = self.transpiler.resolver.opts.preserve_symlinks;
+                self.transpiler.resolver.opts.preserve_symlinks =
+                    main_preserve_override.unwrap_or(saved_preserve);
+                let resolved = self.transpiler.resolver.resolve_and_auto_install(
+                    source_to_use,
+                    normalized_specifier,
+                    import_kind,
+                    global_cache,
+                );
+                self.transpiler.resolver.opts.preserve_symlinks = saved_preserve;
+                resolved
+            };
+            match resolved {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {

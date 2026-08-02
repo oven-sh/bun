@@ -61,7 +61,10 @@ test("commented-out DOMJIT/BINDING_INTEGRITY blocks in webcore do not reappear",
     ["src/jsc/bindings/webcore/JSDOMURL.cpp", /JSDedicatedWorkerGlobalScope/],
     ["src/jsc/bindings/webcore/JSWorkerOptions.cpp", /credentialsValue|\bWorkerType::Classic\b/],
     ["src/jsc/bindings/webcore/JSEventListener.cpp", /handleBeforeUnloadEventReturnValue/],
-    ["src/jsc/bindings/webcore/PerformanceUserTiming.cpp", /restrictedMarkFunctions|isRestrictedMarkName|NavigationTimingFunction/],
+    [
+      "src/jsc/bindings/webcore/PerformanceUserTiming.cpp",
+      /restrictedMarkFunctions|isRestrictedMarkName|NavigationTimingFunction/,
+    ],
     ["src/jsc/bindings/webcore/PerformanceUserTiming.h", /isRestrictedMarkName/],
     ["src/jsc/bindings/webcore/JSTextEncoder.cpp", /DOMJITIDL|DOMJITHelpers|DFGAbstractHeap|namespace JSC::DOMJIT/],
   ];

@@ -3045,7 +3045,6 @@ pub mod formatter {
         ) {
             match key_kind {
                 PropertyKeyKind::String => {
-                    // TODO: make this one pass?
                     if (!key.is_16_bit()
                         && (!quote_keys && JSLexer::is_latin1_identifier_u8(key.slice())))
                         || (key.is_16_bit()

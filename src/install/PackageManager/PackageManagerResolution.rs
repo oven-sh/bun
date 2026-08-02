@@ -179,8 +179,7 @@ impl PackageManager {
             dependency::Tag::Npm => {}
             // Offline, "latest" means the newest stable version in the cache.
             // Other dist tags stay ambiguous and go to the registry.
-            dependency::Tag::DistTag
-                if version.dist_tag().tag.slice(version_buf) == b"latest" => {}
+            dependency::Tag::DistTag if version.dist_tag().tag.slice(version_buf) == b"latest" => {}
             _ => return None,
         }
 

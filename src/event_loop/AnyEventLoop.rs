@@ -294,8 +294,7 @@ impl EventLoopHandle {
     #[inline]
     pub fn init_mini(mini: *mut MiniEventLoop) -> EventLoopHandle {
         // `mini` is the live per-thread singleton (or an `AnyEventLoop::Mini`
-        // payload) — never null at any call site. `BackRef: From<NonNull<T>>`
-        // wraps it without an `unsafe` block; the back-reference invariant
+        // payload) — never null at any call site; the back-reference invariant
         // (pointee outlives every copy of the handle) is the caller's
         // structural guarantee, same as before.
         EventLoopHandle::Mini(
@@ -365,7 +364,7 @@ impl EventLoopHandle {
                 owner: unsafe { JsEventLoop::new(JsEventLoopKind::Jsc, ptr.cast::<()>()) },
             },
             // `(tag, ptr)` came from `into_tag_ptr` on a live loop, so `ptr`
-            // is non-null. `BackRef: From<NonNull<T>>`.
+            // is non-null.
             // SAFETY: `ptr` is the write-capable pointer from `into_tag_ptr`.
             2 => EventLoopHandle::Mini(unsafe {
                 BackRef::from_raw_mut(

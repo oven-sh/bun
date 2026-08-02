@@ -1305,6 +1305,7 @@ pub(super) use super::{
 /// per-transport `RequestContext` so the same body serves HTTP/1 and HTTP/3.
 /// `super::PreparedRequest<SSL,DEBUG>` is the HTTP/1-concrete instantiation
 /// used by the bake/saved-request path; the generic form here is only reached
+/// from the `_for<Ctx>` dispatch helpers below.
 pub struct PreparedRequestFor<Ctx> {
     pub(crate) js_request: JSValue,
     pub(crate) request_object: *mut Request,

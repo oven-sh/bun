@@ -260,11 +260,9 @@ impl JSMySQLConnection {
             t.next = timespec::ms_from_now(TimespecMockMode::AllowMockedTime, interval.into());
         });
         // SAFETY: place projection through `self` keeps whole-struct provenance; the fire path recovers the container from this pointer.
-        let t = unsafe {
-            &mut *core::ptr::addr_of!(self.timer)
-                .cast::<EventLoopTimer>()
-                .cast_mut()
-        };
+        let t = core::ptr::addr_of!(self.timer)
+            .cast::<EventLoopTimer>()
+            .cast_mut();
         self.vm_mut().timer().insert(t);
     }
 
@@ -346,11 +344,9 @@ impl JSMySQLConnection {
             );
         });
         // SAFETY: place projection through `self` keeps whole-struct provenance; the fire path recovers the container from this pointer.
-        let t = unsafe {
-            &mut *core::ptr::addr_of!(self.max_lifetime_timer)
-                .cast::<EventLoopTimer>()
-                .cast_mut()
-        };
+        let t = core::ptr::addr_of!(self.max_lifetime_timer)
+            .cast::<EventLoopTimer>()
+            .cast_mut();
         self.vm_mut().timer().insert(t);
     }
 

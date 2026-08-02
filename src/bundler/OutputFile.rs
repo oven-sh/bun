@@ -108,7 +108,7 @@ pub struct BakeExtra {
     pub bake_is_runtime: bool,
 }
 
-/// A server-side entry-point chunk is a route; `FullyStatic` additionally
+/// A server-side entry-point chunk is a route; `FullyStaticRoute` additionally
 /// means it has no transitive "use client" boundary. Non-route chunks are
 /// never fully static.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]

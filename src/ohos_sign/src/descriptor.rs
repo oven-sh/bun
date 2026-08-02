@@ -19,12 +19,10 @@ pub fn build(sign_size: u32, file_size: u64, root_hash: &[u8; 32]) -> [u8; SIZE]
     out[112..116].copy_from_slice(&FLAG_SELF_SIGN.to_le_bytes());
     // out[116..120] reserved1 = 0
     // out[120..128] merkleTreeOffset = 0
-    // Embed version tag in reserved_2 so signed binaries carry an
-    // identifiable string for diagnostic / audit purposes.
-    let tag = crate::OHOS_SIGN_VERSION;
-    let tag_start = 128 + 127 - tag.len(); // right-align in reserved_2
-    out[tag_start..tag_start + tag.len()].copy_from_slice(tag);
-    // out[128..255] reserved2 = 0 (overwritten above for version tag)
+    // OHOS kernel requires reserved_2 (128..255) to be all zeros
+    // (only the last byte csVersion=3 is set). A version tag here makes
+    // the kernel reject the signature with EPERM/Operation not permitted.
+    // out[128..255] reserved2 = 0
     out[255] = 3; // csVersion
     out
 }

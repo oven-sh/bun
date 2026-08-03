@@ -1650,8 +1650,7 @@ impl<'a> PackageInstall<'a> {
                                             entry.path,
                                         )?;
                                     }
-                                    // FUSE (e.g. Android SDCARD) rejects hardlinks
-                                    // with EACCES/EPERM; fall back to copying.
+                                    // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
                                     sys::E::EXDEV | sys::E::EACCES | sys::E::EPERM => {
                                         return Err(crate::Error::NotSameFileSystem);
                                     }

@@ -925,7 +925,13 @@ impl Task {
                                         match hardlinker.link()? {
                                             sys::Result::Ok(()) => {}
                                             sys::Result::Err(err) => {
-                                                if err.get_errno() == sys::Errno::EXDEV {
+                                                // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
+                                                if matches!(
+                                                    err.get_errno(),
+                                                    sys::Errno::EXDEV
+                                                        | sys::Errno::EACCES
+                                                        | sys::Errno::EPERM
+                                                ) {
                                                     backend = InstallMethod::Copyfile;
                                                     continue 'backend;
                                                 }
@@ -1331,7 +1337,11 @@ impl Task {
                                 match hardlinker.link()? {
                                     sys::Result::Ok(()) => {}
                                     sys::Result::Err(err) => {
-                                        if err.get_errno() == sys::Errno::EXDEV {
+                                        // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
+                                        if matches!(
+                                            err.get_errno(),
+                                            sys::Errno::EXDEV | sys::Errno::EACCES | sys::Errno::EPERM
+                                        ) {
                                             installer.supported_backend.store(
                                                 InstallMethod::Copyfile as u8,
                                                 Ordering::Relaxed,

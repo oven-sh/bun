@@ -2634,6 +2634,116 @@ declare module "bun" {
   }
 
   /**
+   * Every statement `kind` that {@link Transpiler.unstable_parse} may emit.
+   *
+   * **Unstable.** Derived from Bun's internal `bun_ast::Stmt` tag enum; entries
+   * may be added, renamed, or removed in any patch release.
+   * @experimental
+   */
+  type UnstableStmtKind =
+    | "s_block"
+    | "s_break"
+    | "s_class"
+    | "s_comment"
+    | "s_continue"
+    | "s_debugger"
+    | "s_directive"
+    | "s_do_while"
+    | "s_empty"
+    | "s_enum"
+    | "s_export_clause"
+    | "s_export_default"
+    | "s_export_equals"
+    | "s_export_from"
+    | "s_export_star"
+    | "s_expr"
+    | "s_for"
+    | "s_for_in"
+    | "s_for_of"
+    | "s_function"
+    | "s_if"
+    | "s_import"
+    | "s_label"
+    | "s_lazy_export"
+    | "s_local"
+    | "s_namespace"
+    | "s_return"
+    | "s_switch"
+    | "s_throw"
+    | "s_try"
+    | "s_type_script"
+    | "s_while"
+    | "s_with";
+
+  /**
+   * Every expression `kind` that {@link Transpiler.unstable_parse} may emit.
+   *
+   * **Unstable.** Derived from Bun's internal `bun_ast::Expr` tag enum; entries
+   * may be added, renamed, or removed in any patch release.
+   * @experimental
+   */
+  type UnstableExprKind =
+    | "e_array"
+    | "e_arrow"
+    | "e_await"
+    | "e_big_int"
+    | "e_binary"
+    | "e_boolean"
+    | "e_branch_boolean"
+    | "e_call"
+    | "e_class"
+    | "e_commonjs_export_identifier"
+    | "e_dot"
+    | "e_function"
+    | "e_identifier"
+    | "e_if"
+    | "e_import"
+    | "e_import_identifier"
+    | "e_import_meta"
+    | "e_import_meta_main"
+    | "e_index"
+    | "e_inlined_enum"
+    | "e_jsx_element"
+    | "e_missing"
+    | "e_name_of_symbol"
+    | "e_new"
+    | "e_new_target"
+    | "e_null"
+    | "e_number"
+    | "e_object"
+    | "e_private_identifier"
+    | "e_reg_exp"
+    | "e_require_call_target"
+    | "e_require_main"
+    | "e_require_resolve_call_target"
+    | "e_require_resolve_string"
+    | "e_require_string"
+    | "e_special"
+    | "e_spread"
+    | "e_string"
+    | "e_super"
+    | "e_template"
+    | "e_this"
+    | "e_unary"
+    | "e_undefined"
+    | "e_yield";
+
+  /**
+   * Every binding `kind` that {@link Transpiler.unstable_parse} may emit.
+   *
+   * **Unstable.** Derived from Bun's internal `bun_ast::Binding` tag enum.
+   * @experimental
+   */
+  type UnstableBindingKind = "b_array" | "b_identifier" | "b_missing" | "b_object";
+
+  /**
+   * Union of every {@link UnstableASTNode.kind} value. The `s_`/`e_`/`b_` prefix
+   * indicates statement / expression / binding.
+   * @experimental
+   */
+  type UnstableASTKind = UnstableStmtKind | UnstableExprKind | UnstableBindingKind;
+
+  /**
    * The return value of {@link Transpiler.unstable_parse}.
    *
    * **Unstable.** Both the node shapes and the buffer encoding may change in
@@ -2641,18 +2751,60 @@ declare module "bun" {
    * @experimental
    */
   interface UnstableParseResult {
-    /** The self-describing binary tape. `root` and `visit` read from this. */
+    /**
+     * The self-describing binary tape the AST was serialized to. `root` and
+     * `visit` are lazy views over this buffer; no node is materialized until
+     * accessed. The encoding is versioned (magic `"BUNA"` + a version word at
+     * the head) but **not a public format**: treat it as opaque and read it
+     * only via `root`/`visit`.
+     */
     buffer: ArrayBuffer;
-    /** Lazy proxy over the tape; `JSON.stringify(root)` materializes the full tree. */
+    /**
+     * A lazy `Proxy` over the AST root. Field reads decode one tape slot each;
+     * `JSON.stringify(root)` (or `JSON.parse(JSON.stringify(root))`)
+     * materializes the full tree as plain objects. The proxies are read-only:
+     * assigning, `delete`, or `Object.defineProperty` on a node throws
+     * `TypeError`.
+     */
     root: UnstableAST;
-    /** Walk every node under `root.stmts`, dispatching on `kind`; a handler returning `false` skips its subtree. */
-    visit: (
-      visitors: { enter?: (node: UnstableASTNode) => boolean | void } & Record<
-        string,
-        (node: UnstableASTNode) => boolean | void
-      >,
-    ) => void;
+    /**
+     * Walk every node under `root.stmts` in source order, dispatching on
+     * `kind`. For each node:
+     *
+     * 1. If `visitors[node.kind]` is set, it's called with the node.
+     * 2. Otherwise, if `visitors.enter` is set, it's called with the node.
+     * 3. If the handler returns `false`, that node's subtree is skipped.
+     *
+     * Only nodes with a `kind` are dispatched; structural helper records
+     * (declaration lists, function arguments, catch clauses, ...) are
+     * traversed into but never passed to a handler.
+     *
+     * @example
+     * ```ts
+     * visit({
+     *   e_call(n) { console.log(n.target.name, n.args.length) },
+     *   s_function() { return false }, // don't descend into function bodies
+     *   enter(n) { counts[n.kind] = (counts[n.kind] ?? 0) + 1 },
+     * });
+     * ```
+     */
+    visit: (visitors: UnstableParseVisitors) => void;
   }
+
+  /**
+   * Handler map accepted by {@link UnstableParseResult.visit}. Every key must be
+   * a known {@link UnstableASTKind} or `enter`; unknown keys are a type error.
+   * @experimental
+   */
+  type UnstableParseVisitors = {
+    /**
+     * Fallback called for every kind-bearing node that has no kind-specific
+     * handler. Return `false` to skip the node's subtree.
+     */
+    enter?: (node: UnstableASTNode) => boolean | void;
+  } & {
+    [K in UnstableASTKind]?: (node: UnstableASTNode<K>) => boolean | void;
+  };
 
   /**
    * The root AST node from {@link Transpiler.unstable_parse}.
@@ -2663,29 +2815,77 @@ declare module "bun" {
    */
   interface UnstableAST {
     kind: "ast";
-    /** `#!` line without the trailing newline, or `null`. */
+    /**
+     * The `#!` line (including the `#!` prefix, without the trailing newline),
+     * or `null` if the source has no hashbang.
+     */
     hashbang: string | null;
-    /** The top-level directive prologue (e.g. `"use strict"`), or `null`. */
+    /**
+     * The first directive prologue string (e.g. `"use strict"`), or `null` if
+     * the file has none. Only the first directive is surfaced here; additional
+     * directives appear as `s_directive` statements in {@link stmts}.
+     */
     directive: string | null;
-    exportsKind: string;
+    /**
+     * How the parser classified this module's exports. `"esm"` when ESM syntax
+     * (`import`/`export`) was seen, `"cjs"` when CommonJS was inferred
+     * (top-level `module.exports` / `require`), `"none"` when neither was.
+     */
+    exportsKind: "none" | "cjs" | "esm" | "esm_with_dynamic_fallback" | "esm_with_dynamic_fallback_from_cjs";
+    /**
+     * The number of newline characters the lexer counted while tokenizing.
+     * This is a **size hint**, not a line count: it counts raw `\n` bytes
+     * (including those inside strings, comments, and template literals), does
+     * not count `\r`-only line endings, and may undercount lines for sources
+     * the parser bailed on early. Use it only for preallocation heuristics;
+     * for accurate line numbers, count newlines up to a node's
+     * {@link UnstableASTNode.loc} yourself.
+     */
     approximateNewlineCount: number;
+    /**
+     * Every module specifier the parser recorded (static `import`/`export`
+     * sources, `require()` / `import()` string arguments). `kind` says which
+     * syntactic form produced it. `s_import`, `s_export_from`, `e_import` and
+     * similar nodes reference these by index via their `importRecord` field.
+     */
     importRecords: { path: string; kind: ImportKind }[];
-    /** Every symbol the parser created, in declaration order. */
+    /**
+     * Every symbol the parser created, in declaration order. `name` is the
+     * identifier as written in source (before any renaming). Identifier and
+     * binding nodes resolve their `name` against this table.
+     */
     symbols: { name: string; kind: string }[];
-    /** Top-level statements. */
-    stmts: UnstableASTNode[];
+    /**
+     * Top-level statements, in source order. The parser's internal `parts`
+     * boundaries (a bundler tree-shaking concept) are flattened out.
+     */
+    stmts: UnstableASTNode<UnstableStmtKind>[];
   }
 
   /**
-   * An AST node from {@link Transpiler.unstable_parse}. Only `kind` and `loc`
-   * are stable; all other fields are node-specific and may change between
+   * An AST node from {@link Transpiler.unstable_parse}. `kind` and `loc` are
+   * always present; all other fields are node-specific and may change between
    * patch releases.
+   *
+   * The `K` parameter narrows `kind` to a specific literal inside
+   * {@link UnstableParseVisitors} handlers, so `n.kind === "e_call"` is known
+   * inside an `e_call` visitor. Field shapes are **not** narrowed: they remain
+   * `unknown` and require a cast, because this API makes no stability promise
+   * about them.
    * @experimental
    */
-  interface UnstableASTNode {
-    /** Snake_case discriminant, e.g. `"s_local"`, `"e_call"`, `"b_identifier"`. */
-    kind: string;
-    /** Byte offset into the input, or `null` for synthetic nodes. */
+  interface UnstableASTNode<K extends UnstableASTKind = UnstableASTKind> {
+    /**
+     * Snake_case discriminant. `s_*` = statement, `e_*` = expression,
+     * `b_*` = binding pattern. See {@link UnstableASTKind} for the full list.
+     */
+    kind: K;
+    /**
+     * Byte offset into the input where this node begins, or `null` for nodes
+     * the parser synthesized (no corresponding source location). This is a
+     * **byte** offset, not a character index: for multi-byte UTF-8 input,
+     * index into a `Uint8Array` view of the source rather than the JS string.
+     */
     loc: number | null;
     [field: string]: unknown;
   }

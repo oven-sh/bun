@@ -552,7 +552,10 @@ pub mod js_bundler {
                             match promise
                                 .unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled)
                             {
-                                jsc::PromiseResult::Pending => unreachable!(),
+                                // wait_for_promise returns early on VM termination; propagate.
+                                jsc::PromiseResult::Pending => {
+                                    return Err(JsError::Terminated);
+                                }
                                 jsc::PromiseResult::Fulfilled(val) => {
                                     plugin_result = val;
                                 }

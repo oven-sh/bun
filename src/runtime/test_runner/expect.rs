@@ -526,7 +526,8 @@ impl Expect {
                             }
                             Promise::None => unreachable!(),
                         },
-                        js_promise::Status::Pending => unreachable!(),
+                        // wait_for_promise returns early on VM termination; propagate.
+                        js_promise::Status::Pending => return Err(JsError::Terminated),
                     }
 
                     new_value.ensure_still_alive();
@@ -903,7 +904,8 @@ impl Expect {
                     // since we know for sure it rejected, we should always return the error
                     return Ok((Some(rejected.to_error().unwrap_or(rejected)), return_value_from_function));
                 }
-                js_promise::Unwrapped::Pending => unreachable!(),
+                // wait_for_promise returns early on VM termination; propagate.
+                js_promise::Unwrapped::Pending => return Err(JsError::Terminated),
             }
         }
 
@@ -1492,9 +1494,9 @@ impl Expect {
 
             result = promise.result(vm);
             result.ensure_still_alive();
-            debug_assert!(!result.is_empty());
             match promise.status() {
-                js_promise::Status::Pending => unreachable!(),
+                // wait_for_promise returns early on VM termination; propagate.
+                js_promise::Status::Pending => return Err(JsError::Terminated),
                 js_promise::Status::Fulfilled => {}
                 js_promise::Status::Rejected => {
                     // TODO: rewrite this code to use .then() instead of blocking the event loop

@@ -2,6 +2,8 @@
 
 **Method:** Symbol-level diff of exported functions, line-by-line comparison of all 161 `napi_*`/`node_api_*` implementations against `nodejs/node@v26.x` (`src/js_native_api_v8.cc`, `src/node_api.cc`), plus header/type diffs.
 
+**Re-verified against:** `main@506945ef46` (2026-08-02). 40/41 findings confirmed; `napi_make_callback` `is_any_error()` was already fixed by #35329 (struck through below). See [`napi-node26-pr-plan.md`](./napi-node26-pr-plan.md) for the fix plan.
+
 **Symbol coverage:** Bun exports all 161 symbols Node 26 declares. Zero missing at the link level.
 
 **Node 26 `NODE_API_SUPPORTED_VERSION_MAX`:** 10. Bun's `napi_get_version` also returns 10.
@@ -32,7 +34,7 @@ These crash the process where Node returns a status code:
 | `napi_reference_ref` | after referent GC'd, returns incremented count instead of 0 (no `persistent_.IsEmpty()` short-circuit) | [NapiRef.cpp:9](../src/jsc/bindings/NapiRef.cpp#L9) |
 | `napi_get_last_error_info` | missing 2 error strings (`no_external_buffers_allowed`, `cannot_run_js`) → `error_message=NULL` for codes Bun itself returns | [napi.cpp:218](../src/jsc/bindings/napi.cpp#L218) |
 | `napi_throw_error` / `_type_error` / `_range_error` / `node_api_throw_syntax_error` | no pending-exception check → returns `napi_ok` and overwrites exception instead of `napi_pending_exception` | [napi.cpp:1104](../src/jsc/bindings/napi.cpp#L1104) |
-| `napi_make_callback` | tests `res.is_any_error()` → callee *returning* (not throwing) an Error yields `napi_pending_exception` | [napi_body.rs:1209](../src/runtime/napi/napi_body.rs#L1209) |
+| ~~`napi_make_callback`~~ | ~~tests `res.is_any_error()` → callee *returning* an Error yields `napi_pending_exception`~~ **FIXED by #35329** | ~~napi_body.rs~~ |
 | `napi_make_callback` | missing `recv`/`argv` null-checks, no `recv` ToObject, wrong status for non-function, no microtask drain | [napi_body.rs:1176](../src/runtime/napi/napi_body.rs#L1176) |
 | `napi_open_callback_scope` | `*result` never written (garbage), no env/result null-check, `last_error` not cleared | [napi_body.rs:1281](../src/runtime/napi/napi_body.rs#L1281) |
 | `napi_close_callback_scope` | no env/scope null-check, never returns `napi_callback_scope_mismatch`, `last_error` not cleared | [napi_body.rs:1292](../src/runtime/napi/napi_body.rs#L1292) |

@@ -975,9 +975,9 @@ impl Task {
                                         ) {
                                             sys::Result::Ok(fd) => fd,
                                             sys::Result::Err(err) => {
-                                                return Ok(Yield::failure(
-                                                    TaskError::LinkPackage(err),
-                                                ));
+                                                return Ok(Yield::failure(TaskError::LinkPackage(
+                                                    err,
+                                                )));
                                             }
                                         };
                                         let _folder_dir_guard = sys::CloseOnDrop::new(folder_dir);

@@ -1,8 +1,6 @@
-// `require('internal/test/binding')` — Node.js-internal testing shim used by
-// the vendored node test suite. Resolution is gated like
-// `bun:internal-for-testing`: release builds require `--expose-internals`
-// (or BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING); debug builds always allow it.
-// See HardcodedModule::InternalTestBinding.
+// `require('internal/test/binding')` — Node.js-internal testing shim for the vendored node test suite.
+// Gated like `bun:internal-for-testing` (release needs `--expose-internals`). See HardcodedModule::InternalTestBinding.
+// https://github.com/nodejs/node/blob/main/lib/internal/test/binding.js
 
 const agent = require("internal/trace_events");
 
@@ -12,12 +10,9 @@ const closeRawFd = $newRustFunction("udp_socket.rs", "jsDgramCloseFd", 1);
 
 let cachedTcpWrapBinding: any;
 
-// Node's internalBinding('tcp_wrap').TCP for the vendored tests, over
-// Bun.listen/Bun.connect (which bind synchronously, like uv_tcp_bind). Two
-// deviations from libuv, both invisible to the tests: bind() also starts
-// listening (uSockets has no separate bind step), and the constructor keeps
-// the raw-fd path the vendored dgram tests use to produce a stream descriptor
-// (`handle.fd` + zero-argument `listen()`).
+// internalBinding('tcp_wrap').TCP over Bun.listen/Bun.connect. Deviations invisible to tests:
+// bind() also listens (uSockets has no separate bind step); constructor keeps the raw-fd path.
+// https://github.com/nodejs/node/blob/main/src/tcp_wrap.cc
 function getTcpWrapBinding() {
   if (cachedTcpWrapBinding !== undefined) return cachedTcpWrapBinding;
   const { UV_EINVAL, UV_EOF } = process.binding("uv") as Record<string, number>;
@@ -253,11 +248,8 @@ function getTcpWrapBinding() {
 const { isInsideNodeModules } = require("internal/shared");
 
 // ---- StreamBase JS-handle protocol emulation ----------------------------
-// Node's internalBinding("stream_wrap") exposes the request classes and the
-// shared state array every StreamBase handle reports reads/writes through
-// (src/stream_base.h). The vendored stream_wrap/js_stream tests and the
-// internal/js_stream_socket shim speak this protocol; the state array is
-// shared between this binding and every handle emulation below.
+// internalBinding("stream_wrap"): request classes + the shared state array every StreamBase handle
+// reports reads/writes through. https://github.com/nodejs/node/blob/main/src/stream_base.h
 const kReadBytesOrError = 0;
 const kArrayBufferOffset = 1;
 const kBytesWritten = 2;
@@ -287,13 +279,9 @@ function getStreamWrapBinding() {
 
 let cachedJSStreamClass: any;
 
-// Node's JSStream (src/js_stream.cc): a StreamBase handle whose "system" side
-// is driven by JS callbacks. Consumers assign onread/onwrite/onreadstart/
-// onreadstop/onshutdown/isClosing on the instance; readBuffer()/emitEOF()/
-// finishWrite()/finishShutdown() inject completions. Extends TextEncoder so
-// instances stay host objects: the vendored worker tests require
-// postMessage(new JSStream()) to be rejected by the structured-clone
-// serializer like a real native handle.
+// JSStream: a StreamBase handle whose "system" side is driven by JS callbacks (onread/onwrite/...).
+// Extends TextEncoder so instances stay host objects — postMessage(new JSStream()) must be rejected.
+// https://github.com/nodejs/node/blob/main/src/js_stream.cc
 function getJSStreamClass() {
   if (cachedJSStreamClass !== undefined) return cachedJSStreamClass;
   const { UV_EOF, UV_EPROTO } = process.binding("uv") as Record<string, number>;
@@ -353,16 +341,9 @@ function getJSStreamClass() {
 
 let cachedHttp2Binding: any;
 
-// Node's internalBinding("http2") exposes the native handle classes that sit
-// beneath the JS-level Http2Session/Http2Stream; several vendored tests stub
-// methods on those prototypes to inject nghttp2 error codes into the JS layer.
-// Bun's node:http2 drives its Rust engine directly and has no handle layer, so
-// the first internalBinding("http2") call wraps the real node:http2 entry
-// points that node routes through the handle (request/respond/info/
-// pushPromise) to consult these stand-in prototypes at call time, replicating
-// node's error dispatch (lib/internal/http2/core.js) when a stub returns a
-// code. With nothing stubbed on the prototypes every wrapper falls through to
-// the real implementation.
+// internalBinding("http2"): Bun has no native handle layer, so wrap the real node:http2 entry points
+// (request/respond/info/pushPromise) to consult stand-in prototypes tests stub to inject nghttp2 codes.
+// Unstubbed wrappers fall through. https://github.com/nodejs/node/blob/main/lib/internal/http2/core.js
 function getHttp2Binding() {
   if (cachedHttp2Binding !== undefined) return cachedHttp2Binding;
   const http2 = require("node:http2");
@@ -553,11 +534,9 @@ function internalBinding(name: string) {
     case "quic":
       return require("internal/quic/binding");
     case "uv": {
-      // process.binding("uv") carries libuv's own codes on every platform
-      // (including Windows' synthetic ones), same as node's uv binding —
-      // but not getErrorMessage, which node's binding also exposes. Derive
-      // it from the same native uv_e table (util.getSystemErrorMap) so the
-      // messages can never diverge. Cached: node returns a stable object.
+      // process.binding("uv") has libuv's codes but not getErrorMessage; derive it from the same
+      // native uv_e table (util.getSystemErrorMap). Cached: node returns a stable object.
+      // https://github.com/nodejs/node/blob/main/src/uv.cc
       if (cachedUvBinding === undefined) {
         const errmap: Map<number, [string, string]> = require("node:util").getSystemErrorMap();
         cachedUvBinding = {

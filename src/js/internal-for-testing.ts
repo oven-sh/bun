@@ -311,9 +311,8 @@ function assignFunctionName(name, fn, descriptor = nodeKEmptyObject) {
   });
 }
 
-// Ported from node lib/internal/util.js pendingDeprecate(). Bun tracks
-// --pending-deprecation natively and never surfaces it to JS, so the emitter
-// here is a no-op; the wrapper still has to preserve `length` like node's.
+// Port of node's pendingDeprecate(); Bun never surfaces --pending-deprecation to JS,
+// so the emitter is a no-op but `length` is preserved.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util.js#L204
 function nodePendingDeprecate(fn) {
   function deprecated(...args) {

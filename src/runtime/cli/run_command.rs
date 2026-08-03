@@ -1540,19 +1540,12 @@ impl Run {
             Err(err) => entry_point_load_failed(vm, &err.into()),
         }
 
-        // `initializePermission` in Node's pre_execution.js emits these via
-        // process.emitWarning, whose nextTick fires only after the main
-        // module's synchronous body — so a `process.on('warning')` listener
-        // registered at the top of the entry script observes them. Bun's
-        // module load drains tick queues, so emitting before the load (the
-        // obvious spot) fires too early for such listeners.
+        // Node's `initializePermission` emits via process.emitWarning after the main module's
+        // sync body; Bun's load drains ticks, so emitting before the load would fire too early.
         crate::permission::emit_startup_warnings(vm.global());
         if crate::permission::is_enabled() {
-            // Drain the queued warning ticks even when the script scheduled
-            // no other work (the run loop below only spins while the event
-            // loop is alive).
-            // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
-            // accessed here.
+            // Drain queued warning ticks even when no other work was scheduled.
+            // SAFETY: `event_loop` is a self-pointer into this VM; uniquely accessed here.
             vm.event_loop_ref().tick();
         }
 
@@ -1643,10 +1636,8 @@ impl Run {
                         if let Some(promise) = result.as_any_promise() {
                             match promise.status() {
                                 PromiseStatus::Pending => {
-                                    // C-ABI shims are emitted by
-                                    // `generate-host-exports.ts` into
-                                    // `crate::generated_host_exports` under their
-                                    // link name (`Bun__on…EntryPointResult`).
+                                    // C-ABI shims emitted by generate-host-exports.ts into
+                                    // `crate::generated_host_exports` (Bun__on…EntryPointResult).
                                     result.then2(
                                     vm.global(),
                                     JSValue::UNDEFINED,
@@ -3036,11 +3027,8 @@ impl RunCommand {
         Self::boot(ctx, entry, None)
     }
 
-    /// `--check` / `-c` (Node.js compatibility): read the entry point (or
-    /// stdin), then boot the VM with a no-op eval entry so `--require` /
-    /// `--preload` modules still execute the way they do under `node --check`.
-    /// `Run::start` performs the actual syntax check against the stored source
-    /// instead of executing anything user-provided.
+    /// `--check` / `-c`: read the entry point (or stdin), boot with a no-op eval entry so
+    /// `--require`/`--preload` still run like `node --check`; `Run::start` does the check.
     pub fn exec_check(ctx: &mut ContextData) -> crate::Result<()> {
         // `ctx.args.entry_points` is the positional list with the leading
         // subcommand keyword ("run") already stripped.
@@ -3250,10 +3238,8 @@ impl CheckModuleType {
     }
 }
 
-/// `--check` target: (source bytes, display name shown in errors, module type).
-/// Set once during CLI startup in `exec_check` before `boot()`, read in
-/// `Run::start` after the (no-op) entry evaluates. CLI-process state, not
-/// per-VM state: `--check` only ever applies to the single CLI entry point.
+/// `--check` target: (source bytes, display name, module type). Set once in `exec_check`
+/// before `boot()`, read in `Run::start`. CLI-process state, not per-VM.
 static CHECK_SYNTAX_TARGET: std::sync::OnceLock<(Box<[u8]>, Box<[u8]>, CheckModuleType)> =
     std::sync::OnceLock::new();
 

@@ -116,9 +116,7 @@ impl CachedStructure {
             // C++ copies each name into an `Identifier`; the stack buffer
             // outlives the call and its atoms are released right after.
             // SAFETY: `owner` is a cell; `ids` is a valid initialized buffer.
-            let structure = unsafe {
-                JSObject::create_structure(global_object, owner, ids.len() as u32, ids.as_mut_ptr())
-            };
+            let structure = unsafe { JSObject::create_structure(global_object, owner, ids) };
             // SAFETY: initialized above; not read again.
             unsafe { core::ptr::drop_in_place(ids) };
             self.set(global_object, Some(structure), None);

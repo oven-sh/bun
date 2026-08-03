@@ -1,6 +1,8 @@
 use crate::webcore::Blob;
 use bun_core::Utf8Bytes;
-use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{
+    self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, Local, Scope,
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Hash algorithm abstraction
@@ -157,68 +159,68 @@ impl HashAlgorithm for Rapidhash {
 // `hash_wrap`.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[bun_jsc::host_fn]
-fn wyhash(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    hash_wrap::<Wyhash>(global, frame)
+#[bun_jsc::host_fn(scoped)]
+fn wyhash<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    hash_wrap::<Wyhash>(scope, frame)
 }
 
-#[bun_jsc::host_fn]
-fn adler32(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    hash_wrap::<Adler32>(global, frame)
+#[bun_jsc::host_fn(scoped)]
+fn adler32<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    hash_wrap::<Adler32>(scope, frame)
 }
 
 // phase-d: explicit export name — bare `#[host_fn]` defaults the C symbol to
 // the Rust ident (`crc32`), which collides with `node_zlib_binding::crc32`'s
 // shim. The shim ident (`__jsc_host_crc32`) is unchanged, so `create()` below
 // keeps resolving.
-#[bun_jsc::host_fn(export = "Bun__HashObject__crc32")]
-fn crc32(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    hash_wrap::<Crc32>(global, frame)
+#[bun_jsc::host_fn(export = "Bun__HashObject__crc32", scoped)]
+fn crc32<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    hash_wrap::<Crc32>(scope, frame)
 }
 
-#[bun_jsc::host_fn]
-fn city_hash32(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    hash_wrap::<CityHash32>(global, frame)
+#[bun_jsc::host_fn(scoped)]
+fn city_hash32<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    hash_wrap::<CityHash32>(scope, frame)
 }
 
-#[bun_jsc::host_fn]
-fn city_hash64(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    hash_wrap::<CityHash64>(global, frame)
+#[bun_jsc::host_fn(scoped)]
+fn city_hash64<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    hash_wrap::<CityHash64>(scope, frame)
 }
 
-#[bun_jsc::host_fn]
-fn xx_hash32(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    hash_wrap::<XxHash32>(global, frame)
+#[bun_jsc::host_fn(scoped)]
+fn xx_hash32<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    hash_wrap::<XxHash32>(scope, frame)
 }
 
-#[bun_jsc::host_fn]
-fn xx_hash64(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    hash_wrap::<XxHash64>(global, frame)
+#[bun_jsc::host_fn(scoped)]
+fn xx_hash64<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    hash_wrap::<XxHash64>(scope, frame)
 }
 
-#[bun_jsc::host_fn]
-fn xx_hash3(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    hash_wrap::<XxHash3>(global, frame)
+#[bun_jsc::host_fn(scoped)]
+fn xx_hash3<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    hash_wrap::<XxHash3>(scope, frame)
 }
 
-#[bun_jsc::host_fn]
-fn murmur32v2(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    hash_wrap::<Murmur32v2>(global, frame)
+#[bun_jsc::host_fn(scoped)]
+fn murmur32v2<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    hash_wrap::<Murmur32v2>(scope, frame)
 }
 
-#[bun_jsc::host_fn]
-fn murmur32v3(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    hash_wrap::<Murmur32v3>(global, frame)
+#[bun_jsc::host_fn(scoped)]
+fn murmur32v3<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    hash_wrap::<Murmur32v3>(scope, frame)
 }
 
-#[bun_jsc::host_fn]
-fn murmur64v2(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    hash_wrap::<Murmur64v2>(global, frame)
+#[bun_jsc::host_fn(scoped)]
+fn murmur64v2<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    hash_wrap::<Murmur64v2>(scope, frame)
 }
 
-#[bun_jsc::host_fn]
-fn rapidhash(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    hash_wrap::<Rapidhash>(global, frame)
+#[bun_jsc::host_fn(scoped)]
+fn rapidhash<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    hash_wrap::<Rapidhash>(scope, frame)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -244,16 +246,18 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     )
 }
 
-fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // SAFETY: `bun_vm()` never returns null for a Bun-owned global;
-    // ArgumentsSlice borrows it for the call.
-    let mut args = jsc::ArgumentsSlice::init(global.bun_vm(), frame.arguments());
+fn hash_wrap<'s, H: HashAlgorithm>(
+    scope: &mut Scope<'s>,
+    frame: &CallFrame,
+) -> JsResult<Local<'s>> {
+    let args = frame.scoped_args(scope);
+    let global = scope.unscoped_global();
 
     let mut input: &[u8] = b"";
     let input_slice: Utf8Bytes;
     // Hoisted so `array_buffer` outlives the borrow stored in `input`.
     let array_buffer;
-    if let Some(arg) = args.next_eat() {
+    if let Some(&arg) = args.first() {
         if let Some(blob) = arg.as_class_ref::<Blob>() {
             // TODO: files
             input = blob.shared_view();
@@ -273,7 +277,7 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
                 | jsc::JSType::BigInt64Array
                 | jsc::JSType::BigUint64Array
                 | jsc::JSType::DataView => {
-                    array_buffer = match arg.as_array_buffer(global) {
+                    array_buffer = match arg.array_buffer_bytes(scope) {
                         Some(ab) => ab,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -281,10 +285,10 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
                             )));
                         }
                     };
-                    input = array_buffer.byte_slice();
+                    input = &array_buffer;
                 }
                 _ => {
-                    input_slice = arg.to_utf8(global)?;
+                    input_slice = arg.to_utf8(scope)?;
                     input = input_slice.slice();
                 }
             }
@@ -295,12 +299,12 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
     // into `HashAlgorithm::hash` per-impl above; here we always read an
     // optional seed and pass it.
     let mut seed: u64 = 0;
-    if let Some(arg) = args.next_eat() {
+    if let Some(&arg) = args.get(1) {
         if arg.is_number() || arg.is_big_int() {
             seed = arg.to_uint64_no_truncate();
         }
     }
 
     let value = H::hash(seed, input);
-    value.to_js(global)
+    Ok(scope.local(value.to_js(global)?))
 }

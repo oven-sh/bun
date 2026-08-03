@@ -748,10 +748,10 @@ impl Response {
             writer.write_str("\n")?;
 
             formatter.reset_line();
-            // SAFETY: R-2 `JsCell` escape hatch — `Body::write_format` takes
-            // `&mut self`; single-JS-thread invariant.
-            unsafe { self.body.get_mut() }
-                .write_format::<F, W, ENABLE_ANSI_COLORS>(&mut *formatter, writer)?;
+            // `Body::write_format` never re-enters this cell.
+            self.body.with_mut(|body| {
+                body.write_format::<F, W, ENABLE_ANSI_COLORS>(&mut *formatter, writer)
+            })?;
         }
         writer.write_str("\n")?;
         formatter.write_indent(writer)?;
@@ -823,7 +823,7 @@ impl Response {
             // - `url` — assignment drops the old value (WTF deref).
             // - `JsRef` — assignment drops the `Strong` arm (block slot released).
             (*this).init.set(Init::default());
-            (*this).body.get_mut().reset();
+            (*this).body.with_mut(|b| b.reset());
             (*this).url.set(BunString::EMPTY);
             (*this).js_ref.set(JsRef::empty());
             (*this).abort_listener.set(None);

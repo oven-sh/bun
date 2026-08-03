@@ -32,7 +32,7 @@ use core::cmp::Ordering;
 use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 use bun_core::{String as BunString, ZStr};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, Local, Scope, StringJsc as _};
 use bun_threading::{Guarded, Mutex};
 
 /// `(serialize_nonce, address)` of `BlockList` instances currently embedded in
@@ -130,22 +130,28 @@ impl BlockList {
         Ok(JSValue::from(value.as_::<Self>().is_some()))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn add_address(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn add_address<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [address_js, mut family_js] = frame.arguments_as_array::<2>();
+    ) -> JsResult<Local<'s>> {
+        let [address_js, mut family_js] = frame.scoped_arguments::<2>(scope).ptr;
+        let global = scope.unscoped_global();
         if family_js.is_undefined() {
-            family_js = BunString::static_("ipv4").to_js(global)?;
+            family_js = scope.string(&BunString::static_("ipv4"))?;
         }
         let address = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
             sa._addr
         } else {
-            validators::validate_string(global, address_js, format_args!("address"))?;
-            validators::validate_string(global, family_js, format_args!("family"))?;
-            SocketAddress::init_from_addr_family(global, address_js, family_js)?._addr
+            validators::validate_string(global, address_js.unscoped(), format_args!("address"))?;
+            validators::validate_string(global, family_js.unscoped(), format_args!("family"))?;
+            SocketAddress::init_from_addr_family(
+                global,
+                address_js.unscoped(),
+                family_js.unscoped(),
+            )?
+            ._addr
         };
 
         let _guard = this.mutex.lock_guard();
@@ -154,38 +160,41 @@ impl BlockList {
             u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
         );
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn add_range(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn add_range<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [start_js, end_js, mut family_js] = frame.arguments_as_array::<3>();
+    ) -> JsResult<Local<'s>> {
+        let [start_js, end_js, mut family_js] = frame.scoped_arguments::<3>(scope).ptr;
+        let global = scope.unscoped_global();
         if family_js.is_undefined() {
-            family_js = BunString::static_("ipv4").to_js(global)?;
+            family_js = scope.string(&BunString::static_("ipv4"))?;
         }
         let start = if let Some(sa) = start_js.as_class_ref::<SocketAddress>() {
             sa._addr
         } else {
-            validators::validate_string(global, start_js, format_args!("start"))?;
-            validators::validate_string(global, family_js, format_args!("family"))?;
-            SocketAddress::init_from_addr_family(global, start_js, family_js)?._addr
+            validators::validate_string(global, start_js.unscoped(), format_args!("start"))?;
+            validators::validate_string(global, family_js.unscoped(), format_args!("family"))?;
+            SocketAddress::init_from_addr_family(global, start_js.unscoped(), family_js.unscoped())?
+                ._addr
         };
         let end = if let Some(sa) = end_js.as_class_ref::<SocketAddress>() {
             sa._addr
         } else {
-            validators::validate_string(global, end_js, format_args!("end"))?;
-            validators::validate_string(global, family_js, format_args!("family"))?;
-            SocketAddress::init_from_addr_family(global, end_js, family_js)?._addr
+            validators::validate_string(global, end_js.unscoped(), format_args!("end"))?;
+            validators::validate_string(global, family_js.unscoped(), format_args!("family"))?;
+            SocketAddress::init_from_addr_family(global, end_js.unscoped(), family_js.unscoped())?
+                ._addr
         };
         if let Some(ord) = compare(&start, &end) {
             if ord == Ordering::Greater {
                 return Err(global.throw_invalid_argument_value_custom(
                     b"start",
-                    start_js,
+                    start_js.unscoped(),
                     b"must come before end",
                 ));
             }
@@ -197,32 +206,38 @@ impl BlockList {
             u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
         );
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn add_subnet(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn add_subnet<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [network_js, prefix_js, mut family_js] = frame.arguments_as_array::<3>();
+    ) -> JsResult<Local<'s>> {
+        let [network_js, prefix_js, mut family_js] = frame.scoped_arguments::<3>(scope).ptr;
+        let global = scope.unscoped_global();
         if family_js.is_undefined() {
-            family_js = BunString::static_("ipv4").to_js(global)?;
+            family_js = scope.string(&BunString::static_("ipv4"))?;
         }
         let network = if let Some(sa) = network_js.as_class_ref::<SocketAddress>() {
             sa._addr
         } else {
-            validators::validate_string(global, network_js, format_args!("network"))?;
-            validators::validate_string(global, family_js, format_args!("family"))?;
-            SocketAddress::init_from_addr_family(global, network_js, family_js)?._addr
+            validators::validate_string(global, network_js.unscoped(), format_args!("network"))?;
+            validators::validate_string(global, family_js.unscoped(), format_args!("family"))?;
+            SocketAddress::init_from_addr_family(
+                global,
+                network_js.unscoped(),
+                family_js.unscoped(),
+            )?
+            ._addr
         };
         let mut prefix: u8 = 0;
         let fam = network.family_raw();
         if fam == AF_INET as inet::sa_family_t {
             prefix = u8::try_from(validators::validate_int32(
                 global,
-                prefix_js,
+                prefix_js.unscoped(),
                 format_args!("prefix"),
                 Some(0),
                 Some(32),
@@ -231,7 +246,7 @@ impl BlockList {
         } else if fam == AF_INET6 as inet::sa_family_t {
             prefix = u8::try_from(validators::validate_int32(
                 global,
-                prefix_js,
+                prefix_js.unscoped(),
                 format_args!("prefix"),
                 Some(0),
                 Some(128),
@@ -245,38 +260,43 @@ impl BlockList {
             u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
         );
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn check(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn check<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [address_js, mut family_js] = frame.arguments_as_array::<2>();
+    ) -> JsResult<Local<'s>> {
+        let [address_js, mut family_js] = frame.scoped_arguments::<2>(scope).ptr;
+        let global = scope.unscoped_global();
         if family_js.is_undefined() {
-            family_js = BunString::static_("ipv4").to_js(global)?;
+            family_js = scope.string(&BunString::static_("ipv4"))?;
         }
         let address_val;
         let address: &sockaddr = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
             &sa._addr
         } else {
-            validators::validate_string(global, address_js, format_args!("address"))?;
-            validators::validate_string(global, family_js, format_args!("family"))?;
-            match SocketAddress::init_from_addr_family(global, address_js, family_js) {
+            validators::validate_string(global, address_js.unscoped(), format_args!("address"))?;
+            validators::validate_string(global, family_js.unscoped(), format_args!("family"))?;
+            match SocketAddress::init_from_addr_family(
+                global,
+                address_js.unscoped(),
+                family_js.unscoped(),
+            ) {
                 Ok(sa) => {
                     address_val = sa._addr;
                     &address_val
                 }
                 Err(err) => {
                     debug_assert!(err == bun_jsc::JsError::Thrown);
-                    global.clear_exception();
-                    return Ok(JSValue::FALSE);
+                    scope.clear_exception();
+                    return Ok(scope.local(JSValue::FALSE));
                 }
             }
         };
-        Ok(JSValue::js_boolean(this.check_sockaddr(address)))
+        Ok(scope.boolean(this.check_sockaddr(address)))
     }
 
     pub(crate) fn check_sockaddr(&self, address: &sockaddr) -> bool {
@@ -362,12 +382,13 @@ impl BlockList {
         false
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn rules(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn rules<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         let _guard = this.mutex.lock_guard();
         let rules = this.da_rules.get();
         // GC must be able to visit
-        let array = JSValue::create_empty_array(global, rules.len())?;
+        let array = scope.new_array(rules.len())?;
 
         for (i, rule) in rules.iter().enumerate() {
             let s = match rule {
@@ -399,7 +420,9 @@ impl BlockList {
                     ))
                 }
             };
-            array.put_index(global, i as u32, s.into_js(global)?)?;
+            array
+                .unscoped()
+                .put_index(global, i as u32, s.into_js(global)?)?;
         }
         Ok(array)
     }

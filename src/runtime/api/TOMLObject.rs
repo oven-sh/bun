@@ -2,7 +2,8 @@ use bun_collections::HashMap;
 use bun_core::StackCheck;
 use bun_core::String as BunString;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, TemporalType, wtf,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, Local, Scope, TemporalType,
+    wtf,
 };
 use bun_parsers::toml::TOML;
 
@@ -16,9 +17,10 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     )
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    super::with_text_format_source(
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn parse<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
+    let v = super::with_text_format_source(
         global,
         frame,
         b"input.toml",
@@ -50,34 +52,36 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 
             super::expr_to_js(root, global)
         },
-    )
+    )?;
+    Ok(scope.local(v))
 }
 
-#[bun_jsc::host_fn]
-fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+fn stringify<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     // `space` is accepted for signature parity with YAML/JSON5 but ignored:
     // TOML output is line-oriented and has no nesting indentation.
-    let [value, replacer, _space] = frame.arguments_as_array::<3>();
+    let [value, replacer, _space] = frame.scoped_arguments::<3>(scope).ptr;
 
     value.ensure_still_alive();
 
     if value.is_undefined() || value.is_symbol() || value.is_function() {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(scope.undefined());
     }
 
     if !replacer.is_undefined_or_null() {
-        return Err(global.throw(format_args!(
+        return Err(scope.throw(format_args!(
             "TOML.stringify does not support the replacer argument"
         )));
     }
 
-    let unwrapped = value.unwrap_boxed_primitive(global)?;
+    let unwrapped = value.unscoped().unwrap_boxed_primitive(global)?;
     if !unwrapped.is_object()
         || unwrapped.is_array()
         || unwrapped.is_date()
         || temporal_object_type(unwrapped).is_some()
     {
-        return Err(global.throw(format_args!(
+        return Err(scope.throw(format_args!(
             "TOML.stringify expects an object at the top level (a TOML document is a table)"
         )));
     }
@@ -96,7 +100,8 @@ fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         };
     }
 
-    stringifier.builder.to_string(global)
+    let v = stringifier.builder.to_string(global)?;
+    Ok(scope.local(v))
 }
 
 #[derive(Debug)]

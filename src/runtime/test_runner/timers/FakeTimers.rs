@@ -4,7 +4,7 @@ use bun_threading::RwLock;
 
 use bun_core::Environment;
 use bun_core::Timespec;
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult, Local, Scope};
 use crate::api::cron::CronJob;
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::timer::{
@@ -350,28 +350,28 @@ fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) -> JsResult<()>
     Ok(())
 }
 
-#[bun_jsc::host_fn]
-fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+fn use_fake_timers<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     // SAFETY: FFI call into C++ JSMock
     let mut js_now = JSMock__getCurrentUnixTimeMs();
 
     // Check if options object was provided
-    let args = frame.arguments_as_array::<1>();
-    if args.len() > 0 && !args[0].is_undefined() {
-        let options_value = args[0];
+    let options_value = frame.scoped_argument(scope, 0);
+    if !options_value.is_undefined() {
         if options_value.is_string() {
             // Jest 26 compat: useFakeTimers("modern" | "legacy") is a no-op.
         } else if !options_value.is_object() {
-            return Err(global.throw_invalid_arguments(format_args!(
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "useFakeTimers() expects an options object"
             )));
-        } else if let Some(now) = options_value.get(global, "now")? {
+        } else if let Some(now) = options_value.get(scope, "now")? {
             if now.is_number() {
                 js_now = now.as_number();
             } else if now.is_date() {
                 js_now = now.get_unix_timestamp();
             } else {
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(scope.throw_invalid_arguments(format_args!(
                     "'now' must be a number or Date"
                 )));
             }
@@ -391,11 +391,12 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     // This is used by testing-library/react to detect if jest.advanceTimersByTime should be called.
     set_fake_timer_marker(global, true)?;
 
-    Ok(frame.this())
+    Ok(frame.scoped_this(scope))
 }
 
-#[bun_jsc::host_fn]
-fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+fn use_real_timers<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     // SAFETY: per-thread `timer::All`; the borrow ends before `release`.
     let cleared = unsafe { (*timer_all()).fake_timers.deactivate(global) };
     cleared.release(global.bun_vm_ptr());
@@ -403,37 +404,42 @@ fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     // Remove the setTimeout.clock marker when switching back to real timers.
     set_fake_timer_marker(global, false)?;
 
-    Ok(frame.this())
+    Ok(frame.scoped_this(scope))
 }
 
-#[bun_jsc::host_fn]
-fn advance_timers_to_next_timer(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+fn advance_timers_to_next_timer<'s>(
+    scope: &mut Scope<'s>,
+    frame: &CallFrame,
+) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     error_unless_fake_timers(global)?;
 
     FakeTimers::execute_next(global)?;
 
-    Ok(frame.this())
+    Ok(frame.scoped_this(scope))
 }
 
-#[bun_jsc::host_fn]
-fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+fn advance_timers_by_time<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     error_unless_fake_timers(global)?;
 
-    let arg = frame.arguments_as_array::<1>()[0];
+    let arg = frame.scoped_argument(scope, 0);
     if !arg.is_number() {
-        return Err(global.throw_invalid_arguments(format_args!(
+        return Err(scope.throw_invalid_arguments(format_args!(
             "advanceTimersByTime() expects a number of milliseconds"
         )));
     }
     let Some(current) = CURRENT_TIME.get_timespec_now() else {
-        return Err(global.throw_invalid_arguments(format_args!(
+        return Err(scope.throw_invalid_arguments(format_args!(
             "Fake timers not initialized. Initialize with useFakeTimers() first."
         )));
     };
     let arg_number = arg.as_number();
     let max_advance = u32::MAX;
     if arg_number.is_nan() || arg_number < 0.0 || arg_number > max_advance as f64 {
-        return Err(global.throw_invalid_arguments(format_args!(
+        return Err(scope.throw_invalid_arguments(format_args!(
             "advanceTimersByTime() ms is out of range. It must be >= 0 and <= {}. Received {:.0}",
             max_advance, arg_number
         )));
@@ -448,54 +454,58 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     CURRENT_TIME.set(global, &target, None);
     advanced?;
 
-    Ok(frame.this())
+    Ok(frame.scoped_this(scope))
 }
 
-#[bun_jsc::host_fn]
-fn run_only_pending_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+fn run_only_pending_timers<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     error_unless_fake_timers(global)?;
 
     FakeTimers::execute_only_pending_timers(global)?;
 
-    Ok(frame.this())
+    Ok(frame.scoped_this(scope))
 }
 
-#[bun_jsc::host_fn]
-fn run_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+fn run_all_timers<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     error_unless_fake_timers(global)?;
 
     FakeTimers::execute_all_timers(global)?;
 
-    Ok(frame.this())
+    Ok(frame.scoped_this(scope))
 }
 
-#[bun_jsc::host_fn]
-fn get_timer_count(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+fn get_timer_count<'s>(scope: &mut Scope<'s>, _frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     error_unless_fake_timers(global)?;
 
     // SAFETY: per-thread `timer::All`, live for the VM lifetime.
     let count = unsafe { (*timer_all()).fake_timers.timers.count() };
 
-    Ok(JSValue::js_number(count as f64))
+    Ok(scope.number(count as f64))
 }
 
-#[bun_jsc::host_fn]
-fn clear_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+fn clear_all_timers<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     error_unless_fake_timers(global)?;
 
     // SAFETY: per-thread `timer::All`; the borrow ends before `release`.
     let cleared = unsafe { (*timer_all()).fake_timers.clear() };
     cleared.release(global.bun_vm_ptr());
 
-    Ok(frame.this())
+    Ok(frame.scoped_this(scope))
 }
 
-#[bun_jsc::host_fn]
-fn is_fake_timers(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+fn is_fake_timers<'s>(scope: &mut Scope<'s>, _frame: &CallFrame) -> JsResult<Local<'s>> {
     // SAFETY: per-thread `timer::All`, live for the VM lifetime.
     let is_active = unsafe { (*timer_all()).fake_timers.is_active() };
 
-    Ok(JSValue::from(is_active))
+    Ok(scope.boolean(is_active))
 }
 
 // `#[bun_jsc::host_fn]` emits a `__jsc_host_{name}` shim with the raw

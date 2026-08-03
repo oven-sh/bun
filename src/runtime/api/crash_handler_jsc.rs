@@ -6,7 +6,7 @@ use bun_collections::BoundedArray;
 use bun_core::String as BunString;
 use bun_core::{Environment, Global};
 use bun_crash_handler as crash_handler;
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, StringJsc};
+use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, Local, Scope, StringJsc};
 
 pub(crate) mod js_bindings {
     use super::*;
@@ -45,14 +45,14 @@ pub(crate) mod js_bindings {
         obj
     }
 
-    #[bun_jsc::host_fn]
-    fn js_get_mach_o_image_zero_offset(
-        _global: &JSGlobalObject,
+    #[bun_jsc::host_fn(scoped)]
+    fn js_get_mach_o_image_zero_offset<'s>(
+        scope: &mut Scope<'s>,
         _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         #[cfg(not(target_os = "macos"))]
         {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
         #[cfg(target_os = "macos")]
         {
@@ -62,17 +62,17 @@ pub(crate) mod js_bindings {
             }
             let header = _dyld_get_image_header(0);
             if header.is_null() {
-                return Ok(JSValue::UNDEFINED);
+                return Ok(scope.undefined());
             }
             let base_address = header as usize;
             let vmaddr_slide = _dyld_get_image_vmaddr_slide(0) as usize;
 
-            Ok(JSValue::js_number((base_address - vmaddr_slide) as f64))
+            Ok(scope.number((base_address - vmaddr_slide) as f64))
         }
     }
 
-    #[bun_jsc::host_fn]
-    fn js_segfault(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(scoped)]
+    fn js_segfault<'s>(scope: &mut Scope<'s>, _frame: &CallFrame) -> JsResult<Local<'s>> {
         crash_handler::suppress_core_dumps_if_necessary();
         // Under ASAN the SIGSEGV handler is intentionally not installed
         // (`reset_on_posix()` early-returns so ASAN's own DEADLYSIGNAL diagnostic
@@ -94,14 +94,14 @@ pub(crate) mod js_bindings {
             core::ptr::write_unaligned(ptr, 0xDEADBEEF);
             core::hint::black_box(ptr);
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
     /// Triggers a segfault with the fault PC inside a system DLL rather than
     /// inside bun.exe. Exercises the Windows fault-context unwinder: the walk
     /// must recover the bun frames that called into the DLL.
-    #[bun_jsc::host_fn]
-    fn js_segfault_in_dll(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(scoped)]
+    fn js_segfault_in_dll<'s>(scope: &mut Scope<'s>, _frame: &CallFrame) -> JsResult<Local<'s>> {
         crash_handler::suppress_core_dumps_if_necessary();
         #[cfg(windows)]
         {
@@ -120,14 +120,14 @@ pub(crate) mod js_bindings {
             // No equivalent on POSIX (the fault-context walk is fp-based and
             // doesn't care which image the fault is in); fall through to the
             // in-bun segfault so the test hook is defined everywhere.
-            return js_segfault(_global, _frame);
+            return __scoped_js_segfault(scope, _frame);
         }
         #[allow(unreachable_code)]
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn]
-    fn js_panic(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(scoped)]
+    fn js_panic<'s>(_scope: &mut Scope<'s>, _frame: &CallFrame) -> JsResult<Local<'s>> {
         crash_handler::suppress_core_dumps_if_necessary();
         crash_handler::panic_impl(b"invoked crashByPanic() handler", None);
     }
@@ -197,69 +197,66 @@ pub(crate) mod js_bindings {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn]
-    fn js_root_error(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(scoped)]
+    fn js_root_error<'s>(_scope: &mut Scope<'s>, _frame: &CallFrame) -> JsResult<Local<'s>> {
         crash_handler::handle_root_error("Unexpected");
     }
 
-    #[bun_jsc::host_fn]
-    fn js_out_of_memory(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(scoped)]
+    fn js_out_of_memory<'s>(_scope: &mut Scope<'s>, _frame: &CallFrame) -> JsResult<Local<'s>> {
         crash_handler::suppress_core_dumps_if_necessary();
         bun_core::out_of_memory();
     }
 
-    #[bun_jsc::host_fn]
-    fn js_raise_ignoring_panic_handler(
-        _global: &JSGlobalObject,
+    #[bun_jsc::host_fn(scoped)]
+    fn js_raise_ignoring_panic_handler<'s>(
+        _scope: &mut Scope<'s>,
         _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         crash_handler::suppress_core_dumps_if_necessary();
         Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGSEGV);
     }
 
-    #[bun_jsc::host_fn]
-    fn js_get_features_as_vlq(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(scoped)]
+    fn js_get_features_as_vlq<'s>(
+        scope: &mut Scope<'s>,
+        _frame: &CallFrame,
+    ) -> JsResult<Local<'s>> {
         let bits = analytics::packed_features();
         let mut buf = BoundedArray::<u8, 16>::default();
         // PackedFeatures is repr(transparent) u64; `.bits()` exposes the raw value.
         crash_handler::write_u64_as_two_vlqs(buf.writer(), bits.bits() as usize)
             // there is definitely enough space in the bounded array
             .expect("unreachable");
-        BunString::clone_latin1(buf.slice()).into_js(global)
+        let str = BunString::clone_latin1(buf.slice());
+        scope.transfer_string(str)
     }
 
-    #[bun_jsc::host_fn]
-    fn js_get_feature_data(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        let obj = JSValue::create_empty_object(global, 5);
+    #[bun_jsc::host_fn(scoped)]
+    fn js_get_feature_data<'s>(scope: &mut Scope<'s>, _frame: &CallFrame) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
+        let obj = scope.local(JSValue::create_empty_object(global, 5));
         let list = analytics::PACKED_FEATURES_LIST;
-        let array = JSValue::create_array_from_iter(global, list.iter(), |feature| {
-            BunString::static_(feature).to_js(global)
-        })?;
-        obj.put(global, "features", array);
-        obj.put(
+        let array = scope.local(JSValue::create_array_from_iter(
             global,
-            "version",
-            BunString::static_(Global::package_json_version).to_js(global)?,
-        );
-        obj.put(
-            global,
-            "is_canary",
-            JSValue::js_boolean(Environment::IS_CANARY),
-        );
+            list.iter(),
+            |feature| BunString::static_(feature).to_js(global),
+        )?);
+        obj.put(scope, "features", array);
+        let version = scope.string(&BunString::static_(Global::package_json_version))?;
+        obj.put(scope, "version", version);
+        let is_canary = scope.boolean(Environment::IS_CANARY);
+        obj.put(scope, "is_canary", is_canary);
 
         // This is the source of truth for the git sha.
         // Not the github ref or the git tag.
-        obj.put(
-            global,
-            "revision",
-            BunString::static_(Environment::GIT_SHA).to_js(global)?,
-        );
+        let revision = scope.string(&BunString::static_(Environment::GIT_SHA))?;
+        obj.put(scope, "revision", revision);
 
-        obj.put(
-            global,
-            "generated_at",
-            JSValue::js_number_from_int64(bun_core::time::milli_timestamp().max(0)),
-        );
+        let generated_at = scope.local(JSValue::js_number_from_int64(
+            bun_core::time::milli_timestamp().max(0),
+        ));
+        obj.put(scope, "generated_at", generated_at);
         Ok(obj)
     }
 }

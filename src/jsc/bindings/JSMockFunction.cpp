@@ -1004,7 +1004,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMockFunctionGetter_protoImpl, (JSC::JSGlobalObject * 
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSMockFunction__getCalls(JSC::JSGlobalObject* globalThis, EncodedJSValue encodedValue)
+extern "C" [[ZIG_EXPORT(zero_is_throw, no_user_js)]] JSC::EncodedJSValue JSMockFunction__getCalls(JSC::JSGlobalObject* globalThis, EncodedJSValue encodedValue)
 {
     auto scope = DECLARE_THROW_SCOPE(globalThis->vm());
     JSValue value = JSValue::decode(encodedValue);
@@ -1013,7 +1013,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSMockFunction__get
     }
     return encodedJSUndefined();
 }
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSMockFunction__getReturns(JSC::JSGlobalObject* globalThis, EncodedJSValue encodedValue)
+extern "C" [[ZIG_EXPORT(zero_is_throw, no_user_js)]] JSC::EncodedJSValue JSMockFunction__getReturns(JSC::JSGlobalObject* globalThis, EncodedJSValue encodedValue)
 {
     auto scope = DECLARE_THROW_SCOPE(globalThis->vm());
     JSValue value = JSValue::decode(encodedValue);

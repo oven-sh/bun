@@ -12,8 +12,8 @@ use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional,
-    WorkPoolTask,
+    self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, Local, Scope,
+    StrongOptional, WorkPoolTask,
 };
 use bun_threading::work_pool::WorkPool;
 use bun_zlib;
@@ -98,8 +98,9 @@ impl CountedKeepAlive {
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn crc32<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global_this = scope.unscoped_global();
     let arguments = callframe.arguments_as_array::<2>();
 
     let data_view;
@@ -120,8 +121,7 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
         }
         let Some(buffer) = data.as_array_buffer(global_this) else {
             let ty_str = data.js_type_string(global_this);
-            return Err(global_this
-                .err(
+            return Err(scope.err(
                     ErrorCode::INVALID_ARG_TYPE,
                     format_args!(
                         "The \"data\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {}",
@@ -147,7 +147,7 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
         let max: u32 = u32::MAX;
 
         if valuef.floor() != valuef {
-            return Err(global_this
+            return Err(scope
                 .err(
                     ErrorCode::OUT_OF_RANGE,
                     format_args!(
@@ -158,8 +158,7 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
                 .throw());
         }
         if valuef < min as f64 || valuef > max as f64 {
-            return Err(global_this
-                .err(
+            return Err(scope.err(
                     ErrorCode::OUT_OF_RANGE,
                     format_args!(
                         "The value of \"{}\" is out of range. It must be >= {} and <= {}. Received {}",
@@ -172,7 +171,7 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     };
 
     let crc = bun_zlib::crc32_bytes(value, data.slice());
-    Ok(JSValue::js_number(f64::from(crc)))
+    Ok(scope.number(f64::from(crc)))
 }
 
 // ─── CompressionStream mixin trait ────────────────────────────────────────

@@ -8,7 +8,7 @@ use bstr::BStr;
 use bun_collections::VecExt;
 use bun_core::scoped_log;
 use bun_http::Method as HttpMethod;
-use bun_jsc::JsCell;
+use bun_jsc::{JsCell, Local, Scope};
 use bun_ptr::AsCtxPtr;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -1440,13 +1440,17 @@ impl NodeHTTPResponse {
     }
 }
 
-#[bun_jsc::host_fn(export = "Bun__NodeHTTPRequest__onResolve")]
-fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
+#[bun_jsc::host_fn(scoped, export = "Bun__NodeHTTPRequest__onResolve")]
+fn node_http_request_on_resolve<'s>(
+    scope: &mut Scope<'s>,
+    callframe: &CallFrame,
+) -> JsResult<Local<'s>> {
     scoped_log!(NodeHTTPResponse, "onResolve");
-    let arguments = callframe.arguments_as_array::<2>();
+    let global_object = scope.unscoped_global();
+    let arguments = callframe.scoped_arguments::<2>(scope);
     // arguments[1] is the JSNodeHTTPResponse cell from the resolve callback.
     // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
-    let this: &NodeHTTPResponse = arguments[1].as_class_ref::<NodeHTTPResponse>().unwrap();
+    let this: &NodeHTTPResponse = arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
     // `promise` non-empty is the ownership token for the server-handler ref;
     // `mark_request_as_done` may have already released it on abort.
     let had_promise = this.promise.with_mut(|p| {
@@ -1454,7 +1458,7 @@ fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &Call
         p.deinit();
         had
     });
-    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments[1]);
+    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1].unscoped());
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED) && !flags.contains(Flags::SOCKET_CLOSED) {
@@ -1480,16 +1484,20 @@ fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &Call
     if had_promise {
         this.deref();
     }
-    JSValue::UNDEFINED
+    Ok(scope.undefined())
 }
 
-#[bun_jsc::host_fn(export = "Bun__NodeHTTPRequest__onReject")]
-fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
-    let arguments = callframe.arguments_as_array::<2>();
-    let err = arguments[0];
+#[bun_jsc::host_fn(scoped, export = "Bun__NodeHTTPRequest__onReject")]
+fn node_http_request_on_reject<'s>(
+    scope: &mut Scope<'s>,
+    callframe: &CallFrame,
+) -> JsResult<Local<'s>> {
+    let global_object = scope.unscoped_global();
+    let arguments = callframe.scoped_arguments::<2>(scope);
+    let err = arguments.ptr[0];
     // arguments[1] is the JSNodeHTTPResponse cell from the reject callback.
     // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
-    let this: &NodeHTTPResponse = arguments[1].as_class_ref::<NodeHTTPResponse>().unwrap();
+    let this: &NodeHTTPResponse = arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
     // `promise` non-empty is the ownership token for the server-handler ref;
     // `mark_request_as_done` may have already released it on abort.
     let had_promise = this.promise.with_mut(|p| {
@@ -1497,7 +1505,7 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
         p.deinit();
         had
     });
-    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments[1]);
+    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1].unscoped());
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED)
@@ -1525,11 +1533,11 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
         this.on_request_complete();
     }
 
-    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err, true);
+    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err.unscoped(), true);
     if had_promise {
         this.deref();
     }
-    JSValue::UNDEFINED
+    Ok(scope.undefined())
 }
 
 impl NodeHTTPResponse {

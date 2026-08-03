@@ -2,7 +2,9 @@
 
 use bun_core::{self, declare_scope, scoped_log};
 use bun_core::{EncodedSlice, Utf8Bytes, strings};
-use bun_jsc::{AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::{
+    AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult, Local, Scope,
+};
 use bun_semver::{self, SlicedString};
 use core::ffi::c_void;
 
@@ -96,29 +98,33 @@ impl FormData {
     }
 }
 
-#[bun_jsc::host_fn(export = "FormData__jsFunctionFromMultipartData")]
-pub(crate) fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [input_value, boundary_value] = frame.arguments_as_array::<2>();
+#[bun_jsc::host_fn(export = "FormData__jsFunctionFromMultipartData", scoped)]
+pub(crate) fn from_multipart_data<'s>(
+    scope: &mut Scope<'s>,
+    frame: &CallFrame,
+) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
+    let [input_value, boundary_value] = frame.scoped_arguments::<2>(scope).ptr;
     let boundary_slice: Utf8Bytes;
 
     let mut encoding = Encoding::URLEncoded;
 
     if input_value.is_empty_or_undefined_or_null() {
-        return Err(global.throw_invalid_arguments(format_args!("input must not be empty")));
+        return Err(scope.throw_invalid_arguments(format_args!("input must not be empty")));
     }
 
     if !boundary_value.is_empty_or_undefined_or_null() {
-        if let Some(array_buffer) = boundary_value.as_array_buffer(global) {
-            if !array_buffer.byte_slice().is_empty() {
-                encoding = Encoding::Multipart(Box::from(array_buffer.byte_slice()));
+        if let Some(array_buffer) = boundary_value.array_buffer_bytes(scope) {
+            if !array_buffer.is_empty() {
+                encoding = Encoding::Multipart(Box::from(&*array_buffer));
             }
         } else if boundary_value.is_string() {
-            boundary_slice = boundary_value.to_utf8(global)?;
+            boundary_slice = boundary_value.to_utf8(scope)?;
             if !boundary_slice.slice().is_empty() {
                 encoding = Encoding::Multipart(Box::from(boundary_slice.slice()));
             }
         } else {
-            return Err(global.throw_invalid_arguments(format_args!(
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "boundary must be a string or ArrayBufferView"
             )));
         }
@@ -128,21 +134,21 @@ pub(crate) fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) ->
     let input_array_buffer;
     let input: &[u8];
 
-    if let Some(array_buffer) = input_value.as_array_buffer(global) {
+    if let Some(array_buffer) = input_value.array_buffer_bytes(scope) {
         input_array_buffer = array_buffer;
-        input = input_array_buffer.byte_slice();
+        input = &input_array_buffer;
     } else if input_value.is_string() {
-        input_slice = input_value.to_utf8(global)?;
+        input_slice = input_value.to_utf8(scope)?;
         input = input_slice.slice();
     } else if let Some(blob) = input_value.as_class_ref::<Blob>() {
         input = blob.shared_view();
     } else {
-        return Err(global
+        return Err(scope
             .throw_invalid_arguments(format_args!("input must be a string or ArrayBufferView")));
     }
 
     match FormData::to_js(global, input, &encoding) {
-        Ok(v) => Ok(v),
+        Ok(v) => Ok(scope.local(v)),
         Err(crate::Error::JSError) => Err(JsError::Thrown),
         Err(e) => Err(global.throw_error(e, "while parsing FormData")),
     }

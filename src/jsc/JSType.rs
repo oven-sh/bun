@@ -685,7 +685,7 @@ impl JSType {
         )
     }
 
-    pub(crate) fn to_typed_array_type(self) -> TypedArrayType {
+    pub fn to_typed_array_type(self) -> TypedArrayType {
         match self {
             JSType::Int8Array => TypedArrayType::TypeInt8,
             JSType::Int16Array => TypedArrayType::TypeInt16,

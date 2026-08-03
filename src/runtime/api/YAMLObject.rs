@@ -7,7 +7,7 @@ use bun_core::StackCheck;
 use bun_core::String as BunString;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
-    JsError, JsResult, MarkedArgumentBuffer, wtf,
+    JsError, JsResult, Local, MarkedArgumentBuffer, Scope, wtf,
 };
 use bun_parsers::yaml::{CyclicAliases, YAML, YamlParseError};
 
@@ -21,33 +21,35 @@ pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
     )
 }
 
-#[bun_jsc::host_fn]
-fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    let [value, replacer, space_value] = call_frame.arguments_as_array::<3>();
+#[bun_jsc::host_fn(scoped)]
+fn stringify<'s>(scope: &mut Scope<'s>, call_frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
+    let [value, replacer, space_value] = call_frame.scoped_arguments::<3>(scope).ptr;
 
     value.ensure_still_alive();
 
     if value.is_undefined() || value.is_symbol() || value.is_function() {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(scope.undefined());
     }
 
     if !replacer.is_undefined_or_null() {
-        return Err(global.throw(format_args!(
+        return Err(scope.throw(format_args!(
             "YAML.stringify does not support the replacer argument"
         )));
     }
 
-    let mut stringifier = Stringifier::init(global, space_value)?;
+    let mut stringifier = Stringifier::init(global, space_value.unscoped())?;
 
     stringifier
-        .find_anchors_and_aliases(global, value, ValueOrigin::Root)
+        .find_anchors_and_aliases(global, value.unscoped(), ValueOrigin::Root)
         .map_err(|err| err.to_js_error(global))?;
 
     stringifier
-        .stringify(global, value)
+        .stringify(global, value.unscoped())
         .map_err(|err| err.to_js_error(global))?;
 
-    stringifier.builder.to_string(global)
+    let v = stringifier.builder.to_string(global)?;
+    Ok(scope.local(v))
 }
 
 struct Stringifier {
@@ -1019,6 +1021,8 @@ fn is_inf_suffix(str: &BunString, i: usize) -> bool {
         || (a == 0x49 /* 'I' */ && b == 0x4e /* 'N' */ && c == 0x46/* 'F' */)
 }
 
+// Not `scoped`: `ParserCtx::run` signals errors by returning `Ok(JSValue::ZERO)`
+// with the exception already thrown, which `Local` cannot represent.
 #[bun_jsc::host_fn]
 pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     // `NullishInput::ToString` preserves YAML's coerce-undefined-to-"undefined" behavior.

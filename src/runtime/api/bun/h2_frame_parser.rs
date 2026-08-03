@@ -5500,10 +5500,9 @@ impl H2FrameParser {
         });
     }
 
-    /// Free streams whose legacy lifecycle finished (queued by `free_resources`). Only runs at
-    /// a quiescent point: no dispatch into JS on the stack (a native frame below such a
-    /// dispatch may still hold `&mut Stream`) and no in-progress receive() borrowing the
-    /// engine cell. Callers at other points simply leave the ids queued for the next one.
+    /// Free streams whose legacy lifecycle finished (queued by `free_resources`). Only runs
+    /// at a quiescent point — no JS dispatch on the stack and no in-progress receive()
+    /// borrowing the engine cell; otherwise ids stay queued for the next such point.
     fn drain_pending_engine_stream_closes(&self) {
         if self.dispatch_depth.get() != 0 || self.pending_engine_stream_closes.get().is_empty() {
             return;
@@ -5518,10 +5517,9 @@ impl H2FrameParser {
             for id in v.drain(..) {
                 engine.close_stream(id);
                 if let Some(stream) = self.streams.with_mut(|m| m.remove(&id)) {
-                    // SAFETY: stream is the heap::alloc'd *mut Stream owned by the map entry
-                    // just removed; free_resources ran when it was queued; the dispatch-depth
-                    // gate above proves no native frame still borrows it; ids never repeat
-                    // within a session, so this frees exactly once.
+                    // SAFETY: sole owner just removed from the map; free_resources already ran;
+                    // dispatch-depth gate above proves no native frame still borrows it; stream
+                    // ids never repeat in a session → frees exactly once.
                     unsafe {
                         drop(bun_core::heap::take(stream));
                     }
@@ -7978,10 +7976,9 @@ impl H2FrameParser {
             }
         };
 
-        // send_data can re-enter JS mid-payload (batch flushes over JS-backed sockets, prior
-        // writes' callbacks): pin + protect an ArrayBuffer payload for the duration so it
-        // cannot be detached out from under the borrowed slice. Strings are immutable, so
-        // they keep the zero-copy path. ThreadSafe's Drop releases the pin/protect.
+        // send_data can re-enter JS mid-payload (batch flushes, prior writes' callbacks): pin
+        // + protect ArrayBuffer payloads so they can't be detached under the borrowed slice.
+        // Strings are immutable (zero-copy path); ThreadSafe's Drop releases the pin/protect.
         let pin_payload = data_arg.is_cell() && data_arg.js_type().is_array_buffer_like();
         let buffer = match StringOrBuffer::from_js_with_encoding_maybe_async(
             global_object,

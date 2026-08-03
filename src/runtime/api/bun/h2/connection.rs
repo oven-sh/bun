@@ -1112,10 +1112,9 @@ impl Connection {
                                 b"protocol" => pseudo::PROTOCOL,
                                 _ => pseudo::UNKNOWN,
                             };
-                            // 8.3.1/8.3.2: request blocks never carry :status; response blocks
-                            // never carry a request pseudo-header. `is_request` (not is_server)
-                            // is the right guard because a client-received PUSH_PROMISE block is
-                            // a request block and legitimately carries request pseudo-headers.
+                            // RFC 9113 §8.3.1/§8.3.2: :status only in response blocks, request
+                            // pseudo-headers only in request blocks. Key on `is_request` (not
+                            // is_server) — a client-received PUSH_PROMISE is a request block.
                             let wrong_direction = if is_request {
                                 bit == pseudo::STATUS
                             } else {
@@ -1147,10 +1146,9 @@ impl Connection {
                                 informational = true;
                             }
                             seen_pseudo |= bit;
-                            // nghttp2 http_request_on_header per-field flags used by
-                            // check_path()/nghttp2_http_on_request_headers below. It also
-                            // rejects :method CONNECT on an even (pushed) stream up front:
-                            // "we won't allow CONNECT for push".
+                            // nghttp2 http_request_on_header: per-field flags for check_path()/
+                            // nghttp2_http_on_request_headers below; CONNECT on a pushed (even)
+                            // stream is rejected up front ("we won't allow CONNECT for push").
                             match rest {
                                 b"method" => {
                                     if value_b == b"CONNECT" {
@@ -1176,10 +1174,9 @@ impl Connection {
                             match name_b {
                                 b"connection" | b"keep-alive" | b"proxy-connection"
                                 | b"transfer-encoding" | b"upgrade" => malformed = true,
-                                // nghttp2 routes Host through the same check as :authority (empty or
-                                // repeated => malformed), but only for request blocks — a server-received
-                                // block or a client-received PUSH_PROMISE (http_request_on_header). In a
-                                // response, `host` is an ordinary field and node delivers it.
+                                // nghttp2 http_request_on_header: in request blocks Host is checked
+                                // like :authority (empty/repeated => malformed); in a response it
+                                // is an ordinary field and node delivers it.
                                 b"host" if self.is_server || is_request => {
                                     if value_b.is_empty() || saw_host {
                                         malformed = true;
@@ -1239,13 +1236,9 @@ impl Connection {
             sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
             return false;
         }
-        // RFC 9113 §8.3.1 (nghttp2_http_on_request_headers): a request block needs exactly one
-        // non-empty :method, :scheme and :path plus an :authority or Host — except plain
-        // CONNECT, which must omit :scheme/:path and carry :authority; extended CONNECT
-        // (:protocol, RFC 8441) additionally requires :method CONNECT. Without this a block
-        // with no pseudo-headers reaches JS as a request whose method and url are undefined.
-        // A request block is a server-received HEADERS or a client-received PUSH_PROMISE:
-        // nghttp2 finalizes both through nghttp2_http_on_request_headers.
+        // RFC 9113 §8.3.1 / nghttp2_http_on_request_headers: request block = :method+:scheme
+        // +:path + (:authority|Host); plain CONNECT omits :scheme/:path with :authority;
+        // extended CONNECT (RFC 8441) needs :method CONNECT. Applies to HEADERS & PUSH_PROMISE.
         if is_request && !rejected && !malformed {
             use pseudo::{AUTHORITY, METHOD, PATH, PROTOCOL, SCHEME};
             let extended_connect = (seen_pseudo & PROTOCOL) != 0;
@@ -1282,16 +1275,9 @@ impl Connection {
             }
         }
         if malformed && !rejected {
-            // nghttp2 (nghttp2_session.c session_handle_invalid_stream2): a malformed request
-            // block — HEADERS or PUSH_PROMISE — is answered with RST_STREAM(PROTOCOL_ERROR) on
-            // the target stream (the promised id for a push) plus an on_invalid_frame count;
-            // the session stays alive. RFC 9113 §8.4.1 also specifies stream error for a
-            // malformed PUSH_PROMISE. The PUSH_PROMISE reservation was surfaced above so the
-            // embedder can tear the pushed stream down.
-            //
-            // node (Http2Session::OnInvalidFrame): every locally-rejected invalid frame counts
-            // against maxSessionInvalidFrames; exceeding it tears the session down with
-            // ERR_HTTP2_TOO_MANY_INVALID_FRAMES (same post-increment comparison as node).
+            // nghttp2 session_handle_invalid_stream2 / RFC 9113 §8.4.1: malformed HEADERS or
+            // PUSH_PROMISE → RST_STREAM(PROTOCOL_ERROR) on the target id + invalid-frame count.
+            // node Http2Session::OnInvalidFrame tears down on maxSessionInvalidFrames overflow.
             let count = self.invalid_frame_count;
             self.invalid_frame_count = count.saturating_add(1);
             if count > self.max_invalid_frames {

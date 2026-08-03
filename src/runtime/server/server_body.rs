@@ -1901,10 +1901,9 @@ where
                             fetch_headers_to_use
                                 .fast_remove(HTTPHeaderName::SecWebSocketExtensions);
                         }
-                        // Option getters ran user JS which may have called res.end() /
-                        // res.destroy() / a re-entrant upgrade(). Re-check the same guards
-                        // (mirrors the native path below) so the one-shot 101 preamble is
-                        // never committed to the socket for an upgrade() that will refuse.
+                        // Option getters ran user JS (res.end()/destroy()/re-entrant upgrade()
+                        // may have fired): re-check the guards (mirrors the native path below)
+                        // so the one-shot 101 preamble isn't committed for a refusing upgrade().
                         if node_http_response.flags.get().intersects(
                             NodeHTTPResponseFlags::ENDED | NodeHTTPResponseFlags::SOCKET_CLOSED,
                         ) || !node_http_response.can_upgrade()

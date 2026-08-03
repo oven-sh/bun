@@ -327,10 +327,9 @@ struct HttpResponseData;
 
                         // Move past comma if present
                         if (pos < value.length() && value[pos] == ',') {
-                            /* llhttp (HPE_INVALID_TRANSFER_ENCODING): rejects on the comma
-                             * itself once "chunked" has been seen — so "chunked, chunked",
-                             * "chunked, foo" and a trailing empty list element ("chunked,")
-                             * are all invalid rather than framed as chunked. */
+                            /* llhttp HPE_INVALID_TRANSFER_ENCODING: any list element after "chunked"
+                             * (including "chunked,", "chunked,chunked") is invalid, never framed as
+                             * chunked — https://github.com/nodejs/llhttp (src/llhttp/http.ts). */
                             if (sawChunkedToken) {
                                 te.invalid = true;
                                 return te;

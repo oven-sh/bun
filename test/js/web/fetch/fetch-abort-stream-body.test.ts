@@ -39,7 +39,11 @@ test
   .concurrent("abort after reader.cancel() + eden GC does not use a freed response-body source", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "fetch-abort-after-cancel-gc-fixture.ts")],
-      env: { ...bunEnv, ITER: "20", ASAN_OPTIONS: "fast_unwind_on_fatal=1" },
+      env: {
+        ...bunEnv,
+        ITER: "20",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "fast_unwind_on_fatal=1"].filter(Boolean).join(":"),
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

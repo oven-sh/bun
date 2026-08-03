@@ -659,7 +659,10 @@ test.concurrent.skipIf(!isPosix)(
       expect({ ok, hung }).toEqual({ ok: true, hung: [] });
       expect(runs.map(p => p.exitCode)).toEqual(Array(N).fill(0));
     } finally {
-      for (const p of runs) try { p.kill("SIGKILL"); } catch {}
+      for (const p of runs)
+        try {
+          p.kill("SIGKILL");
+        } catch {}
     }
   },
 );

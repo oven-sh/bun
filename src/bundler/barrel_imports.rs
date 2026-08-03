@@ -612,11 +612,8 @@ pub(crate) fn schedule_barrel_deferred_imports(
         }
     }
 
-    // `export * from` re-exports every name of the target, so the target must
-    // be treated as fully requested. applyBarrelOptimization's
-    // IS_EXPORT_STAR_TARGET check covers this only when the star exporter
-    // parses before the target; record the request here so the outcome does
-    // not depend on parse-completion order.
+    // `export * from` re-exports every name of the target: request it in full.
+    // (IS_EXPORT_STAR_TARGET only covers the exporter-parses-first order.)
     let star_record_indices: Vec<u32> =
         this.graph.ast.items_export_star_import_records()[result_source_index as usize].to_vec();
     for star_idx in star_record_indices {
@@ -701,9 +698,8 @@ pub(crate) fn schedule_barrel_deferred_imports(
         if qi >= initial_queue_len {
             let (found, value) = RequestedExports::entry(&mut this.requested_exports, barrel_idx);
             if item_is_star {
-                // An already-All barrel has had (or will have, once parsed)
-                // its full namespace propagated; skipping keeps star
-                // propagation terminating on `export *` cycles.
+                // Already-All barrels were propagated once; skipping here
+                // terminates `export *` cycles.
                 if found && matches!(value, RequestedExports::All) {
                     qi += 1;
                     continue;
@@ -753,20 +749,15 @@ pub(crate) fn schedule_barrel_deferred_imports(
                     }
                 }
             }
-            // Un-deferred records have no source_index until resolved; resolve
-            // now so the namespace request can keep propagating below.
+            // Resolve now: propagation below needs source indices.
             if un_deferred_any {
                 newly_scheduled +=
                     resolve_barrel_records(this, barrel_idx, &mut barrels_to_resolve);
             }
 
-            // A namespace request covers every export of this barrel, so each
-            // re-exported name must be requested from the module it comes
-            // from, and `export *` targets must be fully requested in turn.
-            // Without this, names this barrel re-exports from an
-            // already-parsed inner barrel are never requested there and the
-            // inner barrel's records stay deferred while the namespace object
-            // still references their symbols.
+            // A namespace request covers every export: request each
+            // re-exported name from its source module and `export *` targets
+            // in full, so already-parsed inner barrels un-defer too.
             struct StarPush {
                 target: u32,
                 alias: Option<bun_ast::StoreStr>,
@@ -827,8 +818,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
             for p in pushes {
                 queue.push(BarrelWorkItem {
                     barrel_source_index: p.target,
-                    // SAFETY-equivalent to the existing alias pushes: arena-
-                    // backed `StoreStr` valid for the bundler-arena lifetime.
+                    // Arena-backed `StoreStr`, valid for the bundler-arena lifetime.
                     alias: match p.alias {
                         Some(a) => a.slice(),
                         None => b"",

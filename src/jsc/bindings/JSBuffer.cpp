@@ -406,7 +406,7 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
     }
 
     // only JSC::JSUint8Array::create can throw and we control the ArrayBuffer passed in,
-    // but its allocation may service VMTraps and observe a pending TerminationException.
+    // but we may be entered with a worker's TerminationException already pending.
     scope.assertNoExceptionExceptTermination();
     ASSERT(uint8Array);
 

@@ -457,13 +457,15 @@ test.skipIf(!isDebug)(
 );
 
 // Regression: JSBuffer__bufferFromPointerAndLengthAndDeinit finished with a
-// plain scope.assertNoException(). JSUint8Array::create allocates, which
-// services VMTraps; a concurrent worker.terminate() installs the sticky
-// TerminationException there, and the assert SIGABRTs the whole process.
-// Hit from async crypto.pbkdf2()'s completion (Pbkdf2Ctx::then ->
-// JSValue::create_buffer) running on a worker that has just been terminated.
-// Release WebKit compiles that ASSERT out, so debug-only.
-test.skipIf(!isDebug)(
+// plain scope.assertNoException(). With several pbkdf2 lanes in flight, one
+// lane's JS callback hits a bytecode trap checkpoint where a concurrent
+// worker.terminate() installs the sticky TerminationException; the next
+// lane's completion (Pbkdf2Ctx::then -> JSValue::create_buffer) then enters
+// JSBuffer__bufferFromPointerAndLengthAndDeinit with that exception still
+// pending and the assert SIGABRTs the whole process. The assert is under
+// ENABLE(EXCEPTION_SCOPE_VERIFICATION) = ASSERT_ENABLED || ASAN_ENABLED, so
+// it is compiled in for both debug and release+ASAN.
+test.skipIf(!isDebug && !isASAN)(
   "terminate() while a worker's async crypto.pbkdf2() completion is creating its result Buffer does not trip assertNoException()",
   async () => {
     await using proc = Bun.spawn({

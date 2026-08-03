@@ -65,7 +65,6 @@ JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, cons
 JSC::JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const WTF::String& message);
 JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, JSC::JSValue message);
 JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options);
-JSC::JSValue toJS(JSC::JSGlobalObject*, ErrorCode);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, JSValue thisValue, const ASCIILiteral typeName);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, const String& message);
 
@@ -123,7 +122,6 @@ JSC::EncodedJSValue CRYPTO_OPERATION_FAILED(JSC::ThrowScope& throwScope, JSC::JS
 JSC::EncodedJSValue CRYPTO_INVALID_KEYPAIR(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);
 JSC::EncodedJSValue CRYPTO_ECDH_INVALID_PUBLIC_KEY(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);
 JSC::EncodedJSValue CRYPTO_ECDH_INVALID_FORMAT(JSC::ThrowScope&, JSC::JSGlobalObject*, const WTF::String& formatString);
-JSC::EncodedJSValue CRYPTO_JWK_UNSUPPORTED_CURVE(JSC::ThrowScope&, JSC::JSGlobalObject*, const WTF::String&);
 JSC::EncodedJSValue CRYPTO_JWK_UNSUPPORTED_CURVE(JSC::ThrowScope&, JSC::JSGlobalObject*, ASCIILiteral message, const char* curveName);
 JSC::EncodedJSValue CRYPTO_JWK_UNSUPPORTED_KEY_TYPE(JSC::ThrowScope&, JSC::JSGlobalObject*);
 JSC::EncodedJSValue CRYPTO_INVALID_JWK(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);
@@ -138,10 +136,8 @@ JSC::EncodedJSValue CRYPTO_INVALID_DIGEST(JSC::ThrowScope& throwScope, JSC::JSGl
 JSC::EncodedJSValue CRYPTO_HASH_FINALIZED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);
 JSC::EncodedJSValue CRYPTO_HASH_UPDATE_FAILED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);
 JSC::EncodedJSValue MISSING_PASSPHRASE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral message);
-JSC::EncodedJSValue CRYPTO_TIMING_SAFE_EQUAL_LENGTH(JSC::ThrowScope&, JSC::JSGlobalObject*);
 JSC::EncodedJSValue CRYPTO_UNKNOWN_DH_GROUP(JSC::ThrowScope&, JSC::JSGlobalObject*);
 JSC::EncodedJSValue CRYPTO_INVALID_KEYTYPE(JSC::ThrowScope&, JSC::JSGlobalObject*, WTF::ASCIILiteral message);
-JSC::EncodedJSValue CRYPTO_INVALID_KEYTYPE(JSC::ThrowScope&, JSC::JSGlobalObject*);
 JSC::EncodedJSValue CRYPTO_UNKNOWN_CIPHER(JSC::ThrowScope&, JSC::JSGlobalObject*, const WTF::StringView& cipherName);
 JSC::EncodedJSValue CRYPTO_INVALID_AUTH_TAG(JSC::ThrowScope&, JSC::JSGlobalObject*, const WTF::String& message);
 JSC::EncodedJSValue CRYPTO_INVALID_IV(JSC::ThrowScope&, JSC::JSGlobalObject*);
@@ -151,11 +147,9 @@ JSC::EncodedJSValue CRYPTO_INVALID_KEYLEN(JSC::ThrowScope&, JSC::JSGlobalObject*
 JSC::EncodedJSValue CRYPTO_INVALID_STATE(JSC::ThrowScope&, JSC::JSGlobalObject*, WTF::ASCIILiteral message);
 JSC::EncodedJSValue CRYPTO_INVALID_MESSAGELEN(JSC::ThrowScope&, JSC::JSGlobalObject*);
 JSC::EncodedJSValue OSSL_EVP_INVALID_DIGEST(JSC::ThrowScope&, JSC::JSGlobalObject*);
-JSC::EncodedJSValue KEY_GENERATION_JOB_FAILED(JSC::ThrowScope&, JSC::JSGlobalObject*);
 JSC::EncodedJSValue INCOMPATIBLE_OPTION_PAIR(JSC::ThrowScope&, JSC::JSGlobalObject*, ASCIILiteral opt1, ASCIILiteral opt2);
 JSC::EncodedJSValue MISSING_OPTION(JSC::ThrowScope&, JSC::JSGlobalObject*, ASCIILiteral message);
 JSC::EncodedJSValue INVALID_MIME_SYNTAX(JSC::ThrowScope&, JSC::JSGlobalObject*, const String& part, const String& input, int position);
-JSC::EncodedJSValue CLOSED_MESSAGE_PORT(JSC::ThrowScope&, JSC::JSGlobalObject*);
 JSC::EncodedJSValue INVALID_THIS(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral expectedType);
 JSC::EncodedJSValue DLOPEN_DISABLED(JSC::ThrowScope&, JSC::JSGlobalObject*, ASCIILiteral message);
 

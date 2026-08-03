@@ -134,6 +134,33 @@ test.skipIf(skip)(
   180_000,
 );
 
+// us_socket_group_close_all_ex walks group->head_sockets during
+// server.stop(true), closing each connection. Closing a socket dispatches its
+// JS close/handshake handler; if that handler closes a *sibling* connection,
+// the walk used to advance onto the freed sibling it had cached as `next` and
+// dereference its vtable (`panic: us_socket_t with kind=invalid`, a
+// use-after-free). The fixture reproduces it with a burst of TLS connections
+// torn down mid-handshake while the handlers close siblings.
+//
+// The explicit timeout matches the low-prio fixture above: this spawns child
+// Bun processes and drives hundreds of concurrent TLS handshakes across
+// several rounds, which runs long on a debug+ASAN build.
+test("TLS server.stop(true): a close handler that closes a sibling does not crash the teardown walk", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "tls-close-all-sibling-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout: stdout.trim(),
+    signalCode: proc.signalCode,
+    exitCode,
+    stderrTail: exitCode === 0 ? "" : stderr.slice(-2000),
+  }).toEqual({ stdout: "OK", signalCode: null, exitCode: 0, stderrTail: "" });
+}, 180_000);
+
 // An injected send() errno that is neither would-block/transient
 // (EAGAIN/ENOBUFS/ENOMEM) nor a known peer-gone error (EPIPE/ECONNRESET/...)
 // exercises the bounded unclassified-errno retry in

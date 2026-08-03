@@ -111,7 +111,7 @@ const _: () = {
 
 impl HTMLBundle {
     /// Initialize an HTMLBundle given a path.
-    pub fn init(global: &JSGlobalObject, path: &[u8]) -> IntrusiveRc<HTMLBundle> {
+    pub(crate) fn init(global: &JSGlobalObject, path: &[u8]) -> IntrusiveRc<HTMLBundle> {
         // Box::from aborts on OOM.
         IntrusiveRc::new(HTMLBundle {
             ref_count: RefCount::init(),
@@ -127,7 +127,7 @@ impl HTMLBundle {
 
     // `path: Box<[u8]>` auto-drops; dealloc handled by IntrusiveRc — no explicit Drop body.
 
-    pub fn get_index(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_index(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_jsc::bun_string_jsc::create_utf8_for_js(global, &this.path)
     }
 }
@@ -150,21 +150,21 @@ pub struct Route {
     // FFI userdata — *Route is recovered from uws callback
     // userdata (on_aborted, JSBundleCompletionTask backref). §Pointers FFI
     // rule → `bun_ptr::RefPtr<HTMLBundle>` + `impl RefCounted`.
-    pub bundle: IntrusiveRc<HTMLBundle>,
+    pub(crate) bundle: IntrusiveRc<HTMLBundle>,
     /// One HTMLBundle.Route can be specified multiple times
     ref_count: RefCount<Route>,
     // TODO: attempt to remove the null case. null is only present during server
     // initialization as only a ServerConfig object is present.
-    pub server: Cell<Option<AnyServer>>,
+    pub(crate) server: Cell<Option<AnyServer>>,
     /// When using DevServer, this value is never read or written to.
-    pub state: JsCell<State>,
+    pub(crate) state: JsCell<State>,
     /// Written and read by DevServer to identify if this route has been
     /// registered with the bundler.
-    pub dev_server_id: Cell<Option<route_bundle::Index>>,
+    pub(crate) dev_server_id: Cell<Option<route_bundle::Index>>,
     /// When state == .pending, incomplete responses are stored here.
     // Raw `*mut` because the pointer is handed to uws onAborted callback and
     // compared by identity; allocation/free is via heap::alloc/from_raw.
-    pub pending_responses: JsCell<Vec<*mut PendingResponse>>,
+    pub(crate) pending_responses: JsCell<Vec<*mut PendingResponse>>,
 }
 
 pub enum State {
@@ -183,7 +183,7 @@ pub enum State {
 // completion task (whose matching deref is the caller's `defer this.deref()` in
 // `JSBundleCompletionTask.onComplete`). So `deinit` stays an explicit method.
 impl State {
-    pub(crate) fn deinit(&mut self) {
+    fn deinit(&mut self) {
         match mem::replace(self, State::Pending) {
             State::Err(_log) => {
                 // Log drops itself
@@ -208,7 +208,7 @@ impl State {
 }
 
 impl State {
-    pub(crate) fn memory_cost(&self) -> usize {
+    fn memory_cost(&self) -> usize {
         match self {
             State::Pending => 0,
             State::Building(_) => 0,
@@ -220,7 +220,7 @@ impl State {
 }
 
 impl Route {
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
         cost += mem::size_of::<Route>();
         cost += self.pending_responses.get().len() * mem::size_of::<PendingResponse>();
@@ -234,7 +234,7 @@ impl Route {
     // Forwards `html_bundle` to `IntrusiveRc::init_ref` without dereferencing it
     // here; not_unsafe_ptr_arg_deref is a false positive on forwarding wrappers.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn init(html_bundle: *mut HTMLBundle) -> IntrusiveRc<Route> {
+    pub(crate) fn init(html_bundle: *mut HTMLBundle) -> IntrusiveRc<Route> {
         IntrusiveRc::new(Route {
             // SAFETY: caller contract.
             bundle: unsafe { IntrusiveRc::<HTMLBundle>::init_ref(html_bundle) },
@@ -246,11 +246,11 @@ impl Route {
         })
     }
 
-    pub fn on_request(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_request(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
         Self::on_any_request(this, req, resp, false);
     }
 
-    pub fn on_head_request(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_head_request(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
         Self::on_any_request(this, req, resp, true);
     }
 
@@ -402,7 +402,7 @@ impl Route {
         Ok(())
     }
 
-    pub fn on_plugins_resolved(
+    pub(crate) fn on_plugins_resolved(
         &self,
         plugins: Option<NonNull<JSBundler::Plugin>>,
     ) -> Result<(), crate::Error> {
@@ -516,7 +516,7 @@ impl Route {
         Ok(())
     }
 
-    pub fn on_plugins_rejected(&self) -> Result<(), crate::Error> {
+    pub(crate) fn on_plugins_rejected(&self) -> Result<(), crate::Error> {
         bun_output::scoped_log!(
             debug,
             "HTMLBundleRoute(0x{:x}) plugins rejected",
@@ -527,7 +527,7 @@ impl Route {
         Ok(())
     }
 
-    pub fn on_complete(&self, completion_task: &mut JSBundleCompletionTask) {
+    pub(crate) fn on_complete(&self, completion_task: &mut JSBundleCompletionTask) {
         // For the build task — matches the ref() taken in on_plugins_resolved.
         // SAFETY: self is IntrusiveRc-managed; `adopt` consumes the prior +1 on Drop.
         let _drop_build_ref = unsafe { bun_ptr::ScopedRef::<Route>::adopt(self.as_ctx_ptr()) };
@@ -708,7 +708,7 @@ impl Route {
         self.resume_pending_responses();
     }
 
-    pub fn resume_pending_responses(&self) {
+    pub(crate) fn resume_pending_responses(&self) {
         // R-2: `JsCell::replace` moves the Vec out so the per-response loop
         // (which writes responses and may run uws callbacks) holds no borrow
         // into `self.pending_responses`.

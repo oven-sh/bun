@@ -78,11 +78,8 @@ function fatal(err: unknown): never {
   process.exit(1);
 }
 
-// ---------------------------------------------------------------------------
-// File discovery — node's createTestFileList (runner.js:153-170).
-// ---------------------------------------------------------------------------
-// node's default (utils.js:71-77) — ts/mts/cts only join behind --strip-types
-// there, so matching its default keeps discovery byte-compatible. Split into
+// File discovery — see https://github.com/nodejs/node/blob/main/lib/internal/test_runner/runner.js
+// node's default (utils.js:71-77) omits ts/mts/cts without --strip-types. Split into
 // two globs: Bun.Glob mis-parses `test/**/*` nested inside a brace group.
 const kDefaultPatterns = ["**/{test,test-*,*[._-]test}.{js,mjs,cjs}", "**/test/**/*.{js,mjs,cjs}"];
 const kGlobMagic = /[*?[\]{}!]/;
@@ -326,11 +323,9 @@ async function main() {
 
   debug("run options: %o", runOptions);
 
-  // Resolve every reporter before run() spawns anything: node awaits
-  // setupTestReporters() during bootstrap, and resolving after runFiles has
-  // already spawned means a failed import process.exit(7)s with an orphaned
-  // child. Also closes the truncated-stream race (the first pipe starts the
-  // Readable flowing while a later custom reporter's import() is still pending).
+  // Resolve every reporter before run() spawns anything, like node's bootstrap
+  // awaits setupTestReporters() — a post-spawn failed import would exit(7) with
+  // an orphaned child and a truncated stream.
   let resolved: unknown[];
   try {
     resolved = await Promise.all(reporterNames.map(resolveReporter));
@@ -347,10 +342,9 @@ async function main() {
   const abortController = new AbortController();
   runOptions.signal = abortController.signal;
 
-  // node's harness installs process signal handlers only under --test
-  // (isTestRunner); the runner owns them here so a library run() never
-  // suppresses default Ctrl+C termination. Routed through the run's abort
-  // signal, which kills the current child and stops spawning.
+  // node's harness installs SIGINT/SIGTERM only under --test (isTestRunner);
+  // owned here so a library run() never suppresses default Ctrl+C. Routed
+  // through the run's abort signal to kill the current child and stop spawning.
   function onRunnerSignal() {
     abortController.abort();
     if (runOptions.isolation === "none") {

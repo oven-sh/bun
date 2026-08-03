@@ -1,7 +1,6 @@
 #pragma once
 
 #include "root.h"
-#include "ActiveDOMObject.h"
 #include "SharedEnvStore.h"
 #include <wtf/CrossThreadTask.h>
 #include <wtf/Function.h>

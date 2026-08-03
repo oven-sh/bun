@@ -55,7 +55,7 @@ pub enum EncodingLabel {
 impl EncodingLabel {
     /// The canonical name, lowercased: the value `TextDecoder.prototype.encoding`
     /// reports, and the name used to look up the WebKit `TextCodec`.
-    pub fn get_label(self) -> &'static [u8] {
+    pub(crate) fn get_label(self) -> &'static [u8] {
         match self {
             Self::Utf8 => b"utf-8",
             Self::Utf16Le => b"utf-16le",
@@ -100,10 +100,10 @@ impl EncodingLabel {
         }
     }
 
-    pub const LATIN1: EncodingLabel = EncodingLabel::Windows1252;
+    pub(crate) const LATIN1: EncodingLabel = EncodingLabel::Windows1252;
 
     /// https://encoding.spec.whatwg.org/#concept-encoding-get
-    pub fn which(input_: &[u8]) -> Option<EncodingLabel> {
+    pub(crate) fn which(input_: &[u8]) -> Option<EncodingLabel> {
         // ASCII whitespace: TAB, LF, FF, CR, SPACE.
         let input = strings::trim(input_, b" \t\r\n\x0C");
         strings::in_map_case_insensitive(input, &STRING_MAP)

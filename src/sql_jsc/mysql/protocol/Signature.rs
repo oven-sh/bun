@@ -6,24 +6,22 @@ use crate::mysql::my_sql_statement::Param;
 
 #[derive(Default)]
 pub struct Signature {
-    pub fields: Box<[Param]>,
+    pub(crate) fields: Box<[Param]>,
     pub name: Box<[u8]>,
-    pub query: Box<[u8]>,
 }
 
 impl Signature {
-    pub fn empty() -> Signature {
+    pub(crate) fn empty() -> Signature {
         Signature {
             fields: Box::default(),
             name: Box::default(),
-            query: Box::default(),
         }
     }
 
     // `deinit` deleted — body only freed owned slices; `Box<[T]>` fields drop automatically.
 
     // Errors are collapsed into the crate-wide `crate::Error` currency.
-    pub fn generate(
+    pub(crate) fn generate(
         global_object: &JSGlobalObject,
         query: &[u8],
         array_value: JSValue,
@@ -80,7 +78,6 @@ impl Signature {
         Ok(Signature {
             name: name.into_boxed_slice(),
             fields: fields.into_boxed_slice(),
-            query: Box::<[u8]>::from(query),
         })
     }
 }

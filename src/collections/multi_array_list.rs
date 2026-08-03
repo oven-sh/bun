@@ -244,7 +244,7 @@ macro_rules! __mal_column_impl {
 /// cached in fixed-size `[_; MAX_FIELDS]` arrays so `Slice<T>` can be a plain
 /// value type without a `where [(); field_count::<T>()]:` bound propagating to
 /// every caller.
-pub(crate) const MAX_FIELDS: usize = 32;
+const MAX_FIELDS: usize = 32;
 
 // ──────────────────────── const-eval reflection helpers ───────────────────
 
@@ -268,7 +268,7 @@ const fn fields_of<T>() -> &'static [core::mem::type_info::Field] {
 
 /// Number of fields in `T`.
 #[inline(always)]
-pub(crate) const fn field_count<T>() -> usize {
+const fn field_count<T>() -> usize {
     fields_of::<T>().len()
 }
 
@@ -585,13 +585,6 @@ impl<T> Copy for Slice<T> {}
 // ───────────────────────────── Slice ─────────────────────────────
 
 impl<T> Slice<T> {
-    pub const EMPTY: Self = Self {
-        ptrs: [Reflected::<T>::DANGLING; MAX_FIELDS],
-        len: 0,
-        capacity: 0,
-        _marker: PhantomData,
-    };
-
     /// Build a `Slice` over a raw buffer. `INVARIANT:column_base` applies.
     #[inline]
     fn from_raw(bytes: NonNull<u8>, len: usize, cap: usize) -> Self {
@@ -612,11 +605,6 @@ impl<T> Slice<T> {
     #[inline]
     pub fn len(&self) -> usize {
         self.len
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
     }
 
     /// Typed column base for field `fi`. Substitutes a properly-aligned
@@ -699,7 +687,7 @@ impl<T> Slice<T> {
         Reflected::<T>::META[field_index].size
     }
 
-    pub fn set(&mut self, index: usize, elem: T) {
+    pub(crate) fn set(&mut self, index: usize, elem: T) {
         assert!(
             index < self.len,
             "MultiArrayList::Slice::set: index out of bounds"
@@ -713,7 +701,7 @@ impl<T> Slice<T> {
     /// ownership of every field. Dropping the gathered struct would free
     /// columns the storage still owns (double-free on next `get` / `Drop`),
     /// so it is wrapped in `ManuallyDrop`.
-    pub fn get(&self, index: usize) -> ManuallyDrop<T> {
+    pub(crate) fn get(&self, index: usize) -> ManuallyDrop<T> {
         assert!(
             index < self.len,
             "MultiArrayList::Slice::get: index out of bounds"
@@ -721,7 +709,7 @@ impl<T> Slice<T> {
         ManuallyDrop::new(self.gather(index))
     }
 
-    pub fn to_multi_array_list(self) -> MultiArrayList<T> {
+    pub(crate) fn to_multi_array_list(self) -> MultiArrayList<T> {
         if Reflected::<T>::COUNT == 0 || self.capacity == 0 {
             return MultiArrayList::default();
         }
@@ -868,16 +856,6 @@ impl<T, A: Allocator + Default> Default for MultiArrayList<T, A> {
     }
 }
 
-impl<T> MultiArrayList<T, Global> {
-    pub const EMPTY: Self = Self {
-        bytes: Reflected::<T>::DANGLING,
-        len: 0,
-        capacity: 0,
-        alloc: Global,
-        _marker: PhantomData,
-    };
-}
-
 impl<T, A: Allocator> MultiArrayList<T, A> {
     /// Construct an empty list backed by `alloc`.
     #[inline]
@@ -895,11 +873,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     #[inline]
     pub fn len(&self) -> usize {
         self.len
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
     }
 
     #[inline]
@@ -975,7 +948,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     }
 
     /// Extend the list by 1 element. Allocates more memory as necessary.
-    pub fn push(&mut self, elem: T) -> Result<(), AllocError> {
+    pub(crate) fn push(&mut self, elem: T) -> Result<(), AllocError> {
         self.ensure_unused_capacity(1)?;
         self.append_assume_capacity(elem);
         Ok(())
@@ -996,24 +969,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         s.set(self.len - 1, elem);
     }
 
-    /// Extend the list by 1 element, returning the newly reserved
-    /// index with uninitialized data.
-    /// Allocates more memory as necessary.
-    pub fn add_one(&mut self) -> Result<usize, AllocError> {
-        self.ensure_unused_capacity(1)?;
-        Ok(self.add_one_assume_capacity())
-    }
-
-    /// Extend the list by 1 element, asserting `self.capacity`
-    /// is sufficient to hold an additional item. Returns the
-    /// newly reserved index with uninitialized data.
-    pub fn add_one_assume_capacity(&mut self) -> usize {
-        debug_assert!(self.len < self.capacity);
-        let index = self.len;
-        self.len += 1;
-        index
-    }
-
     /// Remove and return the last element from the list, or return `None` if list is empty.
     /// Invalidates pointers to fields of the removed element.
     pub fn pop(&mut self) -> Option<T> {
@@ -1024,27 +979,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         self.len -= 1;
         // Ownership transferred: the storage no longer references this slot.
         Some(ManuallyDrop::into_inner(val))
-    }
-
-    /// Inserts an item into an ordered list. Shifts all elements
-    /// after and including the specified index back by one and
-    /// sets the given index to the specified element. May reallocate
-    /// and invalidate iterators.
-    pub fn insert(&mut self, index: usize, elem: T) -> Result<(), AllocError> {
-        self.ensure_unused_capacity(1)?;
-        self.insert_assume_capacity(index, elem);
-        Ok(())
-    }
-
-    /// Inserts an item into an ordered list which has room for it.
-    pub fn insert_assume_capacity(&mut self, index: usize, elem: T) {
-        debug_assert!(self.len < self.capacity);
-        debug_assert!(index <= self.len);
-        let tail = self.len - index;
-        self.len += 1;
-        let mut s = self.slice();
-        s.copy_rows_within(index, index + 1, tail);
-        s.scatter(index, elem);
     }
 
     pub fn append_list_assume_capacity(&mut self, other: &Self) {
@@ -1104,7 +1038,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         self.capacity = new_len;
     }
 
-    pub fn clear_and_free(&mut self) {
+    pub(crate) fn clear_and_free(&mut self) {
         self.free_allocated_bytes();
         self.bytes = Reflected::<T>::DANGLING;
         self.len = 0;
@@ -1131,11 +1065,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
             }
         }
         self.len = 0;
-    }
-
-    /// Reduce length to `new_len`.
-    pub fn shrink_retaining_capacity(&mut self, new_len: usize) {
-        self.len = new_len;
     }
 
     /// Invalidates all element pointers.
@@ -1200,7 +1129,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         self.sort_internal::<C, true>(0, self.len, ctx);
     }
 
-    pub fn capacity_in_bytes(capacity: usize) -> usize {
+    pub(crate) fn capacity_in_bytes(capacity: usize) -> usize {
         Reflected::<T>::ELEM_BYTES * capacity
     }
 
@@ -1479,12 +1408,10 @@ mod tests {
         // (i.e. a `u64`-aligned dangling base, not `NonNull::<u8>::dangling()`).
         let list = MultiArrayList::<Foo>::default();
         assert_eq!(list.items::<"c", u64>(), &[] as &[u64]);
-        let s = Slice::<Foo>::EMPTY;
-        assert_eq!(s.items::<"c", u64>(), &[] as &[u64]);
     }
 
     #[test]
-    fn insert_ordered_remove_memmove() {
+    fn ordered_remove_memmove() {
         let mut list = MultiArrayList::<Foo>::default();
         for i in 0..6u32 {
             list.push(Foo {
@@ -1494,20 +1421,11 @@ mod tests {
             })
             .unwrap();
         }
-        list.insert(
-            2,
-            Foo {
-                a: 99,
-                b: 99,
-                c: 99,
-            },
-        )
-        .unwrap();
-        assert_eq!(list.items::<"a", u32>(), &[0, 1, 99, 2, 3, 4, 5]);
-        list.ordered_remove(2);
         assert_eq!(list.items::<"a", u32>(), &[0, 1, 2, 3, 4, 5]);
+        list.ordered_remove(2);
+        assert_eq!(list.items::<"a", u32>(), &[0, 1, 3, 4, 5]);
         list.swap_remove(1);
-        assert_eq!(list.items::<"a", u32>(), &[0, 5, 2, 3, 4]);
+        assert_eq!(list.items::<"a", u32>(), &[0, 5, 3, 4]);
     }
 
     #[test]

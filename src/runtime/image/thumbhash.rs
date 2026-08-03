@@ -176,10 +176,10 @@ fn dct(chan: &[f32], w: u32, h: u32, nx: u32, ny: u32) -> Channel {
     c
 }
 
-pub struct Decoded {
-    pub rgba: Box<[u8]>,
-    pub w: u32,
-    pub h: u32,
+pub(crate) struct Decoded {
+    pub(crate) rgba: Box<[u8]>,
+    pub(crate) w: u32,
+    pub(crate) h: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
@@ -201,7 +201,7 @@ impl From<DecodeError> for super::codecs::Error {
 
 /// Decode `hash` to a ≤32px RGBA image. Returns `error.DecodeFailed` if the
 /// hash is too short. Output is `bun.default_allocator`-owned.
-pub fn decode(hash: &[u8]) -> Result<Decoded, DecodeError> {
+pub(crate) fn decode(hash: &[u8]) -> Result<Decoded, DecodeError> {
     if hash.len() < 5 {
         return Err(DecodeError::DecodeFailed);
     }

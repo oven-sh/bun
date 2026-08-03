@@ -650,11 +650,11 @@ test("Error.captureStackTrace inside error constructor works", () => {
   }).toThrow();
 });
 
-import "harness";
+import { bunRun } from "harness";
 import { join } from "path";
 
-test("Error.prepareStackTrace has a default implementation which behaves the same as being unset", () => {
-  expect([join(import.meta.dirname, "error-prepare-stack-default-fixture.js")]).toRun();
+test("Error.prepareStackTrace has a default implementation which behaves the same as being unset", async () => {
+  expect(await bunRun(join(import.meta.dirname, "error-prepare-stack-default-fixture.js"))).toSpawn();
 });
 
 test("Error.prepareStackTrace returns a CallSite object", () => {

@@ -589,9 +589,15 @@ impl OffsetByteList {
 
     pub fn consume(&mut self, bytes: u32) {
         self.head = self.head.saturating_add(bytes);
-        if self.head as usize >= self.byte_list.len() {
+        let head = self.head as usize;
+        if head >= self.byte_list.len() {
             self.head = 0;
             self.byte_list.clear();
+        } else if head >= self.byte_list.len() - head {
+            let new_len = self.byte_list.len() - head;
+            self.byte_list.copy_within(head.., 0);
+            self.byte_list.truncate(new_len);
+            self.head = 0;
         }
     }
 

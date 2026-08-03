@@ -84,7 +84,7 @@ pub struct TarballStream {
     http_err: Option<crate::Error>,
 
     /// Cached response status (metadata only arrives on the first callback).
-    pub status_code: u32,
+    pub(crate) status_code: u32,
 
     /// True while a drain task is either queued on the thread pool or
     /// running. `on_chunk` sets it before scheduling; `drain` clears it when
@@ -162,7 +162,7 @@ pub struct TarballStream {
     /// BACKREF — `*mut Task` constructed via `ParentRef::from_raw_mut` so the
     /// read-only `request_extract()` accessor in `open_destination` goes
     /// through safe `Deref`; `finish()` recovers the raw via `as_mut_ptr()`.
-    extract_task: bun_ptr::ParentRef<Task>,
+    extract_task: bun_ptr::ParentRef<Task, bun_ptr::Mut>,
     network_task: *mut NetworkTask,
     package_manager: *mut PackageManager,
 }
@@ -202,11 +202,13 @@ impl TarballStream {
         // the union read goes through the centralised tag-checked
         // `request_extract()` accessor; `extract` is the active `Request`
         // variant for streaming tarballs (set by `enqueueExtractNPMPackage`,
-        // `tag == Tag::Extract`). Safe `From<NonNull>` construction — caller
-        // passes a non-null `*mut Task`.
-        let extract_task = bun_ptr::ParentRef::<Task>::from(
-            core::ptr::NonNull::new(extract_task).expect("extract_task non-null (Zig *Task)"),
-        );
+        // `tag == Tag::Extract`).
+        let extract_task =
+            core::ptr::NonNull::new(extract_task).expect("extract_task non-null (Zig *Task)");
+        // SAFETY: `extract_task` is the caller's live task pointer.
+        let extract_task = unsafe {
+            bun_ptr::ParentRef::<Task, bun_ptr::Mut>::from_raw_mut(extract_task.as_ptr())
+        };
         let tarball = &extract_task.request_extract().tarball;
 
         // For GitHub/URL/local tarballs we need a SHA-512 to record in the
@@ -799,6 +801,15 @@ impl TarballStream {
         let rest: &[OSPathChar] = tokenize_rest_after_first(&pathname[..]);
 
         let mut norm_buf = OSPathBuffer::uninit();
+        if rest.len() >= norm_buf.len() {
+            bun_core::warn!(
+                "Skipping entry with a path longer than the maximum path length: {}\n",
+                bun_core::fmt::fmt_os_path(rest, Default::default()),
+            );
+            self.phase = Phase::WantData;
+            self.out_fd = None;
+            return Ok(());
+        }
         let normalized =
             resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..]);
         let norm_len = normalized.len();

@@ -11,7 +11,9 @@ steps:
       queue: build-linux
     command: |
       node scripts/update-test-durations.mjs --builds 5
+      node scripts/update-parallel-allowlist.mjs --builds 300
       buildkite-agent artifact upload test/expected-durations.json
+      buildkite-agent artifact upload test/parallel-allowlist.json
     env:
       # The script reads BUILDKITE_API_TOKEN; the agent environment hook
       # already exports a read-scoped token under this name.

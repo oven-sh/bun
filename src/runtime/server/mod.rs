@@ -554,6 +554,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// still live (its WriteBarrier slots still root the handlers); only
     /// `Finalized` means the slots are gone and the `config` shadows may point
     /// at freed cells. Dispatch trampolines answer 503+close on `None`.
+    ///
+    /// Also `None` once a worker's terminate() has armed the trap: a previous
+    /// request's handler in the same poll sweep may have left the sticky
+    /// TerminationException pending, and every request-family entry calls this
+    /// before its first JS entry.
     pub(crate) fn js_value_for_dispatch(&self) -> Option<JSValue> {
         if self.vm().script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
             return None;
@@ -675,9 +680,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         let resp_ref = bun_opaque::opaque_deref_mut(resp);
 
-        // A worker terminate() raised inside a previous request's handler in
-        // the same poll sweep leaves the TerminationException pending; every
-        // on_request-family entry funnels here before its first JS call.
+        // Belt-and-braces for `prepare_and_save_js_request_context` (bake),
+        // which reaches here without the `js_value_for_dispatch()` gate.
         if server.vm().script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
             server_body::respond_stopped_503(resp_ref);
             return None;

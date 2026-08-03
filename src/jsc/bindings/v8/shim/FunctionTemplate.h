@@ -79,9 +79,11 @@ public:
     void addProperty(JSC::VM& vm, JSC::JSValue name, JSC::JSValue value, unsigned attributes);
     void addAccessor(JSC::VM& vm, JSC::JSValue name, AccessorNameGetterCallback getter, AccessorNameSetterCallback setter, JSC::JSValue data, unsigned attributes);
 
-    // Create a shim::Function for this template, including setting up its
-    // prototype object from m_prototypeTemplate. Shared by GetFunction() and
-    // materialization of nested FunctionTemplates recorded via Template::Set.
+    // Create (or return the cached) shim::Function for this template, including
+    // setting up its prototype object from m_prototypeTemplate. Shared by
+    // GetFunction() and materialization of nested FunctionTemplates recorded
+    // via Template::Set. V8 memoizes per-context; Bun has one context per
+    // Isolate so caching on the template is equivalent.
     Function* makeFunction(JSC::VM& vm, Zig::GlobalObject* globalObject, GlobalInternals* internals);
 
 private:
@@ -90,6 +92,7 @@ private:
     JSC::WriteBarrier<JSC::JSString> m_className;
     JSC::WriteBarrier<ObjectTemplate> m_instanceTemplate;
     JSC::WriteBarrier<ObjectTemplate> m_prototypeTemplate;
+    JSC::WriteBarrier<Function> m_cachedFunction;
     WTF::Vector<TemplateProperty> m_properties;
     WTF::Vector<TemplateAccessor> m_accessors;
 

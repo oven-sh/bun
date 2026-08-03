@@ -161,13 +161,16 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t start
                 }
                 int rawLine = frame.functionStartLine();
                 unsigned rawColumn = frame.functionStartColumn();
+                bool definitionRemapped = false;
                 if (rawLine > 0 && rawColumn != std::numeric_limits<unsigned>::max()) {
                     JSC::LineColumn lc { static_cast<unsigned>(rawLine), rawColumn };
 #if USE(BUN_JSC_ADDITIONS)
                     if (provider) {
                         auto& remap = vm.computeLineColumnWithSourcemap();
-                        if (remap)
+                        if (remap) {
                             remap(vm, provider, lc, url);
+                            definitionRemapped = true;
+                        }
                     }
 #endif
                     line = lc.line > 0 ? static_cast<int>(lc.line) : CpuProfileNode::kNoLineNumberInfo;
@@ -183,7 +186,7 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t start
                 if (frame.hasExpressionInfo()) {
                     JSC::LineColumn sampleLc = frame.semanticLocation.lineColumn;
 #if USE(BUN_JSC_ADDITIONS)
-                    if (provider) {
+                    if (provider && definitionRemapped) {
                         auto& remap = vm.computeLineColumnWithSourcemap();
                         WTF::String sampleUrl = provider->sourceURL();
                         if (remap)
@@ -196,6 +199,7 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t start
 #endif
                     sampleLine = static_cast<int>(sampleLc.line);
                 }
+                (void)definitionRemapped;
             }
 
             WTF::StringBuilder keyBuilder;

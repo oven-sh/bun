@@ -1595,6 +1595,39 @@ void test_v8_function_new_instance(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+void test_v8_getfunction_memoized(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<FunctionTemplate> tmp =
+      FunctionTemplate::New(isolate, construct_callback);
+  tmp->InstanceTemplate()->SetInternalFieldCount(1);
+  tmp->PrototypeTemplate()->Set(
+      String::NewFromUtf8(isolate, "tag").ToLocalChecked(),
+      Number::New(isolate, 7.0));
+
+  Local<Function> ctor1 = tmp->GetFunction(context).ToLocalChecked();
+  Local<Function> ctor2 = tmp->GetFunction(context).ToLocalChecked();
+
+  // V8 memoizes GetFunction per context, so repeat calls return the same
+  // Function with the same .prototype.
+  LOG_EXPR(ctor1->StrictEquals(ctor2));
+
+  Local<Value> proto1 =
+      ctor1
+          ->Get(context,
+                String::NewFromUtf8(isolate, "prototype").ToLocalChecked())
+          .ToLocalChecked();
+  Local<Value> proto2 =
+      ctor2
+          ->Get(context,
+                String::NewFromUtf8(isolate, "prototype").ToLocalChecked())
+          .ToLocalChecked();
+  LOG_EXPR(proto1->StrictEquals(proto2));
+
+  return ok(info);
+}
+
 void test_v8_map(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   Local<Context> context = isolate->GetCurrentContext();
@@ -1808,6 +1841,8 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_function_call", test_v8_function_call);
   NODE_SET_METHOD(exports, "test_v8_function_new_instance",
                   test_v8_function_new_instance);
+  NODE_SET_METHOD(exports, "test_v8_getfunction_memoized",
+                  test_v8_getfunction_memoized);
   NODE_SET_METHOD(exports, "test_v8_map", test_v8_map);
   NODE_SET_METHOD(exports, "test_v8_exception", test_v8_exception);
   NODE_SET_METHOD(exports, "test_v8_aligned_pointer_in_internal_field",

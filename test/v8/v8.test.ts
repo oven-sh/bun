@@ -397,6 +397,9 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("Function::NewInstance constructs via a FunctionTemplate", async () => {
       await checkSameOutput("test_v8_function_new_instance");
     });
+    it("FunctionTemplate::GetFunction returns the same function on repeat calls", async () => {
+      await checkSameOutput("test_v8_getfunction_memoized");
+    });
   });
 
   describe("Map", () => {

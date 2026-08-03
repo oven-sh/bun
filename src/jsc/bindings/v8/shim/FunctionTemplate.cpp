@@ -58,6 +58,7 @@ void FunctionTemplate::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(fn->m_className);
     visitor.append(fn->m_instanceTemplate);
     visitor.append(fn->m_prototypeTemplate);
+    visitor.append(fn->m_cachedFunction);
 
     WTF::Locker locker { fn->cellLock() };
     for (auto& prop : fn->m_properties) {
@@ -135,6 +136,9 @@ void FunctionTemplate::addAccessor(JSC::VM& vm, JSC::JSValue name, AccessorNameG
 
 Function* FunctionTemplate::makeFunction(JSC::VM& vm, Zig::GlobalObject* globalObject, GlobalInternals* internals)
 {
+    if (auto* cached = m_cachedFunction.get())
+        return cached;
+
     auto* f = Function::create(vm, internals->v8FunctionStructure(globalObject), this);
 
     // Properties recorded directly on the FunctionTemplate become own properties
@@ -148,6 +152,7 @@ Function* FunctionTemplate::makeFunction(JSC::VM& vm, Zig::GlobalObject* globalO
         JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     protoObj->putDirect(vm, vm.propertyNames->constructor, f, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
 
+    m_cachedFunction.set(vm, this, f);
     return f;
 }
 

@@ -516,12 +516,19 @@ describe.skipIf(!isASAN)(
                 'for (let l = 0; l < 10; l++) lane(l);' +
                 'parentPort.postMessage("up");' +
                 ${JSON.stringify(workerExit)};
+              function ready(w) {
+                return new Promise((res, rej) => {
+                  w.once("message", res);
+                  w.once("error", rej);
+                  w.once("exit", c => rej(new Error("worker exited " + c + " before ready")));
+                });
+              }
               for (let r = 0; r < ${rounds * 2}; r++) {
                 const T = 60 + ((r * 37) % 200);
                 const w = new Worker(src, { eval: true, workerData: { base, T } });
+                await ready(w);
                 w.on("error", () => {});
                 const exited = new Promise(res => w.once("exit", res));
-                await new Promise(res => w.once("message", res));
                 ${parentAction ? `await Bun.sleep(T); ${parentAction}` : ""}
                 await exited;
                 // Keep-alive pool must stay healthy across the shutdown.

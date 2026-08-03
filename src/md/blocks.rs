@@ -8,7 +8,7 @@ use core::mem::{align_of, size_of};
 type BlockHeader = parser::BlockHeader;
 
 impl Parser<'_> {
-    pub fn process_doc(&mut self) -> Result<(), parser::Error> {
+    pub(crate) fn process_doc(&mut self) -> Result<(), parser::Error> {
         let dummy_blank = Line {
             r#type: LineType::Blank,
             ..Line::default()
@@ -41,7 +41,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn analyze_line(
+    pub(crate) fn analyze_line(
         &mut self,
         off_start: OFF,
         p_end: &mut OFF,
@@ -685,7 +685,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn process_line(
+    pub(crate) fn process_line(
         &mut self,
         pivot_line: &mut Line,
         cur_line_idx: usize,
@@ -831,7 +831,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn start_new_block(&mut self, line: &Line) -> Result<(), parser::Error> {
+    pub(crate) fn start_new_block(&mut self, line: &Line) -> Result<(), parser::Error> {
         let block_type: BlockType = match line.r#type {
             LineType::Hr => BlockType::Hr,
             LineType::Atxheader => BlockType::H,
@@ -854,7 +854,10 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn add_line_to_current_block(&mut self, line: &Line) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn add_line_to_current_block(
+        &mut self,
+        line: &Line,
+    ) -> Result<(), bun_alloc::AllocError> {
         if let Some(cb_off) = self.current_block {
             let hdr = self.get_block_header_at(cb_off);
             hdr.n_lines += 1;
@@ -867,7 +870,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn end_current_block(&mut self) -> Result<(), parser::Error> {
+    pub(crate) fn end_current_block(&mut self) -> Result<(), parser::Error> {
         if let Some(cb_off) = self.current_block {
             // Capture the header fields, drop the &mut borrow, then access
             // other &self fields.
@@ -923,7 +926,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn consume_ref_defs_from_current_block(&mut self) {
+    pub(crate) fn consume_ref_defs_from_current_block(&mut self) {
         if self.current_block_lines.is_empty() {
             return;
         }

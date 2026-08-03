@@ -14,6 +14,7 @@ use crate::server::jsc::{
     JSType, JSValue, JsError, JsRef, JsResult, ZigStringSlice,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
+use crate::webcore::Blob;
 
 bun_output::declare_scope!(WebSocketServer, visible);
 
@@ -54,11 +55,11 @@ impl Flags {
     const PTR_MASK: u64 = (1u64 << 57) - 1;
 
     #[inline]
-    pub fn ssl(self) -> bool {
+    pub(crate) fn ssl(self) -> bool {
         self.0 & Self::SSL_BIT != 0
     }
     #[inline]
-    pub fn set_ssl(&mut self, v: bool) {
+    pub(crate) fn set_ssl(&mut self, v: bool) {
         if v {
             self.0 |= Self::SSL_BIT;
         } else {
@@ -70,7 +71,7 @@ impl Flags {
         self.0 & Self::CLOSED_BIT != 0
     }
     #[inline]
-    pub fn set_closed(&mut self, v: bool) {
+    pub(crate) fn set_closed(&mut self, v: bool) {
         if v {
             self.0 |= Self::CLOSED_BIT;
         } else {
@@ -78,7 +79,7 @@ impl Flags {
         }
     }
     #[inline]
-    pub fn set_opened(&mut self, v: bool) {
+    pub(crate) fn set_opened(&mut self, v: bool) {
         if v {
             self.0 |= Self::OPENED_BIT;
         } else {
@@ -86,7 +87,7 @@ impl Flags {
         }
     }
     #[inline]
-    pub fn binary_type(self) -> BinaryType {
+    pub(crate) fn binary_type(self) -> BinaryType {
         // Stored value was written via `set_binary_type` from a valid
         // `BinaryType` discriminant (4-bit field, 14 variants).
         match ((self.0 & Self::BINARY_TYPE_MASK) >> Self::BINARY_TYPE_SHIFT) as u8 {
@@ -110,16 +111,16 @@ impl Flags {
         }
     }
     #[inline]
-    pub fn set_binary_type(&mut self, v: BinaryType) {
+    pub(crate) fn set_binary_type(&mut self, v: BinaryType) {
         self.0 = (self.0 & !Self::BINARY_TYPE_MASK)
             | (((v as u8 as u64) << Self::BINARY_TYPE_SHIFT) & Self::BINARY_TYPE_MASK);
     }
     #[inline]
-    pub fn packed_websocket_ptr(self) -> u64 {
+    pub(crate) fn packed_websocket_ptr(self) -> u64 {
         (self.0 >> Self::PTR_SHIFT) & Self::PTR_MASK
     }
     #[inline]
-    pub fn set_packed_websocket_ptr(&mut self, v: u64) {
+    pub(crate) fn set_packed_websocket_ptr(&mut self, v: u64) {
         self.0 = (self.0 & !(Self::PTR_MASK << Self::PTR_SHIFT))
             | ((v & Self::PTR_MASK) << Self::PTR_SHIFT);
     }
@@ -193,6 +194,23 @@ pub(super) fn send_status_to_js(
             JSValue::js_number(0.0)
         }
     }
+}
+
+#[inline]
+pub(super) fn blob_payload<'a>(
+    global_this: &JSGlobalObject,
+    fn_name: &'static str,
+    value: JSValue,
+) -> JsResult<Option<&'a [u8]>> {
+    let Some(blob) = value.as_class_ref::<Blob>() else {
+        return Ok(None);
+    };
+    if blob.needs_to_read_file() || blob.is_s3() {
+        return Err(global_this.throw(format_args!(
+            "{fn_name} cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first"
+        )));
+    }
+    Ok(Some(blob.shared_view()))
 }
 
 impl ServerWebSocket {
@@ -334,7 +352,7 @@ impl ServerWebSocket {
 
     /// Initialize a ServerWebSocket with the given handler, data value, and signal.
     /// The signal will not be ref'd inside the ServerWebSocket init function, but will unref itself when the ServerWebSocket is destroyed.
-    pub fn init(
+    pub(crate) fn init(
         handler: &WebSocketServerHandler,
         data_value: JSValue,
         signal: Option<NonNull<AbortSignal>>,
@@ -369,7 +387,7 @@ impl ServerWebSocket {
         this
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         if self.flags.get().closed() {
             return mem::size_of::<ServerWebSocket>();
         }
@@ -383,7 +401,7 @@ impl ServerWebSocket {
     /// here without aliasing a `noalias` borrow. `handler`/`vm`/`global_object`
     /// are detached `&'a` borrows of the server config (a separate allocation),
     /// so they may legally span the call.
-    pub fn on_open(&self, ws: AnyWebSocket) {
+    pub(crate) fn on_open(&self, ws: AnyWebSocket) {
         bun_output::scoped_log!(WebSocketServer, "OnOpen");
         self.update_flags(|f| {
             f.set_packed_websocket_ptr(ws.raw() as usize as u64);
@@ -449,7 +467,7 @@ impl ServerWebSocket {
                 this_value.unprotect();
             }
 
-            handler.run_error_callback(on_error, vm, global_object, err_value);
+            handler.run_error_callback(on_error, global_object, err_value);
             if closed_here {
                 if let Some(server) = server {
                     // May run the idle pass; no `&Handler` borrow is live here.
@@ -460,7 +478,7 @@ impl ServerWebSocket {
     }
 
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
-    pub fn on_message(&self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
+    pub(crate) fn on_message(&self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
         bun_output::scoped_log!(
             WebSocketServer,
             "onMessage({}): {}",
@@ -515,7 +533,7 @@ impl ServerWebSocket {
 
         if let Some(err_value) = result.to_error() {
             self.handler()
-                .run_error_callback(on_error, vm, global_object, err_value);
+                .run_error_callback(on_error, global_object, err_value);
             return;
         }
 
@@ -535,12 +553,12 @@ impl ServerWebSocket {
     }
 
     #[inline]
-    pub fn is_closed(&self) -> bool {
+    pub(crate) fn is_closed(&self) -> bool {
         self.flags.get().closed()
     }
 
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
-    pub fn on_drain(&self, _ws: AnyWebSocket) {
+    pub(crate) fn on_drain(&self, _ws: AnyWebSocket) {
         bun_output::scoped_log!(WebSocketServer, "onDrain");
         let handler = self.handler();
         let vm = handler.vm();
@@ -570,7 +588,7 @@ impl ServerWebSocket {
             let result = corker.result;
 
             if let Some(err_value) = result.to_error() {
-                handler.run_error_callback(on_error, vm, global_object, err_value);
+                handler.run_error_callback(on_error, global_object, err_value);
             }
         }
     }
@@ -586,7 +604,7 @@ impl ServerWebSocket {
     }
 
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
-    pub fn on_ping(&self, _ws: AnyWebSocket, data: &[u8]) {
+    pub(crate) fn on_ping(&self, _ws: AnyWebSocket, data: &[u8]) {
         bun_output::scoped_log!(WebSocketServer, "onPing: {}", bstr::BStr::new(data));
         let handler = self.handler();
         let cb = handler.on_ping;
@@ -611,12 +629,12 @@ impl ServerWebSocket {
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
             let err = global_this.take_exception(e);
             bun_output::scoped_log!(WebSocketServer, "onPing error");
-            handler.run_error_callback(on_error, vm, global_this, err);
+            handler.run_error_callback(on_error, global_this, err);
         }
     }
 
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
-    pub fn on_pong(&self, _ws: AnyWebSocket, data: &[u8]) {
+    pub(crate) fn on_pong(&self, _ws: AnyWebSocket, data: &[u8]) {
         bun_output::scoped_log!(WebSocketServer, "onPong: {}", bstr::BStr::new(data));
         let handler = self.handler();
         let cb = handler.on_pong;
@@ -646,7 +664,7 @@ impl ServerWebSocket {
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
             let err = global_this.take_exception(e);
             bun_output::scoped_log!(WebSocketServer, "onPong error");
-            handler.run_error_callback(on_error, vm, global_this, err);
+            handler.run_error_callback(on_error, global_this, err);
         }
     }
 
@@ -685,7 +703,6 @@ impl ServerWebSocket {
             .try_get()
             .unwrap_or(JSValue::UNDEFINED);
         let this_value_cell: &JsCell<JsRef> = &self.this_value;
-        let global_object_ref = handler.global_object;
         let _cleanup = scopeguard::guard(signal, move |sig| {
             if let Some(sig) = sig {
                 // `sig` was stored with a +1 ref by the upgrade caller; it
@@ -696,9 +713,9 @@ impl ServerWebSocket {
                 sig.unref();
             }
             if was_not_empty {
-                // Drop the server-wrapper traced edge: once closed, this socket
-                // no longer needs to pin the server (and its handler slots).
-                js::server_set_cached(cached_this, global_object_ref.get(), JSValue::ZERO);
+                // The `server` traced edge set in `init` must outlive this
+                // wrapper: `self.handler` points into the server's allocation
+                // and publish()/send() still work on closed sockets (#36788).
                 // R-2: closure-scoped `&mut JsRef` via `JsCell::with_mut` —
                 // no raw `*mut` projection needed.
                 this_value_cell.with_mut(|v| v.downgrade());
@@ -744,7 +761,7 @@ impl ServerWebSocket {
                         "onClose error (message) {}",
                         was_not_empty
                     );
-                    handler.run_error_callback(on_error, vm, global_object, err);
+                    handler.run_error_callback(on_error, global_object, err);
                     return;
                 }
             };
@@ -753,7 +770,7 @@ impl ServerWebSocket {
             if let Err(e) = on_close_handler.call(global_object, JSValue::UNDEFINED, &call_args) {
                 let err = global_object.take_exception(e);
                 bun_output::scoped_log!(WebSocketServer, "onClose error {}", was_not_empty);
-                handler.run_error_callback(on_error, vm, global_object, err);
+                handler.run_error_callback(on_error, global_object, err);
                 return;
             }
         } else if let Some(sig) = signal {
@@ -768,7 +785,9 @@ impl ServerWebSocket {
         }
     }
 
-    pub fn behavior<ServerType, const SSL: bool>(opts: &WebSocketBehavior) -> WebSocketBehavior
+    pub(crate) fn behavior<ServerType, const SSL: bool>(
+        opts: &WebSocketBehavior,
+    ) -> WebSocketBehavior
     where
         ServerType: WebSocketUpgradeServer<SSL>,
     {
@@ -778,7 +797,7 @@ impl ServerWebSocket {
     // No `#[bun_jsc::host_fn]` here — the constructor extern shim is
     // emitted by `generated_classes.rs`, which calls `<Self>::constructor`
     // directly.
-    pub fn constructor(
+    pub(crate) fn constructor(
         global_object: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<*mut ServerWebSocket> {
@@ -804,7 +823,7 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn publish(
+    pub(crate) fn publish(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -854,6 +873,20 @@ impl ServerWebSocket {
             ));
         }
 
+        if let Some(slice) = blob_payload(global_this, "publish", message_value)? {
+            let ret = self.do_publish(
+                ssl,
+                app,
+                publish_to_self,
+                topic_slice.slice(),
+                slice,
+                Opcode::Binary,
+                compress,
+            );
+            message_value.ensure_still_alive();
+            return Ok(ret);
+        }
+
         {
             let js_string = message_value.to_js_string(global_this)?;
             let view = js_string.view(global_this);
@@ -874,7 +907,7 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn publish_text(
+    pub(crate) fn publish_text(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -927,7 +960,7 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn publish_binary(
+    pub(crate) fn publish_binary(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -969,25 +1002,39 @@ impl ServerWebSocket {
             );
         }
 
-        let Some(array_buffer) = message_value.as_array_buffer(global_this) else {
-            return Err(global_this.throw(format_args!("publishBinary expects an ArrayBufferView")));
-        };
+        if let Some(array_buffer) = message_value.as_array_buffer(global_this) {
+            return Ok(self.do_publish(
+                ssl,
+                app,
+                publish_to_self,
+                topic_slice.slice(),
+                array_buffer.slice(),
+                Opcode::Binary,
+                compress,
+            ));
+        }
 
-        Ok(self.do_publish(
-            ssl,
-            app,
-            publish_to_self,
-            topic_slice.slice(),
-            array_buffer.slice(),
-            Opcode::Binary,
-            compress,
-        ))
+        if let Some(slice) = blob_payload(global_this, "publishBinary", message_value)? {
+            let ret = self.do_publish(
+                ssl,
+                app,
+                publish_to_self,
+                topic_slice.slice(),
+                slice,
+                Opcode::Binary,
+                compress,
+            );
+            message_value.ensure_still_alive();
+            return Ok(ret);
+        }
+
+        Err(global_this.throw(format_args!("publishBinary expects a Blob or BufferSource")))
     }
 
     // `passThis: true` in server.classes.ts — wrapper is emitted by
     // generated_classes.rs (ServerWebSocketPrototype__cork) and passes
     // `js_this_value` as a 4th arg, which `#[host_fn(method)]` does not model.
-    pub fn cork(
+    pub(crate) fn cork(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1030,7 +1077,11 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn send(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn send(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let [message_value, compress_value] = callframe.arguments_as_array::<2>();
 
         if callframe.arguments_count() < 1 {
@@ -1064,6 +1115,17 @@ impl ServerWebSocket {
             ));
         }
 
+        if let Some(slice) = blob_payload(global_this, "send", message_value)? {
+            let ret = send_status_to_js(
+                self.websocket().send(slice, Opcode::Binary, compress, true),
+                slice.len(),
+                "send",
+                "bytes",
+            );
+            message_value.ensure_still_alive();
+            return Ok(ret);
+        }
+
         {
             let js_string = message_value.to_js_string(global_this)?;
             let view = js_string.view(global_this);
@@ -1082,7 +1144,7 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn send_text(
+    pub(crate) fn send_text(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1126,7 +1188,7 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn send_binary(
+    pub(crate) fn send_binary(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1150,26 +1212,45 @@ impl ServerWebSocket {
             callframe.arguments_count() as usize,
         )?;
 
-        let Some(buffer) = message_value.as_array_buffer(global_this) else {
-            return Err(global_this.throw(format_args!("sendBinary requires an ArrayBufferView")));
-        };
+        if let Some(buffer) = message_value.as_array_buffer(global_this) {
+            let slice = buffer.slice();
+            return Ok(send_status_to_js(
+                self.websocket().send(slice, Opcode::Binary, compress, true),
+                slice.len(),
+                "sendBinary",
+                "bytes",
+            ));
+        }
 
-        let slice = buffer.slice();
-        Ok(send_status_to_js(
-            self.websocket().send(slice, Opcode::Binary, compress, true),
-            slice.len(),
-            "sendBinary",
-            "bytes",
-        ))
+        if let Some(slice) = blob_payload(global_this, "sendBinary", message_value)? {
+            let ret = send_status_to_js(
+                self.websocket().send(slice, Opcode::Binary, compress, true),
+                slice.len(),
+                "sendBinary",
+                "bytes",
+            );
+            message_value.ensure_still_alive();
+            return Ok(ret);
+        }
+
+        Err(global_this.throw(format_args!("sendBinary requires a Blob or BufferSource")))
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn ping(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn ping(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         self.send_ping(global_this, callframe, "ping", Opcode::Ping)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn pong(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn pong(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         self.send_ping(global_this, callframe, "pong", Opcode::Pong)
     }
 
@@ -1199,6 +1280,18 @@ impl ServerWebSocket {
                         name,
                         "bytes",
                     ));
+                } else if let Some(buffer) = blob_payload(global_this, name, value)? {
+                    if buffer.len() > MAX_CONTROL_FRAME_PAYLOAD {
+                        return Err(throw_control_frame_too_large(global_this, buffer.len()));
+                    }
+                    let ret = send_status_to_js(
+                        self.websocket().send(buffer, opcode, false, true),
+                        buffer.len(),
+                        name,
+                        "bytes",
+                    );
+                    value.ensure_still_alive();
+                    return Ok(ret);
                 } else if value.is_string() {
                     // SAFETY: to_js_string returns a non-null *mut JSString on the Ok path.
                     let string_value = value.to_js_string(global_this)?.to_slice(global_this);
@@ -1213,8 +1306,10 @@ impl ServerWebSocket {
                         "bytes",
                     ));
                 } else {
-                    return Err(global_this
-                        .throw(format_args!("{} requires a string or BufferSource", name)));
+                    return Err(global_this.throw(format_args!(
+                        "{} requires a string, Blob, or BufferSource",
+                        name
+                    )));
                 }
             }
         }
@@ -1228,7 +1323,7 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_data(&self, _global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_data(&self, _global_this: &JSGlobalObject) -> JSValue {
         bun_output::scoped_log!(WebSocketServer, "getData()");
         if let Some(this_value) = self.this_value.get().try_get() {
             return js::data_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
@@ -1237,7 +1332,11 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(setter)]
-    pub fn set_data(&self, global_object: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+    pub(crate) fn set_data(
+        &self,
+        global_object: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<bool> {
         bun_output::scoped_log!(WebSocketServer, "setData()");
         if let Some(this_value) = self.this_value.get().try_get() {
             js::data_set_cached(this_value, global_object, value);
@@ -1246,7 +1345,7 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_ready_state(&self, _global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_ready_state(&self, _global_this: &JSGlobalObject) -> JSValue {
         bun_output::scoped_log!(WebSocketServer, "getReadyState()");
 
         if self.is_closed() {
@@ -1316,7 +1415,7 @@ impl ServerWebSocket {
 
     // `passThis: true` — wrapper emitted by generated_classes.rs.
     // R-2: `&self` — `websocket().close()` synchronously dispatches `on_close`.
-    pub fn terminate(
+    pub(crate) fn terminate(
         &self,
         _global_this: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -1343,7 +1442,7 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_binary_type(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_binary_type(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         bun_output::scoped_log!(WebSocketServer, "getBinaryType()");
 
         Ok(match self.flags.get().binary_type() {
@@ -1355,7 +1454,11 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(setter)]
-    pub fn set_binary_type(&self, global_this: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+    pub(crate) fn set_binary_type(
+        &self,
+        global_this: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<bool> {
         bun_output::scoped_log!(WebSocketServer, "setBinaryType()");
 
         match BinaryType::from_js_value(global_this, value)? {
@@ -1371,7 +1474,7 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_buffered_amount(
+    pub(crate) fn get_buffered_amount(
         &self,
         _global_this: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -1388,7 +1491,7 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn subscribe(
+    pub(crate) fn subscribe(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1397,7 +1500,7 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn unsubscribe(
+    pub(crate) fn unsubscribe(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1411,7 +1514,7 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn is_subscribed(
+    pub(crate) fn is_subscribed(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1425,7 +1528,7 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_subscriptions(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_subscriptions(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if self.is_closed() {
             return JSValue::create_empty_array(global_this, 0);
         }
@@ -1440,7 +1543,7 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_remote_address(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_remote_address(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if self.is_closed() {
             return Ok(JSValue::UNDEFINED);
         }
@@ -1520,7 +1623,7 @@ struct Corker<'a> {
 }
 
 impl<'a> Corker<'a> {
-    pub(crate) fn run(&mut self) {
+    fn run(&mut self) {
         let this_value = self.this_value;
         self.result = match self.callback.call(
             self.global_object,

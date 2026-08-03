@@ -21,53 +21,53 @@ pub use crate::socket::ssl_config::SSLConfig;
 use crate::socket::ssl_config::SSLConfigFromJs;
 
 pub struct ServerConfig {
-    pub address: Address,
-    pub idle_timeout: u8, // TODO: should we match websocket default idleTimeout of 120?
-    pub has_idle_timeout: bool,
+    pub(crate) address: Address,
+    pub(crate) idle_timeout: u8, // TODO: should we match websocket default idleTimeout of 120?
+    pub(crate) has_idle_timeout: bool,
     // TODO: use webkit URL parser instead of bun's
     // NOTE: only the owned buffer is stored; callers parse on
     // demand via [`ServerConfig::base_url`] so the borrow lifetime is tied to
     // `&self` instead of erased to `'static`.
-    pub base_uri: Box<[u8]>,
+    pub(crate) base_uri: Box<[u8]>,
 
-    pub ssl_config: Option<SSLConfig>,
+    pub(crate) ssl_config: Option<SSLConfig>,
     // Vec drop runs each element's `Drop`, and `SSLConfig: Drop` calls
     // `deinit()` (frees the owned C strings).
-    pub sni: Option<Vec<SSLConfig>>,
-    pub max_request_body_size: usize,
-    pub development: DevelopmentOption,
-    pub broadcast_console_log_from_browser_to_server_for_bake: bool,
+    pub(crate) sni: Option<Vec<SSLConfig>>,
+    pub(crate) max_request_body_size: usize,
+    pub(crate) development: DevelopmentOption,
+    pub(crate) broadcast_console_log_from_browser_to_server_for_bake: bool,
 
     /// Enable automatic workspace folders for Chrome DevTools
     /// https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
     /// https://github.com/ChromeDevTools/vite-plugin-devtools-json/blob/76080b04422b36230d4b7a674b90d6df296cbff5/src/index.ts#L60-L77
     ///
     /// If HMR is not enabled, then this field is ignored.
-    pub enable_chrome_devtools_automatic_workspace_folders: bool,
+    pub(crate) enable_chrome_devtools_automatic_workspace_folders: bool,
 
     /// Raw shadow of the wrapper's `onError`/`onRequest`/`onNodeHTTPRequest`
     /// WriteBarrier slots. The wrapper JSCell is the GC root; these are
     /// `JSValue::ZERO` when unset and copied for hot-path dispatch reads.
-    pub on_error: JSValue,
-    pub on_request: JSValue,
-    pub on_node_http_request: JSValue,
+    pub(crate) on_error: JSValue,
+    pub(crate) on_request: JSValue,
+    pub(crate) on_node_http_request: JSValue,
 
-    pub websocket: Option<WebSocketServerContext>,
+    pub(crate) websocket: Option<WebSocketServerContext>,
 
-    pub reuse_port: bool,
-    pub id: Box<[u8]>,
-    pub allow_hot: bool,
-    pub ipv6_only: bool,
-    pub http3: bool,
-    pub http1: bool,
+    pub(crate) reuse_port: bool,
+    pub(crate) id: Box<[u8]>,
+    pub(crate) allow_hot: bool,
+    pub(crate) ipv6_only: bool,
+    pub(crate) http3: bool,
+    pub(crate) http1: bool,
 
-    pub had_routes_object: bool,
+    pub(crate) had_routes_object: bool,
 
-    pub static_routes: Vec<StaticRouteEntry>,
-    pub negative_routes: Vec<ZBox>,
-    pub user_routes_to_build: Vec<UserRouteBuilder>,
+    pub(crate) static_routes: Vec<StaticRouteEntry>,
+    pub(crate) negative_routes: Vec<ZBox>,
+    pub(crate) user_routes_to_build: Vec<UserRouteBuilder>,
 
-    pub bake: Option<crate::bake::UserOptions>,
+    pub(crate) bake: Option<crate::bake::UserOptions>,
 }
 
 impl Default for ServerConfig {
@@ -130,7 +130,7 @@ pub enum DevelopmentOption {
 }
 
 impl DevelopmentOption {
-    pub(crate) fn is_hmr_enabled(self) -> bool {
+    fn is_hmr_enabled(self) -> bool {
         self == DevelopmentOption::Development
     }
 
@@ -140,11 +140,11 @@ impl DevelopmentOption {
 }
 
 impl ServerConfig {
-    pub fn is_development(&self) -> bool {
+    pub(crate) fn is_development(&self) -> bool {
         self.development.is_development()
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         // ignore size_of::<ServerConfig>(), assume already included.
         let mut cost: usize = 0;
         for entry in self.static_routes.iter() {
@@ -183,12 +183,12 @@ impl Default for RouteDeclaration {
 // TODO: rename to StaticRoute.Entry
 pub struct StaticRouteEntry {
     pub path: Box<[u8]>,
-    pub route: AnyRoute,
+    pub(crate) route: AnyRoute,
     pub method: MethodOptional,
 }
 
 impl StaticRouteEntry {
-    pub(crate) fn memory_cost(&self) -> usize {
+    fn memory_cost(&self) -> usize {
         self.path.len() + self.route.memory_cost()
     }
 }
@@ -247,7 +247,9 @@ impl ServerConfig {
         Ok(())
     }
 
-    pub fn clone_for_reloading_static_routes(&mut self) -> Result<ServerConfig, crate::Error> {
+    pub(crate) fn clone_for_reloading_static_routes(
+        &mut self,
+    ) -> Result<ServerConfig, crate::Error> {
         // The sole caller is
         // `self.config = self.config.clone_for_reloading_static_routes()?;`.
         // Move every owning field into `that` and leave the Copy scalars in
@@ -289,7 +291,7 @@ impl ServerConfig {
         Ok(that)
     }
 
-    pub fn append_static_route(
+    pub(crate) fn append_static_route(
         &mut self,
         path: &[u8],
         route: AnyRoute,
@@ -534,6 +536,27 @@ impl<const SSL: bool> StaticRouteLike<SSL> for super::FileRoute {
     }
 }
 
+impl<const SSL: bool> StaticRouteLike<SSL> for super::DirectoryRoute {
+    unsafe fn set_server(this: *mut Self, server: AnyServer) {
+        // SAFETY: caller guarantees `this` is live.
+        unsafe { (*this).set_server(Some(server)) };
+    }
+    unsafe fn on_request(
+        this: *mut Self,
+        req: bun_uws_sys::AnyRequest,
+        resp: bun_uws_sys::AnyResponse,
+    ) {
+        Self::on_request(this, req, resp)
+    }
+    unsafe fn on_head_request(
+        this: *mut Self,
+        req: bun_uws_sys::AnyRequest,
+        resp: bun_uws_sys::AnyResponse,
+    ) {
+        Self::on_head_request(this, req, resp)
+    }
+}
+
 impl<const SSL: bool> StaticRouteLike<SSL> for super::html_bundle::Route {
     unsafe fn set_server(this: *mut Self, server: AnyServer) {
         // SAFETY: caller guarantees `this` is live.
@@ -556,7 +579,7 @@ impl<const SSL: bool> StaticRouteLike<SSL> for super::html_bundle::Route {
 }
 
 impl ServerConfig {
-    pub fn compute_id(&self) -> Vec<u8> {
+    pub(crate) fn compute_id(&self) -> Vec<u8> {
         let mut arraylist: Vec<u8> = Vec::new();
 
         let _ = arraylist.write_all(b"[http]-");
@@ -581,7 +604,7 @@ impl ServerConfig {
         arraylist
     }
 
-    pub fn get_usockets_options(&self) -> i32 {
+    pub(crate) fn get_usockets_options(&self) -> i32 {
         // Unlike Node.js, we set exclusive port in case reuse port is not set
         let mut out: i32 = if self.reuse_port {
             bun_uws_sys::LIBUS_LISTEN_REUSE_PORT | bun_uws_sys::LIBUS_LISTEN_REUSE_ADDR
@@ -1472,7 +1495,7 @@ impl ServerConfig {
                 };
                 let hostname = base_url.hostname;
                 let needs_brackets: bool =
-                    strings::is_ipv6_address(hostname) && hostname[0] != b'[';
+                    bun_core::ip_address::is_ipv6_address(hostname) && hostname[0] != b'[';
                 let pathname = strings::trim_leading_char(base_url.pathname, b'/');
                 let mut buf: Vec<u8> = Vec::new();
                 if needs_brackets {
@@ -1533,7 +1556,8 @@ impl ServerConfig {
                 b"0.0.0.0"
             };
 
-            let needs_brackets: bool = strings::is_ipv6_address(hostname) && hostname[0] != b'[';
+            let needs_brackets: bool =
+                bun_core::ip_address::is_ipv6_address(hostname) && hostname[0] != b'[';
 
             let protocol: &[u8] = if args.ssl_config.is_some() {
                 b"https"
@@ -1618,9 +1642,9 @@ impl ServerConfig {
 
 #[derive(Clone, Copy)]
 pub struct FromJSOptions {
-    pub allow_bake_config: bool,
-    pub is_fetch_required: bool,
-    pub has_user_routes: bool,
+    pub(crate) allow_bake_config: bool,
+    pub(crate) is_fetch_required: bool,
+    pub(crate) has_user_routes: bool,
 }
 
 impl Default for FromJSOptions {
@@ -1634,6 +1658,6 @@ impl Default for FromJSOptions {
 }
 
 pub struct UserRouteBuilder {
-    pub route: RouteDeclaration,
+    pub(crate) route: RouteDeclaration,
     pub callback: Strong, // jsc.Strong.Optional
 }

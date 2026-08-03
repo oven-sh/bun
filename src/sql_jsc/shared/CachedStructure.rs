@@ -5,21 +5,21 @@ use bun_sql::shared::ColumnIdentifier;
 
 #[derive(Default)]
 pub struct CachedStructure {
-    pub structure: StrongOptional, // Strong.Optional = .empty
+    pub(crate) structure: StrongOptional, // Strong.Optional = .empty
     /// only populated if more than jsc.JSC__JSObject__maxInlineCapacity fields otherwise the structure will contain all fields inlined
-    pub fields: Option<Box<[ExternColumnIdentifier]>>,
+    pub(crate) fields: Option<Box<[ExternColumnIdentifier]>>,
 }
 
 impl CachedStructure {
-    pub fn has(&self) -> bool {
+    pub(crate) fn has(&self) -> bool {
         self.structure.has() || self.fields.is_some()
     }
 
-    pub fn js_value(&self) -> Option<JSValue> {
+    pub(crate) fn js_value(&self) -> Option<JSValue> {
         self.structure.get()
     }
 
-    pub fn set(
+    pub(crate) fn set(
         &mut self,
         global_object: &JSGlobalObject,
         value: Option<JSValue>,
@@ -43,7 +43,7 @@ impl CachedStructure {
     ///
     /// `columns` is iterated twice (count + build), hence the `Clone` bound;
     /// `slice.iter().map(..)` satisfies it without allocation.
-    pub fn build_from_columns<'a, I>(
+    pub(crate) fn build_from_columns<'a, I>(
         &mut self,
         global_object: &JSGlobalObject,
         owner: JSValue,

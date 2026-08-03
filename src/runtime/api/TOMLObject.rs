@@ -15,7 +15,7 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     super::with_text_format_source(
         global,
         frame,
@@ -52,7 +52,7 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // `space` is accepted for signature parity with YAML/JSON5 but ignored:
     // TOML output is line-oriented and has no nesting indentation.
     let [value, replacer, _space] = frame.arguments_as_array::<3>();

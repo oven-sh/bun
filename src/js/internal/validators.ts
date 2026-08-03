@@ -187,7 +187,6 @@ function warnOnNonPortableTemplate(template: any) {
   }
 }
 
-hideFromStack(validateLinkHeaderValue, validateInternalField);
 hideFromStack(validateLinkHeaderValue, validateInternalField, validateThisInternalField, validateObject);
 hideFromStack(validateString, validateFunction, validateBoolean, validateUndefined);
 hideFromStack(getValidatedPath, getValidatedFsPath, throwIfNullBytesInFileName);

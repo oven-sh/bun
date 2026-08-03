@@ -73,5 +73,13 @@ describe("url.format", () => {
     assert.strictEqual(url.format(new URL("file:///tmp/x")), "file:///tmp/x");
     assert.strictEqual(url.format(new URL("file:///tmp/x"), { auth: false }), "file:///tmp/x");
     assert.strictEqual(url.format(new URL("foo://")), "foo://");
+
+    // Empty-but-present query/fragment keep their ?/# marker on the slow
+    // path too (node reparses the href, so null vs empty-string survives).
+    assert.strictEqual(url.format(new URL("http://x/?"), { unicode: true }), "http://x/?");
+    assert.strictEqual(url.format(new URL("http://x/#"), { auth: false }), "http://x/#");
+    assert.strictEqual(url.format(new URL("http://x/?#"), { unicode: true }), "http://x/?#");
+    assert.strictEqual(url.format(new URL("http://x/?#"), { fragment: false }), "http://x/?");
+    assert.strictEqual(url.format(new URL("http://x/?#"), { search: false }), "http://x/#");
   });
 });

@@ -32,8 +32,8 @@ test.concurrent(
 // that GC sweeps synchronously; the Response wrapper (MarkedBlock) is swept
 // lazily, so its BodyAbortListener can fire between the two and read the body
 // stream through the downgraded `Locked.readable` handle. The fix stores that
-// handle (and the listener's wrapper handle) as a real JSC::Weak so they read
-// as empty once reaped. Full details in the fixture.
+// handle as a real JSC::Weak so it reads as empty once reaped. Full details in
+// the fixture.
 test.skipIf(!isASAN).concurrent(
   "abort after reader.cancel() + eden GC does not use a freed response-body source",
   async () => {

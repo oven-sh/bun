@@ -893,6 +893,11 @@ impl BufferOutputSink {
         if let Err(e) = unsafe { (*rewriter).write(bytes) } {
             // Poisoned: never call `end()` after a failed `write()`. The
             // field stays non-null so `Drop` frees the rewriter.
+            // A TerminationException left pending by `handler_callback` means
+            // the worker is tearing down; skip the JS error path on both arms.
+            if global.has_exception() {
+                return None;
+            }
             if is_async {
                 // SAFETY: response kept alive by response_value Strong.
                 let _ = unsafe { (*response).get_body_value() }.to_error_instance(
@@ -912,6 +917,9 @@ impl BufferOutputSink {
         unsafe { (*sink).rewriter = core::ptr::null_mut() };
         // SAFETY: `rewriter` was heap-allocated by init(); sole owner now.
         if let Err(e) = unsafe { bun_core::heap::take(rewriter) }.end() {
+            if global.has_exception() {
+                return None;
+            }
             if is_async {
                 // SAFETY: response kept alive by response_value Strong.
                 let _ = unsafe { (*response).get_body_value() }.to_error_instance(
@@ -1197,27 +1205,6 @@ where
 {
     jsc::mark_binding();
 
-    let wrapper = Z::init(value);
-    // SAFETY: Z::init returns a fresh heap allocation.
-    unsafe { (*wrapper).ref_() };
-
-    // When using RefCount, we don't check the count value directly as it's an
-    // opaque type now. The init values are handled by Box::new with Cell::new(1).
-
-    // SAFETY: wrapper is a live heap allocation (ref'd above) for the entire
-    // scope of this guard; deref runs at most once on this path.
-    let _guard = scopeguard::guard(wrapper, |w| unsafe {
-        if Z::HAS_INVALIDATE {
-            // Some wrapper types (Element) hand out sub-objects that borrow
-            // from the underlying lol-html value and must be detached along
-            // with the wrapper itself.
-            (*w).invalidate();
-        } else {
-            clear_field(&*w);
-        }
-        Z::deref(w);
-    });
-
     // SAFETY: `this` is the Box<ElementHandler>/Box<DocumentHandler> userdata
     // pointer we registered with lol-html; it lives in LOLHTMLContext for the
     // duration of the rewriter. `&` (not `&mut`) — `cb.call()` below re-enters
@@ -1245,6 +1232,33 @@ where
     // the pending exception through it, and clear it explicitly.
     bun_jsc::top_scope!(scope, global);
 
+    // Stop the rewriter instead of entering JS with a TerminationException left
+    // pending by a prior handler's interrupted `wait_for_promise`.
+    if scope.has_exception() {
+        return true;
+    }
+
+    let wrapper = Z::init(value);
+    // SAFETY: Z::init returns a fresh heap allocation.
+    unsafe { (*wrapper).ref_() };
+
+    // When using RefCount, we don't check the count value directly as it's an
+    // opaque type now. The init values are handled by Box::new with Cell::new(1).
+
+    // SAFETY: wrapper is a live heap allocation (ref'd above) for the entire
+    // scope of this guard; deref runs at most once on this path.
+    let _guard = scopeguard::guard(wrapper, |w| unsafe {
+        if Z::HAS_INVALIDATE {
+            // Some wrapper types (Element) hand out sub-objects that borrow
+            // from the underlying lol-html value and must be detached along
+            // with the wrapper itself.
+            (*w).invalidate();
+        } else {
+            clear_field(&*w);
+        }
+        Z::deref(w);
+    });
+
     let cb = get_callback(this).expect("callback must be set if handler registered");
     let result = match cb.call(
         global,
@@ -1259,6 +1273,10 @@ where
             // If there's an exception in the scope, capture it for later retrieval
             if let Some(exc) = scope.exception() {
                 let exc_value = JSValue::from_cell(exc.as_ptr());
+                // Let a TerminationException propagate; `clear_exception()` would clear it.
+                if exc_value.is_termination_exception() {
+                    return true;
+                }
                 // Store the exception in the VM's unhandled rejection capture
                 // mechanism if it's available (this is the same mechanism used
                 // by BufferOutputSink)
@@ -1278,6 +1296,9 @@ where
     // Check if there's an exception that was thrown but not caught by the error union
     if let Some(exc) = scope.exception() {
         let exc_value = JSValue::from_cell(exc.as_ptr());
+        if exc_value.is_termination_exception() {
+            return true;
+        }
         // Store the exception in the VM's unhandled rejection capture mechanism
         if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
             // SAFETY: VM-owned pointer set by BufferOutputSink::init.
@@ -1299,6 +1320,11 @@ where
 
         if let Some(promise) = result.as_any_promise() {
             vm().wait_for_promise(promise);
+            // A worker `terminate()` during the wait leaves the promise Pending
+            // with a TerminationException set; stop the rewriter here.
+            if scope.has_exception() {
+                return true;
+            }
             let fail = promise.status() == jsc::js_promise::Status::Rejected;
             if fail {
                 vm().unhandled_rejection(global, promise.result(global.vm()), promise.as_value());

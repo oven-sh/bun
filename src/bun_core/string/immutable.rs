@@ -842,8 +842,7 @@ pub fn starts_with_case_insensitive_ascii(self_: &[u8], prefix: &[u8]) -> bool {
 }
 
 pub fn ends_with_case_insensitive_ascii(self_: &[u8], suffix: &[u8]) -> bool {
-    // `check_len = true` so an empty suffix returns true instead of tripping
-    // the comparator's non-empty debug assertion.
+    // `check_len = true`: an empty suffix is a match, not a comparator debug assert.
     self_.len() >= suffix.len()
         && eql_case_insensitive_ascii(&self_[self_.len() - suffix.len()..], suffix, true)
 }

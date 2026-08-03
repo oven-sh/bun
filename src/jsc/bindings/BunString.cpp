@@ -86,7 +86,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__tryCreateAtom(const char
     return { BunStringTag::Dead, {} };
 }
 
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* globalObject, const char* ptr, size_t length)
+extern "C" [[ZIG_EXPORT(zero_is_throw, no_user_js)]] JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* globalObject, const char* ptr, size_t length)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -140,7 +140,7 @@ JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
     return jsString(vm, WTF::move(str));
 }
 
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(zero_is_throw, no_user_js)]] JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
 {
     return JSValue::encode(bunString->transferToJS(globalObject));
 }
@@ -393,7 +393,7 @@ WTF::String toCrossThreadShareable(const WTF::String& string)
 
 }
 
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject, const BunString* bunString)
+extern "C" [[ZIG_EXPORT(zero_is_throw, no_user_js)]] JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject, const BunString* bunString)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -518,7 +518,7 @@ extern "C" BunString BunString__createExternal(const char* bytes, size_t length,
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJSON(
+extern "C" [[ZIG_EXPORT(zero_is_throw, no_user_js)]] JSC::EncodedJSValue BunString__toJSON(
     JSC::JSGlobalObject* globalObject,
     BunString* bunString)
 {

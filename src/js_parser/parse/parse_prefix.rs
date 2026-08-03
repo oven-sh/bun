@@ -19,31 +19,14 @@ type PResult<T> = crate::CrateResult<T>;
 // The 30+ per-token `t_*` helpers are private; only `parse_prefix` is surfaced. Helper
 // names pfx_-prefixed to avoid colliding with parseStmt.rs / parseSuffix.rs mixins on the same `P`.
 
-/// Returns true when the current lexer position immediately after an
-/// `await` identifier unambiguously forces `await` to be interpreted as
-/// the `await` keyword rather than a plain identifier. Used at actual
-/// module scope in targets where top-level await is nominally
-/// disallowed, so DCE gets a chance to eliminate unreachable branches
-/// before we reject the file.
-///
-/// Notably left out:
-///   - Template literals (`TNoSubstitutionTemplateLiteral`,
-///     `TTemplateHead`): a backtick after an identifier forms a tagged
-///     template call, so the identifier interpretation is still valid
-///     (`var await = String.raw; await` + backtick).
-///   - `TExclamation`: in TypeScript `ident!` is the postfix non-null
-///     assertion, so `await!.foo` must stay as an identifier use.
-///   - Operators that can bind an identifier on the left (`+`, `-`, `*`,
-///     `/`, `(`, `[`, `.`, etc.): always ambiguous; don't upgrade.
-///   - A following `TIdentifier` whose raw text is `of`, `in`, `as`, or
-///     `satisfies`: those are contextual keywords the outer parser
-///     depends on (for-of/for-in, TS type-assertion, TS satisfies).
+/// True when the token after an `await` identifier unambiguously starts an
+/// expression, forcing the keyword interpretation. Excludes template literals
+/// (tagged-template continuation), `!` (TS non-null), ambiguous operators,
+/// and contextual keywords (`of`/`in`/`as`/`satisfies`).
 fn token_starts_await_expr<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
     p: &P<'a, TYPESCRIPT, SCAN_ONLY>,
 ) -> bool {
     match p.lexer.token {
-        // Statement/expression keywords that can only start a new
-        // expression (they can't continue an identifier expression).
         T::TImport
         | T::TFunction
         | T::TClass
@@ -56,22 +39,13 @@ fn token_starts_await_expr<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
         | T::TNull
         | T::TTrue
         | T::TFalse
-        // `await { ... }` only has an identifier-continuation
-        // interpretation via ASI (two separate statements), which
-        // nobody writes intentionally. esbuild treats `await { ... }`
-        // as an await expression and so do we.
+        // `await {}` is an await expression (matches esbuild); the ASI
+        // two-statement reading is never intended.
         | T::TOpenBrace
-        // Literals that can't sit next to a bare identifier.
         | T::TStringLiteral
         | T::TNumericLiteral
         | T::TBigIntegerLiteral
-        // `~` is always a prefix unary operator; it can never follow an
-        // identifier.
         | T::TTilde => true,
-        // A following identifier means `await IDENT`, which is normally
-        // not a valid continuation of an identifier expression — except
-        // when the follow-up identifier is a contextual keyword the
-        // outer parser is depending on.
         T::TIdentifier => {
             let raw = p.lexer.raw();
             raw != b"of" && raw != b"in" && raw != b"as" && raw != b"satisfies"
@@ -209,18 +183,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             AsyncPrefixExpression::IsAwait => {
-                // If we're at module top-level (see `p.is_at_module_scope`
-                // for the precise definition — walks past block/with/label
-                // scopes to reach the real module `entry`) in a non-ESM
-                // target (`AllowIdent`), and `await` is followed on the
-                // same line by a token that clearly starts an expression
-                // — i.e. one that could never be a valid continuation of
-                // an identifier — upgrade to parsing an `await` expression
-                // anyway. DCE then has a chance to drop the branch before
-                // we reject it. If a live await survives DCE, the visit
-                // pass emits a CJS-TLA error instead. (A newline after
-                // `await` is left alone because `await\nfoo` can be two
-                // statements via ASI.)
+                // At module scope in a non-ESM target, parse an unambiguous
+                // `await <expr>` as an await expression so DCE can drop dead
+                // branches; the visit pass rejects any await that survives.
+                // Newline after `await` stays identifier (ASI ambiguity).
                 let at_module_scope = p.is_at_module_scope();
                 let should_upgrade_to_await_expr = p.fn_or_arrow_data_parse.allow_await
                     == AwaitOrYield::AllowIdent
@@ -259,9 +225,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     name_range;
                             }
 
-                            // Propagate the upgrade to nested expression parses so
-                            // `await (a + await b)` is handled as a single await
-                            // expression.
+                            // Propagate the upgrade so `await (a + await b)`
+                            // parses as one await expression.
                             let saved_allow_await = p.fn_or_arrow_data_parse.allow_await;
                             if should_upgrade_to_await_expr {
                                 p.fn_or_arrow_data_parse.allow_await = AwaitOrYield::AllowExpr;

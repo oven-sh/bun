@@ -500,11 +500,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if is_for_await {
                 let await_range = p.lexer.range();
                 for_await_range = await_range;
-                // At module top-level in a non-ESM target we only know
-                // whether a `for await` is truly illegal after DCE has
-                // run (it may live inside a dead `if (false)` branch).
-                // Accept it here and rely on the visit pass to raise a
-                // targeted error if a live `for await` survives.
+                // Module-scope `for await` in a non-ESM target is accepted
+                // here; the visit pass errors if it survives DCE.
                 let at_module_scope = p.is_at_module_scope();
                 let tolerate_top_level = p.fn_or_arrow_data_parse.allow_await
                     == AwaitOrYield::AllowIdent

@@ -220,10 +220,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) has_import_meta: bool,
     pub(crate) has_es_module_syntax: bool,
     pub(crate) top_level_await_keyword: bun_ast::Range,
-    /// Set during the visit pass when an `await` is actually reached in
-    /// live module-scope control flow. This is distinct from
-    /// `top_level_await_keyword`, which is populated during parsing and
-    /// therefore includes awaits inside branches that DCE will eliminate.
+    /// Visit-pass flag: a module-scope `await` survives DCE. Unlike
+    /// `top_level_await_keyword`, this excludes awaits in dead branches.
     pub(crate) has_live_top_level_await: bool,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
     pub(crate) fn_or_arrow_data_visit: FnOrArrowDataVisit,
@@ -1275,20 +1273,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.deoptimize_common_js_named_exports();
     }
 
-    /// True iff the parser is currently parsing a statement or
-    /// expression that is itself at module top level — i.e. walking up
-    /// the scope stack reaches the real module `entry` scope without
-    /// ever crossing a function body, function args, arrow, class body,
-    /// class name, class static init, or a TypeScript namespace / enum
-    /// body. Block and with scopes don't count as crossings because
-    /// statements like `if (false) { await import(x); }` are still
-    /// logically module-scope code.
-    ///
-    /// `.entry` is overloaded: it marks both the true module scope and
-    /// TypeScript namespace / enum bodies. Namespace/enum scopes set
-    /// `ts_namespace != null` — those are function-like nested contexts
-    /// at runtime and must be treated as not-at-module-scope so the
-    /// `await` identifier upgrade doesn't misfire inside them.
+    /// True at module top level: the scope walk reaches the module `Entry` scope
+    /// (blocks/with don't count) without crossing a function, class, or TS
+    /// namespace/enum body (`Entry` with `ts_namespace` set is function-like).
     pub(crate) fn is_at_module_scope(&self) -> bool {
         let mut scope: Option<js_ast::StoreRef<js_ast::Scope>> = Some(self.current_scope);
         while let Some(curr) = scope {
@@ -2780,11 +2767,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.scope_order_to_visit = buf.into_bump_slice();
         }
 
-        // `top_level_await_keyword` may be populated from a parse-time
-        // discovery that lives inside a branch DCE will drop. Only let
-        // it imply ESM when the output format actually allows
-        // top-level await; otherwise we'd mis-classify the file until
-        // the visit pass finishes and we can clear the keyword.
+        // A parse-time TLA keyword may sit in a branch DCE will drop, so it
+        // only implies ESM when the output format supports top-level await.
         let tla_implies_esm =
             !self.top_level_await_keyword.is_empty() && self.options.features.top_level_await;
 
@@ -2857,10 +2841,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.module_scope_mut()
                 .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeExport);
         } else if self.top_level_await_keyword.len > 0 && self.options.features.top_level_await {
-            // Only opt into strict mode from top-level `await` when the
-            // target output actually supports top-level await.
-            // Otherwise we could mark a module strict on the basis of
-            // an `await` that DCE will end up eliminating.
+            // Skipped when the format forbids TLA: the `await` may be in a
+            // branch DCE eliminates, which must not imply strict mode.
             self.module_scope_mut()
                 .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait);
         }

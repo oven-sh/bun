@@ -128,10 +128,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && p.fn_or_arrow_data_visit.is_outside_fn_or_arrow
                 && !p.has_live_top_level_await
             {
-                // Record the first live top-level `await` so a later
-                // CJS-top-level-await diagnostic points at an `await`
-                // that actually survived DCE rather than one that got
-                // eliminated.
+                // Point the post-visit TLA diagnostic at the first
+                // `await` that survived DCE.
                 p.top_level_await_keyword = bun_ast::Range {
                     loc: e.loc,
                     len: b"await".len() as i32,

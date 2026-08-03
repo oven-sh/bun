@@ -152,9 +152,7 @@ pub struct ForOf {
     pub init: StmtNodeIndex,
     pub value: ExprNodeIndex,
     pub body: StmtNodeIndex,
-    /// Source range of the `await` keyword in a `for await (...)` loop.
-    /// Only meaningful when `is_await` is true. Used by the visit pass
-    /// to point CJS-TLA diagnostics at the live `await` token.
+    /// Range of the `await` keyword when `is_await` is true; used for diagnostics.
     pub await_range: crate::Range,
 }
 

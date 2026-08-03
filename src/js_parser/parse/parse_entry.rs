@@ -996,30 +996,14 @@ impl<'a> Parser<'a> {
 
         visit_tracer.end();
 
-        // In a non-ESM target, the DCE-before-reject flow owns the
-        // post-visit state of `top_level_await_keyword`: clear the
-        // pre-DCE range if no live `await` survived (so downstream ESM
-        // classification doesn't mistake a dead `if (false) { await ... }`
-        // for real TLA), or emit a targeted diagnostic at the surviving
-        // `await` if one did.
-        //
-        // In an ESM / bake-dev target we MUST NOT clear the range.
-        // `to_boolean` sets `is_control_flow_dead=true` for a dead
-        // `if (false)` branch unconditionally, but the dead-branch
-        // *removal* in visit_stmt is gated on `features.minify_syntax`.
-        // Without `--minify`, the dead `await` stays in the emitted AST
-        // and the linker still needs to wrap the module in an `async`
-        // closure — clearing the range would emit a non-async `__esm`
-        // wrapper around code that still contains `await`, producing a
-        // runtime SyntaxError.
+        // Non-ESM targets: clear the pre-DCE TLA range if no `await` survived,
+        // else error at the survivor. TLA-capable targets keep the range: dead
+        // branches are only removed under minify_syntax and may still need an
+        // async wrapper.
         if !p.options.features.top_level_await {
             if !p.has_live_top_level_await {
                 p.top_level_await_keyword = bun_ast::Range::NONE;
             } else {
-                // A live top-level await survived DCE, but the
-                // configured output format does not support top-level
-                // await. Emit a targeted error pointing at the
-                // surviving `await`.
                 let msg: &'static [u8] = match p.options.output_format {
                     options::Format::Cjs => {
                         b"Top-level await is currently not supported with the \"cjs\" output format"
@@ -1030,9 +1014,7 @@ impl<'a> Parser<'a> {
                     options::Format::InternalBakeDev => {
                         b"Top-level await is currently not supported with the \"internal_bake_dev\" output format"
                     }
-                    // `!features.top_level_await` should be false for Esm,
-                    // so we shouldn't get here, but fall back to a generic
-                    // message if we do.
+                    // Unreachable: Esm implies `features.top_level_await`.
                     options::Format::Esm => {
                         b"Top-level await is currently not supported with this output format"
                     }

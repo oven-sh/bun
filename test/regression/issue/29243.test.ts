@@ -238,10 +238,9 @@ module.exports = foo;`,
   expect(exitCode).not.toBe(0);
 });
 
-// Arrow function argument lists go through `parseParenExpr`, which is a
-// different path from `parseFn`. It also has to clear `is_top_level` when
-// saving the parser state so the module-scope `await` upgrade doesn't
-// leak into default parameter expressions of non-async arrow functions.
+// Arrow argument lists take a different parse path than function declarations;
+// the module-scope `await` upgrade must not leak into default parameters of
+// non-async arrows.
 test.concurrent("bun build --format=cjs rejects await in a default parameter of a non-async arrow", async () => {
   using dir = tempDir("issue-29243-arrow-default-param", {
     "entry.js": `const fn = (x = await import("node:fs")) => x;

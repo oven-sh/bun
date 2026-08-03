@@ -751,10 +751,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
   // kept `task` / `on_start_buffering` pointing at the freed tasklet, and
   // `Bun.write(path, resp)` then called `on_start_buffering(task)`.
   it.skipIf(!isASAN).each([
-    [
-      "getReader().read() then releaseLock()",
-      "const rd = resp.body.getReader(); await rd.read(); rd.releaseLock();",
-    ],
+    ["getReader().read() then releaseLock()", "const rd = resp.body.getReader(); await rd.read(); rd.releaseLock();"],
     ["resp.body getter", "resp.body;"],
     ["resp.clone()", "resp.clone();"],
   ])(

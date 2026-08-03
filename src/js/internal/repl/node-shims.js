@@ -1,7 +1,6 @@
-// Consolidated shims for Node.js internal modules consumed by the ported
-// node:repl / internal/readline stack. Each export matches the name and
-// calling convention of the Node internal it replaces; implementations
-// delegate to Bun equivalents.
+// Shims for Node internals consumed by the ported node:repl/readline stack.
+// Each export matches the upstream name/calling convention.
+// https://github.com/nodejs/node/tree/main/lib/internal
 const util = require("node:util");
 const Module = require("node:module");
 const path = require("node:path");
@@ -32,11 +31,9 @@ const {
 
 const { kEmptyObject } = require("internal/shared");
 
-// Node's real implementation reconstructs the regex in an internal realm so a
-// tampered `RegExp.prototype[Symbol.replace]` can't observe it. Bun has no
-// internal realm; the load-time-captured intrinsics close the `[Symbol.*]`
-// override hole (a tampered `RegExp.prototype.exec` is still observable per
-// spec — see `@@replace`/`@@split` `Get(rx,"exec")`).
+// Node rebuilds the regex in an internal realm; Bun has none, so load-time
+// primordials close the [Symbol.*] override hole (RegExp.prototype.exec is
+// still observable per spec's @@replace/@@split Get(rx,"exec")).
 function SideEffectFreeRegExpPrototypeSymbolReplace(regexp, str, replacement) {
   return RegExpPrototypeSymbolReplace(regexp, str, replacement);
 }
@@ -85,14 +82,8 @@ function debuglog(set, cb) {
 }
 
 // ---- internal/util/inspector ----------------------------------------------
-//
-// Node's sendInspectorCommand opens a V8 inspector session; REPL previews rely
-// on `Runtime.evaluate` with `throwOnSideEffect: true`. JSC has no side-effect-
-// checking evaluator, so this shim emulates the session: expressions are vetted
-// statically (acorn AST allowlist, fail-closed — unvetted input is never
-// evaluated) and only then run in the REPL's vm context. Unlike V8's dynamic
-// check the vet goes by callee name/shape, so a preview can invoke a user
-// function bound to an allowlisted name (`Array = f` then typing `Array(1)`).
+// JSC has no throwOnSideEffect evaluator; previews are gated by a fail-closed
+// acorn-AST allowlist (name-based, not V8's dynamic check) before running.
 
 // Lazy: don't destructure — see internal/repl/acorn.js.
 const acorn = require("internal/repl/acorn");
@@ -683,12 +674,9 @@ function makeRequireFunction(_mod) {
   }
   const anchor = path.join(cwd, "<repl>");
   const boundRequire = Module.createRequire(anchor);
-  // Bun's resolver throws a ResolveMessage; Node's loader throws a plain Error
-  // with the "Require stack" message, `code`, and `requireStack` — user code
-  // (and test-repl-require) matches on that exact shape. Only reshape failures
-  // whose referrer is the REPL itself: a miss inside a required module keeps
-  // its own (accurate) referrer message.
-  // Not named `require`: the builtin bundler rewrites `require(` tokens.
+  // Reshape Bun's ResolveMessage into Node's {code, requireStack} Error for
+  // REPL-anchored misses only (lib/internal/modules/cjs/loader.js). Not named
+  // `require`: the builtin bundler rewrites `require(` tokens.
   function replRequire(id) {
     try {
       return boundRequire(id);
@@ -834,11 +822,9 @@ class CJSModuleShim {
 // ---- internalBinding('contextify') ----------------------------------------------
 
 function startSigintWatchdog() {
-  // breakOnSigint interruption of synchronous eval WORKS via Bun's own
-  // SigintWatcher (wired in NodeVMScript.cpp). Only Node's `had_pending_
-  // signals` race — SIGINT landing after the script exits but before raw mode
-  // is restored — is unimplemented, so stopSigintWatchdog() always reports no
-  // pending signal.
+  // breakOnSigint works via Bun's SigintWatcher (NodeVMScript.cpp). Only Node's
+  // `had_pending_signals` race (SIGINT between script exit and raw-mode restore)
+  // is unimplemented, so stopSigintWatchdog() always returns false.
   return true;
 }
 

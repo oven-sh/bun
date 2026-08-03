@@ -1283,8 +1283,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
 
     double maxHeaderSizeNumber = maxHeaderSize.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    int32_t lenientBits = lenientHttpFlags.toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
-    Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), static_cast<uint8_t>(lenientHttpFlags.toInt32(globalObject) & 0x3), httpAllowHalfOpen.toBoolean(globalObject));
+    Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), static_cast<uint8_t>(lenientBits & 0x3), httpAllowHalfOpen.toBoolean(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     Server__setMaxHTTPHeaderSize(globalObject, JSValue::encode(serverValue), maxHeaderSizeNumber);
@@ -1316,7 +1318,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetAppFlags, (JSGlobalObject * globalObject, Call
     JSValue lenientHttpFlags = callFrame->uncheckedArgument(3);
     JSValue httpAllowHalfOpen = callFrame->argument(4);
 
-    Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), static_cast<uint8_t>(lenientHttpFlags.toInt32(globalObject) & 0x3), httpAllowHalfOpen.toBoolean(globalObject));
+    int32_t lenientBits = lenientHttpFlags.toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), static_cast<uint8_t>(lenientBits & 0x3), httpAllowHalfOpen.toBoolean(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsUndefined());

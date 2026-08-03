@@ -298,13 +298,11 @@ pub(crate) fn run_task(
             holder.run()?;
         }
         task_tag::FileResponseStreamEof => {
-            // SAFETY: tag identifies pointee — the in-flight read holds a ref
-            // on the stream until `on_reader_done` releases it; the guard keeps
-            // that release from freeing the stream inside its own frame.
             let stream = cast_ptr!(crate::server::FileResponseStream);
-            // SAFETY: tag identifies pointee; the in-flight read holds a ref.
+            // SAFETY: tag identifies pointee; `on_read_chunk` took a ref for
+            // this task at enqueue time which this guard adopts.
             let _pin =
-                unsafe { bun_ptr::ScopedRef::<crate::server::FileResponseStream>::new(stream) };
+                unsafe { bun_ptr::ScopedRef::<crate::server::FileResponseStream>::adopt(stream) };
             // SAFETY: `stream` is live for this call (pinned above).
             unsafe { (*stream).on_reader_done() };
         }
@@ -1288,6 +1286,15 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
                     task.ptr.cast::<crate::ipc::SendQueue>(),
                 )
             };
+            true
+        }
+        task_tag::FileResponseStreamEof => {
+            // SAFETY: `on_read_chunk` took a ref for the queued task; adopt it.
+            drop(unsafe {
+                bun_ptr::ScopedRef::<crate::server::FileResponseStream>::adopt(
+                    task.ptr.cast::<crate::server::FileResponseStream>(),
+                )
+            });
             true
         }
         // `AsyncFSTask`s are `Box::leak`'d in `create()` and freed by

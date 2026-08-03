@@ -4838,9 +4838,6 @@ impl<'a> HTTPClient<'a> {
                                 self.state.transfer_encoding = Encoding::Chunked;
                             }
                             Some(Encoding::Identity) => {}
-                            // We never send a TE request header, so any other coding
-                            // has no decoder here. Defer the error: RFC 9112 §6.1
-                            // allows this header on HEAD/304 where there is no body.
                             Some(_) => unsupported_transfer_coding = true,
                             None => return Err(crate::Error::UnsupportedTransferEncoding),
                         }

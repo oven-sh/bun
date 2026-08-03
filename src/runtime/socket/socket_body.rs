@@ -1619,7 +1619,8 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let callback = handlers.on_end();
         let vm = handlers.vm;
-        if callback.is_empty() || vm.script_execution_status() != jsc::ScriptExecutionStatus::Running
+        if callback.is_empty()
+            || vm.script_execution_status() != jsc::ScriptExecutionStatus::Running
         {
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
 

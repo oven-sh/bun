@@ -950,14 +950,8 @@ static WTF::String generateHeapProfile(JSC::VM& vm)
 }
 
 // ── V8 sampling heap profile (`--heap-prof`, .heapprofile) ──────────────────
-//
-// V8's `--heap-prof` samples allocations and attributes bytes to the JS call
-// stack. JSC has no allocation-sampling profiler, so we approximate: the
-// time-based SamplingProfiler runs for the process lifetime, and at exit the
-// sampled stacks are folded into the V8 `{head, samples}` tree with the live
-// GC heap size distributed evenly across samples. Function attribution is
-// real (sampled stacks); the per-node byte sizes are a time-weighted
-// approximation, not per-allocation truth.
+// JSC has no allocation-sampling profiler, so approximate with the time-based
+// SamplingProfiler and distribute live GC heap size evenly across sampled stacks.
 
 namespace {
 
@@ -1143,12 +1137,8 @@ static WTF::String generateHeapSamplingProfile(JSC::VM& vm)
 }
 
 // ── v8.GCProfiler ───────────────────────────────────────────────────────────
-//
-// Records one entry per collection via JSC::HeapObserver. The observer
-// callbacks can fire on the collector thread with the world stopped, so they
-// only read cheap Heap fields (sizeAfterLast*Collection,
-// totalBytesAllocatedThisCycle) and never walk the heap; entries are guarded
-// by a lock against stop() on the JS thread.
+// One entry per collection via JSC::HeapObserver. Callbacks may fire on the collector
+// thread with the world stopped, so only read cheap Heap fields; entries are locked.
 
 class BunGCProfiler final : public JSC::HeapObserver {
 public:
@@ -1253,10 +1243,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_stopGCProfile, (JSC::JSGlobalObject * global
     return JSC::JSValue::encode(JSC::jsString(vm, json));
 }
 
-// JSC has no allocation-site sampling heap profiler, so live bytes cannot be
-// attributed to the call frames that allocated them. Report the real live-heap
-// size on the (root) frame — the frame V8 uses for unattributable allocations
-// — with no samples, in V8's SamplingHeapProfile JSON shape.
+// JSC has no allocation-site sampling heap profiler; report live-heap size on the
+// (root) frame with no samples, in V8's SamplingHeapProfile JSON shape.
 static WTF::String generateSamplingHeapProfileV8(JSC::VM& vm)
 {
     WTF::StringBuilder output;

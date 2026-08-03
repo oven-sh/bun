@@ -321,11 +321,8 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\""
     ),
-    // Node's permission model. Hidden from `--help` (empty description) until
-    // every scope is enforced: today only `net` is, so advertising
-    // `--allow-fs-read` as a filesystem guard would promise a sandbox that
-    // does not exist. The flags are still parsed so `process.permission`
-    // reports what was granted.
+    // Node's permission model. Hidden from `--help` until every scope is enforced
+    // (today only `net` is); still parsed so `process.permission` reports grants.
     parse_param!("--permission"),
     parse_param!("--allow-fs-read <STR>..."),
     parse_param!("--allow-fs-write <STR>..."),
@@ -934,12 +931,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
                 )
             {
-                // `diag.arg` is the argument as written with its leading
-                // dashes stripped. Node echoes it verbatim, so the long form
-                // keeps a trailing '=' (`node --eval=` reports
-                // "--eval= requires an argument"); the short form reports the
-                // single flag that wanted the value, not the cluster it
-                // arrived in.
+                // Node echoes `diag.arg` verbatim (long form keeps trailing `=`); short
+                // form reports the single flag that wanted the value, not its cluster.
                 let node_flag: Option<Vec<u8>> = match (diag.short, diag.long.as_deref()) {
                     (Some(short @ (b'e' | b'p')), _) => Some(vec![b'-', short]),
                     (_, Some(b"eval" | b"print" | b"inspect-port" | b"debug-port")) => {
@@ -1424,14 +1417,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         }
 
-        // Node registers `--print` as a boolean and `--print <arg>` as an alias
-        // for `-pe`, i.e. `--print --eval <arg>`, so -p turns on print mode and
-        // may also carry the script (`bun -p 42`, `bun -pe 42`, `bun -p -e 42`).
-        //
-        // Divergence: because both spellings feed one upstream `--eval` string,
-        // Node takes whichever came last, so `node -p 7 -e 9` prints 9. Bun's
-        // parser keeps the two options in separate slots with no relative
-        // order, so a script on -p wins and it prints 7.
+        // Node's `--print <arg>` aliases `-pe`, so -p may carry the script. Divergence:
+        // `node -p 7 -e 9` prints 9 (last wins); Bun keeps separate slots so -p wins (7).
         let print_arg = args.option(b"--print");
         let eval_arg = args.option(b"--eval");
         if print_arg.is_some() || eval_arg.is_some() {
@@ -1558,10 +1545,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         }
 
-        // `--inspect-port` / `--debug-port` (Node alias) set the default
-        // debugger target used when --inspect/--inspect-wait/--inspect-brk is
-        // passed without its own [host:]port. They do not activate the
-        // debugger on their own, matching Node.
+        // `--inspect-port` / `--debug-port` set the default debugger target for --inspect*
+        // without its own [host:]port; they do not activate the debugger on their own.
         let inspect_port_value: Option<&[u8]> =
             match (args.option(b"--inspect-port"), args.option(b"--debug-port")) {
                 (Some(value), _) => {
@@ -1628,9 +1613,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             };
         }
 
-        // Node's --diagnostic-dir is the fallback output directory for every
-        // diagnostic artifact; the profiler-specific --cpu-prof-dir /
-        // --heap-prof-dir override it.
+        // --diagnostic-dir is the fallback output dir; --cpu-prof-dir/--heap-prof-dir override.
         // https://github.com/nodejs/node/blob/v26.3.0/src/node_options.cc#L542-L546
         let diagnostic_dir = args.option(b"--diagnostic-dir");
 

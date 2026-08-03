@@ -4038,10 +4038,8 @@ function filterOnlyValidAddress(addresses) {
   return addresses[0];
 }
 
-// Node resolves a non-IP listen host through dns.lookup({ all: true }) and
-// binds the first address that is not IPv6 link-local; the lookup goes
-// through node:dns so user mocks and custom resolvers observe it.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2259
+// Node resolves a non-IP listen host through dns.lookup({ all: true }) and binds the
+// first non-link-local address: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2259
 function lookupAndListen(
   server,
   port,

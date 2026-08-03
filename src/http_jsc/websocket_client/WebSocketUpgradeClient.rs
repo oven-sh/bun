@@ -211,7 +211,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// On error, this returns null.
     /// Returning null signals to the parent function that the connection failed.
     #[allow(clippy::too_many_arguments)]
-    pub unsafe fn connect(
+    pub(crate) unsafe fn connect(
         global: &JSGlobalObject,
         websocket: *mut CppWebSocket,
         host: &BunString,
@@ -572,12 +572,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
     }
 
-    pub fn clear_input(&mut self) {
+    pub(crate) fn clear_input(&mut self) {
         self.input_body_buf = Vec::new();
         self.to_send_len = 0;
     }
 
-    pub fn clear_data(&mut self) {
+    pub(crate) fn clear_data(&mut self) {
         // SAFETY: `get_mut_ptr()` is the live per-thread VM singleton.
         self.poll_ref
             .unref(unsafe { vm_loop_ctx(VirtualMachineRef::get_mut_ptr()) });
@@ -612,7 +612,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// socket userdata pointer, which would alias a `&mut self` argument; and
     /// the trailing `deref` may free `this`, which would violate a `&mut self`
     /// argument protector.
-    pub unsafe fn cancel(this: *mut Self) {
+    pub(crate) unsafe fn cancel(this: *mut Self) {
         // SAFETY: caller (C++ / uWS) holds a live ref; `this` carries root
         // (userdata) provenance from `heap::alloc`.
         let this = unsafe { ThisPtr::new(this) };
@@ -669,7 +669,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// `did_abrupt_close` may run JS that re-enters via `cancel()`, and
     /// `tcp.close()` synchronously dispatches `handle_close`; both would alias
     /// a `&mut self` argument.
-    pub unsafe fn fail(this: *mut Self, code: ErrorCode) {
+    pub(crate) unsafe fn fail(this: *mut Self, code: ErrorCode) {
         log!("onFail: {}", <&'static str>::from(code));
         bun_jsc::mark_binding!();
         // SAFETY: caller contract — `this` is a live `heap::alloc` pointer.
@@ -722,7 +722,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
     /// # Safety
     /// `this` must point to a live `Self`. See `fail`.
-    pub unsafe fn terminate(this: *mut Self, code: ErrorCode) {
+    pub(crate) unsafe fn terminate(this: *mut Self, code: ErrorCode) {
         // SAFETY: forwards `this` with root provenance.
         unsafe { Self::fail(this, code) };
         // We cannot access the pointer after fail is called.
@@ -830,7 +830,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // NUL-terminated CString that outlives this call.
                     bun_http::configure_http_client_with_alpn(
                         unsafe { &mut *handle },
-                        if strings::is_ip_address(me.hostname.as_bytes()) {
+                        if bun_core::ip_address::is_ip_address(me.hostname.as_bytes()) {
                             core::ptr::null()
                         } else {
                             me.hostname.as_ptr()
@@ -856,7 +856,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         me.to_send_len = me.input_body_buf.len() - usize::try_from(wrote).expect("int cast");
     }
 
-    pub fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
+    pub(crate) fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
         // `InternalSocket` has no `PartialEq`; compare native handles.
         socket.get_native_handle() == self.tcp.get_native_handle()
     }
@@ -1191,7 +1191,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// # Safety
     /// `this` must point to a live `Self`. Takes `*mut Self` because
     /// `terminate` may free `this`; see `fail`.
-    pub unsafe fn on_proxy_tls_handshake_complete(this: *mut Self) {
+    pub(crate) unsafe fn on_proxy_tls_handshake_complete(this: *mut Self) {
         log!("onProxyTLSHandshakeComplete");
 
         // SAFETY: short-lived `&mut`; no reentrant calls until `terminate` below.
@@ -1245,7 +1245,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// # Safety
     /// `this` must point to a live `Self`. Takes `*mut Self` because
     /// `terminate`/`process_response` may free `this`; see `fail`.
-    pub unsafe fn handle_decrypted_data(this: *mut Self, data: &[u8]) {
+    pub(crate) unsafe fn handle_decrypted_data(this: *mut Self, data: &[u8]) {
         log!("handleDecryptedData: {} bytes", data.len());
         // SAFETY: caller (proxy tunnel) holds a live ref on `this`.
         let this = unsafe { ThisPtr::new(this) };
@@ -1301,13 +1301,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// `terminate`/`tcp.close()` may synchronously dispatch `handle_close`
     /// (aliased `&mut`), and the success path's double `deref` may free
     /// `this` (argument-protector UB on `&mut self`).
-    pub unsafe fn process_response(
+    pub(crate) unsafe fn process_response(
         this: *mut Self,
         response: picohttp::Response,
         remain_buf: &[u8],
     ) {
         let mut upgrade_header = picohttp::Header::ZERO;
-        let mut connection_header = picohttp::Header::ZERO;
+        let mut connection_header_seen = false;
+        let mut connection_has_upgrade = false;
         let mut websocket_accept_header = picohttp::Header::ZERO;
         let mut protocol_header_seen = false;
 
@@ -1323,13 +1324,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
         for header in response.headers.list {
             match header.name().len() {
                 len if len == b"Connection".len() => {
-                    if connection_header.name().is_empty()
-                        && strings::eql_case_insensitive_ascii_ignore_length(
-                            header.name(),
-                            b"Connection",
-                        )
-                    {
-                        connection_header = *header;
+                    if strings::eql_case_insensitive_ascii_ignore_length(
+                        header.name(),
+                        b"Connection",
+                    ) {
+                        connection_header_seen = true;
+                        connection_has_upgrade |=
+                            HeaderValueIterator::init(header.value()).any(|t| {
+                                strings::eql_case_insensitive_ascii_check_length(t, b"upgrade")
+                            });
                     }
                 }
                 len if len == b"Upgrade".len() => {
@@ -1524,12 +1527,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        if connection_header
-            .name()
-            .len()
-            .min(connection_header.value().len())
-            == 0
-        {
+        if !connection_header_seen {
             // SAFETY: no `&mut Self` is live across this call.
             unsafe { Self::terminate(this, ErrorCode::MissingConnectionHeader) };
             return;
@@ -1553,7 +1551,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        if !strings::eql_case_insensitive_ascii(connection_header.value(), b"Upgrade", true) {
+        if !connection_has_upgrade {
             // SAFETY: no `&mut Self` is live across this call.
             unsafe { Self::terminate(this, ErrorCode::InvalidConnectionHeader) };
             return;
@@ -1725,7 +1723,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         drop(saved_secure);
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = core::mem::size_of::<Self>();
         cost += self.body.capacity();
         cost += self.to_send_len;
@@ -2011,31 +2009,17 @@ fn build_request_body(
     let mut encoded_buf = [0u8; 24];
     let key: &[u8] = 'blk: {
         if let Some(k_slice) = user_key {
-            // Validate that it's a valid base64-encoded 16-byte value
-            let mut decoded_buf = [0u8; 24]; // Max possible decoded size
-            let Ok(decoded_len) = B64_STD.decoder.calc_size_for_slice(k_slice) else {
-                // Invalid base64, fall through to generate
-                break 'blk B64_STD
-                    .encoder
-                    .encode(&mut encoded_buf, &vm.rare_data().next_uuid().bytes);
-            };
-
-            if decoded_len == 16 {
-                // Try to decode to verify it's valid base64
-                if B64_STD.decoder.decode(&mut decoded_buf, k_slice).is_err() {
-                    // Invalid base64, fall through to generate
-                    break 'blk B64_STD
-                        .encoder
-                        .encode(&mut encoded_buf, &vm.rare_data().next_uuid().bytes);
-                }
-                // Valid 16-byte key, use it as-is
+            let mut decoded_buf = [0u8; 24];
+            if B64_STD.decoder.calc_size_for_slice(k_slice) == Ok(16)
+                && B64_STD.decoder.decode(&mut decoded_buf, k_slice).is_ok()
+            {
                 break 'blk k_slice;
             }
         }
-        // Generate a new key if user key is invalid or not provided
+        // RFC 6455 §4.1: base64 of a randomly selected 16-byte value.
         B64_STD
             .encoder
-            .encode(&mut encoded_buf, &vm.rare_data().next_uuid().bytes)
+            .encode(&mut encoded_buf, vm.rare_data().entropy_slice(16))
     };
 
     // Compute the expected Sec-WebSocket-Accept value per RFC 6455 §4.2.2:

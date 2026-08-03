@@ -773,9 +773,8 @@ impl SocketConfig {
 // mapping. `lazy_array($get => $prop)` covers the `queries`-style getter that
 // lazily seeds the slot with an empty `JSArray` on first read.
 //
-// The emitted setter returns `()` — `host_fn_setter_this[_shared]` accepts
-// that via `IntoHostSetterReturn for ()` (≡ `true` at the ABI), so this is
-// drop-in for both `sharedThis` and `&mut`-receiver classes.
+// The emitted setter returns `()` — `host_fn_setter_this_shared` accepts
+// that via `IntoHostSetterReturn for ()` (≡ `true` at the ABI).
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Stamp out trivial cached-prop getter/setter host-fns inside an `impl` block.
@@ -1133,9 +1132,6 @@ js_class_module!(JSImmediate = "Immediate" { callback, arguments });
 js_class_module!(JSBlob      = "Blob"      as crate::webcore_types::Blob { name, stream });
 js_class_module!(JSResponse  = "Response"  { body, headers, url, statusText, stream });
 js_class_module!(JSRequest   = "Request"   { body, headers, url, signal, stream });
-// `values: ["ondrain", "oncancel", "stream"]` in src/runtime/api/ResumableSink.classes.ts.
-js_class_module!(JSResumableFetchSink    = "ResumableFetchSink"    { ondrain, oncancel, stream });
-js_class_module!(JSResumableS3UploadSink = "ResumableS3UploadSink" { ondrain, oncancel, stream });
 // `values: ["resolve", "reject"]` in src/runtime/api/Shell.classes.ts.
 js_class_module!(JSShellInterpreter      = "ShellInterpreter"      { resolve, reject });
 // `src/runtime/crypto/crypto.classes.ts` — one entry per `StaticCryptoHasher`

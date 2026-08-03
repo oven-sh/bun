@@ -6,7 +6,7 @@ use super::Expect;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_equal(
+    pub(crate) fn to_equal(
         &self,
         global: &JSGlobalObject,
         frame: &CallFrame,

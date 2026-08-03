@@ -22,7 +22,7 @@ declare_scope!(OverrideMap, visible);
 #[derive(Default)]
 pub struct OverrideMap {
     // `ArrayHashMap` defaults to identity hashing for integer keys.
-    pub map: ArrayHashMap<PackageNameHash, Dependency>,
+    pub(crate) map: ArrayHashMap<PackageNameHash, Dependency>,
 }
 
 impl OverrideMap {
@@ -155,7 +155,7 @@ impl OverrideMap {
     }
 
     /// https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides
-    pub(crate) fn parse_from_overrides(
+    fn parse_from_overrides(
         &mut self,
         lockfile_dependencies: &[Dependency],
         root_package: &Package,
@@ -273,7 +273,7 @@ impl OverrideMap {
 
     /// yarn classic: https://classic.yarnpkg.com/lang/en/docs/selective-version-resolutions/
     /// yarn berry: https://yarnpkg.com/configuration/manifest#resolutions
-    pub(crate) fn parse_from_resolutions(
+    fn parse_from_resolutions(
         &mut self,
         lockfile_dependencies: &[Dependency],
         root_package: &Package,
@@ -375,7 +375,7 @@ impl OverrideMap {
 
 // `field` is only used in warning-message
 // formatting, so a runtime `&'static str` is fine.
-pub fn parse_override_value(
+pub(crate) fn parse_override_value(
     field: &'static str,
     // Callers hold a live `StringBuilder` (which owns `&mut string_bytes`), so
     // accept the dependency slice directly and read string-bytes through

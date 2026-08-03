@@ -76,7 +76,6 @@ class JSNativeStreamSourceAdapter;
 class JSDirectSinkCloseState;
 class JSAsyncIteratorSourceOperation;
 class JSReadStreamIntoSinkOperation;
-class JSResumableSinkPumpOperation;
 class JSTextEncoderStream;
 class JSTextDecoderStream;
 
@@ -176,7 +175,6 @@ enum class ReadRequestKind : uint8_t {
     ByteTee, // context = the JSStreamTeeState (byte tee's default-reader read request)
     AsyncIterator, // context = InternalFieldTuple{asyncIterator, the next() result promise}
     ReadStreamIntoSink, // Bun: readStreamIntoSink pump read (context = JSReadStreamIntoSinkOperation)
-    ResumableSinkPump, // Bun: ResumableSink pump read (context = JSResumableSinkPumpOperation)
     TextDecode, // Body.textStream()'s per-pull read: context = the output
                 // JSReadableStreamDefaultController (its algorithmContext is the
                 // source reader; decode state inline on m_algorithms.textDecodeState)

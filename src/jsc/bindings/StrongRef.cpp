@@ -1,49 +1,91 @@
 #include "root.h"
 #include "StrongRef.h"
-#include <JavaScriptCore/Strong.h>
-#include <JavaScriptCore/StrongInlines.h>
+#include "StrongRootBlock.h"
 #include "BunClientData.h"
-#include "wtf/DebugHeap.h"
-#include "ZigGlobalObject.h"
 
-extern "C" __attribute__((__always_inline__)) void Bun__StrongRef__delete(JSC::JSValue* _Nonnull handleSlot)
+using Bun::StrongRefImpl;
+using Bun::StrongRootBlock;
+
+// Hot-path clientData lookup without the `downcast<JSVMClientData>`
+// RELEASE_ASSERT virtual call; vm.clientData is unconditionally a
+// JSVMClientData* in bun (set in JSVMClientData::create).
+static ALWAYS_INLINE WebCore::JSVMClientData* clientDataFast(JSC::VM& vm)
 {
-    // deallocate() will correctly remove the handle from the strong list if it's currently on it.
-    JSC::HandleSet::heapFor(handleSlot)->deallocate(handleSlot);
+    ASSERT(WebCore::clientData(vm));
+    return static_cast<WebCore::JSVMClientData*>(vm.clientData);
 }
 
-extern "C" __attribute__((__always_inline__)) JSC::JSValue* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
-{
-    auto& vm = globalObject->vm();
-    JSC::HandleSet* handleSet = vm.heap.handleSet();
-    JSC::HandleSlot handleSlot = handleSet->allocate();
-    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+// Handle layout for bun_jsc::Strong. The Rust side treats the return of
+// Bun__StrongRef__new as an opaque non-null pointer; there is no heap
+// allocation. The low 48 bits point at the WriteBarrier<Unknown> slot inside a
+// StrongRootBlock (so Rust can read/clear the value with a direct pointer
+// load, matching the old HandleSlot fast path), and the top 16 bits hold the
+// slot index so `block` can be recovered as `slot - index*8 - slotsOffset()`.
+// JSC cells live in the low 48 bits of the address space (the same invariant
+// JSValue NaN-boxing and StructureID encoding rely on), and the slot index is
+// bounded by StrongRootBlock::capacity.
+static constexpr unsigned kStrongRefIndexShift = 48;
+static constexpr uintptr_t kStrongRefSlotMask = (static_cast<uintptr_t>(1) << kStrongRefIndexShift) - 1;
+static_assert(sizeof(uintptr_t) == 8, "StrongRef handle encoding requires 64-bit pointers");
+static_assert(StrongRootBlock::capacity < (1u << (64 - kStrongRefIndexShift)), "slot index must fit in the top 16 bits");
+static_assert(sizeof(StrongRootBlock::Slot) == sizeof(JSC::JSValue), "Rust Impl::get reads the slot as a JSValue");
 
-    // The write barrier must be called to add the handle to the strong
-    // list if the new value is a cell. We must use <false> because the value
-    // might be a primitive.
-    handleSet->writeBarrier<false>(handleSlot, value);
-    *handleSlot = value;
-    return handleSlot;
+static ALWAYS_INLINE StrongRefImpl* encodeStrongRef(StrongRootBlock* block, unsigned index)
+{
+    uintptr_t slot = reinterpret_cast<uintptr_t>(block->slotAt(index));
+    ASSERT(!(slot & ~kStrongRefSlotMask));
+    return reinterpret_cast<StrongRefImpl*>(slot | (static_cast<uintptr_t>(index) << kStrongRefIndexShift));
 }
 
-extern "C" void Bun__StrongRef__set(JSC::JSValue* _Nonnull handleSlot, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
+static ALWAYS_INLINE unsigned decodeStrongRefIndex(StrongRefImpl* ref)
 {
-    auto& vm = globalObject->vm();
-    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
-
-    // The write barrier must be called *before* the value in the slot is updated
-    // to correctly update the handle's status in the strong list (e.g. moving
-    // from strong to not strong or vice versa).
-    // Use <false> because the new value can be a primitive.
-    vm.heap.handleSet()->writeBarrier<false>(handleSlot, value);
-    *handleSlot = value;
+    return static_cast<unsigned>(reinterpret_cast<uintptr_t>(ref) >> kStrongRefIndexShift);
 }
 
-extern "C" void Bun__StrongRef__clear(JSC::JSValue* _Nonnull handleSlot)
+static ALWAYS_INLINE StrongRootBlock* decodeStrongRefBlock(StrongRefImpl* ref)
 {
-    // The write barrier must be called *before* the value is cleared
-    // to correctly remove the handle from the strong list if it held a cell.
-    JSC::HandleSet::heapFor(handleSlot)->writeBarrier<false>(handleSlot, {});
-    *handleSlot = {};
+    uintptr_t slot = reinterpret_cast<uintptr_t>(ref) & kStrongRefSlotMask;
+    return reinterpret_cast<StrongRootBlock*>(slot - static_cast<uintptr_t>(decodeStrongRefIndex(ref)) * sizeof(StrongRootBlock::Slot) - StrongRootBlock::slotsOffset());
+}
+
+extern "C" StrongRefImpl* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
+{
+    auto& vm = JSC::getVM(globalObject);
+    unsigned index;
+    auto* block = StrongRootBlock::acquire(clientDataFast(vm), vm, index);
+    block->set(vm, index, JSC::JSValue::decode(encodedValue));
+    return encodeStrongRef(block, index);
+}
+
+extern "C" JSC::EncodedJSValue Bun__StrongRef__get(StrongRefImpl* _Nonnull ref)
+{
+    return JSC::JSValue::encode(decodeStrongRefBlock(ref)->read(decodeStrongRefIndex(ref)));
+}
+
+extern "C" void Bun__StrongRef__set(StrongRefImpl* _Nonnull ref, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
+{
+    decodeStrongRefBlock(ref)->write(JSC::getVM(globalObject), decodeStrongRefIndex(ref), JSC::JSValue::decode(encodedValue));
+}
+
+extern "C" void Bun__StrongRef__clear(StrongRefImpl* _Nonnull ref)
+{
+    decodeStrongRefBlock(ref)->clearValue(decodeStrongRefIndex(ref));
+}
+
+// The Rust caller (Strong.rs Impl::destroy) skips this call once
+// VirtualMachine.is_shutting_down is true, so the block cell is guaranteed
+// live here: destructOnExit / WebWorker__teardownJSCVM set that flag before
+// their final collectNow, which is the only point the block can go dead while
+// handles still exist.
+extern "C" void Bun__StrongRef__delete(StrongRefImpl* _Nonnull ref)
+{
+    auto* block = decodeStrongRefBlock(ref);
+    auto& vm = block->vm();
+    auto* clientData = clientDataFast(vm);
+    // This block just freed a slot, so the next acquire() should try it first
+    // (covers the FIFO pattern where the oldest-armed block gets room while
+    // the cursor sits at a full head).
+    clientData->m_strongRootBlockCursor = block;
+    if (block->clear(decodeStrongRefIndex(ref))) [[unlikely]]
+        StrongRootBlock::release(clientData, vm, block);
 }

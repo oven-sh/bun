@@ -21,25 +21,30 @@ use crate::options::Format;
 /// format ESM import and export statements to always be top-level, so they
 /// can never be inside the wrapper.
 ///
-///      prefix - outer
-///      ...
-///      var init_foo = __esm(() => {
-///          prefix - inner
-///          ...
-///          suffix - inenr
-///      });
-///      ...
-///      suffix - outer
+/// ```text
+/// prefix - outer
+/// ...
+/// var init_foo = __esm(() => {
+///     prefix - inner
+///     ...
+///     suffix - inenr
+/// });
+/// ...
+/// suffix - outer
+/// ```
 ///
 /// Keep in mind that we may need to wrap ES modules in some cases too
 /// Consider:
-///   import * as foo from 'bar';
-///   foo[computedProperty]
+///
+/// ```text
+/// import * as foo from 'bar';
+/// foo[computedProperty]
+/// ```
 ///
 /// In that case, when bundling, we still need to preserve that module
 /// namespace object (foo) because we cannot know what they are going to
 /// attempt to access statically
-pub fn convert_stmts_for_chunk(
+pub(crate) fn convert_stmts_for_chunk(
     c: &mut LinkerContext<'_>,
     source_index: u32,
     stmts: &mut StmtList,
@@ -446,7 +451,7 @@ pub fn convert_stmts_for_chunk(
                         stmt = Stmt::alloc(copied, stmt.loc);
                         stmt.data.s_local_mut().unwrap().is_export = false;
                     } else if FeatureFlags::UNWRAP_COMMONJS_TO_ESM
-                        && s.was_commonjs_export
+                        && s.origin.is_commonjs_export()
                         && wrap == WrapKind::Cjs
                     {
                         debug_assert!(s.decls.len() == 1);

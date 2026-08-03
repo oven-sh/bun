@@ -185,23 +185,23 @@ impl StoredAddr {
 /// reads (`src/js/internal/quic/state.ts`).
 #[repr(C)]
 pub struct SessionState {
-    pub listener_flags: u32,
-    pub closing: u8,
-    pub graceful_close: u8,
-    pub silent_close: u8,
-    pub stateless_reset: u8,
-    pub handshake_completed: u8,
-    pub handshake_confirmed: u8,
-    pub stream_open_allowed: u8,
-    pub priority_supported: u8,
-    pub headers_supported: u8,
-    pub wrapped: u8,
-    pub application_type: u8,
-    pub no_error_code: u64,
-    pub internal_error_code: u64,
-    pub max_datagram_size: u16,
-    pub last_datagram_id: u64,
-    pub max_pending_datagrams: u16,
+    pub(crate) listener_flags: u32,
+    pub(crate) closing: u8,
+    pub(crate) graceful_close: u8,
+    pub(crate) silent_close: u8,
+    pub(crate) stateless_reset: u8,
+    pub(crate) handshake_completed: u8,
+    pub(crate) handshake_confirmed: u8,
+    pub(crate) stream_open_allowed: u8,
+    pub(crate) priority_supported: u8,
+    pub(crate) headers_supported: u8,
+    pub(crate) wrapped: u8,
+    pub(crate) application_type: u8,
+    pub(crate) no_error_code: u64,
+    pub(crate) internal_error_code: u64,
+    pub(crate) max_datagram_size: u16,
+    pub(crate) last_datagram_id: u64,
+    pub(crate) max_pending_datagrams: u16,
 }
 
 /// Node's `SESSION_STATS` field names, in declaration order.
@@ -552,7 +552,7 @@ impl QuicSession {
     /// before any other method can run, outlives `self` (the wrapper keeps
     /// both alive), and is only touched from the JS thread — so the single
     /// raw access below is in-bounds and unaliased.
-    pub(super) fn with_state<R>(&self, f: impl FnOnce(&mut SessionState) -> R) -> R {
+    fn with_state<R>(&self, f: impl FnOnce(&mut SessionState) -> R) -> R {
         // SAFETY: see doc comment.
         unsafe { f(&mut *self.state_mut()) }
     }
@@ -1850,7 +1850,7 @@ impl QuicSession {
         Ok((app, code, reason))
     }
 
-    pub(super) fn apply_graceful_close(&self, app: bool, code: u64, reason: Vec<u8>) {
+    fn apply_graceful_close(&self, app: bool, code: u64, reason: Vec<u8>) {
         let is_http = self
             .endpoint_ref()
             .map(|ep| ep.is_http(self.is_server.get()))

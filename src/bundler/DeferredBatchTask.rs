@@ -18,7 +18,7 @@ pub struct DeferredBatchTask {
 }
 
 impl DeferredBatchTask {
-    pub fn init(&mut self) {
+    pub(crate) fn init(&mut self) {
         // Kept as `&mut self` (not `-> Self`) — this struct is embedded
         // by value in BundleV2 (recovered via container_of in `get_bundle_v2`), so
         // it is reset in place, never separately constructed.
@@ -28,7 +28,7 @@ impl DeferredBatchTask {
         let _ = core::mem::take(self);
     }
 
-    pub fn get_bundle_v2(&mut self) -> &mut BundleV2<'static> {
+    pub(crate) fn get_bundle_v2(&mut self) -> &mut BundleV2<'static> {
         // SAFETY: `self` is always the `drain_defer_task` field of a live `BundleV2`;
         // this struct is never instantiated standalone. Lifetime erased to 'static;
         // callers must not outlive the owning bundle.
@@ -41,7 +41,7 @@ impl DeferredBatchTask {
         }
     }
 
-    pub fn schedule(&mut self) {
+    pub(crate) fn schedule(&mut self) {
         #[cfg(debug_assertions)]
         {
             debug_assert!(!self.running);

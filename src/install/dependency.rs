@@ -274,8 +274,8 @@ const SIZE: usize = core::mem::size_of::<VersionExternal>()
 
 pub struct Context<'a> {
     // allocator dropped (global mimalloc)
-    pub log: &'a mut bun_ast::Log,
-    pub buffer: &'a [u8],
+    pub(crate) log: &'a mut bun_ast::Log,
+    pub(crate) buffer: &'a [u8],
 }
 
 pub(crate) fn to_dependency(this: External, ctx: &mut Context<'_>) -> Dependency {
@@ -358,7 +358,7 @@ pub(crate) fn is_scp_like_path(dependency: &[u8]) -> bool {
 ///
 /// This also checks for a github url that ends with ".tar.gz"
 #[inline]
-pub(crate) fn is_github_tarball_path(dependency: &[u8]) -> bool {
+fn is_github_tarball_path(dependency: &[u8]) -> bool {
     if is_tarball(dependency) {
         return true;
     }
@@ -380,7 +380,7 @@ pub(crate) fn is_github_tarball_path(dependency: &[u8]) -> bool {
 // This won't work for query string params, but I'll let someone file an issue
 // before I add that.
 #[inline]
-pub(crate) fn is_tarball(dependency: &[u8]) -> bool {
+fn is_tarball(dependency: &[u8]) -> bool {
     dependency.ends_with(b".tgz") || dependency.ends_with(b".tar.gz")
 }
 
@@ -423,7 +423,7 @@ pub(crate) fn split_version_and_maybe_name(str: &[u8]) -> (&[u8], Option<&[u8]>)
 }
 
 /// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
-pub(crate) fn split_name_and_maybe_version(str: &[u8]) -> (&[u8], Option<&[u8]>) {
+fn split_name_and_maybe_version(str: &[u8]) -> (&[u8], Option<&[u8]>) {
     if let Some(at_index) = strings::index_of_char(str, b'@') {
         let at_index = at_index as usize;
         if at_index != 0 {
@@ -510,7 +510,7 @@ pub fn is_scoped_package_name(name: &[u8]) -> Result<bool, PackageNameError> {
 /// A dependency name/alias becomes a directory under `node_modules/`. Names
 /// come from untrusted `package.json` / manifest keys, so reject anything that
 /// could resolve outside that directory. `@scope/name` stays valid.
-pub fn is_safe_install_folder_name(name: &[u8]) -> bool {
+pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
     if name.is_empty() {
         return false;
     }
@@ -551,7 +551,6 @@ pub trait VersionExt {
         buf: &[u8],
         builder: &mut SB,
     ) -> Result<Version, crate::Error>;
-    fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
     fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
     fn to_version(alias: String, bytes: VersionExternal, ctx: &mut Context<'_>) -> Version;
     fn to_external(&self) -> VersionExternal;
@@ -575,15 +574,6 @@ impl VersionExt for Version {
             literal: builder.append_string(self.literal.slice(buf)),
             value: self.value.clone_in(self.tag, buf, builder)?,
         })
-    }
-
-    fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
-        debug_assert!(lhs.tag == rhs.tag);
-        strings::cmp_strings_asc(
-            (),
-            lhs.literal.slice(string_buf),
-            rhs.literal.slice(string_buf),
-        )
     }
 
     fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
@@ -1076,7 +1066,8 @@ impl ValueExt for Value {
 // Free functions: parse
 // ──────────────────────────────────────────────────────────────────────────
 
-pub fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u8]> {
+#[cfg(windows)]
+pub(crate) fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u8]> {
     let mut i: usize = 0;
     if dep.len() > 2 && dep[i] == b'/' {
         while dep[i] == b'/' {
@@ -1106,7 +1097,7 @@ pub fn parse<'a>(
     parse_with_tag(alias, dep, Tag::infer(dep), sliced, log.into())
 }
 
-pub fn parse_with_optional_tag<'a>(
+pub(crate) fn parse_with_optional_tag<'a>(
     alias: String,
     dependency: &[u8],
     tag: Option<Tag>,
@@ -1123,7 +1114,7 @@ pub fn parse_with_optional_tag<'a>(
     )
 }
 
-pub fn parse_with_tag(
+pub(crate) fn parse_with_tag(
     alias: String,
     dependency: &[u8],
     tag: Tag,

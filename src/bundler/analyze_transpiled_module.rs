@@ -51,21 +51,21 @@ unsafe impl bytemuck::Pod for RecordKind {}
 
 impl RecordKind {
     /// module_name, import_name, local_name
-    pub const IMPORT_INFO_SINGLE: Self = Self(0);
+    pub(crate) const IMPORT_INFO_SINGLE: Self = Self(0);
     /// module_name, import_name, local_name
-    pub const IMPORT_INFO_SINGLE_TYPE_SCRIPT: Self = Self(1);
+    pub(crate) const IMPORT_INFO_SINGLE_TYPE_SCRIPT: Self = Self(1);
     /// module_name, import_name = '*', local_name
-    pub const IMPORT_INFO_NAMESPACE: Self = Self(2);
+    pub(crate) const IMPORT_INFO_NAMESPACE: Self = Self(2);
     /// export_name, import_name, module_name
-    pub const EXPORT_INFO_INDIRECT: Self = Self(3);
+    pub(crate) const EXPORT_INFO_INDIRECT: Self = Self(3);
     /// export_name, local_name, padding (for local => indirect conversion)
-    pub const EXPORT_INFO_LOCAL: Self = Self(4);
+    pub(crate) const EXPORT_INFO_LOCAL: Self = Self(4);
     /// export_name, module_name
-    pub const EXPORT_INFO_NAMESPACE: Self = Self(5);
+    pub(crate) const EXPORT_INFO_NAMESPACE: Self = Self(5);
     /// module_name
-    pub const EXPORT_INFO_STAR: Self = Self(6);
+    pub(crate) const EXPORT_INFO_STAR: Self = Self(6);
     /// module_name, import_name = '*', local_name (ModulePhase::Defer)
-    pub const IMPORT_INFO_NAMESPACE_DEFER: Self = Self(7);
+    pub(crate) const IMPORT_INFO_NAMESPACE_DEFER: Self = Self(7);
 
     // PascalCase aliases — `bundler_jsc::analyze_jsc` pattern-matches on these
     // (the SCREAMING_CASE consts above are kept for intra-crate use).
@@ -146,15 +146,15 @@ pub enum ModuleInfoError {
 /// alignment ([`MODULE_INFO_ALIGN`]), so every `RawSlice<T>` here is properly
 /// aligned for `T` and `.slice()` is sound.
 pub struct ModuleInfoDeserialized {
-    pub strings_buf: bun_ptr::RawSlice<u8>,
-    pub strings_lens: bun_ptr::RawSlice<u32>,
-    pub requested_modules_keys: bun_ptr::RawSlice<StringID>,
-    pub requested_modules_values: bun_ptr::RawSlice<FetchParameters>,
-    pub requested_modules_phases: bun_ptr::RawSlice<u8>,
-    pub buffer: bun_ptr::RawSlice<StringID>,
-    pub record_kinds: bun_ptr::RawSlice<RecordKind>,
+    pub(crate) strings_buf: bun_ptr::RawSlice<u8>,
+    pub(crate) strings_lens: bun_ptr::RawSlice<u32>,
+    pub(crate) requested_modules_keys: bun_ptr::RawSlice<StringID>,
+    pub(crate) requested_modules_values: bun_ptr::RawSlice<FetchParameters>,
+    pub(crate) requested_modules_phases: bun_ptr::RawSlice<u8>,
+    pub(crate) buffer: bun_ptr::RawSlice<StringID>,
+    pub(crate) record_kinds: bun_ptr::RawSlice<RecordKind>,
     pub flags: Flags,
-    pub owner: Owner,
+    pub(crate) owner: Owner,
 }
 
 pub enum Owner {
@@ -216,7 +216,7 @@ impl ModuleInfoDeserialized {
     /// # Safety
     /// `this` must have been produced by [`Self::create`] (heap box) or by
     /// [`ModuleInfoExt::into_deserialized`].
-    pub unsafe fn deinit(this: *mut ModuleInfoDeserialized) {
+    pub(crate) unsafe fn deinit(this: *mut ModuleInfoDeserialized) {
         // SAFETY: caller contract — see fn doc above.
         unsafe {
             match (*this).owner {
@@ -253,7 +253,7 @@ impl ModuleInfoDeserialized {
         Ok(head)
     }
 
-    pub fn create(source: &[u8]) -> Result<Box<ModuleInfoDeserialized>, ModuleInfoError> {
+    pub(crate) fn create(source: &[u8]) -> Result<Box<ModuleInfoDeserialized>, ModuleInfoError> {
         // Copy into a `MODULE_INFO_ALIGN`-aligned buffer so the typed
         // sub-slices below (whose offsets the format pads to 4 bytes) are
         // properly aligned for `&[T]` materialisation.
@@ -477,7 +477,7 @@ impl ModuleInfoExt for ModuleInfo {
 // JSModuleRecord/IdentifierArray opaques: see bun_bundler_jsc::analyze_jsc
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn zig__ModuleInfo__destroy(info: *mut ModuleInfo) {
+extern "C" fn zig__ModuleInfo__destroy(info: *mut ModuleInfo) {
     // SAFETY: C++ caller passes a non-null pointer obtained from `ModuleInfo::create`.
     let info = unsafe { NonNull::new(info).unwrap_unchecked() };
     // SAFETY: `info` came from `bun_core::heap::into_raw` and ownership is transferred back here.
@@ -485,7 +485,7 @@ pub(crate) extern "C" fn zig__ModuleInfo__destroy(info: *mut ModuleInfo) {
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn zig__ModuleInfoDeserialized__deinit(info: *mut ModuleInfoDeserialized) {
+extern "C" fn zig__ModuleInfoDeserialized__deinit(info: *mut ModuleInfoDeserialized) {
     // SAFETY: C++ caller passes a non-null pointer obtained from `create` or
     // `ModuleInfoExt::into_deserialized`.
     let info = unsafe { NonNull::new(info).unwrap_unchecked() };
@@ -494,7 +494,7 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__deinit(info: *mut ModuleIn
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn zig_log(msg: *const c_char) {
+extern "C" fn zig_log(msg: *const c_char) {
     // SAFETY: C++ caller passes a non-null, NUL-terminated C string.
     let msg = unsafe { NonNull::new(msg.cast_mut()).unwrap_unchecked() };
     // SAFETY: `msg` is non-null and points to a NUL-terminated C string per the contract above.

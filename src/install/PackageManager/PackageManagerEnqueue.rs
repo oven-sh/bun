@@ -585,7 +585,7 @@ pub fn enqueue_dependency_to_root(
 /// All-void callback set used by `enqueueDependencyToRoot` and `runAndWaitFn`:
 /// `Ctx = ()`, no callbacks, so the `HAS_*` const-gates compile out the
 /// callback paths.
-pub(crate) struct VoidRunTasksCallbacks;
+struct VoidRunTasksCallbacks;
 impl run_tasks::RunTasksCallbacks for VoidRunTasksCallbacks {
     type Ctx = ();
 }
@@ -2006,9 +2006,10 @@ fn get_or_put_resolved_package_with_find_result(
         // `manager.workspace_package_json_cache` only — disjoint from
         // `manager.lockfile`.
         this.to_update
-            // If updating, only update packages in the current workspace
-            && unsafe { &*(*this_ptr).lockfile }
-                .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
+            // Update direct deps of the current workspace; catalogs are root-scoped.
+            && (dependency.version.tag == dependency::version::Tag::Catalog
+                || unsafe { &*(*this_ptr).lockfile }
+                    .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id))
             // no need to do a look up if update requests are empty (`bun update` with no args)
             && (this.update_requests.is_empty()
                 || this.updating_packages.contains(
@@ -2776,7 +2777,7 @@ impl PackageManager {
     }
 
     #[inline]
-    pub fn enqueue_tarball_for_download(
+    pub(crate) fn enqueue_tarball_for_download(
         &mut self,
         dependency_id: DependencyID,
         package_id: PackageID,
@@ -2795,7 +2796,7 @@ impl PackageManager {
     }
 
     #[inline]
-    pub fn enqueue_tarball_for_reading(
+    pub(crate) fn enqueue_tarball_for_reading(
         &mut self,
         dependency_id: DependencyID,
         package_id: PackageID,
@@ -2814,7 +2815,7 @@ impl PackageManager {
     }
 
     #[inline]
-    pub fn enqueue_git_for_checkout(
+    pub(crate) fn enqueue_git_for_checkout(
         &mut self,
         dependency_id: DependencyID,
         alias: &[u8],
@@ -2833,7 +2834,7 @@ impl PackageManager {
     }
 
     #[inline]
-    pub fn enqueue_package_for_download(
+    pub(crate) fn enqueue_package_for_download(
         &mut self,
         name: &[u8],
         dependency_id: DependencyID,

@@ -214,7 +214,14 @@ test.skipIf(isWindows)(
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--parallel=2", "--bail=1"],
-      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      // CI sets BUN_CRASH_REPORT_URL; a deliberate segfault must not upload
+      // there or the runner pins it on the next unrelated failing test.
+      env: {
+        ...bunEnv,
+        BUN_TEST_PARALLEL_SCALE_MS: "0",
+        BUN_CRASH_REPORT_URL: "",
+        BUN_ENABLE_CRASH_REPORTING: "0",
+      },
       cwd: String(dir),
       stderr: "pipe",
       stdout: "pipe",

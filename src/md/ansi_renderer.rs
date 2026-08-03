@@ -111,7 +111,7 @@ impl RendererImpl for ImageUrlCollector {
 // Drop is automatic for `Vec<Box<[u8]>>`.
 
 pub struct AnsiRenderer<'a> {
-    pub out: OutputBuffer,
+    pub(crate) out: OutputBuffer,
     src_text: &'a [u8],
     theme: Theme<'a>,
     /// Stack of active block contexts (li/quote) for indentation.
@@ -261,7 +261,7 @@ impl InlineStyle {
 }
 
 impl<'a> AnsiRenderer<'a> {
-    pub fn init(src_text: &'a [u8], theme: Theme<'a>) -> AnsiRenderer<'a> {
+    pub(crate) fn init(src_text: &'a [u8], theme: Theme<'a>) -> AnsiRenderer<'a> {
         let mut r = AnsiRenderer {
             out: OutputBuffer {
                 list: Vec::new(),
@@ -302,7 +302,7 @@ impl<'a> AnsiRenderer<'a> {
         r
     }
 
-    pub fn renderer(&mut self) -> Renderer<'_> {
+    pub(crate) fn renderer(&mut self) -> Renderer<'_> {
         Renderer { ptr: self }
     }
 
@@ -310,7 +310,7 @@ impl<'a> AnsiRenderer<'a> {
     // Block rendering
     // ========================================
 
-    pub fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) {
+    pub(crate) fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) {
         match block_type {
             BlockType::Doc => {}
             BlockType::Quote => {
@@ -487,7 +487,7 @@ impl<'a> AnsiRenderer<'a> {
         }
     }
 
-    pub fn leave_block(&mut self, block_type: BlockType, _data: u32) {
+    pub(crate) fn leave_block(&mut self, block_type: BlockType, _data: u32) {
         match block_type {
             BlockType::Doc => {}
             BlockType::Quote | BlockType::Ul | BlockType::Ol | BlockType::Li => {
@@ -551,7 +551,7 @@ impl<'a> AnsiRenderer<'a> {
     // Span rendering
     // ========================================
 
-    pub fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail) {
+    pub(crate) fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail) {
         match span_type {
             SpanType::Em | SpanType::Strong | SpanType::U | SpanType::Del => {
                 let s = InlineStyle::of(span_type).unwrap();
@@ -607,7 +607,7 @@ impl<'a> AnsiRenderer<'a> {
         }
     }
 
-    pub fn leave_span(&mut self, span_type: SpanType) {
+    pub(crate) fn leave_span(&mut self, span_type: SpanType) {
         match span_type {
             SpanType::Em | SpanType::Strong | SpanType::U | SpanType::Del => {
                 let s = InlineStyle::of(span_type).unwrap();
@@ -686,7 +686,7 @@ impl<'a> AnsiRenderer<'a> {
     // Text rendering
     // ========================================
 
-    pub fn text(&mut self, text_type: TextType, content: &[u8]) {
+    pub(crate) fn text(&mut self, text_type: TextType, content: &[u8]) {
         let mut sanitized: Vec<u8> = Vec::new();
         let content = sanitize_source_text(content, &mut sanitized);
         match text_type {

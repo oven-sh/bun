@@ -16,7 +16,7 @@ use crate::bake::dev_server_body::HmrTopicBits;
 pub(crate) use super::HmrSocket;
 
 impl HmrSocket {
-    pub fn new(dev: &mut DevServer) -> Box<HmrSocket> {
+    pub(crate) fn new(dev: &mut DevServer) -> Box<HmrSocket> {
         Box::new(HmrSocket {
             dev: bun_ptr::BackRef::new_mut(dev),
             subscriptions: HmrTopicBits::empty(),
@@ -42,7 +42,7 @@ impl HmrSocket {
         unsafe { &mut *self.dev.as_ptr() }
     }
 
-    pub fn on_open(&mut self, ws: AnyWebSocket) {
+    pub(crate) fn on_open(&mut self, ws: AnyWebSocket) {
         // SAFETY: JS-thread only; sole `&mut DevServer` for this scope. Derived
         // via the BackRef accessor (lifetime-detached from `&self`) so we can
         // assign `self.underlying` below while `dev` is still live.
@@ -63,7 +63,7 @@ impl HmrSocket {
         }
     }
 
-    pub fn on_message(&mut self, ws: AnyWebSocket, msg: &[u8], _opcode: Opcode) {
+    pub(crate) fn on_message(&mut self, ws: AnyWebSocket, msg: &[u8], _opcode: Opcode) {
         if msg.is_empty() {
             return ws.close();
         }

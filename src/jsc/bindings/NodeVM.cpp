@@ -1111,11 +1111,6 @@ void NodeVMGlobalObject::setContextifiedObject(JSC::JSObject* contextifiedObject
     m_sandbox.set(vm(), this, contextifiedObject);
 }
 
-void NodeVMGlobalObject::clearContextifiedObject()
-{
-    m_sandbox.clear();
-}
-
 void NodeVMGlobalObject::sigintReceived()
 {
     vm().notifyNeedTermination();
@@ -1386,7 +1381,13 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
         RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
     }
 
-    bool isDeclaredOnSandbox = contextifiedObject->getPropertySlot(globalObject, propertyName, slot);
+    // The lookup above may have filled `slot` as cacheable (e.g. a lazy global
+    // stored as a CustomGetterSetter on a non-dictionary structure). Reusing it
+    // here would trip PropertySlot's CachingDisallowed asserts if the sandbox
+    // resolves the same name via setGetterSlot/setCustom/setValue(3-arg), which
+    // happens once the sandbox has transitioned to an uncacheable dictionary.
+    PropertySlot sandboxSlot(globalObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
+    bool isDeclaredOnSandbox = contextifiedObject->getPropertySlot(globalObject, propertyName, sandboxSlot);
     RETURN_IF_EXCEPTION(scope, false);
 
     if (isDeclaredOnSandbox && !isDeclaredOnGlobalProxy) {

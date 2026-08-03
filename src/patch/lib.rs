@@ -41,7 +41,7 @@ pub enum PatchFilePart<'a> {
 
 #[derive(Default)]
 pub struct PatchFile<'a> {
-    pub parts: Vec<PatchFilePart<'a>>,
+    pub(crate) parts: Vec<PatchFilePart<'a>>,
 }
 
 #[cfg_attr(unix, allow(dead_code))]
@@ -515,10 +515,10 @@ impl<'a> FileDeets<'a> {
 
 #[derive(Default)]
 pub struct PatchMutationPart<'a> {
-    pub ty: PartType,
-    pub lines: Vec<&'a [u8]>,
+    pub(crate) ty: PartType,
+    pub(crate) lines: Vec<&'a [u8]>,
     /// This technically can only be on the last part of a hunk
-    pub no_newline_at_end_of_file: bool,
+    pub(crate) no_newline_at_end_of_file: bool,
 }
 
 /// Ensure context, insertion, deletion values are in sync with HunkLineType enum
@@ -533,14 +533,14 @@ pub enum PartType {
 
 #[derive(Default)]
 pub struct Hunk<'a> {
-    pub header: Header,
-    pub parts: Vec<PatchMutationPart<'a>>,
+    pub(crate) header: Header,
+    pub(crate) parts: Vec<PatchMutationPart<'a>>,
 }
 
 #[derive(Copy, Clone)]
 pub struct HeaderRange {
-    pub start: u32,
-    pub len: u32,
+    pub(crate) start: u32,
+    pub(crate) len: u32,
 }
 
 impl Default for HeaderRange {
@@ -551,19 +551,19 @@ impl Default for HeaderRange {
 
 #[derive(Copy, Clone, Default)]
 pub struct Header {
-    pub original: HeaderRange,
-    pub patched: HeaderRange,
+    pub(crate) original: HeaderRange,
+    pub(crate) patched: HeaderRange,
 }
 
 impl Header {
-    pub const EMPTY: Header = Header {
+    pub(crate) const EMPTY: Header = Header {
         original: HeaderRange { start: 1, len: 0 },
         patched: HeaderRange { start: 1, len: 0 },
     };
 }
 
 impl<'a> Hunk<'a> {
-    pub(crate) fn verify_integrity(&self) -> bool {
+    fn verify_integrity(&self) -> bool {
         let mut original_length: usize = 0;
         let mut patched_length: usize = 0;
 
@@ -599,11 +599,11 @@ pub enum FileMode {
 }
 
 impl FileMode {
-    pub(crate) fn to_bun_mode(self) -> sys::Mode {
+    fn to_bun_mode(self) -> sys::Mode {
         sys::Mode::try_from(self as u32).expect("int cast")
     }
 
-    pub(crate) fn from_u32(mode: u32) -> Option<FileMode> {
+    fn from_u32(mode: u32) -> Option<FileMode> {
         match mode {
             0o644 => Some(FileMode::NonExecutable),
             0o755 => Some(FileMode::Executable),
@@ -617,37 +617,37 @@ impl FileMode {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct FileRename<'a> {
-    pub from_path: &'a [u8],
-    pub to_path: &'a [u8],
+    pub(crate) from_path: &'a [u8],
+    pub(crate) to_path: &'a [u8],
 }
 // Does not allocate — no Drop needed.
 
 pub struct FileModeChange<'a> {
-    pub path: &'a [u8],
-    pub old_mode: FileMode,
-    pub new_mode: FileMode,
+    pub(crate) path: &'a [u8],
+    pub(crate) old_mode: FileMode,
+    pub(crate) new_mode: FileMode,
 }
 // Does not allocate — no Drop needed.
 
 pub struct FilePatch<'a> {
-    pub path: &'a [u8],
-    pub hunks: Vec<Hunk<'a>>,
-    pub before_hash: Option<&'a [u8]>,
-    pub after_hash: Option<&'a [u8]>,
+    pub(crate) path: &'a [u8],
+    pub(crate) hunks: Vec<Hunk<'a>>,
+    pub(crate) before_hash: Option<&'a [u8]>,
+    pub(crate) after_hash: Option<&'a [u8]>,
 }
 
 pub struct FileDeletion<'a> {
-    pub path: &'a [u8],
-    pub mode: FileMode,
-    pub hunk: Option<Box<Hunk<'a>>>,
-    pub hash: Option<&'a [u8]>,
+    pub(crate) path: &'a [u8],
+    pub(crate) mode: FileMode,
+    pub(crate) hunk: Option<Box<Hunk<'a>>>,
+    pub(crate) hash: Option<&'a [u8]>,
 }
 
 pub struct FileCreation<'a> {
-    pub path: &'a [u8],
-    pub mode: FileMode,
-    pub hunk: Option<Box<Hunk<'a>>>,
-    pub hash: Option<&'a [u8]>,
+    pub(crate) path: &'a [u8],
+    pub(crate) mode: FileMode,
+    pub(crate) hunk: Option<Box<Hunk<'a>>>,
+    pub(crate) hash: Option<&'a [u8]>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1038,6 +1038,7 @@ fn parse_file_mode(mode: &[u8]) -> Option<FileMode> {
 
 fn is_safe_patch_path(path: &[u8]) -> bool {
     !path.is_empty()
+        && !path.contains(&0)
         && !paths::is_absolute_loose(path)
         && !path
             .split(|&c| c == b'/' || c == b'\\')
@@ -1089,19 +1090,19 @@ struct LookbackIterator<'a> {
 }
 
 impl<'a> LookbackIterator<'a> {
-    pub(crate) fn from_inner(inner: ScalarSplitIter<'a>) -> Self {
+    fn from_inner(inner: ScalarSplitIter<'a>) -> Self {
         Self {
             inner,
             prev_index: 0,
         }
     }
 
-    pub(crate) fn next(&mut self) -> Option<&'a [u8]> {
+    fn next(&mut self) -> Option<&'a [u8]> {
         self.prev_index = self.inner.index.unwrap_or(self.prev_index);
         self.inner.next()
     }
 
-    pub(crate) fn back(&mut self) {
+    fn back(&mut self) {
         self.inner.index = Some(self.prev_index);
     }
 }
@@ -1163,7 +1164,7 @@ impl<'a> PatchLinesParser<'a> {
         };
     }
 
-    pub(crate) fn parse(&mut self, file_: &'a [u8], opts: ParseOpts) -> Result<(), ParseErr> {
+    fn parse(&mut self, file_: &'a [u8], opts: ParseOpts) -> Result<(), ParseErr> {
         if file_.is_empty() {
             return Ok(());
         }
@@ -1886,27 +1887,17 @@ fn git_diff_postprocess(
     let old_folder_trimmed = strings::trim(old_folder, b"/");
     let new_folder_trimmed = strings::trim(new_folder, b"/");
 
-    let mut old_buf = PathBuffer::uninit();
-    let mut new_buf = PathBuffer::uninit();
+    let mut old_buf: Vec<u8> = Vec::with_capacity(old_folder_trimmed.len() + 3);
+    old_buf.extend_from_slice(b"a/");
+    old_buf.extend_from_slice(old_folder_trimmed);
+    old_buf.push(b'/');
 
-    let (a_old_folder_slash, b_new_folder_slash) = {
-        let ob = &mut old_buf[..];
-        ob[0] = b'a';
-        ob[1] = b'/';
-        ob[2..2 + old_folder_trimmed.len()].copy_from_slice(old_folder_trimmed);
-        ob[2 + old_folder_trimmed.len()] = b'/';
+    let mut new_buf: Vec<u8> = Vec::with_capacity(new_folder_trimmed.len() + 3);
+    new_buf.extend_from_slice(b"b/");
+    new_buf.extend_from_slice(new_folder_trimmed);
+    new_buf.push(b'/');
 
-        let nb = &mut new_buf[..];
-        nb[0] = b'b';
-        nb[1] = b'/';
-        nb[2..2 + new_folder_trimmed.len()].copy_from_slice(new_folder_trimmed);
-        nb[2 + new_folder_trimmed.len()] = b'/';
-
-        (
-            &old_buf[0..2 + old_folder_trimmed.len() + 1],
-            &new_buf[0..2 + new_folder_trimmed.len() + 1],
-        )
-    };
+    let (a_old_folder_slash, b_new_folder_slash) = (&old_buf[..], &new_buf[..]);
 
     // const @"$old_folder/" = @"a/$old_folder/"[2..];
     // const @"$new_folder/" = @"b/$new_folder/"[2..];

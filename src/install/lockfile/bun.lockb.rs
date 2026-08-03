@@ -63,7 +63,7 @@ impl<'a> StreamType<'a> {
     }
 
     #[inline]
-    pub(crate) fn write_all(&mut self, data: &[u8]) -> Result<(), Error> {
+    fn write_all(&mut self, data: &[u8]) -> Result<(), Error> {
         self.bytes.extend_from_slice(data);
         Ok(())
     }
@@ -163,7 +163,7 @@ impl<'a, 'b> bun_collections::array_hash_map::ArrayHashAdapter<SemverString, Sem
     }
 }
 
-pub fn save(
+pub(crate) fn save(
     this: &mut Lockfile,
     options: &PackageManagerOptions,
     bytes: &mut Vec<u8>,
@@ -351,7 +351,7 @@ pub fn save(
 #[derive(Default)]
 pub struct SerializerLoadResult {
     pub packages_need_update: bool,
-    pub migrated_from_lockb_v2: bool,
+    pub(crate) migrated_from_lockb_v2: bool,
 }
 
 pub(crate) fn load(

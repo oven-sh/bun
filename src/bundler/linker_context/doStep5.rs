@@ -45,7 +45,7 @@ impl LinkerContext<'_> {
     /// `source_index` row of the `graph.{ast,meta}` SoA columns via raw
     /// per-row pointers obtained from `split_raw()` (root provenance, no
     /// `&mut [T]` intermediate). Disjoint rows ⇒ no overlapping `&mut`.
-    pub unsafe fn do_step5(this: *mut LinkerContext<'_>, source_index_: Index, _: usize) {
+    pub(crate) unsafe fn do_step5(this: *mut LinkerContext<'_>, source_index_: Index, _: usize) {
         let source_index = source_index_.get();
         let _trace = perf::trace("Bundler.CreateNamespaceExports");
 
@@ -369,7 +369,7 @@ impl LinkerContext<'_> {
     /// mutates as explicit `&mut` params, so the parallel `do_step5` dispatch
     /// never forms a concurrent `&mut LinkerContext` / whole-column `&mut [T]`.
     #[allow(clippy::too_many_arguments)]
-    pub fn create_exports_for_file(
+    pub(crate) fn create_exports_for_file(
         &self,
         arena: &Bump,
         id: u32,

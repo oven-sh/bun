@@ -1570,8 +1570,14 @@ test("Bun.build in a Worker: terminate() while plugin async setup() is pending d
             ws.push(new Worker(wfile, { workerData: { entry } }));
           }
           // Each worker posts "up" from inside its plugin setup() body, so by
-          // the time we see it the worker is parked in wait_for_promise.
-          await Promise.all(ws.map(w => new Promise(res => w.once("message", res))));
+          // the time we see it the worker is parked in wait_for_promise. Wire
+          // error/exit to reject so a pre-"up" failure surfaces immediately
+          // instead of hanging until the outer test timeout.
+          await Promise.all(ws.map(w => new Promise((res, rej) => {
+            w.once("message", res);
+            w.once("error", rej);
+            w.once("exit", code => rej(new Error("worker exited before 'up': " + code)));
+          })));
           await Promise.all(ws.map(w => w.terminate()));
         }
         console.log("PASS " + ${rounds});

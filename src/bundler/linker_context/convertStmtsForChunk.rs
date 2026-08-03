@@ -96,6 +96,9 @@ pub(crate) fn convert_stmts_for_chunk(
                 bun_ast::StmtData::SImport(s) => {
                     // "import * as ns from 'path'"
                     // "import {foo} from 'path'"
+                    let imports_only_bindings = s.default_name.is_some()
+                        || !s.items.is_empty()
+                        || s.star_name_loc != Loc::EMPTY;
                     if c.should_remove_import_export_stmt(
                         stmts,
                         stmt.loc,
@@ -103,6 +106,7 @@ pub(crate) fn convert_stmts_for_chunk(
                         s.import_record_index,
                         bump,
                         ast,
+                        imports_only_bindings,
                     )? {
                         continue 'stmt_loop;
                     }
@@ -123,6 +127,7 @@ pub(crate) fn convert_stmts_for_chunk(
                             s.import_record_index,
                             bump,
                             ast,
+                            false,
                         )? {
                             continue 'stmt_loop;
                         }
@@ -354,6 +359,7 @@ pub(crate) fn convert_stmts_for_chunk(
                         s.import_record_index,
                         bump,
                         ast,
+                        true,
                     )? {
                         continue 'stmt_loop;
                     }

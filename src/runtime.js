@@ -318,7 +318,44 @@ export var __decorateElement = (array, flags, name, decorators, target, extra) =
   );
 };
 
-export var __esm = (fn, res) => () => (fn && (res = fn((fn = 0))), res);
+var __esmTrace =
+  typeof process !== "undefined" && process.env && process.env.BUN_LAZY_INIT_TRACE
+    ? /* @__PURE__ */ (() => {
+        var req = import.meta.require,
+          fs = req("node:fs"),
+          heapSize = req("bun:jsc").heapSize,
+          out = [],
+          depth = 0,
+          t0 = Date.now(),
+          path = process.env.BUN_LAZY_INIT_TRACE,
+          flush = () => {
+            if (out.length) fs.appendFileSync(path, out.join("\n") + "\n");
+            out.length = 0;
+          };
+        process.on("exit", flush);
+        return (name, fn) => {
+          var e = {};
+          Error.captureStackTrace && Error.captureStackTrace(e);
+          var frame = String(e.stack || "")
+            .split("\n")
+            .slice(2, 5)
+            .map(l => l.trim().slice(3))
+            .join(" < ");
+          var h0 = heapSize(),
+            d = depth++,
+            t = Date.now() - t0,
+            res = fn();
+          depth--;
+          out.push(t + "\t" + d + "\t" + (heapSize() - h0) + "\t" + name + "\t" + frame);
+          out.length > 2000 && flush();
+          return res;
+        };
+      })()
+    : 0;
+export var __esm = (fn, name, res) =>
+  __esmTrace && name
+    ? () => (fn && (res = __esmTrace(name, () => fn((fn = 0)))), res)
+    : () => (fn && (res = fn((fn = 0))), res);
 
 // This is used for JSX inlining with React.
 export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");

@@ -1130,6 +1130,10 @@ pub struct Options<'a> {
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
+
+    /// Bundler lazy module init: per source index, the `init_*` thunk to call before reading a binding declared in that file.
+    pub lazy_init_wrappers: &'a [Ref],
+    pub lazy_init_current_source: u32,
 }
 
 impl<'a> Options<'a> {
@@ -1153,6 +1157,8 @@ impl<'a> Options<'a> {
 impl<'a> Default for Options<'a> {
     fn default() -> Self {
         Self {
+            lazy_init_wrappers: &[],
+            lazy_init_current_source: u32::MAX,
             bundling: false,
             to_commonjs_ref: Ref::NONE,
             to_esm_ref: Ref::NONE,
@@ -2199,6 +2205,19 @@ pub(crate) mod __gated_printer {
             if wrap {
                 self.print(b")");
             }
+        }
+
+        /// The `init_*` thunk to call before reading `ref_` (a followed symbol), or `Ref::NONE`.
+        fn lazy_init_wrapper_for(&self, ref_: Ref) -> Ref {
+            let wrappers = self.options.lazy_init_wrappers;
+            if wrappers.is_empty() {
+                return Ref::NONE;
+            }
+            let src = ref_.source_index();
+            if src == self.options.lazy_init_current_source {
+                return Ref::NONE;
+            }
+            wrappers.get(src as usize).copied().unwrap_or(Ref::NONE)
         }
 
         pub(crate) fn print_func(&mut self, func: &G::Fn) {
@@ -3918,6 +3937,15 @@ pub(crate) mod __gated_printer {
                     } else {
                         e.ref_
                     };
+
+                    // Lazy module init: `(init_foo(), foo)` so the declaring module evaluates on first use.
+                    let lazy_init = self.lazy_init_wrapper_for(ref_);
+                    if lazy_init.is_valid() {
+                        self.print(b"(");
+                        self.print_symbol(lazy_init);
+                        self.print(b"(),");
+                        self.print_space();
+                    }
                     // reshaped for borrowck — `get_const` borrows self;
                     // capture as `BackRef` so the `&self` borrow is dropped before the
                     // `&mut self` print calls below. Symbol table is arena-backed and
@@ -3937,6 +3965,7 @@ pub(crate) mod __gated_printer {
 
                                 if let Some(target) = &self.call_target {
                                     wrap = e.was_originally_identifier()
+                                        && !lazy_init.is_valid()
                                         && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_));
                                 }
 
@@ -3974,6 +4003,7 @@ pub(crate) mod __gated_printer {
 
                             let wrap = if let Some(target) = &self.call_target {
                                 e.was_originally_identifier()
+                                    && !lazy_init.is_valid()
                                     && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_))
                             } else {
                                 false
@@ -4008,6 +4038,10 @@ pub(crate) mod __gated_printer {
                         self.print_space_before_identifier();
                         self.add_source_mapping(expr.loc);
                         self.print_symbol(e.ref_);
+                    }
+
+                    if lazy_init.is_valid() {
+                        self.print(b")");
                     }
                 }
                 ExprData::EAwait(e) => {
@@ -4597,7 +4631,9 @@ pub(crate) mod __gated_printer {
                                 }
                                 ExprData::EImportIdentifier(e) => 'inner: {
                                     let ref_ = self.symbols().follow(e.ref_);
-                                    if self.options.input_files_for_dev_server.is_some() {
+                                    if self.options.input_files_for_dev_server.is_some()
+                                        || self.lazy_init_wrapper_for(ref_).is_valid()
+                                    {
                                         break 'inner;
                                     }
                                     if let Some(symbol) = self.symbols().get_const(ref_) {
@@ -4641,6 +4677,7 @@ pub(crate) mod __gated_printer {
                                     let ref_ = self.symbols().follow(e.ref_);
                                     if let Some(symbol) = self.symbols().get_const(ref_) {
                                         if symbol.namespace_alias.is_none()
+                                            && !self.lazy_init_wrapper_for(ref_).is_valid()
                                             && strings::utf16_eql_string(
                                                 key_str.slice16(),
                                                 self.name_for_symbol(e.ref_),

@@ -97,12 +97,14 @@ pub(crate) fn run_as_coordinator(
     // With --timings the contiguous chunks are cut by total duration instead
     // of file count, and each chunk is dispatched slowest-first (cache hits
     // depend on which worker runs a file, not the order within the worker).
+    let mut costs: Option<Vec<u64>> = None;
     let ranges: Vec<FileRange> = match reporter.timings.as_ref() {
         Some(t) if !t.is_empty() && !ctx.test_options.randomize => {
             let ranges = t.partition(&sorted, k);
             for r in &ranges {
                 t.sort_slowest_first(&mut sorted[r.lo as usize..r.hi as usize]);
             }
+            costs = Some(t.costs(&sorted));
             ranges
         }
         _ => (0..k)
@@ -151,6 +153,7 @@ pub(crate) fn run_as_coordinator(
         },
         reporter,
         files: sorted,
+        costs,
         // SAFETY: FileSystem singleton is initialized before any test runner code runs.
         cwd: FileSystem::get().top_level_dir,
         argv,
@@ -231,6 +234,7 @@ pub(crate) fn run_as_coordinator(
         }
     }
     if let Some(code) = coord.aborted {
+        coord.reporter.write_timings_if_needed();
         Output::flush();
         Global::exit(code);
     }

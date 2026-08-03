@@ -39,7 +39,7 @@ Workers start lazily. The first worker starts immediately; the rest are only spa
 
 ### How files are distributed
 
-Files are sorted by path and split into one contiguous chunk per worker, so files in the same directory — which usually import the same modules — run in the same process. When a worker drains its chunk it steals the back half of the largest remaining chunk from another worker. With [`--timings`](#balancing-with---timings) the chunks are cut by recorded duration instead of file count and each worker starts its slowest file first, so one long file can't become the tail of the run.
+Files are sorted by path and split into one contiguous chunk per worker, so files in the same directory — which usually import the same modules — run in the same process. When a worker drains its chunk it steals the back half of the largest remaining chunk from another worker. With [`--timings`](#balancing-with---timings) the chunks are cut by recorded duration instead of file count, each worker starts its slowest file first, and an idle worker steals the slowest not-yet-started file from whichever chunk has the most time left.
 
 ### Every file is isolated
 
@@ -148,7 +148,7 @@ The file is plain JSON, slowest first, so it doubles as a "what's slow" report:
 ```
 
 - Paths are relative to the project root; values are wall-clock milliseconds for the whole file.
-- `--update-timings` merges into the existing file rather than replacing it; entries for files that no longer exist are left alone (delete the file to start over). Under `--shard` it instead writes _only_ the files that shard ran, so the per-shard outputs are disjoint and can be merged by concatenating their `files` objects.
+- `--update-timings` merges into the table it read rather than replacing it, so the file is always complete: a sharded run refreshes the entries for the files it ran and carries the rest through unchanged. Entries for files that no longer exist are left alone; delete the file to start over.
 - Files with no entry yet are assumed to take the median time when cutting shards, and are started first under `--parallel`.
 - With `--timings`, `--parallel` also uses the durations: worker chunks are cut by time and each worker starts its slowest file first.
 
@@ -171,12 +171,19 @@ jobs:
           path: .bun-test-timings.json
 ```
 
-Each shard's output contains only the files it ran, so merging them back into one is a matter of combining the `files` objects:
+Each shard's output is the committed table with that shard's entries refreshed, so to fold them back into one file take, per test file, whichever value changed relative to the committed copy:
 
 ```ts title="merge-timings.ts" icon="/icons/typescript.svg"
-const files = {};
-for (const path of process.argv.slice(2)) Object.assign(files, (await Bun.file(path).json()).files);
-await Bun.write(".bun-test-timings.json", JSON.stringify({ version: 1, files }, null, 2));
+// usage: bun merge-timings.ts .bun-test-timings.json timings-*/.bun-test-timings.json
+const [basePath, ...shardPaths] = process.argv.slice(2);
+const base = (await Bun.file(basePath).json()).files;
+const files = { ...base };
+for (const path of shardPaths) {
+  for (const [file, ms] of Object.entries((await Bun.file(path).json()).files)) {
+    if (base[file] !== ms) files[file] = ms;
+  }
+}
+await Bun.write(basePath, JSON.stringify({ version: 1, files }, null, 2) + "\n");
 ```
 
 ## How it compares

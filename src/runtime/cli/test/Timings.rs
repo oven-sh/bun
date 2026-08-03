@@ -19,8 +19,6 @@ pub struct Timings {
     path: Box<[u8]>,
     /// Posix-separator paths relative to the project root → milliseconds; loaded entries overlaid with this run's.
     map: StringArrayHashMap<u32>,
-    /// Only what this run measured, so a `--shard` run can emit a file that merges trivially with its siblings'.
-    measured: StringArrayHashMap<u32>,
     /// Cost assigned to files with no entry when packing shards.
     median: u32,
 }
@@ -93,7 +91,6 @@ impl Timings {
         Timings {
             path: path.into(),
             map,
-            measured: StringArrayHashMap::new(),
             median,
         }
     }
@@ -117,9 +114,7 @@ impl Timings {
     }
 
     pub fn record(&mut self, abs_path: &[u8], ms: u32) {
-        let key = Self::key_for(abs_path);
-        let _ = self.map.put(&key, ms);
-        let _ = self.measured.put(&key, ms);
+        let _ = self.map.put(&Self::key_for(abs_path), ms);
     }
 
     pub fn record_since(&mut self, abs_path: &[u8], started_ms: i64) {
@@ -131,13 +126,17 @@ impl Timings {
         u64::from(self.get(abs_path).unwrap_or(self.median).max(1))
     }
 
+    pub fn costs(&self, files: &[Interned]) -> Vec<u64> {
+        files.iter().map(|f| self.cost(f.as_bytes())).collect()
+    }
+
     /// Cut path-sorted `files` into `k` contiguous runs of roughly equal total
     /// duration. Contiguous so files that share a directory (and therefore most
     /// of their imports) land in the same process and hit its module cache;
     /// by duration so a directory of slow integration tests is spread over
     /// several runs instead of becoming one shard's tail.
     pub fn partition(&self, files: &[Interned], k: u32) -> Vec<FileRange> {
-        let costs: Vec<u64> = files.iter().map(|f| self.cost(f.as_bytes())).collect();
+        let costs = self.costs(files);
         let n = files.len() as u32;
         let mut remaining: u64 = costs.iter().sum();
         let mut ranges = Vec::with_capacity(k as usize);
@@ -173,21 +172,17 @@ impl Timings {
     /// Slowest first; files with no recorded duration go before everything
     /// else so an unknown (possibly slow) file never becomes the tail.
     pub fn sort_slowest_first(&self, files: &mut [Interned]) {
-        files.sort_by(|a, b| {
-            let ka = self.get(a.as_bytes()).map_or(u64::MAX, u64::from);
-            let kb = self.get(b.as_bytes()).map_or(u64::MAX, u64::from);
-            kb.cmp(&ka)
-                .then_with(|| strings::order(a.as_bytes(), b.as_bytes()))
+        files.sort_by_cached_key(|f| {
+            let known = self.get(f.as_bytes()).map_or(u64::MAX, u64::from);
+            (core::cmp::Reverse(known), f.as_bytes().to_vec())
         });
     }
 
-    /// Slowest-first (ties by path) so the file doubles as a "what's slow" report.
-    pub fn write(&mut self, only_measured: bool) {
-        let map = if only_measured {
-            &mut self.measured
-        } else {
-            &mut self.map
-        };
+    /// Loaded entries plus this run's, slowest-first (ties by path), so the file
+    /// stays a complete table for later `--shard` reads and doubles as a
+    /// "what's slow" report.
+    pub fn write(&mut self) {
+        let map = &mut self.map;
         map.sort(|keys, ms, a, b| {
             ms[b]
                 .cmp(&ms[a])

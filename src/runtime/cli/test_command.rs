@@ -1553,7 +1553,7 @@ impl CommandLineReporter {
             && self.worker_ipc_file_idx.is_none()
             && let Some(timings) = self.timings.as_mut()
         {
-            timings.write(self.jest.test_options.shard.is_some());
+            timings.write();
         }
     }
 
@@ -3034,7 +3034,7 @@ impl TestCommand {
         Output::flush();
 
         reporter.write_junit_report_if_needed();
-        if !test_files.is_empty() || ctx.test_options.shard.is_some() {
+        if !test_files.is_empty() {
             reporter.write_timings_if_needed();
         }
 

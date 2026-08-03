@@ -455,3 +455,60 @@ test.skipIf(!isDebug)(
   },
   120_000,
 );
+
+// Regression: worker.terminate() while an async crypto.pbkdf2()/scrypt() was
+// running on the shared work pool freed the worker VM (and its JSC heap) out
+// from under the pool thread. AnyTaskJob::run_task both (a) handed the
+// caller's ArrayBuffer-backed password/salt to BoringSSL (freed by
+// Heap::lastChanceToFinalize) and (b) dereferenced the VM box to post the
+// completion (freed by the worker's dealloc). Release builds segfaulted the
+// whole process; ASAN reported the UAF on a "Bun Pool" thread inside
+// PKCS5_PBKDF2_HMAC / EVP_PBE_scrypt or VirtualMachine::event_loop_shared.
+test(
+  "terminate() while async crypto.pbkdf2()/scrypt() with Buffer inputs is running on the work pool does not UAF",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          'const { parentPort } = require("node:worker_threads");' +
+          'const crypto = require("node:crypto");' +
+          // Salt length NOT a multiple of 64: SHA-256's block function is
+          // uninstrumented assembly, only the <64-byte tail goes through
+          // memcpy where ASAN can observe the freed read.
+          'const salt = Buffer.alloc((4 << 20) - 17, 0xaa);' +
+          'const pw = salt.subarray(0, 1 << 20);' +
+          // Heavy enough params that each job is still inside BoringSSL on a
+          // pool thread when terminate() lands (so the worker event loop never
+          // reaches the JS-thread completion), but bounded so the fix's
+          // close() wait stays well under the test timeout.
+          'for (let k = 0; k < 2; k++) crypto.pbkdf2(pw, salt, 200000, 64, "sha256", () => {});' +
+          'for (let k = 0; k < 2; k++) crypto.scrypt(salt, pw, 32, { N: 1 << 14, r: 8, p: 1, maxmem: 128 << 20 }, () => {});' +
+          'parentPort.postMessage("up");';
+        for (let r = 0; r < ${rounds}; r++) {
+          const w = new Worker(src, { eval: true });
+          w.on("error", () => {});
+          await new Promise((res) => w.once("message", res));
+          await w.terminate();
+        }
+        console.log("ok");
+      `,
+      ],
+      // A job still on the pool when the gate closes is leaked by design (its
+      // ctx holds Strong/JSPromiseStrong handles into the dead VM's JSC heap,
+      // and poll.unref would touch the freed event loop). Bounded per
+      // terminated worker; opt this subprocess out of LSan so that stranded
+      // accounting is not asserted as a regression.
+      env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  },
+  timeout,
+);

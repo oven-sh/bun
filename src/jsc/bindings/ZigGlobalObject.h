@@ -451,10 +451,8 @@ public:
 
     using ThenablesArray = std::array<WriteBarrier<JSFunction>, promiseFunctionsSize + 1>;
     using NapiModuleAndExports = std::array<WriteBarrier<Unknown>, 2>;
-    // Native synthetic modules (node:buffer, node:constants, ...) evaluate
-    // once per registry (ESM vs require); caching the default-export object
-    // here keeps require(id) === (await import(id)).default. Visited via
-    // FOR_EACH_GLOBALOBJECT_GC_MEMBER's std::array<WriteBarrier> overload.
+    // Native module default-export cache so require(id) === (await import(id)).default.
+    // Visited via FOR_EACH_GLOBALOBJECT_GC_MEMBER's std::array<WriteBarrier> overload.
     using NativeModuleDefaultsArray = std::array<WriteBarrier<JSObject>, NativeModuleDefaultSlotCount>;
     WriteBarrier<JSObject>& nativeModuleDefaultObject(NativeModuleDefaultSlot slot)
     {

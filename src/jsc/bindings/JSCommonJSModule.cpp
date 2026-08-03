@@ -123,13 +123,9 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         return false;
     }
 
-    // Node reports a top-level throw from a CJS entry with origin
-    // "uncaughtException" rather than "unhandledRejection"; record that the
-    // entry point is being evaluated as CommonJS so the run command picks
-    // the right origin if this evaluation throws. Only the root module
-    // (m_id == ".", set in createCommonJSModule when requireMap was empty)
-    // can be the entry, so the FFI + filename comparison runs at most once
-    // instead of on every require().
+    // Node reports a CJS entry's top-level throw as origin "uncaughtException", not
+    // "unhandledRejection"; record the entry mode for the run command. Only the root
+    // module (m_id == ".") can be the entry, so the FFI compare runs at most once.
     if (auto* id = moduleObject->m_id.get(); id && id->length() == 1) [[unlikely]] {
         auto view = id->view(globalObject);
         RETURN_IF_EXCEPTION(scope, false);

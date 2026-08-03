@@ -595,11 +595,8 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 #endif
                 size_t i = 0;
                 for (auto k : map) {
-                    // Numeric env keys go through putDirectIndex, which on a
-                    // non-JSFinalObject routes through defineOwnProperty; the
-                    // override declares a ThrowScope, so check after each one.
-                    // The seeded values are already JSStrings so the only real
-                    // throw is OOM inside Base::put.
+                    // Numeric env keys hit putDirectIndex → defineOwnProperty (declares a
+                    // ThrowScope). Seeded values are JSStrings so only OOM can throw.
                     env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTF::move(k.key)), strings.at(i++));
                     scope.assertNoException();
                 }

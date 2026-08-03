@@ -146,13 +146,8 @@ pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSVal
     false
 }
 
-/// Called by the CJS evaluator (JSCommonJSModule.cpp) at most once, for the
-/// root CommonJS module (`m_id == "."`). Records on the VM when that module is
-/// the entry point, so the run command can report a top-level throw with
-/// origin `uncaughtException` (Node's CJS-runner semantics) instead of
-/// `unhandledRejection`. The `main()` comparison stays because an ESM entry
-/// that `import`s a CJS file also gets `m_id == "."` (requireMap was still
-/// empty), and that must not set `evaluated_as_cjs`.
+/// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
+/// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
 // HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
 pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
     if this.entry_point_result.evaluated_as_cjs || this.main().is_empty() {

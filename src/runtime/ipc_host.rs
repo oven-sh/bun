@@ -544,11 +544,6 @@ impl IPCInstance {
     }
 }
 
-/// Whether a channel is available — initialized, or waiting on the recorded `PendingIpc`.
-pub(crate) fn has_ipc(vm: &bun_jsc::virtual_machine::VirtualMachine) -> bool {
-    CHANNEL.get().is_some() || vm.pending_ipc.is_some()
-}
-
 /// Returns the initialized IPC instance, lazily creating it from the VM's
 /// recorded `PendingIpc`.
 pub fn get_ipc_instance(

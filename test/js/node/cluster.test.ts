@@ -1052,7 +1052,7 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 }, 30_000);
 
-test("an out-of-range worker port throws in the worker and leaves the primary alive", () => {
+test("an out-of-range worker port throws in the worker and leaves the primary alive", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -1079,13 +1079,13 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
   expect(stdout).toContain("sync code: ERR_SOCKET_BAD_PORT");
   expect(stdout).toContain("probe errno truthy: true");
   expect(stdout).toContain("primary alive");
 });
 
-test("closing a worker http server releases the primary's port claim", () => {
+test("closing a worker http server releases the primary's port claim", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -1131,7 +1131,7 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
   // The re-listen must hit a FRESH primary test bind (syscall "bind" from the
   // probe reply), not a stale cached success that only fails later inside the
   // worker's own listen.
@@ -1201,7 +1201,7 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 });
 
-test("a malformed external ack from a worker does not crash the primary", () => {
+test("a malformed external ack from a worker does not crash the primary", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -1225,6 +1225,6 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
   expect(stdout).toContain("primary alive");
 });

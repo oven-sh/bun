@@ -316,11 +316,11 @@ pub(crate) fn channel_fd(global: &JSGlobalObject, _frame: &CallFrame) -> JsResul
     // channel is open, `undefined` otherwise (v26.3.0
     // lib/internal/child_process.js Control#fd).
     let vm = global.bun_vm().as_mut();
-    let Some(instance) = vm.get_ipc_instance() else {
+    let Some(instance) = crate::ipc_host::get_ipc_instance(vm) else {
         return Ok(JSValue::UNDEFINED);
     };
     // SAFETY: get_ipc_instance returns the VM-owned live heap pointer.
-    let fd = unsafe { (*instance).data.channel_fd() };
+    let fd = unsafe { (*instance).data().channel_fd() };
     Ok(match fd {
         Some(fd) => JSValue::from(fd.native() as i32),
         None => JSValue::UNDEFINED,

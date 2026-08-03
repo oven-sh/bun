@@ -1084,7 +1084,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             needs_deref,
         };
 
-        if vm.is_shutting_down() {
+        if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
             drop(cleanup);
             return Ok(());
         }
@@ -1199,6 +1199,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             Ok(v) => v,
             Err(e) => global.take_exception(e),
         };
+        if global.has_exception() {
+            return Ok(());
+        }
 
         if let Some(err_val) = result.to_error() {
             // TODO: properly propagate exception upwards
@@ -1466,6 +1469,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let handlers = this.get_handlers();
+        // Multiple JS entries below; a worker terminate() raised in one trips
+        // assertNoException() in the next, and is_shutting_down() is still
+        // false at that point.
+        if handlers.vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
+            return;
+        }
         let callback = handlers.on_open();
         let handshake_callback = handlers.on_handshake();
 
@@ -1475,6 +1484,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.mark_active();
         // TODO: properly propagate exception upwards
         let _ = handlers.resolve_promise(this_value);
+        if global.has_exception() {
+            return;
+        }
 
         if SSL {
             // only calls open callback if handshake callback is provided
@@ -1512,6 +1524,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             this.mark_inactive();
         }
         if !SSL
+            && !global.has_exception()
             && !this.socket.get().is_detached()
             && this.buffered_data_for_node_net.get().len() > 0
         {
@@ -1744,9 +1757,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut callback = handlers.on_handshake();
         let mut is_open = false;
 
-        if handlers.vm.is_shutting_down() {
-            // `on_close` skips its JS dispatch during shutdown, so the native
-            // close is still safe here.
+        if handlers.vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
+            // `on_close` is single-JS-entry, so the native close it routes
+            // through here just takes the trap and returns.
             if reject_unauthorized {
                 this.reject_unauthorized_connection();
             }
@@ -1879,7 +1892,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
         let handlers = this.get_handlers();
-        if handlers.vm.is_shutting_down() {
+        if handlers.vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
             return Ok(());
         }
         let callback = handlers.on_session();
@@ -1926,7 +1939,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
         let handlers = this.get_handlers();
-        if handlers.vm.is_shutting_down() {
+        if handlers.vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
             return Ok(());
         }
         let callback = handlers.on_keylog();

@@ -458,3 +458,25 @@ module.exports = NS;`,
   expect(stdout).toContain("NS.val = await + 1");
   expect(exitCode).toBe(0);
 });
+
+// `using` is a contextual keyword: `await using x = ...` must keep the
+// await-specific diagnostic instead of a generic "Expected ;" error.
+test.concurrent("bun build --format=cjs keeps the await diagnostic for `await using` declarations", async () => {
+  using dir = tempDir("issue-29243-await-using", {
+    "entry.js": `await using x = foo();
+module.exports = x;`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(`"await" can only be used inside an "async" function`);
+  expect(exitCode).not.toBe(0);
+});

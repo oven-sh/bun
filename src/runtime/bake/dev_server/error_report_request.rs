@@ -39,7 +39,7 @@ use bun_core::fmt::parse_hex_to_int;
 pub(crate) struct ErrorReportRequest {
     // BACKREF: heap-allocated request; DevServer owns the server lifecycle and
     // outlives every in-flight request (BackRef invariant).
-    dev: bun_ptr::BackRef<DevServer>,
+    dev: bun_ptr::BackRef<DevServer, bun_ptr::Mut>,
     // BodyReaderMixin is a generic helper that stores the buffered body and
     // dispatches to the two callbacks below.
     body: uws::BodyReaderMixin<ErrorReportRequest>,

@@ -1338,7 +1338,11 @@ fn load_standalone_sourcemap(
 /// # Safety
 /// `global` is the live VM global; called on the JS thread inside an
 /// `event_loop.enter()` scope.
-unsafe fn handle_ipc_internal_child(global: *mut JSGlobalObject, data: JSValue, handle: JSValue) {
+pub(crate) unsafe fn handle_ipc_internal_child(
+    global: *mut JSGlobalObject,
+    data: JSValue,
+    handle: JSValue,
+) {
     // SAFETY: per fn contract.
     let global = unsafe { &*global };
     // Spec discards a JS exception here (`catch |err| switch (err) {
@@ -1352,7 +1356,7 @@ unsafe fn handle_ipc_internal_child(global: *mut JSGlobalObject, data: JSValue, 
 /// `IPCInstance.handleIPCClose`.
 ///
 /// Called on the JS thread (the `CHILD_SINGLETON` static is JS-thread-only).
-fn ipc_child_singleton_deinit() {
+pub(crate) fn ipc_child_singleton_deinit() {
     // `InternalMsgHolder`'s owned fields (`Strong`s, map, `Vec`) all impl
     // `Drop`; taking the `Option` runs them.
     // SAFETY: JS-thread-only mutable static (see `child_singleton()` doc).
@@ -1463,8 +1467,6 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     has_blob_url,
     body_mixin_get_blob,
     process_exit,
-    handle_ipc_internal_child,
-    ipc_child_singleton_deinit,
     console_on_before_print,
     console_print_runtime_object,
     load_standalone_sourcemap,

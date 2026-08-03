@@ -39,8 +39,8 @@ struct SrcAscii {
 // encoding if profiling shows it matters.
 #[derive(Copy, Clone)]
 pub struct InputChar {
-    pub char: u32,
-    pub escaped: bool,
+    pub(crate) char: u32,
+    pub(crate) escaped: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -263,8 +263,8 @@ impl ExpansionVariant {
 
 #[derive(Default, Copy, Clone, PartialEq, Eq)]
 pub struct ExpansionVariants {
-    pub idx: u16,
-    pub end: u16,
+    pub(crate) idx: u16,
+    pub(crate) end: u16,
 }
 
 #[derive(bun_core::EnumTag)]
@@ -334,7 +334,7 @@ pub enum TokenTag {
 }
 
 impl Token {
-    pub fn to_text(&self) -> SmolStr {
+    pub(crate) fn to_text(&self) -> SmolStr {
         match self {
             Token::Open(_) => SmolStr::from_char(b'{'),
             Token::Comma => SmolStr::from_char(b','),
@@ -471,9 +471,9 @@ pub mod ast {
 
     pub struct Group {
         /// BACKREF: child points back to owning parent Group (LIFETIMES.tsv).
-        pub bubble_up: *mut Group,
-        pub bubble_up_next: Option<u16>,
-        pub atoms: GroupAtoms,
+        pub(crate) bubble_up: *mut Group,
+        pub(crate) bubble_up_next: Option<u16>,
+        pub(crate) atoms: GroupAtoms,
     }
 
     impl Default for Group {
@@ -489,7 +489,7 @@ pub mod ast {
     pub struct Expansion {
         // bump-owned mutable slice; raw because expand_nested writes
         // bubble_up backrefs into elements while recursing through the parent.
-        pub variants: *mut [Group],
+        pub(crate) variants: *mut [Group],
     }
 }
 
@@ -623,9 +623,6 @@ unsafe fn expand_nested(
                 }
                 ast::GroupAtoms::Single(ast::Atom::Expansion(expansion)) => {
                     let length = out[usize::from(out_key)].len();
-                    // reshaped for borrowck — snapshot prefix once.
-                    // PERF: extra Vec alloc for prefix snapshot — profile if hot.
-                    let prefix: Vec<u8> = out[usize::from(out_key)][..length].to_vec();
                     let variants = expansion.variants;
                     let variants_len = variants.len();
                     for j in 0..variants_len {
@@ -636,7 +633,11 @@ unsafe fn expand_nested(
                             out_key
                         } else {
                             let new_key = *out_key_counter;
-                            out[usize::from(new_key)].extend_from_slice(&prefix);
+                            // new_key > out_key always (counter is bumped past out_key before
+                            // any recursion into it), and the j==0 recursion only appends to
+                            // out[out_key], so its [..length] prefix is stable.
+                            let (lo, hi) = out.split_at_mut(usize::from(new_key));
+                            hi[0].extend_from_slice(&lo[usize::from(out_key)][..length]);
                             *out_key_counter += 1;
                             new_key
                         };
@@ -673,8 +674,6 @@ unsafe fn expand_nested(
                 }
                 ast::Atom::Expansion(expansion) => {
                     let length = out[usize::from(out_key)].len();
-                    // reshaped for borrowck — see above.
-                    let prefix: Vec<u8> = out[usize::from(out_key)][..length].to_vec();
                     let variants = expansion.variants;
                     let variants_len = variants.len();
                     for j in 0..variants_len {
@@ -685,7 +684,8 @@ unsafe fn expand_nested(
                             out_key
                         } else {
                             let new_key = *out_key_counter;
-                            out[usize::from(new_key)].extend_from_slice(&prefix);
+                            let (lo, hi) = out.split_at_mut(usize::from(new_key));
+                            hi[0].extend_from_slice(&lo[usize::from(out_key)][..length]);
                             *out_key_counter += 1;
                             new_key
                         };
@@ -742,14 +742,15 @@ fn expand_flat(
                 let skip_over_idx = variants[variants.len() - 1].end();
 
                 let starting_len = out[usize::from(out_key)].len();
-                // reshaped for borrowck — snapshot prefix once.
-                let prefix: Vec<u8> = out[usize::from(out_key)][..starting_len].to_vec();
                 for (i, variant) in variants.iter().enumerate() {
                     let new_key = if i == 0 {
                         out_key
                     } else {
                         let new_key = *out_key_counter;
-                        out[usize::from(new_key)].extend_from_slice(&prefix);
+                        // new_key > out_key always; the i==0 recursion only appends to
+                        // out[out_key], so its [..starting_len] prefix is stable.
+                        let (lo, hi) = out.split_at_mut(usize::from(new_key));
+                        hi[0].extend_from_slice(&lo[usize::from(out_key)][..starting_len]);
                         *out_key_counter += 1;
                         new_key
                     };
@@ -1192,7 +1193,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             debug_assert!(matches!(first, Token::Open(_)));
         }
 
-        let mut braces: u8 = 0;
+        let mut braces: u32 = 0;
 
         self.replace_token_with_string(starting_idx);
         let mut i: u32 = starting_idx + 1;

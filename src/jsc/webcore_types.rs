@@ -803,8 +803,8 @@ pub mod store {
     /// live in `bun_runtime` because they reach the HTTP client / event loop.
     pub struct S3 {
         pub pathlike: PathLike,
-        pub mime_type: MimeType,
-        pub credentials: Option<Rc<bun_s3_signing::S3Credentials>>,
+        pub(crate) mime_type: MimeType,
+        pub(crate) credentials: Option<Rc<bun_s3_signing::S3Credentials>>,
         pub options: bun_s3_signing::MultiPartUploadOptions,
         pub acl: Option<bun_s3_signing::ACL>,
         pub storage_class: Option<bun_s3_signing::StorageClass>,

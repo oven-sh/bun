@@ -1182,13 +1182,13 @@ class ChildProcess extends EventEmitter {
         stderr = this.#stderr;
 
       if (stdout === undefined) {
-        this.#stdout = this.#getBunSpawnIo(1, this.#encoding, true);
+        this.#stdout = this.#getBunSpawnIo(1, true);
       } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout.destroyed && stdout.readable) {
         stdout.resume?.();
       }
 
       if (stderr === undefined) {
-        this.#stderr = this.#getBunSpawnIo(2, this.#encoding, true);
+        this.#stderr = this.#getBunSpawnIo(2, true);
       } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr.destroyed && stderr.readable) {
         stderr.resume?.();
       }
@@ -1221,7 +1221,7 @@ class ChildProcess extends EventEmitter {
     this.#maybeClose();
   }
 
-  #getBunSpawnIo(i, encoding, autoResume = false) {
+  #getBunSpawnIo(i, autoResume = false) {
     if ($debug && !this.#handle) {
       if (this.#handle === null) {
         $debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
@@ -1291,7 +1291,7 @@ class ChildProcess extends EventEmitter {
               return stream;
             }
 
-            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, { encoding });
+            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, {});
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();
@@ -1330,7 +1330,6 @@ class ChildProcess extends EventEmitter {
   #stdout;
   #stderr;
   #stdioObject;
-  #encoding;
   #stdioOptions;
 
   #createStdioObject() {
@@ -1358,7 +1357,7 @@ class ChildProcess extends EventEmitter {
           result[i] = this.stderr;
           continue;
         default:
-          result[i] = this.#getBunSpawnIo(i, this.#encoding, false);
+          result[i] = this.#getBunSpawnIo(i, false);
           continue;
       }
     }
@@ -1366,15 +1365,15 @@ class ChildProcess extends EventEmitter {
   }
 
   get stdin() {
-    return (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false));
+    return (this.#stdin ??= this.#getBunSpawnIo(0, false));
   }
 
   get stdout() {
-    return (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false));
+    return (this.#stdout ??= this.#getBunSpawnIo(1, false));
   }
 
   get stderr() {
-    return (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false));
+    return (this.#stderr ??= this.#getBunSpawnIo(2, false));
   }
 
   get stdio() {
@@ -1426,7 +1425,6 @@ class ChildProcess extends EventEmitter {
     var env = options[kBunEnv] || parseEnvPairs(envPairs) || process.env;
 
     const detachedOption = options.detached;
-    this.#encoding = options.encoding || undefined;
     this.#stdioOptions = bunStdio;
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
@@ -1648,7 +1646,7 @@ class ChildProcess extends EventEmitter {
     Object.defineProperties(this.prototype, {
       stdin: {
         get: function () {
-          const value = (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false));
+          const value = (this.#stdin ??= this.#getBunSpawnIo(0, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdin", {
             value: value,
@@ -1663,7 +1661,7 @@ class ChildProcess extends EventEmitter {
       },
       stdout: {
         get: function () {
-          const value = (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false));
+          const value = (this.#stdout ??= this.#getBunSpawnIo(1, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdout", {
             value: value,
@@ -1678,7 +1676,7 @@ class ChildProcess extends EventEmitter {
       },
       stderr: {
         get: function () {
-          const value = (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false));
+          const value = (this.#stderr ??= this.#getBunSpawnIo(2, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stderr", {
             value: value,
@@ -1832,6 +1830,8 @@ function normalizeStdio(stdio): string[] {
         return ["ignore", "ignore", "ignore"];
       case "pipe":
         return ["pipe", "pipe", "pipe"];
+      case "overlapped":
+        return ["overlapped", "overlapped", "overlapped"];
       case "inherit":
         return ["inherit", "inherit", "inherit"];
       default:

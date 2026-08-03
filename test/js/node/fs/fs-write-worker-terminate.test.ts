@@ -89,11 +89,7 @@ process.exit(foreign ? 1 : 0);
           stdout: "pipe",
           stderr: "pipe",
         });
-        const [stdout, stderr, exitCode] = await Promise.all([
-          proc.stdout.text(),
-          proc.stderr.text(),
-          proc.exited,
-        ]);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
         const out = stdout + stderr;
         expect(out).not.toContain("FOREIGN");

@@ -307,7 +307,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useConcurrentJIT() = true;
             // JSC::Options::useSigillCrashAnalyzer() = true;
             JSC::Options::useSourceProviderCache() = true;
-            // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
+            // Bytecode for standalone executables lives in the (mmap'd) binary, so cold UnlinkedCodeBlocks are cheap to re-decode; let the GC drop them.
+            JSC::Options::useUnlinkedCodeBlockJettisoning() = true;
+            JSC::Options::useUnlinkedCodeBlockJettisoningForBytecodeCache() = true;
             // JSModuleLoader is now a JSCell (not a JSObject) so exposing it as
             // the global `Loader` would let user code dereference a non-object
             // and trip JSValue::synthesizePrototype's isSymbol() debug assert.

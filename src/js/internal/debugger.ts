@@ -96,6 +96,73 @@ type CreateBackendFn = (
   receive: (...messages: string[]) => void,
 ) => unknown;
 
+// Reverse-connect mode (Bun dials the frontend's socket): re-dial on failure or
+// close so --inspect-wait/--inspect-brk cannot be left waiting forever for a
+// frontend that can no longer reach it, and so a frontend that restarts between
+// accept and Inspector.initialized can still attach. An fd cannot be re-dialed
+// once its peer is gone.
+function dialWithReconnect(
+  connectionOptions,
+  makeBackend: (receive: (...messages: string[]) => void) => Backend,
+): void {
+  const canReconnect = connectionOptions.fd === undefined;
+  let reconnectDelay = 50;
+  const scheduleReconnect = () => {
+    if (!canReconnect) return;
+    setTimeout(dial, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 1000);
+  };
+  const dial = () => {
+    Bun.connect<{ framer: SocketFramer; backend: Backend }>({
+      ...connectionOptions,
+      socket: {
+        open: socket => {
+          reconnectDelay = 50;
+          let backend: Backend;
+          const framer = new SocketFramer((message: string | string[]) => {
+            backend.write(message);
+          });
+          backend = makeBackend((...messages: string[]) => {
+            for (const message of messages) {
+              framer.send(socket, message);
+            }
+          });
+          socket.data = { framer, backend };
+          socket.ref();
+        },
+        data: (socket, bytes) => {
+          if (!socket.data) {
+            socket.terminate();
+            return;
+          }
+          socket.data.framer.onData(socket, bytes);
+        },
+        // Ensure we always drain the socket.
+        // This is necessary due to socket.$write usage.
+        drain: _socket => {},
+        close: socket => {
+          const socketData = socket.data;
+          if (socketData) {
+            const { backend, framer } = socketData;
+            backend.close();
+            framer.reset();
+          }
+          scheduleReconnect();
+        },
+      },
+    }).catch(error => {
+      $debug("error:", error);
+      if (canReconnect) {
+        scheduleReconnect();
+        return;
+      }
+      // Force us to send a disconnect message
+      makeBackend(() => {}).close();
+    });
+  };
+  dial();
+}
+
 // CDP translation is only needed for node:inspector servers, so load it lazily.
 let lazyInspectorCDPAdapter: any;
 function cdpAdapterConstructor() {
@@ -393,73 +460,7 @@ class Debugger {
   }
 
   #connectOverSocket(networkOptions) {
-    // Reverse-connect mode (Bun dials the frontend's socket): re-dial on
-    // failure or close so --inspect-wait/--inspect-brk cannot be left waiting
-    // forever for a frontend that can no longer reach it. An fd cannot be
-    // re-dialed once its peer is gone.
-    const canReconnect = networkOptions.fd === undefined;
-    let reconnectDelay = 50;
-    const scheduleReconnect = () => {
-      if (!canReconnect) return;
-      setTimeout(dial, reconnectDelay);
-      reconnectDelay = Math.min(reconnectDelay * 2, 1000);
-    };
-    const dial = () => {
-      let backend;
-      Bun.connect<{ framer: SocketFramer; backend: Backend }>({
-        ...networkOptions,
-        socket: {
-          open: socket => {
-            reconnectDelay = 50;
-            let framer: SocketFramer;
-            const callback = (...messages: string[]) => {
-              for (const message of messages) {
-                framer.send(socket, message);
-              }
-            };
-
-            framer = new SocketFramer((message: string | string[]) => {
-              backend.write(message);
-            });
-            backend = this.#createBackend(false, callback);
-            socket.data = {
-              framer,
-              backend,
-            };
-            socket.ref();
-          },
-          data: (socket, bytes) => {
-            if (!socket.data) {
-              socket.terminate();
-              return;
-            }
-            socket.data.framer.onData(socket, bytes);
-          },
-          drain: _socket => {},
-          close: socket => {
-            const socketData = socket.data;
-            if (socketData) {
-              const { backend, framer } = socketData;
-              backend.close();
-              framer.reset();
-            }
-            scheduleReconnect();
-          },
-        },
-      }).catch(err => {
-        $debug("error:", err);
-        if (canReconnect) {
-          scheduleReconnect();
-          return;
-        }
-        // Force us to send a disconnect message
-        if (!backend) {
-          backend = this.#createBackend(false, () => {});
-          backend.close();
-        }
-      });
-    };
-    dial();
+    dialWithReconnect(networkOptions, receive => this.#createBackend(false, receive));
   }
 
   get #websocket(): WebSocketHandler<Connection> {
@@ -672,82 +673,16 @@ function connectToUnixServer(
     return;
   }
 
-  // Reverse-connect mode (Bun dials the frontend's socket): re-dial on failure
-  // or close so a frontend that restarts between accept and Inspector.initialized
-  // can still attach. An fd cannot be re-dialed once its peer is gone.
-  const canReconnect = connectionOptions.fd === undefined;
-  let reconnectDelay = 50;
-  const scheduleReconnect = () => {
-    if (!canReconnect) return;
-    setTimeout(dial, reconnectDelay);
-    reconnectDelay = Math.min(reconnectDelay * 2, 1000);
-  };
-  const dial = () => {
-    Bun.connect<{ framer: SocketFramer; backend: Backend }>({
-      ...connectionOptions,
-      socket: {
-        open: socket => {
-          reconnectDelay = 50;
-          const framer = new SocketFramer((message: string | string[]) => {
-            backend.write(message);
-          });
-
-          const backendRaw = createBackend(executionContextId, true, (...messages: string[]) => {
-            for (const message of messages) {
-              framer.send(socket, message);
-            }
-          });
-
-          const backend = {
-            write: message => {
-              send.$call(backendRaw, message);
-              return true;
-            },
-            close: () => close.$call(backendRaw),
-          };
-
-          socket.data = {
-            framer,
-            backend,
-          };
-
-          socket.ref();
-        },
-        data: (socket, bytes) => {
-          if (!socket.data) {
-            socket.terminate();
-            return;
-          }
-
-          socket.data.framer.onData(socket, bytes);
-        },
-
-        // Ensure we always drain the socket.
-        // This is necessary due to socket.$write usage.
-        drain: _socket => {},
-
-        close: socket => {
-          const socketData = socket.data;
-          if (socketData) {
-            const { backend, framer } = socketData;
-            backend.close();
-            framer.reset();
-          }
-          scheduleReconnect();
-        },
+  dialWithReconnect(connectionOptions, receive => {
+    const backendRaw = createBackend(executionContextId, true, receive);
+    return {
+      write: message => {
+        send.$call(backendRaw, message);
+        return true;
       },
-    }).catch(error => {
-      $debug("error:", error);
-      if (canReconnect) {
-        scheduleReconnect();
-        return;
-      }
-      // Force it to close
-      const backendRaw = createBackend(executionContextId, true, () => {});
-      close.$call(backendRaw);
-    });
-  };
-  dial();
+      close: () => close.$call(backendRaw),
+    };
+  });
 }
 
 function versionInfo(): unknown {

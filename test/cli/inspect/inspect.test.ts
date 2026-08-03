@@ -455,13 +455,24 @@ describe("unix domain socket without websocket", () => {
       await runTest(path, [], { ...bunEnv, BUN_INSPECT: "unix:" + path });
     });
 
-    for (const flag of ["--inspect-wait", "--inspect-brk"]) {
-      test(`bun ${flag}=unix: re-dials after the frontend drops the connection before Inspector.initialized`, async () => {
+    for (const { label, args, env } of [
+      { label: "--inspect-wait=unix:", args: (p: string) => [`--inspect-wait=unix:${p}`], env: bunEnv },
+      { label: "--inspect-brk=unix:", args: (p: string) => [`--inspect-brk=unix:${p}`], env: bunEnv },
+      {
+        label: "BUN_INSPECT_CONNECT_TO=unix:",
+        args: () => [],
+        env: (p: string) => ({ ...bunEnv, BUN_INSPECT_CONNECT_TO: `unix://${p}` }),
+      },
+    ] as const) {
+      test(`bun ${label} re-dials after the frontend drops the connection before Inspector.initialized`, async () => {
         const path = randomSocketPath();
-        const { promise: secondDial, resolve: resolveSecondDial } = Promise.withResolvers<void>();
+        const { promise: evaluated, resolve: resolveEvaluated } = Promise.withResolvers<unknown>();
         let dials = 0;
         let attached;
-        const framer = new SocketFramer(message => {});
+        const framer = new SocketFramer(message => {
+          const parsed = JSON.parse(message);
+          if (parsed.id === 3) resolveEvaluated(parsed);
+        });
         using listener = Bun.listen({
           unix: path,
           socket: {
@@ -474,9 +485,9 @@ describe("unix domain socket without websocket", () => {
                 return;
               }
               attached = socket;
-              resolveSecondDial();
               framer.send(socket, JSON.stringify({ id: 1, method: "Inspector.enable" }));
               framer.send(socket, JSON.stringify({ id: 2, method: "Inspector.initialized" }));
+              framer.send(socket, JSON.stringify({ id: 3, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
             },
             data: (socket, bytes) => framer.onData(socket, bytes),
             error: () => {},
@@ -485,23 +496,34 @@ describe("unix domain socket without websocket", () => {
         });
 
         await using inspectee = spawn({
-          cmd: [bunExe(), `${flag}=unix:${path}`, "-e", "console.error('USER-CODE-STARTED')"],
-          env: bunEnv,
+          cmd: [bunExe(), ...args(path), "-e", "setInterval(()=>{},1000)"],
+          env: typeof env === "function" ? env(path) : env,
           stdout: "ignore",
           stderr: "pipe",
         });
 
-        await secondDial;
-
         let stderr = "";
-        for await (const chunk of inspectee.stderr) {
-          stderr += new TextDecoder().decode(chunk);
-          if (stderr.includes("USER-CODE-STARTED")) break;
-        }
+        (async () => {
+          for await (const chunk of inspectee.stderr) stderr += new TextDecoder().decode(chunk);
+        })().catch(() => {});
 
-        expect(stderr).toContain("USER-CODE-STARTED");
-        expect(dials).toBeGreaterThanOrEqual(2);
-        attached?.end?.();
+        // Race against process exit so a crash-type regression reports the exit
+        // code and stderr rather than a bare timeout. The wedged case (no crash,
+        // no second dial) still surfaces as a timeout: there is nothing else to
+        // observe.
+        const result = await Promise.race([
+          evaluated,
+          inspectee.exited.then(code => ({ inspecteeExited: code, stderr })),
+        ]);
+        try {
+          expect(result).toMatchObject({
+            id: 3,
+            result: { result: { type: "number", value: 2 } },
+          });
+          expect(dials).toBeGreaterThanOrEqual(2);
+        } finally {
+          attached?.end?.();
+        }
       });
     }
   }

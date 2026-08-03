@@ -18,7 +18,7 @@ impl ListenSocket {
         self.get_socket().local_address(buf)
     }
 
-    pub fn get_local_port(&mut self) -> i32 {
+    pub fn get_local_port(&mut self) -> Option<u16> {
         self.get_socket().local_port()
     }
 

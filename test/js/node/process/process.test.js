@@ -32,6 +32,22 @@ it("process.env defineProperty validates descriptors like node", () => {
     expect(process.env[key]).toBe("after");
     Object.defineProperty(process.env, key, full);
     expect(process.env[key]).toBe("v");
+    // node's EnvDefiner stringifies the value, matching the assignment trap.
+    Object.defineProperty(process.env, key, { value: 42, writable: true, enumerable: true, configurable: true });
+    expect(process.env[key]).toBe("42");
+    // [[PreventExtensions]] fails like node, so freeze/seal/preventExtensions
+    // throw plain TypeErrors (no code) and the env stays extensible.
+    for (const op of ["freeze", "seal", "preventExtensions"]) {
+      let opErr;
+      try {
+        Object[op](process.env);
+      } catch (e) {
+        opErr = e;
+      }
+      expect(opErr?.name).toBe("TypeError");
+      expect(opErr?.code).toBeUndefined();
+    }
+    expect(Object.isExtensible(process.env)).toBe(true);
     // Symbol keys: the descriptor is validated first, then node's key
     // coercion throws a plain TypeError with no code.
     let symErr;
@@ -78,6 +94,41 @@ it.skipIf(!isWindows)("a rejected process.env defineProperty leaves no phantom k
     delete process.env[key];
   }
 });
+
+it.skipIf(!isWindows)(
+  "process.env defineProperty enumerates special-accessor keys and coerces accessor reads",
+  async () => {
+    // HTTP_PROXY and friends exist on the underlying env object as DontEnum
+    // CustomAccessors even when unset; the defineProperty trap must use the
+    // envMapList predicate (like the set trap) so a first-time define still
+    // makes the key enumerable. Run in a subprocess with proxy vars stripped so
+    // the var is guaranteed absent from the OS env block at startup.
+    const env = { ...bunEnv };
+    for (const k of Object.keys(env)) if (/^(https?|no)_proxy$/i.test(k)) delete env[k];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const key = "HTTP_PROXY";
+       Object.defineProperty(process.env, key, { value: "http://x", writable: true, enumerable: true, configurable: true });
+       const inKeys = Reflect.ownKeys(process.env).includes(key);
+       const spread = { ...process.env }[key];
+       // An accessor getter's result reaches the OS sync via the trap; a
+       // non-string result must not violate editWindowsEnvVar's string contract.
+       Object.defineProperty(process.env, key, { get: () => 42, configurable: true });
+       console.log(JSON.stringify({ inKeys, spread, getter: process.env[key] }));`,
+      ],
+      env,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+      out: { inKeys: true, spread: "http://x", getter: 42 },
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
 
 /**
  * Helper function to run inline fixture code and return stdout and exit code
@@ -406,7 +457,7 @@ it("process.versions", () => {
   const expectedVersions = {
     boringssl: "1a41b9025c2c0a37edd07ff10f6944f03e028522",
     libarchive: "ded82291ab41d5e355831b96b0e1ff49e24d8939",
-    mimalloc: "acd9924a0af3ba7c341910b48815106f2944ffa0",
+    mimalloc: "d078ad066752ea7fd06acb2323b7a90c49d7d8e4",
     picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
     zlib: "12731092979c6d07f42da27da673a9f6c7b13586",
     tinycc: "05f0fafaa3be31e31d7b4b5c17dc60f62c991171",
@@ -1346,6 +1397,9 @@ it("process.execArgv", async () => {
     ["index.ts --bun -a -b -c", [], ["--bun", "-a", "-b", "-c"]],
     ["--bun index.ts index.ts", ["--bun"], ["index.ts"]],
     ["run -e bruh -b index.ts foo -a -b -c", ["-e", "bruh", "-b"], ["foo", "-a", "-b", "-c"]],
+    // a `-`-prefixed value is still a value (bun_clap consumes it by arity),
+    // not a short chain to normalize
+    ["--define -d:1 index.ts", ["--define", "-d:1"], []],
   ];
 
   for (const [cmd, execArgv, argv] of fixtures) {

@@ -534,7 +534,11 @@ export function windowsEnv(
         return $Object.$defineProperty(internalEnv, p, attributes);
       }
       const k = String(p).toUpperCase();
-      const isNewKey = !(k in internalEnv) && !envMapList.includes(p);
+      // Same predicate as the set trap: don't gate on `k in internalEnv` —
+      // the proxy/TZ/TLS accessor names always exist on internalEnv as
+      // DontEnum CustomAccessors, so the `in` check would skip envMapList
+      // for them and the key would vanish from Object.keys(process.env).
+      const isNewKey = !envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k);
       // The define can throw (JSProcessEnvMap rejects partial data
       // descriptors), so it runs before the bookkeeping: a rejected define
       // must not leave a phantom key in envMapList, and the OS env var is
@@ -543,7 +547,11 @@ export function windowsEnv(
       if (isNewKey) {
         envMapList.push(p);
       }
-      editWindowsEnvVar(k, internalEnv[k]);
+      // String-coerce: the data path is coerced natively, but an accessor
+      // descriptor (deliberate divergence) installs a getter whose result
+      // reaches this read raw, and editWindowsEnvVar requires string|null.
+      const v = internalEnv[k];
+      editWindowsEnvVar(k, v == null ? null : String(v));
       return r;
     },
     getOwnPropertyDescriptor(target, p) {

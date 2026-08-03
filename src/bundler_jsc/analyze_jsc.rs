@@ -13,13 +13,11 @@ use analyze::{ModuleInfoDeserialized, RecordKind, RequestedModuleValue, StringID
 use bun_bundler::analyze_transpiled_module as analyze;
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
+extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     global_object: &JSGlobalObject,
     vm: &VM,
     module_key: &IdentifierArray,
     source_code: &SourceCode,
-    declared_variables: &mut VariableEnvironment,
-    lexical_variables: &mut VariableEnvironment,
     res: &ModuleInfoDeserialized,
 ) -> *mut JSModuleRecord {
     // Ownership of `res` stays with the caller; this function only reads it.
@@ -81,8 +79,6 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
                 return core::ptr::null_mut();
             }
             match k {
-                RecordKind::DeclaredVariable => declared_variables.add(vm, identifiers, buffer[i]),
-                RecordKind::LexicalVariable => lexical_variables.add(vm, identifiers, buffer[i]),
                 RecordKind::ImportInfoSingle
                 | RecordKind::ImportInfoSingleTypeScript
                 | RecordKind::ImportInfoNamespace
@@ -102,8 +98,6 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
         vm,
         module_key,
         source_code,
-        declared_variables,
-        lexical_variables,
         res.flags.contains_import_meta(),
         res.flags.is_typescript(),
         res.flags.has_tla(),
@@ -159,7 +153,6 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
                 unreachable!(); // handled above
             }
             match k {
-                RecordKind::DeclaredVariable | RecordKind::LexicalVariable => {}
                 RecordKind::ImportInfoSingle => module_record.add_import_entry_single(
                     identifiers,
                     buffer[i + 1],
@@ -216,30 +209,6 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
 
 // ─── opaque FFI types ─────────────────────────────────────────────────────────
 
-bun_opaque::opaque_ffi! { pub struct VariableEnvironment; }
-unsafe extern "C" {
-    fn JSC__VariableEnvironment__add(
-        environment: *mut VariableEnvironment,
-        vm: *const VM,
-        identifier_array: *mut IdentifierArray,
-        identifier_index: StringID,
-    );
-}
-impl VariableEnvironment {
-    // Forwards `identifier_array` to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    #[inline]
-    pub fn add(
-        &mut self,
-        vm: &VM,
-        identifier_array: *mut IdentifierArray,
-        identifier_index: StringID,
-    ) {
-        // SAFETY: self is a valid &mut VariableEnvironment from C++; identifier_array is live (scopeguard).
-        unsafe { JSC__VariableEnvironment__add(self, vm, identifier_array, identifier_index) }
-    }
-}
-
 bun_opaque::opaque_ffi! { pub struct IdentifierArray; }
 unsafe extern "C" {
     fn JSC__IdentifierArray__create(len: usize) -> *mut IdentifierArray;
@@ -254,21 +223,21 @@ unsafe extern "C" {
 }
 impl IdentifierArray {
     #[inline]
-    pub fn create(len: usize) -> *mut IdentifierArray {
+    pub(crate) fn create(len: usize) -> *mut IdentifierArray {
         // SAFETY: FFI call; C++ side allocates.
         unsafe { JSC__IdentifierArray__create(len) }
     }
     /// # Safety
     /// `identifier_array` must be a pointer previously returned by `create` and not yet destroyed.
     #[inline]
-    pub unsafe fn destroy(identifier_array: *mut IdentifierArray) {
+    pub(crate) unsafe fn destroy(identifier_array: *mut IdentifierArray) {
         // SAFETY: caller contract — `identifier_array` came from `create` and has not been destroyed.
         unsafe { JSC__IdentifierArray__destroy(identifier_array) }
     }
     /// # Safety
     /// `this` must be live; `n` must be in-bounds for the array's length.
     #[inline]
-    pub unsafe fn set_from_utf8(this: *mut IdentifierArray, n: usize, vm: &VM, str_: &[u8]) {
+    pub(crate) unsafe fn set_from_utf8(this: *mut IdentifierArray, n: usize, vm: &VM, str_: &[u8]) {
         // SAFETY: caller contract — `this` is live, `n` is in bounds; `str_` is a valid slice for the call.
         unsafe { JSC__IdentifierArray__setFromUtf8(this, n, vm, str_.as_ptr(), str_.len()) }
     }
@@ -284,8 +253,6 @@ unsafe extern "C" {
         vm: *const VM,
         module_key: *const IdentifierArray,
         source_code: *const SourceCode,
-        declared_variables: *mut VariableEnvironment,
-        lexical_variables: *mut VariableEnvironment,
         has_import_meta: bool,
         is_typescript: bool,
         has_tla: bool,
@@ -379,13 +346,11 @@ unsafe extern "C" {
 }
 impl JSModuleRecord {
     #[inline]
-    pub(crate) fn create(
+    fn create(
         global_object: &JSGlobalObject,
         vm: &VM,
         module_key: &IdentifierArray,
         source_code: &SourceCode,
-        declared_variables: &mut VariableEnvironment,
-        lexical_variables: &mut VariableEnvironment,
         has_import_meta: bool,
         is_typescript: bool,
         has_tla: bool,
@@ -397,8 +362,6 @@ impl JSModuleRecord {
                 vm,
                 module_key,
                 source_code,
-                declared_variables,
-                lexical_variables,
                 has_import_meta,
                 is_typescript,
                 has_tla,

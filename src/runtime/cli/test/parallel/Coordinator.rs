@@ -14,10 +14,9 @@ use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::Interned;
-use bun_sys::FdExt as _;
 
 use super::frame::{self, Frame};
-use super::worker::{PipeRole, Worker, WorkerPipe};
+use super::worker::{Worker, WorkerPipe};
 use crate::test_command::CommandLineReporter;
 
 // `Status` lives in `crate::api::bun::process`
@@ -26,45 +25,44 @@ use crate::api::bun::process::Process;
 use crate::api::bun::process::Status as SpawnStatus;
 
 pub struct Coordinator<'a> {
-    pub vm: &'a VirtualMachine,
+    pub(crate) vm: &'a VirtualMachine,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    pub event_loop_handle: bun_jsc::EventLoopHandle,
-    pub reporter: &'a mut CommandLineReporter,
-    pub files: Vec<Interned>,
-    pub cwd: &'a [u8],
+    pub(crate) event_loop_handle: bun_jsc::EventLoopHandle,
+    pub(crate) reporter: &'a mut CommandLineReporter,
+    pub(crate) files: Vec<Interned>,
+    pub(crate) cwd: &'a [u8],
     // [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
     // backing storage has a null at [len] for execve-style consumers.
-    pub argv: Box<[bun_spawn::CStrPtr]>,
+    pub(crate) argv: Box<[bun_spawn::CStrPtr]>,
     /// One envp per worker slot — same base, with that slot's JEST_WORKER_ID
     /// and BUN_TEST_WORKER_ID appended.
-    pub envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
+    pub(crate) envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
 
-    pub workers: &'a mut [Worker],
-    /// Temp dir for per-worker JUnit XML and LCOV coverage fragments; None
-    /// when neither was requested.
-    pub worker_tmpdir: Option<&'a [u8]>,
-    pub junit_fragments: Vec<Box<[u8]>>,
-    pub coverage_fragments: Vec<Box<[u8]>>,
+    pub(crate) workers: &'a mut [Worker],
+    pub(crate) junit_chunks: Vec<Option<Box<[u8]>>>,
+    pub(crate) junit_totals: super::aggregate::JunitTotals,
+    pub(crate) coverage_chunks: Vec<Box<[u8]>>,
     /// File index whose `path:` header was most recently written. Result lines
     /// from concurrent workers interleave; whenever the source file changes the
     /// header is re-emitted so every line has visible context. None at start.
-    pub last_header_idx: Option<u32>,
+    pub(crate) last_header_idx: Option<u32>,
     pub frame: Frame,
-    pub parallel_limit: u32,
-    pub scale_up_after_ms: i64,
-    pub bail: u32,
-    pub dots: bool,
-    pub files_done: u32,
-    pub spawned_count: u32,
-    pub live_workers: u32,
-    pub crashed_files: Vec<u32>,
-    pub bailed: bool,
-    pub last_printed_dot: bool,
+    pub(crate) parallel_limit: u32,
+    pub(crate) scale_up_after_ms: i64,
+    pub(crate) bail: u32,
+    pub(crate) dots: bool,
+    pub(crate) files_done: u32,
+    pub(crate) spawned_count: u32,
+    pub(crate) live_workers: u32,
+    pub(crate) crashed_files: Vec<u32>,
+    pub(crate) aborted: Option<u32>,
+    pub(crate) bailed: bool,
+    pub(crate) last_printed_dot: bool,
     /// Kill-on-close Job Object so the OS reaps workers if the coordinator dies
     /// without running its signal handler (e.g. SIGKILL / TerminateProcess).
     #[cfg(windows)]
-    pub windows_job: Option<*mut c_void>,
+    pub(crate) windows_job: Option<*mut c_void>,
 }
 
 impl<'a> Coordinator<'a> {
@@ -112,6 +110,7 @@ impl<'a> Coordinator<'a> {
         while !self.is_done() {
             if abort_handler::SHOULD_ABORT.load(Ordering::Acquire) {
                 self.abort_all();
+                return;
             }
             self.vm.event_loop_ref().tick();
             self.maybe_scale_up();
@@ -145,8 +144,40 @@ impl<'a> Coordinator<'a> {
     /// the coordinator can't run this (SIGKILL): PDEATHSIG on Linux,
     /// kill-on-close Job Object on Windows. macOS has neither; the process
     /// group kill here plus stdin EOF in the worker loop is the best effort.
-    fn abort_all(&mut self) -> ! {
+    fn abort_all(&mut self) {
         abort_handler::uninstall();
+        let now = bun_core::time::milli_timestamp();
+        let workers = &self.workers[..self.spawned_count as usize];
+        let running: Vec<(u32, i64)> = workers
+            .iter()
+            .filter_map(|w| w.inflight.map(|idx| (idx, now - w.dispatched_at)))
+            .collect();
+        for (idx, _) in &running {
+            self.reporter.summary().fail += 1;
+            self.reporter.summary().files += 1;
+            self.crashed_files.push(*idx);
+            self.files_done += 1;
+        }
+        if !running.is_empty() {
+            bun_core::pretty_errorln!("<r>\n<red>Interrupted<r> while still running:");
+            for (idx, running_ms) in &running {
+                bun_core::pretty_errorln!(
+                    "  {} <d>({}s)<r>",
+                    bstr::BStr::new(self.rel_path(*idx)),
+                    running_ms / 1000
+                );
+            }
+            let not_started: u32 = self.workers.iter().map(|w| w.range.len()).sum();
+            if not_started > 0 {
+                bun_core::pretty_errorln!("{} file(s) had not started:", not_started);
+                for w in self.workers.iter() {
+                    for idx in w.range.lo..w.range.hi {
+                        bun_core::pretty_errorln!("  {}", bstr::BStr::new(self.rel_path(idx)));
+                    }
+                }
+            }
+            Output::flush();
+        }
         for w in self.workers[..self.spawned_count as usize].iter_mut() {
             if let Some(p) = w.process {
                 #[cfg(unix)]
@@ -164,10 +195,7 @@ impl<'a> Coordinator<'a> {
                 }
             }
         }
-        if let Some(d) = self.worker_tmpdir {
-            let _ = bun_sys::Fd::cwd().delete_tree(d);
-        }
-        Global::exit(130);
+        self.aborted = Some(130);
     }
 
     fn spawn_worker(&mut self) -> bool {
@@ -180,8 +208,8 @@ impl<'a> Coordinator<'a> {
         // Built via from_mut so the stored `*const` carries write provenance:
         // WorkerPipe::on_read_chunk later mutates the Worker through cast_mut().
         let w_ptr = std::ptr::from_mut::<Worker>(w).cast_const();
-        w.out = WorkerPipe::new(PipeRole::Stdout, w_ptr);
-        w.err = WorkerPipe::new(PipeRole::Stderr, w_ptr);
+        w.out = WorkerPipe::new(w_ptr);
+        w.err = WorkerPipe::new(w_ptr);
         match w.start() {
             Ok(()) => {}
             Err(e) => {
@@ -300,18 +328,30 @@ impl<'a> Coordinator<'a> {
     }
 
     fn ensure_header(&mut self, file_idx: u32) {
-        if self.dots {
-            return;
-        }
         if self.last_header_idx == Some(file_idx) {
             return;
         }
+        self.end_group();
         self.last_header_idx = Some(file_idx);
+        let file_prefix: &[u8] = if Output::is_github_action() {
+            b"::group::"
+        } else {
+            b""
+        };
+        let mut header: Vec<u8> = Vec::with_capacity(64);
         let _ = write!(
-            Output::error_writer(),
-            "\n{}:\n",
+            header,
+            "\n{}{}:\n",
+            bstr::BStr::new(file_prefix),
             bstr::BStr::new(self.rel_path(file_idx))
         );
+        let _ = Output::error_writer().write_all(&header);
+    }
+
+    pub(crate) fn end_group(&mut self) {
+        if self.last_header_idx.take().is_some() && Output::is_github_action() {
+            let _ = Output::error_writer().write_all(b"\n::endgroup::\n");
+        }
     }
 
     fn break_dots(&mut self) {
@@ -340,10 +380,10 @@ impl<'a> Coordinator<'a> {
         match kind {
             frame::Kind::Ready => self.assign_work_or_retry(w),
             frame::Kind::FileStart => {
-                let _ = rd.u32_();
+                let _ = rd.u32();
             }
             frame::Kind::TestDone => {
-                let idx = rd.u32_();
+                let idx = rd.u32();
                 let formatted = rd.str();
                 if w.inflight != Some(idx) {
                     return;
@@ -366,7 +406,7 @@ impl<'a> Coordinator<'a> {
             frame::Kind::FileDone => {
                 let mut nums = [0u32; 9];
                 for n in nums.iter_mut() {
-                    *n = rd.u32_();
+                    *n = rd.u32();
                 }
                 let [
                     idx,
@@ -381,6 +421,9 @@ impl<'a> Coordinator<'a> {
                 ] = nums;
 
                 self.flush_captured(w);
+                if self.last_header_idx == Some(idx) {
+                    self.end_group();
+                }
 
                 // A worker can write file_done and crash before the coordinator
                 // reads the frame; onWorkerExit() will already have called
@@ -433,17 +476,21 @@ impl<'a> Coordinator<'a> {
                     .todos_to_repeat_buf
                     .extend_from_slice(rd.str());
             }
-            frame::Kind::JunitFile | frame::Kind::CoverageFile => {
-                let path = rd.str();
-                if path.is_empty() {
-                    return;
+            frame::Kind::JunitChunk => {
+                let idx = rd.u32() as usize;
+                let chunk = rd.str();
+                if !chunk.is_empty()
+                    && let Some(slot) = self.junit_chunks.get_mut(idx)
+                {
+                    super::aggregate::add_junit_chunk_totals(&mut self.junit_totals, chunk);
+                    *slot = Some(Box::<[u8]>::from(chunk));
                 }
-                let list = if kind == frame::Kind::JunitFile {
-                    &mut self.junit_fragments
-                } else {
-                    &mut self.coverage_fragments
-                };
-                list.push(Box::<[u8]>::from(path));
+            }
+            frame::Kind::CoverageChunk => {
+                let chunk = rd.str();
+                if !chunk.is_empty() {
+                    self.coverage_chunks.push(Box::<[u8]>::from(chunk));
+                }
             }
             frame::Kind::Run | frame::Kind::Shutdown => {}
         }
@@ -485,7 +532,12 @@ impl<'a> Coordinator<'a> {
             // the exit status reflects the crash. SIGKILL is treated as a
             // regular failure (commonly the OOM killer or the user).
             let panicked = is_panic_status(status);
-            self.account_crash(idx, status);
+            let was_bailed = self.bailed;
+            if was_bailed && !panicked {
+                self.account_unfinished(idx, b"aborted: sibling worker panicked");
+            } else {
+                self.account_crash(idx, status);
+            }
             Output::flush();
             w.inflight = None;
             if panicked {
@@ -506,8 +558,8 @@ impl<'a> Coordinator<'a> {
             w.ipc = Default::default();
             // from_mut: keep write provenance on the stored backref (see spawn_worker).
             let w_ptr = std::ptr::from_mut::<Worker>(w).cast_const();
-            w.out = WorkerPipe::new(PipeRole::Stdout, w_ptr);
-            w.err = WorkerPipe::new(PipeRole::Stderr, w_ptr);
+            w.out = WorkerPipe::new(w_ptr);
+            w.err = WorkerPipe::new(w_ptr);
             match w.start() {
                 Ok(()) => {
                     respawned = true;
@@ -526,10 +578,22 @@ impl<'a> Coordinator<'a> {
             // Drop won't fire until Coordinator teardown. Assigning defaults
             // drops the old values now (pipe FDs, capture buffer).
             w.ipc = Default::default();
-            w.out = WorkerPipe::new(PipeRole::Stdout, core::ptr::null());
-            w.err = WorkerPipe::new(PipeRole::Stderr, core::ptr::null());
+            w.out = WorkerPipe::new(core::ptr::null());
+            w.err = WorkerPipe::new(core::ptr::null());
             let _ = core::mem::take(&mut w.captured);
         }
+    }
+
+    fn account_unfinished(&mut self, file_idx: u32, reason: &[u8]) {
+        self.break_dots();
+        bun_core::pretty_error!(
+            "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
+            bstr::BStr::new(self.rel_path(file_idx)),
+            bstr::BStr::new(reason),
+        );
+        self.reporter.summary().fail += 1;
+        self.reporter.summary().files += 1;
+        self.files_done += 1;
     }
 
     fn account_crash(&mut self, file_idx: u32, status: &SpawnStatus) {
@@ -642,7 +706,6 @@ impl<'a> Coordinator<'a> {
                 );
                 self.reporter.summary().fail += 1;
                 self.reporter.summary().files += 1;
-                self.crashed_files.push(idx);
                 self.files_done += 1;
             }
         }
@@ -666,7 +729,7 @@ impl<'a> Coordinator<'a> {
                 return None;
             }
             let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION = bun_core::ffi::zeroed();
-            jeli.BasicLimitInformation.LimitFlags = windows::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            jeli.BasicLimitInformation.LimitFlags = windows::JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE;
             if windows::SetInformationJobObject(
                 job,
                 windows::JobObjectExtendedLimitInformation,
@@ -741,7 +804,7 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
 /// don't do non-signal-safe work in the handler. Linux PDEATHSIG and the
 /// Windows Job Object are the safety net for when the coordinator can't run
 /// this (SIGKILL).
-pub mod abort_handler {
+pub(crate) mod abort_handler {
     use super::*;
 
     pub(crate) static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);

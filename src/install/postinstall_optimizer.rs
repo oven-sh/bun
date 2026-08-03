@@ -9,7 +9,6 @@ use bun_ast as js_ast;
 use bun_semver as semver;
 
 use crate::lockfile::package::Meta;
-use crate::lockfile::tree::Id as TreeId;
 use crate::npm;
 use crate::{PackageID, PackageNameHash};
 
@@ -69,7 +68,7 @@ impl PostinstallOptimizer {
         Ok(true)
     }
 
-    pub fn from_package_json(
+    pub(crate) fn from_package_json(
         list: &mut List,
         expr: &js_ast::Expr,
     ) -> Result<(), bun_alloc::AllocError> {
@@ -90,7 +89,7 @@ impl PostinstallOptimizer {
         Ok(())
     }
 
-    pub fn get_native_binlink_replacement_package_id(
+    pub(crate) fn get_native_binlink_replacement_package_id(
         resolutions: &[PackageID],
         metas: &[Meta],
         target_cpu: npm::Architecture,
@@ -128,18 +127,18 @@ pub type Map = ArrayHashMap<PackageNameHash, PostinstallOptimizer, ArrayIdentity
 
 #[derive(Default)]
 pub struct List {
-    pub dynamic: Map,
-    pub disable_default_native_binlinks: bool,
-    pub disable_default_ignore: bool,
+    pub(crate) dynamic: Map,
+    pub(crate) disable_default_native_binlinks: bool,
+    pub(crate) disable_default_ignore: bool,
 }
 
 #[derive(Clone, Copy)]
 pub struct PkgInfo<'a> {
-    pub name_hash: PackageNameHash,
-    pub version: Option<semver::Version>,
+    pub(crate) name_hash: PackageNameHash,
+    pub(crate) version: Option<semver::Version>,
     // Borrows the lockfile string buffer at call sites; only used to resolve
     // pre/build tags inside `Version::order`, never stored.
-    pub version_buf: &'a [u8],
+    pub(crate) version_buf: &'a [u8],
 }
 
 impl Default for PkgInfo<'_> {
@@ -153,7 +152,7 @@ impl Default for PkgInfo<'_> {
 }
 
 impl List {
-    pub fn is_native_binlink_enabled(&self) -> bool {
+    pub(crate) fn is_native_binlink_enabled(&self) -> bool {
         if self.dynamic.len() == 0 {
             if self.disable_default_native_binlinks {
                 return true;
@@ -172,14 +171,13 @@ impl List {
         true
     }
 
-    pub fn should_ignore_lifecycle_scripts(
+    pub(crate) fn should_ignore_lifecycle_scripts(
         &self,
         pkg_info: &PkgInfo<'_>,
         resolutions: &[PackageID],
         metas: &[Meta],
         target_cpu: npm::Architecture,
         target_os: npm::OperatingSystem,
-        tree_id: Option<TreeId>,
     ) -> bool {
         // The feature flag defaults to false; see note on the binlinker flag above.
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS
@@ -195,22 +193,20 @@ impl List {
 
         match mode {
             PostinstallOptimizer::NativeBinlink => {
-                // TODO: support hoisted.
-                (tree_id.is_none() || tree_id.unwrap() == 0)
-
-                    // It's not as simple as checking `get(name_hash) != null` because if the
-                    // specific versions of the package do not have optional
-                    // dependencies then we cannot do this optimization without
-                    // breaking the code.
-                    //
-                    // This shows up in test/integration/esbuild/esbuild.test.ts
-                    && PostinstallOptimizer::get_native_binlink_replacement_package_id(
-                        resolutions,
-                        metas,
-                        target_cpu,
-                        target_os,
-                    )
-                    .is_some()
+                // Not a plain name-hash lookup: package versions without a
+                // platform optionalDependency (e.g. old esbuild) must still run
+                // their postinstall. See test/integration/esbuild/esbuild.test.ts.
+                //
+                // Tree position doesn't matter here; the `.bin` linker redirects
+                // nested copies to the platform package as well (see
+                // `find_native_binlink_target_tree`).
+                PostinstallOptimizer::get_native_binlink_replacement_package_id(
+                    resolutions,
+                    metas,
+                    target_cpu,
+                    target_os,
+                )
+                .is_some()
             }
 
             PostinstallOptimizer::Ignore => true,
@@ -243,7 +239,7 @@ impl List {
         None
     }
 
-    pub fn get(&self, pkg_info: &PkgInfo<'_>) -> Option<PostinstallOptimizer> {
+    pub(crate) fn get(&self, pkg_info: &PkgInfo<'_>) -> Option<PostinstallOptimizer> {
         if let Some(optimize) = self.dynamic.get(&pkg_info.name_hash) {
             return Some(*optimize);
         }

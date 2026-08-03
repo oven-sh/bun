@@ -6,8 +6,10 @@ use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
+#[cfg(windows)]
+use bun_core::ZStr;
 use bun_core::strings;
-use bun_core::{OwnedString, String as BunString, ZStr};
+use bun_core::{OwnedString, String as BunString};
 use bun_jsc::StringJsc as _;
 use bun_jsc::{
     self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult,
@@ -27,12 +29,13 @@ pub use super::subproc; // declared once in `shell/mod.rs`
 // (still-draft) JSC bridge below. This file keeps the JSC-coupled half
 // (ShellErr, GlobalJS/Mini, shell_cmd_from_js, ShellSrcBuilder, TestingAPIs).
 pub use bun_shell_parser::parse::{
-    IfClauseTok, LEX_JS_OBJREF_PREFIX, LEX_JS_STRING_PREFIX, LexerAscii, LexerUnicode, ParseError,
-    Parser, Token, ast, is_if_clause_keyword_bunstr, needs_escape_bunstr,
+    IfClauseTok, LEX_JS_OBJREF_PREFIX, LEX_JS_REF_TERMINATOR, LEX_JS_STRING_PREFIX, LexerAscii,
+    LexerUnicode, ParseError, Parser, Token, ast, is_if_clause_keyword_bunstr, needs_escape_bunstr,
     needs_escape_utf8_ascii_latin1,
 };
 
-pub const WINDOWS_DEV_NULL: &ZStr = bun_core::zstr!("NUL");
+#[cfg(windows)]
+pub(crate) const WINDOWS_DEV_NULL: &ZStr = bun_core::zstr!("NUL");
 
 // ───────────────────────────── ShellErr ─────────────────────────────
 
@@ -49,39 +52,35 @@ pub enum ShellErr {
 
 impl ShellErr {
     /// Wrap a low-level syscall error.
-    pub fn new_sys(e: &sys::Error) -> Self {
+    pub(crate) fn new_sys(e: &sys::Error) -> Self {
         ShellErr::Sys(e.to_shell_system_error())
     }
     /// Spec `ShellErr.newSys(jsc.SystemError)` — already JS-shaped.
-    pub fn from_system(e: SystemError) -> Self {
+    pub(crate) fn from_system(e: SystemError) -> Self {
         ShellErr::Sys(e)
     }
 
     /// Spec `ShellErr.throwJS` — "basically `transferToJS`". Consumes `self`:
     /// each arm takes ownership of its payload and releases it exactly once.
-    pub fn throw_js(self, global: &JSGlobalObject) -> bun_jsc::JsError {
+    pub(crate) fn throw_js(self, global: &JSGlobalObject) -> bun_jsc::JsError {
         match self {
             ShellErr::Sys(sys) => {
-                // `to_error_instance` decrements every string ref itself, so we
-                // must hand it the *owned* value (move) — no extra deref here.
                 let err = bun_jsc::SystemError::from(sys).to_error_instance(global);
                 global.throw_value(err)
             }
             ShellErr::Custom(custom) => {
                 let err_value = BunString::clone_utf8(&custom).to_error_instance(global);
-                // `custom: Box<[u8]>` drops here.
                 global.throw_value(err_value)
             }
             ShellErr::InvalidArguments { val } => {
                 global.throw_invalid_arguments(format_args!("{}", bstr::BStr::new(&*val)))
-                // `val` drops here.
             }
             ShellErr::Todo(todo) => global.throw_todo(&todo),
         }
     }
 
     /// Spec `ShellErr.throwMini` — print and `exit(1)`. Consumes `self`.
-    pub fn throw_mini(self) -> ! {
+    pub(crate) fn throw_mini(self) -> ! {
         match self {
             ShellErr::Sys(err) => {
                 bun_core::pretty_errorln!(
@@ -89,7 +88,6 @@ impl ShellErr {
                     err.message,
                     err.path
                 );
-                err.deref();
             }
             ShellErr::Custom(custom) => {
                 bun_core::pretty_errorln!(
@@ -112,15 +110,6 @@ impl ShellErr {
         }
         bun_core::Global::exit(1)
     }
-
-    /// Spec `ShellErr.deinit`. Explicit release for callers that drop a
-    /// `ShellErr` without throwing it (the `Box<[u8]>` arms free on ordinary
-    /// drop, so only `.sys` needs work).
-    pub fn deinit(self) {
-        if let ShellErr::Sys(sys) = self {
-            sys.deref();
-        }
-    }
 }
 
 impl fmt::Display for ShellErr {
@@ -135,13 +124,6 @@ impl fmt::Display for ShellErr {
         }
     }
 }
-
-// Note: no `impl Drop for ShellErr`. Release is *manual* and asymmetric — `throwJS` deliberately skips `.sys.deref()` because
-// `toErrorInstance` already consumed those refs. An unconditional `Drop` would
-// re-introduce the double-deref. Ownership is instead expressed by `throw_js` /
-// `throw_mini` / `deinit` taking `self` by value; the `Box<[u8]>` payloads free
-// on ordinary drop, and `.sys` is released exactly once on whichever consume
-// path runs.
 
 // ───────────────────────────── Test ─────────────────────────────
 
@@ -181,7 +163,7 @@ pub mod test {
     }
 
     impl<'a> TestToken<'a> {
-        pub fn from_real(the_token: Token, buf: &'a [u8]) -> TestToken<'a> {
+        pub(crate) fn from_real(the_token: Token, buf: &'a [u8]) -> TestToken<'a> {
             match the_token {
                 Token::Var(txt) => TestToken::Var(&buf[txt.start as usize..txt.end as usize]),
                 Token::VarArgv(int) => TestToken::VarArgv(int),
@@ -226,7 +208,7 @@ pub mod test {
     use core::fmt::Write as _;
 
     impl<'a> TestToken<'a> {
-        pub fn write_json(&self, w: &mut impl core::fmt::Write) -> core::fmt::Result {
+        pub(crate) fn write_json(&self, w: &mut impl core::fmt::Write) -> core::fmt::Result {
             use TestToken as T;
             macro_rules! unit {
                 ($tag:literal) => {{ w.write_str(concat!("{\"", $tag, "\":{}}")) }};
@@ -286,7 +268,7 @@ pub mod test {
     }
 
     /// `Display` adapter that renders the token list as a JSON array.
-    pub fn tokens_json_fmt<'b>(tokens: &'b [TestToken<'_>]) -> impl core::fmt::Display + 'b {
+    pub(crate) fn tokens_json_fmt<'b>(tokens: &'b [TestToken<'_>]) -> impl core::fmt::Display + 'b {
         struct Fmt<'a, 'b>(&'b [TestToken<'a>]);
         impl core::fmt::Display for Fmt<'_, '_> {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -311,11 +293,11 @@ pub mod test {
 /// per-element `deref()` must be explicit. Wrapping the `Vec`
 /// avoids the unit-state `scopeguard` + raw-pointer-reborrow pattern that is UB
 /// under Stacked Borrows (PORTING.md §Idiom-map: `defer <side effect>`).
-pub struct JsStrings(pub Vec<BunString>);
+pub struct JsStrings(pub(crate) Vec<BunString>);
 
 impl JsStrings {
     #[inline]
-    pub fn with_capacity(cap: usize) -> Self {
+    pub(crate) fn with_capacity(cap: usize) -> Self {
         Self(Vec::with_capacity(cap))
     }
 }
@@ -343,7 +325,7 @@ impl Drop for JsStrings {
     }
 }
 
-pub fn shell_cmd_from_js(
+pub(crate) fn shell_cmd_from_js(
     global: &JSGlobalObject,
     string_args: JSValue,
     template_args: &mut JSArrayIterator,
@@ -392,7 +374,7 @@ pub fn shell_cmd_from_js(
 
 const MAX_TEMPLATE_ARRAY_DEPTH: u32 = 100;
 
-pub fn handle_template_value(
+pub(crate) fn handle_template_value(
     global: &JSGlobalObject,
     template_value: JSValue,
     // SAFETY: every JSValue pushed into out_jsobjs is also appended to marked_argument_buffer
@@ -411,8 +393,14 @@ pub fn handle_template_value(
             marked_argument_buffer.append(template_value);
             out_jsobjs.push(template_value);
             let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);
-            write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_OBJREF_PREFIX), idx)
-                .map_err(|_| global.throw_out_of_memory())?;
+            write!(
+                cursor,
+                "{}{}{}",
+                bstr::BStr::new(LEX_JS_OBJREF_PREFIX),
+                idx,
+                LEX_JS_REF_TERMINATOR as char
+            )
+            .map_err(|_| global.throw_out_of_memory())?;
             let n = cursor.position() as usize;
             out_script.extend_from_slice(&jsobjref_buf[..n]);
             return Ok(());
@@ -448,8 +436,14 @@ pub fn handle_template_value(
             marked_argument_buffer.append(template_value);
             out_jsobjs.push(template_value);
             let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);
-            write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_OBJREF_PREFIX), idx)
-                .map_err(|_| global.throw_out_of_memory())?;
+            write!(
+                cursor,
+                "{}{}{}",
+                bstr::BStr::new(LEX_JS_OBJREF_PREFIX),
+                idx,
+                LEX_JS_REF_TERMINATOR as char
+            )
+            .map_err(|_| global.throw_out_of_memory())?;
             let n = cursor.position() as usize;
             out_script.extend_from_slice(&jsobjref_buf[..n]);
             return Ok(());
@@ -460,8 +454,14 @@ pub fn handle_template_value(
             marked_argument_buffer.append(template_value);
             out_jsobjs.push(template_value);
             let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);
-            write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_OBJREF_PREFIX), idx)
-                .map_err(|_| global.throw_out_of_memory())?;
+            write!(
+                cursor,
+                "{}{}{}",
+                bstr::BStr::new(LEX_JS_OBJREF_PREFIX),
+                idx,
+                LEX_JS_REF_TERMINATOR as char
+            )
+            .map_err(|_| global.throw_out_of_memory())?;
             let n = cursor.position() as usize;
             out_script.extend_from_slice(&jsobjref_buf[..n]);
             return Ok(());
@@ -472,8 +472,14 @@ pub fn handle_template_value(
             marked_argument_buffer.append(template_value);
             out_jsobjs.push(template_value);
             let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);
-            write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_OBJREF_PREFIX), idx)
-                .map_err(|_| global.throw_out_of_memory())?;
+            write!(
+                cursor,
+                "{}{}{}",
+                bstr::BStr::new(LEX_JS_OBJREF_PREFIX),
+                idx,
+                LEX_JS_REF_TERMINATOR as char
+            )
+            .map_err(|_| global.throw_out_of_memory())?;
             let n = cursor.position() as usize;
             out_script.extend_from_slice(&jsobjref_buf[..n]);
             return Ok(());
@@ -577,13 +583,13 @@ pub fn handle_template_value(
 
 pub struct ShellSrcBuilder<'a> {
     pub global_this: &'a JSGlobalObject,
-    pub outbuf: &'a mut Vec<u8>,
-    pub jsstrs_to_escape: &'a mut Vec<BunString>,
-    pub jsstr_ref_buf: [u8; 128],
+    pub(crate) outbuf: &'a mut Vec<u8>,
+    pub(crate) jsstrs_to_escape: &'a mut Vec<BunString>,
+    pub(crate) jsstr_ref_buf: [u8; 128],
 }
 
 impl<'a> ShellSrcBuilder<'a> {
-    pub fn init(
+    pub(crate) fn init(
         global: &'a JSGlobalObject,
         outbuf: &'a mut Vec<u8>,
         jsstrs_to_escape: &'a mut Vec<BunString>,
@@ -596,7 +602,7 @@ impl<'a> ShellSrcBuilder<'a> {
         }
     }
 
-    pub fn append_js_value_str<const ALLOW_ESCAPE: bool>(
+    pub(crate) fn append_js_value_str<const ALLOW_ESCAPE: bool>(
         &mut self,
         jsval: JSValue,
     ) -> JsResult<bool> {
@@ -619,7 +625,7 @@ impl<'a> ShellSrcBuilder<'a> {
         Ok(self.append_bun_str::<ALLOW_ESCAPE>(bunstr.get())?)
     }
 
-    pub fn append_bun_str<const ALLOW_ESCAPE: bool>(
+    pub(crate) fn append_bun_str<const ALLOW_ESCAPE: bool>(
         &mut self,
         bunstr: BunString,
     ) -> Result<bool, bun_alloc::AllocError> {
@@ -649,7 +655,10 @@ impl<'a> ShellSrcBuilder<'a> {
         Ok(true)
     }
 
-    pub fn append_utf8<const ALLOW_ESCAPE: bool>(&mut self, utf8: &[u8]) -> crate::Result<bool> {
+    pub(crate) fn append_utf8<const ALLOW_ESCAPE: bool>(
+        &mut self,
+        utf8: &[u8],
+    ) -> crate::Result<bool> {
         let invalid = simdutf::validate::utf8(utf8);
         // Note: the name `invalid` is misleading — it holds the validity bool.
         if !invalid {
@@ -667,7 +676,7 @@ impl<'a> ShellSrcBuilder<'a> {
         Ok(true)
     }
 
-    pub fn append_utf16_impl(&mut self, utf16: &[u16]) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn append_utf16_impl(&mut self, utf16: &[u16]) -> Result<(), bun_alloc::AllocError> {
         let size = simdutf::length::utf8::from::utf16::le(utf16);
         self.outbuf.reserve(size);
         strings::convert_utf16_to_utf8_append(self.outbuf, utf16);
@@ -676,12 +685,15 @@ impl<'a> ShellSrcBuilder<'a> {
         Ok(())
     }
 
-    pub fn append_utf8_impl(&mut self, utf8: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn append_utf8_impl(&mut self, utf8: &[u8]) -> Result<(), bun_alloc::AllocError> {
         self.outbuf.extend_from_slice(utf8);
         Ok(())
     }
 
-    pub fn append_latin1_impl(&mut self, latin1: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn append_latin1_impl(
+        &mut self,
+        latin1: &[u8],
+    ) -> Result<(), bun_alloc::AllocError> {
         // `allocate_latin1_into_utf8_with_list` appends ALL of `latin1` after `len`,
         // including its leading ASCII run; pre-appending any of it would duplicate it.
         let len = self.outbuf.len();
@@ -690,10 +702,20 @@ impl<'a> ShellSrcBuilder<'a> {
         Ok(())
     }
 
-    pub fn append_js_str_ref(&mut self, bunstr: BunString) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn append_js_str_ref(
+        &mut self,
+        bunstr: BunString,
+    ) -> Result<(), bun_alloc::AllocError> {
         let idx = self.jsstrs_to_escape.len();
         let mut cursor = std::io::Cursor::new(&mut self.jsstr_ref_buf[..]);
-        write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_STRING_PREFIX), idx).expect("Impossible");
+        write!(
+            cursor,
+            "{}{}{}",
+            bstr::BStr::new(LEX_JS_STRING_PREFIX),
+            idx,
+            LEX_JS_REF_TERMINATOR as char
+        )
+        .expect("Impossible");
         let n = cursor.position() as usize;
         self.outbuf.extend_from_slice(&self.jsstr_ref_buf[..n]);
         bunstr.ref_();
@@ -709,7 +731,7 @@ pub mod testing_apis {
     use super::*;
 
     #[bun_jsc::host_fn]
-    pub fn disabled_on_this_platform(
+    pub(crate) fn disabled_on_this_platform(
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -720,10 +742,9 @@ pub mod testing_apis {
         }
         #[cfg(not(windows))]
         {
-            let arguments_ = callframe.arguments_old::<1>();
             // SAFETY: bun_vm() is non-null for a Bun-owned global.
             let vm = global.bun_vm();
-            let mut arguments = jsc::ArgumentsSlice::init(vm, arguments_.slice());
+            let mut arguments = jsc::ArgumentsSlice::init(vm, callframe.arguments());
             let string: JSValue = match arguments.next_eat() {
                 Some(s) => s,
                 None => {
@@ -749,7 +770,7 @@ pub mod testing_apis {
 
     /// Codegen (`generated_js2native.rs`) wraps this with `host_fn_result`, so we
     /// expose the bare `JsHostFnZig` signature here and do the buffer scope inline.
-    pub fn shell_lex(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn shell_lex(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         MarkedArgumentBuffer::new(|buf| shell_lex_impl(global, callframe, buf))
     }
 
@@ -758,10 +779,9 @@ pub mod testing_apis {
         callframe: &CallFrame,
         marked_argument_buffer: &mut MarkedArgumentBuffer,
     ) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old::<2>();
         // SAFETY: bun_vm() is non-null for a Bun-owned global.
         let vm = global.bun_vm();
-        let mut arguments = jsc::ArgumentsSlice::init(vm, arguments_.slice());
+        let mut arguments = jsc::ArgumentsSlice::init(vm, callframe.arguments());
         let string_args: JSValue = match arguments.next_eat() {
             Some(s) => s,
             None => {
@@ -829,7 +849,7 @@ pub mod testing_apis {
     /// Testing API: parse the shell template-string arguments and return the
     /// AST as a JSON string (or throw on a parse error). Arguments are pinned
     /// in a `MarkedArgumentBuffer` for GC safety while parsing.
-    pub fn shell_parse(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn shell_parse(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         MarkedArgumentBuffer::new(|buf| shell_parse_impl(global, callframe, buf))
     }
 
@@ -838,10 +858,9 @@ pub mod testing_apis {
         callframe: &CallFrame,
         marked_argument_buffer: &mut MarkedArgumentBuffer,
     ) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old::<2>();
         // SAFETY: bun_vm() is non-null for a Bun-owned global.
         let vm = global.bun_vm();
-        let mut arguments = jsc::ArgumentsSlice::init(vm, arguments_.slice());
+        let mut arguments = jsc::ArgumentsSlice::init(vm, callframe.arguments());
         let string_args: JSValue = match arguments.next_eat() {
             Some(s) => s,
             None => {

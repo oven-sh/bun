@@ -147,7 +147,7 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_clear_routes(Self::SSL_FLAG, self.as_raw())
     }
 
-    pub fn publish_with_options(
+    pub(crate) fn publish_with_options(
         &mut self,
         topic: &[u8],
         message: &[u8],
@@ -429,7 +429,7 @@ impl<const SSL: bool> ListenSocket<SSL> {
     }
 
     #[inline]
-    pub fn get_local_port(&mut self) -> i32 {
+    pub fn get_local_port(&mut self) -> Option<u16> {
         // S008: opaque ZST cast as above.
         bun_opaque::opaque_deref_mut(std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>())
             .get_local_port()
@@ -449,7 +449,7 @@ pub enum AddServerNameError {
 bun_core::impl_tag_error!(AddServerNameError);
 
 bun_opaque::opaque_ffi! { pub struct uws_app_s; }
-pub type uws_app_t = uws_app_s;
+pub(crate) type uws_app_t = uws_app_s;
 
 #[allow(non_camel_case_types)]
 pub mod c {

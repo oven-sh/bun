@@ -2,8 +2,6 @@
 //!
 //! Lives in `bun_ast` so `Ast` (which holds `Vec<ImportRecord>`) is
 //! self-contained and `bun_js_printer` can drop its `bun_js_parser` dep.
-//! `ImportKind::to_api()` lives in `bun_ast::ImportKindExt` (would
-//! back-edge into the schema crate).
 
 use crate::Range;
 use bun_paths::fs::Path;
@@ -38,16 +36,9 @@ pub struct ImportRecord {
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
     pub struct Flags: u16 {
-        /// True for the following cases:
-        ///
-        ///   try { require('x') } catch { handle }
-        ///   try { await import('x') } catch { handle }
-        ///   try { require.resolve('x') } catch { handle }
-        ///   import('x').catch(handle)
-        ///   import('x').then(_, handle)
-        ///
-        /// In these cases we shouldn't generate an error if the path could not be
-        /// resolved.
+        /// require() / await import() / require.resolve() inside the try or
+        /// catch body of a try/catch, or import('x').catch(..) / .then(_, ..):
+        /// don't fail the build when the path can't be resolved.
         const HANDLES_IMPORT_ERRORS = 1 << 0;
 
         const IS_INTERNAL = 1 << 1;
@@ -71,6 +62,10 @@ bitflags::bitflags! {
         /// If true, this "export * from 'path'" statement is evaluated at run-time by
         /// calling the "__reExport()" helper function
         const CALLS_RUNTIME_RE_EXPORT_FN = 1 << 6;
+
+        /// Resolution failed (ModuleNotFound). `path.is_disabled` alone can't
+        /// tell this apart from an intentional `"browser": false` disable.
+        const WAS_UNRESOLVED = 1 << 7;
 
         /// If true, this was originally written as a bare "import 'file'" statement
         const WAS_ORIGINALLY_BARE_IMPORT = 1 << 8;

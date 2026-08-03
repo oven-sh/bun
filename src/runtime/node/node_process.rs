@@ -19,7 +19,7 @@ unsafe extern "C" {
 // `extern "C"`; the C++ caller guarantees a live pointer, so the reference
 // param discharges the non-null obligation at the type level.
 #[unsafe(export_name = "Bun__Process__createArgv0")]
-pub(crate) extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
+extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
     let argv0 = bun_core::argv()
         .get(0)
         .map(|z| z.as_bytes())
@@ -28,7 +28,7 @@ pub(crate) extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue
 }
 
 #[unsafe(export_name = "Bun__Process__getExecPath")]
-pub(crate) extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
+extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
     let Ok(out) = bun_core::self_exe_path() else {
         // if for any reason we are unable to get the executable path, we just return argv[0]
         return create_argv0(global_object);
@@ -50,7 +50,7 @@ pub(crate) extern "C" fn get_exec_argv(global: &JSGlobalObject) -> JSValue {
 
 // @190n: this may need to be noreturn
 #[unsafe(export_name = "Bun__Process__exit")]
-pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
+pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
     let vm = global_object.bun_vm().as_mut();
     vm.exit_handler.exit_code = code;
     if let Some(worker) = vm.worker_ref() {
@@ -66,12 +66,12 @@ pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
 // ───────────────────────────── misc exports ─────────────────────────────
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
+extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
     env_var::NODE_NO_WARNINGS.get() == Some(b"1")
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
+extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
     if feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF
         .get()
         .unwrap_or(false)
@@ -84,19 +84,19 @@ pub(crate) extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
 // `#[repr(transparent)]` newtype so the C++ side still sees a single
 // `const char*`-sized symbol.
 #[repr(transparent)]
-pub(crate) struct CStrPtr(*const c_char);
+struct CStrPtr(*const c_char);
 // SAFETY: the wrapped pointer always targets a `'static` NUL-terminated
 // rodata literal produced by `concatcp!`; it is never written through.
 unsafe impl Sync for CStrPtr {}
 
 #[unsafe(no_mangle)]
-pub(crate) static Bun__version: CStrPtr = CStrPtr(
+static Bun__version: CStrPtr = CStrPtr(
     const_format::concatcp!("v", Global::package_json_version, "\0")
         .as_ptr()
         .cast::<c_char>(),
 );
 #[unsafe(no_mangle)]
-pub(crate) static Bun__version_with_sha: CStrPtr = CStrPtr(
+static Bun__version_with_sha: CStrPtr = CStrPtr(
     const_format::concatcp!("v", Global::package_json_version_with_sha, "\0")
         .as_ptr()
         .cast::<c_char>(),
@@ -104,19 +104,19 @@ pub(crate) static Bun__version_with_sha: CStrPtr = CStrPtr(
 // Version exports removed - now handled by build-generated header (bun_dependency_versions.h)
 // The C++ code in BunProcess.cpp uses the generated header directly
 #[unsafe(no_mangle)]
-pub(crate) static Bun__versions_uws: CStrPtr = CStrPtr(
+static Bun__versions_uws: CStrPtr = CStrPtr(
     const_format::concatcp!(Environment::GIT_SHA, "\0")
         .as_ptr()
         .cast::<c_char>(),
 );
 #[unsafe(no_mangle)]
-pub(crate) static Bun__versions_usockets: CStrPtr = CStrPtr(
+static Bun__versions_usockets: CStrPtr = CStrPtr(
     const_format::concatcp!(Environment::GIT_SHA, "\0")
         .as_ptr()
         .cast::<c_char>(),
 );
 #[unsafe(no_mangle)]
-pub(crate) static Bun__version_sha: CStrPtr = CStrPtr(
+static Bun__version_sha: CStrPtr = CStrPtr(
     const_format::concatcp!(Environment::GIT_SHA, "\0")
         .as_ptr()
         .cast::<c_char>(),
@@ -130,8 +130,7 @@ mod _impl {
     use bun_jsc::{
         JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker, ZigStringJsc as _,
     };
-    use bun_paths::{PathBuffer, SEP};
-    use bun_sys as Syscall;
+    use bun_paths::PathBuffer;
 
     #[cfg(windows)]
     unsafe extern "C" {
@@ -148,12 +147,12 @@ mod _impl {
     // can prefer the store over `uv_get_process_title` without comparing
     // against the "bun" default string.
     #[unsafe(export_name = "Bun__Process__hasTitle")]
-    pub(super) extern "C" fn has_title() -> bool {
+    extern "C" fn has_title() -> bool {
         crate::cli::Bun__Node__ProcessTitle.lock().is_some()
     }
 
     #[unsafe(export_name = "Bun__Process__getTitle")]
-    pub(super) extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
+    extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
         let guard = crate::cli::Bun__Node__ProcessTitle.lock();
         let str_ = guard.as_deref().unwrap_or(b"bun");
         // SAFETY: title is a valid out-param provided by C++ caller
@@ -164,10 +163,7 @@ mod _impl {
 
     // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
     #[unsafe(export_name = "Bun__Process__setTitle")]
-    pub(super) extern "C" fn set_title(
-        _global_object: *const JSGlobalObject,
-        newvalue: *mut BunString,
-    ) {
+    extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: *mut BunString) {
         // SAFETY: newvalue is a valid pointer from C++; we consume one ref before
         // returning. `String` is `Copy`, so read it out by value and let
         // `OwnedString`'s Drop release the ref.
@@ -186,81 +182,8 @@ mod _impl {
     // (headers.h) declares `EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*)`,
     // not a `JSHostFunctionType`. Hand-roll the shim instead of `#[bun_jsc::host_fn]`.
     #[unsafe(no_mangle)]
-    pub(super) extern "C" fn Bun__Process__createExecArgv(
-        global_object: &JSGlobalObject,
-    ) -> JSValue {
+    extern "C" fn Bun__Process__createExecArgv(global_object: &JSGlobalObject) -> JSValue {
         bun_jsc::to_js_host_fn_result(global_object, create_exec_argv(global_object))
-    }
-
-    /// `bun_clap` accepts glued short-flag values (`-r./s.js`, `-r=./s.js`)
-    /// and chained boolean shorts (`-br./s.js`); node's CLI rejects those
-    /// shapes, so the worker execArgv validator (which mirrors node) never
-    /// sees them from node. Normalize to the canonical separate-token form
-    /// when building `process.execArgv` so
-    /// `new Worker(url, { execArgv: process.execArgv })` round-trips.
-    /// Returns `None` when the token does not fully parse as `bun_clap` short
-    /// chaining against `AUTO_PARAMS` (caller pushes it verbatim); otherwise
-    /// `Some(needs_next_value)` where `needs_next_value` is true iff the
-    /// trailing short takes a required value supplied by the next argv token.
-    fn push_normalized_short_token(arg: &[u8], args: &mut Vec<BunString>) -> Option<bool> {
-        fn short_takes_value(c: u8) -> Option<bun_clap::Values> {
-            crate::cli::arguments::AUTO_PARAMS
-                .iter()
-                .find(|p| p.names.short == Some(c))
-                .map(|p| p.takes_value)
-        }
-        // First pass: the whole token must parse (mirrors
-        // `bun_clap::streaming::chainging`); collect the normalized pieces.
-        let mut flags: Vec<u8> = Vec::new();
-        let mut value: Option<&[u8]> = None;
-        let mut needs_next_value = false;
-        let mut j = 1usize;
-        while j < arg.len() {
-            let takes = short_takes_value(arg[j])?;
-            let next = j + 1;
-            match takes {
-                bun_clap::Values::None => {
-                    if next < arg.len() && arg[next] == b'=' {
-                        // bun_clap errors on `-b=x` at launch; unreachable in a
-                        // running process, keep the token verbatim.
-                        return None;
-                    }
-                    flags.push(arg[j]);
-                    j = next;
-                }
-                // A glued remainder after an optional-value short is dropped
-                // by bun_clap; the canonical form is the bare flag.
-                bun_clap::Values::OneOptional => {
-                    flags.push(arg[j]);
-                    break;
-                }
-                bun_clap::Values::One | bun_clap::Values::Many => {
-                    flags.push(arg[j]);
-                    if next >= arg.len() {
-                        // The value is the next argv token; emit the chained
-                        // shorts separately so the trailing one is a 2-byte
-                        // token the worker validator accepts, and tell the
-                        // caller to pair the following argv token with it.
-                        needs_next_value = true;
-                        break;
-                    }
-                    let v = if arg[next] == b'=' {
-                        &arg[next + 1..]
-                    } else {
-                        &arg[next..]
-                    };
-                    value = Some(v);
-                    break;
-                }
-            }
-        }
-        for &f in &flags {
-            args.push(BunString::clone_utf8(&[b'-', f]));
-        }
-        if let Some(v) = value {
-            args.push(BunString::clone_utf8(v));
-        }
-        Some(needs_next_value)
     }
 
     fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
@@ -316,10 +239,17 @@ mod _impl {
             return JSValue::create_empty_array(global_object, 0);
         }
 
-        let argv = bun_core::argv();
+        // Re-parsing the process argv is rare, so it isn't done as part of
+        // the CLI. The token builder lives alongside the worker execArgv
+        // policy so `process.execArgv` and the inherit-path honoring scan see
+        // identical tokens.
+        let tokens = crate::cli::worker_exec_argv::collect_process_exec_argv_tokens();
         // `defer args.deinit()` + `defer for args |*a| a.deref()`
-        let mut args = scopeguard::guard(
-            Vec::<BunString>::with_capacity(argv.len().saturating_sub(1)),
+        let args = scopeguard::guard(
+            tokens
+                .iter()
+                .map(|t| BunString::clone_utf8(t))
+                .collect::<Vec<_>>(),
             |v| {
                 for a in &v {
                     a.deref();
@@ -327,92 +257,13 @@ mod _impl {
             },
         );
 
-        // A set of execArgv args consume an extra argument, so we do not want to
-        // confuse these with script names.
-        // Build the set lazily at runtime from the `AUTO_PARAMS` table:
-        // `--long` / `-s` for every param with a value.
-        static MAP: std::sync::LazyLock<bun_collections::StringSet> =
-            std::sync::LazyLock::new(|| {
-                let mut set = bun_collections::StringSet::new();
-                for param in crate::cli::arguments::AUTO_PARAMS.iter() {
-                    if param.takes_value != bun_clap::Values::None {
-                        if let Some(name) = param.names.long {
-                            let mut k = Vec::with_capacity(2 + name.len());
-                            k.extend_from_slice(b"--");
-                            k.extend_from_slice(name);
-                            bun_core::handle_oom(set.insert(&k));
-                        }
-                        if let Some(name) = param.names.short {
-                            bun_core::handle_oom(set.insert(&[b'-', name]));
-                        }
-                    }
-                }
-                set
-            });
-
-        let mut seen_run = false;
-        let mut prev_takes_value = false;
-
-        // we re-parse the process argv to extract execArgv, since this is a very uncommon operation
-        // it isn't worth doing this as a part of the CLI
-        let mut iter = argv.iter();
-        let _ = iter.next(); // skip argv[0]
-        for arg in iter {
-            let arg: &[u8] = arg;
-
-            if arg.len() >= 1 && arg[0] == b'-' {
-                // Node's whole-token aliases (`-pe`) are substituted before
-                // clap parsing on the bun/node entry points, so they are not
-                // short chains; keep them verbatim and resolve takes-value
-                // via the alias target.
-                let node_alias_to = crate::cli::arguments::NODE_SHORT_ALIASES
-                    .iter()
-                    .find_map(|(from, to)| (*from == arg).then_some(*to));
-                // Normalization covers both the bun/node entry and `bun run`:
-                // every short in RUN_PARAMS is also in AUTO_PARAMS, so the
-                // AUTO_PARAMS-based classifier is correct after `run` too.
-                let normalized = if node_alias_to.is_none() && arg.len() > 2 && arg[1] != b'-' {
-                    push_normalized_short_token(arg, &mut args)
-                } else {
-                    None
-                };
-                prev_takes_value = match normalized {
-                    Some(needs_next) => needs_next,
-                    None => {
-                        args.push(BunString::clone_utf8(arg));
-                        // Node's whole-token aliases only apply on the
-                        // bun/node entry points (Arguments::parse scopes them
-                        // the same way).
-                        MAP.contains(arg)
-                            || (!seen_run && node_alias_to.is_some_and(|to| MAP.contains(to)))
-                    }
-                };
-                continue;
-            }
-
-            if !seen_run && arg == b"run" {
-                seen_run = true;
-                prev_takes_value = false;
-                continue;
-            }
-
-            if prev_takes_value {
-                args.push(BunString::clone_utf8(arg));
-                prev_takes_value = false;
-                continue;
-            }
-
-            // we hit the script name
-            break;
-        }
-
         bun_string_jsc::to_js_array(global_object, &args)
     }
 
     // ───────────────────────────── argv ─────────────────────────────
 
     #[unsafe(export_name = "Bun__Process__createArgv")]
-    pub(super) extern "C" fn create_argv(global_object: &JSGlobalObject) -> JSValue {
+    extern "C" fn create_argv(global_object: &JSGlobalObject) -> JSValue {
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
 
@@ -479,11 +330,22 @@ mod _impl {
     // ───────────────────────────── eval ─────────────────────────────
 
     #[unsafe(export_name = "Bun__Process__getEval")]
-    pub(super) extern "C" fn get_eval(global_object: &JSGlobalObject) -> JSValue {
+    extern "C" fn get_eval(global_object: &JSGlobalObject) -> JSValue {
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
+        // `--interactive` boots the bootstrap through `eval_source`, so read
+        // the user's real `-e` bytes from `interactive_eval_script` instead
+        // (`undefined` when empty, matching `node -i` without `-e`).
+        if let Some(script) = vm.module_loader.interactive_eval_script.as_deref() {
+            if script.is_empty() {
+                return JSValue::UNDEFINED;
+            }
+            return ZigString::init(script).with_encoding().to_js(global_object);
+        }
         if let Some(source) = vm.module_loader.eval_source.as_deref() {
-            return ZigString::init(source.contents()).to_js(global_object);
+            return ZigString::init(source.contents())
+                .with_encoding()
+                .to_js(global_object);
         }
         JSValue::UNDEFINED
     }
@@ -494,7 +356,7 @@ mod _impl {
     // `EncodedJSValue Bun__Process__getCwd(JSGlobalObject*)`. Hand-roll the
     // shim instead of `#[bun_jsc::host_fn]` (caller is not a JSHostFunction).
     #[unsafe(no_mangle)]
-    pub(super) extern "C" fn Bun__Process__getCwd(global_object: &JSGlobalObject) -> JSValue {
+    extern "C" fn Bun__Process__getCwd(global_object: &JSGlobalObject) -> JSValue {
         bun_jsc::to_js_host_fn_result(global_object, get_cwd(global_object))
     }
 
@@ -510,10 +372,7 @@ mod _impl {
     // `EncodedJSValue Bun__Process__setCwd(JSGlobalObject*, ZigString*)`. Hand-roll
     // the shim; the second arg is the raw `*mut ZigString`, not a CallFrame.
     #[unsafe(no_mangle)]
-    pub(super) extern "C" fn Bun__Process__setCwd(
-        global_object: &JSGlobalObject,
-        to: &ZigString,
-    ) -> JSValue {
+    extern "C" fn Bun__Process__setCwd(global_object: &JSGlobalObject, to: &ZigString) -> JSValue {
         bun_jsc::to_js_host_fn_result(global_object, set_cwd(global_object, to))
     }
 
@@ -523,7 +382,7 @@ mod _impl {
                 .throw_invalid_arguments(format_args!("Expected path to be a non-empty string")));
         }
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
-        let vm = global_object.bun_vm();
+        let vm = global_object.bun_vm().as_mut();
         // `Transpiler::fs_mut()` is the audited safe `&mut FileSystem` accessor for
         // the process-lifetime singleton (centralised single-unsafe deref).
         let fs = vm.transpiler.fs_mut();
@@ -536,48 +395,13 @@ mod _impl {
         // path=cwd, dest=target so the
         // resulting Node SystemError carries `path: cwd`, `dest: target` and the
         // `chdir '<cwd>' -> '<target>'` message format (test-process-chdir-errormessage).
-        let top_level_dir: &[u8] = fs.top_level_dir;
-        match Syscall::chdir(slice) {
+        let prev_cwd: Box<[u8]> = Box::from(fs.top_level_dir);
+        match vm.set_process_cwd(slice) {
             bun_sys::Result::Ok(()) => {
-                // When we update the cwd from JS, we have to update the bundler's version as well
-                // However, this might be called many times in a row, so we use a pre-allocated buffer
-                // that way we don't have to worry about garbage collector
-                let into_cwd_len = match Syscall::getcwd(&mut buf[..]) {
-                    bun_sys::Result::Ok(r) => r,
-                    bun_sys::Result::Err(err) => {
-                        // roll back to the previous top_level_dir
-                        let mut rollback = PathBuffer::uninit();
-                        let _ = Syscall::chdir(bun_paths::resolve_path::z(
-                            fs.top_level_dir,
-                            &mut rollback,
-                        ));
-                        return Err(global_object.throw_value(err.to_js(global_object)));
-                    }
-                };
-                fs.top_level_dir_buf[..into_cwd_len].copy_from_slice(&buf[..into_cwd_len]);
-                fs.top_level_dir_buf[into_cwd_len] = 0;
-                // SAFETY: `top_level_dir_buf` is a process-lifetime field of
-                // the FileSystem singleton, so the detached borrow never
-                // outlives its backing storage.
-                fs.top_level_dir =
-                    unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..into_cwd_len]) };
-
-                let len = fs.top_level_dir.len();
-                // Ensure the path ends with a slash
-                if fs.top_level_dir_buf[len - 1] != SEP {
-                    fs.top_level_dir_buf[len] = SEP;
-                    fs.top_level_dir_buf[len + 1] = 0;
-                    // SAFETY: see above.
-                    fs.top_level_dir =
-                        unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..len + 1]) };
-                }
-                // The cwd is stored both in the resolver's
-                // `FileSystem.top_level_dir` (written above) and in
-                // `bun_core::TOP_LEVEL_DIR` (read by `bun_paths::fs::
-                // FileSystem::top_level_dir()` → `GlobWalker::init`). Keep them
-                // in sync so a `process.chdir()` before `new Glob(...).scan()`
-                // is observed.
-                bun_core::set_top_level_dir(fs.top_level_dir);
+                vm.test_isolation_scope(|state| {
+                    state.saved_cwd.get_or_insert(prev_cwd);
+                });
+                let fs = vm.transpiler.fs_mut();
                 #[cfg(windows)]
                 let without_trailing_slash =
                     bun_paths::string_paths::without_trailing_slash_windows_path;
@@ -587,7 +411,7 @@ mod _impl {
                 str_.transfer_to_js(global_object)
             }
             bun_sys::Result::Err(e) => {
-                let e = e.with_path_dest(top_level_dir, slice.as_bytes());
+                let e = e.with_path_dest(&prev_cwd, slice.as_bytes());
                 Err(global_object.throw_value(e.to_js(global_object)))
             }
         }
@@ -598,7 +422,7 @@ mod _impl {
     // TODO: switch this to a WTF::String-backed type when one is added
     #[cfg(windows)]
     #[unsafe(export_name = "Bun__Process__editWindowsEnvVar")]
-    pub(super) extern "C" fn bun_process_edit_windows_env_var(k: BunString, v: BunString) {
+    extern "C" fn bun_process_edit_windows_env_var(k: BunString, v: BunString) {
         const _: () = assert!(cfg!(windows));
         if k.tag() == bun_core::Tag::Empty {
             return;

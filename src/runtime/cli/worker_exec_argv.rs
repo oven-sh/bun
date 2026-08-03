@@ -3,10 +3,9 @@
 //! Node accepts env/isolate options in a worker's execArgv and rejects
 //! per-process options, V8 flags, unknown flags, and missing required values
 //! with `ERR_WORKER_INVALID_EXEC_ARGV` (behavior verified on node v26.3.0).
-//! Bun's accept set = its own runtime flag tables (`RUNTIME_PARAMS_` +
-//! `TRANSPILER_PARAMS_` + `AUTO_ONLY_PARAMS` + `BASE_PARAMS_` — everything
-//! `create_exec_argv`'s `AUTO_PARAMS` can put into `process.execArgv`, minus
-//! process-global flags node also rejects) plus
+//! Bun's accept set = its own runtime flag surface (`AUTO_PARAMS` — everything
+//! `create_exec_argv` can put into `process.execArgv`, minus process-global
+//! flags node also rejects) plus
 //! the node options in `NODE_FLAGS`. Deliberate supersets of node: Bun-only
 //! runtime flags, and `--expose-gc`/`--stack-trace-limit` (both honored
 //! per-worker here, so rejecting them to mimic node would be a regression).
@@ -187,21 +186,14 @@ fn table_map() -> &'static bun_collections::StringArrayHashMap<FlagSpec> {
             bun_core::handle_oom(map.put(&key, spec));
         };
         // Bun's runtime flag surface first, then NODE_FLAGS overrides.
-        // The chained set must cover everything `create_exec_argv` can emit
-        // into `process.execArgv` (its source is `AUTO_PARAMS` =
-        // AUTO_ONLY_PARAMS + RUNTIME_PARAMS_ + TRANSPILER_PARAMS_ +
-        // BASE_PARAMS_; AUTO_ONLY_PARAMS already contains AUTO_OR_RUN_PARAMS,
-        // whose run-surface flags tooling forwards into worker
+        // The set must cover everything `create_exec_argv` can emit into
+        // `process.execArgv` (its source is `AUTO_PARAMS`, which already
+        // contains the run-surface flags tooling forwards into worker
         // execArgv/NODE_OPTIONS — Next.js propagates `--bun` from
         // process.execArgv into its build workers' NODE_OPTIONS). A narrower
         // set rejects flags Bun itself reports in `process.execArgv` and
         // breaks value-consumption in `scan_process_exec_argv`.
-        for param in crate::cli::arguments::RUNTIME_PARAMS_
-            .iter()
-            .chain(crate::cli::arguments::TRANSPILER_PARAMS_)
-            .chain(crate::cli::arguments::AUTO_ONLY_PARAMS)
-            .chain(crate::cli::arguments::BASE_PARAMS_)
-        {
+        for param in crate::cli::arguments::AUTO_PARAMS.iter() {
             let value = match param.takes_value {
                 bun_clap::Values::None => ValueMode::None,
                 bun_clap::Values::OneOptional => ValueMode::Optional,
@@ -230,9 +222,162 @@ fn table_map() -> &'static bun_collections::StringArrayHashMap<FlagSpec> {
         for &(name, spec) in NODE_FLAGS {
             put(name.to_vec(), spec);
         }
+        // `create_exec_argv` emits NODE_SHORT_ALIASES tokens verbatim (`-pe`);
+        // node's option parser recognizes them as whole-token aliases, so
+        // accept them with the target's spec.
+        for &(from, to) in crate::cli::arguments::NODE_SHORT_ALIASES {
+            if let Some(&s) = map.get(to) {
+                bun_core::handle_oom(map.put(from, s));
+            }
+        }
         map
     });
     &MAP
+}
+
+/// Re-parse the raw process argv into the canonical `process.execArgv` token
+/// stream: skip argv[0] and a leading `run`, normalize bun_clap's
+/// glued/chained short-flag forms (which node's CLI rejects) into the
+/// separate-token shape the worker validator accepts, pair a trailing
+/// value-taking short with the next argv token, and stop at the script name.
+/// Shared by `process.execArgv` construction and the inherit-path honoring
+/// scan so both see identical tokens.
+pub fn collect_process_exec_argv_tokens() -> Vec<Vec<u8>> {
+    fn short_takes_value(c: u8) -> Option<bun_clap::Values> {
+        crate::cli::arguments::AUTO_PARAMS
+            .iter()
+            .find(|p| p.names.short == Some(c))
+            .map(|p| p.takes_value)
+    }
+    /// Normalize a chained/glued short-flag token against `AUTO_PARAMS`.
+    /// `None` → not a valid short chain (caller pushes verbatim);
+    /// `Some(needs_next)` → normalized tokens pushed, and `needs_next` is
+    /// true iff the trailing short's required value is the next argv token.
+    fn push_normalized_short_token(arg: &[u8], out: &mut Vec<Vec<u8>>) -> Option<bool> {
+        let mut flags: Vec<u8> = Vec::new();
+        let mut value: Option<&[u8]> = None;
+        let mut needs_next_value = false;
+        let mut j = 1usize;
+        while j < arg.len() {
+            let takes = short_takes_value(arg[j])?;
+            let next = j + 1;
+            match takes {
+                bun_clap::Values::None => {
+                    if next < arg.len() && arg[next] == b'=' {
+                        // bun_clap errors on `-b=x` at launch; unreachable in a
+                        // running process, keep the token verbatim.
+                        return None;
+                    }
+                    flags.push(arg[j]);
+                    j = next;
+                }
+                // A glued remainder after an optional-value short is dropped
+                // by bun_clap; the canonical form is the bare flag.
+                bun_clap::Values::OneOptional => {
+                    flags.push(arg[j]);
+                    break;
+                }
+                bun_clap::Values::One | bun_clap::Values::Many => {
+                    flags.push(arg[j]);
+                    if next >= arg.len() {
+                        needs_next_value = true;
+                        break;
+                    }
+                    let v = if arg[next] == b'=' {
+                        &arg[next + 1..]
+                    } else {
+                        &arg[next..]
+                    };
+                    value = Some(v);
+                    break;
+                }
+            }
+        }
+        for &f in &flags {
+            out.push(vec![b'-', f]);
+        }
+        if let Some(v) = value {
+            out.push(v.to_vec());
+        }
+        Some(needs_next_value)
+    }
+
+    // `--long`/`-s` for every AUTO_PARAMS flag whose value bun_clap consumes
+    // from the NEXT argv token (One/Many only — an OneOptional flag like
+    // `--inspect` or `--config` takes a value solely via `=`, so the token
+    // after it is a fresh flag or the script, never a value); used to decide
+    // whether a non-flag token is a value or the script name.
+    static TAKES_VALUE: LazyLock<bun_collections::StringSet> = LazyLock::new(|| {
+        let mut set = bun_collections::StringSet::new();
+        for param in crate::cli::arguments::AUTO_PARAMS.iter() {
+            if matches!(
+                param.takes_value,
+                bun_clap::Values::One | bun_clap::Values::Many
+            ) {
+                if let Some(name) = param.names.long {
+                    let mut k = Vec::with_capacity(2 + name.len());
+                    k.extend_from_slice(b"--");
+                    k.extend_from_slice(name);
+                    bun_core::handle_oom(set.insert(&k));
+                }
+                if let Some(name) = param.names.short {
+                    bun_core::handle_oom(set.insert(&[b'-', name]));
+                }
+            }
+        }
+        set
+    });
+
+    let argv = bun_core::argv();
+    let mut out = Vec::with_capacity(argv.len().saturating_sub(1));
+    let mut seen_run = false;
+    let mut prev_takes_value = false;
+    let mut iter = argv.iter();
+    let _ = iter.next(); // argv[0]
+    for arg in iter {
+        let arg: &[u8] = arg;
+        // bun_clap consumes the next token as a One/Many value unconditionally
+        // (no leading-`-` check), so a `-`-prefixed value is still a value,
+        // not a new flag to normalize.
+        if prev_takes_value {
+            out.push(arg.to_vec());
+            prev_takes_value = false;
+            continue;
+        }
+        if arg.len() >= 1 && arg[0] == b'-' {
+            // Node's whole-token aliases (`-pe`) are substituted before clap
+            // parsing on the bun/node entry points, so they are not short
+            // chains; keep them verbatim and resolve takes-value via the
+            // alias target. Normalization covers both the bun/node entry and
+            // `bun run`: every short in RUN_PARAMS is also in AUTO_PARAMS.
+            let node_alias_to = crate::cli::arguments::NODE_SHORT_ALIASES
+                .iter()
+                .find_map(|(from, to)| (*from == arg).then_some(*to));
+            let normalized = if node_alias_to.is_none() && arg.len() > 2 && arg[1] != b'-' {
+                push_normalized_short_token(arg, &mut out)
+            } else {
+                None
+            };
+            prev_takes_value = match normalized {
+                Some(needs_next) => needs_next,
+                None => {
+                    out.push(arg.to_vec());
+                    // The aliases only apply on the bun/node entry points
+                    // (Arguments::parse scopes them the same way).
+                    TAKES_VALUE.contains(arg)
+                        || (!seen_run && node_alias_to.is_some_and(|to| TAKES_VALUE.contains(to)))
+                }
+            };
+            continue;
+        }
+        if !seen_run && arg == b"run" {
+            seen_run = true;
+            continue;
+        }
+        // we hit the script name
+        break;
+    }
+    out
 }
 
 /// Node normalizes `_` to `-` in long option names.
@@ -384,19 +529,7 @@ pub fn scan_process_exec_argv() -> WorkerExecArgv {
                 tokens.push(token.to_vec());
             }
         } else {
-            let mut seen_run = false;
-            let mut iter = bun_core::argv().iter();
-            let _ = iter.next(); // argv[0]
-            for arg in iter {
-                let arg: &[u8] = arg;
-                if !seen_run && arg == b"run" {
-                    seen_run = true;
-                    continue;
-                }
-                // Collect everything; `scan_exec_argv` consumes flag values
-                // itself and stops at the first true positional (the script).
-                tokens.push(arg.to_vec());
-            }
+            tokens = collect_process_exec_argv_tokens();
         }
         let mut outcome = scan_exec_argv(&tokens);
         outcome.honored.preloads.clear();

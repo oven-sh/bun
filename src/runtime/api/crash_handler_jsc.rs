@@ -8,10 +8,10 @@ use bun_core::{Environment, Global};
 use bun_crash_handler as crash_handler;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, StringJsc};
 
-pub mod js_bindings {
+pub(crate) mod js_bindings {
     use super::*;
 
-    pub fn generate(global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn generate(global: &JSGlobalObject) -> JSValue {
         // `#[bun_jsc::host_fn]` emits an `extern "C"` shim named `__jsc_host_<fn>`; that
         // shim is the `JSHostFn` value passed to `JSFunction::create`.
         const ENTRIES: &[(&str, bun_jsc::JSHostFn)] = &[
@@ -45,7 +45,7 @@ pub mod js_bindings {
     }
 
     #[bun_jsc::host_fn]
-    pub(crate) fn js_get_mach_o_image_zero_offset(
+    fn js_get_mach_o_image_zero_offset(
         _global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -71,7 +71,7 @@ pub mod js_bindings {
     }
 
     #[bun_jsc::host_fn]
-    pub(crate) fn js_segfault(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    fn js_segfault(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         // Under ASAN the SIGSEGV handler is intentionally not installed
         // (`reset_on_posix()` early-returns so ASAN's own DEADLYSIGNAL diagnostic
@@ -100,10 +100,7 @@ pub mod js_bindings {
     /// inside bun.exe. Exercises the Windows fault-context unwinder: the walk
     /// must recover the bun frames that called into the DLL.
     #[bun_jsc::host_fn]
-    pub(crate) fn js_segfault_in_dll(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    fn js_segfault_in_dll(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         #[cfg(windows)]
         {
@@ -129,13 +126,13 @@ pub mod js_bindings {
     }
 
     #[bun_jsc::host_fn]
-    pub(crate) fn js_panic(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    fn js_panic(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         crash_handler::panic_impl(b"invoked crashByPanic() handler", None, None);
     }
 
     #[bun_jsc::host_fn]
-    pub(crate) fn js_abort(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    fn js_abort(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         // Under ASAN the POSIX signal handlers are not installed; invoke the
         // handler directly so the reporter test still observes the upload.
@@ -155,7 +152,7 @@ pub mod js_bindings {
     }
 
     #[bun_jsc::host_fn]
-    pub(crate) fn js_trap(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    fn js_trap(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         if Environment::ENABLE_ASAN || cfg!(windows) {
             crash_handler::crash_handler(
@@ -185,21 +182,18 @@ pub mod js_bindings {
     }
 
     #[bun_jsc::host_fn]
-    pub(crate) fn js_root_error(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    fn js_root_error(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::handle_root_error("Unexpected", None);
     }
 
     #[bun_jsc::host_fn]
-    pub(crate) fn js_out_of_memory(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    fn js_out_of_memory(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         bun_core::out_of_memory();
     }
 
     #[bun_jsc::host_fn]
-    pub(crate) fn js_raise_ignoring_panic_handler(
+    fn js_raise_ignoring_panic_handler(
         _global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -208,10 +202,7 @@ pub mod js_bindings {
     }
 
     #[bun_jsc::host_fn]
-    pub(crate) fn js_get_features_as_vlq(
-        global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    fn js_get_features_as_vlq(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         let bits = analytics::packed_features();
         let mut buf = BoundedArray::<u8, 16>::default();
         // PackedFeatures is repr(transparent) u64; `.bits()` exposes the raw value.
@@ -223,10 +214,7 @@ pub mod js_bindings {
     }
 
     #[bun_jsc::host_fn]
-    pub(crate) fn js_get_feature_data(
-        global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    fn js_get_feature_data(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         let obj = JSValue::create_empty_object(global, 5);
         let list = analytics::PACKED_FEATURES_LIST;
         let array = JSValue::create_array_from_iter(global, list.iter(), |feature| {

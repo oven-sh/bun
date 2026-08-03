@@ -47,6 +47,7 @@ class WebCoreOpaqueRoot;
 
 enum class CryptoKeyClass {
     AES,
+    AKP,
     EC,
     HMAC,
     OKP,

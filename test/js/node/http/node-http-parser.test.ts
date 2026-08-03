@@ -1,9 +1,24 @@
 import { describe, expect, test } from "bun:test";
-const { HTTPParser, ConnectionsList } = process.binding("http_parser");
+const { HTTPParser, ConnectionsList, methods, allMethods } = process.binding("http_parser");
 const { parsers } = require("node:_http_common");
 
 const kOnHeaders = HTTPParser.kOnHeaders;
 const kOnHeadersComplete = HTTPParser.kOnHeadersComplete;
+
+describe("method lists", () => {
+  // oven-sh/bun#35273: the vendored llhttp method table had been reformatted
+  // into `M - SEARCH`, which the preprocessor stringizes with the spaces.
+  test("contain M-SEARCH, not a malformed token", () => {
+    expect(methods).toContain("M-SEARCH");
+    expect(allMethods).toContain("M-SEARCH");
+  });
+
+  test("contain no whitespace in any method token", () => {
+    for (const method of [...methods, ...allMethods]) {
+      expect(method).toMatch(/^[A-Z_-]+$/);
+    }
+  });
+});
 
 describe("HTTPParser.prototype.close", () => {
   test("does not double free", () => {

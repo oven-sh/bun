@@ -145,6 +145,7 @@ function watch(
               }
               if (event.eventType === "error") {
                 closed = true;
+                watcher.close();
                 removeAbortListener();
                 throw event.filename;
               }

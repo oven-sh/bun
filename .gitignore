@@ -223,3 +223,6 @@ src/jsc/bindings/GeneratedBindings.zig
 /entry
 /entry.js.map
 /nosourcemap_entry
+
+# hawk analysis scaffolding (see tools/hawk/); generated per-run, never committed
+src/bun_bin/hawk_root.rs

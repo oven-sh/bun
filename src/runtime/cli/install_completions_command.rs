@@ -12,7 +12,7 @@ use bun_sys::{self, E, File};
 
 use crate::shell_completions::{Shell, ShellCompletionsExt as _};
 
-pub struct InstallCompletionsCommand;
+pub(crate) struct InstallCompletionsCommand;
 
 impl InstallCompletionsCommand {
     #[cfg(not(windows))]
@@ -208,7 +208,7 @@ impl InstallCompletionsCommand {
         Ok(())
     }
 
-    pub fn exec() -> Result<(), crate::Error> {
+    pub(crate) fn exec() -> Result<(), crate::Error> {
         // Fail silently on auto-update.
         let fail_exit_code: u32 = if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) {
             1

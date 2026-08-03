@@ -1,9 +1,9 @@
 //! `bun test --timings=<path>...` / `--update-timings`:
-//! `{ "version": 1, "files": { "relative/path.test.ts": ms }, "updated": [paths] }`,
-//! used to balance `--shard` by total duration and to start the slowest files
-//! first under `--parallel`. Several files (one per CI shard) are merged on
-//! read; `updated` names the entries a file's writer actually measured so its
-//! carried-through entries never override another shard's fresh ones.
+//! `{ "version": 1, "files": { "relative/path.test.ts": ms } }`, used to
+//! balance `--shard` by total duration and to start the slowest files first
+//! under `--parallel`. Several files (one per CI shard) are unioned on read;
+//! under `--shard` a run writes only the files it ran, so those per-shard
+//! outputs are disjoint and next run's union of them is the whole table.
 
 use std::io::Write as _;
 
@@ -22,8 +22,8 @@ pub struct Timings {
     path: Box<[u8]>,
     /// Posix-separator paths relative to the project root → milliseconds; loaded entries overlaid with this run's.
     map: StringArrayHashMap<u32>,
-    /// Keys this run measured (emitted as `updated`).
-    updated: StringArrayHashMap<()>,
+    /// Just this run's measurements; what a `--shard` run writes.
+    measured: StringArrayHashMap<u32>,
     /// Cost assigned to files with no entry when packing shards.
     median: u32,
 }
@@ -43,7 +43,7 @@ impl Timings {
         Timings {
             path: paths[0].clone(),
             map,
-            updated: StringArrayHashMap::new(),
+            measured: StringArrayHashMap::new(),
             median,
         }
     }
@@ -91,28 +91,12 @@ impl Timings {
             );
             bun_core::Global::exit(1);
         };
-        // Without an `updated` list every entry is authoritative (hand-written or single-writer file).
-        let updated: Option<StringArrayHashMap<()>> = root.as_property(b"updated").map(|q| {
-            let mut set = StringArrayHashMap::new();
-            if let Some(mut it) = q.expr.as_array() {
-                while let Some(item) = it.next() {
-                    if let Some(k) = item.as_utf8_string_literal() {
-                        let _ = set.put(k, ());
-                    }
-                }
-            }
-            set
-        });
         files.for_each_property(|key, _, value| {
             if let Some(ms) = value.as_number()
                 && ms.is_finite()
                 && ms >= 0.0
             {
-                let ms = ms.round().min(u32::MAX as f64) as u32;
-                let fresh = updated.as_ref().is_none_or(|u| u.contains(key));
-                if fresh || !map.contains(key) {
-                    let _ = map.put(key, ms);
-                }
+                let _ = map.put(key, ms.round().min(u32::MAX as f64) as u32);
             }
         });
         bun_ast::Expr::data_store_reset();
@@ -140,7 +124,7 @@ impl Timings {
     pub fn record(&mut self, abs_path: &[u8], ms: u32) {
         let key = Self::key_for(abs_path);
         let _ = self.map.put(&key, ms);
-        let _ = self.updated.put(&key, ());
+        let _ = self.measured.put(&key, ms);
     }
 
     pub fn record_since(&mut self, abs_path: &[u8], started_ms: i64) {
@@ -204,11 +188,16 @@ impl Timings {
         });
     }
 
-    /// Loaded entries plus this run's, slowest-first (ties by path), so the file
-    /// stays a complete table for later `--shard` reads and doubles as a
-    /// "what's slow" report.
-    pub fn write(&mut self) {
-        let map = &mut self.map;
+    /// Slowest-first (ties by path) so the file doubles as a "what's slow"
+    /// report. `only_measured` (set under `--shard`) writes just the files this
+    /// run ran; otherwise everything read is carried through so a local partial
+    /// run doesn't shrink the table.
+    pub fn write(&mut self, only_measured: bool) {
+        let map = if only_measured {
+            &mut self.measured
+        } else {
+            &mut self.map
+        };
         map.sort(|keys, ms, a, b| {
             ms[b]
                 .cmp(&ms[a])
@@ -227,25 +216,9 @@ impl Timings {
             );
         }
         out.extend_from_slice(if map.count() > 0 {
-            b"\n  },\n"
+            b"\n  }\n}\n"
         } else {
-            b"},\n"
-        });
-        self.updated
-            .sort(|keys, _, a, b| strings::order(&keys[a], &keys[b]).is_lt());
-        out.extend_from_slice(b"  \"updated\": [");
-        for (i, key) in self.updated.keys().iter().enumerate() {
-            let _ = write!(
-                &mut out,
-                "{}\n    {}",
-                if i > 0 { "," } else { "" },
-                bun_core::fmt::format_json_string_utf8(key, Default::default()),
-            );
-        }
-        out.extend_from_slice(if self.updated.count() > 0 {
-            b"\n  ]\n}\n"
-        } else {
-            b"]\n}\n"
+            b"}\n}\n"
         });
 
         let mut tmp: Vec<u8> = self.path.to_vec();

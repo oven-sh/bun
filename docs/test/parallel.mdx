@@ -143,21 +143,19 @@ The file is plain JSON, slowest first, so it doubles as a "what's slow" report:
     "test/integration/build.test.ts": 41234,
     "test/db/migrate.test.ts": 9876,
     "src/router.test.ts": 112
-  },
-  "updated": ["src/router.test.ts", "test/db/migrate.test.ts", "test/integration/build.test.ts"]
+  }
 }
 ```
 
 - Paths are relative to the project root; values are wall-clock milliseconds for the whole file.
-- `--update-timings` merges into the table it read rather than replacing it, so the file is always complete: a sharded run refreshes the entries for the files it ran, carries the rest through unchanged, and lists what it actually measured under `updated`. Entries for files that no longer exist are left alone; delete the file to start over.
-- Files with no entry yet are assumed to take the median time when cutting shards, and are started first under `--parallel`.
+- Without `--shard`, `--update-timings` merges into what it read, so re-running part of the suite locally refreshes those entries and keeps the rest. Entries for files that no longer exist are left alone; delete the file to start over.
+- With `--shard`, `--update-timings` writes **only the files that shard ran** — see below.
+- Files with no entry are assumed to take the median time when cutting shards, and are started first under `--parallel`.
 - With `--timings`, `--parallel` also uses the durations: worker chunks are cut by time and each worker starts its slowest file first.
 
 #### One timings file per shard
 
-`--timings` can be passed more than once. All the files are merged into one table before anything is scheduled, and `--update-timings` writes to the **first** path. When the same test file has an entry in several of them, a value that timings file's writer measured itself (listed in its `updated`) wins over a value it merely carried through, so shard outputs merge the same way regardless of the order they're given in.
-
-That makes sharded CI self-contained — each shard writes its own file, and every shard reads all of last run's files:
+`--timings` can be passed more than once; the files are read as one table (paths that don't exist yet are skipped), and `--update-timings` writes to the **first** path. Under `--shard` that output contains just the files the shard ran, so the shards' outputs are disjoint and, read together on the next run, add up to the whole suite. No merge step is needed:
 
 ```yaml title=".github/workflows/test.yml" icon="github"
 jobs:
@@ -169,7 +167,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install
-      # last successful run's per-shard timings (missing on the very first run; bun creates the directory)
+      # last successful run's per-shard timings (nothing on the very first run)
       - uses: actions/cache/restore@v4
         with:
           path: .bun-test-timings
@@ -177,12 +175,12 @@ jobs:
           restore-keys: bun-test-timings-
       - run: |
           bun test --parallel --shard=${{ matrix.shard }}/4 --update-timings \
-            --timings=.bun-test-timings/${{ matrix.shard }}.json \
+            --timings=.bun-test-timings/next/${{ matrix.shard }}.json \
             $(ls .bun-test-timings/*.json 2>/dev/null | sed 's/^/--timings=/')
       - uses: actions/upload-artifact@v4
         with:
           name: timings-${{ matrix.shard }}
-          path: .bun-test-timings/${{ matrix.shard }}.json
+          path: .bun-test-timings/next/${{ matrix.shard }}.json
   save-timings:
     needs: test
     runs-on: ubuntu-latest
@@ -198,7 +196,7 @@ jobs:
           key: bun-test-timings-${{ github.run_id }}
 ```
 
-Every shard must read the _same set_ of timings files for the shards to add up to the whole suite, which is why the files a run reads come from the previous run rather than from sibling shards still in flight.
+Every shard must read the _same set_ of timings files for the shards to add up to the whole suite, which is why a run reads the previous run's files (restored from the cache) and writes its own somewhere they won't be picked up by sibling shards still in flight (`next/` above).
 
 ## How it compares
 

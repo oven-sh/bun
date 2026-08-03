@@ -613,7 +613,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--timings <STR>...               JSON file(s) of per-file durations (ms); several are merged, e.g. one per CI shard. Balances --shard by total time and makes --parallel start the slowest files first."
     ),
     parse_param!(
-        "--update-timings                 After the run, merge each file's measured duration into the first --timings file (creating it if missing)."
+        "--update-timings                 After the run, write measured per-file durations to the first --timings file (only this shard's files under --shard; merged with what was read otherwise)."
     ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(

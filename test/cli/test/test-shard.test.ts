@@ -242,37 +242,47 @@ describe.concurrent("--timings", () => {
     for (const r of results) expect(r.exitCode).toBe(0);
   });
 
-  test("--update-timings under --shard refreshes its own entries and carries the rest through unchanged", async () => {
-    using dir = makeFixture("timings-shard-merge", 4);
-    const before = { "f00.test.ts": 100000, "f01.test.ts": 1, "f02.test.ts": 1, "f03.test.ts": 1 };
-    await Bun.write(`${dir}/t.json`, JSON.stringify({ version: 1, files: before }));
-    const s1 = await runShard(String(dir), "1/2", ["--timings=t.json", "--update-timings"]);
-    expect(s1.ran).toEqual(["f00"]);
-    const after = (await Bun.file(`${dir}/t.json`).json()).files;
-    expect({ ...after, "f00.test.ts": "measured" }).toEqual({ ...before, "f00.test.ts": "measured" });
-    expect(after["f00.test.ts"]).toBeLessThan(before["f00.test.ts"]);
-    expect(s1.exitCode).toBe(0);
+  test("--update-timings creates the timings file's parent directory", async () => {
+    using dir = makeFixture("timings-mkdir", 1);
+    const r = await runShard(String(dir), "1/1", ["--timings=nested/dir/t.json", "--update-timings"]);
+    expect(r.ran).toEqual(["f00"]);
+    expect(Object.keys((await Bun.file(`${dir}/nested/dir/t.json`).json()).files)).toEqual(["f00.test.ts"]);
+    expect(r.exitCode).toBe(0);
   });
 
-  test("multiple --timings files are merged; an entry a file lists in `updated` beats a carried-through copy regardless of order", async () => {
+  test("--update-timings under --shard writes only the files that shard ran, to the first --timings path", async () => {
+    using dir = makeFixture("timings-shard-write", 4);
+    const base = { version: 1, files: { "f00.test.ts": 1000, "f01.test.ts": 1, "f02.test.ts": 1, "f03.test.ts": 1 } };
+    await Bun.write(`${dir}/base.json`, JSON.stringify(base));
+    const [s1, s2] = await Promise.all([
+      runShard(String(dir), "1/2", ["--timings=1.json", "--timings=base.json", "--update-timings"]),
+      runShard(String(dir), "2/2", ["--timings=2.json", "--timings=base.json", "--update-timings"]),
+    ]);
+    expect(s1.ran).toEqual(["f00"]);
+    expect(s2.ran).toEqual(["f01", "f02", "f03"]);
+    expect(Object.keys((await Bun.file(`${dir}/1.json`).json()).files)).toEqual(["f00.test.ts"]);
+    expect(Object.keys((await Bun.file(`${dir}/2.json`).json()).files).sort()).toEqual([
+      "f01.test.ts",
+      "f02.test.ts",
+      "f03.test.ts",
+    ]);
+    // base.json is only read.
+    expect(await Bun.file(`${dir}/base.json`).json()).toEqual(base);
+    expect(s1.exitCode).toBe(0);
+    expect(s2.exitCode).toBe(0);
+  });
+
+  test("multiple --timings files are read as one table, in any order", async () => {
     using dir = makeFixture("timings-multi", 4);
-    // Two shard artifacts from the same baseline {f00..f03: 50}: shard A re-measured f00 (now 1000), shard B re-measured f03 (now 1).
-    const a = {
-      version: 1,
-      files: { "f00.test.ts": 1000, "f01.test.ts": 50, "f02.test.ts": 50, "f03.test.ts": 50 },
-      updated: ["f00.test.ts"],
-    };
-    const b = {
-      version: 1,
-      files: { "f00.test.ts": 50, "f01.test.ts": 50, "f02.test.ts": 50, "f03.test.ts": 1 },
-      updated: ["f03.test.ts"],
-    };
-    await Bun.write(`${dir}/a.json`, JSON.stringify(a));
-    await Bun.write(`${dir}/b.json`, JSON.stringify(b));
-    // Merged = {1000, 50, 50, 1} → 2 shards cut as [f00] | [f01,f02,f03] whichever file is read first.
+    // Last run's per-shard outputs: disjoint, together the whole suite.
+    await Bun.write(`${dir}/1.json`, JSON.stringify({ version: 1, files: { "f00.test.ts": 1000 } }));
+    await Bun.write(
+      `${dir}/2.json`,
+      JSON.stringify({ version: 1, files: { "f01.test.ts": 1, "f02.test.ts": 1, "f03.test.ts": 1 } }),
+    );
     for (const order of [
-      ["a.json", "b.json"],
-      ["b.json", "a.json"],
+      ["1.json", "2.json"],
+      ["2.json", "1.json"],
     ]) {
       const flags = ["--timings=out.json", ...order.map(f => `--timings=${f}`)];
       const [s1, s2] = await Promise.all([runShard(String(dir), "1/2", flags), runShard(String(dir), "2/2", flags)]);
@@ -283,54 +293,11 @@ describe.concurrent("--timings", () => {
     }
   });
 
-  test("a timings file with `updated: []` (nothing measured, e.g. bailed early) never overrides another file's measured entries", async () => {
-    using dir = makeFixture("timings-empty-updated", 4);
-    const measured = {
-      version: 1,
-      files: { "f00.test.ts": 1000, "f01.test.ts": 50, "f02.test.ts": 50, "f03.test.ts": 50 },
-      updated: ["f00.test.ts"],
-    };
-    const stale = {
-      version: 1,
-      files: { "f00.test.ts": 50, "f01.test.ts": 50, "f02.test.ts": 50, "f03.test.ts": 50 },
-      updated: [],
-    };
-    await Bun.write(`${dir}/m.json`, JSON.stringify(measured));
-    await Bun.write(`${dir}/s.json`, JSON.stringify(stale));
-    for (const order of [
-      ["m.json", "s.json"],
-      ["s.json", "m.json"],
-    ]) {
-      const r = await runShard(String(dir), "1/2", ["--timings=out.json", ...order.map(f => `--timings=${f}`)]);
-      expect(r.ran).toEqual(["f00"]);
-      expect(r.exitCode).toBe(0);
-    }
-  });
-
-  test("--update-timings creates the timings file's parent directory", async () => {
-    using dir = makeFixture("timings-mkdir", 1);
-    const r = await runShard(String(dir), "1/1", ["--timings=nested/dir/t.json", "--update-timings"]);
-    expect(r.ran).toEqual(["f00"]);
-    expect((await Bun.file(`${dir}/nested/dir/t.json`).json()).updated).toEqual(["f00.test.ts"]);
-    expect(r.exitCode).toBe(0);
-  });
-
-  test("--update-timings writes to the first --timings path and lists what it measured under `updated`", async () => {
-    using dir = makeFixture("timings-multi-write", 2);
-    await Bun.write(
-      `${dir}/base.json`,
-      JSON.stringify({ version: 1, files: { "f00.test.ts": 5, "f01.test.ts": 5, "old.test.ts": 9 } }),
-    );
-    const r = await runShard(String(dir), "1/2", ["--timings=mine.json", "--timings=base.json", "--update-timings"]);
-    expect(r.ran).toEqual(["f00"]);
-    const mine = await Bun.file(`${dir}/mine.json`).json();
-    expect(Object.keys(mine.files).sort()).toEqual(["f00.test.ts", "f01.test.ts", "old.test.ts"]);
-    expect(mine.updated).toEqual(["f00.test.ts"]);
-    // base.json is only read.
-    expect(await Bun.file(`${dir}/base.json`).json()).toEqual({
-      version: 1,
-      files: { "f00.test.ts": 5, "f01.test.ts": 5, "old.test.ts": 9 },
-    });
+  test("--update-timings under --shard: a shard that gets no files writes an empty table", async () => {
+    using dir = makeFixture("timings-empty-shard", 2);
+    const r = await runShard(String(dir), "3/3", ["--timings=3.json", "--update-timings"]);
+    expect(r.ran).toEqual([]);
+    expect(await Bun.file(`${dir}/3.json`).json()).toEqual({ version: 1, files: {} });
     expect(r.exitCode).toBe(0);
   });
 

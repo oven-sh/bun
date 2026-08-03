@@ -399,6 +399,25 @@ void create_function_with_data(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(f);
 }
 
+void create_and_name_function(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<FunctionTemplate> tmp =
+      FunctionTemplate::New(isolate, return_data_callback);
+  Local<Function> f = tmp->GetFunction(context).ToLocalChecked();
+
+  LOG_EXPR(describe(isolate, f->GetName()));
+
+  Local<String> new_name =
+      String::NewFromUtf8(isolate, "renamedFn").ToLocalChecked();
+  f->SetName(new_name);
+
+  LOG_EXPR(describe(isolate, f->GetName()));
+
+  info.GetReturnValue().Set(f);
+}
+
 void print_values_from_js(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   printf("%d arguments\n", info.Length());
@@ -1294,6 +1313,8 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_object_template", test_v8_object_template);
   NODE_SET_METHOD(exports, "create_function_with_data",
                   create_function_with_data);
+  NODE_SET_METHOD(exports, "create_and_name_function",
+                  create_and_name_function);
   NODE_SET_METHOD(exports, "print_values_from_js", print_values_from_js);
   NODE_SET_METHOD(exports, "return_this", return_this);
   NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);

@@ -50,13 +50,15 @@ Function* Function::create(VM& vm, Structure* structure, FunctionTemplate* funct
 
 void Function::finishCreation(VM& vm, FunctionTemplate* functionTemplate)
 {
-    Base::finishCreation(vm, 0, "Function"_s);
+    Base::finishCreation(vm, 0, emptyString());
     m_functionTemplate.set(vm, this, functionTemplate);
 }
 
 void Function::setName(JSC::JSString* name)
 {
-    m_originalName.set(globalObject()->vm(), this, name);
+    auto& vm = globalObject()->vm();
+    m_originalName.set(vm, this, name);
+    putDirect(vm, vm.propertyNames->name, name, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
 }
 
 } // namespace shim

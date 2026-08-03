@@ -245,8 +245,6 @@ export class ClassDefinition {
   isEventEmitter?: boolean;
   supportsObjectCreate?: boolean;
 
-  getInternalProperties?: boolean;
-
   custom?: Record<string, CustomField>;
 
   configurable?: boolean;

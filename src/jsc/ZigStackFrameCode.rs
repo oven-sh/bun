@@ -9,13 +9,13 @@ pub struct ZigStackFrameCode(pub u8);
 impl ZigStackFrameCode {
     pub const NONE: Self = Self(0);
     /// 🏃
-    pub const EVAL: Self = Self(1);
+    pub(crate) const EVAL: Self = Self(1);
     /// λ
-    pub const FUNCTION: Self = Self(3);
+    pub(crate) const FUNCTION: Self = Self(3);
     /// 🌎
-    pub const GLOBAL: Self = Self(4);
+    pub(crate) const GLOBAL: Self = Self(4);
     /// ⚙️
-    pub const WASM: Self = Self(5);
+    pub(crate) const WASM: Self = Self(5);
     /// 👷
-    pub const CONSTRUCTOR: Self = Self(6);
+    pub(crate) const CONSTRUCTOR: Self = Self(6);
 }

@@ -31,7 +31,7 @@ impl Default for Semaphore {
 
 impl Semaphore {
     /// Const-init with zero permits.
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             mutex: Mutex::new(),
             cond: Condition::new(),

@@ -10,11 +10,11 @@ use crate::shell::states::pipeline::Pipeline;
 use crate::shell::yield_::Yield;
 
 pub struct Async {
-    pub base: Base,
+    pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Expr>,
-    pub io: IO,
-    pub state: AsyncState,
-    pub event_loop: EventLoopHandle,
+    pub(crate) io: IO,
+    pub(crate) state: AsyncState,
+    pub(crate) event_loop: EventLoopHandle,
     /// Heap payload for the main-thread bounce. The node lives in the
     /// reallocatable `Interpreter::nodes` arena, so the intrusive
     /// concurrent-task node must live in a stable heap allocation instead.
@@ -33,7 +33,7 @@ pub enum AsyncState {
 }
 
 impl Async {
-    pub fn init(
+    pub(crate) fn init(
         interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: &ast::Expr,
@@ -62,7 +62,7 @@ impl Async {
         id
     }
 
-    pub fn start(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, this: NodeId) -> Yield {
         log!("Async {} start", this);
         Self::enqueue_self(interp, this);
         let parent = interp.as_async(this).base.parent;
@@ -71,7 +71,7 @@ impl Async {
         interp.child_done(parent, this, 0)
     }
 
-    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         log!(
             "Async {} next {}",
             this,
@@ -134,7 +134,7 @@ impl Async {
         }
     }
 
-    pub fn child_done(
+    pub(crate) fn child_done(
         interp: &Interpreter,
         this: NodeId,
         child: NodeId,
@@ -184,7 +184,7 @@ impl Async {
     /// `deinit` is purposefully empty: an `Async` appears "done" to its parent
     /// immediately (see `start`), so the parent must not free it. Real cleanup
     /// happens in `actually_deinit` once the background body finishes.
-    pub fn actually_deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn actually_deinit(interp: &Interpreter, this: NodeId) {
         let me = interp.as_async_mut(this);
         if !me.task.is_null() {
             // SAFETY: allocated in `init`; the final bounce that reached
@@ -196,7 +196,7 @@ impl Async {
         me.base.end_scope();
     }
 
-    pub fn run_from_main_thread(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn run_from_main_thread(interp: &Interpreter, this: NodeId) {
         Self::next(interp, this).run(interp);
     }
 }

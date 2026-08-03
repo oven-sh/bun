@@ -577,6 +577,97 @@ describe("bundler", () => {
     },
   });
 
+  // ============================================================================
+  // Top-level `return` is only legal inside the CJS function wrapper, so its
+  // presence must force the module to be treated as CommonJS even when no other
+  // CJS marker (module/exports/__dirname/...) appears.
+  // https://github.com/oven-sh/bun/issues/8908
+  // ============================================================================
+
+  itBundled("cjs/TopLevelReturnEntryBrowser", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log("before");
+        return;
+        console.log("after");
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__commonJS");
+    },
+    run: { stdout: "before" },
+  });
+
+  itBundled("cjs/TopLevelReturnEntryBun", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log("before");
+        return;
+        console.log("after");
+      `,
+    },
+    target: "bun",
+    run: { stdout: "before" },
+  });
+
+  itBundled("cjs/TopLevelReturnEntryNode", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log("before");
+        return;
+        console.log("after");
+      `,
+    },
+    target: "node",
+    run: { stdout: "before" },
+  });
+
+  itBundled("cjs/TopLevelReturnImported", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./lib.js";
+        console.log("entry");
+      `,
+      "/lib.js": /* js */ `
+        console.log("lib: before");
+        if (1) return;
+        console.log("lib: after");
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__commonJS");
+    },
+    run: { stdout: "lib: before\nentry" },
+  });
+
+  itBundled("cjs/TopLevelReturnNested", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log("A");
+        {
+          if (1) return;
+        }
+        console.log("B");
+      `,
+    },
+    run: { stdout: "A" },
+  });
+
+  // Negative: a return inside a function must not flip the module to CJS.
+  itBundled("cjs/ReturnInsideFunctionIsNotTopLevel", {
+    files: {
+      "/entry.js": /* js */ `
+        function f() { return 1; }
+        const g = () => { return 2; };
+        console.log(f() + g());
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__commonJS");
+    },
+    run: { stdout: "3" },
+  });
+
   // Test 28: export * from an external package whose module.exports is null.
   // CJS output emits __reExport(exports, require("ext"), module.exports) with
   // the raw require() result, so __reExport itself must tolerate null.

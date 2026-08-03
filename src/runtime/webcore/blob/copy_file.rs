@@ -315,6 +315,10 @@ impl<'a> CopyFile<'a> {
         let mut total_written: u64 = 0;
         let src_fd = self.source_fd;
         let dest_fd = self.destination_fd;
+        let bun_opened_dest = matches!(
+            self.destination_file_store.pathlike,
+            PathOrFileDescriptor::Path(_)
+        );
 
         // defer { this.read_len = @truncate(total_written); }
         let read_len_slot: *mut SizeType = &raw mut self.read_len;
@@ -343,13 +347,12 @@ impl<'a> CopyFile<'a> {
                     return Err(bun_errno::from_errno(err.errno as i32).into());
                 }
                 bun_sys::Result::Ok(()) => {
-                    // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
-                    let _ = unsafe {
-                        libc::ftruncate(
-                            dest_fd.native(),
+                    if bun_opened_dest {
+                        let _ = bun_sys::ftruncate(
+                            dest_fd,
                             i64::try_from(total_written).expect("int cast"),
-                        )
-                    };
+                        );
+                    }
                     return Ok(());
                 }
             }
@@ -418,13 +421,12 @@ impl<'a> CopyFile<'a> {
                             return Err(bun_errno::from_errno(err.errno as i32).into());
                         }
                         bun_sys::Result::Ok(()) => {
-                            // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
-                            let _ = unsafe {
-                                libc::ftruncate(
-                                    dest_fd.native(),
+                            if bun_opened_dest {
+                                let _ = bun_sys::ftruncate(
+                                    dest_fd,
                                     i64::try_from(total_written).expect("int cast"),
-                                )
-                            };
+                                );
+                            }
                             return Ok(());
                         }
                     }
@@ -475,13 +477,12 @@ impl<'a> CopyFile<'a> {
                                 return Err(bun_errno::from_errno(err.errno as i32).into());
                             }
                             bun_sys::Result::Ok(()) => {
-                                // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
-                                let _ = unsafe {
-                                    libc::ftruncate(
-                                        dest_fd.native(),
+                                if bun_opened_dest {
+                                    let _ = bun_sys::ftruncate(
+                                        dest_fd,
                                         i64::try_from(total_written).expect("int cast"),
-                                    )
-                                };
+                                    );
+                                }
                                 return Ok(());
                             }
                         }
@@ -547,7 +548,7 @@ impl<'a> CopyFile<'a> {
                     //
                     // bun test bun-write.test | xargs echo
                     //
-                    bun_sys::E::EBADF => {
+                    bun_sys::E::EBADF | bun_sys::E::ENOTSUP => {
                         let mut total_written: u64 = 0;
 
                         // TODO: this should use non-blocking I/O.
@@ -563,7 +564,9 @@ impl<'a> CopyFile<'a> {
                                 self.system_error = Some(err.to_system_error());
                                 return Err(bun_errno::from_errno(err.errno as i32).into());
                             }
-                            bun_sys::Result::Ok(()) => {}
+                            bun_sys::Result::Ok(()) => {
+                                self.read_len = total_written as SizeType;
+                            }
                         }
                     }
                     _ => {
@@ -835,10 +838,9 @@ impl<'a> CopyFile<'a> {
                     return;
                 }
 
-                // $ bun run foo.js | bun run bar.js
-                if bun_sys::S::ISFIFO(stat.st_mode as _)
-                    && bun_sys::S::ISFIFO(self.destination_file_store.mode as _)
-                {
+                // $ echo hello | bun run script.js > out.txt
+                // splice(2) only needs one end to be a pipe; the source is.
+                if bun_sys::S::ISFIFO(stat.st_mode as _) {
                     if self.destination_file_store.is_atty.unwrap_or(false) {
                         let _ = self.do_copy_file_range::<{ TryWith::Splice }, true>();
                     } else {
@@ -874,16 +876,17 @@ impl<'a> CopyFile<'a> {
                     self.do_close();
                     return;
                 }
-                if stat.st_size != 0
-                    && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
-                {
-                    // SAFETY: `destination_fd` is open; libc ftruncate(2).
-                    let _ = unsafe {
-                        bun_sys::darwin::ftruncate(
-                            self.destination_fd.native(),
+                if stat.st_size != 0 {
+                    let stat_size = SizeType::try_from(stat.st_size).expect("int cast");
+                    if stat_size > self.max_length {
+                        let _ = bun_sys::ftruncate(
+                            self.destination_fd,
                             i64::try_from(self.max_length).expect("int cast"),
-                        )
-                    };
+                        );
+                    }
+                    if self.read_len == 0 {
+                        self.read_len = stat_size.min(self.max_length);
+                    }
                 }
 
                 self.do_close();

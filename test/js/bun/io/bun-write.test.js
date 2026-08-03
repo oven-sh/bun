@@ -450,6 +450,57 @@ const IS_UV_FS_COPYFILE_DISABLED =
     expect(exitCode).toBe(0);
   });
 
+  // https://github.com/oven-sh/bun/issues/14054
+  // Bun.spawn({stdin: <buffer>}) hands the child a regular-file fd, so use sh
+  // to get a real kernel pipe on fd 0.
+  it.skipIf(isWindows)("Bun.write(Bun.file(path), Bun.stdin) drains a pipe into a file", async () => {
+    using dir = tempDir("bun-write-stdin-pipe", {});
+    const out = join(String(dir), "out.txt");
+    const size = 200_000;
+    const script = `process.stderr.write(String(await Bun.write(Bun.file(${JSON.stringify(out)}), Bun.stdin)))`;
+
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `head -c ${size} /dev/zero | "$BUN" -e ${JSON.stringify(script)}`],
+      env: { ...bunEnv, BUN: bunExe() },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, resolved: stderr, written: Bun.file(out).size }).toEqual({
+      stdout: "",
+      resolved: String(size),
+      written: size,
+    });
+    expect(await Bun.file(out).bytes()).toEqual(new Uint8Array(size));
+    expect(exitCode).toBe(0);
+  });
+
+  // splice(2) rejects an O_APPEND destination with EINVAL and the read/write
+  // fallback must not ftruncate a fd it did not open.
+  it.skipIf(isWindows)("Bun.write(Bun.stdout, Bun.stdin) with >> does not truncate the destination", async () => {
+    using dir = tempDir("bun-write-stdin-append", { "log.txt": "AAAAAAAAAA" });
+    const out = join(String(dir), "log.txt");
+    const script = `process.stderr.write(String(await Bun.write(Bun.stdout, Bun.stdin)))`;
+
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `printf bbbbb | "$BUN" -e ${JSON.stringify(script)} >> ${JSON.stringify(out)}`],
+      env: { ...bunEnv, BUN: bunExe() },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, resolved: stderr, content: await Bun.file(out).text() }).toEqual({
+      stdout: "",
+      resolved: "5",
+      content: "AAAAAAAAAAbbbbb",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   it("Bun.file(0) survives GC", async () => {
     for (let i = 0; i < 10; i++) {
       let f = Bun.file(0);

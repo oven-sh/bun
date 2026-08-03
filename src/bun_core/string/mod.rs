@@ -9,10 +9,7 @@
 //! Merged into `bun_core` to break the `bun_core ↔ bun_string` dep edge;
 //! the `bun_string` crate is now a thin re-export shim over this module.
 
-// `#[macro_export]` macros defined in submodules (`w!`, `literal!`) land at
-// the *crate* root (`bun_core::`).
-// Re-export them here so `crate::string::w` / `bun_core::w` paths resolve.
-pub use crate::{literal, w};
+pub use crate::w;
 
 #[path = "escapeRegExp.rs"]
 pub mod escape_reg_exp;
@@ -163,7 +160,7 @@ impl String {
     /// where the pointer value itself is needed (identity comparison,
     /// hand-off to C++) rather than the struct fields.
     #[inline(always)]
-    pub(crate) fn wtf_ptr(&self) -> WTFStringImpl {
+    fn wtf_ptr(&self) -> WTFStringImpl {
         debug_assert_eq!(self.0.tag, Tag::WTFStringImpl);
         // SAFETY: `tag == WTFStringImpl` ⇒ `wtf_string_impl` is the active
         // union field; reading the pointer (not dereferencing) is always sound
@@ -491,7 +488,7 @@ impl String {
     /// this holds (typically by calling [`to_thread_safe`] first); see the
     /// `Send`/`Sync` SAFETY comment for the full contract.
     #[inline]
-    pub fn is_thread_safe(&self) -> bool {
+    pub(crate) fn is_thread_safe(&self) -> bool {
         if self.0.tag == Tag::WTFStringImpl {
             // SAFETY: WTF tag guarantees `value.wtf` is a valid live impl.
             self.as_wtf().is_thread_safe()
@@ -585,7 +582,7 @@ impl String {
     /// unit is ASCII (`< 0x80`). UTF-16 narrows via
     /// [`strings::narrow_ascii_u16`]; 8-bit copies after rejecting any high
     /// Latin-1 byte. Returns `Some(&mut dst[..len])` on success.
-    pub fn ascii_into<'a>(&self, dst: &'a mut [u8]) -> Option<&'a mut [u8]> {
+    pub(crate) fn ascii_into<'a>(&self, dst: &'a mut [u8]) -> Option<&'a mut [u8]> {
         let len = self.length();
         if len == 0 || len > dst.len() {
             return None;
@@ -698,7 +695,7 @@ impl String {
     /// [`to_utf8`]: Self::to_utf8
     /// [`to_slice`]: Self::to_slice
     #[inline]
-    pub fn to_utf8_borrowed(&self) -> ZigStringSlice {
+    pub(crate) fn to_utf8_borrowed(&self) -> ZigStringSlice {
         match self.0.tag {
             Tag::WTFStringImpl => self.as_wtf().to_utf8_borrowed(),
             Tag::ZigString => self.as_zig().to_slice(),
@@ -757,15 +754,6 @@ impl String {
         bytes.len() == lit.len() && strings::eql_comptime_ignore_len(bytes, lit)
     }
 
-    /// `bun.String.githubAction` — returns a `Display`
-    /// formatter that escapes the string for GitHub Actions annotation output
-    /// (`%0A` for newlines, ANSI stripped). Encoding-aware: materialises a
-    /// UTF-8 view inside `fmt` so 16-bit / WTF-backed strings are handled.
-    #[inline]
-    pub fn github_action(&self) -> StringGithubActionFormatter<'_> {
-        StringGithubActionFormatter { text: self }
-    }
-
     /// `bun.String.hasPrefixComptime` — ASCII prefix check. Dispatches on
     /// encoding so only `prefix.len()` units are touched; never scans or
     /// transcodes `self`.
@@ -780,12 +768,6 @@ impl String {
     #[inline]
     pub fn is_dead(&self) -> bool {
         self.0.tag == Tag::Dead
-    }
-
-    /// `bun.String.static` (alt. spelling for callers that prefer `from_*`).
-    #[inline]
-    pub fn from_static(s: &'static [u8]) -> Self {
-        Self::static_(s)
     }
 
     /// `bun.String.fromBytes` — borrow `value` without copying or refcounting;
@@ -923,7 +905,7 @@ impl String {
 
     /// `bun.String.canBeUTF8` — true iff `self`'s 8-bit bytes
     /// are valid UTF-8 (i.e. either UTF-8-tagged or all-ASCII).
-    pub fn can_be_utf8(&self) -> bool {
+    pub(crate) fn can_be_utf8(&self) -> bool {
         match self.0.tag {
             Tag::WTFStringImpl => {
                 let w = self.as_wtf();
@@ -945,7 +927,7 @@ impl String {
     /// `self` is a UTF-8-safe `ZigString`/`StaticZigString` (use [`as_utf8`] for
     /// the checked variant).
     #[inline]
-    pub fn utf8(&self) -> &[u8] {
+    pub(crate) fn utf8(&self) -> &[u8] {
         debug_assert!(matches!(self.0.tag, Tag::ZigString | Tag::StaticZigString));
         debug_assert!(self.can_be_utf8());
         self.as_zig().slice()
@@ -953,7 +935,7 @@ impl String {
 
     /// `bun.String.toUTF8Owned` — like [`to_utf8_without_ref`] but guarantees
     /// the returned slice owns its buffer.
-    pub fn to_utf8_owned(&self) -> ZigStringSlice {
+    pub(crate) fn to_utf8_owned(&self) -> ZigStringSlice {
         self.to_utf8_without_ref().clone_if_borrowed()
     }
 
@@ -1275,19 +1257,6 @@ impl core::fmt::Display for String {
     }
 }
 
-/// `Display` adapter for [`String::github_action`]. Converts to UTF-8 on the
-/// fly (handles 16-bit / WTF-backed strings) and delegates to
-/// `crate::fmt::github_action_writer`.
-pub struct StringGithubActionFormatter<'a> {
-    text: &'a String,
-}
-impl core::fmt::Display for StringGithubActionFormatter<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let utf8 = self.text.to_utf8_without_ref();
-        crate::fmt::github_action_writer(f, utf8.slice())
-    }
-}
-
 /// `Display` adapter for [`ZigString::github_action`]. Converts to UTF-8 on
 /// the fly (handles 16-bit / latin-1 encodings) and delegates to
 /// `crate::fmt::github_action_writer`.
@@ -1340,12 +1309,6 @@ impl core::ops::DerefMut for ZigString {
     }
 }
 
-/// `ZigString.as_()` — encoding-dispatched borrow.
-pub enum ByteString<'a> {
-    Latin1(&'a [u8]),
-    Utf16(&'a [u16]),
-}
-
 impl Default for ZigString {
     #[inline]
     fn default() -> Self {
@@ -1359,18 +1322,12 @@ impl ZigString {
     /// Construct from an already-tagged pointer + length pair. `ptr` is stored
     /// verbatim — tag bits are not touched.
     #[inline]
-    pub const fn from_tagged_ptr(ptr: *const u8, len: usize) -> Self {
+    pub(crate) const fn from_tagged_ptr(ptr: *const u8, len: usize) -> Self {
         Self(bun_alloc::ZigString::from_tagged_ptr(ptr, len))
     }
 
     #[inline]
     pub const fn init(s: &[u8]) -> Self {
-        Self(bun_alloc::ZigString::init(s))
-    }
-    /// [`init`](Self::init) for `'static` literals — alias for callers
-    /// spelling it `init_static`.
-    #[inline]
-    pub const fn init_static(s: &'static [u8]) -> Self {
         Self(bun_alloc::ZigString::init(s))
     }
     /// `ZigString.fromUTF8` — alias of [`init_utf8`].
@@ -1402,7 +1359,7 @@ impl ZigString {
     /// Marks UTF-16 + global; caller must ensure the buffer was allocated by
     /// `bun.default_allocator` (mimalloc) since `deinitGlobal` will free it.
     #[inline]
-    pub fn from16(ptr: *const u16, len: usize) -> Self {
+    pub(crate) fn from16(ptr: *const u16, len: usize) -> Self {
         let mut z = Self::from_tagged_ptr(ptr.cast(), len);
         z.mark_utf16();
         z.mark_global();
@@ -1437,7 +1394,7 @@ impl ZigString {
     /// `ZigString.utf8ByteLength` — exact UTF-8 byte length needed to encode
     /// this string. UTF-16 → simdutf length; Latin-1
     /// → simdutf utf8-from-latin1 length; UTF-8 → `len`.
-    pub fn utf8_byte_length(self) -> usize {
+    pub(crate) fn utf8_byte_length(self) -> usize {
         if self.is_utf8() {
             return self.len;
         }
@@ -1452,7 +1409,7 @@ impl ZigString {
 
     /// `ZigString.utf16ByteLength` — number of bytes the UTF-16LE encoding of
     /// this string would occupy.
-    pub fn utf16_byte_length(self) -> usize {
+    pub(crate) fn utf16_byte_length(self) -> usize {
         if self.is_utf8() {
             let s = self.slice();
             // SAFETY: s describes a valid byte slice.
@@ -1537,7 +1494,7 @@ impl ZigString {
     }
 
     /// `ZigString.eql` — encoding-aware equality.
-    pub fn eql(self, other: Self) -> bool {
+    pub(crate) fn eql(self, other: Self) -> bool {
         if self.len == 0 || other.len == 0 {
             return self.len == other.len;
         }
@@ -1553,23 +1510,12 @@ impl ZigString {
         self.to_slice().slice() == other.to_slice().slice()
     }
 
-    /// `ZigString.as` — encoding-dispatched borrow as either Latin-1 bytes or
-    /// UTF-16 code units.
-    #[inline]
-    pub fn as_(&self) -> ByteString<'_> {
-        if self.is_16bit() {
-            ByteString::Utf16(self.utf16_slice_aligned())
-        } else {
-            ByteString::Latin1(self.slice())
-        }
-    }
-
     /// `ZigString.detectEncoding` — if the (currently-untagged) bytes contain
     /// any non-ASCII, mark the pointer as UTF-16 (assumes the bytes were
     /// sourced from a JS-produced 8-bit string and need re-widening on
     /// non-ASCII).
     #[inline]
-    pub fn detect_encoding(&mut self) {
+    pub(crate) fn detect_encoding(&mut self) {
         if !strings::is_all_ascii(self.slice()) {
             self.mark_utf16();
         }
@@ -1586,17 +1532,6 @@ impl ZigString {
         if self.is_16bit() {
             self.mark_utf8();
         }
-    }
-
-    /// `ZigString.full` — raw 8-bit byte view without the `u32::MAX` length
-    /// clamp `slice()` applies.
-    #[inline]
-    pub fn full(&self) -> &[u8] {
-        if self.len == 0 {
-            return &[];
-        }
-        // SAFETY: untagged ptr valid for `self.len` bytes (constructor invariant).
-        unsafe { core::slice::from_raw_parts(Self::untagged(self.tagged_ptr()), self.len) }
     }
 
     /// `ZigString.toSliceFast` — like `to_slice` but skips the Latin-1-to-UTF-8
@@ -1630,7 +1565,7 @@ impl ZigString {
     }
 
     #[inline]
-    pub fn untagged(ptr: *const u8) -> *const u8 {
+    pub(crate) fn untagged(ptr: *const u8) -> *const u8 {
         bun_alloc::ZigString::untagged(ptr)
     }
     /// `ZigString.utf16Slice` — alias of [`utf16_slice_aligned`] (reached via
@@ -1682,7 +1617,7 @@ impl ZigString {
     /// `ZigString.trunc` — clamp `len`, preserving the
     /// pointer (and its tag bits) verbatim.
     #[inline]
-    pub fn trunc(self, len: usize) -> ZigString {
+    pub(crate) fn trunc(self, len: usize) -> ZigString {
         Self::from_tagged_ptr(self.tagged_ptr(), self.len.min(len))
     }
     /// `ZigString.toSlice` — borrowed-or-owned UTF-8.
@@ -1811,7 +1746,7 @@ impl ZigStringSlice {
     /// storage (`Static`/`WTF`), allocate an owned copy; otherwise return
     /// `self` unchanged. The result is always safe to outlive the original
     /// backing.
-    pub fn clone_if_borrowed(self) -> Self {
+    pub(crate) fn clone_if_borrowed(self) -> Self {
         match &self {
             Self::Owned(_) => self,
             _ => Self::Owned(self.slice().to_vec()),
@@ -2097,7 +2032,7 @@ pub mod lexer {
         crate::string::identifier::is_identifier_start(c as i32)
     }
     #[inline]
-    pub fn is_identifier_continue(c: u32) -> bool {
+    pub(crate) fn is_identifier_continue(c: u32) -> bool {
         crate::string::identifier::is_identifier_part(c as i32)
     }
     #[inline]
@@ -2211,7 +2146,7 @@ pub mod printer {
     pub use crate::io::Write as PrinterWriter;
 
     #[inline]
-    pub(crate) fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
+    fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
         if c <= LAST_ASCII as i32 {
             c >= FIRST_ASCII as i32
                 && c != b'\\' as i32
@@ -2467,10 +2402,6 @@ impl OwnedStringCell {
     #[inline]
     pub fn replace(&self, new: String) -> OwnedString {
         OwnedString(self.0.replace(new))
-    }
-    #[inline]
-    pub fn take(&self) -> OwnedString {
-        OwnedString(self.0.replace(String::dead()))
     }
 }
 

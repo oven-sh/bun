@@ -105,7 +105,7 @@ pub(crate) use dispatch_encoding;
 /// Caller (C++) must guarantee `input[..len]` and `to[..to_len]` are valid for
 /// reading / writing respectively for the duration of the call.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__encoding__writeLatin1(
+unsafe extern "C" fn Bun__encoding__writeLatin1(
     input: *const u8,
     len: usize,
     to: *mut u8,
@@ -126,7 +126,7 @@ pub(crate) unsafe extern "C" fn Bun__encoding__writeLatin1(
 /// Caller (C++) must guarantee `input[..len]` and `to[..to_len]` are valid for
 /// reading / writing respectively for the duration of the call.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__encoding__writeUTF16(
+unsafe extern "C" fn Bun__encoding__writeUTF16(
     input: *const u16,
     len: usize,
     to: *mut u8,
@@ -147,10 +147,7 @@ pub(crate) unsafe extern "C" fn Bun__encoding__writeUTF16(
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__encoding__byteLengthLatin1AsUTF8(
-    input: *const u8,
-    len: usize,
-) -> usize {
+unsafe extern "C" fn Bun__encoding__byteLengthLatin1AsUTF8(input: *const u8, len: usize) -> usize {
     // SAFETY: forwarded from this fn's contract.
     unsafe { byte_length_u8::<{ enc::UTF8 }>(input, len) }
 }
@@ -158,10 +155,7 @@ pub(crate) unsafe extern "C" fn Bun__encoding__byteLengthLatin1AsUTF8(
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__encoding__byteLengthUTF16AsUTF8(
-    input: *const u16,
-    len: usize,
-) -> usize {
+unsafe extern "C" fn Bun__encoding__byteLengthUTF16AsUTF8(input: *const u16, len: usize) -> usize {
     // SAFETY: forwarded from this fn's contract.
     let input = unsafe { bun_core::ffi::slice(input, len) };
     strings::element_length_utf16_into_utf8(input)
@@ -170,7 +164,7 @@ pub(crate) unsafe extern "C" fn Bun__encoding__byteLengthUTF16AsUTF8(
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__encoding__constructFromLatin1(
+unsafe extern "C" fn Bun__encoding__constructFromLatin1(
     global_object: &JSGlobalObject,
     input: *const u8,
     len: usize,
@@ -193,7 +187,7 @@ pub(crate) unsafe extern "C" fn Bun__encoding__constructFromLatin1(
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__encoding__constructFromUTF16(
+unsafe extern "C" fn Bun__encoding__constructFromUTF16(
     global_object: &JSGlobalObject,
     input: *const u16,
     len: usize,
@@ -217,7 +211,7 @@ pub(crate) unsafe extern "C" fn Bun__encoding__constructFromUTF16(
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__encoding__toStringUTF8(
+unsafe extern "C" fn Bun__encoding__toStringUTF8(
     input: *const u8,
     len: usize,
     global_object: &JSGlobalObject,
@@ -233,7 +227,7 @@ pub(crate) unsafe extern "C" fn Bun__encoding__toStringUTF8(
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__encoding__toString(
+unsafe extern "C" fn Bun__encoding__toString(
     input: *const u8,
     len: usize,
     global_object: &JSGlobalObject,
@@ -349,7 +343,7 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
     }
 }
 
-pub(crate) fn to_string_comptime<const ENCODING: u8>(
+fn to_string_comptime<const ENCODING: u8>(
     input: &[u8],
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -361,7 +355,7 @@ pub(crate) fn to_bun_string(input: &[u8], encoding: impl Into<Encoding>) -> BunS
     dispatch_encoding!(encoding.into(), |E| to_bun_string_comptime::<E>(input))
 }
 
-pub(crate) fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
+fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
     if input.is_empty() {
         return BunString::empty();
     }
@@ -592,7 +586,7 @@ pub(crate) unsafe fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: boo
 
 /// # Safety
 /// `input` must be valid for reading `len` bytes.
-pub(crate) unsafe fn byte_length_u8<const ENCODING: u8>(input: *const u8, len: usize) -> usize {
+unsafe fn byte_length_u8<const ENCODING: u8>(input: *const u8, len: usize) -> usize {
     if len == 0 {
         return 0;
     }
@@ -727,10 +721,7 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
 
 /// # Safety
 /// `input` must be valid for reading `len` bytes.
-pub(crate) unsafe fn construct_from_u8<const ENCODING: u8>(
-    input: *const u8,
-    len: usize,
-) -> Vec<u8> {
+unsafe fn construct_from_u8<const ENCODING: u8>(input: *const u8, len: usize) -> Vec<u8> {
     if len == 0 {
         return Vec::new();
     }
@@ -815,10 +806,7 @@ pub(crate) unsafe fn construct_from_u8<const ENCODING: u8>(
 
 /// # Safety
 /// `input` must be valid for reading `len` `u16`s.
-pub(crate) unsafe fn construct_from_u16<const ENCODING: u8>(
-    input: *const u16,
-    len: usize,
-) -> Vec<u8> {
+unsafe fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usize) -> Vec<u8> {
     if len == 0 {
         return Vec::new();
     }

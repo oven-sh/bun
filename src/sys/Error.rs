@@ -125,7 +125,7 @@ impl Error {
     /// `from_libuv` left at default `false`.
     #[cfg(windows)]
     #[inline]
-    pub fn from_uv_rc64(
+    pub(crate) fn from_uv_rc64(
         rc: crate::windows::libuv::ReturnCodeI64,
         syscall_tag: Tag,
     ) -> Option<Error> {
@@ -243,8 +243,9 @@ impl Error {
     /// preserves every other field — chained on a libuv-sourced error
     /// (`from_libuv=true`, errno in the 4000-range) it must keep `from_libuv`
     /// so `name()`/`msg()` still route through the uv→errno mapper.
+    #[cfg(windows)]
     #[inline]
-    pub fn with_dest(&self, dest: &[u8]) -> Error {
+    pub(crate) fn with_dest(&self, dest: &[u8]) -> Error {
         Error {
             errno: self.errno,
             syscall: self.syscall,

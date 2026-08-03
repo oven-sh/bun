@@ -34,9 +34,9 @@ test.concurrent(
 // stream through the downgraded `Locked.readable` handle. The fix stores that
 // handle as a real JSC::Weak so it reads as empty once reaped. Full details in
 // the fixture.
-test.skipIf(!isASAN).concurrent(
-  "abort after reader.cancel() + eden GC does not use a freed response-body source",
-  async () => {
+test
+  .skipIf(!isASAN)
+  .concurrent("abort after reader.cancel() + eden GC does not use a freed response-body source", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "fetch-abort-after-cancel-gc-fixture.ts")],
       env: { ...bunEnv, ITER: "20", ASAN_OPTIONS: "fast_unwind_on_fatal=1" },
@@ -49,8 +49,7 @@ test.skipIf(!isASAN).concurrent(
     expect(stderr).not.toContain("AddressSanitizer");
     expect(stdout).toBe("done 20\n");
     expect(exitCode).toBe(0);
-  },
-);
+  });
 
 test("aborting fetch with a ReadableStream request body does not double-cancel the sink", async () => {
   await using proc = Bun.spawn({

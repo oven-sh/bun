@@ -47,10 +47,11 @@ const V_NULL: Val = Val {
 };
 
 pub(crate) fn ast_to_tape(ast: &ast::Ast<'_>, buf: &mut Vec<u8>) -> Result<(), SerializeError> {
+    // Pre-sizing hint only; clamp so newline-dense input can't drive a huge up-front reserve.
     buf.reserve(
         ast.approximate_newline_count
             .saturating_mul(96)
-            .max(TAPE_HEADER_SIZE + 256),
+            .clamp(TAPE_HEADER_SIZE + 256, 16 << 20),
     );
     buf.extend_from_slice(&[0u8; TAPE_HEADER_SIZE]);
 

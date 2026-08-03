@@ -514,10 +514,8 @@ public:
     /* Error.prepareStackTrace */                                                                            \
     V(public, WriteBarrier<JSC::Unknown>, m_errorConstructorPrepareStackTraceValue)                          \
                                                                                                              \
-    /* Set by the CommonJS synthetic-module generator when a require()-driven  */                            \
-    /* graph load re-enters a CommonJS module whose body is still executing (a */                            \
-    /* require cycle). functionEsmLoadSync compares the load rejection against */                            \
-    /* this by identity and rewrites its message with the offending edge.      */                            \
+    /* require(esm) cycle error planted by the CommonJS synthetic generator; functionEsmLoadSync */          \
+    /* matches the load rejection against this by identity to rewrite its message.               */          \
     V(public, WriteBarrier<JSC::Unknown>, m_pendingRequireESMCycleError)                                     \
                                                                                                              \
     /* When a napi module initializes on dlopen, we need to know what the value is */                        \
@@ -795,15 +793,12 @@ private:
 public:
     // De-optimization once `require("module")._resolveFilename` is written to
     bool hasOverriddenModuleResolveFilenameFunction = false;
-    // De-optimization once `require("module").wrapper` or `require("module").wrap` is written to
-    // Monotonic stamp per fetched module key, recorded in moduleLoaderFetch.
-    // functionEsmLoadSync compares stamps against the counter value captured
-    // when a require(esm) begins to tell modules an outer graph was already
-    // loading apart from modules this require fetched itself, which decides
-    // which import edge a require-cycle error reports.
+    // Monotonic stamp per fetched module key; functionEsmLoadSync compares against the value captured
+    // at require(esm) start to tell outer-graph modules apart when picking the cycle-error import edge.
     uint64_t m_moduleFetchCounter { 0 };
     UncheckedKeyHashMap<WTF::String, uint64_t> m_moduleFetchSequence;
 
+    // De-optimization once `require("module").wrapper` or `require("module").wrap` is written to
     bool hasOverriddenModuleWrapper = false;
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;

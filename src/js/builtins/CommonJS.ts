@@ -35,23 +35,9 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   } else {
     const existing = $requireMap.$get(id);
     if (existing) {
-      // Scenario where this is necessary:
-      //
-      // In an ES Module, we have:
-      //
-      //    import "react-dom/server"
-      //    import "react"
-      //
-      // Synchronously, the "react" import is created first, and then the
-      // "react-dom/server" import is created. Then, at ES Module link time, they
-      // are evaluated. The "react-dom/server" import is evaluated first, and
-      // require("react") was previously created as an ESM module, so we wait
-      // for the ESM module to load
-      //
-      // ...and then when this code is reached, unless
-      // we evaluate it "early", we'll get an empty object instead of the module
-      // exports.
-      //
+      // Evaluate eagerly: e.g. an ESM importing both "react-dom/server" and "react" creates the react
+      // module first but evaluates react-dom first, so a require("react") cache hit here must force
+      // evaluation or the caller gets an empty object.
       const c = $evaluateCommonJSModule(existing, this);
       if (c && c.indexOf(existing) === -1) {
         c.push(existing);
@@ -78,12 +64,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 
   var out: LoaderModule | -1;
 
-  // This is where we load the module. We will see if Module._load and
-  // Module._compile are actually important for compatibility.
-  //
-  // Note: we do not need to wrap this in a try/catch for release, if it throws
-  // the C++ code will clear the module from the map.
-  //
+  // No try/catch needed in release: C++ clears the module from the map on throw.
   if (IS_BUN_DEVELOPMENT) {
     $assert(mod.id === id);
     try {
@@ -117,13 +98,8 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     // If we can pull out a ModuleNamespaceObject, let's do it.
     const namespace = $esmNamespaceForCjs(id);
     if (namespace !== undefined) {
-      // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
-      // Various libraries expect __esModule to be set when using ESM from require().
-      // We don't want to always inject the __esModule export into every module,
-      // And creating an Object wrapper causes the actual exports to not be own properties.
-      // So instead of either of those, we make it so that the __esModule property can be set at runtime.
-      // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
-      // https://github.com/oven-sh/bun/issues/14411
+      // __esModule is a runtime-settable CustomAccessor on the namespace prototype (true or undefined
+      // only) so require(esm) callers see it without a wrapper object. https://github.com/oven-sh/bun/issues/14411
       if (namespace.__esModule === undefined) {
         try {
           namespace.__esModule = true;
@@ -172,12 +148,8 @@ export function internalRequire(id: string, parent: JSCommonJSModule) {
 
 $visibility = "Private";
 export function loadEsmIntoCjs(resolvedSpecifier: string, parentFilename?: string) {
-  // The JSC module loader pipeline is now pure C++. $esmLoadSync sets a VM
-  // flag that makes the loader's internal promise reactions run immediately
-  // (instead of queueing microtasks) whenever the upstream promise is already
-  // settled. Because Bun resolves and reads source code synchronously, the
-  // entire fetch → parse → link → evaluate chain completes within this call
-  // for any module graph that does not use top-level await.
+  // $esmLoadSync diverts loader promise reactions to run immediately on already-settled promises;
+  // Bun's synchronous resolve+read makes the whole pipeline complete in this call for non-TLA graphs.
   return $esmLoadSync(resolvedSpecifier, parentFilename);
 }
 
@@ -315,10 +287,8 @@ function loadEsmIntoCjs__dead(resolvedSpecifier: string) {
 
 $visibility = "Private";
 export function requireESM(this, resolved: string, parentFilename?: string) {
-  // $esmLoadSync returns the cached namespace when the module is already
-  // evaluated, and re-checks the graph for top-level await and require()
-  // cycles on every call (matching Node, which rejects require() of an async
-  // graph even after a successful import() evaluated it).
+  // $esmLoadSync re-checks TLA/cycles even on a cache hit; Node rejects require() of an async graph
+  // even after import() evaluated it. https://github.com/nodejs/node/blob/main/lib/internal/modules/esm/loader.js
   var exports = $loadEsmIntoCjs(resolved, parentFilename);
   if (exports === undefined) {
     throw new TypeError(`require() failed to evaluate module "${resolved}". This is an internal consistentency error.`);
@@ -339,13 +309,8 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
   // If we can pull out a ModuleNamespaceObject, let's do it.
   const namespace = $esmNamespaceForCjs(id);
   if (namespace !== undefined) {
-    // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
-    // Various libraries expect __esModule to be set when using ESM from require().
-    // We don't want to always inject the __esModule export into every module,
-    // And creating an Object wrapper causes the actual exports to not be own properties.
-    // So instead of either of those, we make it so that the __esModule property can be set at runtime.
-    // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
-    // https://github.com/oven-sh/bun/issues/14411
+    // __esModule is a runtime-settable CustomAccessor on the namespace prototype (true or undefined
+    // only) so require(esm) callers see it without a wrapper object. https://github.com/oven-sh/bun/issues/14411
     if (namespace.__esModule === undefined) {
       try {
         namespace.__esModule = true;

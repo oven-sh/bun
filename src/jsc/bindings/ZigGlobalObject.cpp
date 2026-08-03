@@ -793,10 +793,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject 
 
 // --- require(esm) graph checks ---------------------------------------------
 
-// Node refuses require() on any ES module graph that contains top-level await,
-// even when every await would settle synchronously. V8 exposes this as
-// v8::Module::IsGraphAsync() — a static walk over the parsed records — and
-// Node checks it before evaluation starts, and again for cached jobs:
+// Node rejects require() of any graph with TLA (v8::Module::IsGraphAsync), checked pre-eval and on cache hit.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/module_job.js#L530-L540
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/loader.js#L286-L296
 static bool esmGraphHasTLA(JSC::AbstractModuleRecord* root)
@@ -839,20 +836,9 @@ static JSC::EncodedJSValue throwRequireAsyncModuleError(Zig::GlobalObject* globa
     return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_REQUIRE_ASYNC_MODULE, message.toString());
 }
 
-// Searches a require(esm) graph for a cycle back into a module that is
-// currently being processed by an outer graph, matching where Node's
-// synchronous loader throws ERR_REQUIRE_CYCLE_MODULE during loading:
-//  - an ES module that is mid-evaluation:
-//    https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/loader.js#L358-L370
-//  - a CommonJS module whose body is currently on the require stack:
-//    https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/loader.js#L403-L414
-//
-// Bun executes a CommonJS module wrapped for import during the *load* phase
-// (the synthetic-module generator), earlier than Node (which translates at
-// load but executes at evaluation). So when the cycle bottoms out in an
-// executing CommonJS module, the edge Node would report is the first edge on
-// the path whose target ES module is still mid-load; only when there is no
-// such edge is the direct CommonJS import edge reported.
+// Searches for a cycle back into a module an outer graph is processing (ESM mid-evaluation or CJS mid-execute).
+// Bun runs imported CJS at load, not eval, so the reported edge is the first one into an ESM still mid-load.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/loader.js#L358-L414
 struct RequireESMCycleSearch {
     Zig::GlobalObject* globalObject;
     JSC::ThrowScope& scope;
@@ -997,19 +983,15 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     auto* loader = globalObject->moduleLoader();
     const uint64_t requireStartSequence = globalObject->m_moduleFetchCounter;
     bool entryExistedBefore = false;
-    // Whether the requested module was already being processed (loading or
-    // evaluating) by an outer graph when this require() started. Requiring
-    // such a module re-enters the outer graph, which decides the shape of the
-    // cycle error below.
+    // True when an outer graph was already loading/evaluating this module at require() start;
+    // re-entering that graph shapes the cycle error below.
     bool rootWasMidProcessing = false;
     if (auto* entry = loader->registryEntry(key)) {
         entryExistedBefore = true;
         if (auto* loadPromiseBefore = entry->loadPromise(); loadPromiseBefore && loadPromiseBefore->status() == JSPromise::Status::Pending)
             rootWasMidProcessing = entry->record() != nullptr;
         if (auto* record = entry->record()) {
-            // Node checks a cached module job before starting a new load:
-            // an async graph is rejected first, a completed job returns its
-            // namespace, and a job that is still evaluating is a cycle.
+            // Cached-job check: async graph → reject, evaluated → return, still evaluating → cycle.
             // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/loader.js#L286-L334
             if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record)) {
                 auto status = cyclic->status();
@@ -1026,11 +1008,8 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         }
     }
 
-    // Run the loader pipeline in two phases (load, then link+evaluate) with
-    // the synchronous-queue diversion active, so the graph can be inspected
-    // for top-level await and cycles after it is fully fetched and parsed but
-    // before any module body runs — the point where Node performs the same
-    // checks.
+    // Two-phase (load, then link+evaluate) under the synchronous-queue diversion, so TLA/cycle
+    // checks run after parse but before any body — where Node's runSync checks them.
     JSC::VM::SynchronousModuleQueue queue;
     queue.prev = vm.m_synchronousModuleQueue;
     vm.m_synchronousModuleQueue = &queue;
@@ -1038,12 +1017,8 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         vm.m_synchronousModuleQueue = queue.prev;
     });
 
-    // The outer (async) pipeline may have started fetching this module on the
-    // transpiler pool. loadModule would chain on that still-pending fetch
-    // promise, which cannot settle without yielding to the event loop. Force
-    // the fetch through the synchronous path first, the same way the
-    // re-entrant dependency replay in JSModuleLoader::hostLoadImportedModule
-    // does.
+    // An outer async fetch may be pending on the transpiler pool; force a synchronous fetch first
+    // (same as JSModuleLoader::hostLoadImportedModule's re-entrant replay) so loadModule doesn't block.
     if (auto* fetchingEntry = loader->registryEntry(key); fetchingEntry && fetchingEntry->status() == JSC::ModuleRegistryEntry::Status::Fetching) {
         JSPromise* fetchPromise = fetchingEntry->ensureFetchPromise(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -1069,11 +1044,8 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     case JSPromise::Status::Rejected: {
         loadPromise->markAsHandled();
         JSValue error = loadPromise->result();
-        // A rejection identical to the error planted by the CommonJS
-        // synthetic-module generator means this load re-entered a CommonJS
-        // module that is still executing — a require cycle. Rewrite the
-        // message with the edge Node would report (the same error object is
-        // also what rejects any outer pipeline waiting on that module).
+        // Rejection === m_pendingRequireESMCycleError means the load re-entered an executing CJS module;
+        // rewrite its message with the edge Node would report.
         if (error && error == globalObject->m_pendingRequireESMCycleError.get()) {
             globalObject->m_pendingRequireESMCycleError.clear();
             WTF::String message;
@@ -1098,14 +1070,9 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     }
     case JSPromise::Status::Pending: {
         loadPromise->markAsHandled();
-        // The load promise can stay Pending even though the graph is fully
-        // fetched and parsed: when this require() runs inside a CommonJS
-        // module that an outer graph is loading, the requested module's
-        // per-entry load promise belongs to that suspended outer load. If the
-        // record exists, fall through and link/evaluate it directly (Node's
-        // runSync does the same for an instantiated cached job). Otherwise a
-        // fetch went asynchronous, which the synchronous pipeline cannot wait
-        // for.
+        // Pending but record exists: its load promise belongs to a suspended outer load — fall through
+        // and link/evaluate directly (as Node's runSync does for an instantiated cached job). No record
+        // means a fetch went truly asynchronous.
         auto* pendingEntry = loader->registryEntry(key);
         if (pendingEntry && pendingEntry->record())
             break;
@@ -1153,13 +1120,9 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
             }
             case JSPromise::Status::Pending: {
                 evaluatePromise->markAsHandled();
-                // The evaluate promise stays Pending when this module shares an
-                // SCC with an outer module that is still Evaluating. For a
-                // non-TLA record whose status is exactly Evaluating, the body
-                // already ran synchronously; only the status flip waits on the
-                // SCC root. Treat that as success — the namespace is fully
-                // populated. (The graph was checked for top-level await above,
-                // so an async graph can no longer reach this point.)
+                // Pending = shares an SCC with a still-Evaluating outer module; for a non-TLA record in
+                // Evaluating, the body already ran — only the status flip waits on the SCC root, so treat
+                // as success. (TLA was ruled out above.)
                 if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record)) {
                     auto status = cyclic->status();
                     if ((status == JSC::CyclicModuleRecord::Status::Evaluating || status == JSC::CyclicModuleRecord::Status::Evaluated) && !cyclic->hasTLA() && !cyclic->evaluationError())
@@ -1175,12 +1138,8 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         }
     }
 
-    // evaluationError() still surfaces a real throw from the module body, and
-    // we deliberately do NOT gate on CyclicModuleRecord::status() here: when
-    // require(esm) is called from inside an outer ESM graph that is itself
-    // mid-evaluation (a CJS shim imported by an ESM entry), the inner record's
-    // body has already run but its status only flips to Evaluated once the SCC
-    // root settles.
+    // Do NOT gate on status() here: inside an outer mid-evaluation ESM graph, the body has run but
+    // status flips to Evaluated only once the SCC root settles. evaluationError() surfaces real throws.
     if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record)) {
         if (JSValue error = cyclic->evaluationError()) {
             scope.throwException(globalObject, error);

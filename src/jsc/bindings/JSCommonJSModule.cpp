@@ -165,10 +165,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         globalObject->putDirect(vm, Identifier::fromString(vm, "__filename"_s), filename, 0);
         globalObject->putDirect(vm, Identifier::fromString(vm, "__dirname"_s), dirname, 0);
 
-        // The 3-arg JSC::evaluate overload catches the exception into a
-        // discarded NakedPtr (Completion.h), so a require() failure or any
-        // throw in an eval-entry body would vanish and the process would
-        // exit 0 silently. Use the out-param overload and rethrow.
+        // 3-arg JSC::evaluate discards the exception (Completion.h); use the out-param overload and rethrow.
         WTF::NakedPtr<JSC::Exception> returnedException;
         moduleObject->isExecuting = true;
         auto clearExecuting = WTF::makeScopeExit([&] { moduleObject->isExecuting = false; });
@@ -229,10 +226,6 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     // Clear the source code as early as possible.
     code = {};
 
-    // Call the CommonJS module wrapper function.
-    //
-    //    fn(exports, require, module, __filename, __dirname) { /* code */ }(exports, require, module, __filename, __dirname)
-    //
     moduleObject->isExecuting = true;
     auto clearExecuting = WTF::makeScopeExit([&] { moduleObject->isExecuting = false; });
     JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
@@ -244,11 +237,8 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (this->hasEvaluated || this->sourceCode.isNull()) {
-        // A module with no source code that never evaluated is a require(esm)
-        // wrapper. If the underlying ES module is still mid-evaluation, this
-        // cache hit is a require() re-entering an ESM higher up the stack.
-        // Node rejects that instead of handing out a half-initialized
-        // namespace (bindings may still be in TDZ):
+        // No-source + never-evaluated = require(esm) wrapper; a cache hit while its ESM is mid-evaluation
+        // is a cycle and must throw, not return a TDZ namespace.
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L1035-L1043
         if (!this->hasEvaluated && this->sourceCode.isNull()) {
             if (JSString* idString = m_id.get()) {
@@ -259,10 +249,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
                 if (entry) {
                     if (auto* record = dynamicDowncast<JSC::JSModuleRecord>(entry->record())) {
                         auto status = record->status();
-                        // Node throws for any require(esm) wrapper whose module
-                        // has not finished evaluating — including one whose
-                        // graph is still loading, since a cache hit at that
-                        // point can only come from re-entering the require.
+                        // Any status != Evaluated here is only reachable by re-entering the require; Node throws.
                         if (status != JSC::CyclicModuleRecord::Status::Evaluated) {
                             WTF::StringBuilder message;
                             message.append("Cannot require() ES Module "_s);
@@ -368,10 +355,7 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
 
     RETURN_IF_EXCEPTION(scope, {});
 
-    // This function is not bound with the module object. This is because nearly
-    // no one uses this and it is not worth creating an extra bound function for
-    // every single module. Instead, we can unwrap the bound function that we
-    // can see through the `this`.
+    // Not bound to the module (rarely used, not worth a per-module bound fn); unwrap via `this` instead.
     JSValue thisValue = callframe->thisValue();
     auto* requireResolveBound = dynamicDowncast<JSC::JSBoundFunction>(thisValue);
     if (!requireResolveBound) [[unlikely]] {
@@ -1023,34 +1007,9 @@ void populateESMExports(
     auto& vm = JSC::getVM(globalObject);
     const Identifier& esModuleMarker = vm.propertyNames->__esModule;
 
-    // Bun's interpretation of the "__esModule" annotation:
-    //
-    //   - If a "default" export does not exist OR the __esModule annotation is not present, then we
-    //   set the default export to the exports object
-    //
-    //   - If a "default" export also exists, then we set the default export
-    //   to the value of it (matching Babel behavior)
-    //
-    // https://stackoverflow.com/questions/50943704/whats-the-purpose-of-object-definepropertyexports-esmodule-value-0
-    // https://github.com/nodejs/node/issues/40891
-    // https://github.com/evanw/bundler-esm-cjs-tests
-    // https://github.com/evanw/esbuild/issues/1591
-    // https://github.com/oven-sh/bun/issues/3383
-    //
-    // Note that this interpretation is slightly different
-    //
-    //    -  We do not ignore when "type": "module" or when the file
-    //       extension is ".mjs". Build tools determine that based on the
-    //       caller's behavior, but in a JS runtime, there is only one ModuleNamespaceObject.
-    //
-    //       It would be possible to match the behavior at runtime, but
-    //       it would need further engine changes which do not match the ES Module spec
-    //
-    //   -   We ignore the value of the annotation. We only look for the
-    //       existence of the value being set. This is for performance reasons, but also
-    //       this annotation is meant for tooling and the only usages of setting
-    //       it to something that does NOT evaluate to "true" I could find were in
-    //       unit tests of build tools. Happy to revisit this if users file an issue.
+    // __esModule: if absent or no "default" export, default = exports object; else keep Babel's default.
+    // Bun differs from bundlers: not ignored for .mjs / "type":"module", and only presence is checked.
+    // https://github.com/nodejs/node/issues/40891 https://github.com/evanw/esbuild/issues/1591 https://github.com/oven-sh/bun/issues/3383
     bool needsToAssignDefault = true;
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1622,15 +1581,8 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
 
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
-                        // A generation request while this module's body is on the
-                        // stack means a synchronous require()-driven graph load is
-                        // trying to import a CommonJS module that has not finished
-                        // executing — a require cycle. Node rejects this during its
-                        // synchronous load; a plain (async) import instead receives
-                        // the partial exports, so only throw when the synchronous
-                        // queue is active. functionEsmLoadSync recognizes this
-                        // error by identity and rewrites the message with the
-                        // offending import edge.
+                        // Body on stack + synchronous queue active = require(esm) re-entering this CJS module (cycle);
+                        // async import() would get partial exports. functionEsmLoadSync matches this error by identity.
                         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/loader.js#L403-L414
                         if (moduleObject->isExecuting && vm.m_synchronousModuleQueue) {
                             auto* error = Bun::createError(globalObject, Bun::ErrorCode::ERR_REQUIRE_CYCLE_MODULE,

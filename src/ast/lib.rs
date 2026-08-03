@@ -3170,7 +3170,7 @@ pub fn data_store_dupe_str(bytes: &[u8]) -> &'static [u8] {
 }
 
 /// RAII scope for [`store_ast_alloc_heap`]: `enter()` on construction,
-/// `reset()` via [`Self::reset`], `exit()` on drop.
+/// `exit()` on drop.
 #[must_use = "side-arena heap lives until this guard drops"]
 pub struct StoreAstAllocHeap(());
 impl StoreAstAllocHeap {

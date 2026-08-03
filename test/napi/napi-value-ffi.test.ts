@@ -1,9 +1,9 @@
 import { spawnSync } from "bun";
-import { cc } from "bun:ffi";
+import { cc, dlopen } from "bun:ffi";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, canBuildNodeAddons, isASAN, isWindows } from "harness";
-import { join } from "path";
+import { bunEnv, bunExe, canBuildNodeAddons, isASAN, isWindows, tempDir } from "harness";
+import { join, resolve } from "path";
 
 import source from "./napi-app/ffi_addon_1.c" with { type: "file" };
 
@@ -80,6 +80,52 @@ describe.skipIf(isFFIUnavailable)("cc() bundled N-API headers", () => {
     });
     const marker = { marker: 42 };
     expect(symbols.passthrough(undefined, marker)).toBe(marker);
+  });
+});
+
+// Bun's in-tree N-API headers (src/runtime/napi) are what napi.cpp compiles
+// against and what cc() bundles for `#include <node_api.h>`. Compile a file
+// that references the Node 26 type surface directly against them so the build
+// asserts they stay in sync with upstream.
+describe.skipIf(isWindows)("in-tree N-API headers", () => {
+  it("provide the Node 26 type surface and modern NAPI_MODULE_INIT()", async () => {
+    const bunHeaders = resolve(__dirname, "../../src/runtime/napi");
+    expect(existsSync(join(bunHeaders, "node_api.h"))).toBe(true);
+
+    using dir = tempDir("napi-headers-node26", {});
+    const out = join(String(dir), "addon.node");
+    await using compile = Bun.spawn({
+      cmd: [
+        process.env.CC || "cc",
+        "-shared",
+        "-fPIC",
+        ...(process.platform === "darwin" ? ["-undefined", "dynamic_lookup"] : []),
+        `-I${bunHeaders}`,
+        "-DNODE_GYP_MODULE_NAME=addon",
+        join(__dirname, "napi-app/bundled_napi_headers_node26.c"),
+        "-o",
+        out,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([compile.stderr.text(), compile.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    // NAPI_MODULE_INIT() must emit node_api_module_get_api_version_v1 returning
+    // the NAPI_VERSION the addon was built for; dlopen it and call it.
+    const lib = dlopen(out, {
+      node_api_module_get_api_version_v1: { args: [], returns: "i32" },
+      use_node26_types: { args: ["ptr"], returns: "i32" },
+    });
+    try {
+      expect(lib.symbols.node_api_module_get_api_version_v1()).toBe(9);
+      expect(lib.symbols.use_node26_types(null)).toBe(9);
+    } finally {
+      lib.close();
+    }
   });
 });
 

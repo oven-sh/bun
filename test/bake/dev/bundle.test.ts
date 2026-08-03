@@ -912,24 +912,28 @@ devTest("client disconnect on a deferred framework route releases the RequestCon
 
     // Raw TCP so closing the socket is an unambiguous client abort.
     const sock = net.connect(dev.port, "127.0.0.1");
-    await new Promise<void>((resolve, reject) => {
-      sock.once("connect", resolve);
-      sock.once("error", reject);
-    });
-    sock.write(`GET / HTTP/1.1\r\nHost: 127.0.0.1:${dev.port}\r\nConnection: keep-alive\r\n\r\n`);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        sock.once("connect", resolve);
+        sock.once("error", reject);
+      });
+      sock.write(`GET / HTTP/1.1\r\nHost: 127.0.0.1:${dev.port}\r\nConnection: keep-alive\r\n\r\n`);
 
-    // Wait until the bundler has actually picked up gate.ts: the request has
-    // reached the server and is parked in the deferred list.
-    const deadline = Date.now() + 5_000 * WAIT_MULTIPLIER;
-    while (!fs.existsSync(entered)) {
-      if (Date.now() > deadline) throw new Error("plugin gate never entered");
-      await new Promise(r => setTimeout(r, 5));
+      // Wait until the bundler has actually picked up gate.ts: the request has
+      // reached the server and is parked in the deferred list.
+      const deadline = Date.now() + 5_000 * WAIT_MULTIPLIER;
+      while (!fs.existsSync(entered)) {
+        if (Date.now() > deadline) throw new Error("plugin gate never entered");
+        await new Promise(r => setTimeout(r, 5));
+      }
+
+      // Client goes away mid-bundle → RequestContext::on_abort runs the
+      // DeferredRequest abort callback and drops the SavedRequest.
+      sock.destroy();
+      await once(sock, "close");
+    } finally {
+      sock.destroy();
     }
-
-    // Client goes away mid-bundle → RequestContext::on_abort runs the
-    // DeferredRequest abort callback and drops the SavedRequest.
-    sock.destroy();
-    await once(sock, "close");
     // Force the server's event loop to turn so the FIN is processed (and
     // DeferredRequest::abort has run) before the plugin gate is released.
     // /_dev_server_test_set is a plain route added by the harness bootstrap,

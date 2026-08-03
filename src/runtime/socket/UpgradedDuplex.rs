@@ -229,6 +229,9 @@ impl UpgradedDuplex {
                 // Best-effort probe: consume the exception and fall through.
                 Err(err) => drop(global.take_exception(err)),
             }
+            if global.has_exception() {
+                return;
+            }
         }
 
         let name = if msg_more { "write" } else { "end" };

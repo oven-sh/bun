@@ -3601,6 +3601,9 @@ where
                         &[value],
                     )
                     .unwrap_or_else(|err| server.global_this().take_exception(err));
+                if server.global_this().has_exception() {
+                    return;
+                }
                 let _keep = jsc::EnsureStillAlive(result);
                 if !result.is_empty_or_undefined_or_null() {
                     if let Some(err) = result.to_error() {

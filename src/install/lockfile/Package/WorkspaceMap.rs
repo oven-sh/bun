@@ -23,9 +23,9 @@ type Map = StringArrayHashMap<Entry>;
 
 #[derive(Default)]
 pub struct Entry {
-    pub name: Box<[u8]>,
-    pub version: Option<Box<[u8]>>,
-    pub name_loc: bun_ast::Loc,
+    pub(crate) name: Box<[u8]>,
+    pub(crate) version: Option<Box<[u8]>>,
+    pub(crate) name_loc: bun_ast::Loc,
 }
 
 impl WorkspaceMap {
@@ -52,7 +52,7 @@ impl WorkspaceMap {
         self.map.get(key)
     }
 
-    pub(crate) fn insert(&mut self, key: &[u8], value: Entry) -> Result<(), bun_alloc::AllocError> {
+    fn insert(&mut self, key: &[u8], value: Entry) -> Result<(), bun_alloc::AllocError> {
         // No `bun.sys.exists(key)` debug check here: `key` is
         // relative to the workspace root while `exists` resolves against process
         // cwd — false positive whenever the two differ (e.g. `bun unlink` from a
@@ -415,20 +415,16 @@ impl WorkspaceMap {
 
                         // check if it's negated by any remaining patterns
                         for next_pattern in &workspace_globs[i + 1..] {
-                            match glob::r#match(next_pattern, matched_path_without_package_json) {
-                                glob::MatchResult::NoMatch
-                                | glob::MatchResult::Match
-                                | glob::MatchResult::NegateMatch => {}
-
-                                glob::MatchResult::NegateNoMatch => {
-                                    bun_output::scoped_log!(
-                                        Lockfile,
-                                        "skipping negated path: {}, {}\n",
-                                        BStr::new(matched_path_without_package_json),
-                                        BStr::new(next_pattern)
-                                    );
-                                    continue 'next_match;
-                                }
+                            let result =
+                                glob::r#match(next_pattern, matched_path_without_package_json);
+                            if result.is_negated() && !result.matches() {
+                                bun_output::scoped_log!(
+                                    Lockfile,
+                                    "skipping negated path: {}, {}\n",
+                                    BStr::new(matched_path_without_package_json),
+                                    BStr::new(next_pattern)
+                                );
+                                continue 'next_match;
                             }
                         }
                     }

@@ -21,7 +21,7 @@ bun_core::declare_scope!(h2_client, hidden);
 /// `read_buffer`. Operating on a borrowed slice lets `onData` parse
 /// straight from the socket chunk in the common case where no partial
 /// frame is carried over, saving one memcpy of every body byte.
-pub fn parse_frames(session: &mut ClientSession, buf: &[u8]) -> usize {
+pub(crate) fn parse_frames(session: &mut ClientSession, buf: &[u8]) -> usize {
     let mut consumed: usize = 0;
     loop {
         let remaining = &buf[consumed..];
@@ -82,7 +82,7 @@ const ST_MAX_CONCURRENT_STREAMS: u16 = wire::SettingsType::SETTINGS_MAX_CONCURRE
 const ST_INITIAL_WINDOW_SIZE: u16 = wire::SettingsType::SETTINGS_INITIAL_WINDOW_SIZE.0;
 const ST_MAX_FRAME_SIZE: u16 = wire::SettingsType::SETTINGS_MAX_FRAME_SIZE.0;
 
-pub(crate) fn dispatch_frame(
+fn dispatch_frame(
     session: &mut ClientSession,
     frame_type: u8,
     flags: u8,
@@ -543,7 +543,7 @@ pub(crate) fn dispatch_frame(
 
 /// Feed an orphaned (untracked-stream) header block through the HPACK
 /// decoder purely to keep the dynamic table in sync, then discard.
-pub fn decode_discard_orphan(session: &mut ClientSession) {
+pub(crate) fn decode_discard_orphan(session: &mut ClientSession) {
     let mut offset: usize = 0;
     while offset < session.orphan_header_block.len() {
         // Disjoint field borrows: `hpack` (mut) vs `orphan_header_block` (shared).
@@ -564,7 +564,7 @@ pub fn decode_discard_orphan(session: &mut ClientSession) {
 /// END_HEADERS so the dynamic table stays in sync regardless of how many
 /// HEADERS frames arrive in one read. 1xx and trailers are decoded then
 /// dropped; the final response is stored on the stream for delivery.
-pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
+pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
     // `stream.header_block.clear()` is inlined before each return below.
     let mut status: u32 = 0;
     let mut bounds: Vec<[u32; 3]> = Vec::new();
@@ -720,7 +720,7 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
     }
 }
 
-pub(crate) fn strip_padding(payload: &[u8]) -> Option<&[u8]> {
+fn strip_padding(payload: &[u8]) -> Option<&[u8]> {
     if payload.is_empty() {
         return None;
     }
@@ -775,11 +775,11 @@ pub(crate) fn is_malformed_response_field(name: &[u8]) -> bool {
 /// CR (0x0d). HPACK is length-prefixed so these would otherwise pass through
 /// verbatim, breaking the no-CR/LF invariant the HTTP/1.1 parser provides and
 /// enabling header injection when values are forwarded downstream.
-pub fn is_malformed_response_value(value: &[u8]) -> bool {
+pub(crate) fn is_malformed_response_value(value: &[u8]) -> bool {
     value.iter().any(|&c| c == 0 || c == b'\r' || c == b'\n')
 }
 
-pub fn error_code_for(err: crate::Error) -> wire::ErrorCode {
+pub(crate) fn error_code_for(err: crate::Error) -> wire::ErrorCode {
     match err {
         crate::Error::HTTP2ProtocolError => wire::ErrorCode::PROTOCOL_ERROR,
         crate::Error::HTTP2FrameSizeError => wire::ErrorCode::FRAME_SIZE_ERROR,

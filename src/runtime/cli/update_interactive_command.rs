@@ -44,7 +44,7 @@ pub(crate) struct TerminalHyperlink<'a> {
 }
 
 impl<'a> TerminalHyperlink<'a> {
-    pub(crate) fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
+    fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
         TerminalHyperlink {
             link,
             text,
@@ -110,7 +110,7 @@ struct PackageUpdate {
     workspace_path: Box<[u8]>,
 }
 
-pub(crate) struct CatalogUpdateRequest {
+struct CatalogUpdateRequest {
     // Owned copies keep the type lifetime-free (a few small allocations in
     // an interactive UI).
     package_name: Box<[u8]>,
@@ -250,8 +250,29 @@ impl UpdateInteractiveCommand {
         );
         Output::flush();
 
+        // The multi-select reads single keystrokes from raw-mode stdin. On a
+        // pipe (CI, spawn with stdio:'pipe') that either blocks forever or
+        // silently selects nothing on EOF while spraying cursor-control
+        // escapes into a non-TTY log. Refuse early, before resolving
+        // manifests. Tests that drive the UI via piped keystrokes set
+        // BUN_INTERNAL_INTERACTIVE_ASSUME_TTY=1 to bypass this.
+        if !Output::is_stdin_tty()
+            && !bun_core::env_var::feature_flag::BUN_INTERNAL_INTERACTIVE_ASSUME_TTY
+                .get()
+                .unwrap_or(false)
+        {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: <b>bun update --interactive<r> requires an interactive terminal."
+            );
+            bun_core::note!(
+                "Use <cyan>bun update<r> to update non-interactively, or <cyan>bun outdated<r> to list available updates."
+            );
+            Output::flush();
+            Global::exit(1);
+        }
+
         let cli = CommandLineArguments::parse(Subcommand::Update)?;
-        let silent = cli.silent;
+        let silent = cli.log_level.is_silent();
 
         let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Update)
         {
@@ -2222,7 +2243,7 @@ fn leak_dup(bytes: &[u8]) -> &'static [u8] {
 // No `manager` parameter: a local `Bump` is used instead
 // (`E::Object::put` ignores its allocator arg), which keeps
 // `update_catalog_definitions` borrowck-clean.
-pub(crate) fn edit_catalog_definitions(
+fn edit_catalog_definitions(
     updates: &mut [CatalogUpdateRequest],
     current_package_json: &mut Expr,
 ) -> crate::Result<()> {

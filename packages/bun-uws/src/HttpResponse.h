@@ -191,7 +191,7 @@ public:
             if (!Super::isCorked()) {
                 if (httpResponseData->shouldCloseConnection()) {
                     if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                        if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
+                        if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
                             ((AsyncSocket<SSL> *) this)->shutdown();
                             /* We need to force close after sending FIN since we want to hinder
                                 * clients from keeping to send their huge data */
@@ -257,7 +257,7 @@ public:
                 if (!Super::isCorked()) {
                     if (httpResponseData->shouldCloseConnection()) {
                         if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                            if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
+                            if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
                                 ((AsyncSocket<SSL> *) this)->shutdown();
                                 /* We need to force close after sending FIN since we want to hinder
                                 * clients from keeping to send their huge data */
@@ -861,7 +861,7 @@ public:
             HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
             if (httpResponseData->shouldCloseConnection()) {
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                    if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
+                    if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
                         ((AsyncSocket<SSL> *) this)->shutdown();
                         /* We need to force close after sending FIN since we want to hinder
                         * clients from keeping to send their huge data */

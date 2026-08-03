@@ -8,7 +8,6 @@ use crate::socket::SSLConfig;
 use crate::socket::windows_named_pipe::{Handlers as NamedPipeHandlers, WindowsNamedPipe};
 use bun_boringssl_sys as boringssl;
 use bun_core::ZStr;
-use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::Task;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, SysErrorJsc};
@@ -34,17 +33,11 @@ pub struct WindowsNamedPipeContext {
     /// client.
     pub(super) named_pipe: WindowsNamedPipe,
 
-    // task used to deinit the context in the next tick, vm is used to enqueue the task
     vm: &'static VirtualMachine,
     global_this: GlobalRef,
-    task: AnyTask,
     task_event: EventState,
     is_open: bool,
 }
-
-// Intrusive refcount: when count hits zero, calls `schedule_deinit` (NOT immediate free).
-// `ref_()`/`deref()` are provided by `#[derive(CellRefCounted)]` above.
-pub type RefCount = bun_ptr::IntrusiveRc<WindowsNamedPipeContext>;
 
 /// Reached from `on_close` → `Self::deref` while `WindowsNamedPipe::on_close`
 /// still holds a live `&mut (*this).named_pipe` and uses it after we return, so
@@ -57,7 +50,7 @@ fn schedule_deinit(this: *mut WindowsNamedPipeContext) {
         debug_assert!((*this).task_event != EventState::Deinit);
         (*this).task_event = EventState::Deinit;
         let vm = ptr::from_ref::<VirtualMachine>((*this).vm).cast_mut();
-        (*vm).enqueue_task(Task::init(ptr::addr_of_mut!((*this).task)));
+        (*vm).enqueue_task(Task::init(this));
     }
 }
 
@@ -283,8 +276,11 @@ impl WindowsNamedPipeContext {
     }
 
     #[cfg(windows)]
-    fn run_event(this: *mut Self) {
-        // SAFETY: called from AnyTask; `this` is the live ctx pointer registered in create()
+    /// # Safety
+    /// `this` is the live queued pointer; the call may free it.
+    pub(crate) unsafe fn run_event(this: *mut Self) {
+        // SAFETY: called from the `task_tag::WindowsNamedPipeContext` dispatch
+        // arm; `this` is the live ctx pointer registered in create()
         match unsafe { (*this).task_event } {
             EventState::Deinit => {
                 // SAFETY: `this` was allocated via heap::alloc in create(); refcount hit zero
@@ -313,7 +309,7 @@ impl WindowsNamedPipeContext {
         unsafe { Self::deref(this) };
     }
 
-    pub fn create(
+    pub(crate) fn create(
         global_this: &JSGlobalObject,
         socket: SocketType,
     ) -> *mut WindowsNamedPipeContext {
@@ -366,15 +362,6 @@ impl WindowsNamedPipeContext {
                 let pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());
                 WindowsNamedPipe::from(pipe, handlers, vm)
             };
-            // Build the erased AnyTask directly.
-            let task = AnyTask {
-                ctx: ptr::NonNull::new(this.cast::<c_void>()),
-                callback: |ctx| {
-                    Self::run_event(ctx.cast::<WindowsNamedPipeContext>());
-                    Ok(())
-                },
-            };
-
             // SAFETY: `this` is freshly allocated uninit storage exclusively owned here; we write
             // every field exactly once before any read.
             unsafe {
@@ -386,11 +373,13 @@ impl WindowsNamedPipeContext {
                         named_pipe,
                         vm,
                         global_this,
-                        task,
                         task_event: EventState::None,
                         is_open: false,
                     },
                 );
+                (*ptr::addr_of_mut!((*this).named_pipe))
+                    .root
+                    .set(ptr::addr_of_mut!((*this).named_pipe));
             }
 
             // Take a +1 intrusive ref so the wrapped JS socket outlives this context.
@@ -405,7 +394,7 @@ impl WindowsNamedPipeContext {
     /// `tls.createSecureContext` reaches this path with its trust store intact —
     /// on this branch `[buntls]` returns `{secureContext}` only, so `ssl_config`
     /// alone would be empty.
-    pub fn open(
+    pub(crate) fn open(
         global_this: &JSGlobalObject,
         fd: Fd,
         ssl_config: Option<SSLConfig>,
@@ -428,7 +417,7 @@ impl WindowsNamedPipeContext {
     }
 
     /// See `open` for `owned_ctx` ownership.
-    pub fn connect(
+    pub(crate) fn connect(
         global_this: &JSGlobalObject,
         path: &[u8],
         ssl_config: Option<SSLConfig>,
@@ -477,4 +466,9 @@ impl Drop for WindowsNamedPipeContext {
         );
         // `named_pipe` drops via field destructor after this.
     }
+}
+
+#[cfg(windows)]
+impl bun_event_loop::Taskable for WindowsNamedPipeContext {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WindowsNamedPipeContext;
 }

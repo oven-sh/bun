@@ -3062,6 +3062,35 @@ console.log(resolve.length)
       expectParseError("for ([...a, b] of c) {}", 'Unexpected "," after rest pattern');
     });
 
+    it("binding pattern error locations point at the operator", () => {
+      const parseErrorAt = code => {
+        try {
+          parsed(code, false, false);
+        } catch (er) {
+          const err = er instanceof AggregateError ? er.errors[0] : er;
+          return { message: err.message, offset: err.position?.offset };
+        }
+        throw new Error("Expected parse error for code\n\t" + code);
+      };
+
+      expect(parseErrorAt("((...a = 1) => {})")).toEqual({
+        message: "A rest argument cannot have a default initializer",
+        offset: "((...a ".length,
+      });
+      expect(parseErrorAt("x = 1; ([...a = 1]) => {}")).toEqual({
+        message: "A rest argument cannot have a default initializer",
+        offset: "x = 1; ([...a ".length,
+      });
+      expect(parseErrorAt("a;b;(([]) = []) => {}")).toEqual({
+        message: "Unexpected parentheses in binding pattern",
+        offset: "a;b;(".length,
+      });
+      expect(parseErrorAt("a;b;(({}) = {}) => {}")).toEqual({
+        message: "Unexpected parentheses in binding pattern",
+        offset: "a;b;(".length,
+      });
+    });
+
     it("for-in and for-of loop initializers", () => {
       // Annex B: a plain identifier "var" binding may keep its initializer in a sloppy-mode for-in
       expectPrintedNoTrim("for (var x = 1 in y) ;", "x = 1;\nfor (x in y)\n  ;\nvar x;\n");

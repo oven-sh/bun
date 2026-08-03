@@ -182,7 +182,7 @@ impl PathLike {
         }
     }
 
-    pub fn estimated_size(&self) -> usize {
+    pub(crate) fn estimated_size(&self) -> usize {
         match self {
             Self::String(s) => s.length(),
             Self::Buffer(b) => b.slice().len(),
@@ -212,14 +212,6 @@ impl PathLike {
             }
             Self::String(_) | Self::ThreadsafeString(_) | Self::EncodedSlice(_) => {}
         }
-    }
-
-    /// Consuming `to_thread_safe()`: protect any JS-backed buffer and return a
-    /// guard that unprotects on drop.
-    #[inline]
-    pub fn into_thread_safe(mut self) -> ThreadSafe<Self> {
-        self.to_thread_safe();
-        ThreadSafe::adopt(self)
     }
 }
 
@@ -278,25 +270,10 @@ impl PathOrFileDescriptorSerializeTag {
 
 impl PathOrFileDescriptor {
     #[inline]
-    pub fn slice(&self) -> &[u8] {
-        match self {
-            Self::Fd(_) => b"",
-            Self::Path(p) => p.slice(),
-        }
-    }
-
-    #[inline]
     pub fn to_thread_safe(&mut self) {
         if let Self::Path(p) = self {
             p.to_thread_safe();
         }
-    }
-
-    /// Consuming `to_thread_safe()` — see [`PathLike::into_thread_safe`].
-    #[inline]
-    pub fn into_thread_safe(mut self) -> ThreadSafe<Self> {
-        self.to_thread_safe();
-        ThreadSafe::adopt(self)
     }
 
     #[inline]
@@ -356,16 +333,6 @@ impl PathOrFileDescriptor {
         match self {
             Self::Fd(fd) => *fd,
             Self::Path(_) => unreachable!("PathOrFileDescriptor::fd() on Path variant"),
-        }
-    }
-
-    pub fn hash(&self) -> u64 {
-        match self {
-            Self::Path(path) => bun_wyhash::hash(path.slice()),
-            // `Fd` is `#[repr(transparent)]` over its backing integer (`i32`
-            // on posix, `u64` on Windows), so hashing `fd.0.to_ne_bytes()` is
-            // byte-identical to the previous raw `from_raw_parts` reinterpret.
-            Self::Fd(fd) => bun_wyhash::hash(&fd.0.to_ne_bytes()),
         }
     }
 }

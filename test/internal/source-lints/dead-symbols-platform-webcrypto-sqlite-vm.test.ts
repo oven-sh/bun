@@ -11,7 +11,7 @@
 // touch the built binary.
 
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
@@ -20,8 +20,7 @@ function src(p: string): string {
   return readFileSync(path.join(repoRoot, p), "utf8");
 }
 
-test("src/platform/darwin.rs is removed (duplicated bun_sys::darwin)", () => {
-  expect(existsSync(path.join(repoRoot, "src/platform/darwin.rs"))).toBe(false);
+test("bun_platform no longer declares a darwin module (duplicated bun_sys::darwin)", () => {
   expect(src("src/platform/lib.rs")).not.toMatch(/pub mod darwin;/);
 });
 

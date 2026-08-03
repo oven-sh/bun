@@ -4522,6 +4522,13 @@ impl<'a> Resolver<'a> {
                 // A permission-denied ancestor has no fd to enumerate; its
                 // entry set stays empty.
                 if open_dir.is_valid() {
+                    // A cached fd's cursor sits at EOF from its last iteration;
+                    // rewind or the re-read sees an empty directory. (Windows
+                    // restarts the scan per iterator via RestartScan.)
+                    #[cfg(not(windows))]
+                    if queue_top.fd.is_valid() {
+                        bun_sys::set_file_offset(open_dir, 0)?;
+                    }
                     let mut dir_iterator = bun_sys::iterate_dir(open_dir);
                     // NOTE: `WrappedIterator::next` returns
                     // `Result<Option<IteratorResult>>`, so use `?`-style break-on-error.

@@ -2520,10 +2520,7 @@ impl ThreadSafeFunction {
             return;
         }
 
-        // Node's kMaxIterationCount: yield after this many callbacks per tick.
-        const MAX_ITERATION_COUNT: u32 = 1000;
         let mut is_first = true;
-        let mut iterations: u32 = 0;
 
         // Run the tasks.
         loop {
@@ -2535,21 +2532,6 @@ impl ThreadSafeFunction {
                 self_
                     .dispatch_state
                     .store(DispatchState::Pending as u8, Ordering::SeqCst);
-                iterations += 1;
-                if iterations >= MAX_ITERATION_COUNT {
-                    // dispatch_one() may have drained the final item and already
-                    // enqueued the finalizer task (closing == Closed); a second
-                    // dispatch on that pointer would run on freed memory.
-                    if self_.closing.load(Ordering::SeqCst) == ClosingState::Closed as u8 {
-                        return;
-                    }
-                    // Flip to Idle so schedule_dispatch re-enqueues the remainder.
-                    self_
-                        .dispatch_state
-                        .store(DispatchState::Idle as u8, Ordering::SeqCst);
-                    self_.schedule_dispatch();
-                    return;
-                }
             } else {
                 // We're done running tasks, for now. Transition Running → Idle
                 // via CAS instead of an unconditional store: between
@@ -2576,6 +2558,11 @@ impl ThreadSafeFunction {
                 // state was bumped to Pending by enqueue()/release(); re-dispatch.
             }
         }
+
+        // Node sets a maximum number of runs per ThreadSafeFunction to 1,000.
+        // We don't set a max. I would like to see an issue caused by not
+        // setting a max before we do set a max. It is better for performance to
+        // not add unnecessary event loop ticks.
     }
 
     pub(crate) fn is_closing(&self) -> bool {
@@ -2779,10 +2766,9 @@ impl ThreadSafeFunction {
         (NapiStatus::ok as napi_status, false)
     }
 
-    /// Addon-thread callers must hold `lock` (they race `env_teardown` for
-    /// `event_loop`); JS-thread callers (on_dispatch yield, env_teardown) need
-    /// not. Takes only a shared `&EventLoop` because the JS thread may be
-    /// inside `tick()` with its own `&mut`.
+    /// Caller must hold `lock`. Reached from addon threads (`enqueue`,
+    /// `release_locked`), so it may only take a shared `&EventLoop`: the JS
+    /// thread can be inside `tick()` with its own `&mut` at the same time.
     fn schedule_dispatch(&mut self) {
         let prev = self
             .dispatch_state

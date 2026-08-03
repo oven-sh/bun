@@ -1403,16 +1403,6 @@ nativeTests.test_tsfn_null_js_callback_driver = async () => {
   nativeTests.test_tsfn_null_js_callback_result();
 };
 
-// Crosses the 1000-iteration dispatch cap so the TSFN yields and re-schedules.
-nativeTests.test_tsfn_many_items_driver = async () => {
-  nativeTests.test_tsfn_many_items();
-  for (let i = 0; i < 1000; i++) {
-    if (nativeTests.test_tsfn_many_items_count() >= 2000) break;
-    await new Promise(resolve => setImmediate(resolve));
-  }
-  nativeTests.test_tsfn_many_items_result();
-};
-
 // Microtasks queued by one threadsafe-function callback must be drained before
 // the next callback in the same dispatch, and not before the first one.
 nativeTests.test_threadsafe_function_microtask_order = async () => {

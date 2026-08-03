@@ -1675,8 +1675,8 @@ pub mod js_bundler {
             build_result: JSValue,
             rejection: JsResult<JSValue>,
         ) -> JsResult<JSValue>;
-        /// `this` must be a live handle previously returned by `Plugin::create`;
-        /// non-null is checked via `Plugin::opaque_ref` (panics on null).
+        /// `this` must be the non-null +1 handle returned by `Plugin::create`
+        /// (debug-asserted); the callee releases it and may free the allocation.
         fn destroy(this: *mut Plugin);
         fn global_object(&self) -> &JSGlobalObject;
         fn append_defer_promise(&mut self) -> JSValue;

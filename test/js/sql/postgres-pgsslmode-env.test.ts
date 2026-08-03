@@ -68,7 +68,7 @@ function pgEnv(port: number, extra: Record<string, string> = {}) {
   return { ...env, ...extra };
 }
 
-test("PGSSLMODE=require from the environment refuses a plaintext-only server", async () => {
+test.concurrent("PGSSLMODE=require from the environment refuses a plaintext-only server", async () => {
   const { server, port } = await plaintextOnlyServer();
   try {
     await using proc = Bun.spawn({
@@ -85,7 +85,7 @@ test("PGSSLMODE=require from the environment refuses a plaintext-only server", a
   }
 });
 
-test("PGSSLMODE=verify-full from the environment refuses a plaintext-only server", async () => {
+test.concurrent("PGSSLMODE=verify-full from the environment refuses a plaintext-only server", async () => {
   const { server, port } = await plaintextOnlyServer();
   try {
     await using proc = Bun.spawn({
@@ -102,7 +102,7 @@ test("PGSSLMODE=verify-full from the environment refuses a plaintext-only server
   }
 });
 
-test("URL ?sslmode=disable overrides PGSSLMODE=require", async () => {
+test.concurrent("URL ?sslmode=disable overrides PGSSLMODE=require", async () => {
   const { server, port } = await plaintextOnlyServer();
   try {
     await using proc = Bun.spawn({

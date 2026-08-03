@@ -219,8 +219,12 @@ JSON.parse(JSON.stringify(root.stmts[0]));
 // }
 
 visit({
-  e_binary(n) { console.log(n.op) },
-  s_function() { return false }, // skip subtree
+  e_binary(n) {
+    console.log(n.op);
+  },
+  s_function() {
+    return false;
+  }, // skip subtree
 });
 ```
 

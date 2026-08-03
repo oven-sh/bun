@@ -2646,7 +2646,12 @@ declare module "bun" {
     /** Lazy proxy over the tape; `JSON.stringify(root)` materializes the full tree. */
     root: UnstableAST;
     /** Walk every node under `root.stmts`, dispatching on `kind`; a handler returning `false` skips its subtree. */
-    visit: (visitors: { enter?: (node: UnstableASTNode) => boolean | void } & Record<string, (node: UnstableASTNode) => boolean | void>) => void;
+    visit: (
+      visitors: { enter?: (node: UnstableASTNode) => boolean | void } & Record<
+        string,
+        (node: UnstableASTNode) => boolean | void
+      >,
+    ) => void;
   }
 
   /**

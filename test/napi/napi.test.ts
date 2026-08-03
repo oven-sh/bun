@@ -955,21 +955,22 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       // A v10 addon calling napi_throw inside a teardown finalizer gets
       // napi_cannot_run_js. napi_get_last_error_info must then report a
       // non-null message (previously the error_messages table stopped at
-      // napi_would_deadlock, so callers like node-addon-api's Error::New
-      // saw error_message == nullptr).
+      // napi_would_deadlock, so error_message was left as nullptr).
       const code = `globalThis.keep = require(${JSON.stringify(
         join(__dirname, "napi-app/build/Debug/test_last_error_cannot_run_js.node"),
       )});`;
-      await using proc = spawn({
-        cmd: [bunExe(), "-e", code],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
+      const run = async (exe: string) => {
+        await using proc = spawn({ cmd: [exe, "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout: stdout.trim(), stderr, exitCode };
+      };
+      const [bun, node] = await Promise.all([run(bunExe()), run(await nodeExeMatchingAbi())]);
+      expect(bun).toEqual(node);
+      expect(bun).toEqual({
+        stdout: "napi_throw status=23 error_code=23 error_message=Cannot run JavaScript",
+        stderr: "",
+        exitCode: 0,
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout.trim()).toBe("napi_throw status=23 error_code=23 error_message=Cannot run JavaScript");
-      expect(exitCode).toBe(0);
     });
   });
 

@@ -1810,8 +1810,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
     ) -> JsTerminatedResult<()> {
         this.client_mut().socket = Self::socket(socket);
         if SSL {
-            // SNI: `tls.serverName` else the URL host (IP literals skipped per
-            // RFC 6066); `on_handshake`'s `SSL_get_servername` reads it back.
             let ssl_ptr: *mut boringssl::c::SSL = this
                 .client
                 .get()

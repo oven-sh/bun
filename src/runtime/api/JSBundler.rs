@@ -1635,7 +1635,7 @@ pub mod js_bundler {
             global: &JSGlobalObject,
             target: jsc::BunPluginTarget,
         ) -> *mut Plugin;
-        safe fn JSBundlerPlugin__tombstone(plugin: &Plugin);
+        safe fn JSBundlerPlugin__destroy(plugin: &Plugin);
         safe fn JSBundlerPlugin__runOnEndCallbacks(
             plugin: &mut Plugin,
             build_promise: JSValue,
@@ -1701,9 +1701,7 @@ pub mod js_bundler {
     impl PluginJscExt for Plugin {
         fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> *mut Plugin {
             jsc::mark_binding();
-            let plugin = JSBundlerPlugin__create(global, target);
-            JSValue::from_cell(plugin).protect();
-            plugin
+            JSBundlerPlugin__create(global, target)
         }
 
         fn run_on_end_callbacks(
@@ -1739,8 +1737,7 @@ pub mod js_bundler {
 
         fn destroy(this: *mut Plugin) {
             jsc::mark_binding();
-            JSBundlerPlugin__tombstone(Plugin::opaque_ref(this));
-            JSValue::from_cell(this).unprotect();
+            JSBundlerPlugin__destroy(Plugin::opaque_ref(this));
         }
 
         fn global_object(&self) -> &JSGlobalObject {

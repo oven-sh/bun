@@ -190,11 +190,11 @@ impl JSBundleCompletionTask {
     ///
     /// Centralises the `Option<NonNull> → Option<&mut T>` deref so callers
     /// (`to_js_error` / `on_complete_anytask`) stay safe. The plugin is a C++
-    /// `JSBundlerPlugin` opaque created by [`PluginJscExt::create`] and
-    /// `protect()`-ed for the task's lifetime; it is freed only via
-    /// `Plugin::destroy` in `deinit` *after* `take()` clears `self.plugins`.
-    /// While the field is `Some` the pointee is therefore live, pinned, and
-    /// disjoint from `*self` (separate C++-heap allocation).
+    /// `BundlerPlugin` heap allocation created by [`PluginJscExt::create`]
+    /// (which also `gcProtect`s the owning `JSBundlerPlugin` GC cell and takes
+    /// a +1 ref for this task); it is released only via `Plugin::destroy` in
+    /// `deinit` *after* `take()` clears `self.plugins`. While the field is
+    /// `Some` the pointee is therefore live, pinned, and disjoint from `*self`.
     #[inline]
     fn plugins_mut(&mut self) -> Option<&mut Plugin> {
         // SAFETY: see fn doc — C++-heap opaque, live while `self.plugins` is

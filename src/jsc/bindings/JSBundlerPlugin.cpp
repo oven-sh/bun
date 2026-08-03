@@ -26,7 +26,6 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
-#include <JavaScriptCore/YarrMatchingContextHolder.h>
 #include "ErrorCode.h"
 #include "napi_external.h"
 #include "WebCoreJSBuiltins.h"
@@ -77,7 +76,7 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
     nsGroup->append(WTF::move(filter_regexp));
 }
 
-static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, BunString* namespaceStr, BunString* path)
+static bool anyMatchesForNamespace(BundlerPlugin::NamespaceList& list, BunString* namespaceStr, BunString* path)
 {
     auto namespaceString = namespaceStr ? namespaceStr->transferToWTFString() : String();
     auto pathString = path->transferToWTFString();
@@ -94,19 +93,19 @@ static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& li
     auto& filters = *group;
 
     for (auto& filter : filters) {
-        if (filter.match(vm, pathString)) {
+        if (filter.match(pathString)) {
             return true;
         }
     }
 
     return false;
 }
-bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, BunString* namespaceStr, BunString* path, bool isOnLoad)
+bool BundlerPlugin::anyMatchesCrossThread(BunString* namespaceStr, BunString* path, bool isOnLoad)
 {
     if (isOnLoad) {
-        return anyMatchesForNamespace(vm, this->onLoad, namespaceStr, path);
+        return anyMatchesForNamespace(this->onLoad, namespaceStr, path);
     } else {
-        return anyMatchesForNamespace(vm, this->onResolve, namespaceStr, path);
+        return anyMatchesForNamespace(this->onResolve, namespaceStr, path);
     }
 }
 
@@ -162,7 +161,7 @@ public:
 
     template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
 
-    Bun::BundlerPlugin plugin;
+    Ref<Bun::BundlerPlugin> plugin;
     /// These are defined in BundlerPlugin.ts
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onLoadFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onResolveFunction;
@@ -180,9 +179,10 @@ private:
     JSBundlerPlugin(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::Structure* structure, void* config, BunPluginTarget target,
         JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
         : Base(vm, structure)
-        , plugin(BundlerPlugin(config, target, addError, onLoadAsync, onResolveAsync))
+        , plugin(BundlerPlugin::create(config, target, addError, onLoadAsync, onResolveAsync))
         , m_globalObject(global)
     {
+        plugin->setCell(this);
     }
 
     ~JSBundlerPlugin() = default;
@@ -195,8 +195,8 @@ void JSBundlerPlugin::visitAdditionalChildrenInGCThread(Visitor& visitor)
     this->onLoadFunction.visit(visitor);
     this->onResolveFunction.visit(visitor);
     this->setupFunction.visit(visitor);
-    this->plugin.deferredPromises.visit(this, visitor);
-    this->plugin.onBeforeParseExternals.visit(this, visitor);
+    this->plugin->deferredPromises.visit(this, visitor);
+    this->plugin->onBeforeParseExternals.visit(this, visitor);
 }
 
 template<typename Visitor>
@@ -225,7 +225,7 @@ const JSC::ClassInfo JSBundlerPlugin::s_info = { "BundlerPlugin"_s, &Base::s_inf
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
-    if (thisObject->plugin.tombstoned) {
+    if (thisObject->plugin->tombstoned) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
@@ -240,9 +240,9 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter, (JSC::JSGlobalObject
 
     unsigned index = 0;
     if (isOnLoad) {
-        thisObject->plugin.onLoad.append(vm, regExp->regExp(), namespaceStr, index);
+        thisObject->plugin->onLoad.append(vm, regExp->regExp(), namespaceStr, index);
     } else {
-        thisObject->plugin.onResolve.append(vm, regExp->regExp(), namespaceStr, index);
+        thisObject->plugin->onResolve.append(vm, regExp->regExp(), namespaceStr, index);
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -281,14 +281,13 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
     }
 }
 
-bool BundlerPlugin::FilterRegExp::match(JSC::VM& vm, const String& path)
+bool BundlerPlugin::FilterRegExp::match(const String& path)
 {
     WTF::Locker locker { lock };
-    Yarr::MatchingContextHolder regExpContext(vm, nullptr, Yarr::MatchFrom::CompilerThread);
     return regex.match(path) != -1;
 }
 
-int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, OnBeforeParseArguments* onBeforeParseArgs, OnBeforeParseResult* onBeforeParseResult)
+int BundlerPlugin::NativePluginList::call(BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, OnBeforeParseArguments* onBeforeParseArgs, OnBeforeParseResult* onBeforeParseResult)
 {
     unsigned index = 0;
     auto* groupPtr = this->group(namespaceStr->toWTFString(BunString::ZeroCopy), index);
@@ -311,7 +310,7 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, in
             OnBeforeParseResult__reset(onBeforeParseResult);
         }
 
-        if (filters[i].match(vm, path)) {
+        if (filters[i].match(path)) {
             Bun::NapiExternal* external = callbacks[i].external;
             ASSERT(onBeforeParseArgs != nullptr);
             if (external) {
@@ -341,7 +340,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
-    if (thisObject->plugin.tombstoned) {
+    if (thisObject->plugin->tombstoned) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
@@ -404,10 +403,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected external (3rd argument) to be a NAPI external"_s);
             return {};
         }
-        thisObject->plugin.onBeforeParseExternals.append(vm, thisObject, externalPtr);
+        thisObject->plugin->onBeforeParseExternals.append(vm, thisObject, externalPtr);
     }
 
-    thisObject->plugin.onBeforeParse.append(vm, newRegexp, namespaceStr, callback, native_plugin_name ? *native_plugin_name : nullptr, externalPtr);
+    thisObject->plugin->onBeforeParse.append(vm, newRegexp, namespaceStr, callback, native_plugin_name ? *native_plugin_name : nullptr, externalPtr);
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -415,10 +414,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addError, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
-    if (!thisObject->plugin.tombstoned) {
-        thisObject->plugin.addError(
+    if (!thisObject->plugin->tombstoned) {
+        thisObject->plugin->addError(
             UNWRAP_BUNDLER_PLUGIN(callFrame),
-            thisObject,
+            thisObject->plugin.ptr(),
             JSValue::encode(callFrame->argument(1)),
             JSValue::encode(callFrame->argument(2)));
     }
@@ -428,10 +427,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addError, (JSC::JSGlobalObject 
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
-    if (!thisObject->plugin.tombstoned) {
-        thisObject->plugin.onLoadAsync(
+    if (!thisObject->plugin->tombstoned) {
+        thisObject->plugin->onLoadAsync(
             UNWRAP_BUNDLER_PLUGIN(callFrame),
-            thisObject->plugin.config,
+            thisObject->plugin->config,
             JSValue::encode(callFrame->argument(1)),
             JSValue::encode(callFrame->argument(2)));
     }
@@ -441,10 +440,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync, (JSC::JSGlobalObje
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
-    if (!thisObject->plugin.tombstoned) {
-        thisObject->plugin.onResolveAsync(
+    if (!thisObject->plugin->tombstoned) {
+        thisObject->plugin->onResolveAsync(
             UNWRAP_BUNDLER_PLUGIN(callFrame),
-            thisObject->plugin.config,
+            thisObject->plugin->config,
             JSValue::encode(callFrame->argument(1)),
             JSValue::encode(callFrame->argument(2)),
             JSValue::encode(callFrame->argument(3)));
@@ -453,13 +452,14 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync, (JSC::JSGlobalO
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-extern "C" JSC::EncodedJSValue JSBundlerPlugin__appendDeferPromise(Bun::JSBundlerPlugin* pluginObject)
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__appendDeferPromise(Bun::BundlerPlugin* plugin)
 {
-    auto* vm = &pluginObject->vm();
-    auto* globalObject = pluginObject->globalObject();
+    auto* cell = plugin->cell();
+    auto* vm = &cell->vm();
+    auto* globalObject = cell->globalObject();
 
     JSPromise* ret = JSPromise::create(*vm, globalObject->promiseStructure());
-    pluginObject->plugin.deferredPromises.append(*vm, pluginObject, ret);
+    plugin->deferredPromises.append(*vm, cell, ret);
 
     return JSC::JSValue::encode(ret);
 }
@@ -507,16 +507,17 @@ void JSBundlerPlugin::finishCreation(JSC::VM& vm)
     reifyStaticProperties(vm, JSBundlerPlugin::info(), JSBundlerPluginHashTable, *this);
 }
 
-extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, BunString* namespaceString, BunString* path, bool isOnLoad)
+extern "C" bool JSBundlerPlugin__anyMatches(Bun::BundlerPlugin* plugin, BunString* namespaceString, BunString* path, bool isOnLoad)
 {
-    return pluginObject->plugin.anyMatchesCrossThread(pluginObject->vm(), namespaceString, path, isOnLoad);
+    return plugin->anyMatchesCrossThread(namespaceString, path, isOnLoad);
 }
 
-extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, BunString* namespaceString, BunString* path, void* context, uint8_t defaultLoaderId, bool isServerSide)
+extern "C" void JSBundlerPlugin__matchOnLoad(Bun::BundlerPlugin* plugin, BunString* namespaceString, BunString* path, void* context, uint8_t defaultLoaderId, bool isServerSide)
 {
-    JSC::JSGlobalObject* globalObject = plugin->globalObject();
+    auto* cell = plugin->cell();
+    JSC::JSGlobalObject* globalObject = cell->globalObject();
 
-    JSFunction* function = plugin->onLoadFunction.get(plugin);
+    JSFunction* function = cell->onLoadFunction.get(cell);
     if (!function) [[unlikely]]
         return;
 
@@ -525,7 +526,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, BunSt
     if (callData.type == JSC::CallData::Type::None) [[unlikely]]
         return;
 
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(plugin->vm());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(cell->vm());
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(WRAP_BUNDLER_PLUGIN(context));
     arguments.append(path->transferToJS(globalObject));
@@ -535,14 +536,14 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, BunSt
     arguments.append(JSC::jsNumber(defaultLoaderId));
     arguments.append(JSC::jsBoolean(isServerSide));
 
-    call(globalObject, function, callData, plugin, arguments);
+    call(globalObject, function, callData, cell, arguments);
 
     if (scope.exception()) [[unlikely]] {
         auto exception = scope.exception();
         (void)scope.tryClearException();
-        if (!plugin->plugin.tombstoned) {
+        if (!plugin->tombstoned) {
             // which = 1 (Load). JSBundlerPlugin__addError casts ctx based on this value.
-            plugin->plugin.addError(
+            plugin->addError(
                 context,
                 plugin,
                 JSC::JSValue::encode(exception),
@@ -551,11 +552,12 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, BunSt
     }
 }
 
-extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, BunString* namespaceString, BunString* path, BunString* importer, void* context, uint8_t kindId)
+extern "C" void JSBundlerPlugin__matchOnResolve(Bun::BundlerPlugin* plugin, BunString* namespaceString, BunString* path, BunString* importer, void* context, uint8_t kindId)
 {
-    JSC::JSGlobalObject* globalObject = plugin->globalObject();
+    auto* cell = plugin->cell();
+    JSC::JSGlobalObject* globalObject = cell->globalObject();
 
-    JSFunction* function = plugin->onResolveFunction.get(plugin);
+    JSFunction* function = cell->onResolveFunction.get(cell);
     if (!function) [[unlikely]]
         return;
 
@@ -564,7 +566,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, Bu
     if (callData.type == JSC::CallData::Type::None) [[unlikely]]
         return;
 
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(plugin->vm());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(cell->vm());
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(path->transferToJS(globalObject));
     RETURN_IF_EXCEPTION(scope, void());
@@ -575,14 +577,14 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, Bu
     arguments.append(WRAP_BUNDLER_PLUGIN(context));
     arguments.append(JSC::jsNumber(kindId));
 
-    call(globalObject, function, callData, plugin, arguments);
+    call(globalObject, function, callData, cell, arguments);
 
     if (scope.exception()) [[unlikely]] {
         auto exception = JSValue(scope.exception());
         (void)scope.tryClearException();
-        if (!plugin->plugin.tombstoned) {
+        if (!plugin->tombstoned) {
             // which = 0 (Resolve). JSBundlerPlugin__addError casts ctx based on this value.
-            plugin->plugin.addError(
+            plugin->addError(
                 context,
                 plugin,
                 JSC::JSValue::encode(exception),
@@ -592,9 +594,12 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, Bu
     }
 }
 
-extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* globalObject, BunPluginTarget target)
+// Returns the heap-allocated BundlerPlugin with a +1 ref for the caller. The owning
+// JSBundlerPlugin GC cell (which holds the other ref) is gcProtect'd here and released
+// in JSBundlerPlugin__destroy.
+extern "C" Bun::BundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* globalObject, BunPluginTarget target)
 {
-    return JSBundlerPlugin::create(
+    auto* cell = JSBundlerPlugin::create(
         globalObject->vm(),
         globalObject,
         // TODO: cache this structure on the global object
@@ -604,16 +609,27 @@ extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* glob
             globalObject->objectPrototype()),
         nullptr,
         target);
+    JSC::gcProtect(cell);
+    cell->plugin->ref();
+    return cell->plugin.ptr();
 }
 
-extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolvePluginsForServe(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedPlugins, JSC::EncodedJSValue encodedBunfigFolder)
+extern "C" void JSBundlerPlugin__destroy(Bun::BundlerPlugin* plugin)
 {
-    auto& vm = plugin->vm();
+    plugin->tombstone();
+    JSC::gcUnprotect(plugin->cell());
+    plugin->deref();
+}
+
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolvePluginsForServe(Bun::BundlerPlugin* plugin, JSC::EncodedJSValue encodedPlugins, JSC::EncodedJSValue encodedBunfigFolder)
+{
+    auto* cell = plugin->cell();
+    auto& vm = cell->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* loadAndResolvePluginsForServeBuiltinFn = JSC::JSFunction::create(vm, plugin->globalObject(), WebCore::bundlerPluginLoadAndResolvePluginsForServeCodeGenerator(vm), plugin->globalObject());
+    auto* loadAndResolvePluginsForServeBuiltinFn = JSC::JSFunction::create(vm, cell->globalObject(), WebCore::bundlerPluginLoadAndResolvePluginsForServeCodeGenerator(vm), cell->globalObject());
 
-    auto* runSetupFn = plugin->setupFunction.get(plugin);
+    auto* runSetupFn = cell->setupFunction.get(cell);
 
     JSC::CallData callData = JSC::getCallData(loadAndResolvePluginsForServeBuiltinFn);
     if (callData.type == JSC::CallData::Type::None) [[unlikely]]
@@ -624,21 +640,22 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolvePluginsForServe(Bu
     arguments.append(JSValue::decode(encodedBunfigFolder));
     arguments.append(runSetupFn);
 
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::profiledCall(plugin->globalObject(), ProfilingReason::API, loadAndResolvePluginsForServeBuiltinFn, callData, plugin, arguments)));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::profiledCall(cell->globalObject(), ProfilingReason::API, loadAndResolvePluginsForServeBuiltinFn, callData, cell, arguments)));
 }
 
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
-    Bun::JSBundlerPlugin* plugin,
+    Bun::BundlerPlugin* plugin,
     JSC::EncodedJSValue encodedSetupFunction,
     JSC::EncodedJSValue encodedConfig,
     JSC::EncodedJSValue encodedOnstartPromisesArray,
     JSC::EncodedJSValue encodedIsLast,
     JSC::EncodedJSValue encodedIsBake)
 {
-    auto& vm = plugin->vm();
+    auto* cell = plugin->cell();
+    auto& vm = cell->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* setupFunction = plugin->setupFunction.get(plugin);
+    auto* setupFunction = cell->setupFunction.get(cell);
     if (!setupFunction) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
@@ -654,25 +671,26 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     arguments.append(JSValue::decode(encodedIsBake));
     auto* lexicalGlobalObject = uncheckedDowncast<JSFunction>(JSValue::decode(encodedSetupFunction))->globalObject();
 
-    auto result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, setupFunction, callData, plugin, arguments);
+    auto result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, setupFunction, callData, cell, arguments);
     RETURN_IF_EXCEPTION(scope, {}); // should be able to use RELEASE_AND_RETURN, no? observed it returning undefined with exception active
 
     return JSValue::encode(result);
 }
 
-extern "C" void JSBundlerPlugin__setConfig(Bun::JSBundlerPlugin* plugin, void* config)
+extern "C" void JSBundlerPlugin__setConfig(Bun::BundlerPlugin* plugin, void* config)
 {
-    plugin->plugin.config = config;
+    plugin->config = config;
 }
 
-extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObject, bool rejected)
+extern "C" void JSBundlerPlugin__drainDeferred(Bun::BundlerPlugin* plugin, bool rejected)
 {
-    auto* globalObject = pluginObject->globalObject();
+    auto* cell = plugin->cell();
+    auto* globalObject = cell->globalObject();
     MarkedArgumentBuffer arguments;
-    pluginObject->plugin.deferredPromises.drainTo(pluginObject, arguments);
+    plugin->deferredPromises.drainTo(cell, arguments);
     ASSERT(!arguments.hasOverflowed());
 
-    auto& vm = pluginObject->vm();
+    auto& vm = cell->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     for (auto promiseValue : arguments) {
         JSPromise* promise = uncheckedDowncast<JSPromise>(promiseValue);
@@ -686,16 +704,12 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
     RETURN_IF_EXCEPTION(scope, );
 }
 
-extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::BundlerPlugin* plugin, JSC::EncodedJSValue encodedBuildPromise, JSC::EncodedJSValue encodedBuildResult, JSC::EncodedJSValue encodedRejection)
 {
-    plugin->plugin.tombstone();
-}
-
-extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedBuildPromise, JSC::EncodedJSValue encodedBuildResult, JSC::EncodedJSValue encodedRejection)
-{
-    auto& vm = plugin->vm();
+    auto* cell = plugin->cell();
+    auto& vm = cell->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = plugin->globalObject();
+    auto* globalObject = cell->globalObject();
 
     // TODO: have a prototype for JSBundlerPlugin that this is put on instead of re-creating the function on each usage
     auto* runOnEndCallbacksFn = JSC::JSFunction::create(vm, globalObject,
@@ -713,14 +727,14 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundler
 
     // TODO: use AsyncContextFrame?
     auto result
-        = JSC::profiledCall(globalObject, ProfilingReason::API, runOnEndCallbacksFn, callData, plugin, arguments);
+        = JSC::profiledCall(globalObject, ProfilingReason::API, runOnEndCallbacksFn, callData, cell, arguments);
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(result);
 }
 
 extern "C" int JSBundlerPlugin__callOnBeforeParsePlugins(
-    Bun::JSBundlerPlugin* plugin,
+    Bun::BundlerPlugin* plugin,
     void* bunContextPtr,
     const BunString* namespaceStr,
     const BunString* pathString,
@@ -728,17 +742,17 @@ extern "C" int JSBundlerPlugin__callOnBeforeParsePlugins(
     OnBeforeParseResult* onBeforeParseResult,
     int* shouldContinue)
 {
-    return plugin->plugin.onBeforeParse.call(plugin->vm(), &plugin->plugin, shouldContinue, bunContextPtr, namespaceStr, pathString, onBeforeParseArgs, onBeforeParseResult);
+    return plugin->onBeforeParse.call(plugin, shouldContinue, bunContextPtr, namespaceStr, pathString, onBeforeParseArgs, onBeforeParseResult);
 }
 
-extern "C" int JSBundlerPlugin__hasOnBeforeParsePlugins(Bun::JSBundlerPlugin* plugin)
+extern "C" int JSBundlerPlugin__hasOnBeforeParsePlugins(Bun::BundlerPlugin* plugin)
 {
-    return plugin->plugin.onBeforeParse.namespaceCallbacks.size() > 0 || plugin->plugin.onBeforeParse.fileCallbacks.size() > 0;
+    return plugin->onBeforeParse.namespaceCallbacks.size() > 0 || plugin->onBeforeParse.fileCallbacks.size() > 0;
 }
 
-extern "C" JSC::JSGlobalObject* JSBundlerPlugin__globalObject(Bun::JSBundlerPlugin* plugin)
+extern "C" JSC::JSGlobalObject* JSBundlerPlugin__globalObject(Bun::BundlerPlugin* plugin)
 {
-    return plugin->m_globalObject;
+    return plugin->cell()->m_globalObject;
 }
 
 } // namespace Bun

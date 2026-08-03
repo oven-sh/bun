@@ -7,6 +7,7 @@
 #include <JavaScriptCore/RegularExpression.h>
 #include "napi_external.h"
 #include <JavaScriptCore/Yarr.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include "WriteBarrierList.h"
 
 typedef void (*JSBundlerPluginAddErrorCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
@@ -18,7 +19,13 @@ namespace Bun {
 
 using namespace JSC;
 
-class BundlerPlugin final {
+class JSBundlerPlugin;
+
+// Heap-allocated and ref-counted separately from the JSBundlerPlugin GC cell so the
+// bundle thread can read filter lists after a Worker's VM (and its JSC heap) is torn
+// down. The owning JSBundlerPlugin cell holds one ref; the Rust-side Plugin handle
+// holds another.
+class BundlerPlugin final : public ThreadSafeRefCounted<BundlerPlugin> {
 public:
     /// In native plugins, the regular expression could be called concurrently on multiple threads.
     /// Therefore, we need a mutex to synchronize access.
@@ -41,7 +48,7 @@ public:
         {
         }
 
-        bool match(JSC::VM& vm, const String& path);
+        bool match(const String& path);
     };
 
     class NamespaceList {
@@ -95,7 +102,7 @@ public:
         PerNamespaceCallbackList fileCallbacks = {};
         Vector<PerNamespaceCallbackList> namespaceCallbacks = {};
 
-        int call(JSC::VM& vm, BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, OnBeforeParseArguments* onBeforeParseArgs, OnBeforeParseResult* onBeforeParseResult);
+        int call(BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, OnBeforeParseArguments* onBeforeParseArgs, OnBeforeParseResult* onBeforeParseResult);
         void append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback, const char* name, NapiExternal* external);
 
         Vector<FilterRegExp>* group(const String& namespaceStr, unsigned& index)
@@ -118,17 +125,16 @@ public:
     };
 
 public:
-    bool anyMatchesCrossThread(JSC::VM&, BunString* namespaceStr, BunString* path, bool isOnLoad);
+    static Ref<BundlerPlugin> create(void* config, BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
+    {
+        return adoptRef(*new BundlerPlugin(config, target, addError, onLoadAsync, onResolveAsync));
+    }
+
+    bool anyMatchesCrossThread(BunString* namespaceStr, BunString* path, bool isOnLoad);
     void tombstone() { tombstoned = true; }
 
-    BundlerPlugin(void* config, BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
-        : addError(addError)
-        , onLoadAsync(onLoadAsync)
-        , onResolveAsync(onResolveAsync)
-    {
-        this->target = target;
-        this->config = config;
-    }
+    JSBundlerPlugin* cell() const { return m_cell; }
+    void setCell(JSBundlerPlugin* cell) { m_cell = cell; }
 
     NamespaceList onLoad = {};
     NamespaceList onResolve = {};
@@ -145,6 +151,19 @@ public:
     JSBundlerPluginOnResolveAsyncCallback onResolveAsync;
     void* config { nullptr };
     bool tombstoned { false };
+
+private:
+    BundlerPlugin(void* config, BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
+        : addError(addError)
+        , onLoadAsync(onLoadAsync)
+        , onResolveAsync(onResolveAsync)
+    {
+        this->target = target;
+        this->config = config;
+    }
+
+    // Back-pointer into the owning VM's GC heap. Only dereferenced on the JS thread.
+    JSBundlerPlugin* m_cell { nullptr };
 };
 
 } // namespace Zig

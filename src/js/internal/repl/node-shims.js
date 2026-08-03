@@ -1,7 +1,5 @@
-// Consolidated shims for Node.js internal modules consumed by the ported
-// node:repl / internal/readline stack. Each export matches the name and
-// calling convention of the Node internal it replaces; implementations
-// delegate to Bun equivalents.
+// Shims for Node.js internals consumed by the ported node:repl / internal/readline stack.
+// Exports match the Node internal's name/signature; implementations delegate to Bun equivalents.
 const util = require("node:util");
 const Module = require("node:module");
 const path = require("node:path");
@@ -24,11 +22,9 @@ const {
 
 const { kEmptyObject } = require("internal/shared");
 
-// Node's real implementation reconstructs the regex in an internal realm so a
-// tampered `RegExp.prototype[Symbol.replace]` can't observe it. Bun has no
-// internal realm; the load-time-captured intrinsics close the `[Symbol.*]`
-// override hole (a tampered `RegExp.prototype.exec` is still observable per
-// spec — see `@@replace`/`@@split` `Get(rx,"exec")`).
+// Node reconstructs the regex in an internal realm; Bun lacks one, so load-time-captured
+// intrinsics close the `[Symbol.*]` override hole (tampered `.exec` still observable per spec).
+// https://github.com/nodejs/node/blob/main/lib/internal/util.js
 function SideEffectFreeRegExpPrototypeSymbolReplace(regexp, str, replacement) {
   return RegExpPrototypeSymbolReplace(regexp, str, replacement);
 }
@@ -323,11 +319,8 @@ class CJSModuleShim {
 // ---- internalBinding('contextify') ----------------------------------------------
 
 function startSigintWatchdog() {
-  // breakOnSigint interruption of synchronous eval WORKS via Bun's own
-  // SigintWatcher (wired in NodeVMScript.cpp). Only Node's `had_pending_
-  // signals` race — SIGINT landing after the script exits but before raw mode
-  // is restored — is unimplemented, so stopSigintWatchdog() always reports no
-  // pending signal.
+  // breakOnSigint works via Bun's SigintWatcher (NodeVMScript.cpp). Only Node's
+  // `had_pending_signals` post-script race is unimplemented, so stopSigintWatchdog() returns false.
   return true;
 }
 
@@ -374,10 +367,8 @@ function getOwnNonIndexProperties(obj, filter = ALL_PROPERTIES) {
 }
 
 // ---- process.addUncaughtExceptionCaptureCallback polyfill ----------------
-// Bun only implements the single-callback set/clear API; emulate Node's
-// additive API with a dispatcher list. The shim occupies the exclusive slot
-// for the process lifetime once the first REPL starts — see repl.js
-// setupExceptionCapture() for the rationale.
+// Bun only implements the single-callback set/clear API; emulate Node's additive API with a
+// dispatcher list that occupies the exclusive slot once the first REPL starts.
 
 let captureCallbacks = null;
 
@@ -402,10 +393,8 @@ function addUncaughtExceptionCaptureCallback(cb) {
         process.exit(1);
       });
     } catch {
-      // A user capture callback already occupies the exclusive slot. Node's
-      // additive API coexists with it natively; without that engine support,
-      // defer to the user's callback and don't push (the dispatcher isn't
-      // wired, so a queued cb would never fire).
+      // A user capture callback already occupies the exclusive slot; without native additive
+      // support, defer to it and don't push (the dispatcher isn't wired).
       return;
     }
   }

@@ -1064,11 +1064,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             bun_options_types::offline_mode::OfflineMode::Online
         });
 
-        // `-i` that will reach the REPL carries node's --interactive meaning,
-        // so both REPL spellings keep the resolver options bunfig/defaults
-        // produced instead of --install=fallback. Mirrors the exec_node_repl
-        // dispatch in mod.rs: interactive, not --print, and no run target
-        // (RunCommand's positionals carry a leading "run").
+        // `-i` that reaches the REPL means node's --interactive, not --install=fallback; keep
+        // bunfig/default resolver options. Mirrors exec_node_repl in mod.rs: interactive, no
+        // --print, no run target (RunCommand positionals carry a leading "run").
         let repl_no_target = match cmd {
             CommandTag::AutoCommand => ctx.positionals.is_empty(),
             CommandTag::RunCommand => match ctx.positionals.as_slice() {
@@ -1137,12 +1135,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                     Global::exit(9);
                 }
             }
-            // Node applies --input-type to -e/-p/STDIN string input. Bun's
-            // eval grammar accepts ESM and CJS in the same source, so every
-            // valid spelling's requested parse semantics are already
-            // satisfied; accept them. A file entry point ignores the option
-            // and the REPL rejects it (src/js/eval/node-repl.ts), both like
-            // node.
+            // Node applies --input-type to -e/-p/STDIN; Bun's eval accepts ESM+CJS in one source,
+            // so every valid value is already satisfied. File entrypoints ignore it and the REPL
+            // rejects it (src/js/eval/node-repl.ts), both matching node.
         }
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");

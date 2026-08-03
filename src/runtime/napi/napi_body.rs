@@ -2045,6 +2045,10 @@ extern "C" fn napi_get_buffer_info(
     let Some(array_buf) = value.as_array_buffer(env.to_js()) else {
         return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);
     };
+    // node::Buffer::HasInstance is IsArrayBufferView: reject a bare ArrayBuffer.
+    if array_buf.typed_array_type == jsc::JSType::ArrayBuffer {
+        return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);
+    }
 
     write_out(data, array_buf.ptr);
     write_out(length, array_buf.byte_len);
@@ -2520,7 +2524,10 @@ impl ThreadSafeFunction {
             return;
         }
 
+        // Node's kMaxIterationCount: yield after this many callbacks per tick.
+        const MAX_ITERATION_COUNT: u32 = 1000;
         let mut is_first = true;
+        let mut iterations: u32 = 0;
 
         // Run the tasks.
         loop {
@@ -2532,6 +2539,21 @@ impl ThreadSafeFunction {
                 self_
                     .dispatch_state
                     .store(DispatchState::Pending as u8, Ordering::SeqCst);
+                iterations += 1;
+                if iterations >= MAX_ITERATION_COUNT {
+                    // dispatch_one() may have drained the final item and already
+                    // enqueued the finalizer task (closing == Closed); a second
+                    // dispatch on that pointer would run on freed memory.
+                    if self_.closing.load(Ordering::SeqCst) == ClosingState::Closed as u8 {
+                        return;
+                    }
+                    // Flip to Idle so schedule_dispatch re-enqueues the remainder.
+                    self_
+                        .dispatch_state
+                        .store(DispatchState::Idle as u8, Ordering::SeqCst);
+                    self_.schedule_dispatch();
+                    return;
+                }
             } else {
                 // We're done running tasks, for now. Transition Running → Idle
                 // via CAS instead of an unconditional store: between
@@ -2558,11 +2580,6 @@ impl ThreadSafeFunction {
                 // state was bumped to Pending by enqueue()/release(); re-dispatch.
             }
         }
-
-        // Node sets a maximum number of runs per ThreadSafeFunction to 1,000.
-        // We don't set a max. I would like to see an issue caused by not
-        // setting a max before we do set a max. It is better for performance to
-        // not add unnecessary event loop ticks.
     }
 
     pub(crate) fn is_closing(&self) -> bool {
@@ -2691,17 +2708,15 @@ impl ThreadSafeFunction {
                 js: cb_js,
                 napi_threadsafe_function_call_js,
             } => {
-                let js: JSValue = cb_js.get().unwrap_or(JSValue::UNDEFINED);
-
                 // SAFETY: `env` is held alive by `self.env` (`NapiEnvRef`) for the TSF's lifetime.
                 let env_ref = unsafe { &*env };
                 let _hs = NapiHandleScope::open_scoped(env_ref);
-                napi_threadsafe_function_call_js(
-                    env,
-                    napi_value::create(env_ref, js),
-                    self.ctx,
-                    task,
-                );
+                // No func at creation => null js_callback (Node), not encoded undefined.
+                let js = match cb_js.get() {
+                    Some(v) => napi_value::create(env_ref, v),
+                    None => napi_value(0),
+                };
+                napi_threadsafe_function_call_js(env, js, self.ctx, task);
             }
         }
         Ok(())
@@ -2768,9 +2783,10 @@ impl ThreadSafeFunction {
         (NapiStatus::ok as napi_status, false)
     }
 
-    /// Caller must hold `lock`. Reached from addon threads (`enqueue`,
-    /// `release_locked`), so it may only take a shared `&EventLoop`: the JS
-    /// thread can be inside `tick()` with its own `&mut` at the same time.
+    /// Addon-thread callers must hold `lock` (they race `env_teardown` for
+    /// `event_loop`); JS-thread callers (on_dispatch yield, env_teardown) need
+    /// not. Takes only a shared `&EventLoop` because the JS thread may be
+    /// inside `tick()` with its own `&mut`.
     fn schedule_dispatch(&mut self) {
         let prev = self
             .dispatch_state

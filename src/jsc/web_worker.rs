@@ -972,11 +972,9 @@ impl WebWorker {
             VirtualMachine::set_is_main_thread_vm(false);
             vm_ref.on_unhandled_rejection = on_unhandled_rejection;
 
-            // `--watch` restarts the whole process, so worker-loaded modules
-            // must trigger it too: share the process-lifetime watcher with the
-            // worker VM (`add_file` is watcher-mutex serialized). `--hot`
-            // reloads modules in-place on the main thread only; keep workers
-            // out of it.
+            // `--watch` restarts the whole process, so share the process-lifetime
+            // watcher with worker VMs (`add_file` is watcher-mutex serialized).
+            // `--hot` reloads in-place on the main thread only; workers stay out.
             let parent_watcher = parent.bun_watcher;
             if !parent_watcher.is_null()
                 // SAFETY: set once during main-VM startup before any worker

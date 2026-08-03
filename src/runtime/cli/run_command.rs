@@ -1644,12 +1644,9 @@ impl Run {
                 vm.on_before_exit();
                 vm.report_exception_in_hot_reloaded_module_if_needed();
                 if !printed_watch_idle && !vm.is_event_loop_alive() {
-                    // Rejections that settled on the last turn are normally
-                    // reported after the run loop (non-watch path); report
-                    // them now so they decide Failed vs Completed — node's
-                    // child exits 1 on an unhandled rejection. A user
-                    // `unhandledRejection` listener may schedule work; if so,
-                    // the loop is alive again and the print waits.
+                    // Report last-turn rejections now so they decide Failed vs
+                    // Completed (node's child exits 1 on unhandled rejection). If a
+                    // listener schedules work the loop is alive again; print waits.
                     vm.global().handle_rejected_promises();
                     if !vm.is_event_loop_alive() {
                         printed_watch_idle = true;

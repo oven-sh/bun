@@ -446,12 +446,9 @@ fn flush_changed_paths_for_reload() {
 
 // ── node-parity `--watch` status messages ─────────────────────────────────
 
-/// `util.inspect(process.argv.slice(1).join(' '))` equivalent shown in node's
-/// watch-mode messages (lib/internal/main/watch_mode.js `kCommandStr`): the
-/// entry as typed on the command line plus the script's own args. Set once
-/// from `run_command` when `--watch` starts the reloader; left unset for
-/// `--hot`, `bun build --watch` and `bun test --watch`, which keep their
-/// existing quiet output.
+/// Node's `kCommandStr`: `util.inspect(process.argv.slice(1).join(' '))`. Set by
+/// `run_command` for `--watch` only (unset for `--hot`/`build --watch`/`test --watch`).
+/// https://github.com/nodejs/node/blob/main/lib/internal/main/watch_mode.js
 static WATCH_COMMAND_DISPLAY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 /// A watcher-triggered reload can race the JS thread (kill-signal path) with
@@ -483,10 +480,8 @@ fn watch_message_color(color: &'static str) -> [&'static str; 2] {
     }
 }
 
-/// `util.inspect` string quoting (node lib/internal/util/inspect.js
-/// `strEscape`): single quotes unless the string contains one (then double
-/// quotes, then backticks); backslash, the quote char, C0 controls and
-/// U+007F..U+009F escaped, `\xNN` in uppercase hex.
+/// `util.inspect` string quoting — node `strEscape`:
+/// https://github.com/nodejs/node/blob/main/lib/internal/util/inspect.js
 fn node_inspect_quote(s: &str) -> String {
     let has_single = s.contains('\'');
     let has_double = s.contains('"');
@@ -530,10 +525,9 @@ fn node_inspect_quote(s: &str) -> String {
     out
 }
 
-/// node watch_mode.js `restart()`: clear the screen, then `Restarting <cmd>`
-/// (green) on stdout. Returns the clear flag `reload_process` should receive
-/// — when the message is printed, the clear already happened here so the
-/// message stays visible (node's ordering).
+/// Node watch_mode.js `restart()`: clear screen, then green `Restarting <cmd>`.
+/// Returns the clear flag for `reload_process` (false once we've cleared here).
+/// https://github.com/nodejs/node/blob/main/lib/internal/main/watch_mode.js
 pub fn print_watch_restart_message(clear_screen: bool) -> bool {
     let Some(cmd) = WATCH_COMMAND_DISPLAY.get() else {
         return clear_screen;
@@ -551,10 +545,9 @@ pub fn print_watch_restart_message(clear_screen: bool) -> bool {
     false
 }
 
-/// node watch_mode.js child-exit handler: `Completed running <cmd>. Waiting
-/// for file changes before restarting...` (blue) on exit code 0, `Failed
-/// running …` (red) otherwise. Called from `run_command`'s watch loop when
-/// the event loop drains.
+/// Node watch_mode.js child-exit message: blue `Completed running …` on exit 0,
+/// red `Failed running …` otherwise. Called when the watch run-loop drains.
+/// https://github.com/nodejs/node/blob/main/lib/internal/main/watch_mode.js
 pub fn print_watch_idle_message(failed: bool) {
     let Some(cmd) = WATCH_COMMAND_DISPLAY.get() else {
         return;

@@ -3612,10 +3612,9 @@ impl VirtualMachine {
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
     pub(crate) fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
         if self.hot_reload == HOT_RELOAD_WATCH {
-            // Watch reload replaces the process: never defer on a pending
-            // entry promise (node restarts regardless of child state), and
-            // emit the --watch-kill-signal JS handlers first, like node
-            // (which prints `Restarting` before killing the child).
+            // Watch reload replaces the process (never defer on a pending entry
+            // promise). Node prints `Restarting` then kills the child:
+            // https://github.com/nodejs/node/blob/main/lib/internal/main/watch_mode.js
             let should_clear_terminal =
                 !self.env_loader().has_set_no_clear_terminal_on_reload(
                     !bun_core::Output::enable_ansi_colors_stdout(),

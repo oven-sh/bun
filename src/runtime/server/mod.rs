@@ -555,6 +555,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `Finalized` means the slots are gone and the `config` shadows may point
     /// at freed cells. Dispatch trampolines answer 503+close on `None`.
     pub(crate) fn js_value_for_dispatch(&self) -> Option<JSValue> {
+        if self.vm().script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
+            return None;
+        }
         self.js_value.try_get()
     }
 }

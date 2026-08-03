@@ -215,7 +215,7 @@ impl Handlers {
 
     pub(crate) fn resolve_promise(&self, value: JSValue) -> JsResult<()> {
         let vm = self.vm;
-        if vm.is_shutting_down() {
+        if vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
             return Ok(());
         }
 
@@ -231,7 +231,7 @@ impl Handlers {
 
     pub(crate) fn reject_promise(&self, value: JSValue) -> JsResult<bool> {
         let vm = self.vm;
-        if vm.is_shutting_down() {
+        if vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
             return Ok(true);
         }
 
@@ -277,7 +277,7 @@ impl Handlers {
 
     pub(crate) fn call_error_handler(&self, this_value: JSValue, args: &[JSValue; 2]) -> bool {
         let vm = self.vm;
-        if vm.is_shutting_down() {
+        if vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
             return false;
         }
 

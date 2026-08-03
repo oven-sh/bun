@@ -1713,7 +1713,8 @@ impl WindowsNamedPipeListeningContext {
         // SAFETY: `this` is the `data` pointer libuv hands back; it was set to a
         // live heap `WindowsNamedPipeListeningContext` in `listen_named_pipe`.
         let this_ref = unsafe { &mut *this };
-        let shutting_down = this_ref.vm.is_shutting_down();
+        let shutting_down =
+            this_ref.vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running;
         if status != uv::ReturnCode::ZERO || shutting_down || this_ref.listener.is_none() {
             // connection dropped or vm is shutting down or we are deiniting/closing
             return;
@@ -1915,7 +1916,7 @@ pub(crate) extern "C" fn us_dispatch_socket_server_name(
         return core::ptr::null_mut();
     }
     let handlers = tls.get_handlers();
-    if handlers.vm.is_shutting_down() {
+    if handlers.vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
         return core::ptr::null_mut();
     }
     let callback = handlers.on_server_name();
@@ -2008,7 +2009,7 @@ extern "C" fn us_dispatch_server_name(
     // duration of this synchronous handshake dispatch.
     let listener = unsafe { bun_ptr::ThisPtr::new(listener_ptr) };
     let handlers = &listener.handlers;
-    if handlers.vm.is_shutting_down() {
+    if handlers.vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
         return core::ptr::null_mut();
     }
     let callback = handlers.on_server_name();

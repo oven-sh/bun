@@ -2232,6 +2232,9 @@ enum StreamState {
   // The native side fully closed and freed the stream (state 7 delivered): there is
   // nothing left to send on the wire for it.
   NativeClosed = 1 << 6, // 1000000 = 64
+  // close()/destroy() scheduled an RST_STREAM: it replaces the stream's end-of-stream, so
+  // _final must not put an END_STREAM on the wire ahead of it.
+  RstPending = 1 << 7, // 10000000 = 128
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2610,6 +2613,7 @@ class Http2Stream extends Duplex {
       }
       this.push(null);
       const { ending } = this._writableState;
+      this[bunHTTP2StreamStatus] |= StreamState.RstPending;
       if (!ending) {
         // If the writable side of the Http2Stream is still open, emit the
         // 'aborted' event and set the aborted flag.
@@ -2644,6 +2648,9 @@ class Http2Stream extends Duplex {
     // push(null)) and a throwing listener would otherwise skip the clear and
     // leave a retained stream pinning the store.
     this[bunHTTP2AsyncContextFrame] = undefined;
+    // close() already scheduled the RST_STREAM: a second rstNextTick hits the native map-miss
+    // fallback once the first evicted the stream, and writes the frame again.
+    const rstAlreadyPending = (this[bunHTTP2StreamStatus] & StreamState.RstPending) !== 0;
     const { ending } = this._writableState;
     this.push(null);
     // A pushed stream's request was synthesized by the server, so its local (writable) half is
@@ -2655,6 +2662,7 @@ class Http2Stream extends Duplex {
         this[kAborted] = true;
         this.emit("aborted");
       }
+      this[bunHTTP2StreamStatus] |= StreamState.RstPending;
       // at this state destroyed will be true but we need to close the writable side
       this._writableState.destroyed = false;
       this.end();
@@ -2704,6 +2712,7 @@ class Http2Stream extends Duplex {
       session &&
       typeof this.#id === "number" &&
       !this[kNeverAnnounced] &&
+      !rstAlreadyPending &&
       // A cleanly closed stream the native side already freed has nothing to send:
       // the deferred rstStream would be a guaranteed no-op host call per request.
       (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
@@ -2738,15 +2747,24 @@ class Http2Stream extends Duplex {
     if (session) {
       const native = session[bunHTTP2Native];
       if (native) {
-        if (this instanceof ServerHttp2Stream && !this.headersSent && (this.id & 1) === 0) {
-          // A locally-pushed (even-id) stream ended before respond() (HEAD/endStream pushes): an
-          // empty DATA frame would precede the response HEADERS on the wire. respond() forces
-          // endStream for these streams, so END_STREAM rides on the HEADERS frame and the
-          // onStreamEnd(5) dispatch completes this callback through markWritableDone.
-          this[bunHTTP2StreamFinal] = callback;
+        if (this instanceof ServerHttp2Stream && !this.headersSent) {
+          // RFC 9113 §8.1: a response begins with HEADERS, so DATA here is a connection error.
+          // A pushed stream (even id) stashes the callback for the respond() that follows; a
+          // client-initiated stream just settles the writable, with any reset already scheduled.
+          if ((this.id & 1) === 0) {
+            this[bunHTTP2StreamFinal] = callback;
+          } else {
+            this[bunHTTP2StreamStatus] |= StreamState.FinalCalled | StreamState.WritableClosed;
+            callback();
+          }
           return;
         }
         this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
+        if ((this[bunHTTP2StreamStatus] & StreamState.RstPending) !== 0) {
+          this[bunHTTP2StreamStatus] |= StreamState.WritableClosed;
+          callback();
+          return;
+        }
         // When waitForTrailers is active, writing an empty DATA frame with
         // close=true emits a bare empty DATA frame (flags=0) to the wire
         // before the trailer/noTrailers path runs, which then emits ANOTHER
@@ -3318,7 +3336,7 @@ class ServerHttp2Stream extends Http2Stream {
   }
 
   respondWithFile(path, headers, options) {
-    if (this.destroyed) {
+    if (this.destroyed || this.closed || this.session === undefined) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3378,7 +3396,7 @@ class ServerHttp2Stream extends Http2Stream {
         throw err;
       }
     }
-    if (this.destroyed) {
+    if (this.destroyed || this.closed || this.session === undefined) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3505,7 +3523,7 @@ class ServerHttp2Stream extends Http2Stream {
     session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
   }
   respond(headers: any, options?: any) {
-    if (this.destroyed || this.session === undefined) {
+    if (this.destroyed || this.closed || this.session === undefined) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
 

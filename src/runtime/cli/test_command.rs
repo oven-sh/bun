@@ -2254,7 +2254,11 @@ impl TestCommand {
             skips_to_repeat_buf: Vec::new(),
             todos_to_repeat_buf: Vec::new(),
             reporters: ReportersConfig::default(),
-            timings: ctx.test_options.timings_file.as_deref().map(Timings::load),
+            timings: if ctx.test_options.test_worker {
+                None
+            } else {
+                ctx.test_options.timings_file.as_deref().map(Timings::load)
+            },
         });
         // `defer { if (reporter.reporters.junit) |fr| fr.deinit() }` — handled by Drop.
         reporter.repeat_count = ctx.test_options.repeat_count.max(1);
@@ -3030,7 +3034,7 @@ impl TestCommand {
         Output::flush();
 
         reporter.write_junit_report_if_needed();
-        if !test_files.is_empty() {
+        if !test_files.is_empty() || ctx.test_options.shard.is_some() {
             reporter.write_timings_if_needed();
         }
 

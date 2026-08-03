@@ -34,9 +34,20 @@ impl Timings {
                 bun_ast::initialize_store();
                 let source = bun_ast::Source::init_path_string(path, &contents[..]);
                 let mut log = bun_ast::Log::init();
-                let parsed = bun_json::ParsedJson::parse_json(&source, &mut log).ok();
-                let files = parsed
-                    .as_ref()
+                let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
+                    Ok(p) => p,
+                    Err(_) => {
+                        let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                            Output::error_writer(),
+                        ));
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r>: --timings file <b>{}<r> is not valid JSON",
+                            bstr::BStr::new(path)
+                        );
+                        bun_core::Global::exit(1);
+                    }
+                };
+                let files = Some(&parsed)
                     .filter(|p| {
                         p.root
                             .as_property(b"version")
@@ -136,7 +147,10 @@ impl Timings {
             let target = remaining / u64::from(k - bin);
             let lo = i;
             let mut load: u64 = 0;
-            while i < n && (bin == k - 1 || load == 0 || 2 * load + costs[i as usize] <= 2 * target)
+            while i < n
+                && (bin == k - 1
+                    || load == 0
+                    || (2 * load + costs[i as usize] <= 2 * target && n - i > k - 1 - bin))
             {
                 load += costs[i as usize];
                 i += 1;
@@ -197,8 +211,15 @@ impl Timings {
             b"}\n}\n"
         });
 
-        let result = File::create(Fd::cwd(), &self.path, true).and_then(|f| f.write_all(&out));
+        let mut tmp: Vec<u8> = self.path.to_vec();
+        let _ = write!(&mut tmp, ".{}.tmp", std::process::id());
+        let tmp_z = bun_core::ZBox::from_vec(tmp);
+        let dest_z = bun_core::ZBox::from_bytes(&self.path);
+        let result = File::create(Fd::cwd(), tmp_z.as_bytes(), true)
+            .and_then(|f| f.write_all(&out))
+            .and_then(|()| bun_sys::renameat(Fd::cwd(), &tmp_z, Fd::cwd(), &dest_z));
         if let Err(err) = result {
+            let _ = bun_sys::unlinkat(Fd::cwd(), &tmp_z);
             Output::err(
                 crate::Error::WriteFailed,
                 "Failed to write --timings file {}\n{}",

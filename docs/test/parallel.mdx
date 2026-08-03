@@ -120,7 +120,7 @@ bun test --shard=2/3   # machine 2
 bun test --shard=3/3   # machine 3
 ```
 
-Every machine sorts the discovered test files by path and takes a deterministic slice, so together the shards cover each file exactly once with no coordination. By default the split is round-robin by file count.
+Every machine sorts the discovered test files by path and takes a deterministic slice, so together the shards cover each file exactly once with no coordination. Without `--timings`, file `i` of the sorted list goes to shard `(i mod n) + 1` — balanced by file count, not by how long files take.
 
 ### Balancing with `--timings`
 

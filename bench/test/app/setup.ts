@@ -8,6 +8,13 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 const FILES = Number(process.argv[2] ?? 64);
 const TESTS_PER_FILE = 8;
 const ITEMS = Number(process.argv[3] ?? 200);
+for (const [name, v, lo, hi] of [
+  ["files", FILES, 1, 10_000],
+  ["items", ITEMS, 2, 1_000_000],
+] as const) {
+  if (!Number.isSafeInteger(v) || v < lo || v > hi)
+    throw new Error(`${name} must be an integer in [${lo}, ${hi}], got ${v}`);
+}
 const MODULES = 24;
 const root = import.meta.dir;
 

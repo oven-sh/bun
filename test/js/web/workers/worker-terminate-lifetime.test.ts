@@ -215,8 +215,12 @@ describe("terminate() resolves for a worker in a microtask-bound ReadableStream 
               '(async () => { for (;;) { ' + ${JSON.stringify(expr)} + '; await 0; } })();';
             for (let r = 0; r < ${localRounds}; r++) {
               const w = new Worker(src, { eval: true });
+              await new Promise((res, rej) => {
+                w.once("message", res);
+                w.once("error", rej);
+                w.once("exit", (c) => rej(new Error("worker exited " + c + " before ready")));
+              });
               w.on("error", () => {});
-              await new Promise((res) => w.once("message", res));
               await Bun.sleep((r * 23) % 80);
               const winner = await Promise.race([
                 w.terminate().then(() => "ok"),

@@ -24,6 +24,7 @@
 #include <string>
 #include <chrono>
 #include <map>
+#include <set>
 #include <JavaScriptCore/UnlinkedMetadataTable.h>
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/InstructionStream.h>
@@ -60,13 +61,21 @@ extern "C" void mi_free_set_filter(mi_free_filter_fun* filter) noexcept;
 #include <mimalloc.h>
 static std::vector<std::pair<uintptr_t, uintptr_t>> s_frozenRanges; // sorted [start,end)
 static std::vector<uintptr_t> s_payloadPages; // sorted OS pages that held live malloc blocks (main heap) at freeze
+static std::map<uintptr_t, uint32_t> s_pageSizeClass; // page -> block size of (first) live block seen
+struct FrozenRun { uintptr_t start; size_t len; size_t fileOff; };
+static std::vector<FrozenRun> s_runs;
+static int s_snapFd = -1;
+static std::vector<std::pair<uintptr_t, uint32_t>> s_liveBlocks; // (start, size) of live malloc blocks at freeze, sorted
 static std::vector<uintptr_t> s_cellPages; // sorted OS pages inside MarkedBlocks at freeze
 static bool recordUsedBlock(const mi_heap_t*, const mi_heap_area_t*, void* block, size_t block_size, void* arg)
 {
     if (!block) return true;
     size_t pg = *static_cast<size_t*>(arg);
-    for (uintptr_t a = reinterpret_cast<uintptr_t>(block) & ~(pg - 1); a < reinterpret_cast<uintptr_t>(block) + block_size; a += pg)
+    for (uintptr_t a = reinterpret_cast<uintptr_t>(block) & ~(pg - 1); a < reinterpret_cast<uintptr_t>(block) + block_size; a += pg) {
         s_payloadPages.push_back(a);
+        s_pageSizeClass.emplace(a, static_cast<uint32_t>(block_size));
+    }
+    s_liveBlocks.push_back({ reinterpret_cast<uintptr_t>(block), static_cast<uint32_t>(block_size) });
     return true;
 }
 static bool pageIn(const std::vector<uintptr_t>& v, uintptr_t a) { return std::binary_search(v.begin(), v.end(), a); }
@@ -331,12 +340,13 @@ static void fileSnapshotHeap(JSC::VM& vm)
     size_t pg = getpagesize();
     bool onlyLive = !getenv("BUN_FILESNAP_ALL");
     {
-        s_cellPages.clear(); s_payloadPages.clear();
+        s_cellPages.clear(); s_payloadPages.clear(); s_pageSizeClass.clear(); s_liveBlocks.clear(); s_runs.clear();
         vm.heap.objectSpace().forEachBlock([&](JSC::MarkedBlock::Handle* h) {
             for (uintptr_t a = (uintptr_t)&h->block(); a < (uintptr_t)&h->block() + JSC::MarkedBlock::blockSize; a += pg) s_cellPages.push_back(a);
         });
         mi_heap_visit_blocks(mi_heap_main(), true, recordUsedBlock, &pg);
         std::sort(s_cellPages.begin(), s_cellPages.end());
+        std::sort(s_liveBlocks.begin(), s_liveBlocks.end());
         std::sort(s_payloadPages.begin(), s_payloadPages.end());
         s_payloadPages.erase(std::unique(s_payloadPages.begin(), s_payloadPages.end()), s_payloadPages.end());
         // MarkedBlocks are themselves malloc blocks; keep the classes disjoint
@@ -409,7 +419,7 @@ static void fileSnapshotHeap(JSC::VM& vm)
             if (pwrite(fd, (void*)a, len, fileOff) != (ssize_t)len) { fprintf(stderr, "[filesnap] pwrite failed %d\n", errno); close(fd); return; }
             void* m = mmap((void*)a, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, fileOff);
             if (m == MAP_FAILED) { fprintf(stderr, "[filesnap] mmap fixed failed at %p len %zu errno %d\n", (void*)a, len, errno); skipped++; }
-            else { remapped += len; runs++; s_frozenRanges.push_back({ a, a + len }); }
+            else { remapped += len; runs++; s_frozenRanges.push_back({ a, a + len }); s_runs.push_back({ a, len, fileOff }); }
             fileOff += len;
             i = j;
         }
@@ -418,7 +428,12 @@ static void fileSnapshotHeap(JSC::VM& vm)
         std::sort(s_frozenRanges.begin(), s_frozenRanges.end());
         mi_free_set_filter(frozenFreeFilter);
         mi_theap_set_default(mi_heap_theap(mi_heap_new())); // main thread allocates from fresh pages from now on
+        size_t inFrozen = 0;
+        for (int k = 0; k < 64; k++) { void* probe = mi_malloc(48 + k * 16); uintptr_t a = (uintptr_t)probe; auto it = std::upper_bound(s_frozenRanges.begin(), s_frozenRanges.end(), std::make_pair(a, UINTPTR_MAX)); if (it != s_frozenRanges.begin() && a < std::prev(it)->second) inFrozen++; }
+        void* probe2 = WTF::fastMalloc(100); uintptr_t a2 = (uintptr_t)probe2; auto it2 = std::upper_bound(s_frozenRanges.begin(), s_frozenRanges.end(), std::make_pair(a2, UINTPTR_MAX)); bool f2 = it2 != s_frozenRanges.begin() && a2 < std::prev(it2)->second;
+        fprintf(stderr, "[filesnap] post-switch probes landing in frozen ranges: mi_malloc %zu/64, fastMalloc %d\n", inFrozen, (int)f2);
     }
+    s_snapFd = fd;
     // keep fd open for the life of the process (mapping holds a reference anyway)
     fprintf(stderr, "[filesnap] candidates=%zu remapped=%.1fMB in %zu runs, skipped=%zu, file=%.1fMB\n", candidates.size(), remapped / 1048576.0, runs, skipped, fileOff / 1048576.0);
 }
@@ -450,7 +465,12 @@ static void dumpDirtyMap(JSC::VM& vm)
             auto it = blocks.upper_bound(a);
             std::string key = "<malloc/other>";
             if (it != blocks.begin()) { --it; if (a >= it->first && a < it->first + JSC::MarkedBlock::blockSize) key = it->second; }
-            if (key == "<malloc/other>" && pageIn(s_payloadPages, a)) key = "<malloc payload>";
+            if (key == "<malloc/other>" && pageIn(s_payloadPages, a)) {
+                auto sc = s_pageSizeClass.find(a);
+                uint32_t bs = sc == s_pageSizeClass.end() ? 0 : sc->second;
+                const char* bucket = bs <= 16 ? "<=16" : bs <= 32 ? "<=32" : bs <= 48 ? "<=48" : bs <= 64 ? "<=64" : bs <= 96 ? "<=96" : bs <= 128 ? "<=128" : bs <= 256 ? "<=256" : bs <= 512 ? "<=512" : bs <= 1024 ? "<=1K" : bs <= 4096 ? "<=4K" : bs <= 16384 ? "<=16K" : bs <= 65536 ? "<=64K" : ">64K";
+                key = std::string("<malloc payload ") + bucket + ">";
+            }
             if (key[0] != '<') { blockPages++; if (dirty) blockDirty++; } else if (dirty) otherDirty++;
             auto& e = bySubspace[key]; e.second++; if (dirty) e.first++;
         }
@@ -461,6 +481,159 @@ static void dumpDirtyMap(JSC::VM& vm)
     for (auto& [k, v] : bySubspace) { char line[256]; snprintf(line, sizeof line, "  %-40s dirty %7.2fMB / %7.2fMB (%3.0f%%)", k.c_str(), v.first * pg / 1048576.0, v.second * pg / 1048576.0, v.second ? 100.0 * v.first / v.second : 0.0); rows.push_back({ v.first, line }); }
     std::sort(rows.begin(), rows.end(), std::greater<>());
     for (size_t i = 0; i < std::min<size_t>(rows.size(), 40); i++) fprintf(stderr, "%s\n", rows[i].second.c_str());
+
+    // Byte-level diff of dirty malloc-payload pages against the snapshot file: which blocks changed, and how.
+    if (s_snapFd >= 0 && !s_liveBlocks.empty()) {
+        std::vector<uint8_t> orig(pg);
+        size_t changedBytes = 0, dirtyPayloadPages = 0, pagesNoChange = 0;
+        std::map<std::string, size_t> blockClass; // classification -> count
+        std::map<uint32_t, std::pair<size_t,size_t>> bySize; // block size -> (changedBlocks, changedBytes)
+        std::set<uintptr_t> changedBlocks;
+        for (auto& run : s_runs) {
+            size_t n = run.len / pg;
+            disp.assign(n, 0);
+            mach_vm_size_t cnt = n;
+            if (mach_vm_page_range_query(mach_task_self(), run.start, run.len, (mach_vm_address_t)disp.data(), &cnt) != KERN_SUCCESS) continue;
+            for (size_t i = 0; i < n; i++) {
+                uintptr_t a = run.start + i * pg;
+                bool dirty = (disp[i] & VM_PAGE_QUERY_PAGE_DIRTY) || (disp[i] & VM_PAGE_QUERY_PAGE_COPIED);
+                if (!dirty || !pageIn(s_payloadPages, a)) continue;
+                dirtyPayloadPages++;
+                if (pread(s_snapFd, orig.data(), pg, run.fileOff + i * pg) != (ssize_t)pg) continue;
+                const uint8_t* cur = reinterpret_cast<const uint8_t*>(a);
+                bool any = false;
+                for (size_t off = 0; off < pg; off += 8) {
+                    if (!memcmp(cur + off, orig.data() + off, 8)) continue;
+                    any = true; changedBytes += 8;
+                    // find owning block
+                    auto it = std::upper_bound(s_liveBlocks.begin(), s_liveBlocks.end(), std::make_pair(a + off, UINT32_MAX));
+                    if (it == s_liveBlocks.begin()) { blockClass["<not in live block (freed-at-freeze space)>"]++; continue; }
+                    --it;
+                    if (a + off >= it->first + it->second) { blockClass["<not in live block (freed-at-freeze space)>"]++; continue; }
+                    if (changedBlocks.insert(it->first).second) { bySize[it->second].first++; }
+                    bySize[it->second].second += 8;
+                }
+                if (!any) pagesNoChange++;
+            }
+        }
+        // classify changed blocks by change shape
+        size_t onlyHeader8 = 0, small32 = 0, larger = 0;
+        for (uintptr_t b : changedBlocks) {
+            auto it = std::lower_bound(s_liveBlocks.begin(), s_liveBlocks.end(), std::make_pair(b, 0u));
+            uint32_t sz = it->second;
+            // re-diff this block
+            size_t first = SIZE_MAX, last = 0, cntw = 0;
+            for (size_t off = 0; off + 8 <= sz; off += 8) {
+                uintptr_t a = b + off; uintptr_t page = a & ~(pg - 1);
+                // find file offset for page
+                auto r = std::upper_bound(s_runs.begin(), s_runs.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
+                if (r == s_runs.begin()) continue; --r; if (page >= r->start + r->len) continue;
+                uint64_t o; if (pread(s_snapFd, &o, 8, r->fileOff + (a - r->start)) != 8) continue;
+                if (memcmp(&o, (void*)a, 8)) { cntw++; if (first == SIZE_MAX) first = off; last = off; }
+            }
+            if (cntw == 1 && first == 0) onlyHeader8++; else if (cntw <= 4) small32++; else larger++;
+        }
+        fprintf(stderr, "[diffmap] dirtyPayloadPages=%zu (%.1fMB) pagesWithNoByteChange=%zu changedBytes=%.2fMB changedBlocks=%zu: firstWordOnly=%zu (refcount-like) small(<=4 words)=%zu larger=%zu; strayWrites(outside live blocks)=%zu\n",
+            dirtyPayloadPages, dirtyPayloadPages * pg / 1048576.0, pagesNoChange, changedBytes / 1048576.0, changedBlocks.size(), onlyHeader8, small32, larger, blockClass["<not in live block (freed-at-freeze space)>"]);
+        std::vector<std::pair<size_t, uint32_t>> sizes; for (auto& [sz, v] : bySize) sizes.push_back({ v.first, sz });
+        std::sort(sizes.begin(), sizes.end(), std::greater<>());
+        // Cell-granularity diff over immortal MarkedBlocks: how many cells actually changed vs pages dirtied.
+        {
+            size_t cellsTotal = 0, cellsChanged = 0, cellsHeaderOnly = 0, bytesInChangedCells = 0, dirtyCellPages = 0, identicalDirtyCellPages = 0;
+            std::map<std::string, std::pair<size_t, size_t>> byClass; // class -> (changed, total)
+            auto fileWordAt = [&](uintptr_t a, uint64_t& out) -> bool {
+                uintptr_t page = a & ~(pg - 1);
+                auto r = std::upper_bound(s_runs.begin(), s_runs.end(), page, [](uintptr_t v, const FrozenRun& fr) { return v < fr.start; });
+                if (r == s_runs.begin()) return false; --r; if (page >= r->start + r->len) return false;
+                return pread(s_snapFd, &out, 8, r->fileOff + (a - r->start)) == 8;
+            };
+            vm.heap.objectSpace().forEachBlock([&](JSC::MarkedBlock::Handle* h) {
+                if (!h->block().isImmortal()) return;
+                // is any page of this block dirty?
+                uintptr_t base = (uintptr_t)&h->block();
+                disp.assign(JSC::MarkedBlock::blockSize / pg, 0);
+                mach_vm_size_t cnt = disp.size();
+                if (mach_vm_page_range_query(mach_task_self(), base, JSC::MarkedBlock::blockSize, (mach_vm_address_t)disp.data(), &cnt) != KERN_SUCCESS) return;
+                bool anyDirty = false; for (auto d : disp) if ((d & VM_PAGE_QUERY_PAGE_DIRTY) || (d & VM_PAGE_QUERY_PAGE_COPIED)) { anyDirty = true; dirtyCellPages++; }
+                std::string cls = std::string(h->subspace()->name());
+                bool blockAnyChange = false;
+                h->forEachCell([&](size_t, JSC::HeapCell* cell, JSC::HeapCell::Kind) -> IterationStatus {
+                    if (!h->block().isMarkedRaw(cell)) return IterationStatus::Continue;
+                    cellsTotal++; byClass[cls].second++;
+                    if (!anyDirty) return IterationStatus::Continue;
+                    size_t changedWords = 0; bool headerChanged = false;
+                    for (size_t off = 0; off + 8 <= h->cellSize(); off += 8) {
+                        uint64_t o; if (!fileWordAt((uintptr_t)cell + off, o)) break;
+                        if (memcmp(&o, (uint8_t*)cell + off, 8)) { changedWords++; if (!off) headerChanged = true; }
+                    }
+                    if (changedWords) { cellsChanged++; byClass[cls].first++; bytesInChangedCells += h->cellSize(); blockAnyChange = true; if (changedWords == 1 && headerChanged) cellsHeaderOnly++; }
+                    return IterationStatus::Continue;
+                });
+                if (anyDirty && !blockAnyChange) identicalDirtyCellPages += disp.size();
+            });
+            fprintf(stderr, "[celldiff] immortal live cells=%zu changed=%zu (%.1f%%) headerOnly=%zu bytesOfChangedCells=%.2fMB vs dirtyCellPages=%.2fMB (identical-content dirty pages=%.2fMB) => perfect segregation would dirty ~%.2fMB\n",
+                cellsTotal, cellsChanged, cellsTotal ? 100.0 * cellsChanged / cellsTotal : 0.0, cellsHeaderOnly, bytesInChangedCells / 1048576.0, dirtyCellPages * pg / 1048576.0, identicalDirtyCellPages * pg / 1048576.0, bytesInChangedCells / 1048576.0);
+            std::vector<std::pair<size_t, std::string>> crow;
+            for (auto& [k, v] : byClass) { char line[200]; snprintf(line, sizeof line, "    %-36s changed %7zu / %7zu (%3.0f%%)", k.c_str(), v.first, v.second, v.second ? 100.0 * v.first / v.second : 0.0); crow.push_back({ v.first, line }); }
+            std::sort(crow.begin(), crow.end(), std::greater<>());
+            for (size_t i = 0; i < std::min<size_t>(crow.size(), 18); i++) fprintf(stderr, "%s\n", crow[i].second.c_str());
+        }
+        fprintf(stderr, "[diffmap] changed blocks by block size (count, bytes changed):");
+        for (size_t i = 0; i < std::min<size_t>(sizes.size(), 24); i++) fprintf(stderr, " %u:%zu/%zuB", sizes[i].second, sizes[i].first, bySize[sizes[i].second].second);
+        fprintf(stderr, "\n");
+    }
+#endif
+}
+
+// Re-clean: any frozen page that is dirty but byte-identical to the snapshot gets remapped from the file again.
+static void recleanFrozenPages(JSC::VM& vm)
+{
+#if OS(DARWIN)
+    JSC::JSLockHolder lock(vm);
+    if (s_snapFd < 0) return;
+    size_t pg = getpagesize();
+    std::vector<uint8_t> orig(pg);
+    std::vector<int> disp;
+    size_t dirty = 0, identical = 0, remapped = 0, cellIdentical = 0, payloadIdentical = 0, nearly = 0;
+    auto t0 = std::chrono::steady_clock::now();
+    for (auto& run : s_runs) {
+        size_t n = run.len / pg;
+        disp.assign(n, 0);
+        mach_vm_size_t cnt = n;
+        if (mach_vm_page_range_query(mach_task_self(), run.start, run.len, (mach_vm_address_t)disp.data(), &cnt) != KERN_SUCCESS) continue;
+        size_t i = 0;
+        while (i < n) {
+            uintptr_t a = run.start + i * pg;
+            bool d = (disp[i] & VM_PAGE_QUERY_PAGE_DIRTY) || (disp[i] & VM_PAGE_QUERY_PAGE_COPIED);
+            if (!d) { i++; continue; }
+            dirty++;
+            if (pread(s_snapFd, orig.data(), pg, run.fileOff + i * pg) != (ssize_t)pg) { i++; continue; }
+            if (memcmp((void*)a, orig.data(), pg)) {
+                // count nearly-identical (<=64 bytes differ) for information
+                size_t diff = 0; for (size_t off = 0; off < pg && diff <= 64; off += 8) if (memcmp((uint8_t*)a + off, orig.data() + off, 8)) diff += 8;
+                if (diff <= 64) nearly++;
+                i++; continue;
+            }
+            identical++;
+            if (pageIn(s_cellPages, a)) cellIdentical++; else payloadIdentical++;
+            // coalesce consecutive identical dirty pages into one mmap
+            size_t j = i + 1;
+            while (j < n) {
+                uintptr_t b = run.start + j * pg;
+                bool dj = (disp[j] & VM_PAGE_QUERY_PAGE_DIRTY) || (disp[j] & VM_PAGE_QUERY_PAGE_COPIED);
+                if (!dj) break;
+                if (pread(s_snapFd, orig.data(), pg, run.fileOff + j * pg) != (ssize_t)pg || memcmp((void*)b, orig.data(), pg)) break;
+                dirty++; identical++; if (pageIn(s_cellPages, b)) cellIdentical++; else payloadIdentical++;
+                j++;
+            }
+            if (mmap((void*)a, (j - i) * pg, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, s_snapFd, run.fileOff + i * pg) != MAP_FAILED)
+                remapped += (j - i);
+            i = j;
+        }
+    }
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    fprintf(stderr, "[reclean] dirtyFrozenPages=%zu (%.1fMB) identical=%zu (%.1fMB: cells %.1fMB, payload %.1fMB) remapped=%zu nearlyIdentical(<=64B diff)=%zu (%.1fMB) took=%lldms\n",
+        dirty, dirty * pg / 1048576.0, identical, identical * pg / 1048576.0, cellIdentical * pg / 1048576.0, payloadIdentical * pg / 1048576.0, remapped, nearly, nearly * pg / 1048576.0, (long long)ms);
 #endif
 }
 
@@ -488,6 +661,7 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
         unlink(cmdPath.c_str());
         if (!strncmp(buf, "filesnap", 8)) req = 4;
         else if (!strncmp(buf, "dirtymap", 8)) req = 5;
+        else if (!strncmp(buf, "reclean", 7)) req = 6;
         else if (!strncmp(buf, "shrink", 6)) req = 3;
         else if (!strncmp(buf, "gc", 2)) req = 2;
         else req = 1;
@@ -499,6 +673,10 @@ extern "C" void Bun__memdebugMaybeDump(JSC::VM* vm)
     }
     if (req == 5) {
         dumpDirtyMap(*vm);
+        return;
+    }
+    if (req == 6) {
+        recleanFrozenPages(*vm);
         return;
     }
     if (req == 3) {

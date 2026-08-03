@@ -4,7 +4,7 @@
 
 pub mod color_js;
 pub mod css_internals;
-pub mod error_jsc;
+pub(crate) mod error_jsc;
 
 pub use color_js::js_function_color;
 

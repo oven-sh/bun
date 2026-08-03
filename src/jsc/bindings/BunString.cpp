@@ -45,11 +45,6 @@
 using namespace JSC;
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length);
 
-extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__WTFStringImpl__hasPrefix(const WTF::StringImpl* impl, const char* bytes, size_t length)
-{
-    return impl->startsWith({ bytes, length });
-}
-
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__deref(WTF::StringImpl* impl)
 {
     impl->deref();
@@ -682,14 +677,6 @@ extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString* relativeStr
     return Bun::toStringRef(url.string());
 }
 
-extern "C" BunString URL__hash(WTF::URL* url)
-{
-    const auto& fragment = url->fragmentIdentifier().isEmpty()
-        ? emptyString()
-        : url->fragmentIdentifierWithLeadingNumberSign().toStringWithoutCopying();
-    return Bun::toStringRef(fragment);
-}
-
 extern "C" BunString URL__fragmentIdentifier(WTF::URL* url)
 {
     const auto& fragment = url->fragmentIdentifier().isEmpty()
@@ -731,11 +718,6 @@ extern "C" BunString URL__username(WTF::URL* url)
 extern "C" BunString URL__password(WTF::URL* url)
 {
     return Bun::toStringRef(url->password());
-}
-
-extern "C" BunString URL__search(WTF::URL* url)
-{
-    return Bun::toStringRef(url->query().toStringWithoutCopying());
 }
 
 /// Returns the host WITHOUT the port.

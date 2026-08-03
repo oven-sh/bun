@@ -146,10 +146,8 @@ pub mod postgres {
         pub mod field_type;
         #[path = "PortalOrPreparedStatement.rs"]
         pub mod portal_or_prepared_statement;
-        #[path = "TransactionStatusIndicator.rs"]
-        pub mod transaction_status_indicator;
         #[path = "zHelpers.rs"]
-        pub mod z_helpers;
+        pub(crate) mod z_helpers;
 
         #[path = "Authentication.rs"]
         pub mod authentication;

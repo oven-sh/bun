@@ -54,11 +54,6 @@ CookieMap::CookieMap()
 {
 }
 
-CookieMap::CookieMap(Vector<Ref<Cookie>>&& cookies)
-    : m_modifiedCookies(WTF::move(cookies))
-{
-}
-
 CookieMap::CookieMap(Vector<KeyValuePair<String, String>>&& cookies)
     : m_originalCookies(WTF::move(cookies))
 {
@@ -149,19 +144,6 @@ std::optional<String> CookieMap::get(const String& name) const
         return std::optional<String>(m_originalCookies[originalCookieIndex].value);
     }
     return std::nullopt;
-}
-
-Vector<KeyValuePair<String, String>> CookieMap::getAll() const
-{
-    Vector<KeyValuePair<String, String>> all;
-    for (const auto& cookie : m_modifiedCookies) {
-        if (cookie->value().isEmpty()) continue;
-        all.append(KeyValuePair<String, String>(cookie->name(), cookie->value()));
-    }
-    for (const auto& cookie : m_originalCookies) {
-        all.append(KeyValuePair<String, String>(cookie.key, cookie.value));
-    }
-    return all;
 }
 
 bool CookieMap::has(const String& name) const

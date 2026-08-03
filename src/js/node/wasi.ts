@@ -20,7 +20,7 @@ var require_types = __commonJS({
   "node_modules/wasi-js/dist/types.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
-    exports.WASIKillError = exports.WASIExitError = exports.WASIError = void 0;
+    exports.WASIError = void 0;
     var WASIError = class extends Error {
       constructor(errno) {
         super();
@@ -29,22 +29,6 @@ var require_types = __commonJS({
       }
     };
     exports.WASIError = WASIError;
-    var WASIExitError = class extends Error {
-      constructor(code) {
-        super(`WASI Exit error: ${code}`);
-        this.code = code;
-        Object.setPrototypeOf(this, WASIExitError.prototype);
-      }
-    };
-    exports.WASIExitError = WASIExitError;
-    var WASIKillError = class extends Error {
-      constructor(signal) {
-        super(`WASI Kill signal: ${signal}`);
-        this.signal = signal;
-        Object.setPrototypeOf(this, WASIKillError.prototype);
-      }
-    };
-    exports.WASIKillError = WASIKillError;
   },
 });
 
@@ -53,192 +37,6 @@ var require_constants = __commonJS({
   "node_modules/wasi-js/dist/constants.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
-    exports.WASI_ENOMSG =
-      exports.WASI_ENOMEM =
-      exports.WASI_ENOLINK =
-      exports.WASI_ENOLCK =
-      exports.WASI_ENOEXEC =
-      exports.WASI_ENOENT =
-      exports.WASI_ENODEV =
-      exports.WASI_ENOBUFS =
-      exports.WASI_ENFILE =
-      exports.WASI_ENETUNREACH =
-      exports.WASI_ENETRESET =
-      exports.WASI_ENETDOWN =
-      exports.WASI_ENAMETOOLONG =
-      exports.WASI_EMULTIHOP =
-      exports.WASI_EMSGSIZE =
-      exports.WASI_EMLINK =
-      exports.WASI_EMFILE =
-      exports.WASI_ELOOP =
-      exports.WASI_EISDIR =
-      exports.WASI_EISCONN =
-      exports.WASI_EIO =
-      exports.WASI_EINVAL =
-      exports.WASI_EINTR =
-      exports.WASI_EINPROGRESS =
-      exports.WASI_EILSEQ =
-      exports.WASI_EIDRM =
-      exports.WASI_EHOSTUNREACH =
-      exports.WASI_EFBIG =
-      exports.WASI_EFAULT =
-      exports.WASI_EEXIST =
-      exports.WASI_EDQUOT =
-      exports.WASI_EDOM =
-      exports.WASI_EDESTADDRREQ =
-      exports.WASI_EDEADLK =
-      exports.WASI_ECONNRESET =
-      exports.WASI_ECONNREFUSED =
-      exports.WASI_ECONNABORTED =
-      exports.WASI_ECHILD =
-      exports.WASI_ECANCELED =
-      exports.WASI_EBUSY =
-      exports.WASI_EBADMSG =
-      exports.WASI_EBADF =
-      exports.WASI_EALREADY =
-      exports.WASI_EAGAIN =
-      exports.WASI_EAFNOSUPPORT =
-      exports.WASI_EADDRNOTAVAIL =
-      exports.WASI_EADDRINUSE =
-      exports.WASI_EACCES =
-      exports.WASI_E2BIG =
-      exports.WASI_ESUCCESS =
-        void 0;
-    exports.WASI_SIGVTALRM =
-      exports.WASI_SIGUSR2 =
-      exports.WASI_SIGUSR1 =
-      exports.WASI_SIGURG =
-      exports.WASI_SIGTTOU =
-      exports.WASI_SIGTTIN =
-      exports.WASI_SIGTSTP =
-      exports.WASI_SIGTRAP =
-      exports.WASI_SIGTERM =
-      exports.WASI_SIGSTOP =
-      exports.WASI_SIGSEGV =
-      exports.WASI_SIGQUIT =
-      exports.WASI_SIGPIPE =
-      exports.WASI_SIGKILL =
-      exports.WASI_SIGINT =
-      exports.WASI_SIGILL =
-      exports.WASI_SIGHUP =
-      exports.WASI_SIGFPE =
-      exports.WASI_SIGCONT =
-      exports.WASI_SIGCHLD =
-      exports.WASI_SIGBUS =
-      exports.WASI_SIGALRM =
-      exports.WASI_SIGABRT =
-      exports.WASI_ENOTCAPABLE =
-      exports.WASI_EXDEV =
-      exports.WASI_ETXTBSY =
-      exports.WASI_ETIMEDOUT =
-      exports.WASI_ESTALE =
-      exports.WASI_ESRCH =
-      exports.WASI_ESPIPE =
-      exports.WASI_EROFS =
-      exports.WASI_ERANGE =
-      exports.WASI_EPROTOTYPE =
-      exports.WASI_EPROTONOSUPPORT =
-      exports.WASI_EPROTO =
-      exports.WASI_EPIPE =
-      exports.WASI_EPERM =
-      exports.WASI_EOWNERDEAD =
-      exports.WASI_EOVERFLOW =
-      exports.WASI_ENXIO =
-      exports.WASI_ENOTTY =
-      exports.WASI_ENOTSUP =
-      exports.WASI_ENOTSOCK =
-      exports.WASI_ENOTRECOVERABLE =
-      exports.WASI_ENOTEMPTY =
-      exports.WASI_ENOTDIR =
-      exports.WASI_ENOTCONN =
-      exports.WASI_ENOSYS =
-      exports.WASI_ENOSPC =
-      exports.WASI_ENOPROTOOPT =
-        void 0;
-    exports.RIGHTS_REGULAR_FILE_BASE =
-      exports.RIGHTS_CHARACTER_DEVICE_INHERITING =
-      exports.RIGHTS_CHARACTER_DEVICE_BASE =
-      exports.RIGHTS_BLOCK_DEVICE_INHERITING =
-      exports.RIGHTS_BLOCK_DEVICE_BASE =
-      exports.RIGHTS_ALL =
-      exports.WASI_RIGHT_SOCK_SHUTDOWN =
-      exports.WASI_RIGHT_POLL_FD_READWRITE =
-      exports.WASI_RIGHT_PATH_UNLINK_FILE =
-      exports.WASI_RIGHT_PATH_REMOVE_DIRECTORY =
-      exports.WASI_RIGHT_PATH_SYMLINK =
-      exports.WASI_RIGHT_FD_FILESTAT_SET_TIMES =
-      exports.WASI_RIGHT_FD_FILESTAT_SET_SIZE =
-      exports.WASI_RIGHT_FD_FILESTAT_GET =
-      exports.WASI_RIGHT_PATH_FILESTAT_SET_TIMES =
-      exports.WASI_RIGHT_PATH_FILESTAT_SET_SIZE =
-      exports.WASI_RIGHT_PATH_FILESTAT_GET =
-      exports.WASI_RIGHT_PATH_RENAME_TARGET =
-      exports.WASI_RIGHT_PATH_RENAME_SOURCE =
-      exports.WASI_RIGHT_PATH_READLINK =
-      exports.WASI_RIGHT_FD_READDIR =
-      exports.WASI_RIGHT_PATH_OPEN =
-      exports.WASI_RIGHT_PATH_LINK_TARGET =
-      exports.WASI_RIGHT_PATH_LINK_SOURCE =
-      exports.WASI_RIGHT_PATH_CREATE_FILE =
-      exports.WASI_RIGHT_PATH_CREATE_DIRECTORY =
-      exports.WASI_RIGHT_FD_ALLOCATE =
-      exports.WASI_RIGHT_FD_ADVISE =
-      exports.WASI_RIGHT_FD_WRITE =
-      exports.WASI_RIGHT_FD_TELL =
-      exports.WASI_RIGHT_FD_SYNC =
-      exports.WASI_RIGHT_FD_FDSTAT_SET_FLAGS =
-      exports.WASI_RIGHT_FD_SEEK =
-      exports.WASI_RIGHT_FD_READ =
-      exports.WASI_RIGHT_FD_DATASYNC =
-      exports.WASI_FDFLAG_SYNC =
-      exports.WASI_FDFLAG_RSYNC =
-      exports.WASI_FDFLAG_NONBLOCK =
-      exports.WASI_FDFLAG_DSYNC =
-      exports.WASI_FDFLAG_APPEND =
-      exports.WASI_FILETYPE_SYMBOLIC_LINK =
-      exports.WASI_FILETYPE_SOCKET_STREAM =
-      exports.WASI_FILETYPE_SOCKET_DGRAM =
-      exports.WASI_FILETYPE_REGULAR_FILE =
-      exports.WASI_FILETYPE_DIRECTORY =
-      exports.WASI_FILETYPE_CHARACTER_DEVICE =
-      exports.WASI_FILETYPE_BLOCK_DEVICE =
-      exports.WASI_FILETYPE_UNKNOWN =
-      exports.WASI_SIGXFSZ =
-      exports.WASI_SIGXCPU =
-        void 0;
-    exports.SIGNAL_MAP =
-      exports.ERROR_MAP =
-      exports.WASI_WHENCE_END =
-      exports.WASI_WHENCE_CUR =
-      exports.WASI_WHENCE_SET =
-      exports.WASI_STDERR_FILENO =
-      exports.WASI_STDOUT_FILENO =
-      exports.WASI_STDIN_FILENO =
-      exports.WASI_DIRCOOKIE_START =
-      exports.WASI_PREOPENTYPE_DIR =
-      exports.WASI_O_TRUNC =
-      exports.WASI_O_EXCL =
-      exports.WASI_O_DIRECTORY =
-      exports.WASI_O_CREAT =
-      exports.WASI_FILESTAT_SET_MTIM_NOW =
-      exports.WASI_FILESTAT_SET_MTIM =
-      exports.WASI_FILESTAT_SET_ATIM_NOW =
-      exports.WASI_FILESTAT_SET_ATIM =
-      exports.WASI_EVENTTYPE_FD_WRITE =
-      exports.WASI_EVENTTYPE_FD_READ =
-      exports.WASI_EVENTTYPE_CLOCK =
-      exports.WASI_CLOCK_THREAD_CPUTIME_ID =
-      exports.WASI_CLOCK_PROCESS_CPUTIME_ID =
-      exports.WASI_CLOCK_MONOTONIC =
-      exports.WASI_CLOCK_REALTIME =
-      exports.RIGHTS_TTY_INHERITING =
-      exports.RIGHTS_TTY_BASE =
-      exports.RIGHTS_SOCKET_INHERITING =
-      exports.RIGHTS_SOCKET_BASE =
-      exports.RIGHTS_DIRECTORY_INHERITING =
-      exports.RIGHTS_DIRECTORY_BASE =
-      exports.RIGHTS_REGULAR_FILE_INHERITING =
-        void 0;
     exports.WASI_ESUCCESS = 0;
     exports.WASI_E2BIG = 1;
     exports.WASI_EACCES = 2;
@@ -610,9 +408,6 @@ var require_wasi = __commonJS({
       };
     let fs;
     Object.defineProperty(exports, "__esModule", { value: true });
-    exports.SOCKET_DEFAULT_RIGHTS = void 0;
-    var log = () => {};
-    var logOpen = () => {};
     var SC_OPEN_MAX = 32768;
     var types_1 = require_types();
 
@@ -632,14 +427,6 @@ var require_wasi = __commonJS({
       constants_1.WASI_RIGHT_FD_FILESTAT_GET |
       constants_1.WASI_RIGHT_POLL_FD_READWRITE;
     var STDERR_DEFAULT_RIGHTS = STDOUT_DEFAULT_RIGHTS;
-    exports.SOCKET_DEFAULT_RIGHTS =
-      constants_1.WASI_RIGHT_FD_DATASYNC |
-      constants_1.WASI_RIGHT_FD_READ |
-      constants_1.WASI_RIGHT_FD_WRITE |
-      constants_1.WASI_RIGHT_FD_ADVISE |
-      constants_1.WASI_RIGHT_FD_FILESTAT_GET |
-      constants_1.WASI_RIGHT_POLL_FD_READWRITE |
-      constants_1.WASI_RIGHT_FD_FDSTAT_SET_FLAGS;
     var msToNs = ms => {
       const msInt = Math.trunc(ms);
 
@@ -871,7 +658,6 @@ var require_wasi = __commonJS({
                 bufLen,
                 total_memory: byteLength,
               });
-              log("getiovs: warning -- truncating buffer to fit in memory");
               bufLen = Math.min(bufLen, Math.max(0, byteLength - buf));
             }
             try {
@@ -896,7 +682,6 @@ var require_wasi = __commonJS({
                 bufLen,
                 total_memory: byteLength,
               });
-              log("getiovs: warning -- truncating buffer to fit in memory");
               bufLen = Math.min(bufLen, Math.max(0, byteLength - buf));
             }
             try {
@@ -1562,7 +1347,6 @@ var require_wasi = __commonJS({
                   this.view.setUint32(fdPtr, constants_1.WASI_STDIN_FILENO, true);
                   return constants_1.WASI_ESUCCESS;
                 }
-                logOpen("path_open", p);
                 if (p.startsWith("proc/")) {
                   throw new types_1.WASIError(constants_1.WASI_EBADF);
                 }
@@ -1712,7 +1496,6 @@ var require_wasi = __commonJS({
           }),
           poll_oneoff: (sin, sout, nsubscriptions, neventsPtr) => {
             let nevents = 0;
-            let name = "";
             let waitTimeNs = BigInt(0);
             let fd = -1;
             let fd_type = "read";
@@ -1725,16 +1508,6 @@ var require_wasi = __commonJS({
               const type = this.view.getUint8(sin);
               sin += 1;
               sin += 7;
-              if (log.enabled) {
-                if (type == constants_1.WASI_EVENTTYPE_CLOCK) {
-                  name = "poll_oneoff (type=WASI_EVENTTYPE_CLOCK): ";
-                } else if (type == constants_1.WASI_EVENTTYPE_FD_READ) {
-                  name = "poll_oneoff (type=WASI_EVENTTYPE_FD_READ): ";
-                } else {
-                  name = "poll_oneoff (type=WASI_EVENTTYPE_FD_WRITE): ";
-                }
-                log(name);
-              }
               switch (type) {
                 case constants_1.WASI_EVENTTYPE_CLOCK: {
                   const clockid = this.view.getUint32(sin, true);
@@ -1747,9 +1520,6 @@ var require_wasi = __commonJS({
                   sin += 2;
                   sin += 6;
                   const absolute = subclockflags === 1;
-                  if (log.enabled) {
-                    log(name, { clockid, timeout, absolute });
-                  }
                   if (!absolute) {
                     fd_timeout_ms = timeout / BigInt(1e6);
                   }
@@ -1780,7 +1550,6 @@ var require_wasi = __commonJS({
                   fd = this.view.getUint32(sin, true);
                   fd_type = type == constants_1.WASI_EVENTTYPE_FD_READ ? "read" : "write";
                   sin += 4;
-                  log(name, "fd =", fd);
                   sin += 28;
                   this.view.setBigUint64(sout, userdata, true);
                   sout += 8;
@@ -1872,22 +1641,6 @@ var require_wasi = __commonJS({
             return constants_1.WASI_ENOSYS;
           },
         };
-        if (log.enabled) {
-          Object.keys(this.wasiImport).forEach(key => {
-            const prevImport = this.wasiImport[key];
-            this.wasiImport[key] = function (...args2) {
-              log(key, args2);
-              try {
-                let result = prevImport(...args2);
-                log("result", result);
-                return result;
-              } catch (e) {
-                log("error: ", e);
-                throw e;
-              }
-            };
-          });
-        }
       }
       getState() {
         return { env: this.env, FD_MAP: this.FD_MAP, bindings: bindings };
@@ -2000,39 +1753,6 @@ var require_wasi = __commonJS({
                 "\n",
             );
           }
-        }
-      }
-      initWasiFdInfo() {
-        const env = this.env;
-        if (env["WASI_FD_INFO"] != null) {
-          const fdInfo = JSON.parse(env["WASI_FD_INFO"]);
-          for (const wasi_fd in fdInfo) {
-            console.log(wasi_fd);
-            const fd = parseInt(wasi_fd);
-            if (this.FD_MAP.has(fd)) {
-              continue;
-            }
-            const real = fdInfo[wasi_fd];
-            try {
-              this.fstatSync(real);
-            } catch {
-              console.log("discarding ", { wasi_fd, real });
-              continue;
-            }
-            const file = {
-              real,
-              filetype: constants_1.WASI_FILETYPE_SOCKET_STREAM,
-              rights: {
-                base: STDIN_DEFAULT_RIGHTS,
-                inheriting: BigInt(0),
-              },
-            };
-            this.FD_MAP.set(fd, file);
-          }
-          console.log("after initWasiFdInfo: ", this.FD_MAP);
-          console.log("fdInfo = ", fdInfo);
-        } else {
-          console.log("no WASI_FD_INFO");
         }
       }
     };

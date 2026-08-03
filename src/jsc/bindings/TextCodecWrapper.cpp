@@ -79,30 +79,4 @@ void Bun__stripBOMFromTextCodec(void* codecPtr)
     }
 }
 
-// Check if an encoding is supported
-bool Bun__isEncodingSupported(const char* encodingName, size_t encodingNameLen)
-{
-    std::span<const char> span(encodingName, encodingNameLen);
-    StringView encodingView(span);
-    TextEncoding encoding(encodingView);
-    return encoding.isValid();
-}
-
-// Get canonical encoding name
-const char* Bun__getCanonicalEncodingName(const char* encodingName, size_t encodingNameLen, size_t* outLen)
-{
-    std::span<const char> span(encodingName, encodingNameLen);
-    StringView encodingView(span);
-    TextEncoding encoding(encodingView);
-
-    if (!encoding.isValid()) {
-        *outLen = 0;
-        return nullptr;
-    }
-
-    const char* name = encoding.name();
-    *outLen = strlen(name);
-    return name;
-}
-
 } // extern "C"

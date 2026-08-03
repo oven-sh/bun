@@ -6,12 +6,12 @@ use crate::shell::states::base::Base;
 use crate::shell::yield_::Yield;
 
 pub struct Stmt {
-    pub base: Base,
+    pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Stmt>,
-    pub idx: usize,
-    pub last_exit_code: Option<ExitCode>,
-    pub currently_executing: Option<NodeId>,
-    pub io: IO,
+    pub(crate) idx: usize,
+    pub(crate) last_exit_code: Option<ExitCode>,
+    pub(crate) currently_executing: Option<NodeId>,
+    pub(crate) io: IO,
 }
 
 impl Stmt {

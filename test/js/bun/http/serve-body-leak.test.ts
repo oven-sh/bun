@@ -172,12 +172,10 @@ describe("request body leak", () => {
         expect(fixture.exitCode ?? fixture.signalCode).toBeNull();
         const report = await calculateMemoryLeak(fn, url);
         console.log(report);
-        // Peak should stay within a small multiple of the post-GC baseline; a
-        // leaked 512 KB body per request would blow past this by an order of
-        // magnitude. 3x (was 2.5x) gives headroom for the incomplete-streaming
-        // scenario on Windows, where 40 concurrent half-read uploads briefly
-        // hold ~2.6x of a low shared-server baseline before dropping back.
-        expect(report.peak_memory).not.toBeGreaterThan(report.start_memory * 3);
+        // Samples are taken between batches, so up to one batch of in-flight bodies plus
+        // not-yet-purged garbage may be counted; a leaked 512 KB body per request would blow
+        // past this by an order of magnitude.
+        expect(report.peak_memory - report.start_memory).toBeLessThan(256 * 1024 * 1024);
         // acceptable memory leak
         expect(report.leak).toBeLessThanOrEqual(maxMemoryGrowth);
         // ASAN quarantine + debug-assertions instrumentation inflate RSS;

@@ -63,6 +63,8 @@ pub enum Error {
     UnsupportedTransferEncoding,
     #[error("RequestBodyNotReusable")]
     RequestBodyNotReusable,
+    #[error("RequestBodyTruncated")]
+    RequestBodyTruncated,
     #[error("UnsupportedRedirectProtocol")]
     UnsupportedRedirectProtocol,
     #[error("RedirectURLTooLong")]
@@ -291,6 +293,7 @@ impl Error {
             Self::InvalidContentLength => "InvalidContentLength",
             Self::UnsupportedTransferEncoding => "UnsupportedTransferEncoding",
             Self::RequestBodyNotReusable => "RequestBodyNotReusable",
+            Self::RequestBodyTruncated => "RequestBodyTruncated",
             Self::UnsupportedRedirectProtocol => "UnsupportedRedirectProtocol",
             Self::RedirectURLTooLong => "RedirectURLTooLong",
             Self::RedirectURLInvalid => "RedirectURLInvalid",

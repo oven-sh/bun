@@ -58,10 +58,8 @@ const setDefaultAutoSelectFamily = $rust("node_net_binding.rs", "setDefaultAutoS
 const getDefaultAutoSelectFamilyAttemptTimeout = $rust("node_net_binding.rs", "getDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
 const setDefaultAutoSelectFamilyAttemptTimeout = $rust("node_net_binding.rs", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
 
-/**
- * `--tls-keylog=<file>`: every TLS socket appends its NSS key-log lines here,
- * the way Node's CLI option store seeds an implicit 'keylog' listener.
- */
+/** `--tls-keylog=<file>`: every TLS socket appends its NSS key-log lines here, like Node's
+ *  CLI option store seeds an implicit 'keylog' listener. */
 let tlsKeylogPath: string | undefined;
 let tlsKeylogWarned = false;
 function appendTlsKeylog(line: Buffer) {
@@ -127,10 +125,8 @@ const owner_symbol = Symbol("owner_symbol");
 const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
-// tls.Server exposes its native SecureContext constructor through this key so
-// the SNI dispatch (below) can recognize a raw native context the way Node's
-// `context.context || context` unwrap does - without net.ts needing its own
-// binding to the constructor.
+// tls.Server exposes its native SecureContext constructor here so SNI dispatch can recognize a
+// raw native context (Node's `context.context || context` unwrap) without net.ts binding to it.
 const kNativeSecureContextCtor = Symbol.for("::buntlsnativesecurecontextctor::");
 const kReinitializeHandle = Symbol("kReinitializeHandle");
 
@@ -199,12 +195,8 @@ function failWrite(self, negErrno, callback) {
   self._pendingData = null;
   self[kwriteCallback] = null;
   if (callback) {
-    // Node delivers a failed write to BOTH the write callback and the socket:
-    // onWriteComplete calls errorOrDestroy(self, ...) in addition to the
-    // chained callback (lib/internal/stream_base_commons.js), so 'error' and
-    // 'close' still fire even when every write had a callback. Only handing
-    // the error to a callback that ignores it left the socket alive forever
-    // (test-net-stream's server never observed its peer vanish).
+    // Node delivers a failed write to BOTH the callback and the socket (onWriteComplete calls
+    // errorOrDestroy too). https://github.com/nodejs/node/blob/main/lib/internal/stream_base_commons.js
     callback(er);
     if (!self.destroyed && !self._hadError) {
       // _hadError is the cross-path once-guard: the native error dispatch
@@ -221,10 +213,8 @@ function failWrite(self, negErrno, callback) {
       self.once("error", () => {});
       self.destroy(er);
     } else {
-      // No write callback and no 'error' listener: a failed flush on an
-      // orphaned socket (an h2 teardown racing the peer's reset - routine on
-      // Windows, where the reset completes the send first) is teardown noise.
-      // Same silent-close policy as SocketEmitEndNT's no-listener case.
+      // No write callback and no 'error' listener: teardown noise (same silent-close policy
+      // as SocketEmitEndNT's no-listener case).
       self.destroy();
     }
   }
@@ -299,9 +289,7 @@ function onClientHandshakeComplete(self, socket, verifyError) {
   self._secureEstablished = true;
   self[kVerifyError] = verifyError ?? null;
   self.alpnProtocol = socket.alpnProtocol;
-  // Node has no try/catch around these emits; a listener throw reaches
-  // InternalCallbackScope as uncaughtException. reportError mirrors that
-  // without changing Bun.connect's handshake-throw-to-error-handler contract.
+  // Node has no try/catch here; a listener throw is uncaughtException. reportError mirrors that.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
   try {
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1662-L1673
@@ -361,12 +349,8 @@ function onConnectEnd() {
   }
 }
 
-/**
- * Build the Error for a handshake that failed before completing. A fatal SSL
- * protocol error (wrong version number, bad record, ...) carries the OpenSSL
- * error string in `verifyError.reason`; everything else is the peer
- * disconnecting mid-handshake, which Node reports as ECONNRESET.
- */
+/** Build the Error for an incomplete handshake: a fatal SSL protocol error carries the OpenSSL
+ *  reason in `verifyError.reason`; everything else is a mid-handshake disconnect (ECONNRESET). */
 function tlsHandshakeError(verifyError) {
   const verifyErrorCode = verifyError ? verifyError.code : undefined;
   if (verifyErrorCode && verifyErrorCode !== "ECONNRESET") {
@@ -377,10 +361,8 @@ function tlsHandshakeError(verifyError) {
       function?: string;
       reason?: string;
     };
-    // A fatal SSL-library error carries the full OpenSSL error string
-    // ("error:0a00042e:SSL routines:OPENSSL_internal:TLSV1_ALERT_PROTOCOL_VERSION").
-    // Decompose it into Node's library/function/reason properties and the
-    // ERR_SSL_<REASON> code the way ThrowCryptoError does.
+    // Decompose the OpenSSL error string into library/function/reason + ERR_SSL_<REASON> code.
+    // https://github.com/nodejs/node/blob/main/src/crypto/crypto_util.cc (ThrowCryptoError)
     const match = /^error:[0-9a-f]+:SSL routines:([^:]*):(.+)$/.exec(reason);
     if (match) {
       err.library = "SSL routines";
@@ -528,23 +510,14 @@ const SocketHandlers: SocketHandler = {
       // will be handled in onConnectEnd
       return;
     }
-    // The second argument is "authorized" (handshake + verification +
-    // hostname), matching the public Bun.connect handshake callback. node:tls
-    // decides what to do with verification results in JS via the
-    // rejectUnauthorized / checkServerIdentity handling below, so a
-    // verification-class result (an X509 code such as
-    // UNABLE_TO_VERIFY_LEAF_SIGNATURE, or the native hostname verdict) still
-    // means the TLS session itself was established. Only a fatal TLS protocol
-    // failure tears the socket down here: those arrive as EPROTO carrying the
-    // OpenSSL "error:...:SSL routines:..." reason (or an already decomposed
-    // ERR_SSL_* / ERR_OSSL_* code).
+    // `success` is "authorized" (handshake + verification + hostname). Verification-class results
+    // (X509 codes) still mean the session was established; only fatal protocol failures (EPROTO /
+    // ERR_SSL_* / ERR_OSSL_*) tear the socket down here.
     const isProtocolFailure =
       !success &&
       verifyError?.code != null &&
       (verifyError.code === "EPROTO" || /^ERR_(SSL|OSSL)_/.test(verifyError.code));
     if (isProtocolFailure) {
-      // Surface the OpenSSL reason instead of letting the close path report a
-      // generic disconnect.
       self.destroy(tlsHandshakeError(verifyError));
       return;
     }
@@ -566,12 +539,9 @@ function finishSocketEnd(self) {
   if (!self.allowHalfOpen) self.write = writeAfterFIN;
   self.push(null);
   Duplex.prototype.read.$call(self, 0);
-  // The peer's FIN means kernel reads are over for good. In libuv a stream handle only holds
-  // the loop while reading or with a write in flight, so node lets the process exit even if
-  // the (half-open) writable side stays open and the readable side was never consumed. Mirror
-  // that: drop this handle's hold on the loop unless a write is still waiting on drain, and
-  // forget any pause()-time unref so a later read()/resume() does not pin the loop again.
-  // A subsequent buffered write re-refs (see _write) so its callback can still fire.
+  // Peer FIN = no more reads. libuv only refs a stream handle while reading or writing, so drop
+  // this handle's hold on the loop unless a write is waiting on drain (a later buffered write
+  // re-refs in _write). Forget any pause()-time unref so read()/resume() does not re-pin the loop.
   const socket = self._handle;
   if (socket && !self[kwriteCallback]) {
     socket.unref?.();
@@ -590,10 +560,8 @@ function deferEndForOnreadTail(self) {
 function destroyWithReadError(self, _err) {
   let errErrno;
   if (_err.code === undefined && typeof (errErrno = _err.errno) === "number" && errErrno !== 0) {
-    // A codeless close error that still carries the errno (Windows IOCP
-    // delivers some this way): derive the proper code from it. Raw WSA values
-    // (-10054, ...) that the errno table cannot name fall through to the reset
-    // shape below instead of surfacing "Unknown system error N".
+    // Codeless close error with an errno (Windows IOCP): derive the code. Raw WSA values the
+    // errno table cannot name fall through to the reset shape below.
     const er = new ErrnoException(errErrno, "read") as Error & { code?: string };
     if (typeof er.code === "string" && /^E[A-Z0-9]+$/.test(er.code)) {
       self.destroy(er);
@@ -618,46 +586,22 @@ function destroyWithReadError(self, _err) {
 }
 
 function SocketEmitEndNT(self, _err?) {
-  // A read error delivered with the close (e.g. a received RST surfacing as
-  // ECONNRESET) is not a clean EOF — Node destroys the socket with the error
-  // ("read ECONNRESET") instead of emitting a graceful 'end'. Guard on
-  // !destroyed so an already-torn-down socket isn't re-destroyed, and on an
-  // 'error' listener so callers that opted into error handling get Node's
-  // behavior while those that did not keep the previous silent EOF (a server
-  // hard-closing after a clean response would otherwise surface here as an
-  // unhandled error across the proxy/http2/fetch suites under ASAN/baseline
-  // timing).
-  // A reset that lands after the exchange already finished in BOTH
-  // directions (clean EOF delivered and nothing left being written) is
-  // teardown noise - a peer hard-closing once the exchange completed - not
-  // data loss; Node would have destroyed the socket on 'end' for these
-  // non-keepalive flows before the RST could ever be observed. Surfacing it
-  // produced unhandled errors between tests across the fetch/http2 suites on
-  // Windows, where loopback RSTs at teardown are routine. A reset while the
-  // socket is still writing (the peer aborted mid-transfer) is real and is
-  // surfaced (test-net-error-twice).
-  // writableFinished (everything actually flushed) - NOT writableEnded (end()
-  // merely called): a peer reset while queued data is still unflushed is the
-  // peer aborting mid-transfer and must surface (test-net-error-twice).
+  // A read error delivered with the close is not a clean EOF — Node destroys with "read ECONNRESET".
+  // A reset after both directions finished (kended && writableFinished) is teardown noise, not data
+  // loss; a reset while unflushed writes remain is real and surfaces (test-net-error-twice).
   const teardownNoise = self[kended] && self.writableFinished;
   // _hadError: the failure already reached JS through the error dispatch
   // (native on_error / a fatal write); node emits a socket error exactly
   // once, so the close that follows it is delivered plain.
   if (_err && !self.destroyed && !self._hadError && !teardownNoise && self.listenerCount("error") > 0) {
-    // The consumer can detach its 'error' listener between this close
-    // callback and destroy()'s deferred 'error' emission (a request that
-    // finished just as the reset arrived); a last-resort no-op listener keeps
-    // that race from surfacing as an uncaught exception - the no-listener
-    // case is already a documented silent close.
+    // Last-resort no-op listener: the consumer can detach its 'error' listener between now and
+    // destroy()'s deferred 'error' emission.
     self.once("error", () => {});
     destroyWithReadError(self, _err);
   } else if (!self[kended]) {
     finishSocketEnd(self);
   } else if (_err && !self.destroyed) {
-    // An error excluded from the synthesis above (teardown noise, or no
-    // listener attached): nothing more is coming, but the socket still has to
-    // finish its lifecycle - close it quietly instead of leaving it open with
-    // no further events.
+    // Teardown noise / no listener: close quietly instead of leaving the socket open.
     self.destroy();
   }
   // A write that was waiting on the native drain can never complete once the
@@ -678,11 +622,9 @@ function toSNIError(err) {
   return err instanceof Error ? err : Object.assign(new Error("SNI callback error"), { reason: err });
 }
 
-// Applies one SNICallback resolution to the dispatch state. Node assigns
-// `sni_context = context.context || context`: both the SecureContext wrapper
-// and a raw native context are accepted, null/undefined falls through to the
-// default context, and anything else is an invalid SNI context that drops the
-// connection before the handshake completes.
+// Applies one SNICallback resolution. Node assigns `sni_context = context.context || context`:
+// wrapper or raw native accepted, null/undefined falls through, anything else drops the connection.
+// https://github.com/nodejs/node/blob/main/lib/internal/tls/wrap.js
 function consumeSNIResult(state, err, context) {
   if (err) {
     state.failed = toSNIError(err);
@@ -699,10 +641,8 @@ function consumeSNIResult(state, err, context) {
   }
 }
 
-// Stash per-connection (socketHandle.data is this connection's TLSSocket):
-// with concurrent handshakes a per-server stash could hand one connection's
-// error to another's failure handler. The server is the legacy fallback when
-// no handle was available at dispatch time.
+// Stash per-connection so concurrent handshakes cannot cross-deliver errors;
+// the server is the legacy fallback when no handle was available at dispatch time.
 function stashSNIError(state) {
   const target = state.socketHandle?.data ?? state.server;
   if (target) target[kSNIError] = state.failed;
@@ -780,17 +720,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     return result;
   },
   serverName(server, servername, socketHandle) {
-    // Returns what the SNICallback selects for this handshake:
-    //   - the native SecureContext (synchronous selection)
-    //   - undefined to fall through to the default context
-    //   - an Error to abort the handshake (stashed for tlsClientError)
-    //   - `true` to SUSPEND the handshake: the callback is asynchronous, and
-    //     `socketHandle.resumeSNI(ctx, isError)` completes it when the
-    //     callback finally resolves. The native side parks the connection
-    //     (BoringSSL select-certificate retry) until then.
-    // Nothing is cached - the callback runs per-connection the way Node's
-    // does. The native dispatch passes the listener's `data` (the owning
-    // tls.Server) and the accepted connection's handle.
+    // Returns: native SecureContext (sync selection) | undefined (default context) | Error (abort,
+    // stashed for tlsClientError) | `true` (SUSPEND — async; `socketHandle.resumeSNI(ctx, isError)`
+    // completes it). Runs per-connection; native passes the owning tls.Server and connection handle.
     const cb = server?._SNICallback;
     if (typeof cb !== "function" || !servername) return undefined;
     const state = {
@@ -817,10 +749,8 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     }
     const failed = state.failed;
     if (failed !== undefined) {
-      // Stash the error so the handshake-failure handler emits
-      // 'tlsClientError' with it, and return it - the native dispatch
-      // detects an Error return and aborts the handshake, dropping the
-      // connection without a TLS alert the way Node does.
+      // Stash for 'tlsClientError' and return it — native detects an Error return and aborts
+      // the handshake without a TLS alert, like Node.
       stashSNIError(state);
       return failed;
     }
@@ -849,13 +779,8 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     $debug("Bun.Server open");
     const self = socket.data as any as NetServer;
     if (!self) return;
-    // Dispatch through the listener handle's onconnection hook so user code
-    // (and node:cluster RoundRobinHandle) can intercept accepted sockets the
-    // same way Node.js exposes TCP/Pipe wrap onconnection.
-    // For a standalone server-side wrap (new TLSSocket(duplex, { isServer })),
-    // `self` is the wrapping socket - not a Server - and its handle has no
-    // onconnection; throwing here would tear the brand-new TLS engine down
-    // before the ClientHello ever arrives.
+    // Dispatch through the listener's onconnection hook so user code / node:cluster can intercept.
+    // For a standalone `new TLSSocket(duplex, { isServer })`, `self` is the socket (no onconnection).
     const handle = self._handle || socket.listener;
     if (handle && typeof handle.onconnection === "function") {
       handle.onconnection(0, socket);
@@ -869,22 +794,14 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     if (self[khandshakeTimer]) {
       clearTimeout(self[khandshakeTimer]);
       self[khandshakeTimer] = undefined;
-      // node's _finishInit retires the handler with setTimeout(0,
-      // _handleTimeout); leaving it attached would turn a later idle timeout
-      // on an established connection into ERR_TLS_HANDSHAKE_TIMEOUT.
+      // Retire the handler so a later idle timeout is not reported as ERR_TLS_HANDSHAKE_TIMEOUT.
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1105-L1106
       self.removeListener("timeout", onHandshakeTimeout);
     }
-    // On the server side the second argument is the raw handshake result
-    // (client-certificate verification is reported separately through
-    // `verifyError` and handled below), so !success always means the TLS
-    // session was never established.
+    // Server-side `success` is the raw handshake result; client-cert verification is in
+    // `verifyError`. !success = no TLS session: report via tlsClientError and tear down,
+    // unless already reported (handshake timeout / explicit destroy).
     if (!success) {
-      // The handshake never completed: there is no TLS session, so there is
-      // no secureConnection. Report the failure through tlsClientError the
-      // way Node does and tear the connection down. A connection that was
-      // already reported (handshake timeout, explicit destroy) is not
-      // reported a second time when its teardown unwinds the handshake.
       let alreadyDestroyed;
       if (self._hadError || self[kerrorEmitted] || (alreadyDestroyed = self.destroyed)) {
         if (!(alreadyDestroyed ?? self.destroyed)) self.destroy();
@@ -912,10 +829,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       }
       self.servername = socket.getServername();
       self._hadError = true;
-      // Node's onerror destroys *with* the error when the handshake never
-      // finished, so 'close' reports hadError === true; the socket stays
-      // reachable for the 'tlsClientError' listener because the destroy is
-      // deferred through _closeAfterHandlingError.
+      // Destroy with the error so 'close' reports hadError; deferred via _closeAfterHandlingError.
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L480-L488
       self._closeAfterHandlingError = true;
       self.destroy(err);
@@ -934,19 +848,11 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
         if (self._rejectUnauthorized) {
-          // The connection is refused: report the verification result through
-          // tlsClientError before tearing down. When the connection is kept
-          // (rejectUnauthorized: false) it proceeds with authorized=false and
-          // no tlsClientError - Node's onServerSocketSecure never emits it
-          // there and test-tls-sni-option asserts mustNotCall on it for the
-          // authorized=false cases.
+          // Refused connection: report via tlsClientError before tearing down. Kept connections
+          // (rejectUnauthorized: false) proceed with authorized=false and no tlsClientError.
           self[kerrorEmitted] = true;
           server?.emit("tlsClientError", verifyError, self);
-          // A rejected peer is torn down with the verification error, so
-          // 'close' reports hadError === true. The internal 'error' listener
-          // installed by the TLSSocket constructor (node's _init) keeps this
-          // from surfacing as an uncaught exception when the user attached
-          // none of their own.
+          // Destroy with the error; the TLSSocket constructor's internal 'error' listener absorbs it.
           // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L606
           self.destroy(verifyError);
           return;
@@ -979,14 +885,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       }
       if (self.destroyed) return;
       self.emit(kSecureConnectDone);
-      // Accepted sockets expose no post-handshake events: node's socket-level
-      // 'secure' fires before a tls.Server user can hold the socket (the
-      // 'connection' event hands out the raw socket), and 'secureConnect' is
-      // attached by the client path only. A standalone
-      // `new TLSSocket(s, { isServer: true })` is user-held from construction,
-      // so its 'secure' stays observable.
+      // Accepted sockets expose no post-handshake events; a standalone `new TLSSocket(s,
+      // { isServer: true })` is user-held from construction so its 'secure' stays observable.
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1810
       if (!server) self.emit("secure", self);
     } catch (err) {
       reportError(err);
@@ -1022,23 +923,16 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         // Ignore server's authorization errors
         data.destroy();
       } else {
-        // Node emits through _emitTLSError and leaves the socket alive. Bun
-        // still destroys here: its tls.Server completes the handshake for a
-        // peer that already reset, and leaving that connection alive turns the
-        // error it then raises into an uncaught exception.
+        // Node leaves the socket alive; Bun destroys because its tls.Server completes the handshake
+        // for a peer that already reset, and leaving it alive turns the error into uncaughtException.
         data.emit("_tlsError", error);
         data.destroy(data.listenerCount("error") > 0 ? error : undefined);
       }
       return;
     }
-    // Plain TCP. On kqueue a fatal-flush from on_writable is the only place
-    // the errno is visible (the close it issues short-circuits the read
-    // dispatch at loop.c's us_socket_is_closed check), so swallowing it hung
-    // the server behind an un-failed pending write (test-net-stream on
-    // darwin). Shape it like Node's onWriteComplete: fail the pending write
-    // callback, then destroy with the error. destroy() owns the single
-    // 'error' emission via the stream's errorEmitted guard; callback(error)
-    // may have already destroyed, in which case this is a no-op.
+    // Plain TCP. Shape like Node's onWriteComplete: fail the pending write callback, then destroy.
+    // On kqueue a fatal-flush from on_writable is the only place the errno is visible.
+    // https://github.com/nodejs/node/blob/main/lib/internal/stream_base_commons.js
     const callback = data[kwriteCallback];
     if (callback) {
       data[kwriteCallback] = null;
@@ -1066,9 +960,7 @@ function applyRejectUnauthorized(self, tls, rejectUnauthorized) {
   }
 }
 
-// tlsConnectionListener registers this on every accepted socket so an error
-// raised while the server still owns the connection reaches 'tlsClientError'
-// exactly once.
+// Routes an error raised while the server still owns the connection to 'tlsClientError' once.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1234-L1240
 function onSocketTLSError(err) {
   if (!this._controlReleased && !this[kerrorEmitted]) {
@@ -1101,15 +993,9 @@ function initAcceptedTLSSocket(server, socket) {
   socket.on("error", onSocketTLSError);
   const handshakeTimeout = server._handshakeTimeout;
   if (!(handshakeTimeout > 0)) return;
-  // The deadline surfaces as the socket's own 'timeout' event with
-  // _handleTimeout as its first listener, which routes it through
-  // _emitTLSError: 'tlsClientError' fires while control is still the server's,
-  // and the connection is neither errored nor destroyed. Node arms it with
-  // socket.setTimeout(); bun keeps a standalone timer because encrypted bytes
-  // arriving mid-handshake must not extend the deadline (verified against the
-  // v26.3.0 binary: a client dribbling bytes is still cut off on time).
+  // Deadline surfaces as the socket's 'timeout' → _emitTLSError → 'tlsClientError'. Bun uses a
+  // standalone timer so mid-handshake bytes do not extend the deadline (Node uses socket.setTimeout).
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L961-L962
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1056-L1058
   socket.once("timeout", onHandshakeTimeout);
   const timer = setTimeout(onHandshakeDeadline, handshakeTimeout, socket);
   // Node's handshake timer is unref'd: a fully-unref'd server (the
@@ -1132,12 +1018,8 @@ function onconnection(err, clientHandle) {
   clientHandle[kServerSocket] = handle;
   const options = self[bunSocketServerOptions];
   const { pauseOnConnect, connectionListener, [kSocketClass]: SClass } = options;
-  // Propagate the server's half-open/highWaterMark settings to the accepted
-  // socket so the Duplex's allowHalfOpen matches what the native layer was
-  // configured with in kRealListen; without this, net.createServer({
-  // allowHalfOpen: true }) would be ignored on accepted connections.
-  // Matches Node's onconnection:
-  // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L2349
+  // Propagate the server's allowHalfOpen/highWaterMark to the accepted socket.
+  // https://github.com/nodejs/node/blob/main/lib/net.js (onconnection)
   const _socket = new SClass({
     allowHalfOpen: self.allowHalfOpen,
     highWaterMark: self.highWaterMark,
@@ -1225,10 +1107,8 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     let { self, req } = socket.data;
     socket[owner_symbol] = self;
     $debug("self[kupgraded]", String(self[kupgraded]));
-    // Offer a previously-negotiated session for resumption before oncomplete
-    // (afterConnect) runs: a user 'connect' listener that writes immediately
-    // would otherwise send the ClientHello before SSL_set_session runs and
-    // silently skip resumption.
+    // Offer the session for resumption before afterConnect runs, so a 'connect' listener that
+    // writes immediately does not send the ClientHello before SSL_set_session.
     {
       const options = self[bunTLSConnectOptions];
       if (options) {
@@ -1308,13 +1188,9 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (err) $debug(err);
     if (self[kclosed]) return;
     self[kclosed] = true;
-    // A received RST surfacing as ECONNRESET with the close is not a clean
-    // EOF - Node destroys the socket with "read ECONNRESET" instead of a
-    // graceful 'end'. Only surface it when the closing handle is still the
-    // socket's current handle: connection attempts that lost the
-    // family-autoselection race and raw sockets handed off during a TLS
-    // upgrade also report errors on close, and those must keep ending
-    // cleanly.
+    // RST at close is not a clean EOF — Node destroys with "read ECONNRESET". Only surface it when
+    // the closing handle is still the socket's current handle (family-autoselection losers and
+    // raw sockets handed off during a TLS upgrade also report errors here and must end cleanly).
     if (err && !self.destroyed && socket === self._handle && self.listenerCount("error") > 0) {
       // Same late-detach guard as SocketEmitEndNT: the listener seen at
       // close-time can be gone by the deferred 'error' emission.
@@ -1326,12 +1202,8 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
         er.syscall = "read";
         self.destroy(er);
       } else {
-        // Any other recv errno (ETIMEDOUT, EHOSTUNREACH, ENETUNREACH, ...)
-        // keeps its identity — Node's onStreamRead does
-        // `stream.destroy(errnoException(nread, 'read'))` for any nread that
-        // is not UV_EOF. The native on_close only passes a non-undefined err
-        // when the close was driven by a recv() failure (libus close-code
-        // enum values are filtered out in NewSocket::on_close).
+        // Any other recv errno keeps its identity — Node's onStreamRead destroys with
+        // errnoException(nread, 'read') for any nread != UV_EOF.
         self.destroy(err);
       }
     } else if (!deferEndForOnreadTail(self)) {
@@ -1360,23 +1232,14 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       // will be handled in onConnectEnd
       return;
     }
-    // The second argument is "authorized" (handshake + verification +
-    // hostname), matching the public Bun.connect handshake callback. node:tls
-    // decides what to do with verification results in JS via the
-    // rejectUnauthorized / checkServerIdentity handling below, so a
-    // verification-class result (an X509 code such as
-    // UNABLE_TO_VERIFY_LEAF_SIGNATURE, or the native hostname verdict) still
-    // means the TLS session itself was established. Only a fatal TLS protocol
-    // failure tears the socket down here: those arrive as EPROTO carrying the
-    // OpenSSL "error:...:SSL routines:..." reason (or an already decomposed
-    // ERR_SSL_* / ERR_OSSL_* code).
+    // `success` is "authorized" (handshake + verification + hostname). Verification-class results
+    // (X509 codes) still mean the session was established; only fatal protocol failures (EPROTO /
+    // ERR_SSL_* / ERR_OSSL_*) tear the socket down here.
     const isProtocolFailure =
       !success &&
       verifyError?.code != null &&
       (verifyError.code === "EPROTO" || /^ERR_(SSL|OSSL)_/.test(verifyError.code));
     if (isProtocolFailure) {
-      // Surface the OpenSSL reason instead of letting the close path report a
-      // generic disconnect.
       self.destroy(tlsHandshakeError(verifyError));
       return;
     }
@@ -1419,10 +1282,8 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   },
 };
 
-// The same table minus the per-connection callback members: a listener whose
-// config has neither handler never registers the native SNI/ALPN dispatches,
-// so a server without an SNICallback or ALPNCallback does not pay a JS
-// round-trip from inside the handshake for them.
+// Same table minus per-connection callback members: a server without SNICallback/ALPNCallback
+// never registers the native dispatch, so it pays no JS round-trip inside the handshake.
 const { serverName: _serverNameHandler, alpnCallback: _alpnCallbackHandler, ...ServerHandlersNoSNI } = ServerHandlers;
 // Partial tables so a server with exactly one of the callbacks only registers
 // that dispatch (the other would be a per-handshake JS round-trip that always
@@ -1480,11 +1341,8 @@ function kConnectTcp(self, addressType, req, address, port) {
     localAddress: req.localAddress || undefined,
     localPort: req.localPort || undefined,
     ipv6Only: addressType === 6,
-    // The native socket is always half-open: closing it on the peer's FIN
-    // would discard whatever is still buffered on the writable side. The
-    // stream layer implements allowHalfOpen=false (onSocketEnd ends the
-    // writable side, which flushes, sends FIN and destroys), matching Node
-    // where libuv sockets are half-open and the stream layer decides.
+    // Native socket is always half-open; the stream layer (onSocketEnd) implements
+    // allowHalfOpen=false, matching Node where libuv sockets are half-open and streams decide.
     allowHalfOpen: true,
     tls: req.tls,
     data: { self, req },
@@ -1608,16 +1466,9 @@ function Socket(options?) {
   if (options?.fd !== undefined) {
     const { fd } = options;
     validateInt32(fd, "fd", 0);
-    // Adopt pipe/character-device/file fds with synchronous writes. Matches
-    // node's effective semantics for stdio-style sockets: writes to a pipe
-    // complete inline, so data survives an immediate process.exit().
-    // Gated on an explicit `writable: true` (how node's own stdio wraps fds,
-    // e.g. new Socket({ fd: 2, readable: false, writable: true })): a bare
-    // { fd } is the connect({ fd }) path (child_process extra stdio), which
-    // attaches a native duplex handle in Socket.prototype.connect - adopting
-    // here would end its readable side and stomp its write path.
-    // Network-socket fds are not supported (handle adoption needs native
-    // support); those keep the previous validated-but-inert behavior.
+    // Adopt pipe/char-device/file fds with synchronous writes (stdio-style), gated on an explicit
+    // `writable: true` — a bare { fd } is the connect({ fd }) path which attaches a native duplex
+    // handle. Network-socket fds are not supported (handle adoption needs native support).
     if (options.writable === true) {
       let stats;
       try {
@@ -1667,21 +1518,16 @@ function Socket(options?) {
     const self = this;
     this[kOnreadTail] = undefined;
     this[kOnreadDraining] = false;
-    // Node calls the factory once at initSocketHandle time, then once after
-    // every callback (stream_base_commons onStreamRead): the first delivery
-    // already has a real buffer, and a non-Uint8Array result leaves the prior
-    // value (or the `true` sentinel) in place.
+    // Node calls the factory once at initSocketHandle, then after every callback; a non-Uint8Array
+    // result leaves the prior value in place. https://github.com/nodejs/node/blob/main/lib/internal/stream_base_commons.js
     if (onreadBufferIsFn) {
       const first = onreadBuffer();
       this[kOnreadBuffer] = isUint8Array(first) ? first : true;
     } else {
       this[kOnreadBuffer] = onreadBuffer;
     }
-    // onStreamRead calls the user callback bare - a throw is an uncaught
-    // exception, not a socket 'error'. Node bounds each kernel read to the
-    // onread buffer's size, so each slice is a separate onStreamRead call and
-    // a swallowed uncaughtException loses no bytes; bun slices one larger
-    // native read in this loop, so the catch is per-slice.
+    // onStreamRead calls the callback bare — a throw is uncaughtException. Bun slices one larger
+    // native read here, so the catch is per-slice.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L179
     this[kOnreadDeliver] = function deliver(buffer) {
       let offset = 0;
@@ -1911,13 +1757,8 @@ Socket.prototype.connect = function connect(...args) {
       this.pause();
     } else {
       process.nextTick(() => {
-        // Honor pause()/resume() calls made while connecting — only start
-        // reading if the user hasn't explicitly paused the stream. Matches
-        // Node's afterConnect, which calls socket.read(0) only when not paused:
-        // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L1649
-        // read(0) starts the handle reading without switching the stream into
-        // flowing mode, so data that arrives before a 'data' listener is
-        // attached stays buffered instead of being emitted to nobody.
+        // Only start reading if not paused; read(0) starts the handle without switching to
+        // flowing mode. https://github.com/nodejs/node/blob/main/lib/net.js (afterConnect)
         if (!this.isPaused()) this.read(0);
       });
       this.connecting = true;
@@ -1977,20 +1818,15 @@ Socket.prototype.connect = function connect(...args) {
     }
     // start using existing connection
     if (connection) {
-      // A generic duplex transport is already established, so this socket is
-      // not "connecting" - only the TLS layer is pending, which
-      // secureConnecting tracks. Node reports false here. A provided
-      // net.Socket keeps its existing accounting (its own connect lifecycle
-      // drives this flag).
+      // A generic duplex is already established, so `connecting` is false (only `secureConnecting`
+      // is pending). A provided net.Socket keeps its existing accounting.
       if (!(connection instanceof Socket)) {
         this.connecting = false;
       }
       if (connectListener != null) this.once("secureConnect", connectListener);
       try {
-        // reset the underlying writable object when establishing a new connection
-        // this is a function on `Duplex`, originally defined on `Writable`
-        // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L311
-        // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L1126
+        // Reset the underlying writable object when establishing a new connection.
+        // https://github.com/nodejs/node/blob/main/lib/net.js#L311
         this._undestroy();
         const socket = connection._handle;
         if (!upgradeDuplex && socket) {
@@ -2149,10 +1985,8 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
-  // Tear down a wrapped generic duplex with this socket: the native handle's
-  // close only flushes close_notify and lets the wrapper drain; without an
-  // explicit destroy here a late RST on the underlying transport can surface
-  // as an unhandled error after this socket is gone.
+  // Tear down a wrapped generic duplex with this socket, otherwise a late RST on the underlying
+  // transport can surface as an unhandled error after this socket is gone.
   const upgraded = this[kupgraded];
   if (upgraded && !(upgraded instanceof Socket) && !upgraded.destroyed) {
     upgraded.destroy?.();
@@ -2192,10 +2026,8 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     const currentHandle = this._handle;
     if (this.resetAndClosing) {
       this.resetAndClosing = false;
-      // resetAndDestroy() must send an RST (not a graceful FIN) so the peer sees
-      // ECONNRESET. `close()` does a fast shutdown (clean close) which only
-      // happens to surface as RST on some platforms; `terminate()` arms
-      // SO_LINGER{1,0} for a real reset on all platforms.
+      // resetAndDestroy() must send RST so the peer sees ECONNRESET; `terminate()` arms
+      // SO_LINGER{1,0} for a real reset on all platforms (`close()` is a clean shutdown).
       const err = this._handle.terminate();
       setImmediate(() => {
         $debug("emit close");
@@ -2324,10 +2156,8 @@ Socket.prototype.resume = function resume() {
   if (!this.connecting && !drainOnreadTail(this)) {
     this._handle?.resume?.();
   }
-  // Restore the hold pause() removed - even while still connecting, so the
-  // pause-then-resume sequence is symmetric. Gated on the pause flag so a
-  // socket that was never paused (e.g. a wrapped duplex with no fd) is not
-  // newly pinned to the loop.
+  // Restore the hold pause() removed (symmetric even while connecting). Gated on the pause flag
+  // so a socket that was never paused (wrapped duplex with no fd) is not newly pinned.
   if (this[kPausedUnref] && !this[kUserUnrefed]) {
     this._handle?.ref?.();
     this[kPausedUnref] = false;
@@ -2352,12 +2182,8 @@ Socket.prototype.pause = function pause() {
   return Duplex.prototype.pause.$call(this);
 };
 
-// Server-side TLS upgrade over an accepted socket, for
-// `new tls.TLSSocket(socket, { isServer: true })`. Adopts the connection's fd
-// into an accept-state TLS socket (us_socket_adopt_tls with is_client=0) so the
-// native read path drives the handshake. Lives here, not tls.ts, to reach
-// ServerHandlers — the shared accepted-socket handler table, with per-socket
-// state carried via `data` (mirrors tls.createServer's one-handler-for-all model).
+// Server-side TLS upgrade for `new tls.TLSSocket(socket, { isServer: true })`: adopt the fd into
+// an accept-state TLS socket (us_socket_adopt_tls is_client=0). Lives here to reach ServerHandlers.
 Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, tls) {
   const socket = connection._handle;
   if (!socket || connection.encrypted || hasUnflushedWrites(connection)) {
@@ -2626,10 +2452,8 @@ Socket.prototype.setNoDelay = function setNoDelay(enable = true) {
   return this;
 };
 
-// Matches Node's setTypeOfService/getTypeOfService (lib/net.js + TCPWrap).
-// The native handle does the setsockopt (IP_TOS / IPV6_TCLASS); a socket
-// without a handle yet caches the value and applies it on connect.
-// https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L661
+// Native handle does the setsockopt (IP_TOS / IPV6_TCLASS); cached and applied on connect if no
+// handle yet. https://github.com/nodejs/node/blob/main/lib/net.js#L661
 Socket.prototype.setTypeOfService = function setTypeOfService(tos) {
   if (Number.isNaN(tos)) {
     throw $ERR_INVALID_ARG_TYPE("tos", "number", tos);
@@ -2770,12 +2594,8 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   }
   const socket = this._handle;
   if (!socket && this[kupgraded] && !this.destroyed) {
-    // Node wraps the handle synchronously in the TLSSocket constructor
-    // (_wrapHandle), so a banner written in the same tick as the wrap is
-    // buffered by TLSWrap and flushed once the handshake completes. Bun
-    // adopts the fd a tick later, so hold the write until it lands rather
-    // than failing it as a closed socket.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L590-L608
+    // Node's _wrapHandle is synchronous; Bun adopts the fd a tick later, so hold the write
+    // until it lands. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L590-L608
     this[kwriteCallback] = callback;
     this._pendingData = chunk;
     this._pendingEncoding = encoding;
@@ -2793,11 +2613,8 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   }
   this._unrefTimer();
   if (socket.readyState < 0) {
-    // The handle's native socket was already closed (e.g. handle.close() was
-    // called directly): fail the write the way a write(2) on a closed fd does
-    // in Node instead of waiting forever for a drain that never comes.
-    // Node reports this as errnoException(UV_EBADF/UV_EPIPE, 'write'), with
-    // message, code, errno and syscall all populated.
+    // The native socket was already closed: fail the write with errnoException(UV_EBADF/UV_EPIPE,
+    // 'write') instead of waiting for a drain that never comes.
     const er = new ErrnoException(process.platform === "win32" ? -4047 /* UV_EPIPE */ : -9 /* UV_EBADF */, "write");
     process.nextTick(callback, er);
     return false;
@@ -2812,18 +2629,12 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   }
   if (res) {
     if (this.encrypted) {
-      // TLS batches writes through the SSL engine, so the bytes stay buffered
-      // after $write returns. Defer the callback so writableLength/bufferSize
-      // reflects the queued bytes until they are flushed (test-tls-buffersize.js).
-      // Node's bufferSize getter is just writableLength:
-      // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L752
+      // TLS buffers through the SSL engine; defer the callback so writableLength/bufferSize
+      // reflects queued bytes (test-tls-buffersize.js). https://github.com/nodejs/node/blob/main/lib/net.js#L752
       process.nextTick(callback);
     } else {
-      // A plain TCP write completes synchronously once $write reports success.
-      // Calling the callback synchronously lets writableLength drain so a tight
-      // write() loop backpressures at the kernel rather than the JS
-      // highWaterMark, matching Node's _write (test-net-throttle.js):
-      // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L1036
+      // Plain TCP write completes synchronously; call inline so a tight write() loop backpressures
+      // at the kernel (test-net-throttle.js). https://github.com/nodejs/node/blob/main/lib/net.js#L1036
       callback();
     }
   } else if (this[kwriteCallback]) {
@@ -3134,11 +2945,8 @@ function internalConnect(self, options, address, port, addressType, localAddress
 
     traceConnectStart(req);
     err = kConnectTcp(self, addressType, req, address, port);
-    // kConnectTcp returns 0 (not undefined) on the async-connect path, so the
-    // perf context must be established whenever the attempt was dispatched
-    // without a synchronous error — matching the `if (err)` failure check
-    // below. Guarding on `err === undefined` never fired, so the 'net' entry
-    // was never produced for the TCP path.
+    // kConnectTcp returns 0 (not undefined) on the async path; establish the perf context
+    // whenever the attempt was dispatched without a synchronous error.
     if (!err && hasObserver("net")) {
       startPerf(self, kPerfHooksNetConnectContext, {
         type: "net",
@@ -3351,11 +3159,8 @@ function afterConnect(status, handle, req, readable, writable) {
 
   $debug("afterConnect", status, readable, writable);
 
-  // A pre-open error on a user-supplied duplex (tls.connect({ socket })) can
-  // clear `connecting` before the queued StartTLS task fires this callback.
-  // The socket is already being torn down, so bail out instead of asserting:
-  // this both avoids the debug $assert abort and stops the late callback from
-  // proceeding to touch a handle that the error path already freed.
+  // A pre-open error on a user-supplied duplex can clear `connecting` before the queued StartTLS
+  // task fires this callback; bail out instead of touching a handle the error path already freed.
   if (!self.connecting) return;
   self.connecting = false;
   self._sockname = null;
@@ -3742,15 +3547,8 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
         throw error;
       }
 
-      // port <number>
-      // host <string>
-      // path <string> Will be ignored if port is specified. See Identifying paths for IPC connections.
-      // backlog <number> Common parameter of server.listen() functions.
-      // exclusive <boolean> Default: false
-      // readableAll <boolean> For IPC servers makes the pipe readable for all users. Default: false.
-      // writableAll <boolean> For IPC servers makes the pipe writable for all users. Default: false.
-      // ipv6Only <boolean> For TCP servers, setting ipv6Only to true will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound. Default: false.
-      // signal <AbortSignal> An AbortSignal that may be used to close a listening server.
+      // Options: port, host, path, backlog, exclusive, readableAll, writableAll, ipv6Only, signal.
+      // https://nodejs.org/api/net.html#serverlistenoptions-callback
 
       if (typeof options.callback === "function") onListen = options?.callback;
     } else if (port === undefined || port === null) {
@@ -3859,11 +3657,8 @@ Server.prototype[kRealListen] = function (
       socket: serverHandlersFor(this),
       data: this,
     });
-    // Mirror libuv uv_pipe_chmod: readableAll/writableAll relax the unix socket
-    // file's group/other permission bits. Skipped on Windows and abstract
-    // sockets (no filesystem entry). uSockets binds synchronously, so the file
-    // exists by the time Bun.listen returns.
-    // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L1899
+    // Mirror libuv uv_pipe_chmod: readableAll/writableAll relax group/other perms (skipped on
+    // Windows and abstract sockets). https://github.com/nodejs/node/blob/main/lib/net.js#L1899
     if ((readableAll || writableAll) && process.platform !== "win32" && path.charCodeAt(0) !== 0) {
       let desired = 0;
       if (readableAll) desired |= 0o44; // S_IRGRP | S_IROTH
@@ -3925,13 +3720,8 @@ Server.prototype[kRealListen] = function (
   // Unref the handle if the server was unref'ed prior to listening
   if (this._unref) this.unref();
 
-  // We must schedule the emitListeningNextTick() only after the next run of
-  // the event loop's IO queue. Otherwise, the server may not actually be listening
-  // when the 'listening' event is emitted.
-  //
-  // That leads to all sorts of confusion.
-  //
-  // process.nextTick() is not sufficient because it will run before the IO queue.
+  // Schedule after the next IO queue run so the server is actually listening when 'listening'
+  // fires. process.nextTick() is not sufficient because it runs before the IO queue.
   setTimeout(emitListeningNextTick, 1, this);
 };
 
@@ -4129,10 +3919,8 @@ function closeSocketHandle(self, isException, isCleanupPending = false) {
   }
 }
 
-// Reformat a native listen error to Node's "listen <CODE>: <description> <addr>"
-// (Node uses exceptionWithHostPort). Only rewrites known uv codes; the code is
-// already set natively.
-// https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L1899
+// Reformat a native listen error to Node's "listen <CODE>: <description> <addr>" (exceptionWithHostPort).
+// https://github.com/nodejs/node/blob/main/lib/net.js#L1899
 function uvListenErrorDescription(code) {
   switch (code) {
     case "EADDRINUSE":
@@ -4162,10 +3950,8 @@ function formatListenError(err, address, port) {
 }
 
 function checkBindError(err, port, handle) {
-  // EADDRINUSE may not be reported until we call listen() or connect().
-  // To complicate matters, a failed bind() followed by listen() or connect()
-  // will implicitly bind to a random port. Ergo, check that the socket is
-  // bound to the expected port before calling listen() or connect().
+  // EADDRINUSE may not surface until listen()/connect(); a failed bind() then implicitly binds to
+  // a random port. Check the socket is bound to the expected port first.
   if (err === 0 && port > 0 && handle.getsockname) {
     const out = {};
     err = handle.getsockname(out);

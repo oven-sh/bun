@@ -996,10 +996,9 @@ impl<'a> Parser<'a> {
 
         visit_tracer.end();
 
-        // Non-ESM targets: clear the pre-DCE TLA range if no `await` survived,
-        // else error at the survivor. TLA-capable targets keep the range: dead
-        // branches are only removed under minify_syntax and may still need an
-        // async wrapper.
+        // Non-ESM targets only: clear the pre-DCE TLA range if no `await`
+        // survived, else error at the survivor. TLA-capable targets keep the
+        // range; they may still need an async module wrapper.
         if !p.options.features.top_level_await {
             if !p.has_live_top_level_await {
                 p.top_level_await_keyword = bun_ast::Range::NONE;

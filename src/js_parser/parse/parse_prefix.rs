@@ -20,9 +20,8 @@ type PResult<T> = crate::CrateResult<T>;
 // names pfx_-prefixed to avoid colliding with parseStmt.rs / parseSuffix.rs mixins on the same `P`.
 
 /// True when the token after an `await` identifier unambiguously starts an
-/// expression, forcing the keyword interpretation. Excludes template literals
-/// (tagged-template continuation), `!` (TS non-null), ambiguous operators,
-/// and contextual keywords (`of`/`in`/`as`/`satisfies`).
+/// expression, forcing the keyword interpretation. Excludes tagged-template
+/// continuations, TS `!`, ambiguous operators, and contextual keywords.
 fn token_starts_await_expr<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
     p: &P<'a, TYPESCRIPT, SCAN_ONLY>,
 ) -> bool {
@@ -48,7 +47,7 @@ fn token_starts_await_expr<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
         | T::TTilde => true,
         T::TIdentifier => {
             let raw = p.lexer.raw();
-            raw != b"of" && raw != b"in" && raw != b"as" && raw != b"satisfies"
+            raw != b"of" && raw != b"in" && raw != b"as" && raw != b"satisfies" && raw != b"using"
         }
         _ => false,
     }
@@ -183,10 +182,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             AsyncPrefixExpression::IsAwait => {
-                // At module scope in a non-ESM target, parse an unambiguous
+                // At module scope in a non-ESM target, parse unambiguous
                 // `await <expr>` as an await expression so DCE can drop dead
                 // branches; the visit pass rejects any await that survives.
-                // Newline after `await` stays identifier (ASI ambiguity).
                 let at_module_scope = p.is_at_module_scope();
                 let should_upgrade_to_await_expr = p.fn_or_arrow_data_parse.allow_await
                     == AwaitOrYield::AllowIdent

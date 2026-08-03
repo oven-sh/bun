@@ -21,9 +21,7 @@ int64_t Integer::Value() const
     JSC::JSValue value = localToJSValue();
     if (value.isInt32()) [[likely]]
         return value.asInt32();
-    // V8's Integer::Value() is a raw static_cast<int64_t>(HeapNumber::value())
-    // (see v8 api.cc), so match it exactly and take the same per-arch result
-    // for out-of-int64-range doubles that real addons observe under Node.
+    // Matches V8's api.cc exactly (raw cast, no range clamp).
     return static_cast<int64_t>(value.asNumber());
 }
 

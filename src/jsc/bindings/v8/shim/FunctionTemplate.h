@@ -53,10 +53,7 @@ public:
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionCall(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionConstruct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 
-    // Shared frame-building/callback-invocation path used by both the JSC host-call entry
-    // (functionCall/functionConstruct) and v8::Function::NewInstance. When isConstruct is true the synthetic
-    // ApiCallbackExitFrame is tagged as a construct-exit frame and new.target is set to the
-    // callee so IsConstructCall()/NewTarget() behave as under `new`.
+    // Builds the synthetic ApiCallbackExitFrame and invokes m_callback.
     static JSC::JSValue invokeCallback(JSC::JSGlobalObject* globalObject, Function* callee, JSC::JSObject* thisObject, const JSC::ArgList& args, bool isConstruct);
 
     friend v8::Local<v8::Value> api_internal::GetFunctionTemplateData(v8::Isolate* isolate, v8::Local<v8::Data> target);
@@ -79,11 +76,7 @@ public:
     void addProperty(JSC::VM& vm, JSC::JSValue name, JSC::JSValue value, unsigned attributes);
     void addAccessor(JSC::VM& vm, JSC::JSValue name, AccessorNameGetterCallback getter, AccessorNameSetterCallback setter, JSC::JSValue data, unsigned attributes);
 
-    // Create (or return the cached) shim::Function for this template, including
-    // setting up its prototype object from m_prototypeTemplate. Shared by
-    // GetFunction() and materialization of nested FunctionTemplates recorded
-    // via Template::Set. V8 memoizes per-context; Bun has one context per
-    // Isolate so caching on the template is equivalent.
+    // Memoized; shared by GetFunction() and nested Template::Set materialization.
     Function* makeFunction(JSC::VM& vm, Zig::GlobalObject* globalObject, GlobalInternals* internals);
 
 private:

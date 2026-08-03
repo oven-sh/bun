@@ -56,8 +56,10 @@ test("should reject HEADERS frame with Pad Length >= payload length", async () =
   });
   try {
     expect(err).toBeDefined();
-    expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
-    expect(err.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
+    // Node's nghttp2 surfaces locally-detected connection errors as NghttpError
+    // (ERR_HTTP2_ERROR, message = nghttp2_strerror(NGHTTP2_ERR_PROTO)).
+    expect(err.code).toBe("ERR_HTTP2_ERROR");
+    expect(err.message).toBe("Protocol error");
   } finally {
     close();
   }
@@ -72,8 +74,8 @@ test("should reject zero-length HEADERS frame with PADDED flag", async () => {
   });
   try {
     expect(err).toBeDefined();
-    expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
-    expect(err.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
+    expect(err.code).toBe("ERR_HTTP2_ERROR");
+    expect(err.message).toBe("Protocol error");
   } finally {
     close();
   }
@@ -89,8 +91,8 @@ test("should reject HEADERS frame with truncated priority fields", async () => {
   });
   try {
     expect(err).toBeDefined();
-    expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
-    expect(err.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
+    expect(err.code).toBe("ERR_HTTP2_ERROR");
+    expect(err.message).toBe("Protocol error");
   } finally {
     close();
   }
@@ -111,8 +113,8 @@ test("should reject DATA frame with Pad Length >= payload length", async () => {
   });
   try {
     expect(err).toBeDefined();
-    expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
-    expect(err.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
+    expect(err.code).toBe("ERR_HTTP2_ERROR");
+    expect(err.message).toBe("Protocol error");
   } finally {
     close();
   }

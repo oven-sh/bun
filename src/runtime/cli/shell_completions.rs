@@ -30,9 +30,8 @@ impl ShellCompletionsExt for Shell {
 // hand back arena-backed `'static` borrows while `bun_getcompletes` supplies an
 // owned `Vec` for the `a` (add-completions) branch — no leaking.
 pub struct ShellCompletions {
-    pub commands: std::borrow::Cow<'static, [&'static [u8]]>,
-    pub descriptions: std::borrow::Cow<'static, [&'static [u8]]>,
-    pub flags: std::borrow::Cow<'static, [&'static [u8]]>,
+    pub(crate) commands: std::borrow::Cow<'static, [&'static [u8]]>,
+    pub(crate) descriptions: std::borrow::Cow<'static, [&'static [u8]]>,
     pub shell: Shell,
 }
 
@@ -41,14 +40,13 @@ impl Default for ShellCompletions {
         Self {
             commands: std::borrow::Cow::Borrowed(&[]),
             descriptions: std::borrow::Cow::Borrowed(&[]),
-            flags: std::borrow::Cow::Borrowed(&[]),
             shell: Shell::default(),
         }
     }
 }
 
 impl ShellCompletions {
-    pub fn print(&self) {
+    pub(crate) fn print(&self) {
         let _flush = Output::flush_guard();
         let writer = &mut *Output::writer();
 
@@ -74,22 +72,20 @@ impl ShellCompletions {
             }
         }
 
-        if self.commands.len() > 1 {
-            for (i, cmd) in self.commands[1..].iter().enumerate() {
-                if writer.write_all(delimiter).is_err() {
-                    return;
-                }
+        for (i, cmd) in self.commands[1..].iter().enumerate() {
+            if writer.write_all(delimiter).is_err() {
+                return;
+            }
 
-                if writer.write_all(cmd).is_err() {
+            if writer.write_all(cmd).is_err() {
+                return;
+            }
+            if !self.descriptions.is_empty() {
+                if writer.write_all(b"\t").is_err() {
                     return;
                 }
-                if !self.descriptions.is_empty() {
-                    if writer.write_all(b"\t").is_err() {
-                        return;
-                    }
-                    if writer.write_all(self.descriptions[i]).is_err() {
-                        return;
-                    }
+                if writer.write_all(self.descriptions[i]).is_err() {
+                    return;
                 }
             }
         }

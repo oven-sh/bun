@@ -645,7 +645,7 @@ impl<'a> ImportScanner<'a> {
 
                     // Remove unused import-equals statements, since those likely
                     // correspond to types instead of values
-                    if st.was_ts_import_equals && !st.is_export && st.decls.len_u32() > 0 {
+                    if st.origin.is_ts_import_equals() && !st.is_export && st.decls.len_u32() > 0 {
                         let decl = &st.decls.slice()[0];
 
                         // Skip to the underlying reference

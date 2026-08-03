@@ -20,46 +20,18 @@ unsafe extern "C" {
     safe fn URL__fromJS(value: JSValue, global: &JSGlobalObject) -> *mut URL;
     safe fn URL__fromString(input: &mut String) -> *mut URL;
     safe fn URL__protocol(url: &URL) -> OwnedString;
-    safe fn URL__href(url: &URL) -> OwnedString;
     safe fn URL__username(url: &URL) -> OwnedString;
     safe fn URL__password(url: &URL) -> OwnedString;
-    safe fn URL__search(url: &URL) -> OwnedString;
     safe fn URL__host(url: &URL) -> OwnedString;
-    safe fn URL__hostname(url: &URL) -> OwnedString;
     safe fn URL__port(url: &URL) -> u32;
     fn URL__deinit(url: *mut URL);
     safe fn URL__pathname(url: &URL) -> OwnedString;
     safe fn URL__getHrefFromJS(value: JSValue, global: &JSGlobalObject) -> OwnedString;
-    safe fn URL__getHref(input: &mut String) -> OwnedString;
     safe fn URL__getFileURLString(input: &mut String) -> OwnedString;
-    safe fn URL__getHrefJoin(base: &mut String, relative: &mut String) -> OwnedString;
     safe fn URL__pathFromFileURL(input: &mut String) -> OwnedString;
-    safe fn URL__hash(url: &URL) -> OwnedString;
-    safe fn URL__fragmentIdentifier(url: &URL) -> OwnedString;
 }
 
 impl URL {
-    /// Includes the leading '#'.
-    pub fn hash(&self) -> OwnedString {
-        URL__hash(self)
-    }
-
-    /// Exactly the same as hash, excluding the leading '#'.
-    pub fn fragment_identifier(&self) -> OwnedString {
-        URL__fragmentIdentifier(self)
-    }
-
-    pub fn href_from_string(str: String) -> OwnedString {
-        let mut input = str;
-        URL__getHref(&mut input)
-    }
-
-    pub fn join(base: String, relative: String) -> OwnedString {
-        let mut base_str = base;
-        let mut relative_str = relative;
-        URL__getHrefJoin(&mut base_str, &mut relative_str)
-    }
-
     pub fn file_url_from_string(str: String) -> OwnedString {
         let mut input = str;
         URL__getFileURLString(&mut input)
@@ -97,10 +69,6 @@ impl URL {
         URL__protocol(self)
     }
 
-    pub fn href(&self) -> OwnedString {
-        URL__href(self)
-    }
-
     pub fn username(&self) -> OwnedString {
         URL__username(self)
     }
@@ -109,32 +77,16 @@ impl URL {
         URL__password(self)
     }
 
-    pub fn search(&self) -> OwnedString {
-        URL__search(self)
-    }
-
     /// Returns the host WITHOUT the port.
     ///
-    /// Note that this does NOT match JS behavior, which returns the host with the port. See
-    /// `hostname` for the JS equivalent of `host`.
+    /// Note that this does NOT match JS behavior, which returns the host with the port. The
+    /// with-port form lives on the JSC-free shim as `bun_url::whatwg::URL::hostname`.
     ///
     /// ```text
     /// URL("http://example.com:8080").host() => "example.com"
     /// ```
     pub fn host(&self) -> OwnedString {
         URL__host(self)
-    }
-
-    /// Returns the host WITH the port.
-    ///
-    /// Note that this does NOT match JS behavior which returns the host without the port. See
-    /// `host` for the JS equivalent of `hostname`.
-    ///
-    /// ```text
-    /// URL("http://example.com:8080").hostname() => "example.com:8080"
-    /// ```
-    pub fn hostname(&self) -> OwnedString {
-        URL__hostname(self)
     }
 
     /// Returns `u32::MAX` if the port is not set. Otherwise, `port`

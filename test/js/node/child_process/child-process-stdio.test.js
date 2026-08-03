@@ -167,3 +167,51 @@ describe("short stdio arrays", () => {
     expect(stdout.readableEnded).toBe(true);
   });
 });
+
+describe("child.stdin", () => {
+  it("write() after child 'close' returns false and calls back with ERR_STREAM_DESTROYED", async () => {
+    const child = spawn(bunExe(), ["-e", ""], {
+      env: bunEnv,
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    await once(child, "close");
+
+    const { promise, resolve } = Promise.withResolvers();
+    const ret = child.stdin.write("dropped", resolve);
+    const cbErr = await promise;
+
+    expect({
+      ret,
+      cbCode: cbErr?.code,
+      destroyed: child.stdin.destroyed,
+      writable: child.stdin.writable,
+    }).toEqual({
+      ret: false,
+      cbCode: "ERR_STREAM_DESTROYED",
+      destroyed: true,
+      writable: false,
+    });
+  });
+
+  it("write() after child 'exit' (before 'close') returns false and calls back with ERR_STREAM_DESTROYED", async () => {
+    const child = spawn(bunExe(), ["-e", "process.stdin.once('data', () => process.exit(0))"], {
+      env: bunEnv,
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    child.stdin.on("error", () => {});
+    await new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.stdin.write("go\n", err => (err ? reject(err) : resolve()));
+    });
+    await once(child, "exit");
+
+    const { promise, resolve } = Promise.withResolvers();
+    const ret = child.stdin.write("late", resolve);
+    const cbErr = await promise;
+
+    expect({ ret, cbCode: cbErr?.code }).toEqual({
+      ret: false,
+      cbCode: "ERR_STREAM_DESTROYED",
+    });
+  });
+});

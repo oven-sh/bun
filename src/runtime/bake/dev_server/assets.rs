@@ -1,7 +1,7 @@
 //! `DevServer.Assets` — content-addressable store on `/_bun/asset/{hash}.ext`.
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_core::{Output, fmt as bun_fmt, scoped_log};
+use bun_core::{fmt as bun_fmt, scoped_log};
 use bun_http::MimeType::MimeType;
 
 use super::memory_cost::{memory_cost_array_hash_map, memory_cost_array_list};
@@ -18,16 +18,16 @@ pub(crate) type EntryIndex = bun_core::GenericIndex<u32, AssetsMarker>;
 pub struct Assets {
     /// Keys are absolute paths. `StringArrayHashMap` stores owned `Box<[u8]>`
     /// keys.
-    pub path_map: StringArrayHashMap<EntryIndex>,
+    pub(crate) path_map: StringArrayHashMap<EntryIndex>,
     /// Content-addressable store. Multiple paths can point to the same content
     /// hash, tracked by `refs`. One ref held to each `StaticRoute` while stored
     /// (`StaticRoute` is intrusively ref-counted).
     // SAFETY: `*mut StaticRoute` is an intrusive RefPtr; `deref_()` on remove.
-    pub files: ArrayHashMap<u64, *mut StaticRoute>,
+    pub(crate) files: ArrayHashMap<u64, *mut StaticRoute>,
     /// Parallel to `files`. Never `0`.
-    pub refs: Vec<u32>,
+    pub(crate) refs: Vec<u32>,
     /// When mutating `files`'s keys, the map must be reindexed to function.
-    pub needs_reindex: bool,
+    pub(crate) needs_reindex: bool,
 }
 
 // SAFETY: `Assets` is only ever constructed as the `assets` field of
@@ -35,7 +35,7 @@ pub struct Assets {
 bun_core::impl_field_parent! { Assets => DevServer.assets; pub(super) fn owner; fn owner_mut; }
 
 impl Assets {
-    pub fn get_hash(&self, path: &[u8]) -> Option<u64> {
+    pub(crate) fn get_hash(&self, path: &[u8]) -> Option<u64> {
         debug_assert!(self.owner().magic == Magic::Valid);
         self.path_map
             .get(path)
@@ -47,7 +47,7 @@ impl Assets {
     ///
     /// `abs_path` is not allocated. Ownership of `contents` is transferred to
     /// this function.
-    pub fn replace_path(
+    pub(crate) fn replace_path(
         &mut self,
         abs_path: &[u8],
         mut contents: AnyBlob,
@@ -151,46 +151,7 @@ impl Assets {
         Ok(entry)
     }
 
-    /// Returns a slot to insert the `*mut StaticRoute`. If `None` is returned,
-    /// then there is already data here.
-    pub fn put_or_increment_ref_count(
-        &mut self,
-        content_hash: u64,
-        ref_count: u32,
-    ) -> Result<Option<&mut *mut StaticRoute>, bun_alloc::AllocError> {
-        // Invariant: `files.count() == refs.len()`. `gop.value_ptr` borrows
-        // `self.files` mutably, so re-derive the slot via
-        // `values_mut()[index]` after the invariant assert.
-        let file_index_gop = self.files.get_or_put(content_hash)?;
-        let index = file_index_gop.index;
-        let found = file_index_gop.found_existing;
-        if !found {
-            self.refs.push(ref_count);
-        } else {
-            self.refs[index] += ref_count;
-        }
-        debug_assert_eq!(self.files.count(), self.refs.len());
-        Ok(if found {
-            None
-        } else {
-            Some(&mut self.files.values_mut()[index])
-        })
-    }
-
-    pub fn unref_by_hash(&mut self, content_hash: u64, dec_count: u32) {
-        let index = self.files.get_index(&content_hash).unwrap_or_else(|| {
-            Output::panic(format_args!(
-                "Asset double unref: {:x?}",
-                content_hash.to_ne_bytes()
-            ))
-        });
-        self.unref_by_index(
-            EntryIndex::init(u32::try_from(index).expect("int cast")),
-            dec_count,
-        );
-    }
-
-    pub fn unref_by_index(&mut self, index: EntryIndex, dec_count: u32) {
+    pub(crate) fn unref_by_index(&mut self, index: EntryIndex, dec_count: u32) {
         debug_assert!(dec_count > 0);
         self.refs[index.get_usize()] -= dec_count;
         if self.refs[index.get_usize()] == 0 {
@@ -216,7 +177,7 @@ impl Assets {
         debug_assert_eq!(self.files.count(), self.refs.len());
     }
 
-    pub fn unref_by_path(&mut self, path: &[u8]) {
+    pub(crate) fn unref_by_path(&mut self, path: &[u8]) {
         let Some(entry) = self.path_map.fetch_swap_remove(path) else {
             return;
         };
@@ -224,7 +185,7 @@ impl Assets {
     }
 
     /// `Assets.reindexIfNeeded`.
-    pub fn reindex_if_needed(&mut self) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn reindex_if_needed(&mut self) -> Result<(), bun_alloc::AllocError> {
         if self.needs_reindex {
             self.files.re_index()?;
             self.needs_reindex = false;
@@ -240,7 +201,7 @@ impl Assets {
     }
 
     /// `Assets.memoryCost`.
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
         // `StringArrayHashMap` derefs to its inner `ArrayHashMap<Box<[u8]>, V, _>`.
         cost += memory_cost_array_hash_map(&self.path_map);

@@ -182,6 +182,134 @@ nativeTests.test_get_property = () => {
   }
 };
 
+nativeTests.test_get_all_property_names_accessor = () => {
+  // napi_key_filter values
+  const napi_key_writable = 1;
+  const napi_key_configurable = 1 << 2;
+  // napi_key_collection_mode values
+  const napi_key_include_prototypes = 0;
+  const napi_key_own_only = 1;
+  // napi_key_conversion values
+  const napi_key_keep_numbers = 0;
+
+  const filterStrings = keys => keys.filter(k => typeof k === "string").sort();
+
+  // own_only: object with an own accessor property alongside data properties
+  const ownAccessor = { data: 1 };
+  Object.defineProperty(ownAccessor, "acc_rw", {
+    get() {
+      return 1;
+    },
+    set(v) {},
+    configurable: true,
+  });
+  Object.defineProperty(ownAccessor, "acc_ro", {
+    get() {
+      return 1;
+    },
+    configurable: true,
+  });
+  Object.defineProperty(ownAccessor, "data_ro", { value: 2, writable: false, configurable: true });
+  for (const filter of [napi_key_writable, napi_key_configurable, napi_key_writable | napi_key_configurable]) {
+    const { status, keys } = nativeTests.get_all_property_names(
+      ownAccessor,
+      napi_key_own_only,
+      filter,
+      napi_key_keep_numbers,
+    );
+    console.log(`own_only filter=${filter}: status=${status}`, JSON.stringify(filterStrings(keys)));
+  }
+
+  // include_prototypes: a plain object reaches Object.prototype.__proto__ (an accessor)
+  const plain = { a: 1 };
+  for (const filter of [napi_key_writable, napi_key_configurable]) {
+    const { status, keys } = nativeTests.get_all_property_names(
+      plain,
+      napi_key_include_prototypes,
+      filter,
+      napi_key_keep_numbers,
+    );
+    console.log(`include_prototypes filter=${filter}: status=${status}`, JSON.stringify(filterStrings(keys)));
+  }
+};
+
+nativeTests.test_get_all_property_names_proxy_and_string_wrapper = () => {
+  const napi_key_include_prototypes = 0;
+  const napi_key_own_only = 1;
+  const napi_key_writable = 1;
+  const napi_key_enumerable = 1 << 1;
+  const napi_key_configurable = 1 << 2;
+  const napi_key_keep_numbers = 0;
+
+  const apn = (obj, filter, mode = napi_key_own_only) =>
+    nativeTests.get_all_property_names(obj, mode, filter, napi_key_keep_numbers);
+  const show = (label, r) => console.log(label, "status=" + r.status, "keys=" + JSON.stringify(r.keys));
+  const dropBuiltinProto = r => ({
+    status: r.status,
+    keys: r.keys
+      .filter(k => typeof k !== "symbol" && !Object.prototype.hasOwnProperty(k) && !String.prototype.hasOwnProperty(k))
+      .sort(),
+  });
+
+  // V8's FilterProxyKeys only applies ONLY_ENUMERABLE; writable/configurable
+  // filters pass every proxy key regardless of the reported descriptor.
+  const proxy = new Proxy(
+    { a: 1 },
+    {
+      ownKeys: () => ["x", "y"],
+      getOwnPropertyDescriptor: () => ({ value: 1, writable: false, enumerable: true, configurable: true }),
+    },
+  );
+  for (const [name, f] of [
+    ["writable", napi_key_writable],
+    ["configurable", napi_key_configurable],
+    ["enumerable", napi_key_enumerable],
+  ]) {
+    show(`proxy own_only ${name}:`, apn(proxy, f));
+  }
+
+  // A proxy with no traps still takes V8's proxy path: writable/configurable
+  // do not filter even when the target's descriptors say otherwise.
+  const target = {};
+  Object.defineProperty(target, "ro", { value: 1, writable: false, enumerable: true, configurable: true });
+  Object.defineProperty(target, "rw", { value: 2, writable: true, enumerable: true, configurable: true });
+  show("proxy(no traps) writable:", apn(new Proxy(target, {}), napi_key_writable));
+
+  // V8 adds a String wrapper's character indices without consulting the
+  // attribute filter; only the ordinary own property `length` is filtered.
+  const str = new String("ab");
+  for (const [name, f] of [
+    ["writable", napi_key_writable],
+    ["configurable", napi_key_configurable],
+    ["enumerable", napi_key_enumerable],
+  ]) {
+    show(`string own_only ${name}:`, apn(str, f));
+  }
+  class DerivedString extends String {}
+  show("derived string writable:", apn(new DerivedString("xy"), napi_key_writable));
+
+  // include_prototypes: the exemption applies at whatever prototype level owns
+  // the key, matching V8's per-level KeyAccumulator dispatch. Built-in
+  // prototype keys are dropped so engine ordering differences don't leak in.
+  show(
+    "proxy-proto include_prototypes writable:",
+    dropBuiltinProto(apn(Object.create(proxy), napi_key_writable, napi_key_include_prototypes)),
+  );
+  show(
+    "string-proto include_prototypes configurable:",
+    dropBuiltinProto(apn(Object.create(str), napi_key_configurable, napi_key_include_prototypes)),
+  );
+
+  // Attribute filtering must still apply to ordinary objects.
+  const plain = {};
+  Object.defineProperty(plain, "w", { value: 1, writable: true, enumerable: true, configurable: true });
+  Object.defineProperty(plain, "ro", { value: 2, writable: false, enumerable: true, configurable: true });
+  Object.defineProperty(plain, "nc", { value: 3, writable: true, enumerable: true, configurable: false });
+  show("plain writable:", apn(plain, napi_key_writable));
+  show("plain configurable:", apn(plain, napi_key_configurable));
+  show("frozen writable:", apn(Object.freeze({ a: 1, b: 2 }), napi_key_writable));
+};
+
 nativeTests.test_set_property = () => {
   const objects = [
     {},
@@ -233,6 +361,123 @@ nativeTests.test_set_property = () => {
         console.log("threw", e.name);
       }
     }
+  }
+};
+
+nativeTests.test_define_properties = () => {
+  const statusNames = [
+    "napi_ok",
+    "napi_invalid_arg",
+    "napi_object_expected",
+    "napi_string_expected",
+    "napi_name_expected",
+    "napi_function_expected",
+    "napi_number_expected",
+    "napi_boolean_expected",
+    "napi_array_expected",
+    "napi_generic_failure",
+    "napi_pending_exception",
+  ];
+  const fmtStatus = s => statusNames[s] ?? String(s);
+  const fmtDesc = d =>
+    d === undefined
+      ? "undefined"
+      : JSON.stringify({
+          value: d.value,
+          get: typeof d.get,
+          set: typeof d.set,
+          writable: d.writable,
+          enumerable: d.enumerable,
+          configurable: d.configurable,
+        });
+
+  const run = (label, target, kind, name, inspectKey) => {
+    const { status, pending } = nativeTests.define_properties(target, kind, name);
+    let descText = "";
+    if (inspectKey !== null) {
+      descText = " desc=" + fmtDesc(Object.getOwnPropertyDescriptor(target, inspectKey));
+    }
+    console.log(`${label}: status=${fmtStatus(status)} pending=${pending}${descText}`);
+  };
+
+  for (const kind of ["value", "getter", "setter", "accessor", "method"]) {
+    // frozen target: [[DefineOwnProperty]] must fail
+    run(`frozen ${kind}`, Object.freeze({}), kind, undefined, "k");
+
+    // proxy whose defineProperty trap records calls and forwards
+    let trapCalls = 0;
+    const proxTarget = {};
+    const prox = new Proxy(proxTarget, {
+      defineProperty(t, k, d) {
+        trapCalls++;
+        return Reflect.defineProperty(t, k, d);
+      },
+    });
+    run(`proxy ${kind}`, prox, kind, undefined, null);
+    console.log(
+      `proxy ${kind}: trapCalls=${trapCalls} targetDesc=${fmtDesc(Object.getOwnPropertyDescriptor(proxTarget, "k"))}`,
+    );
+
+    // proxy with throwing trap
+    const throwing = new Proxy(
+      {},
+      {
+        defineProperty() {
+          throw new TypeError("boom");
+        },
+      },
+    );
+    run(`throwing-proxy ${kind}`, throwing, kind, undefined, "k");
+
+    // plain object: check descriptor shape (no synthetic getter for setter-only)
+    run(`plain ${kind}`, {}, kind, undefined, "k");
+  }
+
+  // setter-only/getter-only over an existing accessor: a missing side must
+  // leave that slot ABSENT in the descriptor (preserving the existing value),
+  // not present-undefined.
+  for (const kind of ["getter", "setter"]) {
+    const existing = {};
+    Object.defineProperty(existing, "k", {
+      get: () => 1,
+      set: () => {},
+      configurable: true,
+    });
+    run(`redefine ${kind}`, existing, kind, undefined, "k");
+
+    let trapDesc;
+    const prox = new Proxy(
+      {},
+      {
+        defineProperty(t, k, d) {
+          trapDesc = { hasGet: "get" in d, hasSet: "set" in d };
+          return Reflect.defineProperty(t, k, d);
+        },
+      },
+    );
+    nativeTests.define_properties(prox, kind, undefined);
+    console.log(`proxy-shape ${kind}:`, JSON.stringify(trapDesc));
+  }
+
+  // name as a napi_value string
+  run("name=string", {}, "value", "k", "k");
+  // name as a napi_value symbol
+  const sym = Symbol("s");
+  run("name=symbol", {}, "value", sym, sym);
+  // name as a napi_value number (not a valid property name)
+  run("name=number", {}, "value", 5, "5");
+  // name as a napi_value object (not a valid property name)
+  run("name=object", {}, "value", { toString: () => "x" }, "x");
+  // utf8name with invalid bytes: decoded with U+FFFD replacement
+  run("utf8name=invalid", {}, "value", null, "\ufffd");
+
+  // napi_define_class should also reject non-string/symbol property names
+  for (const [label, name] of [
+    ["string", "k"],
+    ["number", 5],
+  ]) {
+    const { status, pending } = nativeTests.define_properties({}, "method", name, true);
+    console.log(`define_class name=${label}: status=${fmtStatus(status)} pending=${pending}`);
   }
 };
 
@@ -1145,6 +1390,17 @@ nativeTests.test_threadsafe_function_orphan_leak = async () => {
     const closing = nativeTests.call_leaked_threadsafe_functions();
     console.log(`orphaned=${orphaned} closing=${closing} leaked=${napiThreadsafeFunctionLiveCount() - before}`);
   }
+};
+
+// When napi_create_threadsafe_function is given no JS func, the call_js
+// callback receives a null js_callback (addons test `if (js_callback != NULL)`).
+nativeTests.test_tsfn_null_js_callback_driver = async () => {
+  nativeTests.test_tsfn_null_js_callback();
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.test_tsfn_null_js_callback_ran()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  nativeTests.test_tsfn_null_js_callback_result();
 };
 
 // Microtasks queued by one threadsafe-function callback must be drained before

@@ -125,16 +125,6 @@ function isWritableFinished(stream, strict) {
   return !!(wState.finished || (strict === false && wState.ended === true && wState.length === 0));
 }
 
-// Have been push(null):d.
-function isReadableEnded(stream) {
-  if (!isReadableNodeStream(stream)) return null;
-  if (stream.readableEnded === true) return true;
-  const rState = stream._readableState;
-  if (!rState || rState.errored) return false;
-  if (typeof rState?.ended !== "boolean") return null;
-  return rState.ended;
-}
-
 // Have emitted 'end'.
 function isReadableFinished(stream, strict?) {
   if (!isReadableNodeStream(stream)) return null;
@@ -296,7 +286,6 @@ export default {
   isIterable,
   isReadableNodeStream,
   isReadableStream,
-  isReadableEnded,
   isReadableFinished,
   isReadableErrored,
   isNodeStream,

@@ -13,7 +13,9 @@ export function initializeDecompressionStream(this, format) {
   if (!(format in builders))
     throw $ERR_INVALID_ARG_VALUE("format", format, "must be one of: " + Object.keys(builders).join(", "));
 
-  const transform = newBufferSourceTransformPairFromDuplex(builders[format]());
+  // The Compression Streams spec requires erroring on any bytes that follow the
+  // end of the compressed data.
+  const transform = newBufferSourceTransformPairFromDuplex(builders[format]({ rejectGarbageAfterEnd: true }));
   $putByIdDirectPrivate(this, "readable", transform.readable);
   $putByIdDirectPrivate(this, "writable", transform.writable);
 

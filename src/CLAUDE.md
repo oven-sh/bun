@@ -161,18 +161,17 @@ let url = URL::from_utf8(href)?;                  // Option<NonNull<URL>>
 
 url.protocol()   // bun_core::OwnedString (+1; Drop derefs)
 url.pathname()   // bun_core::OwnedString
-url.search()     // bun_core::OwnedString
+url.host()       // bun_core::OwnedString — the hostname WITHOUT the port (opposite of JS `host`!)
 url.port()       // u32 (u32::MAX = unset; otherwise u16 range)
-
-// NOTE: host()/hostname() are SWAPPED relative to JS:
-url.host()       // hostname WITHOUT port  (opposite of JS!)
-url.hostname()   // hostname WITH port     (opposite of JS!)
 ```
 
-`URL::href_from_string`, `URL::file_url_from_string`, `URL::path_from_file_url`
+`URL::href_from_js`, `URL::file_url_from_string`, `URL::path_from_file_url`
 do whole-string conversions. Every string getter returns `OwnedString` — use
 `.into_inner()` only when you must transfer the +1 out (e.g. into a struct
-field that will deref later).
+field that will deref later). The JSC-free shim `bun_url::whatwg::URL` exposes
+`hostname()`, which returns the host WITH the port (also the opposite of JS
+`hostname`) — so `bun_jsc::URL::host` and `bun_url::whatwg::URL::hostname`
+are effectively swapped relative to their JS namesakes.
 
 ## MIME Types (`bun_http_types::MimeType`)
 

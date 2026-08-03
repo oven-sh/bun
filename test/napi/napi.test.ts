@@ -565,7 +565,12 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         // complete() is not invoked on the terminate path (see PR body), so the
         // addon's per-work calloc leaks by design. LSan stays off so the crash
         // assertion below is what decides pass/fail.
-        env: { ...bunEnv, ADDON: addon, WORKER_SRC: workerSrc, ASAN_OPTIONS: "detect_leaks=0:allow_user_segv_handler=1" },
+        env: {
+          ...bunEnv,
+          ADDON: addon,
+          WORKER_SRC: workerSrc,
+          ASAN_OPTIONS: "detect_leaks=0:allow_user_segv_handler=1",
+        },
         stdout: "pipe",
         stderr: "pipe",
       });

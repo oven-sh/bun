@@ -1525,3 +1525,72 @@ test("Bun.build can be called thousands of times in one process without crashing
   expect(stdout.trim()).toBe("OK 400");
   expect(exitCode).toBe(0);
 }, 180_000);
+
+// Terminating a Worker while a Bun.build() plugin's async setup() promise is
+// still pending makes wait_for_promise return early (execution forbidden) with
+// the promise still Pending. Previously the Pending arm in Config::from_js was
+// an unreachable!() and the whole process (parent included) aborted with
+// "panic: internal error: entered unreachable code".
+test("Bun.build in a Worker: terminate() while plugin async setup() is pending does not crash the process", async () => {
+  // Debug/ASAN worker VM startup is slow; a handful of rounds is enough since
+  // the setup promise never resolves, so every terminate() lands mid-wait.
+  const rounds = isDebug || isASAN ? 4 : 12;
+  using dir = tempDir("bun-build-worker-terminate-setup", {
+    "entry.js": "export default 1;\n",
+    "w.cjs": `
+      const { parentPort, workerData } = require("node:worker_threads");
+      const entry = workerData.entry;
+      // Keep the event loop live so wait_for_promise's auto_tick wakes promptly
+      // on notifyNeedTermination.
+      setInterval(() => {}, 5);
+      Bun.build({
+        entrypoints: [entry],
+        plugins: [{
+          name: "never-resolves",
+          async setup(b) {
+            // We are now inside Config::from_js -> wait_for_promise. Tell the
+            // parent to terminate us, then keep this promise Pending forever.
+            parentPort.postMessage("up");
+            await new Promise(() => {});
+            b.onLoad({ filter: /never/ }, () => undefined);
+          },
+        }],
+      }).catch(() => {});
+    `,
+    "run.cjs": `
+      const { Worker } = require("node:worker_threads");
+      const path = require("node:path");
+      const wfile = path.join(__dirname, "w.cjs");
+      const entry = path.join(__dirname, "entry.js");
+
+      (async () => {
+        for (let r = 0; r < ${rounds}; r++) {
+          const ws = [];
+          for (let i = 0; i < 3; i++) {
+            const w = new Worker(wfile, { workerData: { entry } });
+            w.on("error", () => {});
+            ws.push(w);
+          }
+          // Each worker posts "up" from inside its plugin setup() body, so by
+          // the time we see it the worker is parked in wait_for_promise.
+          await Promise.all(ws.map(w => new Promise(res => w.once("message", res))));
+          await Promise.all(ws.map(w => w.terminate()));
+        }
+        console.log("PASS " + ${rounds});
+        process.exit(0);
+      })();
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(`PASS ${rounds}`);
+  expect(exitCode).toBe(0);
+}, 60_000);

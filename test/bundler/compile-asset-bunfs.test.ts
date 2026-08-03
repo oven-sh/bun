@@ -140,7 +140,8 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           dirLstatIsDir: true,
           accessOk: true,
           accessWriteErr: "EACCES",
-          readdir: expect.any(Array),
+          // the hashed file-loader name is covered by readdirHasAsset
+          readdir: expect.arrayContaining(["client", "config.json"]),
           readdirHasAsset: true,
         },
         client: {
@@ -166,7 +167,6 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         enoent: { code: "ENOENT", exists: false },
         singleFile: { exists: true, content: `{"ok":true}`, readdirCode: "ENOTDIR" },
       });
-      expect(r.fileLoader.readdir.length).toBeGreaterThan(0);
       // recursive uses the platform path separator (same as Node's real-fs recursive readdir)
       expect(r.client.recursive.join("\n")).not.toContain(sep === "/" ? "\\" : "/");
       // data.txt + config.json + 4 under client/

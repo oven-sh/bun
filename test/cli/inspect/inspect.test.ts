@@ -435,8 +435,14 @@ describe("stalled websocket frontend", () => {
     let port = 0;
     while (!port) {
       const m = stderr.match(/ws:\/\/127\.0\.0\.1:(\d+)\/stalled/);
-      if (m) port = +m[1];
-      else await Bun.sleep(10);
+      if (m) {
+        port = +m[1];
+        break;
+      }
+      if (child.exitCode !== null || child.signalCode !== null) {
+        throw new Error("inspectee exited before printing the listening URL:\n" + stderr);
+      }
+      await Bun.sleep(10);
     }
 
     // Raw TCP so the client can stop reading after the upgrade; a real
@@ -467,12 +473,15 @@ describe("stalled websocket frontend", () => {
       );
       // Read only the handshake response, then stop; the rest piles up in
       // the kernel receive buffer and the inspected process's send buffers.
-      await new Promise<void>(resolve => {
-        sock.once("data", () => {
-          sock.pause();
-          resolve();
-        });
-      });
+      await Promise.race([
+        new Promise<void>(resolve => {
+          sock.once("data", () => {
+            sock.pause();
+            resolve();
+          });
+        }),
+        closedPromise.then(() => Promise.reject(new Error("socket closed before handshake response:\n" + stderr))),
+      ]);
 
       const sendFrame = (opcode: number, payload: Buffer) => {
         const mask = crypto.randomBytes(4);

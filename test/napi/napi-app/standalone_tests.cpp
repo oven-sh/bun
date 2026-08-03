@@ -3756,6 +3756,53 @@ test_tsfn_null_js_callback_result(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// napi_define_properties / napi_object_freeze / napi_object_seal /
+// napi_type_tag_object / napi_check_object_type_tag / node_api_set_prototype
+// must ToObject-coerce primitives like Node's CHECK_TO_OBJECT[_WITH_PREAMBLE].
+static napi_value
+test_napi_toobject_coercion_node26(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+#ifndef _WIN32
+  BlockingStdoutScope blocking_stdout;
+#endif
+
+  napi_value v_null, v_undef, v_num;
+  NODE_API_CALL(env, napi_get_null(env, &v_null));
+  NODE_API_CALL(env, napi_get_undefined(env, &v_undef));
+  NODE_API_CALL(env, napi_create_double(env, 42.5, &v_num));
+
+  napi_value v;
+  NODE_API_CALL(env, napi_create_int32(env, 7, &v));
+  napi_property_descriptor desc = {"x",  NULL, NULL,         NULL,
+                                   NULL, v,    napi_default, NULL};
+  report_status(env, "define_properties(number)",
+                napi_define_properties(env, v_num, 1, &desc));
+  report_status(env, "define_properties(null)",
+                napi_define_properties(env, v_null, 1, &desc));
+  report_status(env, "object_freeze(number)", napi_object_freeze(env, v_num));
+  report_status(env, "object_freeze(null)", napi_object_freeze(env, v_null));
+  report_status(env, "object_seal(number)", napi_object_seal(env, v_num));
+  report_status(env, "object_seal(undefined)", napi_object_seal(env, v_undef));
+  napi_type_tag tag = {1, 2};
+  report_status(env, "type_tag_object(number)",
+                napi_type_tag_object(env, v_num, &tag));
+  report_status(env, "type_tag_object(null)",
+                napi_type_tag_object(env, v_null, &tag));
+  bool match;
+  report_status(env, "check_object_type_tag(number)",
+                napi_check_object_type_tag(env, v_num, &tag, &match));
+  report_status(env, "check_object_type_tag(null)",
+                napi_check_object_type_tag(env, v_null, &tag, &match));
+  napi_value proto;
+  NODE_API_CALL(env, napi_create_object(env, &proto));
+  report_status(env, "node_api_set_prototype(number)",
+                node_api_set_prototype(env, v_num, proto));
+  report_status(env, "node_api_set_prototype(null)",
+                node_api_set_prototype(env, v_null, proto));
+
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_typedarray_info_byte_offset);
   REGISTER_FUNCTION(env, exports, test_dataview_info_byte_offset);
@@ -3837,6 +3884,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback);
   REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback_ran);
   REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback_result);
+  REGISTER_FUNCTION(env, exports, test_napi_toobject_coercion_node26);
 }
 
 } // namespace napitests

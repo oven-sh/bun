@@ -21,11 +21,7 @@ describe.skipIf(!isWindows)("uv_spawn cleanup after CreateProcessW", () => {
       env: { ...bunEnv, SPAWN_FAULT_DLL: dll, SPAWN_FAULT_N: String(N) },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const byTag: Record<string, any> = {};
     for (const line of stdout.split("\n")) {
       if (!line.startsWith("{")) continue;

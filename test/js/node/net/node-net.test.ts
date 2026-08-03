@@ -699,6 +699,42 @@ it("unref should exit when no more work pending", async () => {
   expect(await process.exited).toBe(0);
 });
 
+// An unref() applied while lookup is pending must survive the autoSelectFamily handle reinit.
+it("unref survives an autoSelectFamily retry", async () => {
+  // IPv4-only server + injected lookup listing ::1 first forces a refused attempt then a retry; unref() runs mid-lookup.
+  const server = createServer(() => {});
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const lookup = (host, opts, cb) =>
+            setTimeout(() => cb(null, [{ address: "::1", family: 6 }, { address: "127.0.0.1", family: 4 }]), 10);
+          const s = net.connect({ host: "localhost", port: ${server.address().port}, autoSelectFamily: true, lookup });
+          s.on("data", () => {});
+          s.on("error", e => process.stdout.write("error " + e.code + "\\n"));
+          s.on("connect", () => process.stdout.write("connected " + s.remoteAddress + "\\n"));
+          s.unref();
+          // Sentinel keeping the loop alive across the refuse + retry.
+          setTimeout(() => process.stdout.write("timer\\n"), 500);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    // After the sentinel timer only the unref'd socket remains, so the process must exit.
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim().split("\n").sort()).toEqual(["connected 127.0.0.1", "timer"]);
+    expect(exitCode).toBe(0);
+  } finally {
+    server.close();
+  }
+});
+
 it("socket should keep process alive if unref is not called", async () => {
   const process = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "node-ref-default-fixture.js")],
@@ -1067,9 +1103,36 @@ describe("net.Server accepted-socket buffering", () => {
     }
   });
 
+  it("keeps a client socket's buffered response available for a late reader after peer FIN", async () => {
+    // An outbound client with no reader yet must keep its buffered response
+    // indefinitely, like node (a late .on('data') still delivers it).
+    const received = Promise.withResolvers<string>();
+    const server = createServer(sock => {
+      sock.end("late response");
+    });
+    let client: Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, "127.0.0.1", () => listening.resolve());
+      await listening.promise;
+      client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
+      client.on("error", received.reject);
+      while (!client._readableState?.ended && !client.destroyed) await new Promise<void>(r => setImmediate(r));
+      await new Promise<void>(r => setImmediate(r));
+      await new Promise<void>(r => setImmediate(r));
+      expect(client.destroyed).toBe(false);
+      let got = "";
+      client.on("data", chunk => (got += chunk));
+      client.on("end", () => received.resolve(got));
+      expect(await received.promise).toBe("late response");
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
   it("delivers bytes to a 'data' listener attached via setImmediate from the connection handler", async () => {
-    // Bytes that arrived before the handler engaged the readable side stay
-    // buffered until a reader attaches, like Node.
     const received = Promise.withResolvers<string>();
     const server = createServer(sock => {
       setImmediate(() => {
@@ -1089,6 +1152,55 @@ describe("net.Server accepted-socket buffering", () => {
       const data = await received.promise;
       expect(data).toBe("hello");
     } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  it("keeps a server socket open while buffered data from a write-then-FIN client is unread", async () => {
+    // A client that sends its request and immediately half-closes (curl-style
+    // `shutdown(SHUT_WR)`) must not cause the server socket to be torn down
+    // before the app's async pipeline attaches a reader: the buffered payload
+    // stays deliverable and 'end' only follows once it is drained, like Node.
+    const connected = Promise.withResolvers<Socket>();
+    const server = createServer(s => connected.resolve(s));
+    let client: Socket | undefined;
+    let sock: Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, "127.0.0.1", () => listening.resolve());
+      await listening.promise;
+      client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
+      client.on("error", connected.reject);
+      await new Promise<void>((resolve, reject) => {
+        client!.once("connect", () => resolve());
+        client!.once("error", reject);
+      });
+      client.end("PAYLOAD-1234567890");
+      sock = await connected.promise;
+      const events: string[] = [];
+      sock.on("end", () => events.push("end"));
+      sock.on("close", hadError => events.push("close:" + hadError));
+      // Wait for the peer FIN to mark the readable side ended, then let any
+      // FIN-time lifecycle work settle before asserting the socket stayed open.
+      while (!sock._readableState?.ended && !sock.destroyed) await new Promise<void>(r => setImmediate(r));
+      await new Promise<void>(r => setImmediate(r));
+      await new Promise<void>(r => setImmediate(r));
+      expect({
+        destroyed: sock.destroyed,
+        readableLength: sock.readableLength,
+        events: [...events],
+      }).toEqual({ destroyed: false, readableLength: 18, events: [] });
+      const received = Promise.withResolvers<string>();
+      let got = "";
+      sock.on("data", chunk => (got += chunk));
+      sock.once("end", () => received.resolve(got));
+      sock.once("error", received.reject);
+      expect(await received.promise).toBe("PAYLOAD-1234567890");
+      expect(events).toEqual(["end"]);
+    } finally {
+      sock?.destroy();
       client?.destroy();
       server.close();
     }
@@ -1793,4 +1905,85 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
   } finally {
     target.close();
   }
+});
+
+// On Windows the connect-error path receives raw WSA codes (WSAECONNRESET,
+// WSAEADDRINUSE) from getsockopt(SO_ERROR) and the pre-connect bind(); these
+// must be mapped before the errno whitelist, or every failure degrades to
+// ECONNREFUSED. POSIX already reports these correctly.
+describe.skipIf(!isWindows)("connect() error codes on Windows", () => {
+  it("localPort in use reports EADDRINUSE", async () => {
+    const server1 = createServer(() => {});
+    const server2 = createServer(() => {});
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server1.on("error", reject);
+        server1.listen(0, "127.0.0.1", resolve);
+      });
+      await new Promise<void>((resolve, reject) => {
+        server2.on("error", reject);
+        server2.listen(0, "127.0.0.1", resolve);
+      });
+      const port = (server1.address() as import("node:net").AddressInfo).port;
+      const localPort = (server2.address() as import("node:net").AddressInfo).port;
+      const err = await new Promise<NodeJS.ErrnoException>(resolve => {
+        const c = connect({ host: "127.0.0.1", port, localAddress: "127.0.0.1", localPort });
+        c.on("error", resolve);
+        c.on("connect", () => {
+          c.destroy();
+          resolve(Object.assign(new Error("connected"), { code: "CONNECTED" }));
+        });
+      });
+      expect(err.code).toBe("EADDRINUSE");
+    } finally {
+      server1.close();
+      server2.close();
+    }
+  });
+
+  it("server resetAndDestroy() surfaces ECONNRESET on the client", async () => {
+    const server = createServer(c => {
+      c.resetAndDestroy();
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.on("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const err = await new Promise<NodeJS.ErrnoException>(resolve => {
+        const c = connect(port, "127.0.0.1");
+        c.on("error", resolve);
+        c.on("close", hadError => {
+          if (!hadError) resolve(Object.assign(new Error("clean close"), { code: "NOERR" }));
+        });
+      });
+      expect(err.code).toBe("ECONNRESET");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("connect to a path that is not a socket reports ECONNREFUSED/ENOTSOCK, missing path reports ENOENT", async () => {
+    const dir = tmpdirSync();
+    const regular = join(dir, "not-a-socket.txt");
+    fs.writeFileSync(regular, "");
+    const missing = join(dir, "does-not-exist");
+
+    const errFor = (path: string) =>
+      new Promise<NodeJS.ErrnoException>(resolve => {
+        const c = createConnection(path);
+        c.on("error", resolve);
+        c.on("connect", () => {
+          c.destroy();
+          resolve(Object.assign(new Error("connected"), { code: "CONNECTED" }));
+        });
+      });
+
+    const regularErr = await errFor(regular);
+    expect(["ENOTSOCK", "ECONNREFUSED"]).toContain(regularErr.code);
+
+    const missingErr = await errFor(missing);
+    expect(missingErr.code).toBe("ENOENT");
+  });
 });

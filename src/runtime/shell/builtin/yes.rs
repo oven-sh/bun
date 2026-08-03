@@ -15,16 +15,15 @@ pub enum State {
     WaitingWriteErr,
     WaitingIo,
     Err,
-    Done,
 }
 
 #[derive(Default)]
 pub struct Yes {
-    pub state: State,
+    pub(crate) state: State,
     /// One repetition of the output (`"y\n"` or joined argv + `'\n'`), tiled
     /// out to ~BUFSIZ.
-    pub buffer: Vec<u8>,
-    pub buffer_used: usize,
+    pub(crate) buffer: Vec<u8>,
+    pub(crate) buffer_used: usize,
     /// Populated in `start()`.
     pub task: Option<YesTask>,
 }
@@ -147,7 +146,7 @@ impl Yes {
         stdout.enqueue(child, &yes.buffer[..yes.buffer_used], safeguard)
     }
 
-    pub(crate) fn write_failing_error(
+    fn write_failing_error(
         interp: &Interpreter,
         cmd: NodeId,
         buf: &[u8],
@@ -193,10 +192,10 @@ impl Yes {
 #[repr(C)]
 pub struct YesTask {
     /// Back-ref to the owning [`Interpreter`].
-    pub interp: *mut Interpreter,
-    pub cmd: NodeId,
-    pub evtloop: EventLoopHandle,
-    pub concurrent_task: EventLoopTask,
+    pub(crate) interp: *mut Interpreter,
+    pub(crate) cmd: NodeId,
+    pub(crate) evtloop: EventLoopHandle,
+    pub(crate) concurrent_task: EventLoopTask,
 }
 
 impl Taskable for YesTask {
@@ -208,7 +207,7 @@ impl YesTask {
     /// `this` must point to a live `YesTask` whose storage is stable until the
     /// enqueued task fires (it lives inside `Box<Yes>` in the interpreter
     /// arena).
-    pub(crate) unsafe fn enqueue(this: *mut Self) {
+    unsafe fn enqueue(this: *mut Self) {
         // SAFETY: caller contract — `this` is live and stable; `evtloop` /
         // `concurrent_task` were initialised together by `Yes::start` so the
         // Js/Mini discriminants agree. `owner`/`mini` are live event-loop

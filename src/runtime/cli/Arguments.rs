@@ -610,10 +610,10 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs."
     ),
     parse_param!(
-        "--timings <STR>                  JSON file of per-file durations (ms). Balances --shard by total time and makes --parallel start the slowest files first."
+        "--timings <STR>...               JSON file(s) of per-file durations (ms); several are merged, e.g. one per CI shard. Balances --shard by total time and makes --parallel start the slowest files first."
     ),
     parse_param!(
-        "--update-timings                 After the run, merge each file's measured duration into the --timings file (creating it if missing)."
+        "--update-timings                 After the run, merge each file's measured duration into the first --timings file (creating it if missing)."
     ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(
@@ -1785,15 +1785,17 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         }
         ctx.test_options.shard = Some(Shard { index, count });
     }
-    if let Some(path) = args.option(b"--timings") {
+    for path in args.options(b"--timings") {
         if path.is_empty() {
             bun_core::pretty_errorln!("<r><red>error<r>: --timings expects a file path");
             Global::exit(1);
         }
-        ctx.test_options.timings_file = Some(path.into());
+        if !ctx.test_options.timings_files.iter().any(|p| &**p == *path) {
+            ctx.test_options.timings_files.push((*path).into());
+        }
     }
     ctx.test_options.update_timings = args.flag(b"--update-timings");
-    if ctx.test_options.update_timings && ctx.test_options.timings_file.is_none() {
+    if ctx.test_options.update_timings && ctx.test_options.timings_files.is_empty() {
         bun_core::pretty_errorln!(
             "<r><red>error<r>: --update-timings requires --timings, e.g. --timings=.bun-test-timings.json --update-timings"
         );

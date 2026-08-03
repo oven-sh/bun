@@ -254,6 +254,52 @@ describe.concurrent("--timings", () => {
     expect(s1.exitCode).toBe(0);
   });
 
+  test("multiple --timings files are merged; an entry a file lists in `updated` beats a carried-through copy regardless of order", async () => {
+    using dir = makeFixture("timings-multi", 4);
+    // Two shard artifacts from the same baseline {f00..f03: 50}: shard A re-measured f00 (now 1000), shard B re-measured f03 (now 1).
+    const a = {
+      version: 1,
+      files: { "f00.test.ts": 1000, "f01.test.ts": 50, "f02.test.ts": 50, "f03.test.ts": 50 },
+      updated: ["f00.test.ts"],
+    };
+    const b = {
+      version: 1,
+      files: { "f00.test.ts": 50, "f01.test.ts": 50, "f02.test.ts": 50, "f03.test.ts": 1 },
+      updated: ["f03.test.ts"],
+    };
+    await Bun.write(`${dir}/a.json`, JSON.stringify(a));
+    await Bun.write(`${dir}/b.json`, JSON.stringify(b));
+    // Merged = {1000, 50, 50, 1} → 2 shards cut as [f00] | [f01,f02,f03] whichever file is read first.
+    for (const order of [
+      ["a.json", "b.json"],
+      ["b.json", "a.json"],
+    ]) {
+      const flags = ["--timings=out.json", ...order.map(f => `--timings=${f}`)];
+      const [s1, s2] = await Promise.all([runShard(String(dir), "1/2", flags), runShard(String(dir), "2/2", flags)]);
+      expect(s1.ran).toEqual(["f00"]);
+      expect(s2.ran).toEqual(["f01", "f02", "f03"]);
+    }
+  });
+
+  test("--update-timings writes to the first --timings path and lists what it measured under `updated`", async () => {
+    using dir = makeFixture("timings-multi-write", 2);
+    await Bun.write(
+      `${dir}/base.json`,
+      JSON.stringify({ version: 1, files: { "f00.test.ts": 5, "f01.test.ts": 5, "old.test.ts": 9 } }),
+    );
+    const r = await runShard(String(dir), "1/2", ["--timings=mine.json", "--timings=base.json", "--update-timings"]);
+    expect(r.ran).toEqual(["f00"]);
+    const mine = await Bun.file(`${dir}/mine.json`).json();
+    expect(Object.keys(mine.files).sort()).toEqual(["f00.test.ts", "f01.test.ts", "old.test.ts"]);
+    expect(mine.updated).toEqual(["f00.test.ts"]);
+    // base.json is only read.
+    expect(await Bun.file(`${dir}/base.json`).json()).toEqual({
+      version: 1,
+      files: { "f00.test.ts": 5, "f01.test.ts": 5, "old.test.ts": 9 },
+    });
+    expect(r.exitCode).toBe(0);
+  });
+
   test("--update-timings without --timings is an error", async () => {
     using dir = tempDir("timings-no-path", { "a.test.ts": `import {test} from "bun:test"; test("t", () => {});` });
     await using proc = Bun.spawn({

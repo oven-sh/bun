@@ -2254,10 +2254,10 @@ impl TestCommand {
             skips_to_repeat_buf: Vec::new(),
             todos_to_repeat_buf: Vec::new(),
             reporters: ReportersConfig::default(),
-            timings: if ctx.test_options.test_worker {
+            timings: if ctx.test_options.test_worker || ctx.test_options.timings_files.is_empty() {
                 None
             } else {
-                ctx.test_options.timings_file.as_deref().map(Timings::load)
+                Some(Timings::load(&ctx.test_options.timings_files))
             },
         });
         // `defer { if (reporter.reporters.junit) |fr| fr.deinit() }` — handled by Drop.

@@ -1,7 +1,9 @@
-//! `bun test --timings=<path>` / `--update-timings`:
-//! `{ "version": 1, "files": { "relative/path.test.ts": milliseconds } }`,
+//! `bun test --timings=<path>...` / `--update-timings`:
+//! `{ "version": 1, "files": { "relative/path.test.ts": ms }, "updated": [paths] }`,
 //! used to balance `--shard` by total duration and to start the slowest files
-//! first under `--parallel`.
+//! first under `--parallel`. Several files (one per CI shard) are merged on
+//! read; `updated` names the entries a file's writer actually measured so its
+//! carried-through entries never override another shard's fresh ones.
 
 use std::io::Write as _;
 
@@ -16,64 +18,40 @@ use bun_sys::{Fd, File};
 use super::parallel::file_range::FileRange;
 
 pub struct Timings {
+    /// The first `--timings` path; `--update-timings` writes here.
     path: Box<[u8]>,
     /// Posix-separator paths relative to the project root → milliseconds; loaded entries overlaid with this run's.
     map: StringArrayHashMap<u32>,
+    /// Keys this run measured (emitted as `updated`).
+    updated: StringArrayHashMap<()>,
     /// Cost assigned to files with no entry when packing shards.
     median: u32,
 }
 
 impl Timings {
-    /// A missing file is not an error (first `--update-timings` run creates it); a malformed one is.
-    pub fn load(path: &[u8]) -> Timings {
+    /// Missing files are not an error (the first `--update-timings` run creates one); malformed ones are.
+    pub fn load(paths: &[Box<[u8]>]) -> Timings {
         let mut map: StringArrayHashMap<u32> = StringArrayHashMap::new();
-        match File::read_from(Fd::cwd(), path) {
-            Ok(contents) if !contents.is_empty() => {
-                bun_ast::initialize_store();
-                let source = bun_ast::Source::init_path_string(path, &contents[..]);
-                let mut log = bun_ast::Log::init();
-                let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
-                    Ok(p) => p,
-                    Err(_) => {
-                        let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                            Output::error_writer(),
-                        ));
-                        bun_core::pretty_errorln!(
-                            "<r><red>error<r>: --timings file <b>{}<r> is not valid JSON",
-                            bstr::BStr::new(path)
-                        );
-                        bun_core::Global::exit(1);
-                    }
-                };
-                let files = Some(&parsed)
-                    .filter(|p| {
-                        p.root
-                            .as_property(b"version")
-                            .and_then(|v| v.expr.as_number())
-                            == Some(1.0)
-                    })
-                    .and_then(|p| p.root.as_property(b"files"))
-                    .filter(|f| f.expr.is_object());
-                let Some(files) = files else {
-                    bun_core::pretty_errorln!(
-                        "<r><red>error<r>: --timings file <b>{}<r> must look like {{ \"version\": 1, \"files\": {{ \"path\": milliseconds }} }}",
-                        bstr::BStr::new(path)
-                    );
-                    bun_core::Global::exit(1);
-                };
-                files.expr.for_each_property(|key, _, value| {
-                    if let Some(ms) = value.as_number()
-                        && ms.is_finite()
-                        && ms >= 0.0
-                    {
-                        let _ = map.put(key, ms.round().min(u32::MAX as f64) as u32);
-                    }
-                });
-                bun_ast::Expr::data_store_reset();
-                bun_ast::Stmt::data_store_reset();
-            }
-            Ok(_) => {}
-            Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
+        for path in paths {
+            Self::load_one(path, &mut map);
+        }
+        let median = {
+            let mut known: Vec<u32> = map.values().to_vec();
+            known.sort_unstable();
+            known.get(known.len() / 2).copied().unwrap_or(0)
+        };
+        Timings {
+            path: paths[0].clone(),
+            map,
+            updated: StringArrayHashMap::new(),
+            median,
+        }
+    }
+
+    fn load_one(path: &[u8], map: &mut StringArrayHashMap<u32>) {
+        let contents = match File::read_from(Fd::cwd(), path) {
+            Ok(contents) => contents,
+            Err(err) if err.get_errno() == bun_sys::E::ENOENT => return,
             Err(err) => {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: failed to read --timings file <b>{}<r>: {}",
@@ -82,17 +60,62 @@ impl Timings {
                 );
                 bun_core::Global::exit(1);
             }
-        }
-        let median = {
-            let mut known: Vec<u32> = map.values().to_vec();
-            known.sort_unstable();
-            known.get(known.len() / 2).copied().unwrap_or(0)
         };
-        Timings {
-            path: path.into(),
-            map,
-            median,
+        if contents.is_empty() {
+            return;
         }
+        bun_ast::initialize_store();
+        let source = bun_ast::Source::init_path_string(path, &contents[..]);
+        let mut log = bun_ast::Log::init();
+        let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
+            Ok(p) => p,
+            Err(_) => {
+                let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                    Output::error_writer(),
+                ));
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: --timings file <b>{}<r> is not valid JSON",
+                    bstr::BStr::new(path)
+                );
+                bun_core::Global::exit(1);
+            }
+        };
+        let root = &parsed.root;
+        let files = Some(root)
+            .filter(|r| r.as_property(b"version").and_then(|v| v.expr.as_number()) == Some(1.0))
+            .and_then(|r| r.get_object(b"files"));
+        let Some(files) = files else {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --timings file <b>{}<r> must look like {{ \"version\": 1, \"files\": {{ \"path\": milliseconds }} }}",
+                bstr::BStr::new(path)
+            );
+            bun_core::Global::exit(1);
+        };
+        // Without an `updated` list every entry is authoritative (hand-written or single-writer file).
+        let mut updated: Option<StringArrayHashMap<()>> = None;
+        if let Some(mut it) = root.get_array(b"updated") {
+            let mut set = StringArrayHashMap::new();
+            while let Some(item) = it.next() {
+                if let Some(k) = item.as_utf8_string_literal() {
+                    let _ = set.put(k, ());
+                }
+            }
+            updated = Some(set);
+        }
+        files.for_each_property(|key, _, value| {
+            if let Some(ms) = value.as_number()
+                && ms.is_finite()
+                && ms >= 0.0
+            {
+                let ms = ms.round().min(u32::MAX as f64) as u32;
+                let fresh = updated.as_ref().is_none_or(|u| u.contains(key));
+                if fresh || !map.contains(key) {
+                    let _ = map.put(key, ms);
+                }
+            }
+        });
+        bun_ast::Expr::data_store_reset();
+        bun_ast::Stmt::data_store_reset();
     }
 
     pub fn is_empty(&self) -> bool {
@@ -114,7 +137,9 @@ impl Timings {
     }
 
     pub fn record(&mut self, abs_path: &[u8], ms: u32) {
-        let _ = self.map.put(&Self::key_for(abs_path), ms);
+        let key = Self::key_for(abs_path);
+        let _ = self.map.put(&key, ms);
+        let _ = self.updated.put(&key, ());
     }
 
     pub fn record_since(&mut self, abs_path: &[u8], started_ms: i64) {
@@ -201,9 +226,25 @@ impl Timings {
             );
         }
         out.extend_from_slice(if map.count() > 0 {
-            b"\n  }\n}\n"
+            b"\n  },\n"
         } else {
-            b"}\n}\n"
+            b"},\n"
+        });
+        self.updated
+            .sort(|keys, _, a, b| strings::order(&keys[a], &keys[b]).is_lt());
+        out.extend_from_slice(b"  \"updated\": [");
+        for (i, key) in self.updated.keys().iter().enumerate() {
+            let _ = write!(
+                &mut out,
+                "{}\n    {}",
+                if i > 0 { "," } else { "" },
+                bun_core::fmt::format_json_string_utf8(key, Default::default()),
+            );
+        }
+        out.extend_from_slice(if self.updated.count() > 0 {
+            b"\n  ]\n}\n"
+        } else {
+            b"]\n}\n"
         });
 
         let mut tmp: Vec<u8> = self.path.to_vec();

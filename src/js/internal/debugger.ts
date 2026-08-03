@@ -744,11 +744,9 @@ function webSocketWriter(ws: ServerWebSocket<unknown>): Writer {
   };
 }
 
-// Past this many pending JS-side characters the frontend is considered stalled
-// and dropped. uWS already buffers up to its own 16 MB backpressureLimit before
-// sendText() starts returning DROPPED, so this is the second-stage backlog on
-// top of that. The combined bound keeps a frozen/unreachable frontend from
-// growing the inspected process's heap with every console line it emits.
+// JS-side retry backlog cap, on top of uWS's own 16 MB backpressureLimit.
+// A frontend that fills both has stopped reading and is terminated so it
+// cannot grow the inspected process's heap without bound.
 const maxPendingWriterChars = 32 * 1024 * 1024;
 
 function bufferedWriter(writer: Writer): Writer {

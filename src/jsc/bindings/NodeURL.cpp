@@ -59,17 +59,9 @@ static String runUIDNA(UIDNAFunction convert, const UIDNA* idna, const String& i
     return String(std::span { buffer.begin(), static_cast<size_t>(length) });
 }
 
-// Unicode 16.0 revised the UTS #46 IdnaMappingTable: U+180E MONGOLIAN VOWEL
-// SEPARATOR and the deprecated format characters U+206A..U+206F changed from
-// disallowed to ignored, U+04C0 and U+2183 gained lowercase mappings, and
-// five CJK compatibility ideographs got their corrected (non-NFC) mappings.
-// Unicode 15.1 earlier retargeted U+1E9E LATIN CAPITAL LETTER SHARP S from
-// "ss" to U+00DF. Node v26 follows Unicode 16 through ada::idna (the ICU path
-// was removed in nodejs/node#55156), while the ICU bundled with WebKit is at
-// 75.1 (Unicode 15.1) on most platforms but 73.2 (Unicode 15.0) on Windows.
-// Apply the delta before any IDNA processing so every node:url surface matches
-// node regardless of which ICU data the platform ships (WPT toascii.json cases
-// 66/74/81/82/83/87/88 pin this).
+// Unicode 15.1/16.0 revised the UTS #46 IdnaMappingTable (U+180E/U+206A..U+206F→ignored,
+// U+1E9E→U+00DF, etc.). Node v26 uses ada::idna (Unicode 16) while WebKit's bundled ICU may be
+// older; apply the delta before IDNA so node:url matches node. WPT toascii.json pins this.
 bool containsUnicode16IDNADeltaSource(StringView view)
 {
     if (view.is8Bit())

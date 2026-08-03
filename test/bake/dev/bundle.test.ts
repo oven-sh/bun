@@ -3,7 +3,7 @@ import { expect } from "bun:test";
 import { once } from "node:events";
 import fs from "node:fs";
 import net from "node:net";
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework, WAIT_MULTIPLIER } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -920,7 +920,7 @@ devTest("client disconnect on a deferred framework route releases the RequestCon
 
     // Wait until the bundler has actually picked up gate.ts: the request has
     // reached the server and is parked in the deferred list.
-    const deadline = Date.now() + 30_000;
+    const deadline = Date.now() + 5_000 * WAIT_MULTIPLIER;
     while (!fs.existsSync(entered)) {
       if (Date.now() > deadline) throw new Error("plugin gate never entered");
       await new Promise(r => setTimeout(r, 5));

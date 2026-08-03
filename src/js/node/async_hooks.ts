@@ -33,10 +33,7 @@ function sameValue(a, b) {
   return a !== a && b !== b;
 }
 
-// Installed by node:domain when it loads. Until then AsyncResource never
-// touches process.domain, matching Node where the tagging lives in
-// lib/domain.js's own createHook init hook (async_hooks itself is
-// domain-agnostic).
+// Installed by node:domain on load (node lib/domain.js createHook init hook).
 let domainActiveGetter: (() => any) | null = null;
 
 // Only run during debug
@@ -151,7 +148,7 @@ class AsyncLocalStorage {
       var prev = get();
       set(context);
       try {
-        return fn(...args);
+        return fn.$apply(undefined, args);
       } finally {
         set(prev);
       }
@@ -198,7 +195,7 @@ class AsyncLocalStorage {
     // so a match here would skip installing store_value and let the callback
     // read the unmasked frame value instead.
     if (!this.#disabled && sameValue(this.getStore(), store_value)) {
-      return callback(...args);
+      return callback.$apply(undefined, args);
     }
     var context = get() as any[]; // we make sure to .slice() before mutating
     var hasPrevious = false;
@@ -236,7 +233,9 @@ class AsyncLocalStorage {
     $assert(i > -1, "i was not set");
     $assert(sameValue(this.getStore(), store_value), "run: store_value was not set");
     try {
-      return callback(...args);
+      // $apply, not a spread: spreading goes through Array.prototype[Symbol.iterator],
+      // which userland can delete (node uses ReflectApply here for the same reason).
+      return callback.$apply(undefined, args);
     } finally {
       // Note: early `return` will prevent `throw` above from working. I think...
       // Set AsyncContextFrame to undefined if we are out of context values.
@@ -381,14 +380,12 @@ class AsyncResource {
     this.#snapshot = get();
     this.#triggerAsyncId = triggerAsyncId;
 
-    // Node's domain init hook tags every async resource created while a
-    // domain is active with a non-enumerable `domain` property. The getter
-    // is null until node:domain has actually loaded, so a userland write to
-    // process.domain (or a throwing getter) is not observable here.
+    // node lib/domain.js init hook: tag with a non-enumerable .domain.
     if (domainActiveGetter !== null) {
       const domain = domainActiveGetter();
       if (domain != null) {
         Object.defineProperty(this, "domain", {
+          __proto__: null,
           configurable: true,
           enumerable: false,
           value: domain,
@@ -634,10 +631,7 @@ const asyncWrapProviders = {
   INSPECTORJSBINDING: 57,
 };
 
-// Internal hook point for node:domain — not part of the public API surface.
-// The registry-symbol string is forgeable, but only the informational
-// AsyncResource `.domain` tag flows through it; error routing uses the
-// tamper-proof captured ALS methods.
+// Internal node:domain hook; only the informational .domain tag flows through it.
 const kSetDomainActiveGetter = Symbol.for("::bunternal::async_hooks.setDomainActiveGetter");
 
 export default {

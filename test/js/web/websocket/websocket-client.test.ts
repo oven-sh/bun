@@ -619,6 +619,50 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
   });
 });
 
+// RFC 6455 §4.1: the 101's Connection header must *contain* an `Upgrade` token, not equal it.
+describe("WebSocket handshake Connection header token list", () => {
+  it.each([
+    ["Connection: keep-alive, Upgrade"],
+    ["Connection: upgrade,keep-alive"],
+    ["Connection: keep-alive", "Connection: Upgrade"],
+  ])("%s", async (...connectionHeaders) => {
+    const server = createServer(sock => {
+      sock.on("error", () => {});
+      let buf = "";
+      sock.on("data", chunk => {
+        buf += chunk.toString("latin1");
+        if (!buf.includes("\r\n\r\n")) return;
+        const key = /sec-websocket-key: *([^\r\n]+)/i.exec(buf)![1];
+        const accept = createHash("sha1")
+          .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+          .digest("base64");
+        sock.write(
+          [
+            "HTTP/1.1 101 Switching Protocols",
+            "Upgrade: websocket",
+            ...connectionHeaders,
+            `Sec-WebSocket-Accept: ${accept}`,
+            "",
+            "",
+          ].join("\r\n"),
+        );
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/`);
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      ws.onopen = () => resolve();
+      ws.onclose = e => reject(new Error(`closed ${e.code} ${e.reason}`));
+      await promise;
+      ws.terminate();
+    } finally {
+      server.close();
+    }
+  });
+});
+
 async function listen(): Promise<URL> {
   const pathname = path.join(import.meta.dir, "./websocket-server-echo.mjs");
   const { promise, resolve, reject } = Promise.withResolvers();

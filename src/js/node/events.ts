@@ -65,8 +65,7 @@ function EventEmitter(opts) {
   EventEmitter.init.$call(this, opts);
 }
 
-// Exposed as a static like in Node.js so that node:domain (and userland code
-// that calls `EventEmitter.init.call(this)`) can observe and wrap it.
+// node exposes .init as a static so node:domain / userland can wrap it.
 EventEmitter.init = function init(opts) {
   if (this._events === undefined || this._events === this.__proto__._events) {
     this._events = Object.create(null);
@@ -207,9 +206,7 @@ EventEmitterPrototype.emit = function emit(type, ...args) {
         result = handler.$apply(this, args);
         break;
     }
-    // Node's fast-path guard (lib/events.js): the extra local + undefined
-    // check are cheap enough to keep a single prototype emit; addCatch
-    // itself early-returns when this[kCapture] is false.
+    // node lib/events.js fast-path guard; addCatch early-returns when !this[kCapture].
     if (result !== undefined && $isPromise(result)) {
       addCatch(this, result, type, args);
     }
@@ -868,10 +865,7 @@ class EventEmitterAsyncResource extends EventEmitter {
 
   emit(event, ...args) {
     const asyncResource = this.#asyncResource;
-    // Node routes through super.emit; the single prototype emit already gates
-    // rejection capture on this[kCapture], and reading super.emit at call time
-    // means a userland monkeypatch of EventEmitter.prototype.emit is observed
-    // like it is for plain emitters.
+    // node routes through super.emit; single prototype emit gates on this[kCapture].
     ArrayPrototypeUnshift.$call(args, super.emit, this, event);
     return asyncResource.runInAsyncScope.$apply(asyncResource, args);
   }

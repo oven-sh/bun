@@ -914,8 +914,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_setUncaughtExceptionCaptureCallback, (JSC::JSGl
     return JSC::JSValue::encode(jsUndefined());
 }
 
-// Used by node:domain ($newCppFunction) to install its uncaught-exception
-// dispatch hook. Intentionally not exposed as a process property.
+// node:domain installs its dispatch hook through this (not on `process`).
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSetDomainErrorHandler, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -1220,10 +1219,8 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
 extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
 extern "C" bool Bun__isMainThreadVM();
 
-// node only honors --abort-on-uncaught-exception on the main thread: an
-// uncaught exception inside a Worker is forwarded to the parent's 'error'
-// handler instead of aborting the process
-// (test/js/node/test/parallel/test-worker-abort-on-uncaught-exception.js).
+// node only honors --abort-on-uncaught-exception on the main thread
+// (test-worker-abort-on-uncaught-exception.js).
 static bool shouldAbortOnUncaughtException()
 {
     return Bun__Node__AbortOnUncaughtException && Bun__isMainThreadVM();
@@ -1232,11 +1229,8 @@ static bool shouldAbortOnUncaughtException()
 [[noreturn]] static void abortOnUncaughtException()
 {
 #if OS(WINDOWS)
-    // Node's ABORT() macro (src/util.h) — _exit(134) — so
-    // common.nodeProcessAborted() sees the abort. V8's base::OS::Abort()
-    // uses __debugbreak (STATUS_BREAKPOINT 0x80000003) instead, but Bun's
-    // spawn machinery stores subprocess exit codes as u8 and would truncate
-    // that to 3; still break into an attached debugger for local runs.
+    // Node's ABORT() macro (src/util.h) is _exit(134) so
+    // common.nodeProcessAborted() sees it.
     if (IsDebuggerPresent()) DebugBreak();
     _exit(134);
 #else
@@ -1244,25 +1238,17 @@ static bool shouldAbortOnUncaughtException()
 #endif
 }
 
-// Mirrors `bun_jsc::virtual_machine::UncaughtExceptionOrigin`. Keep the
-// discriminants in sync with the Rust enum: they cross the FFI boundary as a
-// plain `int`.
+// Mirrors bun_jsc::virtual_machine::UncaughtExceptionOrigin (FFI int).
 enum class UncaughtExceptionOrigin : int {
-    // A synchronous uncaught exception.
     Exception = 0,
-    // A true unhandled promise rejection.
     Rejection = 1,
-    // The entry-point module promise rejected, which is how a synchronous
-    // throw from the main module surfaces. Aborts like `Exception` (V8 aborts
-    // at throw time), but listeners observe the 'unhandledRejection' origin
-    // string like `Rejection`.
+    // Entry-point module promise rejected: aborts like Exception, listeners
+    // see 'unhandledRejection'.
     EntryPointRejection = 2,
 };
 
-// `substituteError` (out): when the domain handler or capture callback
-// throws in a Worker, the thrown value is written here and false is
-// returned so the Rust caller routes it through the worker error-dispatch
-// path (parent 'error' + exit code 1) instead of exiting 7.
+// substituteError out-param: a domain handler / capture callback throw in a
+// Worker is routed to the parent 'error' + exit 1 instead of exit 7.
 extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int originValue, JSC::EncodedJSValue* substituteError)
 {
     const auto origin = static_cast<UncaughtExceptionOrigin>(originValue);
@@ -1273,31 +1259,19 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     auto* process = globalObject->processObject();
     auto& wrapped = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return true;
 
     auto domainHandler = process->getDomainErrorHandler();
-    // Snapshot at throw time — feeds every abort decision below. Node
-    // decides abort once inside V8 Isolate::Throw and never re-checks.
+    // Snapshot at throw time: node decides abort once inside V8 Isolate::Throw.
     const auto captureAtThrow = process->getUncaughtExceptionCaptureCallback();
-    // The other half of node's should_abort_on_uncaught_toggle, snapshotted
-    // for the same reason: a listener that later removes a domain's 'error'
-    // listener must not turn a suppressed exception into a SIGABRT.
     bool domainClaimsAtThrow = false;
 
-    // Under --abort-on-uncaught-exception, node aborts before
-    // process._fatalException runs — 'uncaughtExceptionMonitor' and
-    // 'uncaughtException' listeners never fire. Synchronous throws abort
-    // inside V8 (Isolate::Throw) only when node's
-    // ShouldAbortOnUncaughtException callback reports no capture callback
-    // and no domain on the stack has an 'error' listener
-    // (should_abort_on_uncaught_toggle, kept current by lib/domain.js
-    // updateExceptionCapture). Unhandled promise rejections routed through
-    // the JS-side triggerUncaughtException binding abort unconditionally
-    // regardless of capture/domain (node_errors.cc
-    // TriggerUncaughtException(FunctionCallbackInfo)).
+    // node aborts before process._fatalException (V8 Isolate::Throw /
+    // node_errors.cc TriggerUncaughtException) when no capture callback is
+    // set and no domain on the stack has an 'error' listener.
     if (shouldAbortOnUncaughtException() && origin != UncaughtExceptionOrigin::Rejection
         && !domainHandler.isEmpty() && !domainHandler.isUndefinedOrNull()) {
-        // node:domain is loaded — ask its predicate whether any domain on
-        // the effective stack has an 'error' listener.
         auto wouldClaim = process->getDomainWouldClaim();
         if (!wouldClaim.isEmpty() && !wouldClaim.isUndefinedOrNull()) {
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -1327,14 +1301,14 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     // node parity (exitWithUndefinedFatalException): the internal fatal-exception
     // handler is monkey-patchable as process._fatalException. If user code
     // replaces it with a non-callable value, node cannot dispatch and exits with
-    // code 6 (InvalidFatalExceptionMonkeyPatching). This runs after the abort
-    // checks above: V8 aborts inside Isolate::Throw, before node ever reaches
-    // TriggerUncaughtException and consults _fatalException.
+    // code 6 (InvalidFatalExceptionMonkeyPatching).
     {
         auto fatalScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSValue fatalException = process->get(globalObject, Identifier::fromString(vm, "_fatalException"_s));
         if (fatalScope.exception()) {
             (void)fatalScope.tryClearException();
+            if (vm.hasPendingTerminationException()) [[unlikely]]
+                return true;
         } else if (!fatalException.isCallable()) {
             Bun__Process__exit(globalObject, 6);
             return true;
@@ -1352,29 +1326,23 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     auto uncaughtExceptionMonitor = Identifier::fromString(JSC::getVM(globalObject), "uncaughtExceptionMonitor"_s);
     if (wrapped.listenerCount(uncaughtExceptionMonitor) > 0) {
         wrapped.emit(uncaughtExceptionMonitor, args);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return true;
     }
 
     auto uncaughtExceptionIdent = Identifier::fromString(JSC::getVM(globalObject), "uncaughtException"_s);
 
-    // node:domain installs a dispatch hook when it is first loaded. It runs
-    // before the public capture callback and 'uncaughtException' listeners
-    // and returns true when an active domain handled the exception. Re-read
-    // the slot: a monitor listener that require()d node:domain must be
-    // honored (Node reads captureFn — which the domain hook writes — after
-    // the monitor emit).
+    // node reads captureFn after the monitor emit; re-read the domain slot too.
     domainHandler = process->getDomainErrorHandler();
     if (!domainHandler.isEmpty() && !domainHandler.isUndefinedOrNull()) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSValue handled = call(lexicalGlobalObject, domainHandler, args, "domainErrorHandler"_s);
         if (auto ex = scope.exception()) {
             (void)scope.tryClearException();
-            // An exception thrown from a top-level domain 'error' handler is
-            // fatal. Main thread: node aborts when
-            // --abort-on-uncaught-exception is set and otherwise exits with
-            // code 7 (internal exception handler run-time failure). Worker:
-            // node's workerOnGlobalUncaughtException catches, posts the
-            // handler's error to the parent, and exits with code 1 — mirror
-            // that via the caller's on_unhandled_rejection path.
+            if (vm.hasPendingTerminationException()) [[unlikely]]
+                return true;
+            // Throwing domain handler: main thread -> abort / exit 7;
+            // Worker -> node workerOnGlobalUncaughtException posts to parent + exit 1.
             if (shouldAbortOnUncaughtException()) {
                 Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
                 abortOnUncaughtException();
@@ -1392,12 +1360,7 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         }
     }
 
-    // The abort decision consumes only the throw-time snapshot: a monitor
-    // listener that clears the capture callback (or removes a domain's
-    // 'error' listener) must not turn a suppressed exception into a SIGABRT
-    // (node has no post-monitor abort path). This gate covers node:domain
-    // loaded before the throw with the predicate slot missing, and stays as
-    // a defensive assert otherwise.
+    // node has no post-monitor abort path; use only the throw-time snapshot.
     if (origin != UncaughtExceptionOrigin::Rejection && shouldAbortOnUncaughtException()
         && !domainClaimsAtThrow
         && (captureAtThrow.isEmpty() || captureAtThrow.isUndefinedOrNull())) {
@@ -1405,9 +1368,7 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         abortOnUncaughtException();
     }
 
-    // Re-read for dispatch: a monitor listener or the domain dispatcher may
-    // have installed (or cleared) the capture callback. Node reads
-    // exceptionHandlerState.captureFn after the monitor emit.
+    // node reads exceptionHandlerState.captureFn after the monitor emit.
     auto capture = process->getUncaughtExceptionCaptureCallback();
 
     // if there is an uncaughtExceptionCaptureCallback, call it and consider the exception handled
@@ -1416,8 +1377,9 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
         if (auto ex = scope.exception()) {
             (void)scope.tryClearException();
-            // An exception thrown in the capture callback is fatal — same
-            // main-thread/Worker split as the domain-handler case above.
+            if (vm.hasPendingTerminationException()) [[unlikely]]
+                return true;
+            // Same main-thread/Worker split as the domain-handler case above.
             if (shouldAbortOnUncaughtException()) {
                 Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
                 abortOnUncaughtException();
@@ -1487,6 +1449,8 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return;
     auto warning = JSC::createError(globalObject, "Unhandled promise rejection. This error originated either by "
                                                   "throwing inside of an async function without a catch block, "
                                                   "or by rejecting a promise which was not handled with .catch(). "
@@ -1497,19 +1461,27 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
     JSValue reasonStack {};
     auto is_errorlike = Bun__promises__isErrorLike(globalObject, JSValue::decode(reason));
     CLEAR_IF_EXCEPTION(scope);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return;
     if (is_errorlike) {
         reasonStack = JSValue::decode(reason).get(globalObject, vm.propertyNames->stack);
         CLEAR_IF_EXCEPTION(scope);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return;
         warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
     }
     if (!reasonStack) {
         reasonStack = JSValue::decode(Bun__noSideEffectsToString(vm, globalObject, reason));
         CLEAR_IF_EXCEPTION(scope);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return;
     }
     if (!reasonStack) reasonStack = jsUndefined();
 
     Process::emitWarning(globalObject, reasonStack, jsString(globalObject->vm(), "UnhandledPromiseRejectionWarning"_str), jsUndefined(), jsUndefined());
     CLEAR_IF_EXCEPTION(scope);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return;
     Process::emitWarningErrorInstance(globalObject, warning);
     CLEAR_IF_EXCEPTION(scope);
 }
@@ -1519,9 +1491,12 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return true;
     auto* process = globalObject->processObject();
 
-    auto eventType = Identifier::fromString(JSC::getVM(globalObject), "unhandledRejection"_s);
+    auto eventType = Identifier::fromString(vm, "unhandledRejection"_s);
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
         MarkedArgumentBuffer args;
@@ -1538,17 +1513,22 @@ extern "C" bool Bun__VM__allowRejectionHandledWarning(void* vm);
 
 extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue promise)
 {
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(lexicalGlobalObject));
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return true;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto* process = globalObject->processObject();
 
-    auto eventType = Identifier::fromString(JSC::getVM(globalObject), "rejectionHandled"_s);
+    auto eventType = Identifier::fromString(vm, "rejectionHandled"_s);
 
     if (Bun__VM__allowRejectionHandledWarning(globalObject->bunVM())) {
-        Process::emitWarning(globalObject, jsString(globalObject->vm(), String("Promise rejection was handled asynchronously"_s)), jsString(globalObject->vm(), String("PromiseRejectionHandledWarning"_s)), jsUndefined(), jsUndefined());
+        Process::emitWarning(globalObject, jsString(vm, String("Promise rejection was handled asynchronously"_s)), jsString(vm, String("PromiseRejectionHandledWarning"_s)), jsUndefined(), jsUndefined());
         CLEAR_IF_EXCEPTION(scope);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return true;
     }
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
@@ -3684,7 +3664,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * g
 
     result->putDirectOffset(vm, 0, jsNumber(std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec));
     result->putDirectOffset(vm, 1, jsNumber(std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec));
+#if OS(DARWIN)
+    // ru_maxrss is bytes on darwin; Node reports kilobytes everywhere.
+    result->putDirectOffset(vm, 2, jsNumber(rusage.ru_maxrss / 1024));
+#else
     result->putDirectOffset(vm, 2, jsNumber(rusage.ru_maxrss));
+#endif
     result->putDirectOffset(vm, 3, jsNumber(rusage.ru_ixrss));
     result->putDirectOffset(vm, 4, jsNumber(rusage.ru_idrss));
     result->putDirectOffset(vm, 5, jsNumber(rusage.ru_isrss));
@@ -4294,6 +4279,9 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* object = constructEmptyObject(globalObject);
 
+    // node:inspector serves a CDP endpoint, precise coverage and breakpoint
+    // pausing; the long tail of CDP domains (Network, NodeWorker, Target,
+    // tracing, DOMStorage, permissions) are not implemented yet.
     object->putDirect(vm, Identifier::fromString(vm, "inspector"_s), jsBoolean(true));
 #ifdef BUN_DEBUG
     object->putDirect(vm, Identifier::fromString(vm, "debug"_s), jsBoolean(true));
@@ -4310,6 +4298,7 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     object->putDirect(vm, Identifier::fromString(vm, "tls"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "cached_builtins"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "openssl_is_boringssl"_s), jsBoolean(true));
+    object->putDirect(vm, Identifier::fromString(vm, "quic"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "require_module"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "typescript"_s), jsString(vm, String("transform"_s)));
 

@@ -1,5 +1,5 @@
 import { pathToFileURL } from "bun";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "path";
 
@@ -241,7 +241,7 @@ describe("fs.watchFile", () => {
   // observed to manifest as a crash on Windows (20 attempts on macOS with
   // 200 watchers and 20 GC cycles never crashed).
   test.skipIf(!isWindows)("no crash when finalize() races WorkPool deinit", async () => {
-    const dir = tempDirWithFiles(
+    await using dir = tempDir(
       "watchfile-gc",
       Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`f${i}.txt`, `d`])),
     );
@@ -365,7 +365,7 @@ describe("fs.watchFile", () => {
   test("a throwing listener on the initial ENOENT callback keeps watching", async () => {
     // Fresh per-run directory so the target is guaranteed not to exist and
     // the initial stat takes the ENOENT path.
-    const dir = tempDirWithFiles("watchfile-throw", {
+    await using dir = tempDir("watchfile-throw", {
       ".keep": "",
     });
     const target = path.join(dir, "does-not-exist.txt");

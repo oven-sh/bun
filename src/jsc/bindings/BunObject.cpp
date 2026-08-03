@@ -698,11 +698,17 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
     JSC::JSValue arg1 = callFrame->uncheckedArgument(0);
     JSC::JSValue arg2 = callFrame->uncheckedArgument(1);
     JSC::JSValue strict = callFrame->argument(2);
+    JSC::JSValue skipPrototype = callFrame->argument(3);
 
     Vector<std::pair<JSValue, JSValue>, 16> stack;
     MarkedArgumentBuffer gcBuffer;
 
     if (strict.isBoolean() && strict.asBoolean()) {
+        if (skipPrototype.isBoolean() && skipPrototype.asBoolean()) {
+            bool isEqual = Bun__deepEquals<true, false, true>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSValue::encode(jsBoolean(isEqual));
+        }
 
         bool isEqual = Bun__deepEquals<true, false>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
         RETURN_IF_EXCEPTION(scope, {});

@@ -420,7 +420,7 @@ impl ServerWebSocket {
         let global_object = handler.global_object();
         let on_open_handler = handler.on_open;
         let on_error = handler.on_error;
-        if vm.is_shutting_down() {
+        if vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
             bun_output::scoped_log!(WebSocketServer, "onOpen called after script execution");
             ws.close();
             return;
@@ -493,7 +493,7 @@ impl ServerWebSocket {
         let global_object = self.handler().global_object();
         // This is the start of a task.
         let vm = self.handler().vm();
-        if vm.is_shutting_down() {
+        if vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
             bun_output::scoped_log!(WebSocketServer, "onMessage called after script execution");
             ws.close();
             return;
@@ -501,19 +501,18 @@ impl ServerWebSocket {
 
         let _loop_guard = vm.enter_event_loop_scope();
 
+        let payload = match opcode {
+            Opcode::Text => jsc::bun_string_jsc::create_utf8_for_js(global_object, message),
+            Opcode::Binary => self.binary_to_js(global_object, message),
+            _ => unreachable!(),
+        };
+        let Ok(payload) = payload else { return };
         let arguments = [
             self.this_value
                 .get()
                 .try_get()
                 .unwrap_or(JSValue::UNDEFINED),
-            match opcode {
-                Opcode::Text => jsc::bun_string_jsc::create_utf8_for_js(global_object, message)
-                    .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
-                Opcode::Binary => self
-                    .binary_to_js(global_object, message)
-                    .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
-                _ => unreachable!(),
-            },
+            payload,
         ];
 
         let mut corker = Corker {
@@ -562,7 +561,9 @@ impl ServerWebSocket {
         bun_output::scoped_log!(WebSocketServer, "onDrain");
         let handler = self.handler();
         let vm = handler.vm();
-        if self.is_closed() || vm.is_shutting_down() {
+        if self.is_closed()
+            || vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running
+        {
             return;
         }
 
@@ -610,7 +611,9 @@ impl ServerWebSocket {
         let cb = handler.on_ping;
         let on_error = handler.on_error;
         let vm = handler.vm();
-        if cb.is_empty_or_undefined_or_null() || vm.is_shutting_down() {
+        if cb.is_empty_or_undefined_or_null()
+            || vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running
+        {
             return;
         }
         let global_this = handler.global_object();
@@ -618,13 +621,15 @@ impl ServerWebSocket {
         // This is the start of a task.
         let _loop_guard = vm.enter_event_loop_scope();
 
+        let Ok(payload) = self.binary_to_js(global_this, data) else {
+            return;
+        };
         let args = [
             self.this_value
                 .get()
                 .try_get()
                 .unwrap_or(JSValue::UNDEFINED),
-            self.binary_to_js(global_this, data)
-                .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
+            payload,
         ];
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
             let err = global_this.take_exception(e);
@@ -646,20 +651,22 @@ impl ServerWebSocket {
         let global_this = handler.global_object();
         let vm = handler.vm();
 
-        if vm.is_shutting_down() {
+        if vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
             return;
         }
 
         // This is the start of a task.
         let _loop_guard = vm.enter_event_loop_scope();
 
+        let Ok(payload) = self.binary_to_js(global_this, data) else {
+            return;
+        };
         let args = [
             self.this_value
                 .get()
                 .try_get()
                 .unwrap_or(JSValue::UNDEFINED),
-            self.binary_to_js(global_this, data)
-                .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
+            payload,
         ];
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
             let err = global_this.take_exception(e);
@@ -723,7 +730,7 @@ impl ServerWebSocket {
         });
 
         let vm = handler.vm();
-        if vm.is_shutting_down() {
+        if vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
             return;
         }
 

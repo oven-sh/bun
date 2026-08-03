@@ -455,3 +455,70 @@ test.skipIf(!isDebug)(
   },
   120_000,
 );
+
+// Regression: the remaining NewSocket dispatch entry points (on_end,
+// on_writable, on_data, on_timeout, on_close, handle_error, ALPN) still gated
+// on is_shutting_down(), so a worker terminate() raised inside one socket's
+// callback left the TerminationException pending for the next socket's
+// dispatch in the same uSockets tick. This shape fires on plain TCP via
+// on_end: the worker accepts NCLI connections, the parent FINs them all in
+// one burst (so multiple on_end dispatches land in one poll sweep), then
+// terminates the worker mid-sweep.
+test.skipIf(!isDebug)(
+  "terminate() while a worker's Bun.listen end handler is firing does not trip assertNoException()",
+  async () => {
+    const ROUNDS = 15;
+    const NCLI = 60;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const net = require("node:net");
+        const src =
+          "const { parentPort, workerData: d } = require('node:worker_threads');" +
+          "let opens = 0;" +
+          "const srv = Bun.listen({ hostname: '127.0.0.1', port: 0, allowHalfOpen: true, socket: {" +
+          "  open(s) { if (++opens === d.ncli) parentPort.postMessage('ready'); }," +
+          "  data() {}, end(s) { s.end(); }, close() {}, error() {} } });" +
+          "parentPort.postMessage(srv.port);";
+        for (let r = 0; r < ${ROUNDS}; r++) {
+          const w = new Worker(src, { eval: true, workerData: { ncli: ${NCLI} } });
+          const msgs = [];
+          const port = await new Promise((res, rej) => {
+            w.once("error", rej);
+            w.on("message", (m) => { msgs.push(m); if (msgs.length === 1) res(m); });
+          });
+          const clients = [];
+          for (let i = 0; i < ${NCLI}; i++) {
+            const c = net.connect(port, "127.0.0.1");
+            c.on("error", () => {}); c.on("data", () => {});
+            clients.push(c);
+          }
+          await new Promise((res, rej) => {
+            w.once("error", rej);
+            if (msgs.includes("ready")) return res();
+            w.on("message", (m) => { if (m === "ready") res(); });
+          });
+          w.on("error", () => {});
+          await Bun.sleep(r % 4);
+          for (const c of clients) c.end();
+          await w.terminate();
+          for (const c of clients) c.destroy();
+        }
+        console.log("PASS");
+      `,
+      ],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  120_000,
+);

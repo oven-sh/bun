@@ -3585,6 +3585,12 @@ where
         if let Some(server) = self.server {
             // SAFETY: BACKREF
             let server = &*server;
+            // The "error" may be the worker's TerminationException raised
+            // inside on_request's fetch-handler call; entering the user
+            // error() handler with it pending trips assertNoException().
+            if server.vm().script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
+                return;
+            }
             let on_error = server.config().on_error;
             if !on_error.is_empty() && !self.flags.has_called_error_handler() {
                 self.flags.set_has_called_error_handler(true);
@@ -3595,6 +3601,9 @@ where
                         &[value],
                     )
                     .unwrap_or_else(|err| server.global_this().take_exception(err));
+                if server.global_this().has_exception() {
+                    return;
+                }
                 let _keep = jsc::EnsureStillAlive(result);
                 if !result.is_empty_or_undefined_or_null() {
                     if let Some(err) = result.to_error() {

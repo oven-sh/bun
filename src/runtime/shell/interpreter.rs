@@ -1199,6 +1199,13 @@ impl Interpreter {
                     let global_this = self
                         .global_this_ref()
                         .expect("global_this set on Js event-loop path");
+                    if global_this.bun_vm().script_execution_status()
+                        != bun_jsc::ScriptExecutionStatus::Running
+                    {
+                        self.keep_alive.with_mut(|k| k.disable());
+                        self.deref_root_shell_and_io_if_needed(true);
+                        return Yield::done();
+                    }
                     let buffered_stdout = self.get_buffered_stdout(global_this);
                     let buffered_stderr = self.get_buffered_stderr(global_this);
                     self.keep_alive.with_mut(|k| k.disable());

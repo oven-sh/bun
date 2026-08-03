@@ -691,7 +691,11 @@ int getpwuid_r(uid_t uid, struct passwd *pwd, char *buf, size_t buflen,
 		homedir = NULL;
 	if (!homedir)
 		homedir = "/data/storage/el2/base";
-	static const char shell[] = "/bin/false";
+	const char *shell = getenv("SHELL");
+	if (shell && !*shell)
+		shell = NULL;
+	if (!shell)
+		shell = "/bin/false";
 
 	char uid_buf[32];
 	if (!username) {
@@ -699,7 +703,7 @@ int getpwuid_r(uid_t uid, struct passwd *pwd, char *buf, size_t buflen,
 		username = uid_buf;
 	}
 
-	size_t need = strlen(username) + 1 + strlen(homedir) + 1 + sizeof(shell);
+	size_t need = strlen(username) + 1 + strlen(homedir) + 1 + strlen(shell) + 1;
 	if (buflen < need) {
 		*result = NULL;
 		return ERANGE;

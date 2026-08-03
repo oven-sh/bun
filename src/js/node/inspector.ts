@@ -327,14 +327,14 @@ function settleLocalPost(callback, result) {
   }
 }
 
-function captureConsoleStackTrace(hook: Function) {
+function captureCDPStackTrace(hide: Function) {
   const holder: { stack?: any } = {};
   const previousPrepare = ErrorObject.prepareStackTrace;
   const previousLimit = ErrorObject.stackTraceLimit;
   try {
     ErrorObject.prepareStackTrace = returnCallSites;
     ErrorObject.stackTraceLimit = 30;
-    errorCaptureStackTrace.$call(ErrorObject, holder, hook);
+    errorCaptureStackTrace.$call(ErrorObject, holder, hide);
     const sites = holder.stack;
     if (!$isJSArray(sites)) return undefined;
     const callFrames: object[] = [];
@@ -373,10 +373,10 @@ function captureConsoleStackTrace(hook: Function) {
   }
 }
 
-// Writes Error's statics; if user code froze/swapped Error, degrade to no stackTrace — console.log must never throw.
-function tryCaptureConsoleStackTrace(hook: Function) {
+// Writes Error's statics; if user code froze/swapped Error, degrade to no stackTrace rather than throw.
+function tryCaptureCDPStackTrace(hide: Function) {
   try {
-    return captureConsoleStackTrace(hook);
+    return captureCDPStackTrace(hide);
   } catch {
     return undefined;
   }
@@ -385,7 +385,7 @@ function tryCaptureConsoleStackTrace(hook: Function) {
 function makeConsoleHook(type: string, original: Function): Function {
   const hook = function (this: unknown, ...args: unknown[]) {
     if (!emittingConsoleAPI && runtimeEnabledSessions.size > 0) {
-      emitConsoleAPICalled(type, args, tryCaptureConsoleStackTrace(hook));
+      emitConsoleAPICalled(type, args, tryCaptureCDPStackTrace(hook));
     }
     return original.$apply(this, args);
   };
@@ -590,6 +590,13 @@ function forEachNetworkSession<C>(fn: (session: Session, state: NetworkState, ct
   for (const { 0: session, 1: state } of networkEnabledSessions) fn(session, state, ctx);
 }
 
+// Node's NetworkAgent captures the caller's JS stack so DevTools' Initiator column is clickable.
+// Like Node, internal node:inspector frames are left in; DevTools walks past them.
+function captureNetworkInitiator() {
+  const stack = tryCaptureCDPStackTrace(captureNetworkInitiator);
+  return stack !== undefined ? { type: "script", stack } : { type: "script" };
+}
+
 const Network = {
   requestWillBeSent(params: any) {
     if (networkEnabledSessions.size === 0) return;
@@ -599,7 +606,8 @@ const Network = {
     const request = requestFromObject(params);
     // The request charset sits at the top level, not inside `request`.
     const requestIsUTF8 = params.charset === "utf-8";
-    forEachNetworkSession(sessionRequestWillBeSent, { requestId, request, requestIsUTF8, timestamp, wallTime });
+    const initiator = captureNetworkInitiator();
+    forEachNetworkSession(sessionRequestWillBeSent, { requestId, request, requestIsUTF8, timestamp, wallTime, initiator });
   },
 
   responseReceived(params: any) {
@@ -655,7 +663,8 @@ const Network = {
     if (networkEnabledSessions.size === 0) return;
     const requestId = requireEventString(params, "requestId");
     const url = requireEventString(params, "url");
-    forEachNetworkSession(sessionWebSocketCreated, { requestId, url });
+    const initiator = captureNetworkInitiator();
+    forEachNetworkSession(sessionWebSocketCreated, { requestId, url, initiator });
   },
 
   webSocketClosed(params: any) {
@@ -687,7 +696,7 @@ function sessionRequestWillBeSent(session, state, ctx) {
     request,
     timestamp: ctx.timestamp,
     wallTime: ctx.wallTime,
-    initiator: { type: "script" },
+    initiator: ctx.initiator,
   });
 }
 
@@ -758,7 +767,7 @@ function sessionWebSocketCreated(session, _state, ctx) {
   emitToSession(session, "Network.webSocketCreated", {
     requestId: ctx.requestId,
     url: ctx.url,
-    initiator: { type: "script" },
+    initiator: ctx.initiator,
   });
 }
 

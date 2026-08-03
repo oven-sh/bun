@@ -828,6 +828,42 @@ test("a console argument whose toString throws does not break console.log", asyn
   }
 });
 
+test("Network.requestWillBeSent / webSocketCreated populate initiator.stack with the caller's frames", () => {
+  const session = new inspector.Session();
+  session.connect();
+  try {
+    const events: any[] = [];
+    session.on("Network.requestWillBeSent", m => events.push(m.params));
+    session.on("Network.webSocketCreated", m => events.push(m.params));
+    session.post("Network.enable");
+    function callerFrame() {
+      inspector.Network.requestWillBeSent({
+        requestId: "r1",
+        timestamp: 0,
+        wallTime: 0,
+        request: { url: "http://x/", method: "GET", headers: {} },
+      });
+      inspector.Network.webSocketCreated({ requestId: "ws1", url: "ws://x/" });
+    }
+    callerFrame();
+    expect(events).toHaveLength(2);
+    const thisFile = pathToFileURL(import.meta.path).href;
+    for (const evt of events) {
+      expect(evt.initiator.type).toBe("script");
+      const frames = evt.initiator.stack?.callFrames;
+      expect(Array.isArray(frames)).toBe(true);
+      // Like Node, internal node:inspector frames precede the caller; the first
+      // user frame must be our call site.
+      const firstUser = frames.find((f: any) => f.url === thisFile);
+      expect(firstUser).toMatchObject({ functionName: "callerFrame", url: thisFile });
+      expect(typeof firstUser.lineNumber).toBe("number");
+    }
+    session.post("Network.disable");
+  } finally {
+    session.disconnect();
+  }
+});
+
 // Activating breakpoints on a debugger that was attached at runtime (after the
 // entry module has already been linked) used to crash the inspected process:
 // JSC's clearCode discarded the module's UnlinkedModuleProgramCodeBlock, and

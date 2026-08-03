@@ -185,7 +185,7 @@ unsafe extern "C" {
 }
 
 static FUTEX_ATOMIC: AtomicU32 = AtomicU32::new(0);
-pub(crate) static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
+static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
 /// Script execution context of the thread currently blocked waiting for a
 /// frontend (`--inspect-brk`, `--inspect-wait`, `inspector.waitForDebugger()`),
 /// or 0 when none is. Contexts are what inspector connections are keyed by, so

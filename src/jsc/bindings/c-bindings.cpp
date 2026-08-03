@@ -3,6 +3,7 @@
 #include <cstdio>
 
 #if !OS(WINDOWS)
+#include <wtf/WTFConfig.h>
 #include <sys/resource.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -328,9 +329,9 @@ extern "C" void on_before_reload_process_posix()
     // kill. execve itself resets caught dispositions, so this only shrinks
     // the window to zero. Inherited SIG_IGN (nohup's SIGHUP, job-control
     // SIGTTIN/SIGTTOU) is left alone so it survives execve like before.
-    // SIGSEGV/SIGBUS (JSC's wasm trap + crash handler) and real-time
-    // signals (JSC's sigThreadSuspendResume, pthread_kill'd by the
-    // SamplingProfiler and concurrent GC) are left for execve to reset
+    // SIGSEGV/SIGBUS (JSC's wasm trap + crash handler), real-time signals,
+    // and JSC's sigThreadSuspendResume (SIGPWR on Linux, pthread_kill'd by
+    // the SamplingProfiler and concurrent GC) are left for execve to reset
     // atomically; resetting them here while those threads are still
     // running turns a sampler tick or stop-the-world into a fatal signal.
     struct sigaction sa {};
@@ -339,6 +340,10 @@ extern "C" void on_before_reload_process_posix()
     for (int s = 1; s < NSIG; s++) {
         if (s == SIGKILL || s == SIGSTOP || s == SIGSEGV || s == SIGBUS)
             continue;
+#if OS(LINUX)
+        if (s == g_wtfConfig.sigThreadSuspendResume)
+            continue;
+#endif
 #ifdef SIGRTMIN
         if (s >= SIGRTMIN)
             break;

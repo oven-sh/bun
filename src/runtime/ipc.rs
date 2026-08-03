@@ -2283,7 +2283,7 @@ pub(crate) fn ipc_tag_advanced_buffers(
 ) -> JsResult<JSValue> {
     // `[[ZIG_EXPORT(zero_is_throw)]]`; returns null when the message holds no
     // Buffers, else the `[message, buffers]` envelope (see Ipc.ts).
-    crate::cpp::IPCTagAdvancedBuffers(global_object, message)
+    bun_jsc::cpp::IPCTagAdvancedBuffers(global_object, message)
 }
 
 #[track_caller]
@@ -2292,7 +2292,7 @@ pub(crate) fn ipc_restore_advanced_buffers(
     envelope: JSValue,
 ) -> JsResult<JSValue> {
     // `[[ZIG_EXPORT(zero_is_throw)]]`
-    crate::cpp::IPCRestoreAdvancedBuffers(global_object, envelope)
+    bun_jsc::cpp::IPCRestoreAdvancedBuffers(global_object, envelope)
 }
 
 #[track_caller]

@@ -391,6 +391,7 @@ class AsyncResource {
       const domain = domainActiveGetter();
       if (domain != null) {
         Object.defineProperty(this, "domain", {
+          __proto__: null,
           configurable: true,
           enumerable: false,
           value: domain,

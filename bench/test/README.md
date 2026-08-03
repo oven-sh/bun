@@ -37,3 +37,25 @@ hyperfine --warmup 1 \
 gets a fresh global; the VM-level SourceProvider cache means the 2MB is
 transpiled and parsed once, and every subsequent file rebuilds the module
 record from cached `module_info` with zero re-parsing.
+
+## `--isolate`: JIT-heavy shared dependencies (global reuse)
+
+```sh
+bun app/setup.ts
+hyperfine --warmup 1 \
+  -n 'fresh global' 'bun test --isolate ./app/suite' \
+  -n 'reuse global' 'BUN_FEATURE_FLAG_EXPERIMENTAL_TEST_ISOLATE_REUSE_GLOBAL=1 bun test --isolate ./app/suite' \
+  -n 'no isolate'   'bun test ./app/suite'
+```
+
+128 test files that each import zod, date-fns and lodash-es and call into them
+~2000 times, enough for JSC to tier the hot dependency functions up into
+DFG/FTL. With a fresh global per file the dependency `JSModuleRecord`s (and
+the `FunctionExecutable` / `CodeBlock` chain hanging off them) are rebuilt and
+re-optimized every file; the experimental reuse path keeps the same global and
+evicts only project-source module entries, so dependencies keep their optimized
+code.
+
+To see the JIT-thread cost directly, compare user-CPU time (all threads) to
+wall time: the gap is almost entirely DFG/FTL worklist threads recompiling the
+same dependency functions.

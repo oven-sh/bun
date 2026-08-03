@@ -419,6 +419,9 @@ pub struct TestOptions {
     /// `bun test --isolate`: run each test file in a fresh global object on
     /// the same VM, force-closing leaked handles between files.
     pub isolate: bool,
+    /// `bun test --isolate=fresh-global`: force a fresh global per file even
+    /// when `BUN_FEATURE_FLAG_EXPERIMENTAL_TEST_ISOLATE_REUSE_GLOBAL` is set.
+    pub isolate_force_fresh_global: bool,
     /// `bun test --parallel[=N]`: run test files across N worker
     /// processes. 0 means not requested. Implies `isolate` in workers.
     pub parallel: u32,
@@ -497,6 +500,7 @@ impl Default for TestOptions {
             // overrides explicitly.
             max_concurrency: if bun_core::env::ENABLE_ASAN { 5 } else { 20 },
             isolate: false,
+            isolate_force_fresh_global: false,
             parallel: 0,
             parallel_delay_ms: None,
             test_worker: false,

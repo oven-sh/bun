@@ -507,6 +507,11 @@ pub mod Jest {
         if let Some(test_runner) = runner() {
             test_runner.default_timeout_override = timeout_ms;
         }
+        // SAFETY: single-threaded JS thread; `bun_vm_ptr` is the live per-thread VM.
+        let vm = unsafe { &mut *global_object.bun_vm_ptr() };
+        if vm.is_in_preload && vm.test_isolation_state.reuse.enabled {
+            vm.test_isolation_state.reuse.baseline_default_timeout_override = Some(timeout_ms);
+        }
 
         Ok(JSValue::UNDEFINED)
     }

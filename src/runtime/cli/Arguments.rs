@@ -595,7 +595,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--changed <STR>?                 Only run test files affected by changed files according to git. Optionally pass a commit or branch to compare against."
     ),
     parse_param!(
-        "--isolate                        Run each test file in a fresh global object. Leaked handles from one file cannot affect another."
+        "--isolate <STR>?                 Run each test file in a fresh global object. Leaked handles from one file cannot affect another."
     ),
     parse_param!(
         "--parallel <NUMBER>?             Run test files in parallel using N worker processes. Implies --isolate. Defaults to CPU core count."
@@ -1785,7 +1785,18 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     ctx.test_options.pass_with_no_tests = args.flag(b"--pass-with-no-tests");
     ctx.test_options.concurrent = args.flag(b"--concurrent");
     ctx.test_options.randomize = args.flag(b"--randomize");
-    ctx.test_options.isolate = args.flag(b"--isolate");
+    if let Some(isolate_val) = args.option(b"--isolate") {
+        ctx.test_options.isolate = true;
+        if isolate_val == b"fresh-global" {
+            ctx.test_options.isolate_force_fresh_global = true;
+        } else if !isolate_val.is_empty() {
+            bun_core::pretty_errorln!(
+                "<red>error<r>: --isolate expects no value or \"fresh-global\", received \"{}\"",
+                BStr::new(isolate_val)
+            );
+            Global::exit(1);
+        }
+    }
     ctx.test_options.test_worker = args.flag(b"--test-worker");
 
     if let Some(parallel_str) = args.option(b"--parallel") {

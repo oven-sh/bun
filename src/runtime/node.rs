@@ -1,10 +1,7 @@
 //! Node.js APIs in Bun.
 
-// Rust only compiles a `.rs` file if it is reachable via a `mod` declaration —
-// `#[no_mangle]` alone does NOT make an orphaned file link. Every Windows-only
-// sibling (`uv_signal_handle_windows`, `win_watcher`) must have a
-// `#[cfg(windows)] pub mod` entry here or its C-ABI exports will be missing at
-// link time.
+// Rust only compiles a `.rs` file reachable via `mod`; `#[no_mangle]` alone won't link an
+// orphaned file. Every Windows-only sibling needs a `#[cfg(windows)] pub mod` entry here.
 
 // ─── compiling submodules ─────────────────────────────────────────────────
 #[path = "node/assert/myers_diff.rs"]
@@ -172,10 +169,7 @@ pub type gid_t = libc::gid_t;
 #[cfg(not(unix))]
 pub type gid_t = bun_sys::windows::libuv::uv_gid_t;
 
-/// Node.js expects the error to include contextual information
-/// - "syscall"
-/// - "path"
-/// - "errno"
+/// Node.js expects the error to include "syscall", "path", "errno".
 pub type Maybe<R, E = bun_sys::Error> = core::result::Result<R, E>;
 
 /// Generic helper surface for `Maybe(R, E)`.

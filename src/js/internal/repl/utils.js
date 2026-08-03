@@ -248,10 +248,7 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
             ) {
               callback(null, null);
             } else if (result.objectId) {
-              // The writer options might change and have influence on the inspect
-              // output. The user might change e.g., `showProxy`, `getters` or
-              // `showHidden`. Use `inspect` instead of `JSON.stringify` to keep
-              // `Infinity` and similar intact.
+              // Use `inspect` (not JSON.stringify) so writer.options and non-JSON values round-trip.
               const inspectOptions = inspect(
                 {
                   ...repl.writer.options,
@@ -394,10 +391,7 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
     wrapped = false;
   };
 
-  // -------------------------------------------------------------------------//
-  // Replace multiple interface functions. This is required to fully support  //
-  // previews without changing readlines behavior.                            //
-  // -------------------------------------------------------------------------//
+  // Replace multiple interface functions so previews work without changing readline behavior.
 
   // Refresh prints the whole screen again and the preview will be removed
   // during that procedure. Print the preview again. This also makes sure
@@ -537,28 +531,8 @@ function setupReverseSearch(repl) {
   }
 
   function print(outputLine, inputLine, cursor = repl.cursor) {
-    // upstream-todo(BridgeAR): Resizing the terminal window hides the overlay. To fix
-    // that, readline must be aware of this information. It's probably best to
-    // add a couple of properties to readline that allow to do the following:
-    // 1. Add arbitrary data to the end of the current line while not counting
-    //    towards the line. This would be useful for the completion previews.
-    // 2. Add arbitrary extra lines that do not count towards the regular line.
-    //    This would be useful for both, the input preview and the reverse
-    //    search. It might be combined with the first part?
-    // 3. Add arbitrary input that is "on top" of the current line. That is
-    //    useful for the reverse search.
-    // 4. To trigger the line refresh, functions should be used to pass through
-    //    the information. Alternatively, getters and setters could be used.
-    //    That might even be more elegant.
-    // The data would then be accounted for when calling `_refreshLine()`.
-    // This function would then look similar to:
-    //   repl.overlay(outputLine);
-    //   repl.addTrailingLine(inputLine);
-    //   repl.setCursor(cursor);
-    // More potential improvements: use something similar to stream.cork().
-    // Multiple cursor moves on the same tick could be prevented in case all
-    // writes from the same tick are combined and the cursor is moved at the
-    // tick end instead of after each operation.
+    // upstream-todo(BridgeAR): terminal resize hides the overlay; see print() in
+    // https://github.com/nodejs/node/blob/main/lib/internal/repl/utils.js
     let rows = 0;
     if (lastMatch !== -1) {
       const line = StringPrototypeSlice(repl.history[lastMatch], 0, lastCursor);
@@ -723,11 +697,8 @@ const globalBuiltins = new SafeSet(vm.runInNewContext("Object.getOwnPropertyName
 // `undici`, `ws`) so completion doesn't offer e.g. `node:undici`.
 let _builtinLibs = getBuiltinLibs().slice();
 
-// Note: the `getReplBuiltinLibs` and `setReplBuiltinLibs` are functions used to provide getters and
-//       setters for the `builtinModules` and `_builtinLibs` properties of the repl module and for making
-//       sure that all internal repl modules share the same value, which can potentially be updated by users.
-//       Also note that both `repl.builtinModules` and `repl._builtinLibs` are deprecated, once such properties
-//       are removed these two functions should also be removed as no longer necessary.
+// Shared getter/setter so all repl modules see user mutations to the deprecated
+// `repl.builtinModules`/`repl._builtinLibs`; remove once those properties are dropped.
 
 function getReplBuiltinLibs() {
   return _builtinLibs;

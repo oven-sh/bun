@@ -211,18 +211,9 @@ function completeFSFunctions(match) {
   return [[completions], baseName];
 }
 
-// Provide a list of completions for the given leading text. This is
-// given to the readline interface for handling tab completion.
-//
-// Example:
-//  complete('let foo = util.')
-//    -> [['util.print', 'util.debug', 'util.log', 'util.inspect'],
-//        'util.' ]
-//
-// Warning: This evals code like "foo.bar.baz", so it could run property
-// getter code. To avoid potential triggering side-effects with getters the completion
-// logic is skipped when getters or proxies are involved in the expression.
-// (see: https://github.com/nodejs/node/issues/57829).
+// Tab-completion handler for readline. Evals member chains, so getter/Proxy chains are
+// skipped to avoid side effects (https://github.com/nodejs/node/issues/57829).
+// See https://github.com/nodejs/node/blob/main/lib/internal/repl/completion.js
 function complete(line, callback) {
   // List of completion lists, one for each inheritance "level"
   let completionGroups = [];
@@ -411,10 +402,8 @@ function complete(line, callback) {
       return;
     }
 
-    // Destructuring keeps the "eval" property name out of member-access
-    // position: JSC's assertion-enabled builtin parser rejects `x.eval` /
-    // `x["eval"]` inside builtin sources, and minify-syntax would fold a
-    // bracket access back into dot form.
+    // Destructuring avoids `x.eval`/`x["eval"]`, which JSC's assertion-enabled
+    // builtin parser rejects (and minify-syntax would fold brackets to dot).
     const { eval: evalFn } = this;
 
     return includesProxiesOrGetters(
@@ -457,10 +446,7 @@ function complete(line, callback) {
                 p = ObjectGetPrototypeOf(p);
               }
             } catch {
-              // Maybe a Proxy object without `getOwnPropertyNames` trap.
-              // We simply ignore it here, as we don't want to break the
-              // autocompletion. Fixes the bug
-              // https://github.com/nodejs/node/issues/2119
+              // Ignore (e.g. Proxy without getOwnPropertyNames trap): https://github.com/nodejs/node/issues/2119
             }
 
             if (memberGroups.length) {

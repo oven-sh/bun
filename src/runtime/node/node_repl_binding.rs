@@ -46,12 +46,8 @@ pub(crate) fn check_syntax(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         return Ok(JSValue::NULL);
     }
 
-    // First error message + byte offset. `tokenStart` is the first char at
-    // `offset` so JS doesn't need to convert the byte index to UTF-16.
-    // A failure with no logged message (or no location) tells us nothing about
-    // where the input ran out, so report `atEOF: false`: an unknown parse error
-    // must not be classified as recoverable, or the REPL waits for more input
-    // on a line that can never compile.
+    // `tokenStart` is the first char at `offset` so JS avoids byte→UTF-16 conversion.
+    // No location ⇒ `atEOF: false`: unknown errors must not be recoverable or the REPL hangs.
     let (text, offset) = log
         .msgs
         .iter()

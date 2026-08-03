@@ -199,14 +199,9 @@ function replExceptionCaptureCallback(err) {
   // No active REPL context - let other handlers try
 }
 
-// One-shot install per process. Node's `addUncaughtExceptionCaptureCallback`
-// keeps a separate aux list that never counts against
-// `hasUncaughtExceptionCaptureCallback()`; Bun lacks that native API, so the
-// shim occupies the exclusive slot for the process lifetime once the first
-// REPL starts (uninstalling on 'exit' would drop async errors that fire after
-// input close — see test-repl-uncaught-exception-after-input-ended). The
-// shim's fallthrough re-emits `uncaughtException` with the origin arg so user
-// listeners still see it.
+// Bun lacks Node's aux capture-callback list, so the shim holds the exclusive slot for the
+// process lifetime (uninstalling on 'exit' would miss post-close errors; see
+// test-repl-uncaught-exception-after-input-ended) and re-emits `uncaughtException` on fallthrough.
 function setupExceptionCapture() {
   if (exceptionCaptureInstalled) return;
   exceptionCaptureInstalled = true;
@@ -220,10 +215,7 @@ function processNewListener(event, listener) {
   if (event === "uncaughtException") {
     const store = replContext.getStore();
     if (store?.replServer) {
-      // Throw an error so that the event will not be added and the
-      // current REPL handles it. That way the user is notified about
-      // the error and the current code evaluation is stopped, just as
-      // any other code that contains an error.
+      // Throw so the listener isn't added and the REPL surfaces the error like any other.
       throw new ERR_INVALID_REPL_INPUT("Listeners for `uncaughtException` cannot be used in the REPL");
     }
   }
@@ -253,18 +245,14 @@ fixReplRequire(__node_module__);
 const writer = obj => inspect(obj, writer.options);
 writer.options = { ...inspect.defaultOptions, showProxy: true };
 
-// Matches one static import declaration: a namespace, default, default + (
-// namespace | named), or named clause before `from`, or a bare side-effect
-// import. Global so every declaration on the line is converted, as the acorn
-// walk this replaced did.
+// Matches one static import declaration (namespace / default [+ named|ns] / named / bare);
+// global so every declaration on the line is converted, matching the acorn walk this replaced.
 const importDeclRE =
   /\bimport\s+(?:\*\s+as\s+([\p{ID_Start}$_][\p{ID_Continue}$_]*)|([\p{ID_Start}$_][\p{ID_Continue}$_]*)(?:\s*,\s*(?:\*\s+as\s+([\p{ID_Start}$_][\p{ID_Continue}$_]*)|(\{[^}]*\})))?|(\{[^}]*\}))\s*from\s*(['"][^'"]*['"])|\bimport\s*(['"][^'"]*['"])/gu;
 const importAsRE = /([\p{ID_Start}$_][\p{ID_Continue}$_]*)\s+as\s+([\p{ID_Start}$_][\p{ID_Continue}$_]*)/gu;
 
-// Converts the static import statements on a line into dynamic-import hint
-// text for the "Cannot use import statement inside the REPL" error message.
-// Returns null when nothing matched so the caller leaves the message alone —
-// the acorn walk this replaced threw there, which had the same effect.
+// Rewrite static imports on a line into dynamic-import hint text for the REPL error message.
+// Returns null on no match (the acorn walk this replaced threw, same net effect).
 const toDynamicImport = codeLine => {
   importDeclRE.lastIndex = 0;
   let out = "";
@@ -302,10 +290,8 @@ class REPLServer extends Interface {
       // An options object was given.
       options = { ...prompt };
       stream = options.stream || options.socket;
-      // Destructuring keeps the "eval" property name out of member-access
-      // position: JSC's assertion-enabled builtin parser rejects `x.eval` /
-      // `x["eval"]` inside builtin sources, and minify-syntax would fold a
-      // bracket access back into dot form.
+      // Destructuring avoids `x.eval`/`x["eval"]`, which JSC's assertion-enabled
+      // builtin parser rejects (and minify-syntax would fold brackets to dot).
       ({ eval: eval_ } = options);
       useGlobal = options.useGlobal;
       ignoreUndefined = options.ignoreUndefined;
@@ -706,10 +692,8 @@ class REPLServer extends Interface {
     // The function names are needed for stack trace filtering - they must not
     // be anonymous, but we can't use 'eval' as a name since it's reserved.
     const originalEval = eval_;
-    // ObjectDefineProperty instead of a plain assignment: JSC's
-    // assertion-enabled builtin parser rejects the "eval" property name in
-    // member-access position (`self.eval` / `self["eval"]`), and
-    // minify-syntax folds bracket accesses into dot form.
+    // ObjectDefineProperty avoids `self.eval`/`self["eval"]`, which JSC's assertion-enabled
+    // builtin parser rejects (and minify-syntax would fold brackets to dot).
     ObjectDefineProperty(self, "eval", {
       __proto__: null,
       configurable: true,
@@ -1314,13 +1298,8 @@ function _memory(cmd) {
   if (depth) {
     (function workIt() {
       if (depth > 0) {
-        // Going... down.
-        // Push the line#, depth count, and if the line is a function.
-        // Since JS only has functional scope I only need to remove
-        // "function() {" lines, clearly this will not work for
-        // "function()
-        // {" but nothing should break, only tab completion for local
-        // scope will not work for this function.
+        // Going down: push line# and depth. See memory() in
+        // https://github.com/nodejs/node/blob/main/lib/repl.js
         ArrayPrototypePush(self.lines.level, {
           line: self.lines.length - 1,
           depth: depth,
@@ -1545,10 +1524,8 @@ for (const name of ["builtinModules", "_builtinLibs"]) {
   });
 }
 
-// Lets the bun --interactive entry (a plain eval script, not a builtin) reach
-// internal/repl's createInternalRepl so the NODE_REPL_* env parsing has one
-// implementation. Lazy getter: internal/repl requires node:repl at its top.
-// Non-enumerable so it stays off the public node:repl surface.
+// Lets `bun --interactive` reach createInternalRepl without duplicating NODE_REPL_* parsing.
+// Lazy (internal/repl requires node:repl) and non-enumerable (off the public surface).
 ObjectDefineProperty(__node_module__.exports, Symbol.for("bun.repl.createInternalRepl"), {
   __proto__: null,
   get: () => require("internal/repl").createInternalRepl,

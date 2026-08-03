@@ -34,10 +34,8 @@ function classifyRecoverable(code) {
   if (StringPrototypeIncludes(message, "end of file")) return true;
   if (message === 'Expected "*/" to terminate multi-line comment') return true;
   if (message === "Unterminated string literal") {
-    // Templates and backslash-continued strings may span lines; a plain
-    // string that hit a newline (or EOF) without a `\` cannot. An unterminated
-    // template reports the start of the failing token: the backtick, or \u2014 once
-    // a `${\u2026}` substitution has been consumed \u2014 the `}` that opens the tail.
+    // Templates and `\`-continued strings may span lines; a plain unterminated string cannot.
+    // An unterminated template's tokenStart is the opening "`", or the "}" after a `${...}`.
     if (tokenStart === "`" || tokenStart === "}") return true;
     return RegExpPrototypeExec(/\\(?:\r\n?|\n|\u2028|\u2029)$/, code) !== null;
   }
@@ -48,14 +46,9 @@ function isValidSyntax(code) {
   return checkSyntaxNative(code) === null;
 }
 
-// bun_js_parser's repl_mode already implements the same rewrite Node's
-// internal/repl/await.js does with acorn-walk (var-hoist declarations,
-// async-IIFE wrap, `{__proto__:null, value: <last expr>}` return).
-// The transform's own IIFE always follows zero-or-more hoist statements at the
-// START of the output; each is a `var` with a comma-separated identifier list
-// and never an initializer (`var a, b;` for `const {a,b} = await f()`).
-// Anchoring on the no-initializer shape keeps a user's own async arrow after
-// their own `var x = 1;` from false-positiving.
+// repl_mode emits zero-or-more `var a, b;` hoists (no initializers) then `(async () => …`;
+// anchoring on that exact shape avoids matching a user-written `var x = 1; (async () => …`.
+// See https://github.com/nodejs/node/blob/main/lib/internal/repl/await.js
 const replModeAsyncWrapRE =
   /^(?:var [\p{ID_Start}$_][\p{ID_Continue}$_]*(?:,\s*[\p{ID_Start}$_][\p{ID_Continue}$_]*)*;\s*)*\(async\s*\(\)\s*=>/u;
 

@@ -3522,6 +3522,194 @@ test_node_api_sharedarraybuffer(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static void noop_tsfn_cb(napi_env, napi_value, void *, void *) {}
+
+// Each case below returns a different napi_status in Bun than in Node.js 26
+// prior to the fix; see the PR body for the per-function Node.js references.
+// This test prints status codes and pending-exception state so checkSameOutput
+// can diff Bun against Node byte-for-byte.
+static napi_value test_napi_status_codes_node26(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
+  napi_value number, sym, nullv, undefinedv, obj, fn;
+  NODE_API_CALL(env, napi_create_int32(env, 7, &number));
+  {
+    napi_value desc;
+    NODE_API_CALL(env,
+                  napi_create_string_utf8(env, "s", NAPI_AUTO_LENGTH, &desc));
+    NODE_API_CALL(env, napi_create_symbol(env, desc, &sym));
+  }
+  NODE_API_CALL(env, napi_get_null(env, &nullv));
+  NODE_API_CALL(env, napi_get_undefined(env, &undefinedv));
+  NODE_API_CALL(env, napi_create_object(env, &obj));
+  NODE_API_CALL(env, napi_create_function(
+                         env, "noop", NAPI_AUTO_LENGTH,
+                         [](napi_env e, napi_callback_info) -> napi_value {
+                           napi_value u;
+                           napi_get_undefined(e, &u);
+                           return u;
+                         },
+                         nullptr, &fn));
+
+  auto print_status = [&](const char *label, napi_status st,
+                          bool drain_exception) {
+    bool pending = false;
+    napi_is_exception_pending(env, &pending);
+    printf("%s: status=%d pending=%d\n", label, (int)st, (int)pending);
+    if (drain_exception && pending) {
+      napi_value exc;
+      napi_get_and_clear_last_exception(env, &exc);
+    }
+  };
+
+  // napi_wrap / napi_unwrap / napi_remove_wrap / napi_add_finalizer on a
+  // primitive: Node returns napi_invalid_arg, not napi_object_expected.
+  {
+    void *out;
+    napi_ref ref_out;
+    print_status(
+        "napi_wrap(number)",
+        napi_wrap(env, number, nullptr, nullptr, nullptr, nullptr), true);
+    print_status("napi_unwrap(number)", napi_unwrap(env, number, &out), true);
+    print_status("napi_remove_wrap(number)",
+                 napi_remove_wrap(env, number, &out), true);
+    print_status(
+        "napi_add_finalizer(number)",
+        napi_add_finalizer(
+            env, number, nullptr,
+            [](napi_env, void *, void *) {}, nullptr, &ref_out),
+        true);
+  }
+
+  // napi_coerce_to_*: when coercion throws, Node returns napi_<type>_expected
+  // and leaves the exception pending.
+  {
+    napi_value out;
+    print_status("napi_coerce_to_number(Symbol)",
+                 napi_coerce_to_number(env, sym, &out), true);
+    print_status("napi_coerce_to_string(Symbol)",
+                 napi_coerce_to_string(env, sym, &out), true);
+    print_status("napi_coerce_to_object(null)",
+                 napi_coerce_to_object(env, nullv, &out), true);
+  }
+
+  // napi_run_script: on compile or eval error Node returns
+  // napi_generic_failure, not napi_pending_exception.
+  {
+    napi_value script_throw, script_syntax, out;
+    NODE_API_CALL(env, napi_create_string_utf8(env, "throw new Error('E')",
+                                               NAPI_AUTO_LENGTH,
+                                               &script_throw));
+    NODE_API_CALL(env, napi_create_string_utf8(env, "?!?", NAPI_AUTO_LENGTH,
+                                               &script_syntax));
+    print_status("napi_run_script(throw)",
+                 napi_run_script(env, script_throw, &out), true);
+    print_status("napi_run_script(syntax)",
+                 napi_run_script(env, script_syntax, &out), true);
+  }
+
+  // napi_create_bigint_words: for INT_MAX < word_count Node returns
+  // napi_invalid_arg with no throw.
+  {
+    napi_value out;
+    uint64_t one = 1;
+    print_status(
+        "napi_create_bigint_words(INT_MAX+1)",
+        napi_create_bigint_words(env, 0, (size_t)INT_MAX + 1, &one, &out),
+        true);
+  }
+
+  // napi_create_buffer / napi_create_buffer_copy: allocation failure returns
+  // napi_generic_failure. Both engines reject SIZE_MAX before allocating or
+  // reading data.
+  {
+    napi_value out;
+    void *data;
+    print_status("napi_create_buffer(SIZE_MAX)",
+                 napi_create_buffer(env, SIZE_MAX, &data, &out), true);
+    static const char one_byte = 0;
+    print_status(
+        "napi_create_buffer_copy(SIZE_MAX)",
+        napi_create_buffer_copy(env, SIZE_MAX, &one_byte, nullptr, &out),
+        true);
+  }
+
+  // napi_throw_error while an exception is already pending: Node returns
+  // napi_pending_exception and keeps the first exception.
+  {
+    NODE_API_CALL(env, napi_throw_error(env, nullptr, "first"));
+    napi_status s = napi_throw_error(env, nullptr, "second");
+    printf("napi_throw_error(2nd): status=%d\n", (int)s);
+    napi_value exc;
+    NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+    napi_value msg_key, msg;
+    NODE_API_CALL(env, napi_create_string_utf8(env, "message",
+                                               NAPI_AUTO_LENGTH, &msg_key));
+    NODE_API_CALL(env, napi_get_property(env, exc, msg_key, &msg));
+    char buf[64] = {0};
+    size_t len = 0;
+    NODE_API_CALL(env,
+                  napi_get_value_string_utf8(env, msg, buf, sizeof(buf), &len));
+    printf("napi_throw_error(2nd): kept=%s\n", buf);
+  }
+
+  // node_api_post_finalizer: Node accepts a NULL finalize_cb.
+  {
+    print_status("node_api_post_finalizer(NULL)",
+                 node_api_post_finalizer(env, nullptr, nullptr, nullptr),
+                 true);
+  }
+
+  // napi_make_callback argument validation: Node returns napi_invalid_arg for
+  // a NULL recv, for argc>0 with argv==NULL, and for a non-function func.
+  {
+    napi_value out;
+    print_status(
+        "napi_make_callback(recv=NULL)",
+        napi_make_callback(env, nullptr, nullptr, fn, 0, nullptr, &out), true);
+    print_status(
+        "napi_make_callback(argc>0,argv=NULL)",
+        napi_make_callback(env, nullptr, obj, fn, 1, nullptr, &out), true);
+    print_status(
+        "napi_make_callback(func=number)",
+        napi_make_callback(env, nullptr, obj, number, 0, nullptr, &out),
+        true);
+  }
+
+  // napi_ref/unref_threadsafe_function: Node ignores env (basic-env function)
+  // and does not touch last_error.
+  {
+    napi_value name;
+    NODE_API_CALL(env, napi_create_string_utf8(env, "tsfn_status_codes",
+                                               NAPI_AUTO_LENGTH, &name));
+    napi_threadsafe_function tsfn = nullptr;
+    NODE_API_CALL(env, napi_create_threadsafe_function(
+                           env, nullptr, nullptr, name, 0, 1, nullptr,
+                           nullptr, nullptr, noop_tsfn_cb, &tsfn));
+    printf("napi_ref_threadsafe_function(env=NULL): status=%d\n",
+           (int)napi_ref_threadsafe_function(nullptr, tsfn));
+    printf("napi_unref_threadsafe_function(env=NULL): status=%d\n",
+           (int)napi_unref_threadsafe_function(nullptr, tsfn));
+
+    // last_error should be untouched: arm it, call ref, then read it back.
+    napi_get_value_int32(env, undefinedv, nullptr); // sets napi_invalid_arg
+    napi_ref_threadsafe_function(env, tsfn);
+    const napi_extended_error_info *err;
+    napi_get_last_error_info(env, &err);
+    printf("napi_ref_threadsafe_function: last_error_preserved=%d\n",
+           (int)err->error_code);
+
+    NODE_API_CALL(env,
+                  napi_release_threadsafe_function(tsfn, napi_tsfn_release));
+  }
+
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_typedarray_info_byte_offset);
   REGISTER_FUNCTION(env, exports, test_dataview_info_byte_offset);
@@ -3599,6 +3787,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_node_api_set_prototype);
   REGISTER_FUNCTION(env, exports, test_node_api_create_object_with_properties);
   REGISTER_FUNCTION(env, exports, test_node_api_sharedarraybuffer);
+  REGISTER_FUNCTION(env, exports, test_napi_status_codes_node26);
 }
 
 } // namespace napitests

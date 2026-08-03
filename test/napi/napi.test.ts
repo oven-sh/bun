@@ -435,6 +435,50 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("status code alignment with Node.js", () => {
+    it("returns the same napi_status as Node.js for invalid inputs", async () => {
+      const result = await checkSameOutput("test_napi_status_codes_node26", []);
+
+      // napi_wrap/unwrap/remove_wrap/add_finalizer on primitive -> napi_invalid_arg (1)
+      for (const fn of ["napi_wrap", "napi_unwrap", "napi_remove_wrap", "napi_add_finalizer"]) {
+        expect(result).toContain(`${fn}(number): status=1 pending=0`);
+      }
+
+      // napi_coerce_to_*: type-specific status, exception stays pending
+      expect(result).toContain("napi_coerce_to_number(Symbol): status=6 pending=1");
+      expect(result).toContain("napi_coerce_to_string(Symbol): status=3 pending=1");
+      expect(result).toContain("napi_coerce_to_object(null): status=2 pending=1");
+
+      // napi_run_script: napi_generic_failure (9), exception stays pending
+      expect(result).toContain("napi_run_script(throw): status=9 pending=1");
+      expect(result).toContain("napi_run_script(syntax): status=9 pending=1");
+
+      // napi_create_bigint_words > INT_MAX: napi_invalid_arg, no throw
+      expect(result).toContain("napi_create_bigint_words(INT_MAX+1): status=1 pending=0");
+
+      // napi_create_buffer / napi_create_buffer_copy: napi_generic_failure (9) on alloc failure
+      expect(result).toContain("napi_create_buffer(SIZE_MAX): status=9 pending=1");
+      expect(result).toContain("napi_create_buffer_copy(SIZE_MAX): status=9 pending=1");
+
+      // second napi_throw_error: napi_pending_exception, first message kept
+      expect(result).toContain("napi_throw_error(2nd): status=10");
+      expect(result).toContain("napi_throw_error(2nd): kept=first");
+
+      // node_api_post_finalizer(NULL): napi_ok
+      expect(result).toContain("node_api_post_finalizer(NULL): status=0 pending=0");
+
+      // napi_make_callback validation -> napi_invalid_arg
+      for (const which of ["recv=NULL", "argc>0,argv=NULL", "func=number"]) {
+        expect(result).toContain(`napi_make_callback(${which}): status=1 pending=0`);
+      }
+
+      // napi_ref/unref_threadsafe_function: env ignored, last_error untouched
+      expect(result).toContain("napi_ref_threadsafe_function(env=NULL): status=0");
+      expect(result).toContain("napi_unref_threadsafe_function(env=NULL): status=0");
+      expect(result).toContain("napi_ref_threadsafe_function: last_error_preserved=1");
+    });
+  });
+
   describe("napi_async_work", () => {
     it("null checks execute callbacks", async () => {
       const output = await checkSameOutput("test_napi_async_work_execute_null_check", []);

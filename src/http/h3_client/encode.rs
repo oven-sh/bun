@@ -14,8 +14,10 @@ use crate::internal_state::HTTPStage;
 use crate::{HTTPClient, HTTPVerboseLevel, Protocol};
 
 /// Build pseudo-headers + user headers and send them on `qs`, then kick off
-/// body transmission. Called from `callbacks.on_stream_open` once lsquic hands
-/// us a stream for a pending request.
+/// body transmission. Called from the first `callbacks.on_stream_writable`
+/// for this stream (not `on_stream_open`; see the comment there for why no
+/// `lsquic_stream_write` may happen before lsquic's priority iterator has
+/// served the HSK crypto stream).
 pub fn write_request(
     session: &ClientSession,
     stream: &mut Stream,

@@ -1,6 +1,7 @@
 #include "quic.h"
 
 #include "internal/internal.h"
+#include "internal/fault_inject.h"
 #if defined(_WIN32) && !defined(WIN32)
 /* lsquic.h gates on WIN32 (not _WIN32) to pick <vc_compat.h> over <sys/uio.h>. */
 #define WIN32 1
@@ -236,8 +237,11 @@ static int us_quic_send_one(LIBUS_SOCKET_DESCRIPTOR fd, const struct lsquic_out_
     msg.msg_namelen = sa_len(spec->dest_sa);
     msg.msg_iov = spec->iov;
     msg.msg_iovlen = spec->iovlen;
-    ssize_t r;
-    do { r = sendmsg(fd, &msg, 0); } while (r < 0 && errno == EINTR);
+    ssize_t r = 0; int unused = 0;
+    if (!US_FAULT_CHECK(US_FAULT_SENDMSG, fd, r, unused)) {
+        do { r = sendmsg(fd, &msg, 0); } while (r < 0 && errno == EINTR);
+    }
+    (void) unused;
     return r < 0 ? -1 : 1;
 #endif
 }
@@ -269,9 +273,15 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
             k++;
         }
         int r;
-        do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
-        if (r < 0) break;
-        sent += (unsigned) r;
+        {
+            ssize_t injected = 0; int unused = 0;
+            if (US_FAULT_CHECK(US_FAULT_SENDMSG, fd, injected, unused)) {
+                r = (int) injected;
+            } else {
+                do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
+            }
+            (void) injected; (void) unused;
+        }
         /* sendmmsg(2) BUGS: on a short return the error code is lost and the
          * caller is expected to retry starting at the first failed message.
          * udp(7): an unconnected socket surfaces async ICMP from an earlier
@@ -279,13 +289,25 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
          * a packet to a live peer can fail mid-batch with an error that
          * belongs to a prior dead peer. So loop instead of breaking; r >= 1
          * here so `sent` advances and the retry's first message either
-         * consumes the stale error (returns -1, handled below) or succeeds. */
+         * consumes the stale error (returns -1, handled below) or succeeds.
+         * The r < 0 path gets one retry for the same reason: the failing
+         * read cleared sk_err, so the retry sends cleanly unless this is
+         * real backpressure. EAGAIN/ENOBUFS (send buffer full) stays a
+         * break — that's the backpressure lsquic's pause is for. */
+        if (r < 0 && !(errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS)) {
+            do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
+        }
+        if (r < 0) break;
+        sent += (unsigned) r;
     }
 #else
     for (; sent < n; sent++) {
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
         if (!ls->udp) { errno = EBADF; break; }
-        if (us_quic_send_one(us_poll_fd((struct us_poll_t *) ls->udp), &specs[sent]) < 0) break;
+        if (us_quic_send_one(us_poll_fd((struct us_poll_t *) ls->udp), &specs[sent]) < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) break;
+            if (us_quic_send_one(us_poll_fd((struct us_poll_t *) ls->udp), &specs[sent]) < 0) break;
+        }
     }
 #endif
 

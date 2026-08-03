@@ -173,7 +173,7 @@ impl<'a> BundleV2<'a> {
     /// `switch (this.loop().*)` — `linker.loop` is a non-owning backref to the
     /// `AnyEventLoop` that owns this bundle pass and outlives it.
     #[inline]
-    pub fn any_loop_mut(&mut self) -> &mut bun_event_loop::AnyEventLoop<'static> {
+    pub fn any_loop_mut(&mut self) -> &mut bun_event_loop::AnyEventLoop {
         // BACKREF deref centralised in `LinkerContext::any_loop_mut`.
         self.linker
             .any_loop_mut()
@@ -2689,8 +2689,6 @@ pub mod bv2_impl {
             heap: &'a ThreadLocalArena,
         ) -> Result<Box<BundleV2<'a>>, Error> {
             // The Box is heap-owned and dropped by the caller.
-            transpiler.env().load_tracy();
-
             transpiler.options.mark_builtins_as_external =
                 transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
             transpiler.resolver.opts.mark_builtins_as_external =

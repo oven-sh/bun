@@ -470,9 +470,22 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     this.pos = start;
   }
 
+  // A writer cannot be opened for every fd a caller may hand us -- a read-only
+  // descriptor is the common case, and node's tty.WriteStream accepts one. Fall
+  // back to the general path there, which surfaces the failure at write time the
+  // way node does, rather than throwing from the constructor.
+  let fastWriter;
+  if (fastPath && fd != null) {
+    try {
+      fastWriter = Bun.file(fd).writer();
+    } catch {
+      fastPath = false;
+    }
+  }
+
   // Enable fast path
   if (fastPath) {
-    this[kWriteStreamFastPath] = fd ? Bun.file(fd).writer() : true;
+    this[kWriteStreamFastPath] = fd != null ? fastWriter : true;
     this._write = underscoreWriteFast;
     this._writev = undefined;
     this.write = writeFast as any;

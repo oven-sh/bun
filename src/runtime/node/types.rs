@@ -1300,7 +1300,7 @@ impl Valid {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
                         .to_system_error();
-                system_error.syscall = bun_core::String::DEAD;
+                system_error.syscall = bun_core::String::DEAD.into();
                 Err(ctx.throw_value(system_error.to_error_instance(ctx)))
             }
         }
@@ -1320,7 +1320,7 @@ impl Valid {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
                         .to_system_error();
-                system_error.syscall = bun_core::String::DEAD;
+                system_error.syscall = bun_core::String::DEAD.into();
                 Err(ctx.throw_value(system_error.to_error_instance(ctx)))
             }
         }

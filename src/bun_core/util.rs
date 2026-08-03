@@ -3557,10 +3557,8 @@ impl_integer!(
 
 /// Primitive integers transcodable as native-endian raw bytes.
 ///
-/// Explicit trait
-/// bound shared by the peechy wire codec (`bun_analytics::SchemaInt`) and the
-/// MySQL protocol reader (`bun_sql::ReadableInt`), which re-export this under
-/// their local names.
+/// Explicit trait bound used by the MySQL protocol reader
+/// (`bun_sql::ReadableInt`), which re-exports this under its local name.
 pub trait NativeEndianInt: Copy + 'static {
     const SIZE: usize;
     /// Reinterpret `b[..SIZE]` as `Self` (native endian).

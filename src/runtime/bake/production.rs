@@ -61,10 +61,9 @@ fn side_name(s: bun_bundler::options::Side) -> &'static str {
 }
 
 /// Process-lifetime backing storage for the dotenv singleton; `OnceLock` owns
-/// the allocation. `Loader` self-borrows `Map`, so both live in one cell.
+/// the allocation.
 struct DotenvSingleton {
-    map: UnsafeCell<dotenv::Map>,
-    loader: UnsafeCell<MaybeUninit<dotenv::Loader<'static>>>,
+    loader: UnsafeCell<dotenv::Loader>,
 }
 // SAFETY: `build_command` runs single-threaded during CLI init; the singleton
 // is set exactly once before any reader exists.
@@ -218,9 +217,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // LIFO order — under the API lock, before the VM is destroyed.
     let mut pt = PerThread::placeholder(vm_ptr);
 
-    // Note: reshaped for borrowck — `pt.vm` already borrows `*vm`, so pass
-    // the raw VM pointer and re-borrow inside.
-    match build_with_vm(ctx, &cwd, vm_ptr, &mut pt) {
+    match build_with_vm(ctx, &cwd, &mut pt) {
         Ok(()) => {}
         Err(crate::Error::JSError) => {
             // SAFETY: vm.global is live for VM lifetime.
@@ -284,14 +281,11 @@ pub(super) fn write_sourcemap_to_disk(
     Ok(())
 }
 
-pub(super) fn build_with_vm(
-    ctx: Context,
-    cwd: &[u8],
-    vm_ptr: *mut VirtualMachine,
-    pt: &mut PerThread,
-) -> crate::Result<()> {
-    // SAFETY: vm_ptr is the live per-thread VM passed from build_command;
-    // exclusive access on this thread for the duration of the call.
+pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
+    // `pt.vm` is the live per-thread VM's BackRef set in `build_command`;
+    // `as_ptr()` is `Copy` and does not borrow `pt`.
+    let vm_ptr: *mut VirtualMachine = pt.vm.as_ptr();
+    // SAFETY: exclusive access on this thread for the duration of the call.
     let vm = unsafe { &mut *vm_ptr };
     // Load and evaluate the configuration module. `global()` returns
     // `&'static`, decoupled from `vm` so later `&mut vm` reborrows are allowed.
@@ -420,22 +414,15 @@ pub(super) fn build_with_vm(
 
     // this is probably wrong
     // Note: process-lifetime dotenv singleton owned via `OnceLock`
-    // (PORTING.md §Forbidden: no leaking). `Loader` self-borrows `Map`,
-    // so both live in `DOTENV_SINGLETON`.
+    // (PORTING.md §Forbidden: no leaking).
     let backing = DOTENV_SINGLETON.get_or_init(|| DotenvSingleton {
-        map: UnsafeCell::new(dotenv::Map::init()),
-        loader: UnsafeCell::new(MaybeUninit::uninit()),
+        loader: UnsafeCell::new(dotenv::Loader::init()),
     });
-    // SAFETY: single-threaded CLI init; `get_or_init` guarantees one-time setup
-    // and `backing` is never moved (static storage), so the exclusive map borrow
-    // self-borrow stored in `Loader` stays valid for process lifetime.
-    let loader = unsafe {
-        let map = &mut *backing.map.get();
-        (*backing.loader.get()).write(dotenv::Loader::init(map));
-        (*backing.loader.get()).assume_init_mut()
-    };
+    // SAFETY: single-threaded CLI init; `get_or_init` guarantees one-time
+    // setup and `backing` is never moved (static storage).
+    let loader = unsafe { &mut *backing.loader.get() };
     loader.map.put(b"NODE_ENV", b"production")?;
-    dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader<'static>>(loader));
+    dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader>(loader));
 
     // In-place init via `MaybeUninit` (`init_transpiler_with_options`
     // keeps the out-param shape shared with the dev-server path).

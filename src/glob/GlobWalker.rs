@@ -470,11 +470,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             )
         };
 
-        // Note: reshaped for borrowck — `path_buf` aliases `self.walker.path_buf`;
-        // capture the raw ptr+len up front so the &mut borrow ends before
-        // `handle_sys_err_with_path` re-borrows `self.walker`.
         let root_path = &root_work_item.path;
-        let (path_buf_ptr, root_path_len) = {
+        let root_path_len = {
             let path_buf: &mut PathBuffer = &mut *self.walker.path_buf;
             if root_path.len() >= path_buf.len() {
                 return Ok(Err(SysError::from_code(
@@ -485,17 +482,12 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             }
             path_buf[0..root_path.len()].copy_from_slice(&root_path[0..root_path.len()]);
             path_buf[root_path.len()] = 0;
-            (path_buf.as_ptr(), root_path.len())
+            root_path.len()
         };
-        // SAFETY: path_buf[root_path_len] == 0 written above; buffer outlives `cwd_fd` open call.
-        let root_path_z = unsafe { ZStr::from_raw(path_buf_ptr, root_path_len) };
+        let root_path_z = ZStr::from_buf(&self.walker.path_buf[..], root_path_len);
         let cwd_fd = match A::open(root_path_z)? {
             Err(err) => {
-                return Ok(Err(self.walker.handle_sys_err_with_path(
-                    &err,
-                    // SAFETY: NUL at index `root_path_len` written above.
-                    unsafe { ZStr::from_raw(path_buf_ptr, root_path_len) },
-                )));
+                return Ok(Err(err.with_path(&self.walker.path_buf[..root_path_len])));
             }
             Ok(fd) => fd,
         };

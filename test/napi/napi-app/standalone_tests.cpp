@@ -3025,6 +3025,50 @@ static void test_make_callback_tsfn_cb(napi_env env, napi_value js_callback,
   tsfn_make_callback = nullptr;
 }
 
+// napi_make_callback status derivation must match Node.js: status reflects
+// whether a JS exception is pending after the call, not whether the returned
+// value happens to be an Error instance.
+static napi_value
+test_napi_make_callback_status(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
+  napi_value recv;
+  NODE_API_CALL(env, napi_get_global(env, &recv));
+
+  napi_value sentinel;
+  NODE_API_CALL(env, napi_create_int32(env, -1, &sentinel));
+
+  // info[0] is the GC callback; remaining args are callbacks to invoke
+  for (size_t i = 1; i < info.Length(); i++) {
+    napi_value cb = info[i];
+    napi_value out = sentinel;
+    napi_status status =
+        napi_make_callback(env, nullptr, recv, cb, 0, nullptr, &out);
+
+    bool pending = false;
+    NODE_API_CALL(env, napi_is_exception_pending(env, &pending));
+    if (pending) {
+      napi_value exc;
+      NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+    }
+
+    bool is_error = false;
+    NODE_API_CALL(env, napi_is_error(env, out, &is_error));
+    bool wrote_result = false;
+    NODE_API_CALL(env, napi_strict_equals(env, out, sentinel, &wrote_result));
+    wrote_result = !wrote_result;
+
+    printf("cb %zu: status=%d pending=%d wrote_result=%d result_is_error=%d\n",
+           i, (int)status, (int)pending, (int)wrote_result, (int)is_error);
+  }
+
+  return ok(env);
+}
+
 static napi_value test_napi_make_callback_async_context_frame(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   Napi::HandleScope scope(env);
@@ -3520,6 +3564,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_pending_exception_gate);
   REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);
   REGISTER_FUNCTION(env, exports, test_issue_25933);
+  REGISTER_FUNCTION(env, exports, test_napi_make_callback_status);
   REGISTER_FUNCTION(env, exports, test_napi_make_callback_async_context_frame);
   REGISTER_FUNCTION(env, exports, test_napi_create_tsfn_async_context_frame);
   REGISTER_FUNCTION(env, exports, test_node_api_set_prototype);

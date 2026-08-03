@@ -372,8 +372,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             {
                 let mut had_err = false;
 
-                let mut env_map = bun_dotenv::Map::init();
-                let mut process_env = bun_dotenv::Loader::init(&mut env_map);
+                let mut process_env = bun_dotenv::Loader::init();
                 process_env.load_process()?;
                 let cache_dir = fetch_cache_directory_path(&mut process_env, None);
                 let mut rm_buf = PathBuffer::uninit();

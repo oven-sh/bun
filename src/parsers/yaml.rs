@@ -1038,8 +1038,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                 if scalar_str.len() == resolved_scalar_len {
                     drop(scalar_str);
                     break 'scalar TokenScalar {
-                        multiline,
-                        is_quoted: false,
+                        style: ScalarStyle::Plain { multiline },
                         data: scalar,
                     };
                 }
@@ -1048,8 +1047,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             }
 
             break 'scalar TokenScalar {
-                multiline,
-                is_quoted: false,
+                style: ScalarStyle::Plain { multiline },
                 data: NodeScalar::String(scalar_str),
             };
         };
@@ -1863,8 +1861,22 @@ pub enum TokenData<Enc: Encoding> {
 #[derive(Clone)]
 pub struct TokenScalar<Enc: Encoding> {
     pub data: NodeScalar<Enc>,
-    pub multiline: bool,
-    pub is_quoted: bool,
+    pub style: ScalarStyle,
+}
+
+/// How a scalar token was written in the source. Only `Plain` carries
+/// `multiline`: the sole reader (`parse_block_indented`'s tag-neutral
+/// rewind) cares exclusively about plain single-line scalars, and the
+/// value has no well-defined meaning for quoted or block styles.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ScalarStyle {
+    /// [131] ns-plain. `multiline` = source text spans more than one line,
+    /// tracked by `ScalarResolverCtx::check_append`.
+    Plain { multiline: bool },
+    /// [170] `|` literal or [174] `>` folded.
+    Block,
+    /// [120] single-quoted or [109] double-quoted.
+    Quoted,
 }
 
 #[derive(Clone, Copy)]
@@ -3545,17 +3557,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     // is now abandoned to the parent, rewind to its start and
                     // re-scan tag-neutral so the sibling key resolves under
                     // the default schema. Only plain single-line scalars are
-                    // tag-resolved at scan time; quoted scalars ignore
+                    // tag-resolved at scan time; quoted/block scalars ignore
                     // ScanOptions.tag (and their token.start is past the
-                    // opening quote, so rewind would be wrong); multiline
+                    // opening indicator, so rewind would be wrong); multiline
                     // plain scalars may have advanced parser state across
                     // lines that a positional rewind cannot fully restore.
                     if value_tag.is_some()
                         && matches!(
                             &self.token.data,
                             TokenData::Scalar(TokenScalar {
-                                is_quoted: false,
-                                multiline: false,
+                                style: ScalarStyle::Plain { multiline: false },
                                 ..
                             })
                         )
@@ -4096,7 +4107,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         _ => unreachable!("token.data was Scalar at match guard"),
                     };
 
-                    let json_key = if scalar.is_quoted {
+                    let json_key = if scalar.style == ScalarStyle::Quoted {
                         self.maybe_set_json_key(opts.flow_pair_allowed)?
                     } else {
                         false
@@ -4810,8 +4821,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     line: self.line,
                     resolved: TokenScalar {
                         data: NodeScalar::String(YamlString::List(self.text)),
-                        multiline: true,
-                        is_quoted: false,
+                        style: ScalarStyle::Block,
                     },
                 }))
             }
@@ -5193,9 +5203,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         indent: scalar_indent,
                         line: scalar_line,
                         resolved: TokenScalar {
-                            // TODO: wrong!
-                            multiline: self.line != scalar_line,
-                            is_quoted: true,
+                            style: ScalarStyle::Quoted,
                             data: NodeScalar::String(YamlString::List(text)),
                         },
                     }));
@@ -5271,9 +5279,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         indent: scalar_indent,
                         line: scalar_line,
                         resolved: TokenScalar {
-                            // TODO: wrong!
-                            multiline: self.line != scalar_line,
-                            is_quoted: true,
+                            style: ScalarStyle::Quoted,
                             data: NodeScalar::String(YamlString::List(text)),
                         },
                     }));

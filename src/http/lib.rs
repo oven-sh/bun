@@ -359,17 +359,16 @@ impl HTTPClient<'_> {
     /// undo the HTTP/1.1-specific framing decisions that don't apply when the
     /// transport delimits the body (h2 DATA frames / h3 STREAM frames).
     ///
-    /// SAFETY CONTRACT: `headers` borrows caller-owned storage
-    /// (`stream.decoded_bytes` for h2, the lsquic hset for h3) that is
-    /// lifetime-erased into `state.pending_response`. The caller MUST invoke
-    /// `clone_metadata` (which deep-copies the header bytes) synchronously
-    /// before that backing storage is freed. Both call sites already do.
+    /// Returns the (possibly-mutated) response so the caller can pass it to
+    /// `clone_metadata` once the redirect decision has been made; the borrow of
+    /// `headers` flows through, so the deep copy is checked by the compiler
+    /// rather than by a call-ordering contract.
     #[inline]
-    pub(crate) fn apply_multiplexed_headers(
+    pub(crate) fn apply_multiplexed_headers<'h>(
         &mut self,
         status_code: u32,
-        headers: &[picohttp::Header],
-    ) -> crate::Result<HeaderResult> {
+        headers: &'h [picohttp::Header],
+    ) -> crate::Result<(HeaderResult, picohttp::Response<'h>)> {
         let mut response = picohttp::Response {
             minor_version: 0,
             status_code,
@@ -377,14 +376,7 @@ impl HTTPClient<'_> {
             headers: picohttp::HeaderList { list: headers },
             bytes_read: 0,
         };
-        // SAFETY: see fn doc — erased borrow is deep-copied by `clone_metadata`
-        // before the backing storage is released.
-        self.state.pending_response = Some(unsafe { response.detach_lifetime() });
         let should_continue = self.handle_response_metadata(&mut response)?;
-        // handle_response_metadata may mutate `response` (e.g. the 304 rewrite
-        // for force_last_modified); clone_metadata reads pending_response, so
-        // re-sync. SAFETY: same lifetime erase as above.
-        self.state.pending_response = Some(unsafe { response.detach_lifetime() });
         // h2/h3 framing delimits the body; chunked transfer-encoding and the
         // HTTP/1.1 "no Content-Length ⇒ no keep-alive" rule don't apply.
         self.state.transfer_encoding = Encoding::Identity;
@@ -392,11 +384,12 @@ impl HTTPClient<'_> {
             self.state.response_stage = ResponseStage::Body;
         }
         self.state.flags.allow_keepalive = true;
-        Ok(if should_continue == ShouldContinue::Finished {
+        let result = if should_continue == ShouldContinue::Finished {
             HeaderResult::Finished
         } else {
             HeaderResult::HasBody
-        })
+        };
+        Ok((result, response))
     }
 }
 
@@ -618,7 +611,7 @@ impl ProxySettings {
     }
 
     /// Capture `http_proxy` / `https_proxy` / `no_proxy` from the process env.
-    pub fn from_env(env: &bun_dotenv::Loader<'_>) -> Option<Box<Self>> {
+    pub fn from_env(env: &bun_dotenv::Loader) -> Option<Box<Self>> {
         #[inline]
         fn is_emptyish(v: &[u8]) -> bool {
             v.is_empty() || v == b"\"\"" || v == b"''"
@@ -640,7 +633,7 @@ impl ProxySettings {
 
     /// Build from an explicit `fetch(url, { proxy })` option. The same proxy is
     /// used for both schemes; NO_PROXY is still consulted per hop.
-    pub fn from_explicit(proxy_href: &[u8], env: &bun_dotenv::Loader<'_>) -> Option<Box<Self>> {
+    pub fn from_explicit(proxy_href: &[u8], env: &bun_dotenv::Loader) -> Option<Box<Self>> {
         let no_proxy = env
             .get(b"no_proxy")
             .filter(|v| !v.is_empty())
@@ -1570,25 +1563,10 @@ impl<'a> HTTPClient<'a> {
     }
     /// Common tail of `fail` / `fail_from_h2` / `complete_connecting_process`:
     /// build the result, reset request state, and dispatch the callback.
-    /// Factored out so the borrowck reshape (`to_result()` borrows `&mut self`
-    /// while the post-reset callback wants `&mut self.state` again) lives in
-    /// one place instead of being open-coded with raw `(*this_ptr).field` at
-    /// every fail site.
     fn dispatch_result_and_reset(&mut self, clear_proxy_tunneling: bool) {
         let callback = self.result_callback;
-        // reshaped for borrowck — `to_result()`'s `body` field is a
-        // `&mut MutableString` derived from a NonNull (caller-owned, disjoint
-        // from `self`'s storage), but its lifetime is tied to `&mut self`.
-        // Detach so the `state.reset()` reborrow below compiles.
-        // SAFETY: `body_out_str` points at the caller-owned MutableString that
-        // outlives this client. NOTE: `state.reset()` below DOES write through
-        // that same allocation (`(*body_out_str).reset()`, InternalState.rs)
-        // while `result.body` is a live `&'static mut` to it — this overlap is
-        // pre-existing (the old open-coded `(*this_ptr).state.reset()` did the
-        // same); the callback observes the
-        // post-reset (empty) buffer. Do not read this comment as asserting
-        // `result.body` and `state.reset()` are disjoint.
-        let result = unsafe { self.to_result().detach_lifetime() };
+        let body = self.state.body_out_str;
+        let mut result = self.to_result();
         self.state.reset();
         // `state.reset()` returns every stage field to Pending, which makes
         // this finished client indistinguishable from a fresh one. Every
@@ -1606,6 +1584,9 @@ impl<'a> HTTPClient<'a> {
         if clear_proxy_tunneling {
             self.flags.proxy_tunneling = false;
         }
+        // `state.reset()` cleared the caller-owned body buffer; attach it now
+        // so the callback sees the (empty) post-reset buffer.
+        result.body = body_out::opt_mut(body);
         callback.run(self.parent_async_http(), result);
     }
     #[inline]
@@ -3598,55 +3579,17 @@ impl<'a> HTTPClient<'a> {
         } else {
             crate::ssl_config::SSLConfig::ZERO
         };
-        // Take ownership of the CONNECT accumulation buffer BEFORE entering
-        // ProxyTunnel::start. The envelope has been fully consumed by the
-        // caller (handle_on_data_headers); we leave an empty buffer behind so
-        // that when the tunnel later re-enters handle_on_data_headers with
-        // decrypted upstream bytes, the stale CONNECT envelope isn't re-parsed
-        // as the user-facing response (see #30381). Without this, a split
-        // CONNECT 200 response (envelope arriving across two TCP reads) stays
-        // buffered; the tunnel's re-entry appends the decrypted upstream bytes
-        // onto it, re-parses the envelope as the response (leaking
-        // proxy-agent / connection: close into response.headers), and hands
-        // the upstream's raw HTTP/1.1 bytes to the body unparsed.
-        //
-        // `start_payload` may alias into this buffer's heap storage on the
-        // split-read path, but `std::mem::take` swaps only the `Vec` header —
-        // the heap allocation (and thus the bytes `start_payload` points at)
-        // stays put until `envelope_buf` is dropped at the end of this
-        // function. ProxyTunnel::start copies `start_payload` into the TLS BIO
-        // via start_with_payload -> BIO_write before it returns, so the bytes
-        // are captured before the drop.
-        //
-        // We hold the buffer in a local and drop it AFTER start() rather than
-        // clearing `self.state.response_message_buffer` afterwards:
-        // ProxyTunnel::start has synchronous failure paths (SSLWrapper init
-        // error, or a handshake-traffic error that synchronously fires
-        // on_close) that call close_and_fail -> fail -> the result callback,
-        // which can free the AsyncHTTP that embeds `*self`. Touching `self`
-        // after start() returns would be a use-after-free.
-        let envelope_buf = std::mem::take(&mut self.state.response_message_buffer);
+        // The sole caller (`handle_on_data_headers`) has already moved
+        // `response_message_buffer` into a local, so the CONNECT envelope is
+        // gone from `self` and `start_payload` borrows that caller local (or
+        // `incoming_data`), which outlives this call; the #30381 split-envelope
+        // hazard is handled there. ProxyTunnel::start has synchronous failure
+        // paths (SSLWrapper init error, or a handshake-traffic error that
+        // synchronously fires on_close) that call close_and_fail -> fail -> the
+        // result callback, which can free the AsyncHTTP that embeds `*self`.
+        debug_assert!(self.state.response_message_buffer.list.capacity() == 0);
         ProxyTunnel::start::<IS_SSL>(self, socket, &ssl_options, start_payload);
         // Must not reference `self` past this point — see comment above.
-        drop(envelope_buf);
-    }
-
-    #[inline]
-    fn handle_short_read<const IS_SSL: bool>(
-        &mut self,
-        incoming_data: &[u8],
-        socket: HttpSocket<IS_SSL>,
-        needs_move: bool,
-    ) {
-        if needs_move {
-            let to_copy = incoming_data;
-            if !to_copy.is_empty() {
-                // this one will probably be another chunk, so we leave a little extra room
-                let _ = self.state.response_message_buffer.append(to_copy); // OOM/capacity: fire-and-forget
-            }
-        }
-
-        self.set_timeout(&socket);
     }
 
     pub fn handle_on_data_headers<const IS_SSL: bool>(
@@ -3660,51 +3603,59 @@ impl<'a> HTTPClient<'a> {
             "handleOnDataHeader data: {}",
             BStr::new(incoming_data)
         );
-        // reshaped for borrowck — `to_read` aliases either
-        // `incoming_data` or `self.state.response_message_buffer`; hold it as a
-        // `RawSlice` (encapsulated outlives-holder backref, safe `.slice()`)
-        // so subsequent `&mut self` calls don't trip the checker.
-        let mut to_read = bun_ptr::RawSlice::new(incoming_data);
-        macro_rules! to_read {
-            () => {
-                to_read.slice()
-            };
-        }
-        let mut needs_move = true;
-        if !self.state.response_message_buffer.list.is_empty() {
+        // Move the accumulation buffer out of `self` so `to_read` can be a
+        // plain `&[u8]` borrow of either `incoming_data` or the local `buffer`,
+        // both disjoint from `&mut self`. The short-read paths move it back;
+        // every other path either drops it (terminal / reset) or lets it drop
+        // here once `clone_metadata()` has deep-copied the parsed headers.
+        let mut buffer = std::mem::take(&mut self.state.response_message_buffer);
+        let needs_move = buffer.list.is_empty();
+        let mut to_read: &[u8] = if needs_move {
+            incoming_data
+        } else {
             // this one probably won't be another chunk, so we use appendSliceExact() to avoid over-allocating
-            let _ = self
-                .state
-                .response_message_buffer
-                .append_slice_exact(incoming_data);
-            to_read = bun_ptr::RawSlice::new(self.state.response_message_buffer.list.as_slice());
-            needs_move = false;
+            let _ = buffer.append_slice_exact(incoming_data);
+            buffer.list.as_slice()
+        };
+
+        // Persist the unparsed tail for the next `on_data` and re-arm the
+        // receive timeout. When `needs_move`, `to_read` is a suffix of
+        // `incoming_data` and is copied into the (currently empty) accumulation
+        // buffer; otherwise `to_read` is a suffix of `buffer`, so the consumed
+        // prefix is drained and `buffer` is moved back into state.
+        macro_rules! short_read {
+            () => {{
+                bun_core::scoped_log!(fetch, "handleShortRead");
+                if needs_move {
+                    if !to_read.is_empty() {
+                        // this one will probably be another chunk, so we leave a little extra room
+                        let _ = self.state.response_message_buffer.append(to_read);
+                    }
+                } else {
+                    let keep = to_read.len();
+                    buffer
+                        .list
+                        .drain_front(buffer.list.len().saturating_sub(keep));
+                    self.state.response_message_buffer = buffer;
+                }
+                self.set_timeout(&socket);
+                return;
+            }};
         }
 
-        loop {
+        let shared_resp = scratch::response_headers();
+        let mut response = loop {
             let mut amount_read: usize = 0;
-
-            // we reset the pending_response each time wich means that on parse error this will be always be empty
-            self.state.pending_response = Some(picohttp::Response::default());
 
             // minimal http/1.1 response is 16 bytes ("HTTP/1.1 200\r\n\r\n")
             // if less than 16 it will always be a ShortRead
-            if to_read!().len() < 16 {
-                bun_core::scoped_log!(fetch, "handleShortRead");
-                if !needs_move {
-                    let remaining = to_read!().len();
-                    let buffer = &mut self.state.response_message_buffer.list;
-                    buffer.drain_front(buffer.len().saturating_sub(remaining));
-                    to_read = bun_ptr::RawSlice::new(buffer.as_slice());
-                }
-                self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
-                return;
+            if to_read.len() < 16 {
+                short_read!();
             }
 
-            let shared_resp = scratch::response_headers();
-            let response = match picohttp::Response::parse_parts(
-                to_read!(),
-                shared_resp,
+            let parsed = match picohttp::Response::parse_parts(
+                to_read,
+                &mut shared_resp[..],
                 Some(&mut amount_read),
             ) {
                 Ok(r) => r,
@@ -3716,21 +3667,14 @@ impl<'a> HTTPClient<'a> {
                     // `response_message_buffer` growth, so use a generous fixed
                     // cap independent of that knob.
                     const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
-                    if to_read!().len() > MAX_RESPONSE_HEADER_BUFFER {
+                    if to_read.len() > MAX_RESPONSE_HEADER_BUFFER {
                         self.close_and_fail::<IS_SSL>(
                             crate::Error::ResponseHeadersTooLarge,
                             socket,
                         );
                         return;
                     }
-                    if !needs_move {
-                        let remaining = to_read!().len();
-                        let buffer = &mut self.state.response_message_buffer.list;
-                        buffer.drain_front(buffer.len().saturating_sub(remaining));
-                        to_read = bun_ptr::RawSlice::new(buffer.as_slice());
-                    }
-                    self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
-                    return;
+                    short_read!();
                 }
                 Err(e) => {
                     self.close_and_fail::<IS_SSL>(e.into(), socket);
@@ -3738,20 +3682,11 @@ impl<'a> HTTPClient<'a> {
                 }
             };
 
-            // we save the successful parsed response
-            // SAFETY: response borrows SHARED_RESPONSE_HEADERS_BUF / response_message_buffer,
-            // both of which outlive this fn; widen to 'static for storage.
-            // Rebind `response` to the detached `'static` copy so it no longer
-            // borrows `to_read` (lets the `to_read` reassignment below pass
-            // borrowck — `RawSlice::slice` ties output to `&to_read`).
-            let response = unsafe { response.detach_lifetime() };
-            self.state.pending_response = Some(response);
-
             let bytes_read =
-                (usize::try_from(response.bytes_read).expect("int cast")).min(to_read.len());
-            to_read = bun_ptr::RawSlice::new(&to_read.slice()[bytes_read..]);
+                (usize::try_from(parsed.bytes_read).expect("int cast")).min(to_read.len());
+            to_read = &to_read[bytes_read..];
 
-            if response.status_code == 101 {
+            if parsed.status_code == 101 {
                 if self.flags.upgrade_state == HTTPUpgradeState::None
                     || (self.flags.proxy_tunneling && self.proxy_tunnel.is_none())
                 {
@@ -3763,18 +3698,17 @@ impl<'a> HTTPClient<'a> {
                 self.flags.upgrade_state = HTTPUpgradeState::Upgraded;
                 // start draining the request body
                 self.flush_stream::<IS_SSL>(socket);
-                break;
+                break parsed;
             }
 
             // handle the case where we have a 100 Continue
-            if response.status_code >= 100 && response.status_code < 200 {
+            if parsed.status_code >= 100 && parsed.status_code < 200 {
                 bun_core::scoped_log!(fetch, "information headers");
 
-                self.state.pending_response = None;
-                if to_read!().is_empty() {
+                if to_read.is_empty() {
                     if !needs_move {
-                        let buffer = &mut self.state.response_message_buffer.list;
-                        buffer.drain_front(buffer.len());
+                        buffer.list.clear();
+                        self.state.response_message_buffer = buffer;
                     }
                     // we only received 1XX responses, we wanna wait for the next status code
                     return;
@@ -3783,12 +3717,8 @@ impl<'a> HTTPClient<'a> {
                 continue;
             }
 
-            break;
-        }
-        // pending_response is already `Option<Response<'static>>` (set just above).
-        // NOTE: copy (Response is Copy), do NOT .take() — clone_metadata() below
-        // requires pending_response to remain Some.
-        let mut response: picohttp::Response<'static> = self.state.pending_response.unwrap();
+            break parsed;
+        };
         let should_continue = match self.handle_response_metadata(&mut response) {
             Ok(s) => s,
             Err(err) => {
@@ -3796,10 +3726,6 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
         };
-        // handle_response_metadata may mutate `response`; mirror it back so
-        // clone_metadata() sees the up-to-date headers regardless of the
-        // content-encoding branch below.
-        self.state.pending_response = Some(response);
 
         if (self.state.content_encoding_i as usize) < response.headers.list.len()
             && !self.state.flags.did_set_content_encoding
@@ -3807,8 +3733,6 @@ impl<'a> HTTPClient<'a> {
             // if it compressed with this header, it is no longer because we will decompress it
             self.state.flags.did_set_content_encoding = true;
             self.state.content_encoding_i = u8::MAX;
-            // we need to reset the pending response because we removed a header
-            self.state.pending_response = Some(response);
         }
 
         if should_continue == ShouldContinue::Finished {
@@ -3818,7 +3742,7 @@ impl<'a> HTTPClient<'a> {
             }
             // this means that the request ended
             // clone metadata and return the progress at this point
-            self.clone_metadata();
+            self.clone_metadata(&response);
             // if is chuncked but no body is expected we mark the last chunk
             self.state.flags.received_last_chunk = true;
             // if is not we ignore the content_length
@@ -3829,14 +3753,14 @@ impl<'a> HTTPClient<'a> {
 
         if self.flags.proxy_tunneling && self.proxy_tunnel.is_none() {
             // we are proxing we dont need to cloneMetadata yet
-            self.start_proxy_handshake::<IS_SSL>(socket, to_read!());
+            self.start_proxy_handshake::<IS_SSL>(socket, to_read);
             return;
         }
 
         // we have body data incoming so we clone metadata and keep going
-        self.clone_metadata();
+        self.clone_metadata(&response);
 
-        if to_read!().is_empty() {
+        if to_read.is_empty() {
             // no body data yet, but we can report the headers
             if self.signals.get(signals::Field::HeaderProgress) {
                 self.progress_update::<IS_SSL>(ctx, socket);
@@ -3845,7 +3769,7 @@ impl<'a> HTTPClient<'a> {
         }
 
         if self.state.response_stage == ResponseStage::Body {
-            let report_progress = match self.handle_response_body(to_read!(), true) {
+            let report_progress = match self.handle_response_body(to_read, true) {
                 Ok(b) => b,
                 Err(err) => {
                     self.close_and_fail::<IS_SSL>(err, socket);
@@ -3859,7 +3783,7 @@ impl<'a> HTTPClient<'a> {
             }
         } else if self.state.response_stage == ResponseStage::BodyChunk {
             self.set_timeout(&socket);
-            let report_progress = match self.handle_response_body_chunked_encoding(to_read!()) {
+            let report_progress = match self.handle_response_body_chunked_encoding(to_read) {
                 Ok(b) => b,
                 Err(err) => {
                     self.close_and_fail::<IS_SSL>(err, socket);
@@ -3904,7 +3828,6 @@ impl<'a> HTTPClient<'a> {
         // the proxy_tunnel dispatch above: a tunneled target's raw inner-TLS
         // records must keep reaching the SSLWrapper while parked.
         if self.state.flags.is_waiting_for_cert_check {
-            self.state.pending_response = None;
             self.close_and_fail::<IS_SSL>(crate::Error::UnexpectedData, socket);
             return;
         }
@@ -3952,7 +3875,6 @@ impl<'a> HTTPClient<'a> {
             }
             ResponseStage::Fail => {}
             _ => {
-                self.state.pending_response = None;
                 self.close_and_fail::<IS_SSL>(crate::Error::UnexpectedData, socket);
                 return;
             }
@@ -4037,50 +3959,36 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    // We have to clone metadata immediately after use
-    pub fn clone_metadata(&mut self) {
-        debug_assert!(self.state.pending_response.is_some());
-        // `Response<'static>` is `Copy`; bind by value so no borrow
-        // of `self.state` is held across the `pending_response = None` write
-        // below.
-        if let Some(response) = self.state.pending_response {
-            if let Some(old) = self.state.cloned_metadata.take() {
-                drop(old); // deinit
-            }
-            let mut builder = picohttp::StringBuilder::default();
-            response.count(&mut builder);
-            builder.count(self.url.href);
-            let _ = builder.allocate();
-            // headers_buf is owned by the cloned_response (aka cloned_response.headers)
-            // `Response::clone` ties its return lifetime to
-            // `headers: &'a mut [Header]`; leak the box to obtain `'static` so
-            // the cloned response can be stored in `HTTPResponseMetadata`.
-            // Reclaimed by `Drop for HTTPResponseMetadata`.
-            let headers_buf = bun_core::heap::release(
-                vec![picohttp::Header::ZERO; response.headers.list.len()].into_boxed_slice(),
-            );
-            let cloned_response = response.clone(headers_buf, &mut builder);
-
-            // we clean the temporary response since cloned_metadata is now the owner
-            self.state.pending_response = None;
-
-            // SAFETY: `href` aliases `builder`'s heap buffer; ownership of that
-            // buffer is transferred to `owned_buf` immediately below and stored
-            // alongside `href` in `HTTPResponseMetadata`.
-            let href = bun_ptr::RawSlice::new(unsafe { builder.append_raw(self.url.href) });
-            // Transfer the single backing allocation out of the builder
-            // (`builder.ptr.?[0..builder.cap]`) so its Drop becomes a no-op.
-            let owned_buf = builder.move_to_slice();
-            self.state.cloned_metadata = Some(HTTPResponseMetadata {
-                owned_buf,
-                response: cloned_response,
-                url: href,
-            });
-        } else {
-            // we should never clone metadata that dont exists
-            // we added a empty metadata just in case but will hit the assert
-            self.state.cloned_metadata = Some(HTTPResponseMetadata::default());
-        }
+    /// Deep-copy `response` (headers, status, and this request's `url.href`)
+    /// into owned storage on `state.cloned_metadata` so the caller can drop the
+    /// buffer the parsed slices borrow.
+    pub fn clone_metadata(&mut self, response: &picohttp::Response<'_>) {
+        self.state.cloned_metadata = None;
+        let mut builder = picohttp::StringBuilder::default();
+        response.count(&mut builder);
+        builder.count(self.url.href);
+        let _ = builder.allocate();
+        // headers_buf is owned by the cloned_response (aka cloned_response.headers)
+        // `Response::clone` ties its return lifetime to
+        // `headers: &'a mut [Header]`; leak the box to obtain `'static` so
+        // the cloned response can be stored in `HTTPResponseMetadata`.
+        // Reclaimed by `Drop for HTTPResponseMetadata`.
+        let headers_buf = bun_core::heap::release(
+            vec![picohttp::Header::ZERO; response.headers.list.len()].into_boxed_slice(),
+        );
+        let cloned_response = response.clone(headers_buf, &mut builder);
+        // SAFETY: `href` aliases `builder`'s heap buffer; ownership of that
+        // buffer is transferred to `owned_buf` immediately below and stored
+        // alongside `href` in `HTTPResponseMetadata`.
+        let href = bun_ptr::RawSlice::new(unsafe { builder.append_raw(self.url.href) });
+        // Transfer the single backing allocation out of the builder
+        // (`builder.ptr.?[0..builder.cap]`) so its Drop becomes a no-op.
+        let owned_buf = builder.move_to_slice();
+        self.state.cloned_metadata = Some(HTTPResponseMetadata {
+            owned_buf,
+            response: cloned_response,
+            url: href,
+        });
     }
 
     /// The idle timeout to arm for this request, in seconds (0 = disabled):
@@ -4176,14 +4084,6 @@ impl<'a> HTTPClient<'a> {
         if self.flags.protocol != Protocol::Http1_1 {
             return self.send_progress_update_multiplexed();
         }
-        // reshaped for borrowck — `to_result()` returns an
-        // `HTTPClientResult<'_>` whose lifetime is tied to `&mut self` (via the
-        // `body: &mut MutableString` borrow). Holding that result across the
-        // `is_done` mutations below would require a second live `&mut Self`,
-        // which PORTING.md §Forbidden flags as aliased `&mut`. Instead:
-        // snapshot every owned/Copy field out of the result, drop it, mutate
-        // `self` directly, then rebuild a fresh `HTTPClientResult` for the
-        // callback from the snapshotted fields + the restored body.
         let body = self.state.body_out_str;
         // Snapshot the body buffer's CONTENTS by value so that `state.reset()`
         // — which calls `body.reset()` and clears the list — doesn't deliver
@@ -4191,32 +4091,8 @@ impl<'a> HTTPClient<'a> {
         let body_snapshot = body_out::take_list(body);
         let callback = self.result_callback;
 
-        let (
-            has_more,
-            redirected,
-            can_stream,
-            is_http2,
-            fail,
-            dns_error,
-            dns_hostname,
-            metadata,
-            body_size,
-            certificate_info,
-        ) = {
-            let r = self.to_result();
-            (
-                r.has_more,
-                r.redirected,
-                r.can_stream,
-                r.is_http2,
-                r.fail,
-                r.dns_error,
-                r.dns_hostname,
-                r.metadata,
-                r.body_size,
-                r.certificate_info,
-            )
-        }; // r (and its &mut borrow of self) dropped here
+        let mut result = self.to_result();
+        let has_more = result.has_more;
         let is_done = !has_more;
 
         bun_core::scoped_log!(fetch, "progressUpdate {}", is_done);
@@ -4343,23 +4219,8 @@ impl<'a> HTTPClient<'a> {
 
         // Restore the body bytes that `state.reset()` cleared.
         body_out::restore_list(body, body_snapshot);
-        let async_http = self.parent_async_http();
-        // Rebuild the result from snapshotted fields now that all `&mut self`
-        // mutations are finished — no aliased borrows remain.
-        let result = HTTPClientResult {
-            body: body_out::opt_mut(body),
-            has_more,
-            redirected,
-            can_stream,
-            is_http2,
-            fail,
-            dns_error,
-            dns_hostname,
-            metadata,
-            body_size,
-            certificate_info,
-        };
-        callback.run(async_http, result);
+        result.body = body_out::opt_mut(body);
+        callback.run(self.parent_async_http(), result);
 
         if has_more {
             self.maybe_pause_receive(socket);
@@ -4381,44 +4242,13 @@ impl<'a> HTTPClient<'a> {
     /// transport, so there is no `ctx`/`socket` to hand back to the pool here.
     fn send_progress_update_multiplexed(&mut self) {
         debug_assert!(self.flags.protocol != Protocol::Http1_1);
-        // reshaped for borrowck — `to_result()` ties `result`'s
-        // lifetime to `&mut self`, so holding it across the `is_done` mutations
-        // would require a second live `&mut Self` (aliased UB). Instead snapshot
-        // every owned/Copy field out of the result, drop it, mutate `self`
-        // directly, then rebuild a fresh `HTTPClientResult` for the callback.
-        // See send_progress_update_without_stage_check for the same pattern.
         let body = self.state.body_out_str;
         // Snapshot the body buffer's CONTENTS by value; restored below.
         let body_snapshot = body_out::take_list(body);
         let callback = self.result_callback;
 
-        let (
-            has_more,
-            redirected,
-            can_stream,
-            is_http2,
-            fail,
-            dns_error,
-            dns_hostname,
-            metadata,
-            body_size,
-            certificate_info,
-        ) = {
-            let r = self.to_result();
-            (
-                r.has_more,
-                r.redirected,
-                r.can_stream,
-                r.is_http2,
-                r.fail,
-                r.dns_error,
-                r.dns_hostname,
-                r.metadata,
-                r.body_size,
-                r.certificate_info,
-            )
-        }; // r (and its &mut borrow of self) dropped here
-        let is_done = !has_more;
+        let mut result = self.to_result();
+        let is_done = !result.has_more;
         bun_core::scoped_log!(fetch, "progressUpdate {}", is_done);
         if is_done {
             self.unregister_abort_tracker();
@@ -4430,23 +4260,8 @@ impl<'a> HTTPClient<'a> {
         }
         // Restore the body bytes that `state.reset()` cleared.
         body_out::restore_list(body, body_snapshot);
-        let async_http = self.parent_async_http();
-        // Rebuild the result from snapshotted fields now that all `&mut self`
-        // mutations are finished — no aliased borrows remain.
-        let result = HTTPClientResult {
-            body: body_out::opt_mut(body),
-            has_more,
-            redirected,
-            can_stream,
-            is_http2,
-            fail,
-            dns_error,
-            dns_hostname,
-            metadata,
-            body_size,
-            certificate_info,
-        };
-        callback.run(async_http, result);
+        result.body = body_out::opt_mut(body);
+        callback.run(self.parent_async_http(), result);
     }
 
     /// `do_redirect` minus the per-request socket release/close. The session
@@ -4591,7 +4406,14 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    pub fn to_result(&mut self) -> HTTPClientResult<'_> {
+    /// Build the result payload for the progress/completion callback.
+    ///
+    /// `body` is left `None`: every caller attaches it from `state.body_out_str`
+    /// *after* the `state.reset()` that follows this call (reset writes through
+    /// the same allocation). With `body` absent the result is fully owned, so
+    /// it can be held across the caller's `&mut self` mutations without a
+    /// lifetime widen.
+    pub fn to_result(&mut self) -> HTTPClientResult<'static> {
         let body_size: BodySize = if self.state.is_chunked_encoding() {
             BodySize::TotalReceived(self.state.total_body_received)
         } else if let Some(content_length) = self.state.content_length {
@@ -4612,7 +4434,7 @@ impl<'a> HTTPClient<'a> {
                 // transfer ownership of the metadata here
                 return HTTPClientResult {
                     metadata: Some(metadata),
-                    body: body_out::opt_mut(self.state.body_out_str),
+                    body: None,
                     redirected: self.flags.redirected,
                     fail: self.state.fail,
                     dns_error: self.state.dns_error,
@@ -4628,7 +4450,7 @@ impl<'a> HTTPClient<'a> {
             }
         }
         HTTPClientResult {
-            body: body_out::opt_mut(self.state.body_out_str),
+            body: None,
             metadata: None,
             redirected: self.flags.redirected,
             fail: self.state.fail,
@@ -4694,16 +4516,6 @@ impl<'a> HTTPClient<'a> {
                 self.state
                     .get_body_buffer()
                     .append_slice_exact(incoming_data)?;
-            }
-
-            if self.state.response_message_buffer.owns(incoming_data) {
-                // i'm not sure why this would happen and i haven't seen it happen
-                // but we should check
-                debug_assert!(
-                    self.state.get_body_buffer().list.as_ptr()
-                        != self.state.response_message_buffer.list.as_ptr()
-                );
-                self.state.response_message_buffer = MutableString::default();
             }
         }
 
@@ -4879,31 +4691,19 @@ impl<'a> HTTPClient<'a> {
         // using content-encoding per chunk is not supported
         self.state.chunked_decoder.consume_trailer = 1;
 
-        // Capture the length up front so no `&[u8]` aliases the live `&mut [u8]` below.
+        // `handle_on_data_headers` moves `response_message_buffer` into a
+        // local before dispatching here, so `incoming_data` never aliases
+        // `self` and the scratch copy is always sufficient (the dispatcher
+        // bounds `incoming_data.len()` to the scratch size).
         let in_len = incoming_data.len();
-        let buffer: &mut [u8] = if self.state.response_message_buffer.owns(incoming_data) {
-            // if we've already copied the buffer once, we can avoid copying it again.
-            // SAFETY: `incoming_data` is a subslice of `response_message_buffer.list`
-            // (`owns` just verified).
-            // `incoming_data.as_ptr() as *mut u8` would carry SharedReadOnly provenance
-            // (it came from a `&[u8]`) and writing through it is UB. Derive the mutable
-            // slice from the owning Vec instead so the write has Unique provenance.
-            let base = self.state.response_message_buffer.list.as_mut_ptr();
-            let off = incoming_data.as_ptr() as usize - base as usize;
-            // SAFETY: `owns()` proved `[base+off, base+off+in_len)` lies within
-            // `response_message_buffer.list`; `base` carries Unique provenance.
-            unsafe { bun_core::ffi::slice_mut(base.add(off), in_len) }
-        } else {
-            small[0..in_len].copy_from_slice(incoming_data);
-            &mut small[0..in_len]
-        };
+        let buffer = &mut small[0..in_len];
+        buffer.copy_from_slice(incoming_data);
 
         let mut bytes_decoded = in_len;
         // phr_decode_chunked mutates in-place
         // SAFETY: `buffer` is an exclusive &mut [u8] of len == in_len; offset
         // len - in_len == 0 is trivially in bounds. `chunked_decoder` is a
-        // disjoint field of `self.state` (no live borrow of `self` at this
-        // point — `buffer` is raw-derived or borrows `small`).
+        // disjoint field of `self.state` (`buffer` borrows `small`).
         let pret = unsafe {
             picohttp::phr_decode_chunked(
                 &raw mut self.state.chunked_decoder,

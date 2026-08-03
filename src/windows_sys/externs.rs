@@ -972,6 +972,14 @@ pub mod kernel32 {
             First: u32,
             Handler: unsafe extern "system" fn(*mut c_void) -> i32,
         ) -> *mut c_void;
+        /// `SetUnhandledExceptionFilter` (`errhandlingapi.h`). Runs after all
+        /// frame-based (SEH) handlers have declined.
+        pub fn SetUnhandledExceptionFilter(
+            lpTopLevelExceptionFilter: Option<unsafe extern "system" fn(*mut c_void) -> i32>,
+        ) -> Option<unsafe extern "system" fn(*mut c_void) -> i32>;
+        /// `GetModuleHandleW` (`libloaderapi.h`). `lpModuleName == null` returns
+        /// the base address of the calling process's executable image.
+        pub fn GetModuleHandleW(lpModuleName: LPCWSTR) -> HMODULE;
         /// `RemoveVectoredExceptionHandler` (`errhandlingapi.h`).
         pub fn RemoveVectoredExceptionHandler(Handle: *mut c_void) -> u32;
     }

@@ -65,7 +65,7 @@ pub struct JSBundleCompletionTask {
     pub global_this: BackRef<JSGlobalObject>,
     pub promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
-    pub env: *mut bun_dotenv::Loader<'static>,
+    pub env: *mut bun_dotenv::Loader,
     pub log: bun_ast::Log,
     pub cancelled: bool,
 
@@ -381,7 +381,7 @@ impl JSBundleCompletionTask {
 
         // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at
         // construction; valid for the lifetime of the VirtualMachine.
-        let env = unsafe { &mut *self.env.cast::<bun_dotenv::Loader>() };
+        let env = unsafe { &mut *self.env };
 
         let result = match to_executable(
             &compile_options.compile_target,
@@ -971,8 +971,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         }
         // `transpiler.env` is the dotenv loader installed by
         // `Transpiler::init`; non-null and valid for `'a`.
-        transpiler.resolver.env_loader =
-            NonNull::new(transpiler.env.cast::<bun_dotenv::Loader<'_>>());
+        transpiler.resolver.env_loader = NonNull::new(transpiler.env);
         // `Resolver.opts` is the resolver-crate subset
         // — re-project from the now-mutated `transpiler.options`.
         transpiler.sync_resolver_opts();
@@ -1050,11 +1049,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         };
 
         let log: *mut bun_ast::Log = &raw mut self.log;
-        // SAFETY: `self.env` is the per-VM dotenv loader stashed at
-        // construction; cast erases `'_` (bun_dotenv::Loader is invariant on
-        // its arena lifetime, but `Transpiler::init` only stores the pointer).
-        let env = self.env.cast::<bun_dotenv::Loader<'static>>();
-        let t = Transpiler::init(bump, log, opts, Some(env))?;
+        let t = Transpiler::init(bump, log, opts, Some(self.env))?;
         let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);
 
         // Post-init field wiring.
@@ -1081,7 +1076,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         // it outlives the BACKREF in `linker.loop`.
         let mut any_loop = bun_event_loop::AnyEventLoop::default();
         let event_loop: bun_bundler::linker_context_mod::EventLoop =
-            Some(NonNull::from(&mut any_loop).cast::<bun_event_loop::AnyEventLoop<'static>>());
+            Some(NonNull::from(&mut any_loop).cast::<bun_event_loop::AnyEventLoop>());
 
         // `thread_pool` is the `WorkPool` singleton (`OnceLock`-backed,
         // process-lifetime, concurrently read by worker threads). Do NOT

@@ -290,7 +290,6 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
     // arriving here is unexpected.
     if this.state.flags.is_waiting_for_cert_check {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onData while parked");
-        this.state.pending_response = None;
         // SAFETY: `this` dead (NLL); reenter via raw ptr.
         ProxyTunnel::close_from_callback(proxy_nn, crate::Error::UnexpectedData);
         return;
@@ -354,7 +353,6 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
         }
         _ => {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData unexpected data");
-            this.state.pending_response = None;
             // SAFETY: `this` dead (NLL); reenter via raw ptr.
             ProxyTunnel::close_from_callback(proxy_nn, crate::Error::UnexpectedData);
         }

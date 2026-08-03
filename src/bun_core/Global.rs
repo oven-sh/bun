@@ -718,8 +718,12 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
             // preconditions, so `safe fn` discharges the link-time proof.
             unsafe extern "system" {
                 safe fn RemoveVectoredExceptionHandler(Handle: *mut core::ffi::c_void) -> u32;
+                safe fn SetUnhandledExceptionFilter(
+                    f: Option<unsafe extern "system" fn(*mut core::ffi::c_void) -> i32>,
+                ) -> Option<unsafe extern "system" fn(*mut core::ffi::c_void) -> i32>;
             }
             let _ = RemoveVectoredExceptionHandler(handle);
+            let _ = SetUnhandledExceptionFilter(None);
         }
     }
 

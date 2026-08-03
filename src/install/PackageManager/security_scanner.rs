@@ -1367,7 +1367,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.has_process_exited && self.remaining_fds == 0
     }
 
-    pub fn event_loop(&self) -> &AnyEventLoop<'static> {
+    pub fn event_loop(&self) -> &AnyEventLoop {
         &self.manager.event_loop
     }
 

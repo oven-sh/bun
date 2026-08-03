@@ -218,10 +218,9 @@ impl CryptoHasher {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
+        let [arg] = callframe.arguments_as_array::<1>();
         // ?Node.StringOrBuffer (instance-method arm: empty/undefined/null → None)
-        let output: Option<StringOrBuffer> = if arguments.len > 0 {
-            let arg = arguments.ptr[0];
+        let output: Option<StringOrBuffer> = if callframe.arguments_count() > 0 {
             if !arg.is_empty_or_undefined_or_null() {
                 match StringOrBuffer::from_js(global, arg)? {
                     Some(v) => Some(v),
@@ -242,11 +241,11 @@ impl CryptoHasher {
     /// Hand-expanded static-method argument decode for the parameter list
     /// `(algorithm string, input, optional output buffer/encoding)`.
     pub fn hash(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<3>();
+        let arguments = callframe.arguments();
         let mut i = 0usize;
         let mut next_eat = || {
-            if i < arguments.len {
-                let v = arguments.ptr[i];
+            if i < arguments.len() {
+                let v = arguments[i];
                 i += 1;
                 Some(v)
             } else {
@@ -470,14 +469,13 @@ impl CryptoHasher {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<Box<CryptoHasher>> {
-        let arguments = callframe.arguments_old::<2>();
-        if arguments.len == 0 {
+        let [algorithm_name, hmac_value] = callframe.arguments_as_array::<2>();
+        if callframe.arguments_count() == 0 {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Expected an algorithm name as an argument"
             )));
         }
 
-        let algorithm_name = arguments.ptr[0];
         if algorithm_name.is_empty_or_undefined_or_null() || !algorithm_name.is_string() {
             return Err(global.throw_invalid_arguments(format_args!("algorithm must be a string")));
         }
@@ -488,7 +486,6 @@ impl CryptoHasher {
             return Err(global.throw_invalid_arguments(format_args!("Invalid algorithm name")));
         }
 
-        let hmac_value = arguments.ptr[1];
         let mut hmac_key: Option<StringOrBuffer> = None;
         // `defer { if (hmac_key) |*key| key.deinit(); }` — handled by Drop on `hmac_key`.
 
@@ -571,14 +568,12 @@ impl CryptoHasher {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let this_value = callframe.this();
-        let arguments = callframe.arguments_old::<2>();
-        let input = arguments.ptr[0];
+        let [input, encoding_value] = callframe.arguments_as_array::<2>();
         if input.is_empty_or_undefined_or_null() {
             return Err(
                 global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
             );
         }
-        let encoding_value = arguments.ptr[1];
         // Encoding only affects string inputs (same gate as JSHash.cpp); don't
         // coerce it for Blob/Buffer inputs where it is ignored.
         let encoding = if input.is_string() && encoding_value.is_cell() {
@@ -1217,10 +1212,9 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
+        let [arg] = callframe.arguments_as_array::<1>();
         // ?Node.StringOrBuffer (instance-method arm: empty/undefined/null → None)
-        let output: Option<StringOrBuffer> = if arguments.len > 0 {
-            let arg = arguments.ptr[0];
+        let output: Option<StringOrBuffer> = if callframe.arguments_count() > 0 {
             if !arg.is_empty_or_undefined_or_null() {
                 match StringOrBuffer::from_js(global, arg)? {
                     Some(v) => Some(v),
@@ -1243,11 +1237,11 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     /// Hand-expanded `wrapStaticMethod` decode for the parameter list
     /// `(*JSGlobalObject, Node.BlobOrStringOrBuffer, ?Node.StringOrBuffer)`.
     pub fn hash(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
+        let arguments = callframe.arguments();
         let mut i = 0usize;
         let mut next_eat = || {
-            if i < arguments.len {
-                let v = arguments.ptr[i];
+            if i < arguments.len() {
+                let v = arguments[i];
                 i += 1;
                 Some(v)
             } else {

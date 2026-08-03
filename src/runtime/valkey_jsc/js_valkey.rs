@@ -1514,21 +1514,12 @@ impl JSValkeyClient {
         let socket_ref = self.ref_scope();
 
         let is_tls = self.client.get().tls != valkey::TLS::None;
-        // `vm.rare_data()` needs `&mut VirtualMachine`; `client.vm`
-        // is `&'static`. Cast through raw — the per-thread VM is single-owner
-        // on the JS thread, and `valkey_group` only touches the embedded
-        // `SocketGroup` field + `vm.uws_loop()` (disjoint from anything we
-        // hold). Same pattern as `Bun__RareData__postgresGroup`.
-        let vm_ptr = std::ptr::from_ref::<VirtualMachine>(self.client.get().vm).cast_mut();
-        // SAFETY: per-thread VM, accessed from the JS thread; `rare_data()`
-        // lazy-inits the box.
-        let group: *mut uws::SocketGroup = unsafe {
-            let rare = std::ptr::from_mut::<jsc::rare_data::RareData>((*vm_ptr).rare_data());
-            if is_tls {
-                (*rare).valkey_group::<true>(&*vm_ptr)
-            } else {
-                (*rare).valkey_group::<false>(&*vm_ptr)
-            }
+        let vm = self.client.get().vm.as_mut();
+        let loop_ = vm.uws_loop();
+        let group: *mut uws::SocketGroup = if is_tls {
+            vm.rare_data().valkey_group::<true>(loop_)
+        } else {
+            vm.rare_data().valkey_group::<false>(loop_)
         };
 
         // Populate `_secure` first, then handle the failure branch outside the
@@ -1568,8 +1559,8 @@ impl JSValkeyClient {
         let ssl_ctx: Option<*mut uws::SslCtx> = match &self.client.get().tls {
             valkey::TLS::None => None,
             valkey::TLS::Enabled => {
-                // SAFETY: `vm_ptr` is the live per-thread VM (see above).
-                Some(unsafe { crate::jsc_hooks::default_client_ssl_ctx(vm_ptr) })
+                // SAFETY: `vm` is the live per-thread VM (see above).
+                Some(unsafe { crate::jsc_hooks::default_client_ssl_ctx(vm) })
             }
             valkey::TLS::Custom(_) => Some(self._secure.get().unwrap()),
         };

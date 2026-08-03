@@ -33,6 +33,7 @@ bun_base64.workspace = true
 bun_boringssl.workspace = true
 bun_boringssl_sys.workspace = true
 bun_brotli.workspace = true
+bun_lsquic_sys.workspace = true
 bun_alloc.workspace = true
 bun_errno.workspace = true
 bun_core.workspace = true

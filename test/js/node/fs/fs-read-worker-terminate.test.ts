@@ -16,10 +16,8 @@ describe.concurrent.skipIf(!isLinux || !isASAN)(
   "worker.terminate() during parked async node:fs read keeps the destination buffer alive",
   () => {
     for (const api of ["read", "readv"] as const) {
-      test(
-        `fs.${api}`,
-        async () => {
-          const fixture = `
+      test(`fs.${api}`, async () => {
+        const fixture = `
 import { Worker } from "node:worker_threads";
 import fs from "node:fs";
 import path from "node:path";
@@ -62,30 +60,28 @@ console.log("PASS addr=0x" + addr.toString(16) + " len=" + len);
 process.exit(0);
 `;
 
-          using dir = tempDir("fs-read-term", { "fixture.mjs": fixture });
-          await using proc = Bun.spawn({
-            cmd: [bunExe(), "--smol", "fixture.mjs", String(dir), api],
-            env: {
-              ...bunEnv,
-              // Route JSC ArrayBuffer storage through system malloc so ASAN
-              // owns the allocation and the ffi probe can observe the free.
-              Malloc: "1",
-              // The fail-before ASAN report is the signal; symbolization adds
-              // several seconds for no information the assertion uses.
-              ASAN_OPTIONS: (bunEnv.ASAN_OPTIONS ? bunEnv.ASAN_OPTIONS + ":" : "") + "symbolize=0",
-            },
-            cwd: String(dir),
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-          const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        using dir = tempDir("fs-read-term", { "fixture.mjs": fixture });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "--smol", "fixture.mjs", String(dir), api],
+          env: {
+            ...bunEnv,
+            // Route JSC ArrayBuffer storage through system malloc so ASAN
+            // owns the allocation and the ffi probe can observe the free.
+            Malloc: "1",
+            // The fail-before ASAN report is the signal; symbolization adds
+            // several seconds for no information the assertion uses.
+            ASAN_OPTIONS: (bunEnv.ASAN_OPTIONS ? bunEnv.ASAN_OPTIONS + ":" : "") + "symbolize=0",
+          },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-          expect(stderr).not.toContain("AddressSanitizer");
-          expect(stdout + stderr).not.toContain("FAIL");
-          expect(stdout).toMatch(/^PASS addr=0x[0-9a-f]+ len=8388608$/m);
-        },
-        20_000,
-      );
+        expect(stderr).not.toContain("AddressSanitizer");
+        expect(stdout + stderr).not.toContain("FAIL");
+        expect(stdout).toMatch(/^PASS addr=0x[0-9a-f]+ len=8388608$/m);
+      }, 20_000);
     }
   },
 );

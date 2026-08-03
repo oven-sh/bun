@@ -537,11 +537,7 @@ describe.skipIf(!isASAN)(
             stderr: "pipe",
           });
 
-          const [stdout, stderr, exitCode] = await Promise.all([
-            proc.stdout.text(),
-            proc.stderr.text(),
-            proc.exited,
-          ]);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           // Check stderr first: on failure the sanitizer report is the useful part.
           expect(stderr).toBe("");
           expect(stdout).toBe("survived\n");

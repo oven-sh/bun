@@ -36,8 +36,10 @@ describe.skipIf(!isLinux || isMusl || !cc)("hardlink backend falls back to copyf
           "shim.c": shimC(errno),
           "package.json": JSON.stringify({
             name: "hardlink-fallback-test",
-            dependencies: { bar: "file:./bar-0.0.2.tgz" },
+            dependencies: { bar: "file:./bar-0.0.2.tgz", localdep: "file:./localdep" },
           }),
+          "localdep/package.json": JSON.stringify({ name: "localdep", version: "1.2.3" }),
+          "localdep/index.js": "module.exports = 1;",
         });
         cpSync(join(import.meta.dir, "bar-0.0.2.tgz"), join(String(dir), "bar-0.0.2.tgz"));
 
@@ -81,6 +83,16 @@ describe.skipIf(!isLinux || isMusl || !cc)("hardlink backend falls back to copyf
         // A hardlink from the cache would have nlink >= 2; nlink === 1 proves
         // the copy fallback ran.
         expect(statSync(installed).nlink).toBe(1);
+
+        // Folder dependencies take a separate path in the isolated linker
+        // that reuses the folder's dir fd across the hardlink attempt and
+        // the copy fallback; the contents must still be installed.
+        const installedLocal = join(String(dir), "node_modules", "localdep", "package.json");
+        expect(await Bun.file(installedLocal).json()).toMatchObject({
+          name: "localdep",
+          version: "1.2.3",
+        });
+        expect(statSync(installedLocal).nlink).toBe(1);
       });
     }
   }

@@ -968,6 +968,22 @@ impl Task {
                                     }
 
                                     InstallMethod::Copyfile => {
+                                        // The failed hardlink walk advanced `folder_dir`'s
+                                        // directory cursor; reopen it or the copy walk
+                                        // sees no entries.
+                                        let folder_dir = match bun_sys::open_dir_for_iteration(
+                                            Fd::cwd(),
+                                            path,
+                                        ) {
+                                            sys::Result::Ok(fd) => fd,
+                                            sys::Result::Err(err) => {
+                                                return Ok(Yield::failure(
+                                                    TaskError::LinkPackage(err),
+                                                ));
+                                            }
+                                        };
+                                        let _folder_dir_guard = sys::CloseOnDrop::new(folder_dir);
+
                                         #[cfg(windows)]
                                         let mut src_path = OsAutoAbsPath::init();
                                         #[cfg(not(windows))]

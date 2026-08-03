@@ -1462,9 +1462,11 @@ impl<'a> Linker<'a> {
     ///      package root (`@anthropic-ai/claude-code-win32-x64` ships
     ///      `claude.exe` at root while the root package's `bin` is
     ///      `bin/claude.exe`)
-    ///   4. (Windows) `<package_dir>/<bin_name>.exe` - esbuild ships
-    ///      `esbuild.exe` at the root of `@esbuild/win32-x64` while the root
-    ///      package's `bin` is the extensionless `bin/esbuild`
+    ///   4. `<package_dir>/<bin_name>.exe` - esbuild ships `esbuild.exe` at
+    ///      the root of `@esbuild/win32-x64` while the root package's `bin`
+    ///      is the extensionless `bin/esbuild`. Not `#[cfg(windows)]`-gated
+    ///      so the redirect still resolves when cross-installing with
+    ///      `--os win32`.
     ///
     /// Falls through to (1) when nothing exists so the existing
     /// `skipped_due_to_missing_bin` retry-without-redirect path still fires.
@@ -1504,7 +1506,6 @@ impl<'a> Linker<'a> {
             }
         }
 
-        #[cfg(windows)]
         if !bin_name.is_empty() && !strings::has_suffix_comptime(bin_name, b".exe") {
             let mut exe_name = Vec::with_capacity(bin_name.len() + b".exe".len());
             exe_name.extend_from_slice(bin_name);

@@ -2,13 +2,12 @@
   "_id": "test-native-binlink-altpath-target",
   "name": "test-native-binlink-altpath-target",
   "dist-tags": {
-    "latest": "1.0.0"
+    "latest": "3.0.0"
   },
   "versions": {
     "1.0.0": {
       "name": "test-native-binlink-altpath-target",
       "version": "1.0.0",
-      "_id": "test-native-binlink-altpath-target@1.0.0",
       "os": [
         "darwin",
         "linux",
@@ -18,10 +17,49 @@
         "arm64",
         "x64"
       ],
+      "_id": "test-native-binlink-altpath-target@1.0.0",
       "dist": {
-        "integrity": "sha512-+LnJuEt4mt1XOvXeBq6wEbpvcNb1kL1oPdnjCrpy322Dsr/ud1oHFEeg6fyzeIiSW9LkCvA9ikhpr4w89hRcIQ==",
-        "shasum": "c3e2e29fc1f033aec922c6b8c0384157ea85d312",
+        "integrity": "sha512-OkZAxnM0XS8RUFAIPZ2uXEkYuoL94EXTE+daAuKh/SqkH5gfXsv1Q4wIZOPsioMBIvNi+WNcXc9pOGiBg3MIjg==",
+        "shasum": "23ec3e425c14d17f47ee83058a1be418548fff3a",
         "tarball": "http://localhost:4873/test-native-binlink-altpath-target/-/test-native-binlink-altpath-target-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "test-native-binlink-altpath-target",
+      "version": "2.0.0",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "cpu": [
+        "arm64",
+        "x64"
+      ],
+      "_id": "test-native-binlink-altpath-target@2.0.0",
+      "dist": {
+        "integrity": "sha512-zuus2xhewvIiW0NVn78x9IMbp177hr2cGLermN2sIzINf/mXhRjGt/vm7ao5vXVsWm/FE//smi66x6ZnjNBSLA==",
+        "shasum": "4fb58dcc15acb8cff172a779b2eea0c0535e9b0b",
+        "tarball": "http://localhost:4873/test-native-binlink-altpath-target/-/test-native-binlink-altpath-target-2.0.0.tgz"
+      }
+    },
+    "3.0.0": {
+      "name": "test-native-binlink-altpath-target",
+      "version": "3.0.0",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "cpu": [
+        "arm64",
+        "x64"
+      ],
+      "_id": "test-native-binlink-altpath-target@3.0.0",
+      "dist": {
+        "integrity": "sha512-wTI0iIDc56dtksGJG/Dk+rkk1W+qMQkeg9b9NFn2SO/eqgy9eFUPuiuRUnPC1Fau6E+3jTUukH3/3BBKWbGchw==",
+        "shasum": "6796dac7f94e464868c2125eee31a3cd789e5988",
+        "tarball": "http://localhost:4873/test-native-binlink-altpath-target/-/test-native-binlink-altpath-target-3.0.0.tgz"
       }
     }
   }

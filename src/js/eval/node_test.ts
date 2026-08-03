@@ -78,12 +78,9 @@ function fatal(err: unknown): never {
   process.exit(1);
 }
 
-// ---------------------------------------------------------------------------
-// File discovery — node's createTestFileList (runner.js:153-170).
-// ---------------------------------------------------------------------------
-// node's default (utils.js:71-77) — ts/mts/cts only join behind --strip-types
-// there, so matching its default keeps discovery byte-compatible. Split into
-// two globs: Bun.Glob mis-parses `test/**/*` nested inside a brace group.
+// File discovery — node's createTestFileList / kDefaultPattern:
+// https://github.com/nodejs/node/blob/main/lib/internal/test_runner/runner.js
+// Split into two globs: Bun.Glob mis-parses `test/**/*` nested in a brace group.
 const kDefaultPatterns = ["**/{test,test-*,*[._-]test}.{js,mjs,cjs}", "**/test/**/*.{js,mjs,cjs}"];
 const kGlobMagic = /[*?[\]{}!]/;
 function hasNoGlobMagic(pattern) {
@@ -317,11 +314,9 @@ async function main() {
 
   debug("run options: %o", runOptions);
 
-  // Resolve every reporter before run() spawns anything: node awaits
-  // setupTestReporters() during bootstrap, and resolving after runFiles has
-  // already spawned means a failed import process.exit(7)s with an orphaned
-  // child. Also closes the truncated-stream race (the first pipe starts the
-  // Readable flowing while a later custom reporter's import() is still pending).
+  // Resolve every reporter before run() spawns anything (node awaits
+  // setupTestReporters() at bootstrap): a later failed import would orphan a
+  // child, and an earlier pipe would start the Readable flowing too soon.
   let resolved: unknown[];
   try {
     resolved = await Promise.all(reporterNames.map(resolveReporter));
@@ -339,9 +334,8 @@ async function main() {
   runOptions.signal = abortController.signal;
 
   // node's harness installs process signal handlers only under --test
-  // (isTestRunner); the runner owns them here so a library run() never
-  // suppresses default Ctrl+C termination. Routed through the run's abort
-  // signal, which kills the current child and stops spawning.
+  // (isTestRunner), so the CLI driver — not library run() — owns them here.
+  // https://github.com/nodejs/node/blob/main/lib/internal/test_runner/harness.js
   function onRunnerSignal() {
     abortController.abort();
     if (runOptions.isolation === "none") {

@@ -911,10 +911,9 @@ impl JunitReporter {
     }
 }
 
-/// Drain the event loop after a file's tests finish, like a node process
-/// would before exiting: on for node:test run() children, or opt-in via
-/// `BUN_TEST_DRAIN_EVENT_LOOP=1` (the vendored-node-test runner sets it) so
-/// mustCall()-style exit checks see completed async work.
+/// Drain the event loop after a file's tests finish, like a node process would
+/// before exiting: on for node:test run() children, or via BUN_TEST_DRAIN_EVENT_LOOP=1
+/// (vendored-node-test sets it) so mustCall()-style exit checks see completed work.
 fn should_drain_event_loop() -> bool {
     is_node_test_child() || env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }

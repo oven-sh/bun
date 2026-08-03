@@ -181,6 +181,34 @@ import { readableStreamFromArray } from "harness";
   });
 }
 
+{
+  // https://github.com/WebKit/WebKit/blob/443e796d1538654c34f2690e39600c70c8052b63/LayoutTests/imported/w3c/web-platform-tests/encoding/streams/decode-bad-chunks.any.js
+  // https://encoding.spec.whatwg.org/#decode-and-enqueue-a-chunk step 1: the chunk is converted
+  // to a non-optional BufferSource, so every non-BufferSource (including `undefined`) must error
+  // the stream. `undefined` is the interesting case: TextDecoder.decode's optional first argument
+  // would otherwise treat it as an empty buffer and let the write resolve.
+  const badChunks = [
+    { name: "undefined", value: undefined },
+    { name: "null", value: null },
+    { name: "numeric", value: 3.14 },
+    { name: "object, not BufferSource", value: {} },
+    { name: "array", value: [65] },
+  ];
+
+  for (const chunk of badChunks) {
+    test(`chunk of type ${chunk.name} should error the stream`, async () => {
+      const tds = new TextDecoderStream();
+      const reader = tds.readable.getReader();
+      const writer = tds.writable.getWriter();
+      const writePromise = writer.write(chunk.value);
+      const readPromise = reader.read();
+      readPromise.catch(() => {}); // handled below; avoid an unhandled-rejection flag while awaiting writePromise
+      await expect(writePromise).rejects.toBeInstanceOf(TypeError);
+      await expect(readPromise).rejects.toBeInstanceOf(TypeError);
+    });
+  }
+}
+
 // Web IDL: `new TextDecoderStream(label, options)` treats undefined/null options as {}.
 test("TextDecoderStream accepts undefined and null options", () => {
   for (const options of [undefined, null]) {

@@ -318,6 +318,17 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("can recover the value from a weak ref", async () => {
       await checkSameOutput("test_napi_ref", []);
     });
+    it("napi_reference_ref returns 0 after the referent is collected", async () => {
+      const output = await checkSameOutput("test_reference_ref_after_collect_driver", []);
+      expect(output).toContain("get_reference_value is undefined=1 reference_ref count=0");
+      expect(output).toContain("second reference_ref count=0");
+    });
+    it("napi_get_buffer_info rejects a bare ArrayBuffer", async () => {
+      const output = await checkSameOutput("test_napi_get_buffer_info_gate", []);
+      expect(output).toContain("get_buffer_info(ArrayBuffer): status=1 pending=0");
+      expect(output).toContain("get_buffer_info(Uint8Array): status=0 pending=0");
+      expect(output).toContain("get_buffer_info(DataView): status=0 pending=0");
+    });
     it("allows creating a handle scope in the finalizer", async () => {
       await checkSameOutput("test_napi_handle_scope_finalizer", []);
     });

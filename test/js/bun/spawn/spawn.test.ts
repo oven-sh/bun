@@ -703,6 +703,43 @@ describe("spawn unref and kill should not hang", () => {
     await proc.exited;
     expect().pass();
   });
+
+  it.skipIf(isWindows)("kill after exit is a no-op on the waiter thread path", async () => {
+    const script = /* js */ `
+      for (let i = 0; i < 5; i++) {
+        const proc = Bun.spawn({
+          cmd: [process.execPath, "-e", "process.exit(42)"],
+          stdout: "ignore",
+          stderr: "ignore",
+          stdin: "ignore",
+        });
+        const code = await proc.exited;
+        for (let j = 0; j < 5; j++) {
+          proc.kill();
+          proc.kill(9);
+        }
+        if (code !== 42 || proc.exitCode !== 42 || proc.signalCode !== null) {
+          throw new Error("unexpected: " + JSON.stringify({ code, exitCode: proc.exitCode, signalCode: proc.signalCode }));
+        }
+      }
+      console.log("done");
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        BUN_GARBAGE_COLLECTOR_LEVEL: "1",
+        BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("done");
+    expect(exitCode).toBe(0);
+  });
 });
 
 async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited"]) {

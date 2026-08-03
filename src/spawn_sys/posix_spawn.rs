@@ -793,6 +793,35 @@ pub mod posix_spawn {
         }
     }
 
+    /// Non-blocking check for whether `pid` has terminated, WITHOUT reaping
+    /// it (`WNOWAIT`). The child stays a zombie — its pid cannot be recycled —
+    /// until the caller reaps it with [`wait4`].
+    #[cfg(unix)]
+    pub fn poll_exited_no_reap(pid: pid_t) -> sys::Result<bool> {
+        loop {
+            let mut info: libc::siginfo_t = bun_core::ffi::zeroed();
+            // SAFETY: `info` is a valid out-pointer for the call's duration.
+            let rc = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    libc::id_t::try_from(pid).expect("int cast"),
+                    &raw mut info,
+                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                )
+            };
+            match errno(rc) {
+                // SAFETY: `waitid` succeeded; the union arm read by `si_pid()`
+                // is the one it populated (or the zeroed init when no child
+                // was waitable under `WNOHANG`).
+                Errno::SUCCESS => return sys::Result::Ok(unsafe { info.si_pid() } == pid),
+                Errno::INTR => continue,
+                e => {
+                    return sys::Result::Err(sys::Error::from_code_int(e.0, SYSCALL_WAITPID));
+                }
+            }
+        }
+    }
+
     // Higher-tier re-exports (`Process`/`Status`/`spawn_process`/`sync`/
     // `Windows*`) live in `bun_spawn::posix_spawn::bun_spawn`, which augments
     // this module — they need event-loop types this `-sys` crate cannot name.

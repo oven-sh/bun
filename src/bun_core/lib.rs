@@ -2541,6 +2541,10 @@ pub mod ffi {
     // SAFETY: integer-array struct on the gated targets; all-zero is valid.
     #[cfg(all(unix, not(target_vendor = "apple")))]
     unsafe impl Zeroable for libc::sigset_t {}
+    // SAFETY: C POD (integer/union-of-POD fields only); zero-init before
+    // `waitid` is the documented usage.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::siginfo_t {}
     // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::utsname {}

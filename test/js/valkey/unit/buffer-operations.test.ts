@@ -206,22 +206,28 @@ describe("Valkey: Blob argument serialization", () => {
     try {
       await client.connect();
 
-      const msg = /file- or S3-backed Blob/;
+      const expected = expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringMatching(/file- or S3-backed Blob/),
+      });
       // value position
-      expect(() => client.set("file", Bun.file(fpath))).toThrow(msg);
+      expect(() => client.set("file", Bun.file(fpath))).toThrow(expected);
       // key position
-      expect(() => client.set(Bun.file(fpath), "as-key")).toThrow(msg);
+      expect(() => client.set(Bun.file(fpath), "as-key")).toThrow(expected);
       // single-part Blob around a file-backed Blob shares the file store
-      expect(() => client.set("wrapped", new Blob([Bun.file(fpath)]))).toThrow(msg);
+      expect(() => client.set("wrapped", new Blob([Bun.file(fpath)]))).toThrow(expected);
       // reading the file once does not make the Blob itself in-memory
       const bf = Bun.file(fpath);
       await bf.text();
-      expect(() => client.set("fileRead", bf)).toThrow(msg);
+      expect(() => client.set("fileRead", bf)).toThrow(expected);
       // nonexistent path is still a file-backed Blob
-      expect(() => client.set("missing", Bun.file(join(String(dir), "no.txt")))).toThrow(msg);
+      expect(() => client.set("missing", Bun.file(join(String(dir), "no.txt")))).toThrow(expected);
+      // S3-backed Blob (no network: the throw happens in argument conversion)
+      const s3 = new Bun.S3Client({ accessKeyId: "x", secretAccessKey: "y", bucket: "b", endpoint: "http://127.0.0.1:1" });
+      expect(() => client.set("s3", s3.file("some-key"))).toThrow(expected);
       // other prototype methods route through the same converter
-      expect(() => client.getBuffer(Bun.file(fpath))).toThrow(msg);
-      expect(() => client.append("k", Bun.file(fpath))).toThrow(msg);
+      expect(() => client.getBuffer(Bun.file(fpath))).toThrow(expected);
+      expect(() => client.append("k", Bun.file(fpath))).toThrow(expected);
 
       // nothing above should have produced a frame
       await client.set("after", "ok");

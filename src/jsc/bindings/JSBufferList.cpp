@@ -456,15 +456,6 @@ JSC::EncodedJSValue JSBufferListConstructor::construct(JSC::JSGlobalObject* lexi
     return JSC::JSValue::encode(bufferList);
 }
 
-void JSBufferListConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSBufferListPrototype* prototype)
-{
-}
-
 const ClassInfo JSBufferListConstructor::s_info = { "BufferList"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferListConstructor) };
-
-JSValue getBufferList(Zig::GlobalObject* globalObject)
-{
-    return static_cast<Zig::GlobalObject*>(globalObject)->JSBufferList();
-}
 
 } // namespace Zig

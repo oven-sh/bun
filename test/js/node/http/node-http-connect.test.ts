@@ -782,3 +782,41 @@ describe("Should be compatible with node.js", () => {
     expect(await process.exited).toBe(0);
   });
 });
+
+// Windows: after FIN on a CONNECT-tunnel socket, AFD's level-triggered
+// UV_DISCONNECT used to re-derive EOF and bounce the poll between 0 and
+// WRITABLE forever (pins the poll_cb allow_half_open arm).
+test("CONNECT: process exits after the tunnel socket is re-emitted as a connection and the server closes", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const http = require("node:http");
+       let endCount = 0;
+       const server = http.createServer(() => { throw new Error("request listener should not run"); });
+       server.on("connect", (req, socket) => {
+         socket.on("end", () => endCount++);
+         socket.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+         server.emit("connection", socket);
+         server.close();
+       });
+       server.listen(0, () => {
+         http.request({ port: server.address().port, method: "CONNECT" }).end();
+       });
+       process.on("exit", () => {
+         if (endCount !== 1) throw new Error("end fired " + endCount + " times (expected 1)");
+         console.log("ok");
+       });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "ok\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});

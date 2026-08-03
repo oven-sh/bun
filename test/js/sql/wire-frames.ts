@@ -88,6 +88,22 @@ export function pgAuthenticationCleartextPassword(): Buffer {
   return buf;
 }
 
+// PostgreSQL FE/BE protocol §55.7 AuthenticationMD5Password: Byte1('R') Int32(12) Int32(5) Byte4(salt)
+export function pgAuthenticationMD5Password(salt: Buffer = Buffer.alloc(4, 0x61)): Buffer {
+  const buf = Buffer.alloc(13);
+  buf.write("R", 0);
+  buf.writeInt32BE(12, 1);
+  buf.writeInt32BE(5, 5);
+  salt.copy(buf, 9);
+  return buf;
+}
+
+// PostgreSQL FE/BE protocol §55.7 AuthenticationSASL: Byte1('R') Int32(len) Int32(10) (String mechanism)* Byte1(0)
+export function pgAuthenticationSASL(mechanisms: string[] = ["SCRAM-SHA-256"]): Buffer {
+  const body = Buffer.concat([pgInt32(10), ...mechanisms.map(m => pgCString(m)), Buffer.from([0])]);
+  return pgRaw("R", body);
+}
+
 // PostgreSQL FE/BE protocol §55.7 ParameterStatus: Byte1('S') Int32(len) String(name) String(value)
 export function pgParameterStatus(name: string, value: string): Buffer {
   return pgRaw("S", Buffer.concat([pgCString(name), pgCString(value)]));
@@ -120,6 +136,16 @@ export function pgErrorResponse(fields: { S: string; C: string; M: string; [k: s
   }
   buf[o] = 0;
   return buf;
+}
+
+// PostgreSQL FE/BE protocol §55.7 ParameterStatus: Byte1('S') Int32(len) String(name) String(value)
+export function pgParameterStatus(name: string, value: string): Buffer {
+  return pgRaw("S", Buffer.concat([pgCString(name), pgCString(value)]));
+}
+
+// PostgreSQL FE/BE protocol §55.7 NotificationResponse: Byte1('A') Int32(len) Int32(pid) String(channel) String(payload)
+export function pgNotificationResponse(pid: number, channel: string, payload: string): Buffer {
+  return pgRaw("A", Buffer.concat([pgInt32(pid), pgCString(channel), pgCString(payload)]));
 }
 
 // PostgreSQL FE/BE protocol §55.7 generic backend message: Byte1(type) Int32(len = 4 + body.length) body

@@ -74,10 +74,8 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     }
 
     let arg = JSArgument::from_js_maybe_file(global, value, false)?;
-    // A file- or S3-backed Blob has an empty `shared_view()` (bytes live
-    // off-heap), so letting it through would serialize as the empty string
-    // on the wire. Reject it up front like ServerWebSocket / MySQL do.
     if let Some(JSArgument::Blob(ref blob)) = arg {
+        // `shared_view()` is empty for file/S3 stores, which would serialize as "".
         if blob.needs_to_read_file() || blob.is_s3() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "RedisClient cannot serialize a file- or S3-backed Blob; pass await blob.bytes() instead"

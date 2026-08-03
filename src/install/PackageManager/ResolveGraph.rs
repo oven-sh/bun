@@ -93,6 +93,9 @@ struct NodeCursor {
     children_start: usize,
     edges: Vec<DependencyID>,
     index: usize,
+    /// Names of the edges not yet decided, so a child placed under this
+    /// node knows in O(1) which names could still gain a slot above it.
+    remaining_names: HashMap<PackageNameHash, u32>,
 }
 
 /// What a blocked edge is waiting on. Cached so a retry checks the wait
@@ -634,7 +637,7 @@ impl GraphResolver {
         match self.decide_edge(this, node, dep_id) {
             Ok(EdgeStep::Done) => {
                 self.blocked = None;
-                self.current.as_mut().unwrap().index += 1;
+                self.advance_cursor(this);
                 Ok(Step::Progress)
             }
             Ok(EdgeStep::Blocked(target)) => {
@@ -647,7 +650,7 @@ impl GraphResolver {
                 // is still decided.
                 log_dependency_error(this, dep_id, err);
                 self.blocked = None;
-                self.current.as_mut().unwrap().index += 1;
+                self.advance_cursor(this);
                 Ok(Step::Progress)
             }
         }
@@ -698,15 +701,7 @@ impl GraphResolver {
             let sorter = DepSorter {
                 lockfile: &this.lockfile,
             };
-            edges.sort_by(|&a, &b| {
-                if sorter.is_less_than(a, b) {
-                    core::cmp::Ordering::Less
-                } else if sorter.is_less_than(b, a) {
-                    core::cmp::Ordering::Greater
-                } else {
-                    core::cmp::Ordering::Equal
-                }
-            });
+            edges.sort_by(|&a, &b| sorter.cmp(a, b));
         }
 
         if self.pass == Pass::Decide && node == ROOT_NODE {
@@ -720,9 +715,19 @@ impl GraphResolver {
             self.prefetch_node_deps(this, node, &edges);
         }
 
+        let mut remaining_names: HashMap<PackageNameHash, u32> = HashMap::default();
+        {
+            let dependencies = this.lockfile.buffers.dependencies.as_slice();
+            for &dep_id in &edges {
+                *remaining_names
+                    .entry(dependencies[dep_id as usize].name_hash)
+                    .or_default() += 1;
+            }
+        }
         self.current = Some(NodeCursor {
             node,
             children_start: self.nodes.len(),
+            remaining_names,
             edges,
             index: 0,
         });
@@ -854,20 +859,20 @@ impl GraphResolver {
         if self.ancestor_has_package(at, package_id) {
             return Ok(());
         }
-        let id = self.push_node(this, at, package_id);
+        let id = self.push_node(at, package_id);
         self.nodes[at as usize].slots.insert(folder_name_hash, id);
         // Start the new node's manifest fetches now, ahead of the cursor
         // reaching it, so the whole frontier fetches in parallel. Only names
         // the owning node has yet to decide can still gain a slot above the
         // child; those wait for the owner to finish (see `step`).
         if self.pass == Pass::Decide {
-            let pending = self.pending_owner_names(this);
             let edges: Vec<DependencyID> = self
                 .decide_edges_of(this, id)
                 .into_iter()
                 .filter(|&dep_id| {
-                    !pending
-                        .contains(&this.lockfile.buffers.dependencies[dep_id as usize].name_hash)
+                    !self.owner_has_pending_name(
+                        this.lockfile.buffers.dependencies[dep_id as usize].name_hash,
+                    )
                 })
                 .collect();
             self.prefetch_node_deps(this, id, &edges);
@@ -875,26 +880,32 @@ impl GraphResolver {
         Ok(())
     }
 
-    /// Names of the edges the owning (current) node has yet to decide. Any
-    /// of them can still place a slot the current placement's children
-    /// would walk up to, so their prefetch waits for the owner to finish.
-    fn pending_owner_names(&self, this: &PackageManager) -> Vec<PackageNameHash> {
-        let Some(cursor) = &self.current else {
-            return Vec::new();
-        };
-        let dependencies = this.lockfile.buffers.dependencies.as_slice();
-        cursor.edges[cursor.index..]
-            .iter()
-            .map(|&dep_id| dependencies[dep_id as usize].name_hash)
-            .collect()
+    /// Move the cursor past the edge just decided, dropping its name from
+    /// the set that can still gain a slot above the owner's children.
+    fn advance_cursor(&mut self, this: &PackageManager) {
+        let cursor = self.current.as_mut().unwrap();
+        let dep_id = cursor.edges[cursor.index];
+        let name_hash = this.lockfile.buffers.dependencies[dep_id as usize].name_hash;
+        if let Some(count) = cursor.remaining_names.get_mut(&name_hash) {
+            *count -= 1;
+            if *count == 0 {
+                cursor.remaining_names.remove(&name_hash);
+            }
+        }
+        cursor.index += 1;
     }
 
-    fn push_node(
-        &mut self,
-        this: &mut PackageManager,
-        parent: NodeId,
-        package_id: PackageID,
-    ) -> NodeId {
+    /// Whether the owning (current) node has yet to decide an edge with this
+    /// name. Such a name can still place a slot the current placement's
+    /// children would walk up to, so their prefetch waits for the owner.
+    fn owner_has_pending_name(&self, name_hash: PackageNameHash) -> bool {
+        match &self.current {
+            Some(cursor) => cursor.remaining_names.get(&name_hash).is_some(),
+            None => false,
+        }
+    }
+
+    fn push_node(&mut self, parent: NodeId, package_id: PackageID) -> NodeId {
         debug_assert!(
             !self.ancestor_has_package(parent, package_id),
             "cycle: package placed under itself"
@@ -909,7 +920,6 @@ impl GraphResolver {
         if self.pass == Pass::PlaceBound {
             self.queue.push_back(id);
         }
-        let _ = this;
         id
     }
 
@@ -940,18 +950,13 @@ impl GraphResolver {
     /// name is taken at the owner's own scope — still needs its dependency
     /// list decided. Give it a node with no slot (nothing can walk to it by
     /// name); the hoister reports the conflict itself later.
-    fn place_detached_if_unplaced(
-        &mut self,
-        this: &mut PackageManager,
-        parent: NodeId,
-        package_id: PackageID,
-    ) {
+    fn place_detached_if_unplaced(&mut self, parent: NodeId, package_id: PackageID) {
         if self.package_first_node.get(&package_id).is_some()
             || self.ancestor_has_package(parent, package_id)
         {
             return;
         }
-        self.push_node(this, parent, package_id);
+        self.push_node(parent, package_id);
     }
 
     /// Place a package for an edge given the walk's result: dedupe onto a
@@ -981,60 +986,10 @@ impl GraphResolver {
                     // The name is taken at every scope down to the owner: no
                     // slot for this package. Its dependency list is still
                     // walked; the hoister reports the conflict.
-                    self.place_detached_if_unplaced(this, at, package_id);
+                    self.place_detached_if_unplaced(at, package_id);
                     return Ok(());
                 }
                 self.place(this, at, folder_name_hash, package_id)?;
-                Ok(())
-            }
-        }
-    }
-
-    /// Place a peer's own package: never nested below the owner; shared as
-    /// high as the walk allows.
-    fn place_peer_by_walk(
-        &mut self,
-        this: &mut PackageManager,
-        walk: Walk,
-        owner: NodeId,
-        folder_name_hash: PackageNameHash,
-        package_id: PackageID,
-    ) -> Result<(), crate::Error> {
-        match walk {
-            Walk::Bound(_) => Ok(()),
-            Walk::Free { candidate } => {
-                self.place(this, candidate, folder_name_hash, package_id)?;
-                Ok(())
-            }
-            Walk::Conflict {
-                candidate: Some(at),
-                ..
-            } => {
-                if self.nodes[at as usize]
-                    .slots
-                    .get(&folder_name_hash)
-                    .is_some()
-                {
-                    self.place_detached_if_unplaced(this, at, package_id);
-                    return Ok(());
-                }
-                self.place(this, at, folder_name_hash, package_id)?;
-                Ok(())
-            }
-            Walk::Conflict {
-                candidate: None, ..
-            } => {
-                // Conflict directly at the parent scope; place under the
-                // owner so the runtime finds this copy first.
-                if self.nodes[owner as usize]
-                    .slots
-                    .get(&folder_name_hash)
-                    .is_some()
-                {
-                    self.place_detached_if_unplaced(this, owner, package_id);
-                    return Ok(());
-                }
-                self.place(this, owner, folder_name_hash, package_id)?;
                 Ok(())
             }
         }
@@ -1105,11 +1060,7 @@ impl GraphResolver {
                     package_id: resolution,
                 },
             );
-            if is_peer {
-                self.place_peer_by_walk(this, walk, node, dependency.name_hash, resolution)?;
-            } else {
-                self.place_by_walk(this, walk, node, dependency.name_hash, resolution)?;
-            }
+            self.place_by_walk(this, walk, node, dependency.name_hash, resolution)?;
             return Ok(EdgeStep::Done);
         }
 
@@ -1208,7 +1159,7 @@ impl GraphResolver {
                 )? {
                     NpmResolve::Package(package_id) => {
                         this.assign_resolution(dep_id, package_id);
-                        self.place_detached_if_unplaced(this, node, package_id);
+                        self.place_detached_if_unplaced(node, package_id);
                         Ok(EdgeStep::Done)
                     }
                     NpmResolve::Blocked(target) => Ok(EdgeStep::Blocked(target)),
@@ -1238,7 +1189,7 @@ impl GraphResolver {
                 )? {
                     NpmResolve::Package(package_id) => {
                         this.assign_resolution(dep_id, package_id);
-                        self.place_resolved(this, walk, node, dep_id, is_peer, package_id)
+                        self.place_resolved(this, walk, node, dep_id, package_id)
                     }
                     NpmResolve::Blocked(target) => Ok(EdgeStep::Blocked(target)),
                     NpmResolve::Unresolved => Ok(EdgeStep::Done),
@@ -1253,17 +1204,12 @@ impl GraphResolver {
         walk: Walk,
         node: NodeId,
         dep_id: DependencyID,
-        is_peer: bool,
         package_id: PackageID,
     ) -> Result<EdgeStep, crate::Error> {
         // `assign_resolution` back-fills empty git/tarball dependency names,
         // so the folder name is read from the buffer after binding.
         let folder_name_hash = this.lockfile.buffers.dependencies[dep_id as usize].name_hash;
-        if is_peer {
-            self.place_peer_by_walk(this, walk, node, folder_name_hash, package_id)?;
-        } else {
-            self.place_by_walk(this, walk, node, folder_name_hash, package_id)?;
-        }
+        self.place_by_walk(this, walk, node, folder_name_hash, package_id)?;
         Ok(EdgeStep::Done)
     }
 
@@ -1502,7 +1448,7 @@ impl GraphResolver {
                 return Ok(EdgeStep::Done);
             }
         }
-        self.place_resolved(this, walk, node, dep_id, is_peer, package_id)
+        self.place_resolved(this, walk, node, dep_id, package_id)
     }
 
     fn decide_download(
@@ -1584,7 +1530,7 @@ impl GraphResolver {
             dependency.name_hash,
             &EdgeMatch::Exact { package_id },
         );
-        self.place_resolved(this, walk, node, dep_id, is_peer, package_id)
+        self.place_resolved(this, walk, node, dep_id, package_id)
     }
 }
 
@@ -1962,7 +1908,10 @@ fn load_manifest<'a>(
     if cached.usable {
         return Ok(ManifestState::Ready(cached.manifest.expect("usable")));
     }
-    let loaded_manifest = cached.manifest.cloned();
+    // A stale copy seeds the fetch; keep only its address so the clone
+    // happens after the dedupe check inside `fire_manifest_fetch`, on the
+    // path that actually fires.
+    let stale: Option<*const Npm::PackageManifest> = cached.manifest.map(std::ptr::from_ref);
 
     if let Some(&failure) = this.failed_manifests.get(&real_name_hash) {
         return Ok(match failure {
@@ -1980,7 +1929,9 @@ fn load_manifest<'a>(
         this,
         &name_str,
         real_name_hash,
-        loaded_manifest,
+        // SAFETY: `stale` points into `this.manifests`, which the fetch
+        // path does not mutate before this copy is taken.
+        move || stale.map(|manifest| unsafe { (*manifest).clone() }),
         dependency.behavior.is_required(),
         dependency.behavior.is_optional(),
     )?;
@@ -2002,14 +1953,18 @@ fn fire_manifest_fetch(
     this: &mut PackageManager,
     name: &[u8],
     name_hash: PackageNameHash,
-    loaded_manifest: Option<Npm::PackageManifest>,
+    // Produces the cached manifest to seed the fetch. Called only when the
+    // fetch actually fires, so a dedupe hit never pays for the manifest copy.
+    seed_manifest: impl FnOnce() -> Option<Npm::PackageManifest>,
     is_required: bool,
     is_optional: bool,
 ) -> Result<(), crate::Error> {
     let task_id = Task::Id::for_manifest(name);
+    // Dedupes an in-flight fetch and OR-upgrades its required bit.
     if this.has_created_network_task(task_id, is_required) {
         return Ok(());
     }
+    let loaded_manifest = seed_manifest();
 
     if PackageManager::verbose_install() {
         bun_core::pretty_errorln!(
@@ -2075,13 +2030,15 @@ fn prefetch_manifest(
     if cached.usable {
         return Ok(());
     }
-    let loaded_manifest = cached.manifest.cloned();
+    let stale: Option<*const Npm::PackageManifest> = cached.manifest.map(std::ptr::from_ref);
 
     fire_manifest_fetch(
         this,
         &name_str,
         real_name_hash,
-        loaded_manifest,
+        // SAFETY: `stale` points into `this.manifests`, which the fetch
+        // path does not mutate before this copy is taken.
+        move || stale.map(|manifest| unsafe { (*manifest).clone() }),
         dependency.behavior.is_required(),
         dependency.behavior.is_optional(),
     )
@@ -2109,15 +2066,24 @@ fn tagged_version(
     // The tag string lives in the lockfile's buffer; copy it out before the
     // manifest lookup borrows the manager.
     let tag: Vec<u8> = this.lockfile.str(&version.dist_tag().tag).to_vec();
+    // Same filter the resolver applies (`minimumReleaseAge` / excludes), so
+    // the peer is compared against the version that would be installed.
+    let min_age = this.options.minimum_release_age_ms;
+    let excludes = this.options.minimum_release_age_excludes;
     let manifest = match load_manifest(this, real_name, real_name_hash, version, dependency)? {
         ManifestState::Ready(manifest) => manifest,
         ManifestState::Pending => return Ok(TaggedVersion::Pending),
         ManifestState::Failed(_) => return Ok(TaggedVersion::Unknown),
     };
-    Ok(match manifest.find_by_dist_tag(&tag) {
-        Some(found) => TaggedVersion::Version(found.version),
-        None => TaggedVersion::Unknown,
-    })
+    Ok(
+        match manifest
+            .find_by_dist_tag_with_filter(&tag, min_age, excludes)
+            .unwrap()
+        {
+            Some(found) => TaggedVersion::Version(found.version),
+            None => TaggedVersion::Unknown,
+        },
+    )
 }
 
 enum NpmFind<'a> {
@@ -2844,18 +2810,8 @@ fn log_resolved(
     result: &ResolvedPackageResult,
     version: &dependency::Version,
 ) {
-    if result.is_first_time && PackageManager::verbose_install() {
-        let label = this.lockfile.str(&version.literal);
-        bun_core::pretty_errorln!(
-            "   -> \"{}\": \"{}\" -> {}@{}",
-            bstr::BStr::new(this.lockfile.str(&result.package.name)),
-            bstr::BStr::new(label),
-            bstr::BStr::new(this.lockfile.str(&result.package.name)),
-            result.package.resolution.fmt(
-                this.lockfile.buffers.string_bytes.as_slice(),
-                bun_core::fmt::PathSep::Auto
-            ),
-        );
+    if result.is_first_time {
+        log_resolved_package(this, result.package.meta.id, version);
     }
 }
 

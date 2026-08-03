@@ -7,9 +7,13 @@
 // produce, and every scenario also runs under several release orders,
 // asserting the lockfile is byte-identical across all of them.
 import { spawn } from "bun";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+
+// Every scenario runs several full installs against a debug build; match
+// the ceiling the other install suites use.
+setDefaultTimeout(1000 * 60 * 5);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Registry model
@@ -252,10 +256,7 @@ async function resolveUnderOrders(
 const project = (deps: Record<string, unknown>) =>
   ({ "package.json": JSON.stringify({ name: "root", version: "0.0.0", ...deps }) }) as Record<string, string>;
 
-// Every scenario runs several full installs (one per release order), so the
-// default per-test budget does not fit; give each an explicit ceiling.
-const SCENARIO_TIMEOUT = 60_000;
-const scenario = (name: string, fn: () => Promise<void>) => test(name, fn, SCENARIO_TIMEOUT);
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // Peers
@@ -265,7 +266,7 @@ describe.concurrent("peers", () => {
   // Ten packages each pin a-dep exactly; one peers `a-dep ^1.0.2`. The best
   // satisfying version wins the top level and the pins nest — which manifest
   // landed first must not decide it.
-  scenario("a ranged peer takes the best version at top level; exact pins nest", async () => {
+  test("a ranged peer takes the best version at top level; exact pins nest", async () => {
     const registry: RegistrySpec = {
       "a-dep": pkg(Array.from({ length: 10 }, (_, i) => `1.0.${i + 1}`)),
       "peer-a-dep": pkg({ "1.0.0": { peerDependencies: { "a-dep": "^1.0.2" } } }),
@@ -295,7 +296,7 @@ describe.concurrent("peers", () => {
 
   // A peer already provided in the parent scope binds to that copy: no second
   // install, no warning.
-  scenario("a peer satisfied by the parent scope binds without another copy or a warning", async () => {
+  test("a peer satisfied by the parent scope binds without another copy or a warning", async () => {
     const registry: RegistrySpec = {
       provider: pkg(["1.2.0", "1.9.0"]),
       plugin: pkg({ "1.0.0": { peerDependencies: { provider: "^1.0.0" } } }),
@@ -310,7 +311,7 @@ describe.concurrent("peers", () => {
 
   // A peer whose parent scope holds a same-named package that does not
   // satisfy binds to it anyway, with a warning — never a second copy.
-  scenario("a peer conflicting with the parent scope binds to it with a warning", async () => {
+  test("a peer conflicting with the parent scope binds to it with a warning", async () => {
     const registry: RegistrySpec = {
       react: pkg(["17.0.2", "18.2.0"]),
       widget: pkg({ "1.0.0": { peerDependencies: { react: ">=18" } } }),
@@ -326,7 +327,7 @@ describe.concurrent("peers", () => {
 
   // With no provider anywhere, a required peer is auto-installed at the
   // manifest's best satisfying version and shared at the top level.
-  scenario("a peer with no provider is auto-installed at the top level", async () => {
+  test("a peer with no provider is auto-installed at the top level", async () => {
     const registry: RegistrySpec = {
       provider: pkg(["1.0.0", "2.3.4", "3.0.0"]),
       plugin: pkg({ "1.0.0": { peerDependencies: { provider: "^2.0.0" } } }),
@@ -338,7 +339,7 @@ describe.concurrent("peers", () => {
 
   // A peer that no published version satisfies stays quietly unresolved: the
   // install succeeds and nothing is installed for it.
-  scenario("a peer no version satisfies is left unresolved without failing", async () => {
+  test("a peer no version satisfies is left unresolved without failing", async () => {
     const registry: RegistrySpec = {
       provider: pkg(["1.0.0", "1.1.0"]),
       plugin: pkg({ "1.0.0": { peerDependencies: { provider: ">=9.0.0" } } }),
@@ -349,7 +350,7 @@ describe.concurrent("peers", () => {
 
   // Several packages peer the same provider that the root already declares:
   // all bind to the one root copy — no warnings, no extra installs.
-  scenario("many peers of one provided package all bind to the single copy", async () => {
+  test("many peers of one provided package all bind to the single copy", async () => {
     const registry: RegistrySpec = {
       provider: pkg(["4.0.0"]),
       p1: pkg({ "1.0.0": { peerDependencies: { provider: "^4" } } }),
@@ -371,7 +372,7 @@ describe.concurrent("peers", () => {
 
   // A peer chain: A peers B, B peers C. The root provides only C, so B is
   // auto-installed and B's own peer C binds to the root's copy.
-  scenario("a peer's own peers resolve against the scope it was placed in", async () => {
+  test("a peer's own peers resolve against the scope it was placed in", async () => {
     const registry: RegistrySpec = {
       c: pkg(["1.0.0"]),
       b: pkg({ "2.0.0": { peerDependencies: { c: "^1.0.0" } } }),
@@ -383,7 +384,7 @@ describe.concurrent("peers", () => {
   });
 
   // A dist-tag peer whose parent scope holds the tagged version binds silently.
-  scenario("a dist-tag peer already satisfied by the parent scope does not warn", async () => {
+  test("a dist-tag peer already satisfied by the parent scope does not warn", async () => {
     const registry: RegistrySpec = {
       tool: pkg(["5.0.0", "5.6.2"], { latest: "5.6.2" }),
       user: pkg({ "1.0.0": { peerDependencies: { tool: "latest" } } }),
@@ -398,7 +399,7 @@ describe.concurrent("peers", () => {
 
   // A dist-tag peer whose parent scope holds a different version binds to it
   // with a warning rather than installing the tagged version as a second copy.
-  scenario("a dist-tag peer conflicting with the parent scope warns and binds, not duplicates", async () => {
+  test("a dist-tag peer conflicting with the parent scope warns and binds, not duplicates", async () => {
     const registry: RegistrySpec = {
       tool: pkg(["5.0.0", "5.6.2"], { latest: "5.6.2" }),
       user: pkg({ "1.0.0": { peerDependencies: { tool: "latest" } } }),
@@ -420,7 +421,7 @@ describe.concurrent("hoisting", () => {
   // Two dependencies need different majors of one package. The first in the
   // cursor's fixed order (name-ascending) claims the top level; the second
   // nests under its dependent — a stable rule, never an arrival race.
-  scenario("conflicting ranges: cursor order, not arrival order, decides the top level", async () => {
+  test("conflicting ranges: cursor order, not arrival order, decides the top level", async () => {
     const registry: RegistrySpec = {
       shared: pkg(["3.5.0", "4.2.0"]),
       alpha: pkg({ "1.0.0": { dependencies: { shared: "^3.0.0" } } }),
@@ -440,7 +441,7 @@ describe.concurrent("hoisting", () => {
   });
 
   // A diamond: both sides accept the same version, so one copy is shared.
-  scenario("a diamond whose ranges overlap shares one copy", async () => {
+  test("a diamond whose ranges overlap shares one copy", async () => {
     const registry: RegistrySpec = {
       shared: pkg(["1.2.0", "1.9.0", "2.0.0"]),
       left: pkg({ "1.0.0": { dependencies: { shared: "^1.2.0" } } }),
@@ -457,7 +458,7 @@ describe.concurrent("hoisting", () => {
   // dependency conflicting with the root's copy then nests at the highest
   // free scope below the conflict — inner's own node_modules — matching the
   // npm/yarn layout.
-  scenario("a deep conflict nests at the highest free scope below it", async () => {
+  test("a deep conflict nests at the highest free scope below it", async () => {
     const registry: RegistrySpec = {
       shared: pkg(["1.0.0", "2.0.0"]),
       inner: pkg({ "1.0.0": { dependencies: { shared: "^2.0.0" } } }),
@@ -477,7 +478,7 @@ describe.concurrent("hoisting", () => {
 
   // An exact edge and a range edge that its version satisfies collapse onto
   // one package.
-  scenario("an exact edge and a range it satisfies dedupe to one package", async () => {
+  test("an exact edge and a range it satisfies dedupe to one package", async () => {
     const registry: RegistrySpec = {
       shared: pkg(["1.2.3", "1.2.9"]),
       exact: pkg({ "1.0.0": { dependencies: { shared: "1.2.3" } } }),
@@ -493,7 +494,7 @@ describe.concurrent("hoisting", () => {
 
   // A package that satisfies its own dependency (self-cycle) resolves to a
   // single copy.
-  scenario("a package depending on itself resolves to one copy", async () => {
+  test("a package depending on itself resolves to one copy", async () => {
     const registry: RegistrySpec = {
       loops: pkg({ "1.0.0": { dependencies: { loops: "^1.0.0" } } }),
     };
@@ -528,7 +529,7 @@ describe.concurrent("hoisting", () => {
 
 describe.concurrent("dist-tags and aliases", () => {
   // A dist-tag names one version; a range edge it satisfies shares the copy.
-  scenario("a dist-tag edge and a satisfied range share one copy", async () => {
+  test("a dist-tag edge and a satisfied range share one copy", async () => {
     const registry: RegistrySpec = {
       shared: pkg(["1.0.0", "2.4.0"], { latest: "2.4.0" }),
       "wants-range": pkg({ "1.0.0": { dependencies: { shared: "^2.0.0" } } }),
@@ -543,7 +544,7 @@ describe.concurrent("dist-tags and aliases", () => {
   // A root npm alias occupies node_modules/<alias>. A same-named dependency
   // elsewhere in the tree whose range the alias target's version satisfies
   // binds to the alias — and the shadowed name is never requested.
-  scenario("a root npm alias satisfies a same-named transitive dependency and shadows its name", async () => {
+  test("a root npm alias satisfies a same-named transitive dependency and shadows its name", async () => {
     const registry: RegistrySpec = {
       target: pkg(["0.0.5", "1.0.0"]),
       consumer: pkg({ "1.0.0": { dependencies: { shadowed: ">=0.0.3" } } }),
@@ -560,7 +561,7 @@ describe.concurrent("dist-tags and aliases", () => {
   // When the alias target's version does not satisfy the same-named
   // dependency's range, the dependency resolves its own real package and
   // nests below the alias — it never binds past it.
-  scenario("an npm alias whose version does not satisfy leaves the real package to nest", async () => {
+  test("an npm alias whose version does not satisfy leaves the real package to nest", async () => {
     const registry: RegistrySpec = {
       target: pkg(["0.0.5"]),
       real: pkg(["3.0.0"]),
@@ -586,7 +587,7 @@ describe.concurrent("workspaces", () => {
   // Two workspaces need different majors of a package. Workspaces are decided
   // in name order, so the first claims the top level and the second nests
   // under itself — stable regardless of arrival.
-  scenario("workspaces with conflicting ranges resolve in workspace-name order", async () => {
+  test("workspaces with conflicting ranges resolve in workspace-name order", async () => {
     const registry: RegistrySpec = { shared: pkg(["1.4.0", "2.6.0"]) };
     const files = {
       "package.json": JSON.stringify({ name: "root", version: "0.0.0", workspaces: ["packages/*"] }),
@@ -611,7 +612,7 @@ describe.concurrent("workspaces", () => {
   // A root npm alias satisfies a workspace's same-named plain dependency
   // when its version fits, so only the alias is installed and the shadowed
   // name is never requested.
-  scenario("a root npm alias satisfies a workspace's same-named dependency", async () => {
+  test("a root npm alias satisfies a workspace's same-named dependency", async () => {
     const registry: RegistrySpec = { target: pkg(["0.0.5"]) };
     const files = {
       "package.json": JSON.stringify({
@@ -634,7 +635,7 @@ describe.concurrent("workspaces", () => {
 
   // A `workspace:` reference resolves to the local package even when the
   // registry publishes the same name.
-  scenario("a workspace protocol dependency resolves locally, not from the registry", async () => {
+  test("a workspace protocol dependency resolves locally, not from the registry", async () => {
     const registry: RegistrySpec = { core: pkg(["9.9.9"]) };
     const files = {
       "package.json": JSON.stringify({ name: "root", version: "0.0.0", workspaces: ["packages/*"] }),
@@ -653,7 +654,7 @@ describe.concurrent("workspaces", () => {
 
   // A catalog names one version for the whole workspace: every catalog
   // reference resolves to it, one shared copy.
-  scenario("catalog references across workspaces resolve to one shared version", async () => {
+  test("catalog references across workspaces resolve to one shared version", async () => {
     const registry: RegistrySpec = { shared: pkg(["1.0.0", "1.5.0", "2.0.0"]) };
     const files = {
       "package.json": JSON.stringify({
@@ -680,7 +681,7 @@ describe.concurrent("lockfile fidelity", () => {
   // An in-sync install decides nothing: the lockfile is byte-identical and
   // no changes are reported. Both installs use one registry, as a real
   // reinstall does, so the recorded URLs are directly comparable.
-  scenario("reinstalling with nothing changed leaves the lockfile byte-identical", async () => {
+  test("reinstalling with nothing changed leaves the lockfile byte-identical", async () => {
     const registry: RegistrySpec = {
       shared: pkg(["1.0.0", "1.1.0"]),
       user: pkg({ "1.0.0": { dependencies: { shared: "^1.0.0" } } }),
@@ -718,7 +719,7 @@ describe.concurrent("lockfile fidelity", () => {
   // Adding one dependency reuses the version the lockfile already carries for
   // a name (a present satisfying copy) instead of pulling a newer one — the
   // change's lockfile diff stays scoped to the change.
-  scenario("adding a dependency reuses a satisfying version already in the lockfile", async () => {
+  test("adding a dependency reuses a satisfying version already in the lockfile", async () => {
     const registry: RegistrySpec = {
       shared: pkg(["1.5.0", "1.9.0", "2.0.0"]),
       owner: pkg({ "1.0.0": { dependencies: { shared: "1.5.0" } } }),
@@ -754,7 +755,7 @@ describe.concurrent("lockfile fidelity", () => {
 
 describe.concurrent("optional dependencies", () => {
   // An optional dependency that resolves installs like a normal one.
-  scenario("a resolvable optional dependency installs", async () => {
+  test("a resolvable optional dependency installs", async () => {
     const registry: RegistrySpec = {
       extra: pkg(["1.0.0", "1.1.0"]),
       host: pkg({ "1.0.0": { optionalDependencies: { extra: "^1.0.0" } } }),
@@ -765,7 +766,7 @@ describe.concurrent("optional dependencies", () => {
 
   // A missing optional dependency does not fail the install and does not
   // appear in the tree.
-  scenario("a missing optional dependency is skipped without failing", async () => {
+  test("a missing optional dependency is skipped without failing", async () => {
     const registry: RegistrySpec = {
       host: pkg({ "1.0.0": { optionalDependencies: { missing: "^1.0.0" } } }),
     };
@@ -775,7 +776,7 @@ describe.concurrent("optional dependencies", () => {
 
   // An optional peer that a sibling provides binds to it; nothing extra
   // installs and there is no warning.
-  scenario("an optional peer provided by a sibling binds to it", async () => {
+  test("an optional peer provided by a sibling binds to it", async () => {
     const registry: RegistrySpec = {
       provider: pkg(["2.0.0"]),
       plugin: pkg({
@@ -794,7 +795,7 @@ describe.concurrent("optional dependencies", () => {
   });
 
   // An optional peer nobody provides is not auto-installed.
-  scenario("an unprovided optional peer is not installed", async () => {
+  test("an unprovided optional peer is not installed", async () => {
     const registry: RegistrySpec = {
       provider: pkg(["2.0.0"]),
       plugin: pkg({
@@ -815,7 +816,7 @@ describe.concurrent("optional dependencies", () => {
 
 describe.concurrent("dev dependencies and overrides", () => {
   // Root devDependencies resolve; a dependency's own devDependencies do not.
-  scenario("root devDependencies resolve but transitive ones do not", async () => {
+  test("root devDependencies resolve but transitive ones do not", async () => {
     const registry: RegistrySpec = {
       tool: pkg(["1.0.0"]),
       hidden: pkg(["1.0.0"]),
@@ -831,7 +832,7 @@ describe.concurrent("dev dependencies and overrides", () => {
 
   // An override pins a transitive dependency's version regardless of the
   // range that requested it.
-  scenario("an override pins a transitive dependency version", async () => {
+  test("an override pins a transitive dependency version", async () => {
     const registry: RegistrySpec = {
       shared: pkg(["1.0.0", "1.5.0", "2.0.0"]),
       user: pkg({ "1.0.0": { dependencies: { shared: "^1.0.0" } } }),
@@ -851,7 +852,7 @@ describe.concurrent("dev dependencies and overrides", () => {
 describe.concurrent("shapes", () => {
   // A long dependency chain resolves fully, every link hoisted to the top
   // level since no names collide.
-  scenario("a deep chain with no conflicts hoists every link", async () => {
+  test("a deep chain with no conflicts hoists every link", async () => {
     const registry: RegistrySpec = {
       d: pkg(["1.0.0"]),
       c: pkg({ "1.0.0": { dependencies: { d: "^1.0.0" } } }),
@@ -864,7 +865,7 @@ describe.concurrent("shapes", () => {
 
   // Many packages fan out to one shared dependency with compatible ranges:
   // a single shared copy, chosen deterministically.
-  scenario("a wide fan-in to one compatible dependency shares a single copy", async () => {
+  test("a wide fan-in to one compatible dependency shares a single copy", async () => {
     const registry: RegistrySpec = {
       hub: pkg(["3.0.0", "3.4.0", "3.9.0"]),
       ...Object.fromEntries(
@@ -884,7 +885,7 @@ describe.concurrent("shapes", () => {
 
   // A three-way version split: the first two names each claim a level, the
   // rest nest — decided by the cursor's fixed order, never by arrival.
-  scenario("three conflicting majors resolve in a stable order", async () => {
+  test("three conflicting majors resolve in a stable order", async () => {
     const registry: RegistrySpec = {
       core: pkg(["1.0.0", "2.0.0", "3.0.0"]),
       first: pkg({ "1.0.0": { dependencies: { core: "^1.0.0" } } }),
@@ -907,7 +908,7 @@ describe.concurrent("shapes", () => {
 
   // The root's own dependency claims the top level even when transitive
   // dependencies want a different major.
-  scenario("the root's own version claims the top level over transitive wants", async () => {
+  test("the root's own version claims the top level over transitive wants", async () => {
     const registry: RegistrySpec = {
       shared: pkg(["1.0.0", "2.0.0"]),
       "needs-new": pkg({ "1.0.0": { dependencies: { shared: "^2.0.0" } } }),
@@ -925,7 +926,7 @@ describe.concurrent("shapes", () => {
 
   // A dist-tag at the root and a conflicting range in a dependency: the
   // root's tagged version stays on top, the range nests.
-  scenario("a root dist-tag stays on top while a conflicting range nests", async () => {
+  test("a root dist-tag stays on top while a conflicting range nests", async () => {
     const registry: RegistrySpec = {
       shared: pkg(["1.0.0", "2.5.0"], { latest: "2.5.0", legacy: "1.0.0" }),
       "wants-old": pkg({ "1.0.0": { dependencies: { shared: "^1.0.0" } } }),

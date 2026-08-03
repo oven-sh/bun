@@ -195,6 +195,17 @@ pub(crate) struct DepSorter<'a> {
 }
 
 impl<'a> DepSorter<'a> {
+    /// Total order over dependency ids, for `sort_by` and friends.
+    pub(crate) fn cmp(&self, l: DependencyID, r: DependencyID) -> core::cmp::Ordering {
+        if self.is_less_than(l, r) {
+            core::cmp::Ordering::Less
+        } else if self.is_less_than(r, l) {
+            core::cmp::Ordering::Greater
+        } else {
+            core::cmp::Ordering::Equal
+        }
+    }
+
     pub(crate) fn is_less_than(&self, l: DependencyID, r: DependencyID) -> bool {
         let deps_buf = self.lockfile.buffers.dependencies.as_slice();
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();

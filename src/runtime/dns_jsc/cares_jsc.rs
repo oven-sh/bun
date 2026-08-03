@@ -250,12 +250,12 @@ impl_cares_linked!(
 );
 
 fn cares_list_to_js_array<T: CAresLinked>(
-    head: &mut T,
+    head: &T,
     global_this: &JSGlobalObject,
-    mut to_js: impl FnMut(&mut T, &JSGlobalObject) -> JsResult<JSValue>,
+    mut to_js: impl FnMut(&T, &JSGlobalObject) -> JsResult<JSValue>,
 ) -> JsResult<JSValue> {
     let mut count: usize = 0;
-    let mut p: *mut T = head;
+    let mut p: *const T = head;
     while !p.is_null() {
         // SAFETY: `p` walks the c-ares-owned linked list (CAresLinked invariant).
         unsafe { p = (*p).next() };
@@ -267,8 +267,9 @@ fn cares_list_to_js_array<T: CAresLinked>(
     p = head;
     let mut i: u32 = 0;
     while !p.is_null() {
-        // SAFETY: `p` walks the c-ares-owned linked list (CAresLinked invariant).
-        let node = unsafe { &mut *p };
+        // SAFETY: `p` walks the c-ares-owned linked list (CAresLinked invariant);
+        // shared access only — the `to_js` builders never mutate the reply.
+        let node = unsafe { &*p };
         array.put_index(global_this, i, to_js(node, global_this)?)?;
         p = node.next();
         i += 1;
@@ -287,7 +288,7 @@ pub(crate) fn caa_reply_to_js_response(
 }
 
 fn caa_reply_to_js(
-    this: &mut c_ares::struct_ares_caa_reply,
+    this: &c_ares::struct_ares_caa_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 2);
@@ -315,7 +316,7 @@ pub(crate) fn srv_reply_to_js_response(
 }
 
 fn srv_reply_to_js(
-    this: &mut c_ares::struct_ares_srv_reply,
+    this: &c_ares::struct_ares_srv_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 4);
@@ -349,7 +350,7 @@ pub(crate) fn mx_reply_to_js_response(
 }
 
 fn mx_reply_to_js(
-    this: &mut c_ares::struct_ares_mx_reply,
+    this: &c_ares::struct_ares_mx_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 2);
@@ -376,7 +377,7 @@ pub(crate) fn txt_reply_to_js_response(
 }
 
 fn txt_reply_to_js(
-    this: &mut c_ares::struct_ares_txt_reply,
+    this: &c_ares::struct_ares_txt_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let array = JSValue::create_empty_array(global_this, 1)?;
@@ -407,7 +408,7 @@ pub(crate) fn naptr_reply_to_js_response(
 }
 
 fn naptr_reply_to_js(
-    this: &mut c_ares::struct_ares_naptr_reply,
+    this: &c_ares::struct_ares_naptr_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 6);
@@ -708,7 +709,7 @@ impl ErrorDeferred {
         }
         impl Context {
             // `bun_event_loop::ManagedTask::new` expects
-            // `fn(*mut T) -> bun_event_loop::JsResult<()>` (low-tier `ErasedJsError`).
+            // `fn(*mut T) -> bun_event_loop::JsResult<()>` (tier-0 `bun_core::JsError`).
             fn callback(this: *mut Context) -> bun_event_loop::JsResult<()> {
                 // SAFETY: `this` is the heap-allocated pointer passed to ManagedTask::new
                 // below; ManagedTask::run calls us exactly once with that pointer.

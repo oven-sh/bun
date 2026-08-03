@@ -23,5 +23,6 @@
   "src/runtime/node/fs_events.rs": 3,
   "src/runtime/node/node_fs.rs": 2,
   "src/runtime/server/NodeHTTPResponse.rs": 1,
+  "src/runtime/shell/subproc.rs": 1,
   "src/spawn_sys/posix_spawn.rs": 4
 }

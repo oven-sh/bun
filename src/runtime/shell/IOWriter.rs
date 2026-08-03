@@ -319,13 +319,14 @@ impl IOWriter {
     /// # Safety
     /// `interp` must be null or point to the live owning `Interpreter` (which
     /// owns the IO struct holding this `Arc`) and outlive it; single-threaded.
-    // Forwards `interp` to `ParentRef::from_nullable_mut` without dereferencing
-    // it here; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    // Forwards `interp` to `ParentRef::from_nullable` (shared provenance)
+    // without dereferencing it here; not_unsafe_ptr_arg_deref is a false
+    // positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub(crate) fn set_interp(&self, interp: *mut Interpreter) {
         // SAFETY: caller contract above.
-        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
+        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable(interp) };
     }
 
     #[inline]

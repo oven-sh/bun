@@ -487,7 +487,10 @@ describe("unix domain socket without websocket", () => {
               attached = socket;
               framer.send(socket, JSON.stringify({ id: 1, method: "Inspector.enable" }));
               framer.send(socket, JSON.stringify({ id: 2, method: "Inspector.initialized" }));
-              framer.send(socket, JSON.stringify({ id: 3, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
+              framer.send(
+                socket,
+                JSON.stringify({ id: 3, method: "Runtime.evaluate", params: { expression: "1 + 1" } }),
+              );
             },
             data: (socket, bytes) => framer.onData(socket, bytes),
             error: () => {},

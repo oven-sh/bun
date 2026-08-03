@@ -4,7 +4,7 @@
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const { validateString } = require("internal/validators");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
-const { isStringOneByteRepresentation, startGCProfiler, stopGCProfiler } = $cpp(
+const { isStringOneByteRepresentation, startGCProfiler, stopGCProfiler, discardGCProfiler } = $cpp(
   "NodeV8.cpp",
   "Bun::createNodeV8Binding",
 );
@@ -77,7 +77,7 @@ class GCProfiler {
     this[kGCProfilerStartTime] = DateNow();
     const id = startGCProfiler();
     this[kGCProfilerSession] = id;
-    (gcProfilerRegistry ??= new FinalizationRegistry(stopGCProfiler)).register(this, id, this);
+    (gcProfilerRegistry ??= new FinalizationRegistry(discardGCProfiler)).register(this, id, this);
   }
 
   stop() {

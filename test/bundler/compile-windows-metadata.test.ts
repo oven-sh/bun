@@ -292,7 +292,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
           windows: {
             title: "API App",
             publisher: "API Company",
-            version: "999.999.999.999",
+            version: "65535.65535.65535.65535",
             description: "Built with Bun.build API",
             copyright: "© 2024 API Company",
           },
@@ -303,14 +303,15 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       expect(result.outputs.length).toBe(1);
 
       const outfile = result.outputs[0].path;
-      // Version "999.999.999.999" (near-u16-max parts) round-trips unchanged.
+      // Version "65535.65535.65535.65535" (u16 max per part) round-trips; pairs
+      // with the invalid "65536.0.0.0" case below as the valid-side fence post.
       expect(await readVersionInfo(outfile)).toMatchObject({
         ProductName: "API App",
         CompanyName: "API Company",
         FileDescription: "Built with Bun.build API",
         LegalCopyright: "© 2024 API Company",
-        ProductVersion: "999.999.999.999",
-        FileVersion: "999.999.999.999",
+        ProductVersion: "65535.65535.65535.65535",
+        FileVersion: "65535.65535.65535.65535",
         OriginalFilename: "",
       });
     });
@@ -383,7 +384,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
     //   1.2.3       -> 1.2.3.0          (Combined > metadata with --windows-hide-console)
     //   1.2.3.4     -> 1.2.3.4          (CLI flags > all metadata flags via CLI)
     //   10.20.30.40 -> 10.20.30.40      (CLI flags > partial metadata flags)
-    //   999.999.999.999 -> unchanged    (Bun.build API > all metadata)
+    //   65535.65535.65535.65535 -> same (Bun.build API > all metadata; u16 max)
     test("--windows-version alone zero-pads to four parts", async () => {
       using dir = tempDir("windows-version-alone", {
         "app.js": `console.log("Version test");`,

@@ -280,11 +280,11 @@ fn apply_barrel_optimization_impl(
 }
 
 /// Clear is_unused on a deferred barrel record. Returns true if the record was un-deferred.
-fn un_defer_record(import_records: &mut import_record::List, record_idx: u32) -> bool {
-    if record_idx as usize >= import_records.len() {
+fn un_defer_record(import_records: &mut import_record::List, record_idx: usize) -> bool {
+    if record_idx >= import_records.len() {
         return false;
     }
-    let rec = &mut import_records.as_mut_slice()[record_idx as usize];
+    let rec = &mut import_records.as_mut_slice()[record_idx];
     if rec.flags.contains(import_record::Flags::IS_INTERNAL)
         || !rec.flags.contains(import_record::Flags::IS_UNUSED)
     {
@@ -740,7 +740,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
                 if flags.contains(import_record::Flags::IS_UNUSED)
                     && !flags.contains(import_record::Flags::IS_INTERNAL)
                 {
-                    if un_defer_record(barrel_ir, u32::try_from(idx).unwrap()) {
+                    if un_defer_record(barrel_ir, idx) {
                         barrels_to_resolve.put(barrel_idx, ())?;
                         un_deferred_any = true;
                     }
@@ -845,7 +845,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
                 if star_idx as usize >= barrel_ir.len() {
                     continue;
                 }
-                if un_defer_record(barrel_ir, star_idx) {
+                if un_defer_record(barrel_ir, star_idx as usize) {
                     barrels_to_resolve.put(barrel_idx, ())?;
                 }
                 let mut star_rec_si = barrel_ir.as_slice()[star_idx as usize].source_index;
@@ -871,7 +871,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         };
 
         let barrel_ir = &mut this.graph.ast.items_import_records_mut()[barrel_idx as usize];
-        if un_defer_record(barrel_ir, resolution.import_record_index) {
+        if un_defer_record(barrel_ir, resolution.import_record_index as usize) {
             barrels_to_resolve.put(barrel_idx, ())?;
         }
 

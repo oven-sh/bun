@@ -987,8 +987,8 @@ napi_define_properties(napi_env env, napi_value object, size_t property_count,
     NAPI_RETURN_EARLY_IF_FALSE(env, properties || property_count == 0, napi_invalid_arg);
 
     JSValue objectValue = toJS(object);
-    JSC::JSObject* objectObject = objectValue.getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, objectObject, napi_object_expected);
+    JSC::JSObject* objectObject = objectValue.toObject(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, napi_set_last_error(env, napi_object_expected));
 
     for (size_t i = 0; i < property_count; i++) {
         napi_status status = Napi::defineProperty(env, objectObject, properties[i], throwScope);
@@ -1613,8 +1613,7 @@ extern "C" JS_EXPORT napi_status node_api_set_prototype(napi_env env,
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
 
-    JSObject* obj = toJS(object).getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, obj, napi_object_expected);
+    NAPI_CHECK_TO_OBJECT(env, globalObject, obj, toJS(object));
 
     // JSC's setPrototypeDirect asserts prototype.isObject() || prototype.isNull();
     // reject primitives here rather than reaching the engine assertion.
@@ -1783,12 +1782,10 @@ extern "C" napi_status napi_object_freeze(napi_env env, napi_value object_value)
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, object_value);
-    JSC::JSValue value = toJS(object_value);
-    NAPI_RETURN_EARLY_IF_FALSE(env, value.isObject(), napi_object_expected);
 
     Zig::GlobalObject* globalObject = toJS(env);
+    NAPI_CHECK_TO_OBJECT(env, globalObject, object, toJS(object_value));
 
-    JSC::JSObject* object = uncheckedDowncast<JSC::JSObject>(value);
     objectConstructorFreeze(globalObject, object);
     NAPI_RETURN_IF_EXCEPTION(env);
 
@@ -1798,12 +1795,10 @@ extern "C" napi_status napi_object_seal(napi_env env, napi_value object_value)
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, object_value);
-    JSC::JSValue value = toJS(object_value);
-    NAPI_RETURN_EARLY_IF_FALSE(env, value.isObject(), napi_object_expected);
 
     Zig::GlobalObject* globalObject = toJS(env);
+    NAPI_CHECK_TO_OBJECT(env, globalObject, object, toJS(object_value));
 
-    JSC::JSObject* object = uncheckedDowncast<JSC::JSObject>(value);
     objectConstructorSeal(globalObject, object);
     NAPI_RETURN_IF_EXCEPTION(env);
 
@@ -3183,8 +3178,8 @@ extern "C" napi_status napi_type_tag_object(napi_env env, napi_value value, cons
     NAPI_CHECK_ARG(env, value);
     NAPI_CHECK_ARG(env, type_tag);
     Zig::GlobalObject* globalObject = toJS(env);
-    JSObject* js_object = toJS(value).getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, js_object, napi_object_expected);
+    JSObject* js_object = toJS(value).toObject(globalObject);
+    NAPI_RETURN_IF_VM_EXCEPTION(env);
     JSValue napiTypeTagValue = globalObject->napiTypeTags()->get(js_object);
 
     auto* existing_tag = dynamicDowncast<Bun::NapiTypeTag>(napiTypeTagValue);
@@ -3203,8 +3198,8 @@ extern "C" napi_status napi_check_object_type_tag(napi_env env, napi_value value
     NAPI_CHECK_ARG(env, value);
     NAPI_CHECK_ARG(env, type_tag);
     Zig::GlobalObject* globalObject = toJS(env);
-    JSObject* js_object = toJS(value).getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, js_object, napi_object_expected);
+    JSObject* js_object = toJS(value).toObject(globalObject);
+    NAPI_RETURN_IF_VM_EXCEPTION(env);
 
     bool match = false;
     auto* found_tag = dynamicDowncast<Bun::NapiTypeTag>(globalObject->napiTypeTags()->get(js_object));

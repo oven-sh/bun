@@ -1605,6 +1605,22 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       expect(output).toContain("keep_numbers key0 typeof=number");
       expect(output).toContain("numbers_to_strings key0 typeof=string");
     });
+
+    it("coerces primitives for define_properties/freeze/seal/type_tag/set_prototype", async () => {
+      const output = await checkSameOutput("test_napi_toobject_coercion_node26", []);
+      expect(output).toContain("define_properties(number): status=0 pending=0");
+      expect(output).toContain("define_properties(null): status=2 pending=1");
+      expect(output).toContain("object_freeze(number): status=0 pending=0");
+      expect(output).toContain("object_freeze(null): status=2 pending=1");
+      expect(output).toContain("object_seal(number): status=0 pending=0");
+      expect(output).toContain("object_seal(undefined): status=2 pending=1");
+      expect(output).toContain("type_tag_object(number): status=0 pending=0");
+      expect(output).toContain("type_tag_object(null): status=10 pending=1");
+      expect(output).toContain("check_object_type_tag(number): status=0 pending=0");
+      expect(output).toContain("check_object_type_tag(null): status=10 pending=1");
+      expect(output).toContain("node_api_set_prototype(number): status=0 pending=0");
+      expect(output).toContain("node_api_set_prototype(null): status=2 pending=1");
+    });
   });
 
   describe("napi_object_freeze and napi_object_seal", () => {

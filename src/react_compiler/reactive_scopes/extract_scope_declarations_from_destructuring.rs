@@ -27,7 +27,7 @@ use crate::reactive_scopes::visitors::{
 /// Extracts scope declarations from destructuring patterns where some bindings
 /// are scope declarations and others aren't.
 /// TS: `extractScopeDeclarationsFromDestructuring`
-pub fn extract_scope_declarations_from_destructuring(
+pub(crate) fn extract_scope_declarations_from_destructuring(
     func: &mut ReactiveFunction,
     env: &mut Environment,
 ) -> Result<(), crate::diagnostics::CompilerError> {

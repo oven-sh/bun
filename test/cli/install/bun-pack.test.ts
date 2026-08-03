@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { exists, mkdir, rm } from "fs/promises";
-import { bunEnv, bunExe, pack, runBunInstall, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, pack, runBunInstall, tempDir, tmpdirSync } from "harness";
 import fs from "node:fs/promises";
 import { join } from "path";
 
@@ -1339,7 +1339,7 @@ describe("files", () => {
   });
 
   test("excluded entries within included directories are not included", async () => {
-    const dir = tempDirWithFiles("bun-pack-files-excluded-entries", {
+    await using dir = tempDir("bun-pack-files-excluded-entries", {
       "package.json": `
       {
         "name": "pack-excluded-entries-from-files",

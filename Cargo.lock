@@ -289,18 +289,9 @@ dependencies = [
 name = "bun_brotli"
 version = "0.0.0"
 dependencies = [
- "bitflags",
- "bstr",
  "bun_alloc",
  "bun_brotli_sys",
  "bun_core",
- "bun_io",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
  "thiserror",
 ]
 
@@ -538,11 +529,9 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_analytics",
- "bun_ast",
  "bun_base64",
  "bun_collections",
  "bun_core",
- "bun_dispatch",
  "bun_errno",
  "bun_io",
  "bun_options_types",
@@ -963,7 +952,6 @@ dependencies = [
  "bun_uws",
  "bun_which",
  "bun_wyhash",
- "bun_zlib",
  "bytemuck",
  "const_format",
  "enum-map",
@@ -1263,6 +1251,10 @@ dependencies = [
  "scopeguard",
  "strum",
 ]
+
+[[package]]
+name = "bun_lsquic_sys"
+version = "0.0.0"
 
 [[package]]
 name = "bun_md"
@@ -1638,6 +1630,7 @@ dependencies = [
  "bun_libarchive",
  "bun_libdeflate_sys",
  "bun_libuv_sys",
+ "bun_lsquic_sys",
  "bun_md",
  "bun_opaque",
  "bun_options_types",
@@ -1718,17 +1711,7 @@ dependencies = [
 name = "bun_safety"
 version = "0.0.0"
 dependencies = [
- "bitflags",
- "bstr",
- "bun_alloc",
  "bun_core",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
- "thiserror",
 ]
 
 [[package]]
@@ -2236,7 +2219,6 @@ dependencies = [
  "libc",
  "scopeguard",
  "strum",
- "thiserror",
 ]
 
 [[package]]

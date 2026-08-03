@@ -1340,7 +1340,9 @@ impl Task {
                                         // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
                                         if matches!(
                                             err.get_errno(),
-                                            sys::Errno::EXDEV | sys::Errno::EACCES | sys::Errno::EPERM
+                                            sys::Errno::EXDEV
+                                                | sys::Errno::EACCES
+                                                | sys::Errno::EPERM
                                         ) {
                                             installer.supported_backend.store(
                                                 InstallMethod::Copyfile as u8,

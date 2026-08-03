@@ -68,17 +68,11 @@ describe.skipIf(!isLinux || !cc)("hardlink backend falls back to copyfile", () =
           },
           stderr: "pipe",
         });
-        const [stdout, stderr, exitCode] = await Promise.all([
-          proc.stdout.text(),
-          proc.stderr.text(),
-          proc.exited,
-        ]);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stderr).not.toContain(errno);
         expect(stdout).toMatch(/\d+ packages? installed/);
         expect(exitCode).toBe(0);
-        expect(
-          await Bun.file(join(String(dir), "node_modules", "bar", "package.json")).json(),
-        ).toMatchObject({
+        expect(await Bun.file(join(String(dir), "node_modules", "bar", "package.json")).json()).toMatchObject({
           name: "bar",
           version: "0.0.2",
         });

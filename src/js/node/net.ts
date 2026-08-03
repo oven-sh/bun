@@ -301,8 +301,9 @@ function onClientHandshakeComplete(self, socket, verifyError) {
   self[kVerifyError] = verifyError ?? null;
   self.alpnProtocol = socket.alpnProtocol;
   // Node has no try/catch around these emits; a listener throw reaches
-  // InternalCallbackScope as uncaughtException. reportError mirrors that
-  // without changing Bun.connect's handshake-throw-to-error-handler contract.
+  // InternalCallbackScope as uncaughtException (TLSWrap completion runs via
+  // MakeCallback). reportUncaughtException mirrors that without letting the
+  // throw fall through to Bun.connect's handshake-to-error-handler contract.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
   try {
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1662-L1673
@@ -344,7 +345,7 @@ function onClientHandshakeComplete(self, socket, verifyError) {
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1810
     self.emit("secure", self);
   } catch (err) {
-    reportError(err);
+    reportUncaughtException(err);
   }
 }
 function onConnectEnd() {
@@ -995,7 +996,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1810
       if (!server) self.emit("secure", self);
     } catch (err) {
-      reportError(err);
+      reportUncaughtException(err);
     }
   },
   error(socket, error) {

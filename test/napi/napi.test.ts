@@ -456,6 +456,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       // napi_create_bigint_words > INT_MAX: napi_invalid_arg, no throw
       expect(result).toContain("napi_create_bigint_words(INT_MAX+1): status=1 pending=0");
 
+      // napi_create_buffer / napi_create_buffer_copy: napi_generic_failure (9) on alloc failure
+      expect(result).toContain("napi_create_buffer(SIZE_MAX): status=9 pending=1");
+      expect(result).toContain("napi_create_buffer_copy(SIZE_MAX): status=9 pending=1");
+
       // second napi_throw_error: napi_pending_exception, first message kept
       expect(result).toContain("napi_throw_error(2nd): status=10");
       expect(result).toContain("napi_throw_error(2nd): kept=first");

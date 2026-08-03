@@ -151,6 +151,12 @@ using namespace Zig;
 // Return an error code if an exception was thrown after NAPI_PREAMBLE
 #define NAPI_RETURN_IF_VM_EXCEPTION(_env) RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error((_env), napi_pending_exception))
 
+// Like NAPI_RETURN_IF_VM_EXCEPTION but returns a caller-chosen status.
+// Used where Node.js reports a specific code (e.g. napi_string_expected,
+// napi_generic_failure) while leaving the thrown exception pending.
+#define NAPI_RETURN_STATUS_IF_EXCEPTION(_env, _status) \
+    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error((_env), (_status)))
+
 #define NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(_env, _scope)                                   \
     do {                                                                                    \
         RETURN_IF_EXCEPTION((_scope), napi_set_last_error((_env), napi_pending_exception)); \
@@ -2187,7 +2193,7 @@ extern "C" napi_status napi_coerce_to_string(napi_env env, napi_value value,
 
     // .toString() can throw
     JSValue resultValue = JSValue(jsValue.toString(globalObject));
-    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_string_expected));
+    NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_string_expected);
 
     JSC::EnsureStillAliveScope ensureStillAlive1(resultValue);
     *result = toNapi(resultValue, globalObject);
@@ -2222,7 +2228,7 @@ extern "C" napi_status napi_coerce_to_number(napi_env env, napi_value value, nap
     JSValue jsValue = toJS(value);
     // might throw
     double nativeNumber = jsValue.toNumber(globalObject);
-    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_number_expected));
+    NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_number_expected);
 
     *result = toNapi(JSC::jsNumber(nativeNumber), globalObject);
     NAPI_RETURN_SUCCESS(env);
@@ -2239,7 +2245,7 @@ extern "C" napi_status napi_coerce_to_object(napi_env env, napi_value value, nap
     JSValue jsValue = toJS(value);
     // might throw
     JSObject* obj = jsValue.toObject(globalObject);
-    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_object_expected));
+    NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_object_expected);
 
     *result = toNapi(obj, globalObject);
     NAPI_RETURN_SUCCESS(env);
@@ -2276,7 +2282,7 @@ extern "C" napi_status napi_create_buffer(napi_env env, size_t length,
 
     // In Node.js, napi_create_buffer is uninitialized memory.
     auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, length);
-    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_generic_failure));
+    NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
 
     if (data != nullptr) {
         // Node.js' code looks like this:
@@ -2337,7 +2343,7 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
         // TODO: is there a way to create a detached uint8 array?
         auto arrayBuffer = JSC::ArrayBuffer::createUninitialized(0, 1);
         auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTF::move(arrayBuffer), 0, 0);
-        RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_generic_failure));
+        NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
         buffer->existingBuffer()->detach(vm);
 
         vm.heap.addFinalizer(buffer, [env = WTF::Ref<NapiEnv>(*env), finalize_cb, data, finalize_hint](JSCell* cell) -> void {
@@ -2357,7 +2363,7 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(data), length }, WTF::move(destructor));
 
     auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTF::move(arrayBuffer), 0, length);
-    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_generic_failure));
+    NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
 
     // Arm only after successful creation: if create threw, the destructor
     // runs disarmed and skips finalize_cb (caller retains ownership).
@@ -3119,7 +3125,7 @@ extern "C" napi_status napi_instanceof(napi_env env, napi_value object, napi_val
     JSValue objectValue = toJS(object);
     JSValue constructorValue = toJS(constructor);
     JSC::JSObject* constructorObject = constructorValue.toObject(globalObject);
-    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_object_expected));
+    NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_object_expected);
 
     if (!constructorObject->isCallable()) {
         napi_throw_type_error(env, "ERR_NAPI_CONS_FUNCTION", "Constructor must be a function");
@@ -3127,7 +3133,7 @@ extern "C" napi_status napi_instanceof(napi_env env, napi_value object, napi_val
     }
 
     *result = constructorObject->hasInstance(globalObject, objectValue);
-    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_generic_failure));
+    NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
 
     return napi_set_last_error(env, napi_ok);
 }

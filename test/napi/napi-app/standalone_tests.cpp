@@ -3595,6 +3595,21 @@ static napi_value test_napi_status_codes_node26(const Napi::CallbackInfo &info) 
         true);
   }
 
+  // napi_create_buffer / napi_create_buffer_copy: allocation failure returns
+  // napi_generic_failure. Both engines reject SIZE_MAX before allocating or
+  // reading data.
+  {
+    napi_value out;
+    void *data;
+    print_status("napi_create_buffer(SIZE_MAX)",
+                 napi_create_buffer(env, SIZE_MAX, &data, &out), true);
+    static const char one_byte = 0;
+    print_status(
+        "napi_create_buffer_copy(SIZE_MAX)",
+        napi_create_buffer_copy(env, SIZE_MAX, &one_byte, nullptr, &out),
+        true);
+  }
+
   // napi_throw_error while an exception is already pending: Node returns
   // napi_pending_exception and keeps the first exception.
   {
@@ -3653,14 +3668,12 @@ static napi_value test_napi_status_codes_node26(const Napi::CallbackInfo &info) 
            (int)napi_unref_threadsafe_function(nullptr, tsfn));
 
     // last_error should be untouched: arm it, call ref, then read it back.
-    napi_value dummy;
     napi_get_value_int32(env, undefinedv, nullptr); // sets napi_invalid_arg
     napi_ref_threadsafe_function(env, tsfn);
     const napi_extended_error_info *err;
     napi_get_last_error_info(env, &err);
     printf("napi_ref_threadsafe_function: last_error_preserved=%d\n",
            (int)err->error_code);
-    (void)dummy;
 
     NODE_API_CALL(env,
                   napi_release_threadsafe_function(tsfn, napi_tsfn_release));

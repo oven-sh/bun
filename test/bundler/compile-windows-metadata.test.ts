@@ -73,25 +73,13 @@ async function readVersionInfo(outfile: string) {
   return info as Record<string, string>;
 }
 
+const windowsTarget = process.arch === "arm64" ? "bun-windows-aarch64" : "bun-windows-x64";
+
 // https://github.com/oven-sh/bun/issues/19916
 describe.skipIf(!isWindows).concurrent("--windows-hide-console", () => {
-  test("default build is a console subsystem", async () => {
-    using dir = tempDir("windows-subsystem-default", {
-      "app.js": `console.log("cui");`,
-    });
-    const outfile = join(String(dir), "cui.exe");
-    await using _cleanup = cleanup(outfile);
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await expectBuildOk(proc);
-
-    expect(await readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_CUI);
-  });
+  // The default-target console-subsystem baseline is asserted inside
+  // "Windows compile metadata > CLI flags > all metadata flags via CLI" to
+  // avoid a redundant full --compile.
 
   test("CLI flag sets GUI subsystem", async () => {
     using dir = tempDir("windows-subsystem-gui-cli", {
@@ -136,7 +124,7 @@ describe.skipIf(!isWindows).concurrent("--windows-hide-console", () => {
       entrypoints: [join(String(dir), "app.js")],
       outdir: String(dir),
       compile: {
-        target: process.arch === "arm64" ? "bun-windows-aarch64" : "bun-windows-x64",
+        target: windowsTarget,
         outfile: "gui-api.exe",
         windows: { hideConsole: true },
       },
@@ -148,33 +136,9 @@ describe.skipIf(!isWindows).concurrent("--windows-hide-console", () => {
     expect(await readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
   });
 
-  test("GUI subsystem survives the rescle metadata pass", async () => {
-    using dir = tempDir("windows-subsystem-gui-rescle", {
-      "app.js": `console.log("gui+metadata");`,
-    });
-    const outfile = join(String(dir), "gui-rescle.exe");
-    await using _cleanup = cleanup(outfile);
-
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "build",
-        "--compile",
-        "--windows-hide-console",
-        "--windows-title",
-        "Hidden Console App",
-        join(String(dir), "app.js"),
-        "--outfile",
-        outfile,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await expectBuildOk(proc);
-
-    expect(await readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
-  });
+  // The "GUI subsystem survives the rescle metadata pass" case is asserted
+  // inside "Combined > metadata with --windows-hide-console" below, which
+  // builds the same flag combination and checks both Subsystem and VersionInfo.
 });
 
 describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
@@ -212,6 +176,10 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
 
       await expectBuildOk(proc);
 
+      // No --windows-hide-console here, so the default build must stay a
+      // console (CUI) subsystem even after the rescle metadata pass.
+      expect(await readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_CUI);
+
       // OriginalFilename must be cleared (not "bun.exe") even with every
       // metadata field set; this is the "Original Filename removal" coverage.
       expect(await readVersionInfo(outfile)).toMatchObject({
@@ -243,7 +211,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
           "--windows-title",
           "Simple App",
           "--windows-version",
-          "2.0.0.0",
+          "10.20.30.40",
         ],
         env: bunEnv,
         stdout: "pipe",
@@ -253,10 +221,11 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       await expectBuildOk(proc);
 
       // OriginalFilename must also be cleared with only a subset of flags.
+      // Version input "10.20.30.40" (multi-digit 4-part) round-trips unchanged.
       expect(await readVersionInfo(outfile)).toMatchObject({
         ProductName: "Simple App",
-        ProductVersion: "2.0.0.0",
-        FileVersion: "2.0.0.0",
+        ProductVersion: "10.20.30.40",
+        FileVersion: "10.20.30.40",
         OriginalFilename: "",
       });
     });
@@ -318,12 +287,12 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         entrypoints: [join(String(dir), "app.js")],
         outdir: String(dir),
         compile: {
-          target: process.arch === "arm64" ? "bun-windows-aarch64" : "bun-windows-x64",
+          target: windowsTarget,
           outfile: "app-api.exe",
           windows: {
             title: "API App",
             publisher: "API Company",
-            version: "3.0.0.0",
+            version: "999.999.999.999",
             description: "Built with Bun.build API",
             copyright: "© 2024 API Company",
           },
@@ -334,12 +303,14 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       expect(result.outputs.length).toBe(1);
 
       const outfile = result.outputs[0].path;
+      // Version "999.999.999.999" (near-u16-max parts) round-trips unchanged.
       expect(await readVersionInfo(outfile)).toMatchObject({
         ProductName: "API App",
         CompanyName: "API Company",
         FileDescription: "Built with Bun.build API",
         LegalCopyright: "© 2024 API Company",
-        ProductVersion: "3.0.0.0",
+        ProductVersion: "999.999.999.999",
+        FileVersion: "999.999.999.999",
         OriginalFilename: "",
       });
     });
@@ -353,11 +324,11 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         entrypoints: [join(String(dir), "app.js")],
         outdir: String(dir),
         compile: {
-          target: process.arch === "arm64" ? "bun-windows-aarch64" : "bun-windows-x64",
+          target: windowsTarget,
           outfile: "partial-api.exe",
           windows: {
             title: "Partial App",
-            version: "1.0.0.0",
+            version: "1.2",
           },
         },
       });
@@ -365,9 +336,12 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       expect(result.success).toBe(true);
 
       const outfile = result.outputs[0].path;
+      // Version input "1.2" (2-part) is zero-padded to 4 parts.
       expect(await readVersionInfo(outfile)).toMatchObject({
         ProductName: "Partial App",
-        ProductVersion: "1.0.0.0",
+        ProductVersion: "1.2.0.0",
+        FileVersion: "1.2.0.0",
+        OriginalFilename: "",
       });
     });
 
@@ -380,7 +354,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         entrypoints: [join(String(dir), "app.js")],
         outdir: "./out",
         compile: {
-          target: process.arch === "arm64" ? "bun-windows-aarch64" : "bun-windows-x64",
+          target: windowsTarget,
           outfile: "relative.exe",
           windows: {
             title: "Relative Path App",
@@ -391,24 +365,27 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       expect(result.success).toBe(true);
       expect(result.outputs.length).toBe(1);
 
-      // Should not crash with assertion error
-      const exists = await Bun.file(result.outputs[0].path).exists();
-      expect(exists).toBe(true);
+      const outfile = result.outputs[0].path;
+      await using _cleanup = cleanup(outfile);
+      expect(await readVersionInfo(outfile)).toMatchObject({
+        ProductName: "Relative Path App",
+        OriginalFilename: "",
+      });
     });
   });
 
   describe("Version string formats", () => {
-    const testVersionFormats = [
-      { input: "1", expected: "1.0.0.0" },
-      { input: "1.2", expected: "1.2.0.0" },
-      { input: "1.2.3", expected: "1.2.3.0" },
-      { input: "1.2.3.4", expected: "1.2.3.4" },
-      { input: "10.20.30.40", expected: "10.20.30.40" },
-      { input: "999.999.999.999", expected: "999.999.999.999" },
-    ];
-
-    test.each(testVersionFormats)("version format: $input", async ({ input, expected }) => {
-      using dir = tempDir(`windows-version-${input.replace(/\./g, "-")}`, {
+    // The normalization of each accepted arity is asserted on the binaries the
+    // surrounding tests already build, so only the "--windows-version with no
+    // other metadata" path needs its own compile here:
+    //   1           -> 1.0.0.0          (this test)
+    //   1.2         -> 1.2.0.0          (Bun.build API > partial metadata)
+    //   1.2.3       -> 1.2.3.0          (Combined > metadata with --windows-hide-console)
+    //   1.2.3.4     -> 1.2.3.4          (CLI flags > all metadata flags via CLI)
+    //   10.20.30.40 -> 10.20.30.40      (CLI flags > partial metadata flags)
+    //   999.999.999.999 -> unchanged    (Bun.build API > all metadata)
+    test("--windows-version alone zero-pads to four parts", async () => {
+      using dir = tempDir("windows-version-alone", {
         "app.js": `console.log("Version test");`,
       });
 
@@ -423,7 +400,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
           "--outfile",
           outfile,
           "--windows-version",
-          input,
+          "1",
         ],
         env: bunEnv,
         stdout: "pipe",
@@ -433,8 +410,9 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       await expectBuildOk(proc);
 
       expect(await readVersionInfo(outfile)).toMatchObject({
-        ProductVersion: expected,
-        FileVersion: expected,
+        ProductVersion: "1.0.0.0",
+        FileVersion: "1.0.0.0",
+        OriginalFilename: "",
       });
     });
 
@@ -445,15 +423,22 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       { version: "65536.0.0.0" }, // > 65535
       { version: "" },
     ])("invalid version format should error gracefully: $version", async ({ version }) => {
+      // InvalidVersionFormat is raised by the Rust-side validator *before* the
+      // rescle C++ bindings touch the output, so we can compile against a
+      // ~128 KiB minimal PE template instead of cloning the full debug bun.exe.
       using dir = tempDir("windows-invalid-version", {
         "app.js": `console.log("Invalid version test");`,
       });
+      const tmplPath = join(String(dir), "template.exe");
+      await Bun.write(tmplPath, minimalPE64Template());
 
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "build",
           "--compile",
+          "--compile-executable-path",
+          tmplPath,
           join(String(dir), "app.js"),
           "--outfile",
           join(String(dir), "test.exe"),
@@ -506,12 +491,17 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       });
     });
 
-    test("special characters in metadata", async () => {
-      using dir = tempDir("windows-special-chars", {
-        "app.js": `console.log("Special chars test");`,
+    // Every --windows-* string field flows through the same
+    // `to_utf16_alloc_for_real` -> rescle `SetVersionString` wide-string path,
+    // so a single build that mixes Latin-1 symbols, ASCII punctuation, BMP CJK
+    // and surrogate-pair emoji round-tripping across the four fields covers the
+    // same encoding surface as two separate compiles would.
+    test("unicode and special characters in metadata", async () => {
+      using dir = tempDir("windows-unicode-special", {
+        "app.js": `console.log("Unicode + special chars test");`,
       });
 
-      const outfile = join(String(dir), "special-chars.exe");
+      const outfile = join(String(dir), "unicode-special.exe");
 
       await using proc = Bun.spawn({
         cmd: [
@@ -522,50 +512,13 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
           "--outfile",
           outfile,
           "--windows-title",
-          "App™ with® Special© Characters",
+          "App™ with® Special© アプリケーション",
           "--windows-publisher",
-          "Company & Co.",
+          "Company & Co. 会社名",
           "--windows-description",
-          "Test \"quotes\" and 'apostrophes'",
+          "Test \"quotes\" and 'apostrophes' 🚀 🎉",
           "--windows-copyright",
-          "© 2024 <Company>",
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      await expectBuildOk(proc);
-
-      const info = await readVersionInfo(outfile);
-      expect(info.ProductName).toContain("App");
-      expect(info.CompanyName).toBe("Company & Co.");
-      expect(info.LegalCopyright).toContain("<Company>");
-    });
-
-    test("unicode in metadata", async () => {
-      using dir = tempDir("windows-unicode", {
-        "app.js": `console.log("Unicode test");`,
-      });
-
-      const outfile = join(String(dir), "unicode.exe");
-
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "build",
-          "--compile",
-          join(String(dir), "app.js"),
-          "--outfile",
-          outfile,
-          "--windows-title",
-          "アプリケーション",
-          "--windows-publisher",
-          "会社名",
-          "--windows-description",
-          "Émoji test 🚀 🎉",
-          "--windows-copyright",
-          "© 2024 世界",
+          "© 2024 <Company> 世界",
         ],
         env: bunEnv,
         stdout: "pipe",
@@ -575,8 +528,10 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       await expectBuildOk(proc);
 
       expect(await readVersionInfo(outfile)).toMatchObject({
-        ProductName: "アプリケーション",
-        CompanyName: "会社名",
+        ProductName: "App™ with® Special© アプリケーション",
+        CompanyName: "Company & Co. 会社名",
+        FileDescription: "Test \"quotes\" and 'apostrophes' 🚀 🎉",
+        LegalCopyright: "© 2024 <Company> 世界",
       });
     });
 
@@ -608,8 +563,10 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
 
       await expectBuildOk(proc);
 
-      const exists = await Bun.file(outfile).exists();
-      expect(exists).toBe(true);
+      // rescle-binding.cpp skips empty title/description but still clears
+      // OriginalFilename unconditionally, so asserting on it proves the
+      // metadata pass ran (and that the output is a readable PE).
+      expect(await readVersionInfo(outfile)).toMatchObject({ OriginalFilename: "" });
     });
   });
 
@@ -633,7 +590,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
           "--windows-title",
           "Hidden Console App",
           "--windows-version",
-          "1.0.0.0",
+          "1.2.3",
         ],
         env: bunEnv,
         stdout: "pipe",
@@ -642,9 +599,13 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
 
       await expectBuildOk(proc);
 
+      // rescle must not undo the GUI subsystem patch inject() applied.
+      expect(await readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
+      // Version input "1.2.3" (3-part) is zero-padded to 4 parts.
       expect(await readVersionInfo(outfile)).toMatchObject({
         ProductName: "Hidden Console App",
-        ProductVersion: "1.0.0.0",
+        ProductVersion: "1.2.3.0",
+        FileVersion: "1.2.3.0",
       });
     });
 

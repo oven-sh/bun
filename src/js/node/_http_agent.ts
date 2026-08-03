@@ -206,15 +206,9 @@ function handleSocketAfterProxy(err, req) {
   }
 }
 
-// https-proxy-agent & co keep their constructor options on `agent.connectOpts`:
-// https://github.com/TooTallNate/proxy-agents/blob/main/packages/https-proxy-agent/src/index.ts#L110-L117
-// Node.js only uses those for the connection to the proxy. Bun has always also
-// honored the TLS trust and client-identity options for the CONNECT-tunneled
-// connection itself (`new HttpsProxyAgent(url, { ca })` is widely relied on),
-// so addRequest seeds exactly those at the lowest priority; `pfx` is the
-// PKCS#12 spelling of cert/key and is treated the same. Options describing the
-// connection to the proxy (host, port, servername, ALPNProtocols, ...) are not
-// forwarded.
+// https-proxy-agent stores ctor options on `agent.connectOpts`: https://github.com/TooTallNate/proxy-agents/blob/main/packages/https-proxy-agent/src/index.ts
+// Bun-vs-Node: Bun also forwards TLS trust/identity opts (ca/cert/key/pfx/...) to the CONNECT-tunneled
+// connection at lowest priority; proxy-connection opts (host/port/servername/ALPN) are not forwarded.
 const kTunneledTLSOptions = [
   "ca",
   "cert",
@@ -315,10 +309,8 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
   options.encoding = null;
 
   const oncreate = once((err, s) => {
-    // Pass the socket along with the error: proxy-tunnel failures with a
-    // statusCode deliberately skip destroy in cleanupAndPropagate so
-    // req.onSocket can destroy the connection - dropping it here would leak
-    // a proxy socket that holds its end open after a non-200 CONNECT.
+    // Pass socket on error: proxy-tunnel failures with a statusCode skip destroy in cleanupAndPropagate
+    // so req.onSocket can close it; dropping it here leaks a proxy socket held open after non-200 CONNECT.
     if (err) return cb(err, s);
     this.sockets[name] ||= [];
     this.sockets[name].push(s);
@@ -347,10 +339,7 @@ function calculateServerName(options, req) {
   if (hostHeader) {
     validateString(hostHeader, "options.headers.host");
 
-    // abc => abc
-    // abc:123 => abc
-    // [::1] => ::1
-    // [::1]:123 => ::1
+    // abc => abc, abc:123 => abc, [::1] => ::1, [::1]:123 => ::1
     if (hostHeader[0] === "[") {
       const index = hostHeader.indexOf("]");
       if (index === -1) {

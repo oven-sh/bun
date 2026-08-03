@@ -296,9 +296,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 
         // Use JSC::initialize with a callback to set Options during initialization.
         // The callback runs BEFORE IPInt::initialize() so we can configure WASM options early.
-        // Under ASAN+Linux, JSC's notifyOptionsChanged() already disables
-        // useWasmFaultSignalHandler/FastMemory when ASAN_OPTIONS lacks
-        // allow_user_segv_handler=1, so we don't force it off here.
+        // Under ASAN+Linux, JSC's notifyOptionsChanged() gates useWasmFaultSignalHandler
+        // on ASAN_OPTIONS containing allow_user_segv_handler=1; bun_jsc::initialize()
+        // supplies that default before capturing envp.
         JSC::initialize([&] {
             JSC::Options::useWasm() = true;
             JSC::Options::useJIT() = true;

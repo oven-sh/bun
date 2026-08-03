@@ -530,23 +530,107 @@ pub fn initialize(eval_mode: bool) {
     // The counter lives in `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
-    let env = bun_sys::environ();
-    // One-shot eval invocations (`bun -e ...` / `bun --print ...`) exit before
-    // any long-running event loop; tell JSC to skip the worker threads it
-    // otherwise spawns eagerly at VM creation (see `JSCInitialize`).
-    let one_shot = is_one_shot_eval_invocation();
-    // SAFETY: `env` borrows the libc `environ` global for the duration of the
-    // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
-    // it is handed. JSCInitialize is called exactly once at startup.
+    // Bundler WorkPool threads (Macro::init, CachedBytecode, RegularExpression)
+    // each call this off the main thread; the C++ `std::call_once` only guards
+    // the FFI body, so serialize the Rust-side env read/write here too.
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        #[cfg(all(bun_asan, target_os = "linux"))]
+        let restore = mirror_asan_segv_handler_into_env();
+        let env = bun_sys::environ();
+        // One-shot eval invocations (`bun -e ...` / `bun --print ...`) exit
+        // before any long-running event loop; tell JSC to skip the worker
+        // threads it otherwise spawns eagerly at VM creation (see
+        // `JSCInitialize`).
+        let one_shot = is_one_shot_eval_invocation();
+        // SAFETY: `env` borrows the libc `environ` global for the duration of
+        // the call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the
+        // (ptr,len) it is handed. Runs under `Once::call_once` so no other
+        // entrant is mutating `environ` concurrently.
+        unsafe {
+            JSCInitialize(
+                env.as_ptr(),
+                env.len(),
+                on_jsc_invalid_env_var,
+                eval_mode,
+                one_shot,
+            )
+        };
+        #[cfg(all(bun_asan, target_os = "linux"))]
+        restore_asan_options(restore);
+    });
+}
+
+/// What [`restore_asan_options`] should do once JSC has read `ASAN_OPTIONS`.
+#[cfg(all(bun_asan, target_os = "linux"))]
+enum AsanOptionsRestore {
+    Unchanged,
+    Unset,
+    Value(Vec<u8>),
+}
+
+/// JSC's `notifyOptionsChanged()` clears `useWasmFaultSignalHandler` (and with
+/// it WebAssembly shared memory) unless `getenv("ASAN_OPTIONS")` contains
+/// `allow_user_segv_handler=1`. `__asan_default_options()` already opts the
+/// runtime in; mirror it into the env var for the duration of JSC init so that
+/// check passes, then let the caller restore the original value so
+/// `process.env` and child-process inheritance stay as the user set them. Runs
+/// before `bun_sys::environ()` is captured so the `envp` slice passed to C++
+/// reflects the mutated `environ` array.
+#[cfg(all(bun_asan, target_os = "linux"))]
+#[cold]
+fn mirror_asan_segv_handler_into_env() -> AsanOptionsRestore {
+    use core::ffi::CStr;
+    // SAFETY: serialized by `initialize`'s `Once::call_once`.
     unsafe {
-        JSCInitialize(
-            env.as_ptr(),
-            env.len(),
-            on_jsc_invalid_env_var,
-            eval_mode,
-            one_shot,
-        )
-    };
+        let cur = libc::getenv(c"ASAN_OPTIONS".as_ptr());
+        if cur.is_null() {
+            libc::setenv(
+                c"ASAN_OPTIONS".as_ptr(),
+                c"allow_user_segv_handler=1".as_ptr(),
+                1,
+            );
+            return AsanOptionsRestore::Unset;
+        }
+        let bytes = CStr::from_ptr(cur).to_bytes();
+        if bun_core::strings::contains(bytes, b"allow_user_segv_handler=")
+            || bun_core::strings::contains(bytes, b"handle_segv=0")
+        {
+            return AsanOptionsRestore::Unchanged;
+        }
+        let mut original = Vec::with_capacity(bytes.len() + 1);
+        original.extend_from_slice(bytes);
+        original.push(0);
+        let mut merged = Vec::with_capacity(bytes.len() + b":allow_user_segv_handler=1\0".len());
+        merged.extend_from_slice(bytes);
+        merged.extend_from_slice(if bytes.is_empty() {
+            b"allow_user_segv_handler=1\0"
+        } else {
+            b":allow_user_segv_handler=1\0"
+        });
+        libc::setenv(c"ASAN_OPTIONS".as_ptr(), merged.as_ptr().cast(), 1);
+        AsanOptionsRestore::Value(original)
+    }
+}
+
+/// Restore `ASAN_OPTIONS` after `JSCInitialize` has returned (and is no longer
+/// reading the `envp` slice). `setenv`-overwrite and `unsetenv` do not realloc
+/// `environ`, so this does not invalidate any borrow the caller may still hold.
+#[cfg(all(bun_asan, target_os = "linux"))]
+#[cold]
+fn restore_asan_options(restore: AsanOptionsRestore) {
+    // SAFETY: serialized by `initialize`'s `Once::call_once`.
+    unsafe {
+        match restore {
+            AsanOptionsRestore::Unchanged => {}
+            AsanOptionsRestore::Unset => {
+                libc::unsetenv(c"ASAN_OPTIONS".as_ptr());
+            }
+            AsanOptionsRestore::Value(v) => {
+                libc::setenv(c"ASAN_OPTIONS".as_ptr(), v.as_ptr().cast(), 1);
+            }
+        }
+    }
 }
 
 /// Whether this process was launched as `bun -e <code>` / `bun --eval <code>` /

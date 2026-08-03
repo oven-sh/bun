@@ -119,3 +119,102 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
   expect(stdout).not.toContain("unreachable");
   expect(exitCode).not.toBe(0);
 });
+
+// When the watcher thread enters execve(), the kernel's de_thread makes a
+// concurrent pthread_create on any other thread fail with EAGAIN, and WTF
+// treats that as fatal (abort()). The shim reproduces that deterministically
+// by hooking execve and, before calling the real one, spawning a few threads
+// that abort(). bun's reload_process sets RELOAD_IN_PROGRESS before it reaches
+// execve, so the hook runs inside the reload window; a correct build parks
+// each aborting thread via pthread_exit and the exec then completes. Two
+// aborts are needed because the crash handler's existing SA_RESETHAND SIGABRT
+// hook absorbs a single one.
+it.skipIf(!isLinux || !cc)("survives abort() from another thread during --watch reload", async () => {
+  const SHIM_C = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <pthread.h>
+#include <stdlib.h>
+#include <sys/resource.h>
+#include <time.h>
+
+static int (*real_execve)(const char *, char *const[], char *const[]);
+
+__attribute__((constructor)) static void no_core(void) {
+  struct rlimit rl = {0, 0};
+  setrlimit(RLIMIT_CORE, &rl);
+}
+
+static void *aborter(void *unused) {
+  (void)unused;
+  abort();
+  return 0;
+}
+
+int execve(const char *path, char *const argv[], char *const envp[]) {
+  if (!real_execve) real_execve = dlsym(RTLD_NEXT, "execve");
+  pthread_t t;
+  pthread_create(&t, 0, aborter, 0);
+  pthread_create(&t, 0, aborter, 0);
+  pthread_create(&t, 0, aborter, 0);
+  /* Let the aborts land before the real execve starts de_thread. */
+  struct timespec ts = {0, 100 * 1000 * 1000};
+  nanosleep(&ts, 0);
+  return real_execve(path, argv, envp);
+}
+`;
+  const WATCHEE = `
+process.stdout.write("gen " + GEN + " up\\n");
+setInterval(() => {}, 1000);
+`;
+  using dir = tempDir("watch-reload-abort", {
+    "shim.c": SHIM_C,
+    "watchee.mjs": WATCHEE.replace("GEN", "1"),
+  });
+  const shimPath = join(String(dir), "shim.so");
+  await using ccProc = Bun.spawn({
+    cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(String(dir), "shim.c"), "-ldl", "-lpthread"],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
+  if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+
+  const existing = bunEnv.LD_PRELOAD;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--watch", "--no-clear-screen", "watchee.mjs"],
+    cwd: String(dir),
+    env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const target = 3;
+  let gen = 1;
+  let sawTarget = false;
+  let stderrText = "";
+  (async () => {
+    for await (const chunk of proc.stderr) stderrText += new TextDecoder().decode(chunk);
+  })();
+  for await (const chunk of proc.stdout) {
+    const text = new TextDecoder().decode(chunk);
+    if (text.includes(`gen ${gen} up`)) {
+      if (gen >= target) {
+        sawTarget = true;
+        proc.kill("SIGKILL");
+        break;
+      }
+      gen++;
+      await Bun.write(join(String(dir), "watchee.mjs"), WATCHEE.replace("GEN", String(gen)));
+    }
+  }
+  await proc.exited;
+
+  expect({ sawTarget, restartsCompleted: gen - 1, signalCode: proc.signalCode, stderr: stderrText.trim() }).toEqual({
+    sawTarget: true,
+    restartsCompleted: target - 1,
+    signalCode: "SIGKILL",
+    stderr: "",
+  });
+}, 30_000);

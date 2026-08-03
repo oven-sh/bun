@@ -4363,6 +4363,44 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     RELOAD_IN_PROGRESS.store(true, AOrdering::Relaxed);
     RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.set(true));
 
+    // Once this thread enters execve(), the kernel's de_thread makes a
+    // concurrent pthread_create on any other thread fail with EAGAIN.
+    // WTF::Thread::create treats that as fatal and abort()s, and the SIGABRT
+    // can land before exec reaches its point of no return, killing the whole
+    // watcher instead of restarting it. Install a non-resetting handler that
+    // parks any such thread via pthread_exit so the exec can complete. The
+    // crash handler's SIGABRT hook already does this, but it is one-shot
+    // (SA_RESETHAND) and not installed under ASAN. execve resets signal
+    // dispositions, so this handler does not leak into the new image.
+    #[cfg(unix)]
+    {
+        extern "C" fn park_during_reload(sig: core::ffi::c_int) {
+            if is_process_reload_in_progress_on_another_thread() {
+                exit_thread();
+            }
+            // Fired on the reloading thread itself: restore default and
+            // re-raise so the fault terminates normally.
+            // SAFETY: sigaction/raise are async-signal-safe; a zeroed
+            // sigaction is SIG_DFL.
+            unsafe {
+                let act: libc::sigaction = core::mem::zeroed();
+                libc::sigaction(sig, &raw const act, core::ptr::null_mut());
+                libc::raise(sig);
+            }
+        }
+        let mut act: libc::sigaction = crate::ffi::zeroed();
+        act.sa_sigaction = park_during_reload as *const () as usize;
+        act.sa_flags = libc::SA_RESTART;
+        // SAFETY: sa_mask is a valid out-pointer into a zeroed struct;
+        // sigaction takes a valid &act and a null oldact.
+        unsafe {
+            libc::sigemptyset(&raw mut act.sa_mask);
+            for sig in [libc::SIGABRT, libc::SIGTRAP, libc::SIGILL] {
+                libc::sigaction(sig, &raw const act, core::ptr::null_mut());
+            }
+        }
+    }
+
     if clear_terminal {
         crate::output::flush();
         crate::output::disable_buffering();

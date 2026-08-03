@@ -3244,6 +3244,15 @@ CPP_DECL bool JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
     if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v))) {
         if (!buf->isShared())
             buf->pin();
+        // The native ref is what keeps ArrayBufferContents alive if the owning
+        // VM is torn down while a pool thread is still reading the storage
+        // (worker.terminate() racing an async node:fs write): pin() only
+        // blocks transfer(), and JSValue::protect() is a GC root that
+        // Heap::lastChanceToFinalize ignores, whereas the deferred-flag drop
+        // in GCIncomingRefCountedSet::lastChanceToFinalize deletes only at
+        // refcount 0. Balanced by unpinArrayBuffer; both run on the JS thread
+        // (DeferrableRefCounted is not atomic).
+        buf->ref();
         return true;
     }
     return false;
@@ -3253,6 +3262,7 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
     if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v))) {
         if (!buf->isShared())
             buf->unpin();
+        buf->deref();
     }
 }
 
@@ -3295,6 +3305,7 @@ CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, co
         if (!buf) return 0;
         if (!buf->isShared())
             buf->pin();
+        buf->ref();
         *out_ptr = static_cast<const uint8_t*>(view->vector());
         *out_len = view->byteLength();
         return 2;
@@ -3304,6 +3315,7 @@ CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, co
         if (!buf || buf->isDetached()) return 0;
         if (!buf->isShared())
             buf->pin();
+        buf->ref();
         *out_ptr = static_cast<const uint8_t*>(buf->data());
         *out_len = buf->byteLength();
         return 2;
@@ -6593,6 +6605,7 @@ extern "C" int32_t Bun__JSArray__collectBufferSpans(
                 return 2;
             if (!buf->isShared())
                 buf->pin();
+            buf->ref();
         }
         append(ctx, JSC::JSValue::encode(view), view->vector(), view->byteLength());
     }

@@ -248,14 +248,6 @@ impl PosixLoop {
         unsafe { c::us_wakeup_loop(self) };
     }
 
-    /// Nanoseconds this loop has spent parked, for eventLoopUtilization().
-    /// `&self`: a parent thread reads this while the worker holds its own
-    /// `&mut` — the body is one atomic load, so it must not alias mutably.
-    pub fn idle_ns(&self) -> u64 {
-        // SAFETY: self is a valid loop pointer; the counter is read atomically.
-        unsafe { c::us_loop_idle_ns(core::ptr::from_ref(self).cast_mut()) }
-    }
-
     #[inline]
     pub fn wake(&mut self) {
         self.wakeup();
@@ -455,14 +447,6 @@ impl WindowsLoop {
     pub fn wakeup(&mut self) {
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_wakeup_loop(self) };
-    }
-
-    /// Nanoseconds this loop has spent parked, for eventLoopUtilization().
-    /// `&self`: a parent thread reads this while the worker holds its own
-    /// `&mut` — the body is one atomic load, so it must not alias mutably.
-    pub fn idle_ns(&self) -> u64 {
-        // SAFETY: self is a valid loop pointer; the counter is read atomically.
-        unsafe { c::us_loop_idle_ns(core::ptr::from_ref(self).cast_mut()) }
     }
 
     #[inline]

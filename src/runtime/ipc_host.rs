@@ -345,10 +345,8 @@ pub(crate) fn do_send(
                     global_object.report_active_exception_as_unhandled(e);
                 }
             }
-            // node:http server sockets carry no JS pause(); stop the
-            // sender's uSockets read loop natively so bytes arriving before
-            // the NODE_HANDLE_ACK are not drained on this side (no-op for
-            // any other handle shape via the downcast).
+            // node:http server sockets have no JS pause(); natively stop the uSockets read
+            // loop so bytes before NODE_HANDLE_ACK aren't drained here (no-op for other shapes).
             Ok(_) => bun_jsc::cpp::NodeHTTP__pauseServerSocket(pause_target),
             Err(e) => global_object.report_active_exception_as_unhandled(e),
         }

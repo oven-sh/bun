@@ -792,11 +792,9 @@ impl SendHandle {
         // self drops here → data/callbacks/handle Drop.
     }
 
-    /// The channel closed with this message still parked behind a pending
-    /// handle ack: close the attached handle wrap (if any), and drop the
-    /// callbacks without settling them — node discards its _handleQueue on
-    /// abrupt close without invoking those callbacks (verified against
-    /// v26.3.0; see the "unsent queued handle callback never fires" test).
+    /// Channel closed while parked behind a pending handle ack: close the handle wrap and
+    /// drop callbacks unsettled — node discards `_handleQueue` on abrupt close (v26.3.0).
+    /// https://github.com/nodejs/node/blob/main/lib/internal/child_process.js
     pub(crate) fn abort_parked(
         self,
         global: &JSGlobalObject,
@@ -1195,12 +1193,9 @@ impl SendQueue {
                 log!("SendQueue#_onAfterIPCClosed");
                 if !sq.close_event_sent.replace(true) {
                     let global = sq.get_global_this();
-                    // Node's observable close contract (v26.3.0): messages
-                    // parked in _handleQueue behind a pending NODE_HANDLE ack
-                    // are discarded without their callbacks ever firing. The
-                    // window opens the moment a handle send is *initiated*, so
-                    // everything queued after the first handle-bearing item is
-                    // parked — not just items queued after its write completed.
+                    // Node discards _handleQueue on close without firing callbacks; the parked
+                    // window opens when a handle send is *initiated*, so everything after the
+                    // first handle-bearing item is parked. lib/internal/child_process.js (v26.3.0)
                     let mut parked = sq.waiting_for_ack.get().is_some();
                     if let Some(item) = sq.waiting_for_ack.with_mut(|w| w.take()) {
                         item.complete(&global, &sq.close_handle_fn);
@@ -1675,10 +1670,8 @@ impl SendQueue {
         }
     }
 
-    /// Raw descriptor of the live IPC channel, mirroring Node's `Control#fd`
-    /// getter (v26.3.0 lib/internal/child_process.js:596): `None` once the
-    /// channel is gone. Windows has no meaningful raw descriptor for the uv
-    /// pipe here; callers surface that as `undefined`, like a closed channel.
+    /// Raw descriptor of the live IPC channel (Node `Control#fd`, lib/internal/child_process.js:596).
+    /// `None` once closed; Windows has no raw fd here so callers surface `undefined`.
     pub fn channel_fd(&self) -> Option<Fd> {
         #[cfg(not(windows))]
         {

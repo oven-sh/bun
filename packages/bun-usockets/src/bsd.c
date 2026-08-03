@@ -1314,15 +1314,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
         *out_port = port;
     }
 #ifdef _WIN32
-    /* Listen before the socket is duplicated to workers, mirroring libuv's
-     * uv__tcp_xfer_export (UV_HANDLE_SHARED_TCP_SOCKET path):
-     * https://github.com/libuv/libuv/blob/v1.52.1/src/win/tcp.c#L1301-L1330
-     * A dup of a listening socket deterministically hits the benign
-     * already-listening path in the worker; racing listen() calls on dups of a
-     * bound-only socket intermittently fail with WSAEINVAL (SO_ACCEPTCONN
-     * probes on protocol info snapshotted pre-listen). SOMAXCONN like libuv;
-     * the user's backlog is ignored here because the primary listens before
-     * any worker (and its backlog option) exists. */
+    /* Listen before duplicating to workers (libuv uv__tcp_xfer_export): racing listen() on
+     * dups of a bound-only socket hits WSAEINVAL; SOMAXCONN since no worker backlog exists yet.
+     * https://github.com/libuv/libuv/blob/v1.52.1/src/win/tcp.c#L1301-L1330 */
     if (listen(fd, SOMAXCONN)) {
         *error = WSAGetLastError();
         bsd_close_socket(fd);

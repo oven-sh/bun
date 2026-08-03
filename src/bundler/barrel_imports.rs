@@ -634,7 +634,10 @@ pub(crate) fn schedule_barrel_deferred_imports(
         } else {
             continue;
         };
-        let (_, value) = RequestedExports::entry(&mut this.requested_exports, target);
+        let (found, value) = RequestedExports::entry(&mut this.requested_exports, target);
+        if found && matches!(value, RequestedExports::All) {
+            continue;
+        }
         *value = RequestedExports::All;
         queue.push(BarrelWorkItem {
             barrel_source_index: target,

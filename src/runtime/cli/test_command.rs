@@ -26,6 +26,7 @@ use bun_sys::{self, Fd, File};
 
 // Debug log scope for test-runner entrypoint loading.
 bun_output::declare_scope!(bun_test, hidden);
+bun_output::declare_scope!(test_isolate, hidden);
 
 // ─── coverage façade ────────────────────────────────────────────────────────
 // Thin adapter over `bun_sourcemap_jsc::code_coverage` that preserves the
@@ -3098,6 +3099,10 @@ impl TestCommand {
                 debug_assert!(!files.is_empty());
 
                 let isolate = vm.test_isolation_enabled;
+                let reuse_global = isolate
+                    && bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_TEST_ISOLATE_REUSE_GLOBAL::get()
+                        .unwrap_or(false);
+                let mut reused_count: u32 = 0;
 
                 if files.len() > 1 {
                     for (i, file_name) in files[0..files.len() - 1].iter().enumerate() {
@@ -3116,13 +3121,32 @@ impl TestCommand {
                         Global::mimalloc_cleanup(false);
                         if isolate {
                             crate::jsc_hooks::close_isolation_handles(vm);
-                            vm.swap_global_for_test_isolation();
+                            if reuse_global {
+                                let (esm, cjs) = vm.reuse_global_for_test_isolation();
+                                reused_count += 1;
+                                bun_output::scoped_log!(
+                                    test_isolate,
+                                    "reused global (evicted {} esm, {} cjs)",
+                                    esm,
+                                    cjs
+                                );
+                            } else {
+                                vm.swap_global_for_test_isolation();
+                            }
                             reporter
                                 .jest
                                 .bun_test_root
                                 .reset_hook_scope_for_test_isolation();
                         }
                     }
+                }
+                if reuse_global && reused_count > 0 {
+                    bun_output::scoped_log!(
+                        test_isolate,
+                        "reused global for {} of {} files",
+                        reused_count,
+                        files.len()
+                    );
                 }
 
                 if let Err(err) = TestCommand::run(

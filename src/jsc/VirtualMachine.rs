@@ -4694,14 +4694,16 @@ impl VirtualMachine {
         Ok(())
     }
 
-    /// Replaces the global object between test files so each file runs in a fresh realm.
+    /// Per-file cleanup shared by the fresh-global and reuse-global isolation
+    /// paths: restore cwd, drain microtasks, close leaked sockets, kill leaked
+    /// subprocesses, cancel timers, bump the generation, and reset entry-point
+    /// state. Runs no user JS after the microtask drains.
     ///
     /// Callers must run `bun_runtime::jsc_hooks::close_isolation_handles(vm)`
     /// first so leaked watchers/servers are stopped (dropping their JS-side
-    /// Strongs, which otherwise pin the outgoing global) before the blind
-    /// socket-group close below. That helper lives in the higher-tier crate
-    /// and cannot be called from here.
-    pub fn swap_global_for_test_isolation(&mut self) {
+    /// Strongs) before the blind socket-group close below. That helper lives
+    /// in the higher-tier crate and cannot be called from here.
+    fn cleanup_between_isolated_test_files(&mut self) {
         debug_assert!(self.test_isolation_enabled);
 
         if let Some(cwd) = self.test_isolation_state.saved_cwd.take() {
@@ -4810,6 +4812,12 @@ impl VirtualMachine {
         self.main_resolved_path.deref();
         self.main_resolved_path = bun_core::String::empty();
         self.unhandled_error_counter = 0;
+    }
+
+    /// Replaces the global object between test files so each file runs in a fresh realm.
+    /// See [`Self::cleanup_between_isolated_test_files`] for caller preconditions.
+    pub fn swap_global_for_test_isolation(&mut self) {
+        self.cleanup_between_isolated_test_files();
 
         let old_global = self.global;
         // `old_global` valid for VM lifetime (safe ZST-handle deref);
@@ -4835,6 +4843,31 @@ impl VirtualMachine {
                 }
             }
         }
+    }
+
+    /// Experimental `--isolate` path: keep the current global object and evict
+    /// only project-source module records (anything not under `node_modules/`
+    /// and not a `node:`/`bun:` built-in) from the ESM registry and
+    /// `require.cache`, so dependency `JSModuleRecord`s — and the DFG/FTL
+    /// `CodeBlock`s hung off their `FunctionExecutable`s — survive across
+    /// files. Gated by `BUN_FEATURE_FLAG_EXPERIMENTAL_TEST_ISOLATE_REUSE_GLOBAL`;
+    /// does not yet check that the global is pristine.
+    ///
+    /// See [`Self::cleanup_between_isolated_test_files`] for caller preconditions.
+    pub fn reuse_global_for_test_isolation(&mut self) -> (u32, u32) {
+        self.cleanup_between_isolated_test_files();
+
+        let mut evicted_esm: u32 = 0;
+        let mut evicted_cjs: u32 = 0;
+        // SAFETY: `self.global` is the live per-VM global on the JS thread.
+        unsafe {
+            crate::cpp::raw::Bun__evictProjectModulesForTestIsolation(
+                self.global,
+                &mut evicted_esm,
+                &mut evicted_cjs,
+            );
+        }
+        (evicted_esm, evicted_cjs)
     }
 
     /// Loads and evaluates a macro entry module, waiting for its promise.

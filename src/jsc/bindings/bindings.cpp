@@ -2791,6 +2791,93 @@ void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global,
     moduleLoader->removeEntry(identifier);
 }
 
+// A module key is "kept" across test files under the experimental
+// --isolate global-reuse path when it resolves into a node_modules tree or
+// is a built-in specifier. Everything else (project source, the test file
+// itself, Bun's synthetic entry key) is evicted so the next file re-evaluates
+// it, while dependency JSModuleRecords — and the optimized CodeBlocks hanging
+// off their FunctionExecutables — stay live.
+static ALWAYS_INLINE bool isKeptAcrossTestIsolation(const WTF::String& key)
+{
+    if (key.isEmpty())
+        return false;
+#if OS(WINDOWS)
+    if (key.containsIgnoringASCIICase("/node_modules/"_s) || key.containsIgnoringASCIICase("\\node_modules\\"_s))
+        return true;
+#else
+    if (key.contains("/node_modules/"_s))
+        return true;
+#endif
+    // Built-in / virtual specifiers never live on disk; dropping them just
+    // forces a redundant re-link of native modules.
+    if (key.startsWith("node:"_s) || key.startsWith("bun:"_s) || key.startsWith("internal:"_s))
+        return true;
+    return false;
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__evictProjectModulesForTestIsolation(JSC::JSGlobalObject* globalObject, uint32_t* outEvictedEsm, uint32_t* outEvictedCjs)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+    auto* moduleLoader = globalObject->moduleLoader();
+
+    uint32_t evictedEsm = 0;
+    uint32_t evictedCjs = 0;
+
+    {
+        WTF::Vector<JSC::Identifier, 16> evict;
+        for (auto& [key, entry] : moduleLoader->moduleMap()) {
+            if (!key.first)
+                continue;
+            WTF::String keyString { key.first };
+            if (isKeptAcrossTestIsolation(keyString))
+                continue;
+            evict.append(JSC::Identifier::fromString(vm, keyString));
+        }
+        if (!evict.isEmpty()) {
+            WTF::Locker locker { moduleLoader->cellLock() };
+            for (auto& id : evict)
+                moduleLoader->removeEntry(id);
+        }
+        evictedEsm = evict.size();
+    }
+
+    {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        auto* requireMap = zigGlobal->requireMap();
+        WTF::Vector<JSC::JSValue, 16> evict;
+        auto iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), requireMap, JSC::IterationKind::Keys);
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException();
+        } else {
+            JSC::JSValue keyValue;
+            while (iter->next(globalObject, keyValue)) {
+                auto keyString = keyValue.toWTFString(globalObject);
+                if (scope.exception()) [[unlikely]] {
+                    scope.clearException();
+                    continue;
+                }
+                if (isKeptAcrossTestIsolation(keyString))
+                    continue;
+                evict.append(keyValue);
+            }
+            if (scope.exception()) [[unlikely]]
+                scope.clearException();
+            for (auto& key : evict) {
+                requireMap->remove(globalObject, key);
+                if (scope.exception()) [[unlikely]]
+                    scope.clearException();
+            }
+        }
+        evictedCjs = evict.size();
+    }
+
+    if (outEvictedEsm)
+        *outEvictedEsm = evictedEsm;
+    if (outEvictedCjs)
+        *outEvictedCjs = evictedCjs;
+}
+
 void JSC__VM__collectAsync(JSC::VM* vm)
 {
     JSC::JSLockHolder lock(*vm);

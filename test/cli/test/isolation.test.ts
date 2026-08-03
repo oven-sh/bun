@@ -968,3 +968,205 @@ test.concurrent("--isolate: require(esm) caches a BunTranspiledModule SourceProv
     expect(exitCode, `run ${run}`).toBe(0);
   }
 });
+
+describe.concurrent("BUN_FEATURE_FLAG_EXPERIMENTAL_TEST_ISOLATE_REUSE_GLOBAL", () => {
+  const reuseEnv = {
+    ...bunEnv,
+    BUN_FEATURE_FLAG_EXPERIMENTAL_TEST_ISOLATE_REUSE_GLOBAL: "1",
+  };
+
+  async function run(dir: string, files: string[], env = reuseEnv) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", ...files],
+      env,
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // This is the defining semantic: a dependency's JSModuleRecord (and with it
+  // any DFG/FTL CodeBlocks) survives across files, so its module-scope state
+  // is the same instance. Project-source modules are evicted and re-evaluate
+  // fresh. With a fresh global per file (flag off) the dep would ALSO be fresh,
+  // so file B would see `dep.touchedByA === undefined` and this test would fail.
+  test("node_modules records survive across files; project modules re-evaluate", async () => {
+    using dir = tempDir("isolate-reuse-dep", {
+      "node_modules/dep/package.json": `{"name":"dep","type":"module","main":"index.js"}`,
+      "node_modules/dep/index.js": `
+        export const state = { loads: 0 };
+        state.loads++;
+        export function hot(n) { let s = 0; for (let i = 0; i < n; i++) s += i; return s; }
+      `,
+      "project.ts": `
+        export const state = { loads: 0 };
+        state.loads++;
+      `,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        import { state as dep, hot } from "dep";
+        import { state as proj } from "./project";
+        test("a", () => {
+          expect(dep.loads).toBe(1);
+          expect(proj.loads).toBe(1);
+          dep.touchedByA = true;
+          proj.touchedByA = true;
+          expect(hot(1000)).toBe(499500);
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import { state as dep, hot } from "dep";
+        import { state as proj } from "./project";
+        test("b", () => {
+          // dep was NOT evicted: same record, same instance
+          expect(dep).toEqual({ loads: 1, touchedByA: true });
+          // project.ts WAS evicted and re-evaluated: fresh instance
+          expect(proj).toEqual({ loads: 1 });
+          expect(hot(1000)).toBe(499500);
+        });
+      `,
+    });
+    const { stderr, exitCode } = await run(String(dir), ["./a.test.ts", "./b.test.ts"]);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  // Without the flag, today's --isolate gives every file a fresh global, so a
+  // dependency's module-scope state resets per file (loads === 1 each time).
+  // Run the same b.test.ts above without the flag: still passes, but for the
+  // opposite reason. The observable difference is the dep instance identity,
+  // which we assert here.
+  test("flag off: dep module is a fresh instance per file", async () => {
+    using dir = tempDir("isolate-reuse-off", {
+      "node_modules/dep/package.json": `{"name":"dep","type":"module","main":"index.js"}`,
+      "node_modules/dep/index.js": `
+        export const state = { loads: 0 };
+        state.loads++;
+      `,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        import { state } from "dep";
+        test("a", () => { state.touched = true; expect(state.loads).toBe(1); });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import { state } from "dep";
+        test("b", () => {
+          expect(state.loads).toBe(1);
+          if (process.env.BUN_FEATURE_FLAG_EXPERIMENTAL_TEST_ISOLATE_REUSE_GLOBAL === "1") {
+            expect(state.touched).toBe(true);
+          } else {
+            expect(state.touched).toBeUndefined();
+          }
+        });
+      `,
+    });
+    for (const env of [reuseEnv, bunEnv]) {
+      const { stderr, exitCode } = await run(String(dir), ["./a.test.ts", "./b.test.ts"], env);
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  test("CJS: node_modules entry kept in require.cache; project entry evicted", async () => {
+    using dir = tempDir("isolate-reuse-cjs", {
+      "node_modules/cjsdep/package.json": `{"name":"cjsdep","main":"index.js"}`,
+      "node_modules/cjsdep/index.js": `
+        module.exports.state = { loads: (global.__cjsdep_loads = (global.__cjsdep_loads ?? 0) + 1) };
+      `,
+      "project.cjs": `
+        module.exports.state = { loads: (global.__proj_loads = (global.__proj_loads ?? 0) + 1) };
+      `,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        const dep = require("cjsdep");
+        const proj = require("./project.cjs");
+        test("a", () => {
+          expect(dep.state.loads).toBe(1);
+          expect(proj.state.loads).toBe(1);
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        const dep = require("cjsdep");
+        const proj = require("./project.cjs");
+        test("b", () => {
+          // kept: same module object, body not re-run
+          expect(dep.state.loads).toBe(1);
+          // evicted: body re-ran in the same global, counter is 2
+          expect(proj.state.loads).toBe(2);
+        });
+      `,
+    });
+    const { stderr, exitCode } = await run(String(dir), ["./a.test.ts", "./b.test.ts"]);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("leaked timer, server and subprocess are still torn down between files", async () => {
+    using dir = tempDir("isolate-reuse-cleanup", {
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        test("leak", async () => {
+          const server = Bun.serve({ port: 0, fetch: () => new Response("hi") });
+          (globalThis as any).leakedPort = server.port;
+          setInterval(() => { (globalThis as any).ticks = ((globalThis as any).ticks ?? 0) + 1; }, 5).unref();
+          Bun.spawn({ cmd: [process.execPath, "-e", "setInterval(()=>{},1e6)"], stdio: ["ignore","ignore","ignore"] });
+          expect(server.port).toBeGreaterThan(0);
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        test("cleaned", async () => {
+          // The global object is reused, so props set in file A are still visible
+          // (P0 spike: no pristine-global fallback yet). What we assert here is
+          // that the leaked *resources* are gone.
+          const port = (globalThis as any).leakedPort;
+          expect(typeof port).toBe("number");
+          await expect(fetch("http://127.0.0.1:" + port)).rejects.toThrow();
+        });
+      `,
+    });
+    const { stderr, exitCode } = await run(String(dir), ["./a.test.ts", "./b.test.ts"]);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  // Preload modules live in project space, so the P0 spike evicts them like
+  // any other project module and load_preloads re-evaluates them per file in
+  // the reused global. "Preload once per global" is follow-up work (requires
+  // tracking resolved preload paths so the eviction pass can skip them); this
+  // test pins the current behaviour so that change is deliberate.
+  test("preload runs per file (P0: evicted like project modules)", async () => {
+    using dir = tempDir("isolate-reuse-preload", {
+      "preload.ts": `
+        (globalThis as any).__preload_count = ((globalThis as any).__preload_count ?? 0) + 1;
+      `,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        test("a", () => { expect((globalThis as any).__preload_count).toBe(1); });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        test("b", () => { expect((globalThis as any).__preload_count).toBe(2); });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "--preload", "./preload.ts", "./a.test.ts", "./b.test.ts"],
+      env: reuseEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+});

@@ -547,7 +547,13 @@ impl<'a> WorkerLoop<'a> {
                 test_command::handle_top_level_test_error_before_javascript_start(&err);
             }
             crate::jsc_hooks::close_isolation_handles(vm);
-            vm.swap_global_for_test_isolation();
+            if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_TEST_ISOLATE_REUSE_GLOBAL::get()
+                .unwrap_or(false)
+            {
+                let _ = vm.reuse_global_for_test_isolation();
+            } else {
+                vm.swap_global_for_test_isolation();
+            }
             self.reporter
                 .jest
                 .bun_test_root

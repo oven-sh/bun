@@ -180,6 +180,10 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       "[3.14]",
       "['string']",
       "[{}]",
+      "[new (class extends Array {})()]",
+      "[new Proxy([], {})]",
+      "[new Proxy(new Map(), {})]",
+      "[(() => { const { proxy, revoke } = Proxy.revocable([], {}); revoke(); return proxy; })()]",
     ])("matches Node for IsMap/IsArray/IsInt32/IsBigInt on %s", async args => {
       await checkSameOutput("test_v8_value_type_checks", args);
     });

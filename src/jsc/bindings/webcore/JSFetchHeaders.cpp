@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSFetchHeaders.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"

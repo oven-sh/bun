@@ -22,25 +22,6 @@
 #endif // !OS(WINDOWS)
 #include <lshpack.h>
 
-#if CPU(X86_64) && !OS(WINDOWS)
-extern "C" void bun_warn_avx_missing(const char* url)
-{
-    __builtin_cpu_init();
-    if (__builtin_cpu_supports("avx")) {
-        return;
-    }
-
-    static constexpr const char* str = "warn: CPU lacks AVX support, strange crashes may occur. Reinstall Bun or use *-baseline build:\n  ";
-    const size_t len = strlen(str);
-
-    char buf[512];
-    strcpy(buf, str);
-    strcpy(buf + len, url);
-    strcpy(buf + len + strlen(url), "\n\0");
-    [[maybe_unused]] auto _ = write(STDERR_FILENO, buf, strlen(buf));
-}
-#endif
-
 // Error condition is encoded as max int32_t.
 // The only error in this function is ESRCH (no process found)
 extern "C" int32_t get_process_priority(int32_t pid)
@@ -233,25 +214,21 @@ extern "C" size_t Bun__memoryFootprint()
 #define NS_PER_HNS (100ULL) // NS = nanoseconds
 #define NS_PER_SEC (MS_PER_SEC * US_PER_MS * NS_PER_US)
 
-extern "C" int clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
+extern "C" void clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
 {
-    static LARGE_INTEGER ticksPerSec;
+    // C++11 thread-safe static init: Timespec::now() runs on multiple threads.
+    // QueryPerformanceFrequency is documented to always succeed on Windows XP+.
+    static const LARGE_INTEGER ticksPerSec = [] {
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        return f;
+    }();
+
     LARGE_INTEGER ticks;
-
-    if (!ticksPerSec.QuadPart) {
-        QueryPerformanceFrequency(&ticksPerSec);
-        if (!ticksPerSec.QuadPart) {
-            errno = ENOTSUP;
-            return -1;
-        }
-    }
-
     QueryPerformanceCounter(&ticks);
 
     *tv_sec = (int64_t)(ticks.QuadPart / ticksPerSec.QuadPart);
     *tv_nsec = (int64_t)(((ticks.QuadPart % ticksPerSec.QuadPart) * NS_PER_SEC) / ticksPerSec.QuadPart);
-
-    return 0;
 }
 
 extern "C" void windows_enable_stdio_inheritance()
@@ -925,7 +902,7 @@ extern "C" int64_t Bun__currentSyncPID = 0;
 static int Bun__pendingSignalToSend = 0;
 static struct sigaction previous_actions[NSIG];
 
-// This list of signals is copied from npm.
+// npm's signal list minus SIGIOT/SIGPOLL (aliases of SIGABRT/SIGIO; listing both would overwrite previous_actions[N]).
 // https://github.com/npm/cli/blob/fefd509992a05c2dfddbe7bc46931c42f1da69d7/workspaces/arborist/lib/signals.js#L26-L57
 #define FOR_EACH_POSIX_SIGNAL(M) \
     M(SIGABRT);                  \
@@ -940,16 +917,12 @@ static struct sigaction previous_actions[NSIG];
     M(SIGTRAP);                  \
     M(SIGSYS);                   \
     M(SIGQUIT);                  \
-    M(SIGIOT);                   \
     M(SIGIO);
 
 #if OS(LINUX)
 // SIGPWR is intentionally excluded: JSC uses it for GC thread suspend/resume
-// (see wtf/posix/ThreadingPOSIX.cpp). Overriding it here breaks GC and the
-// SA_RESETHAND disposition leaves it at SIG_DFL after one delivery, which
-// kills the process on the next collection.
+// (see wtf/posix/ThreadingPOSIX.cpp); overriding it here breaks GC.
 #define FOR_EACH_LINUX_ONLY_SIGNAL(M) \
-    M(SIGPOLL);                       \
     M(SIGSTKFLT);
 
 #endif
@@ -994,7 +967,8 @@ extern "C" void Bun__registerSignalsForForwarding()
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESETHAND;
+    // Not SA_RESETHAND: a nested runner sees the signal more than once and must not die on a repeat delivery.
+    sa.sa_flags = 0;
     sa.sa_handler = [](int sig) {
         if (Bun__currentSyncPID == 0) {
             Bun__pendingSignalToSend = sig;

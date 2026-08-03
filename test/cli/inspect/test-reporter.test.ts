@@ -310,4 +310,149 @@ afterAll(async () => {
     const exitCode = await proc.exited;
     expect(exitCode).toBe(0);
   });
+
+  test("assigns unique test IDs when TestReporter.enable lands mid-collection", async () => {
+    // Regression: the live-registration path (ScopeFunctions::call) and the
+    // retroactive path (retroactively_report_discovered_tests) used to draw
+    // IDs from two independent counters. The existing test above enables
+    // TestReporter only after collection finishes, so the two paths never
+    // interleave there.
+    //
+    // Here we pause inside suite B's *async describe callback*. By that point
+    // collection has already run suite A's (sync) callback to completion
+    // (registering test A1/A2), while suite B's own test() has not yet been
+    // called. Enabling TestReporter in that window sends suite A + suite B's
+    // describe through the retroactive walk; test B1 is registered live once
+    // we release the gate.
+
+    using dir = tempDir("test-reporter-mid-collection", {
+      "mid-collection.test.ts": `
+import { afterAll, describe, test, expect } from "bun:test";
+import { existsSync } from "node:fs";
+
+describe("suite A", () => {
+  test("test A1", () => {
+    expect(1).toBe(1);
+  });
+  test("test A2", () => {
+    expect(2).toBe(2);
+  });
+});
+
+describe("suite B", async () => {
+  console.log("__COLLECTION_CHECKPOINT__");
+  while (!existsSync("collect-gate")) {
+    await Bun.sleep(5);
+  }
+  test("test B1", () => {
+    expect(3).toBe(3);
+  });
+});
+
+afterAll(async () => {
+  while (!existsSync("done-gate")) await Bun.sleep(10);
+});
+`,
+    });
+
+    const socketPath = join(String(dir), `inspector-${Math.random().toString(36).substring(2)}.sock`);
+    const collectGatePath = join(String(dir), "collect-gate");
+    const doneGatePath = join(String(dir), "done-gate");
+
+    const session = new TestReporterSession();
+    const framer = new SocketFramer((message: string) => {
+      session.onMessage(message);
+    });
+
+    // Track every raw `found` id in arrival order (no dedupe) so a collision
+    // shows up as a literal duplicate independent of the Map-keyed bookkeeping
+    // in TestReporterSession (which would silently coalesce same-id events).
+    const rawFoundIds: number[] = [];
+    session.addEventListener("TestReporter.found", (params: any) => {
+      rawFoundIds.push(params.id);
+    });
+
+    const socketPromise = connect(`unix://${socketPath}`).then(s => {
+      socket = s;
+      session.socket = s;
+      session.framer = framer;
+      s.data = {
+        onData: framer.onData.bind(framer),
+      };
+      return s;
+    });
+
+    proc = spawn({
+      cmd: [bunExe(), `--inspect-wait=unix:${socketPath}`, "test", "--timeout", "30000", "mid-collection.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    await socketPromise;
+
+    // Enable Inspector and Console (NOT TestReporter). Console lets us observe
+    // the collection checkpoint without disturbing collection itself.
+    session.enableInspector();
+    session.send("Console.enable");
+
+    const checkpointSeen = session.waitForConsoleMessage("__COLLECTION_CHECKPOINT__", 15000);
+
+    // Signal ready - this allows test collection to proceed.
+    session.initialize();
+
+    // Wait until suite A has fully registered and collection is paused inside
+    // suite B's async describe callback (test B1 not yet registered).
+    await checkpointSeen;
+
+    // Enable TestReporter now, genuinely mid-collection.
+    session.enableTestReporter();
+
+    // suite A's describe + 2 tests, plus suite B's (empty) describe: 4 events
+    // via the retroactive walk.
+    await session.waitForFoundTests(4, 15000);
+
+    // Release the gate so suite B's callback registers test B1 via the live
+    // path while the agent is enabled.
+    await write(collectGatePath, "go");
+
+    // test B1 brings the total to 5. Pre-fix its id collides with one the
+    // retroactive walk already used, so the Map stays at 4 keys and this
+    // wait times out.
+    const foundTests = await session.waitForFoundTests(5, 15000);
+    expect(foundTests.size).toBe(5);
+
+    const endedTests = await session.waitForEndedTests(3, 15000);
+    expect(endedTests.size).toBe(3);
+
+    // All `end` events received; release the afterAll hold so the subprocess
+    // can exit.
+    await write(doneGatePath, "go");
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    void stdout;
+
+    // Core assertion: every `found` id across both paths is unique.
+    expect(rawFoundIds.length).toBe(5);
+    expect(new Set(rawFoundIds).size).toBe(5);
+
+    // Every `end` event's id must correspond to an actual `test`.
+    for (const id of endedTests.keys()) {
+      const found = foundTests.get(id);
+      expect(found).toBeDefined();
+      expect(found.type).toBe("test");
+    }
+
+    const testNames = [...foundTests.values()]
+      .filter(t => t.type === "test")
+      .map(t => t.name)
+      .sort();
+    expect(testNames).toEqual(["test A1", "test A2", "test B1"]);
+
+    if (exitCode !== 0) {
+      expect(stderr).toBe("");
+    }
+    expect(exitCode).toBe(0);
+  });
 });

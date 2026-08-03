@@ -3,6 +3,7 @@
 
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
+#include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMWrapperCache.h"
@@ -160,6 +161,7 @@ static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::VM& vm, JSC::JSGl
     case SourceKind::FromIterable:
     case SourceKind::CrossRealm:
     case SourceKind::Native:
+    case SourceKind::TextDecode:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -193,6 +195,7 @@ static JSC::JSPromise* performByteControllerCancelAlgorithm(JSC::VM& vm, JSC::JS
     case SourceKind::FromIterable:
     case SourceKind::CrossRealm:
     case SourceKind::Native:
+    case SourceKind::TextDecode:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -675,6 +678,8 @@ void readableByteStreamControllerClearAlgorithms(JSReadableByteStreamController*
     controller->m_algorithms.method1.clear();
     controller->m_algorithms.method2.clear();
     controller->m_algorithms.algorithmContext.clear();
+    if (auto* stream = controller->m_stream.get())
+        readableStreamClearSourceBarriers(stream);
 }
 
 void readableByteStreamControllerClearPendingPullIntos(JSReadableByteStreamController* controller)
@@ -1248,16 +1253,16 @@ void readableByteStreamControllerRespondWithNewView(JSGlobalObject* globalObject
     }
     const size_t bytesFilled = firstDescriptor->m_bytesFilled;
     if (firstDescriptor->m_byteOffset + bytesFilled != view->byteOffset()) {
-        throwRangeError(globalObject, scope, "The view's byte offset does not match the BYOB request's current write position"_s);
+        Bun::ERR::INVALID_ARG_VALUE_RangeError(scope, globalObject, "view"_s, view, "must match the BYOB request's current write position"_s);
         return;
     }
     RefPtr<JSC::ArrayBuffer> viewedBuffer = view->possiblySharedBuffer();
     if (firstDescriptor->m_bufferByteLength != viewedBuffer->byteLength()) {
-        throwRangeError(globalObject, scope, "The view's buffer length does not match the BYOB request's buffer length"_s);
+        Bun::ERR::INVALID_ARG_VALUE_RangeError(scope, globalObject, "view"_s, view, "must have the same buffer length as the BYOB request"_s);
         return;
     }
     if (bytesFilled + viewByteLength > firstDescriptor->m_byteLength) {
-        throwRangeError(globalObject, scope, "The view's byte length exceeds the remaining length of the BYOB request"_s);
+        Bun::ERR::INVALID_ARG_VALUE_RangeError(scope, globalObject, "view"_s, view, "must not exceed the remaining length of the BYOB request"_s);
         return;
     }
     RefPtr<JSC::ArrayBuffer> transferredBuffer = transferArrayBufferImpl(globalObject, *viewedBuffer);

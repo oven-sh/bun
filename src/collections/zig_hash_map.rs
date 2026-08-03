@@ -130,10 +130,6 @@ impl<K, V, C> HashMap<K, V, C> {
         self.size as usize
     }
     #[inline]
-    pub fn count(&self) -> u32 {
-        self.size
-    }
-    #[inline]
     pub fn is_empty(&self) -> bool {
         self.size == 0
     }
@@ -688,10 +684,6 @@ impl<'a, K, V, C> OccupiedEntry<'a, K, V, C> {
     pub fn into_mut(self) -> &'a mut V {
         &mut self.map.slots[self.idx].as_mut().unwrap().1
     }
-    #[inline]
-    pub fn key(&self) -> &K {
-        &self.map.slots[self.idx].as_ref().unwrap().0
-    }
 }
 
 impl<'a, K, V, C: HashContext<K>> VacantEntry<'a, K, V, C> {
@@ -700,9 +692,5 @@ impl<'a, K, V, C: HashContext<K>> VacantEntry<'a, K, V, C> {
         debug_assert!(!found);
         self.map.slots[idx] = Some((self.key, value));
         &mut self.map.slots[idx].as_mut().unwrap().1
-    }
-    #[inline]
-    pub fn key(&self) -> &K {
-        &self.key
     }
 }

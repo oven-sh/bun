@@ -175,7 +175,7 @@ struct WyhashStateless {
 
 impl WyhashStateless {
     #[inline(always)]
-    pub(crate) fn init(seed: u64) -> WyhashStateless {
+    fn init(seed: u64) -> WyhashStateless {
         WyhashStateless { seed, msg_len: 0 }
     }
 
@@ -195,7 +195,7 @@ impl WyhashStateless {
     }
 
     #[inline(always)]
-    pub(crate) fn update(&mut self, b: &[u8]) {
+    fn update(&mut self, b: &[u8]) {
         debug_assert!(b.len().is_multiple_of(32));
 
         let mut off: usize = 0;
@@ -215,7 +215,7 @@ impl WyhashStateless {
     // `#[cold] #[inline(never)] final_long`, leaving `final_` with just the
     // `0..=16` arms — small enough to inline cleanly into every hashbrown probe.
     #[inline(always)]
-    pub(crate) fn final_(&mut self, b: &[u8]) -> u64 {
+    fn final_(&mut self, b: &[u8]) -> u64 {
         debug_assert!(b.len() < 32);
 
         let seed = self.seed;
@@ -307,7 +307,7 @@ impl WyhashStateless {
     // — `#[inline]` (hint) was being declined across the bun_wyhash →
     // bun_js_parser/bun_collections crate boundary; force it.
     #[inline(always)]
-    pub(crate) fn hash(seed: u64, input: &[u8]) -> u64 {
+    fn hash(seed: u64, input: &[u8]) -> u64 {
         let aligned_len = input.len() - (input.len() % 32);
 
         let mut c = WyhashStateless::init(seed);

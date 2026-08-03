@@ -11,7 +11,7 @@ import {
   isMusl,
   isWindows,
   nodeExeMatchingAbi,
-  tempDirWithFiles,
+  tempDir,
 } from "harness";
 import { join } from "path";
 
@@ -73,7 +73,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   describe.each(["esm", "cjs"])("bundle .node files to %s via", format => {
     describe.each(["node", "bun"])("target %s", target => {
       it("Bun.build", async () => {
-        const dir = tempDirWithFiles("node-file-cli", {
+        await using dir = tempDir("node-file-cli", {
           "package.json": JSON.stringify({
             name: "napi-app",
             version: "1.0.0",
@@ -116,7 +116,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         it(
           "should work with --compile",
           async () => {
-            const dir = tempDirWithFiles("napi-app-compile-" + format, {
+            await using dir = tempDir("napi-app-compile-" + format, {
               "package.json": JSON.stringify({
                 name: "napi-app",
                 version: "1.0.0",
@@ -140,7 +140,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
               stderr: "inherit",
             });
             expect(build.success).toBeTrue();
-            const tmpdir = tempDirWithFiles("should-be-empty-except", {});
+            await using tmpdir = tempDir("should-be-empty-except", {});
             const result = spawnSync({
               cmd: [exe, "self"],
               env: { ...bunEnv, BUN_TMPDIR: tmpdir },
@@ -158,12 +158,15 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
               // Not clear how to test for that.
             }
           },
-          10 * 1000,
+          // CI runs tests under bun-profile (~700 MB on linux with ThinLTO
+          // DWARF); --compile copies+reads+rewrites the whole thing to /tmp,
+          // which on debian/ubuntu is disk-backed gp3.
+          30 * 1000,
         );
       }
 
       it("`bun build`", async () => {
-        const dir = tempDirWithFiles("node-file-build", {
+        await using dir = tempDir("node-file-build", {
           "package.json": JSON.stringify({
             name: "napi-app",
             version: "1.0.0",
@@ -324,6 +327,18 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("napi_get_version / node_api_create_external_string_*", () => {
+    it("reports Node-API v10 and accepts zero-length external strings", async () => {
+      const result = await checkSameOutput("test_napi_v10_surface", []);
+      expect(result).toContain("napi_get_version >= 10 = true");
+      expect(result).toContain("external latin1 empty: status=0 copied=0 finalized=1");
+      expect(result).toContain("external latin1 empty: length=0");
+      expect(result).toContain("external utf16 empty: status=0 copied=0 finalized=1");
+      expect(result).toContain("external utf16 empty: length=0");
+      expect(result).toContain("external utf16 nonempty: copied=0");
+    });
+  });
+
   describe("napi_create_external_buffer", () => {
     it("handles empty/null data without throwing", async () => {
       const result = await checkSameOutput("test_napi_create_external_buffer_empty", []);
@@ -374,6 +389,96 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("pending-exception gate", () => {
+    it("refuses and performs no side effects while a napi exception is pending", async () => {
+      const result = await checkSameOutput("test_pending_exception_gate", []);
+      // every gated call must report napi_pending_exception (10)
+      for (const fn of [
+        "napi_object_freeze",
+        "napi_object_seal",
+        "napi_set_element",
+        "napi_run_script",
+        "napi_instanceof",
+        "napi_strict_equals",
+        "napi_wrap",
+        "napi_get_prototype",
+        "napi_get_date_value",
+        "napi_get_array_length",
+        "napi_create_date",
+        "napi_create_dataview",
+        "napi_create_promise",
+        "napi_resolve_deferred",
+      ]) {
+        expect(result).toContain(`${fn}: status=10`);
+      }
+      // functions Node.js does NOT gate (CHECK_ENV) must still succeed
+      for (const fn of [
+        "napi_get_global",
+        "napi_create_reference",
+        "napi_reference_unref",
+        "napi_get_reference_value",
+        "napi_create_bigint_int64",
+        "napi_create_symbol",
+        "napi_is_buffer",
+        "napi_is_typedarray",
+        "napi_get_instance_data",
+        "napi_get_value_bigint_uint64",
+        "napi_add_async_cleanup_hook",
+        "napi_remove_async_cleanup_hook",
+      ]) {
+        expect(result).toContain(`${fn}: status=0`);
+      }
+      // side effects must NOT have happened
+      expect(result).toContain("side_effect frozen=false");
+      expect(result).toContain("side_effect arr[7]=undefined");
+      expect(result).toContain("side_effect script_ran=false");
+    });
+  });
+
+  describe("status code alignment with Node.js", () => {
+    it("returns the same napi_status as Node.js for invalid inputs", async () => {
+      const result = await checkSameOutput("test_napi_status_codes_node26", []);
+
+      // napi_wrap/unwrap/remove_wrap/add_finalizer on primitive -> napi_invalid_arg (1)
+      for (const fn of ["napi_wrap", "napi_unwrap", "napi_remove_wrap", "napi_add_finalizer"]) {
+        expect(result).toContain(`${fn}(number): status=1 pending=0`);
+      }
+
+      // napi_coerce_to_*: type-specific status, exception stays pending
+      expect(result).toContain("napi_coerce_to_number(Symbol): status=6 pending=1");
+      expect(result).toContain("napi_coerce_to_string(Symbol): status=3 pending=1");
+      expect(result).toContain("napi_coerce_to_object(null): status=2 pending=1");
+
+      // napi_run_script: napi_generic_failure (9), exception stays pending
+      expect(result).toContain("napi_run_script(throw): status=9 pending=1");
+      expect(result).toContain("napi_run_script(syntax): status=9 pending=1");
+
+      // napi_create_bigint_words > INT_MAX: napi_invalid_arg, no throw
+      expect(result).toContain("napi_create_bigint_words(INT_MAX+1): status=1 pending=0");
+
+      // napi_create_buffer / napi_create_buffer_copy: napi_generic_failure (9) on alloc failure
+      expect(result).toContain("napi_create_buffer(SIZE_MAX): status=9 pending=1");
+      expect(result).toContain("napi_create_buffer_copy(SIZE_MAX): status=9 pending=1");
+
+      // second napi_throw_error: napi_pending_exception, first message kept
+      expect(result).toContain("napi_throw_error(2nd): status=10");
+      expect(result).toContain("napi_throw_error(2nd): kept=first");
+
+      // node_api_post_finalizer(NULL): napi_ok
+      expect(result).toContain("node_api_post_finalizer(NULL): status=0 pending=0");
+
+      // napi_make_callback validation -> napi_invalid_arg
+      for (const which of ["recv=NULL", "argc>0,argv=NULL", "func=number"]) {
+        expect(result).toContain(`napi_make_callback(${which}): status=1 pending=0`);
+      }
+
+      // napi_ref/unref_threadsafe_function: env ignored, last_error untouched
+      expect(result).toContain("napi_ref_threadsafe_function(env=NULL): status=0");
+      expect(result).toContain("napi_unref_threadsafe_function(env=NULL): status=0");
+      expect(result).toContain("napi_ref_threadsafe_function: last_error_preserved=1");
+    });
+  });
+
   describe("napi_async_work", () => {
     it("null checks execute callbacks", async () => {
       const output = await checkSameOutput("test_napi_async_work_execute_null_check", []);
@@ -416,6 +521,11 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   });
 
   describe("napi_threadsafe_function", () => {
+    it("passes NULL js_callback to call_js when created without a func", async () => {
+      const output = await checkSameOutput("test_tsfn_null_js_callback_driver", []);
+      expect(output).toContain("js_callback == NULL: 1");
+    });
+
     it("keeps the event loop alive without async_work", async () => {
       const result = await checkSameOutput("test_promise_with_threadsafe_function", []);
       expect(result).toContain("tsfn_callback");
@@ -585,6 +695,19 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("napi_adjust_external_memory", () => {
+    it("applies negative deltas and reports the running total", async () => {
+      const result = await checkSameOutput("test_napi_adjust_external_memory", []);
+      // printf() via the Windows CRT emits \r\n, so split on either ending.
+      expect(result.split(/\r?\n/)).toEqual([
+        "after_add-base=8192",
+        "after_sub-after_add=-8192",
+        "readback-after_sub=0",
+        "readback-base=0",
+      ]);
+    });
+  });
+
   describe("napi_run_script", () => {
     it("evaluates a basic expression", async () => {
       await checkSameOutput("test_napi_run_script", ["5 * (1 + 2)"]);
@@ -619,12 +742,34 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("napi_define_properties", () => {
+    it("goes through [[DefineOwnProperty]] and validates the name", async () => {
+      await checkSameOutput("test_define_properties", []);
+    });
+  });
+
   describe("napi_get_property_names / napi_get_all_property_names", () => {
     it("does not poison JSC's per-Structure own-keys cache", async () => {
       const output = await checkSameOutput("test_property_names_cache_poisoning", []);
       expect(output).toContain("Reflect.ownKeys after get_all_property_names(include_prototypes): a,b");
       expect(output).toContain("Object.keys after get_property_names: w1,w2");
       expect(output).toContain("napi get_property_names result: w1,w2,pEnum");
+    });
+    it("handles accessor properties when filtering by napi_key_writable", async () => {
+      await checkSameOutput("test_get_all_property_names_accessor", []);
+    });
+    it("matches Node for Proxy and String wrapper with napi_key_writable/napi_key_configurable", async () => {
+      const output = await checkSameOutput("test_get_all_property_names_proxy_and_string_wrapper", []);
+      expect(output).toContain(`proxy own_only writable: status=0 keys=["x","y"]`);
+      expect(output).toContain(`proxy own_only configurable: status=0 keys=["x","y"]`);
+      expect(output).toContain(`proxy(no traps) writable: status=0 keys=["ro","rw"]`);
+      expect(output).toContain(`string own_only writable: status=0 keys=[0,1]`);
+      expect(output).toContain(`string own_only configurable: status=0 keys=[0,1]`);
+      expect(output).toContain(`derived string writable: status=0 keys=[0,1]`);
+      expect(output).toContain(`proxy-proto include_prototypes writable: status=0 keys=["x","y"]`);
+      expect(output).toContain(`string-proto include_prototypes configurable: status=0 keys=[0,1]`);
+      expect(output).toContain(`plain writable: status=0 keys=["w","nc"]`);
+      expect(output).toContain(`frozen writable: status=0 keys=[]`);
     });
   });
 
@@ -678,6 +823,33 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("node_api experimental", () => {
+    it("node_api_set_prototype sets [[Prototype]]", async () => {
+      const output = await checkSameOutput("test_node_api_set_prototype", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "set_prototype: proto_matches=true inherited=123",
+        "set_prototype: null_proto_type=1",
+      ]);
+    });
+    it("node_api_create_object_with_properties creates an object with the given prototype and properties", async () => {
+      const output = await checkSameOutput("test_node_api_create_object_with_properties", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "create_object_with_properties: proto_type=1 a=1 b=2 sym=3 idx0=4",
+        "create_object_with_properties: bad_name_status=4",
+        "create_object_with_properties: custom_proto_matches=true",
+      ]);
+    });
+    it("node_api_create_sharedarraybuffer / is_sharedarraybuffer / create_external_sharedarraybuffer", async () => {
+      const output = await checkSameOutput("test_node_api_sharedarraybuffer", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "create_sharedarraybuffer: data_nonnull=true is_sab=true is_ab=false",
+        "create_sharedarraybuffer: info_data_matches=true info_len=16",
+        "is_sharedarraybuffer: plain_ab=false number=false",
+        "create_external_sharedarraybuffer: is_sab=true data_matches=true len=8 first=176 finalized_early=false",
+      ]);
+    });
+  });
+
   describe("napi_get_typedarray_info", () => {
     it("reports a zero byte offset for a view over the whole buffer and the view's byte offset for an offset view", async () => {
       const whole = await checkSameOutput("test_typedarray_info_byte_offset", "[new Uint8Array(new ArrayBuffer(64))]");
@@ -711,6 +883,20 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(output).toBe(
         "byte_offset=32 length=4 arraybuffer_byte_length=64 data_is_arraybuffer_data_plus_byte_offset=true",
       );
+    });
+
+    it("maps Float16Array to napi_float16_array in both napi_get_typedarray_info and napi_create_typedarray", async () => {
+      const output = await checkSameOutput(
+        "test_napi_float16_array",
+        "[(() => { const f = new Float16Array(new ArrayBuffer(16), 4, 4); f.set([1.5, 2, 3, 4]); return f; })()]",
+      );
+      // printf() via the Windows CRT emits \r\n, so split on either ending.
+      expect(output.split(/\r?\n/)).toEqual([
+        "is_typedarray=1 info_status=0 type=11 length=4 byte_offset=4 e0=0x3E00",
+        "arraybuffer_byte_length=16 data_is_ab_plus_offset=1",
+        "create_status=0 created_is_typedarray=1 created_type=11 created_length=4",
+        "created instanceof Float16Array=1",
+      ]);
     });
   });
 
@@ -812,6 +998,28 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   describe("napi_get_last_error_info", () => {
     it("returns information from the most recent call", async () => {
       await checkSameOutput("test_extended_error_messages", []);
+    });
+
+    it("returns a non-null message for napi_cannot_run_js", async () => {
+      // A v10 addon calling napi_throw inside a teardown finalizer gets
+      // napi_cannot_run_js. napi_get_last_error_info must then report a
+      // non-null message (previously the error_messages table stopped at
+      // napi_would_deadlock, so error_message was left as nullptr).
+      const code = `globalThis.keep = require(${JSON.stringify(
+        join(__dirname, "napi-app/build/Debug/test_last_error_cannot_run_js.node"),
+      )});`;
+      const run = async (exe: string) => {
+        await using proc = spawn({ cmd: [exe, "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout: stdout.trim(), stderr, exitCode };
+      };
+      const [bun, node] = await Promise.all([run(bunExe()), run(await nodeExeMatchingAbi())]);
+      expect(bun).toEqual(node);
+      expect(bun).toEqual({
+        stdout: "napi_throw status=23 error_code=23 error_message=Cannot run JavaScript",
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 
@@ -1094,19 +1302,20 @@ describe.skipIf(!canBuildNodeAddons())("napi_create_string_latin1", () => {
   it("does not leak the WTFStringImpl", async () => {
     const fixture = /* js */ `
       const nativeTests = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))});
+      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
       const size = 256 * 1024;
       for (let i = 0; i < 20; i++) {
         const s = nativeTests.create_latin1_string(size);
         if (s.length !== size) throw new Error("wrong length: " + s.length);
       }
       Bun.gc(true);
-      const before = process.memoryUsage.rss();
+      const before = rss();
       for (let i = 0; i < 300; i++) {
         const s = nativeTests.create_latin1_string(size);
         if (s.length !== size) throw new Error("wrong length: " + s.length);
       }
       Bun.gc(true);
-      const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+      const growthMB = (rss() - before) / 1024 / 1024;
       console.error("RSS growth: " + growthMB.toFixed(1) + " MB");
       process.exit(growthMB > Number(process.env.THRESHOLD_MB) ? 1 : 0);
     `;
@@ -1254,6 +1463,24 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     });
   });
 
+  describe("napi_new_instance", () => {
+    it("returns the same status codes as Node.js for non-constructible targets", async () => {
+      const output = await checkSameOutput(
+        "test_napi_new_instance_status",
+        "[() => {}, (() => {}).bind(null), 42, null, {}, function () {}]",
+      );
+      // arrow + bound arrow: napi_pending_exception with a pending TypeError
+      expect(output).toContain("target 1: status=10 pending=1 type_error=1");
+      expect(output).toContain("target 2: status=10 pending=1 type_error=1");
+      // number / null / plain object: napi_invalid_arg, nothing thrown
+      expect(output).toContain("target 3: status=1 pending=0 type_error=0");
+      expect(output).toContain("target 4: status=1 pending=0 type_error=0");
+      expect(output).toContain("target 5: status=1 pending=0 type_error=0");
+      // regular function: napi_ok
+      expect(output).toContain("target 6: status=0 pending=0 type_error=0");
+    });
+  });
+
   describe("napi_create_array_with_length", () => {
     it("should handle boundary values consistently", async () => {
       const output = await checkSameOutput("test_napi_create_array_boundary", []);
@@ -1268,6 +1495,33 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       const output = await checkSameOutput("test_napi_dataview_bounds_errors", []);
       expect(output).toContain("napi_create_dataview");
       // Check for proper bounds validation
+    });
+  });
+
+  describe("NULL napi_value arguments", () => {
+    it("returns napi_invalid_arg instead of crashing", async () => {
+      const output = await checkSameOutput("test_napi_null_value_args", []);
+      expect(output).toContain("napi_detach_arraybuffer(NULL) -> 1");
+      expect(output).toContain("node_api_create_buffer_from_arraybuffer(NULL) -> 1");
+      expect(output).toContain("napi_strict_equals(NULL, NULL) -> 1");
+      expect(output).toContain("napi_instanceof(NULL, NULL) -> 1");
+      expect(output).toContain("napi_new_instance(NULL) -> 1");
+      expect(output).toContain("napi_is_array(NULL) -> 1");
+      expect(output).toContain("napi_is_error(NULL) -> 1");
+      expect(output).toContain("napi_is_arraybuffer(NULL) -> 1");
+      expect(output).toContain("napi_is_dataview(NULL) -> 1");
+      expect(output).toContain("napi_is_date(NULL) -> 1");
+      expect(output).toContain("napi_get_array_length(NULL) -> 1");
+      expect(output).toContain("napi_get_dataview_info(NULL) -> 1");
+    });
+
+    it("returns napi_invalid_arg for NULL env / NULL out-param instead of crashing", async () => {
+      const output = await checkSameOutput("test_napi_null_env_and_result", []);
+      expect(output).toContain("napi_typeof(NULL env) -> 1");
+      expect(output).toContain("napi_is_exception_pending(NULL env) -> 1");
+      expect(output).toContain("napi_call_function(NULL env) -> 1");
+      expect(output).toContain("napi_is_error(NULL result) -> 1");
+      expect(output).toContain("napi_async_init(NULL result) -> 1");
     });
   });
 
@@ -1293,6 +1547,19 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       // as js_callback and passes it to napi_make_callback, it should succeed.
       const output = await checkSameOutput("test_make_callback_with_async_context", []);
       expect(output).toContain("PASS: napi_make_callback succeeded");
+    });
+
+    it("derives napi_make_callback status from pending exception, not return value", async () => {
+      // Returning an Error is napi_ok; throwing (any value) is napi_pending_exception
+      // and leaves the exception observable to napi_is_exception_pending.
+      const output = await checkSameOutput(
+        "test_napi_make_callback_status",
+        "[() => 42, () => new Error('returned'), () => { throw new Error('thrown'); }, () => { throw 'string'; }]",
+      );
+      expect(output).toContain("cb 1: status=0 pending=0 wrote_result=1 result_is_error=0");
+      expect(output).toContain("cb 2: status=0 pending=0 wrote_result=1 result_is_error=1");
+      expect(output).toContain("cb 3: status=10 pending=1 wrote_result=0 result_is_error=0");
+      expect(output).toContain("cb 4: status=10 pending=1 wrote_result=0 result_is_error=0");
     });
 
     it("should accept AsyncContextFrame in napi_create_threadsafe_function with null call_js_cb", async () => {
@@ -1366,6 +1633,27 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
         "napi_is_arraybuffer=true napi_get_arraybuffer_info=0",
         "napi_is_arraybuffer=false napi_get_arraybuffer_info=0",
         "napi_is_arraybuffer=false napi_get_arraybuffer_info=1",
+      ]);
+    });
+  });
+
+  describe("napi_detach_arraybuffer", () => {
+    it("rejects SharedArrayBuffer instead of returning napi_ok for a no-op detach", async () => {
+      // napi_ok on a SharedArrayBuffer is a memory-lifetime lie: the addon
+      // believes the backing store is neutralized while JS (and other threads)
+      // still read and write it. Node rejects a SharedArrayBuffer with
+      // napi_arraybuffer_expected (19) because V8's IsArrayBuffer() is false
+      // for a SharedArrayBuffer. The same ArrayBuffer is passed twice so the
+      // third row covers a second detach on an already-detached buffer.
+      const output = await checkSameOutput(
+        "test_detach_arraybuffer",
+        "(() => { const ab = new ArrayBuffer(8); return [new SharedArrayBuffer(8), ab, ab, new Uint8Array(8)]; })()",
+      );
+      expect(output.split(/\r?\n/)).toEqual([
+        "napi_detach_arraybuffer=19 napi_is_detached_arraybuffer=0 is_detached=false napi_get_arraybuffer_info=0 length=8",
+        "napi_detach_arraybuffer=0 napi_is_detached_arraybuffer=0 is_detached=true napi_get_arraybuffer_info=0 length=0",
+        "napi_detach_arraybuffer=0 napi_is_detached_arraybuffer=0 is_detached=true napi_get_arraybuffer_info=0 length=0",
+        "napi_detach_arraybuffer=19 napi_is_detached_arraybuffer=0 is_detached=false napi_get_arraybuffer_info=1 length=0",
       ]);
     });
   });

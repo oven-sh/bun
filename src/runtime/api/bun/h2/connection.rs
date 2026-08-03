@@ -13,6 +13,18 @@ use super::stream::{self, State};
 use super::wire::{self, ErrorCode, FrameHeader, FrameType, SettingId};
 use bun_collections::HashMap;
 
+/// Pseudo-header presence bits shared by the per-field decode loop and the RFC 9113 §8.3.1
+/// request checks in `finish_header_block` (nghttp2's NGHTTP2_HTTP_FLAG__* equivalents).
+mod pseudo {
+    pub(super) const METHOD: u8 = 1;
+    pub(super) const SCHEME: u8 = 2;
+    pub(super) const AUTHORITY: u8 = 4;
+    pub(super) const PATH: u8 = 8;
+    pub(super) const STATUS: u8 = 16;
+    pub(super) const PROTOCOL: u8 = 32;
+    pub(super) const UNKNOWN: u8 = 64;
+}
+
 /// Snapshot of the local-settings values carried by one sent-but-unACKed SETTINGS frame, so an
 /// inbound ACK is attributed to the submission it actually acknowledges (RFC 9113 §6.5.3) rather
 /// than to the latest submission.
@@ -97,18 +109,6 @@ pub struct Feed {
 /// nghttp2's NGHTTP2_DEFAULT_MAX_OBQ_FLOOD_ITEM: outbound PING/SETTINGS ACKs that may pile up
 /// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
 const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
-
-/// Pseudo-header presence bits shared by the per-field decode loop and the RFC 9113 §8.3.1
-/// request checks in `finish_header_block` (nghttp2's NGHTTP2_HTTP_FLAG__* equivalents).
-mod pseudo {
-    pub(super) const METHOD: u8 = 1;
-    pub(super) const SCHEME: u8 = 2;
-    pub(super) const AUTHORITY: u8 = 4;
-    pub(super) const PATH: u8 = 8;
-    pub(super) const STATUS: u8 = 16;
-    pub(super) const PROTOCOL: u8 = 32;
-    pub(super) const UNKNOWN: u8 = 64;
-}
 
 /// What the connection engine calls back into the embedder (the JSC binding) for. Methods take
 /// `&self`: the JSC binding (H2FrameParser) is fully interior-mutable (Cell/JsCell) and its host
@@ -341,27 +341,8 @@ impl Connection {
         }
     }
 
-    /// §3.4 client preface (24-octet magic), sent before our first SETTINGS.
-    pub fn send_client_preface(&mut self, sink: &impl Sink) {
-        sink.write(wire::CONNECTION_PREFACE);
-    }
-
-    pub fn send_settings(&mut self, sink: &impl Sink) {
-        let mut buf = [0u8; Settings::STANDARD_COUNT * 6];
-        let n = self.local_settings.pack_standard(&mut buf);
-        self.pending_local_settings_acks
-            .push_back(PendingLocalSettings {
-                settings: self.local_settings,
-            });
-        self.write_frame(sink, FrameType::Settings, 0, 0, &buf[..n]);
-    }
-
     fn send_settings_ack(&mut self, sink: &impl Sink) {
         self.write_frame(sink, FrameType::Settings, wire::flags::ACK, 0, &[]);
-    }
-
-    pub fn send_ping(&mut self, sink: &impl Sink, payload: [u8; 8]) {
-        self.write_frame(sink, FrameType::Ping, 0, 0, &payload);
     }
 
     fn send_ping_ack(&mut self, sink: &impl Sink, payload: &[u8]) {
@@ -1964,14 +1945,6 @@ impl Connection {
         };
         if inc > 0 {
             self.send_window_update(sink, stream_id, inc);
-        }
-    }
-
-    /// Locally reset a stream (RST_STREAM) and mark it closed.
-    pub fn send_reset(&mut self, sink: &impl Sink, stream_id: u32, code: ErrorCode) {
-        self.send_rst_stream(sink, stream_id, code);
-        if let Some(s) = self.streams.get_mut(&stream_id) {
-            s.state = State::Closed;
         }
     }
 

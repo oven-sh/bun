@@ -18,7 +18,6 @@
 #pragma once
 #include <map>
 #include <list>
-#include <iostream>
 #include <unordered_set>
 #include <utility>
 #include <memory>
@@ -106,9 +105,7 @@ private:
     std::vector<T> outgoingMessages;
 
     void checkIteratingSubscriber(Subscriber *s) {
-        /* Notify user that they are doing something wrong here */
         if (iteratingSubscriber == s) {
-            std::cerr << "Error: WebSocket must not subscribe or unsubscribe to topics while iterating its topics!" << std::endl;
             std::terminate();
         }
     }
@@ -163,7 +160,6 @@ public:
 
     /* Subscribe fails if we already are subscribed */
     Topic *subscribe(Subscriber *s, std::string_view topic) {
-        /* Notify user that they are doing something wrong here */
         checkIteratingSubscriber(s);
 
         /* Lookup or create new topic */
@@ -187,7 +183,6 @@ public:
 
     /* Returns ok, last, newCount */
     std::tuple<bool, bool, int> unsubscribe(Subscriber *s, std::string_view topic) {
-        /* Notify user that they are doing something wrong here */
         checkIteratingSubscriber(s);
 
         /* Lookup topic */

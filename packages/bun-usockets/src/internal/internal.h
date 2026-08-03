@@ -138,6 +138,8 @@ extern void us_dispatch_keylog(us_socket_r s, const unsigned char *data, int len
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
 
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
+/* Fills *out when host is a numeric address (incl. inet_aton shorthand and %zone); 0 when it is a name. */
+extern int Bun__parseIpAddress(const char* host, uint16_t port, struct sockaddr_storage* out);
 extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
 extern int Bun__addrinfo_cancel(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
 extern void Bun__addrinfo_freeRequest(struct addrinfo_request* addrinfo_req, int error);
@@ -174,6 +176,13 @@ void us_internal_loop_data_init(struct us_loop_t *loop,
 void us_internal_loop_data_free(us_loop_r loop);
 void us_internal_loop_pre(us_loop_r loop);
 void us_internal_loop_post(us_loop_r loop);
+
+/* node:quic loop driver (node_quic_shim.c): per-turn engine pass. */
+struct us_nq_driver_s;
+void us_nq_loop_flush_if_pending(struct us_loop_t *loop);
+void us_nq_loop_drain(struct us_loop_t *loop);
+void us_nq_loop_register(struct us_loop_t *loop, struct us_nq_driver_s *d, void *owner);
+void us_nq_loop_unregister(struct us_loop_t *loop, struct us_nq_driver_s *d);
 
 /* Asyncs (old) */
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop,
@@ -224,6 +233,7 @@ int us_internal_ssl_handshake_callback_has_fired(us_socket_r s);
 int us_internal_ssl_is_shut_down(us_socket_r s);
 void us_internal_ssl_shutdown(us_socket_r s);
 int us_internal_ssl_write(us_socket_r s, const char *data, int length);
+unsigned int us_internal_ssl_spill_pending(us_socket_r s);
 void *us_internal_ssl_get_native_handle(us_socket_r s);
 struct us_bun_verify_error_t us_internal_ssl_verify_error(us_socket_r s);
 void *us_internal_ssl_sni_userdata(us_socket_r s);
@@ -359,10 +369,10 @@ struct us_udp_socket_t {
     void (*on_data)(struct us_udp_socket_t *, void *, int);
     void (*on_drain)(struct us_udp_socket_t *);
     void (*on_close)(struct us_udp_socket_t *);
-    /* Called when recvmmsg returns an error (other than EAGAIN). The socket
-     * is NOT closed — caller decides whether to close. Used to surface ICMP
-     * errors delivered via IP_RECVERR on Linux (ECONNREFUSED, etc.). */
-    void (*on_recv_error)(struct us_udp_socket_t *, int err);
+    /* Called for a receive-path error. is_errqueue == 1 when the errno came
+     * from Linux's MSG_ERRQUEUE (an ICMP report about an earlier send), 0 when
+     * recvmmsg itself failed. The socket is NOT closed — caller decides. */
+    void (*on_recv_error)(struct us_udp_socket_t *, int err, int is_errqueue);
     void *user;
     struct us_loop_t *loop;
     /* An UDP socket can only ever be bound to one single port regardless of how

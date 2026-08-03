@@ -6,6 +6,40 @@
 
 const agent = require("internal/trace_events");
 
+const newRawSocketFd = $newRustFunction("udp_socket.rs", "jsDgramNewSocketFd", 2);
+const listenRawFd = $newRustFunction("udp_socket.rs", "jsDgramListenFd", 1);
+const closeRawFd = $newRustFunction("udp_socket.rs", "jsDgramCloseFd", 1);
+
+// Just enough of internalBinding('tcp_wrap').TCP for vendored dgram tests to
+// produce a listening stream descriptor and assert it gets rejected.
+class TestTCPWrap {
+  #fd = -1;
+
+  constructor(_type: number) {
+    this.#fd = newRawSocketFd(false, true);
+  }
+
+  get fd() {
+    return this.#fd;
+  }
+
+  listen() {
+    try {
+      listenRawFd(this.#fd);
+      return 0;
+    } catch (err) {
+      return typeof err?.errno === "number" && err.errno < 0 ? err.errno : -1;
+    }
+  }
+
+  close() {
+    if (this.#fd >= 0) {
+      closeRawFd(this.#fd);
+      this.#fd = -1;
+    }
+  }
+}
+
 function internalBinding(name: string) {
   switch (name) {
     case "trace_events":
@@ -21,6 +55,22 @@ function internalBinding(name: string) {
           TRACE_EVENT_PHASE_NESTABLE_ASYNC_END: 101,
         },
       };
+    case "quic":
+      return require("internal/quic/binding");
+    // libuv error codes, the UDP handle wrap, and the minimal TCP wrap the
+    // vendored dgram tests consume.
+    case "uv":
+      // process.binding("uv") carries libuv's own codes on every platform
+      // (including Windows' synthetic ones), same as node's uv binding.
+      return process.binding("uv");
+    case "udp_wrap":
+      return { UDP: require("internal/dgram").UDP };
+    case "tcp_wrap":
+      return { TCP: TestTCPWrap, constants: { SOCKET: 0, SERVER: 1 } };
+    case "cares_wrap":
+      // Only the pure IP-normalizer the vendored tls/dns tests reach for; the
+      // resolver surface lives in node:dns.
+      return { canonicalizeIP: require("bun:internal-for-testing").canonicalizeIP };
     default:
       throw new Error(`internalBinding("${name}") is not implemented in Bun`);
   }

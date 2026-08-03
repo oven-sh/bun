@@ -1,9 +1,9 @@
 import { beforeAll, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 test.skipIf(isWindows)("verify that we can call sigint 4096 times", () => {
-  const dir = tempDirWithFiles("ctrlc", {
+  using dir = tempDir("ctrlc", {
     "index.js": /*js*/ `
       let count = 0;
         process.exitCode = 1;
@@ -46,7 +46,7 @@ test.skipIf(isWindows)("verify that we can call sigint 4096 times", () => {
 });
 
 test.skipIf(isWindows)("verify that we forward SIGINT from parent to child in bun run", () => {
-  const dir = tempDirWithFiles("ctrlc", {
+  using dir = tempDir("ctrlc", {
     "index.js": `
       let count = 0;
       process.exitCode = 1;

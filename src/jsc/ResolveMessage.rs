@@ -745,10 +745,9 @@ impl ResolveMessage {
         }
     }
 
-    /// Node's fail-fast specifier checks for the default ESM loader:
-    /// unsupported URL schemes (ERR_UNSUPPORTED_ESM_URL_SCHEME) and `data:`
-    /// MIME types no loader accepts (ERR_UNKNOWN_MODULE_FORMAT). Returns the
-    /// Node-shaped `Msg` when the specifier can never load, `None` otherwise.
+    /// Node's fail-fast ESM specifier checks (ERR_UNSUPPORTED_ESM_URL_SCHEME /
+    /// ERR_UNKNOWN_MODULE_FORMAT); returns the Node-shaped `Msg` or `None`.
+    /// https://github.com/nodejs/node/blob/main/lib/internal/modules/esm/load.js
     pub fn esm_specifier_precheck(
         specifier: &[u8],
         import_kind: ImportKind,
@@ -770,11 +769,9 @@ impl ResolveMessage {
             }
         };
         if let Some(rest) = specifier.strip_prefix(b"data:".as_slice()) {
-            // Mirrors Node's mimeToFormat: only JS, JSON, and Wasm MIME
-            // types have a module format (Bun additionally derives the JSON
-            // flavor from the same categories).
-            // Comma-less data: URLs aren't data URLs at all; leave them to
-            // the resolver's invalid-data-URL error.
+            // https://github.com/nodejs/node/blob/main/lib/internal/modules/esm/formats.js
+            // (mimeToFormat): only JS/JSON/Wasm MIME types have a format. Comma-less
+            // data: URLs fall through to the resolver's invalid-data-URL error.
             let Some(comma) = strings::index_of_char(rest, b',') else {
                 return None;
             };

@@ -5359,9 +5359,8 @@ unsafe fn resolve_hook(
             &mut result_query,
         )
     } {
-        // Synthesise a `ResolveMessage` from the resolver's Node-shaped
-        // capture, else the first `.resolve`-tagged log msg, else fall back
-        // to `ResolveMessage::fmt`.
+        // Prefer the resolver's Node-shaped capture, else the first
+        // `.resolve`-tagged log msg, else `ResolveMessage::fmt`.
         // SAFETY: `vm` is the live per-thread VM.
         let captured = unsafe { (*vm).transpiler.resolver.node_module_error.take() };
         let msg: bun_ast::Msg = 'brk: {

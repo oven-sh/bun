@@ -1,14 +1,6 @@
-//! Node-shaped module-resolution failure info, captured by the resolver as it
-//! walks `exports` / `imports` maps and consumed by the runtime's resolve
-//! hooks to produce Node's exact `ERR_*` module errors. The capture is
-//! advisory: it never changes the resolution outcome, and is only read when
-//! the overall resolve fails.
-//!
-//! Message templates: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js
-//! (`ERR_PACKAGE_PATH_NOT_EXPORTED`, `ERR_PACKAGE_IMPORT_NOT_DEFINED`,
-//! `ERR_INVALID_PACKAGE_TARGET`, `ERR_INVALID_PACKAGE_CONFIG`,
-//! `ERR_INVALID_MODULE_SPECIFIER`, `ERR_MODULE_NOT_FOUND`,
-//! `ERR_UNSUPPORTED_DIR_IMPORT`).
+//! Node-shaped module-resolution failure info captured by the resolver for the
+//! runtime to surface as Node's exact `ERR_*` errors when a resolve fails.
+//! Message templates: https://github.com/nodejs/node/blob/main/lib/internal/errors.js
 
 use std::io::Write as _;
 

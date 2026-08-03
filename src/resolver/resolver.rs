@@ -490,10 +490,9 @@ pub struct Resolver<'a> {
     pub debug_logs: Option<DebugLogs>,
     pub elapsed: u64, // tracing
 
-    /// Advisory capture of the first Node-shaped resolution failure
-    /// (exports/imports maps, package-name validation, malformed
-    /// package.json). Never changes the resolution outcome; the runtime's
-    /// resolve hooks clear it before resolving and read it after a failure.
+    /// Advisory capture of the first Node-shaped resolution failure. Never
+    /// changes the resolution outcome; the runtime's resolve hooks clear it
+    /// before each resolve and read it only after a failure.
     pub node_module_error: Option<Box<crate::NodeModuleError>>,
 
     pub watcher: Option<AnyResolveWatcher>,
@@ -2534,10 +2533,9 @@ impl<'a> Resolver<'a> {
         out: &mut MatchResult,
     ) -> MatchStatus {
         let mut dir_info: DirInfoRef = _dir_info;
-        // Node validates the package name before any lookup (parsePackageName,
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/resolve.js#L620-L651);
-        // record the Node-shaped error but keep resolving — it only surfaces
-        // if the resolve fails.
+        // Node validates the package name before any lookup (parsePackageName);
+        // record the Node-shaped error but keep resolving — only surfaces on failure.
+        // https://github.com/nodejs/node/blob/main/lib/internal/modules/esm/resolve.js
         if matches!(kind, ast::ImportKind::Stmt | ast::ImportKind::Dynamic)
             && !import_path.starts_with(b"#")
             && self.node_module_error.is_none()
@@ -5096,10 +5094,9 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            // Node rejects URL-like imports targets outright
-            // (resolvePackageTargetString's URLCanParse branch); Bun instead
-            // hands unaliased ones to package resolution, so only shape the
-            // error in case that fails.
+            // Node rejects URL-like imports targets outright (resolvePackageTargetString's
+            // URLCanParse branch); Bun hands them to package resolution, so only shape
+            // the error in case that fails.
             if has_url_scheme(&esm_resolution.path) {
                 self.capture_node_module_error(crate::NodeModuleError::invalid_package_target(
                     package_json.source.path.text,
@@ -6899,11 +6896,8 @@ fn has_url_scheme(s: &[u8]) -> bool {
     false
 }
 
-/// Node's `parsePackageName` validity check
-/// (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/resolve.js#L620-L651):
-/// the package name (first path segment, or first two for `@scope/name`) must
-/// be non-empty, complete (`@scope` alone is invalid), not start with `.`,
-/// and contain no `%` or `\`.
+/// Node's `parsePackageName` validity check: non-empty, no leading `.`, no `%`/`\`.
+/// https://github.com/nodejs/node/blob/main/lib/internal/modules/esm/resolve.js
 fn node_invalid_package_name(specifier: &[u8]) -> bool {
     let mut sep = strings::index_of_char(specifier, b'/').map(|i| i as usize);
     if specifier.first() == Some(&b'@') {

@@ -4312,13 +4312,9 @@ impl VirtualMachine {
         Ok(())
     }
 
-    /// Resolves `specifier` relative to `source`, writing the result or error into `res`.
-    ///
-    /// This is the module loader's entry (`Zig__GlobalObject__resolve`).
-    /// Specifiers the default ESM loader can never load fail fast here with
-    /// Node's error shape; `Bun.resolveSync` / `import.meta.resolve` bypass
-    /// this on purpose — like Node's `import.meta.resolve`, they return
-    /// URL-like specifiers as-is.
+    /// Module-loader entry (`Zig__GlobalObject__resolve`): resolves `specifier`
+    /// relative to `source`. Fails fast on ESM specifiers Node's default loader
+    /// rejects; `Bun.resolveSync`/`import.meta.resolve` bypass that precheck.
     pub(crate) fn resolve(
         res: &mut ErrorableString,
         global: &JSGlobalObject,

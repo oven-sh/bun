@@ -14,8 +14,10 @@ import type { Dependency } from "../source.ts";
 // fix, ConPTY uv_spawn, AppContainer pipe namespace (oven-sh/libuv#7), fs/tty
 // fixes (oven-sh/libuv#8), high-res poll timeouts (oven-sh/libuv#9),
 // FileModeInformation error return (oven-sh/libuv#10), error translation /
-// propagation audit fixes (oven-sh/libuv#11). To bump, update `bun`.
-const LIBUV_COMMIT = "2881ce536d420132f132d57cb94075ee92ed4506";
+// propagation audit fixes (oven-sh/libuv#11), uv_spawn returns an error
+// instead of aborting on AssignProcessToJobObject failure (oven-sh/libuv#12).
+// To bump, update `bun`.
+const LIBUV_COMMIT = "58de9bb2fb3679bce98a7008bcd8be2484d6a1cf";
 
 // prettier-ignore
 const SHARED = [

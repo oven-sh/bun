@@ -1711,8 +1711,6 @@ extern "C" JS_EXPORT napi_status node_api_create_sharedarraybuffer(napi_env env,
     NAPI_RETURN_SUCCESS(env);
 }
 
-typedef void (*node_api_noenv_finalize)(void* finalize_data, void* finalize_hint);
-
 // SharedArrayBuffer backing stores can outlive the creating napi_env (they
 // may be posted to other agents), so Node-API specifies a finalizer with no
 // env parameter. This destructor mirrors NapiExternalBufferDestructor but

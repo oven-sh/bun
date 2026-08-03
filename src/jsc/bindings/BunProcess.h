@@ -27,14 +27,9 @@ class Process : public WebCore::JSEventEmitter {
     // Only used by internal code via passing to queueNextTick
     LazyProperty<Process, JSFunction> m_emitHelperFunction;
     WriteBarrier<Unknown> m_uncaughtExceptionCaptureCallback;
-    // Set by node:domain (jsFunctionSetDomainErrorHandler). Consulted by
-    // Bun__handleUncaughtException before the public capture callback and
-    // 'uncaughtException' listeners; a truthy return marks the exception
-    // as handled by a domain.
+    // node:domain dispatch hook, consulted before captureFn / 'uncaughtException'.
     WriteBarrier<Unknown> m_domainErrorHandler;
-    // Predicate installed alongside m_domainErrorHandler: true iff some
-    // domain currently on the stack has an 'error' listener (node's
-    // should_abort_on_uncaught_toggle equivalent).
+    // node should_abort_on_uncaught_toggle equivalent.
     WriteBarrier<Unknown> m_domainWouldClaim;
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116

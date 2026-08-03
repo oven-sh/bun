@@ -259,8 +259,7 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--abort-on-uncaught-exception     Abort instead of exiting when an uncaught exception is not handled."
     ),
-    // V8 accepts both spellings; no help text so the alias is parsed but
-    // hidden from --help (see simple_help), like the Node compat flags below.
+    // V8 accepts both spellings; hidden from --help like the Node compat flags below.
     parse_param!("--abort_on_uncaught_exception"),
     parse_param!("--title <STR>                     Set the process title"),
     parse_param!(
@@ -1287,8 +1286,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if args.flag(b"--throw-deprecation") {
             Bun__Node__ProcessThrowDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
         }
-        // V8 (and therefore node) accepts both the dashed and the
-        // underscored spelling of this flag.
         if args.flag(b"--abort-on-uncaught-exception")
             || args.flag(b"--abort_on_uncaught_exception")
         {

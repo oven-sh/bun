@@ -407,10 +407,7 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
         checkIfNextTickWasCalledDuringMicrotask(vm);
     } else {
         vm.setOnEachMicrotaskTick(nullptr);
-        // Like the startup onEachMicrotaskTick hook, unhooking must not skip
-        // draining: process.nextTick callbacks queued before this cleanup ran
-        // (e.g. alongside an AsyncLocalStorage.enterWith) would otherwise be
-        // dropped if the event loop has no other work left.
+        // Drain so nextTick callbacks queued before this cleanup aren't dropped.
         globalObject->m_nextTickQueue.get()->drain(vm, globalObject);
     }
 }

@@ -355,28 +355,15 @@ pub struct TestIsolationState {
 // `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*` and C++
 // mutating VM/process state through it is interior mutation invisible to Rust.
 /// How an uncaught error reached [`VirtualMachine::uncaught_exception`].
-/// Forwarded to `Bun__handleUncaughtException` (BunProcess.cpp), which
-/// decides --abort-on-uncaught-exception ordering: both synchronous
-/// throws and true promise rejections abort before any monitor/capture/
-/// 'uncaughtException' listeners run — unless a capture callback is set
-/// or a domain on the stack has an 'error' listener (node's
-/// should_abort_on_uncaught_toggle). Node aborts sync throws inside V8's
-/// Isolate::Throw and rejections at the top of the JS-facing
-/// TriggerUncaughtException binding, both before process._fatalException.
-/// The distinction matters for the origin string listeners observe when
-/// the flag is not set.
+/// Forwarded to `Bun__handleUncaughtException` (BunProcess.cpp) for
+/// --abort-on-uncaught-exception ordering (node V8 Isolate::Throw / node_errors.cc).
 #[repr(i32)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum UncaughtExceptionOrigin {
     Exception = 0,
     Rejection = 1,
-    /// The entry-point module promise rejected. A synchronous throw from
-    /// the main module surfaces this way (module evaluation wraps it in the
-    /// internal promise), so the abort path must treat it like a
-    /// synchronous uncaught exception, while listeners still observe the
-    /// 'unhandledRejection' origin string. A rejected top-level await also
-    /// lands here and is indistinguishable from a synchronous throw, so it
-    /// shares the abort-before-listeners behavior.
+    /// Entry-point module promise rejected: aborts like `Exception`,
+    /// listeners observe the 'unhandledRejection' origin string.
     EntryPointRejection = 2,
 }
 
@@ -1412,9 +1399,7 @@ impl VirtualMachine {
             origin as c_int,
             &raw mut substitute,
         ) > 0;
-        // A domain 'error' handler or capture callback that throws in a
-        // Worker returns its exception here; route that to the parent
-        // instead of the original (node's workerOnGlobalUncaughtException).
+        // node workerOnGlobalUncaughtException: route the handler's throw to the parent.
         let err = if substitute.is_empty() {
             err
         } else {
@@ -1436,11 +1421,7 @@ impl VirtualMachine {
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
                 panic!("made it past process.exit()");
             }
-            // TODO maybe we want a separate code path for uncaught exceptions
-            // NOTE: --abort-on-uncaught-exception is handled inside
-            // Bun__handleUncaughtException (before any monitor/listeners
-            // run, for every origin), so `handled == false` here means the
-            // flag was not set.
+            // --abort-on-uncaught-exception already handled in Bun__handleUncaughtException.
             self.unhandled_error_counter += 1;
             self.exit_handler.exit_code = 1;
             (self.on_unhandled_rejection)(self, global_object, err);

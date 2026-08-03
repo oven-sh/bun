@@ -33,6 +33,12 @@ export const lolhtml: Dependency = {
     commit: LOLHTML_COMMIT,
   }),
 
+  // Fixes two O(depth^2) paths in the selectors_vm open-element stack that
+  // turn sub-MB hostile HTML into a CPU pin: a full reverse scan on every
+  // unmatched end tag, and per-ancestor re-execution of the same hereditary
+  // jump for descendant combinators. Drop once the fix is upstream.
+  patches: ["patches/lolhtml/selectors-vm-quadratic.patch"],
+
   // No separate build — compiled as part of the workspace cargo build via
   // `bun_runtime`/`bun_bundler`'s path dep on `vendor/lolhtml`.
   build: () => ({ kind: "none" }),

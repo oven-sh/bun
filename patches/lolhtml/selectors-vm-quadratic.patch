@@ -1,0 +1,368 @@
+--- a/src/html/local_name.rs
++++ b/src/html/local_name.rs
+@@ -134,12 +134,31 @@
+ /// `LocalName` is used for the comparison of tag names.
+ /// In the majority of cases it will be represented as a hash, however for long
+ /// non-standard tag names it fallsback to the Name representation.
+-#[derive(Clone, Debug, Eq, Hash)]
++#[derive(Clone, Debug, Eq)]
+ pub enum LocalName<'i> {
+     Hash(LocalNameHash),
+     Bytes(BytesCow<'i>),
+ }
+ 
++// NOTE: `PartialEq` compares the `Bytes` variant case-insensitively, so `Hash`
++// must case-fold too or two equal names would land in different hash-map
++// buckets. This matters for any name that falls off `LocalNameHash` (custom
++// elements, >12 chars, chars outside a-zA-Z1-6).
++impl std::hash::Hash for LocalName<'_> {
++    #[inline]
++    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
++        core::mem::discriminant(self).hash(state);
++        match self {
++            LocalName::Hash(h) => h.hash(state),
++            LocalName::Bytes(b) => {
++                for &byte in b.iter() {
++                    byte.to_ascii_lowercase().hash(state);
++                }
++            }
++        }
++    }
++}
++
+ impl<'i> LocalName<'i> {
+     #[inline]
+     #[must_use]
+@@ -219,4 +238,15 @@
+     fn hash_invalidation_for_long_values() {
+         assert!(LocalNameHash::from("aaaaaaaaaaaaaa").is_empty());
+     }
++
++    #[test]
++    fn bytes_variant_hash_matches_case_insensitive_eq() {
++        use std::hash::{BuildHasher, RandomState};
++        let s = RandomState::new();
++        let a = LocalName::from_str_without_replacements("My-Widget", encoding_rs::UTF_8).unwrap();
++        let b = LocalName::from_str_without_replacements("my-widget", encoding_rs::UTF_8).unwrap();
++        assert!(matches!(a, LocalName::Bytes(_)));
++        assert_eq!(a, b);
++        assert_eq!(s.hash_one(&a), s.hash_one(&b));
++    }
+ }
+--- a/src/selectors_vm/mod.rs
++++ b/src/selectors_vm/mod.rs
+@@ -59,7 +59,6 @@
+ 
+ #[derive(Default)]
+ struct HereditaryJumpPtr {
+-    stack_offset: usize,
+     instr_set_idx: usize,
+     offset: usize,
+ }
+@@ -485,22 +484,15 @@
+         ctx: &mut ExecutionCtx<'_, E>,
+         match_handler: &mut dyn FnMut(MatchInfo<E::MatchPayload>),
+     ) -> Result<(), Bailout<HereditaryJumpPtr>> {
+-        for (i, ancestor) in self.stack.items().iter().rev().enumerate() {
+-            for (j, jumps) in ancestor.hereditary_jumps.iter().enumerate() {
+-                self.try_exec_instr_set_without_attrs(jumps.clone(), ctx, match_handler)
+-                    .map_err(move |b| Bailout {
+-                        at_addr: b.at_addr,
+-                        recovery_point: HereditaryJumpPtr {
+-                            stack_offset: i,
+-                            instr_set_idx: j,
+-                            offset: b.recovery_point,
+-                        },
+-                    })?;
+-            }
+-
+-            if !ancestor.has_ancestor_with_hereditary_jumps {
+-                break;
+-            }
++        for (i, (jumps, _)) in self.stack.active_hereditary_jumps().iter().enumerate() {
++            self.try_exec_instr_set_without_attrs(jumps.clone(), ctx, match_handler)
++                .map_err(move |b| Bailout {
++                    at_addr: b.at_addr,
++                    recovery_point: HereditaryJumpPtr {
++                        instr_set_idx: i,
++                        offset: b.recovery_point,
++                    },
++                })?;
+         }
+ 
+         Ok(())
+@@ -513,47 +505,13 @@
+         ptr: HereditaryJumpPtr,
+         match_handler: &mut dyn FnMut(MatchInfo<E::MatchPayload>),
+     ) {
+-        let items = self.stack.items();
+-
+-        if items.is_empty() {
+-            return;
+-        }
+-
+-        let ptr_ancestor_idx = items.len() - 1 - ptr.stack_offset;
+-
+-        // NOTE: first find pointed ancestor, then jump instruction
+-        // set and execute it with the offset.
+-        if let Some(ptr_ancestor) = items.get(ptr_ancestor_idx) {
+-            if let Some(ptr_jumps) = ptr_ancestor.hereditary_jumps.get(ptr.instr_set_idx) {
+-                self.exec_instr_set_with_attrs(
+-                    ptr_jumps,
+-                    attr_matcher,
+-                    ctx,
+-                    ptr.offset,
+-                    match_handler,
+-                );
++        let active = self.stack.active_hereditary_jumps();
+ 
+-                // NOTE: execute the rest of jump instruction sets in the pointed ancestor as usual.
+-                for jumps in ptr_ancestor
+-                    .hereditary_jumps
+-                    .iter()
+-                    .skip(ptr.instr_set_idx + 1)
+-                {
+-                    self.exec_instr_set_with_attrs(jumps, attr_matcher, ctx, 0, match_handler);
+-                }
+-            }
++        if let Some((ptr_jumps, _)) = active.get(ptr.instr_set_idx) {
++            self.exec_instr_set_with_attrs(ptr_jumps, attr_matcher, ctx, ptr.offset, match_handler);
+ 
+-            // NOTE: execute hereditary jumps in remaining ancestors as usual.
+-            if ptr_ancestor.has_ancestor_with_hereditary_jumps {
+-                for ancestor in items.iter().rev().skip(ptr.stack_offset + 1) {
+-                    for jumps in &ancestor.hereditary_jumps {
+-                        self.exec_instr_set_with_attrs(jumps, attr_matcher, ctx, 0, match_handler);
+-                    }
+-
+-                    if !ancestor.has_ancestor_with_hereditary_jumps {
+-                        break;
+-                    }
+-                }
++            for (jumps, _) in active.iter().skip(ptr.instr_set_idx + 1) {
++                self.exec_instr_set_with_attrs(jumps, attr_matcher, ctx, 0, match_handler);
+             }
+         }
+     }
+--- a/src/selectors_vm/stack.rs
++++ b/src/selectors_vm/stack.rs
+@@ -178,7 +178,6 @@
+     pub jumps: Vec<AddressRange>,
+     pub hereditary_jumps: Vec<AddressRange>,
+     pub child_counter: ChildCounter,
+-    pub has_ancestor_with_hereditary_jumps: bool,
+     pub stack_directive: StackDirective,
+ }
+ 
+@@ -192,7 +191,6 @@
+             jumps: Vec::default(),
+             hereditary_jumps: Vec::default(),
+             child_counter: Default::default(),
+-            has_ancestor_with_hereditary_jumps: false,
+             stack_directive: StackDirective::Push,
+         }
+     }
+@@ -205,7 +203,6 @@
+             jumps: self.jumps,
+             hereditary_jumps: self.hereditary_jumps,
+             child_counter: self.child_counter,
+-            has_ancestor_with_hereditary_jumps: self.has_ancestor_with_hereditary_jumps,
+             stack_directive: self.stack_directive,
+         }
+     }
+@@ -217,6 +214,13 @@
+     /// A typed counter for all elements on all frames. This is optional to indicate if types are actually being counted.
+     typed_child_counters: Option<TypedChildCounterMap>,
+     items: LimitedVec<StackItem<'static, E>>,
++    /// Number of open items per tag name, so a stray end tag can be rejected in O(1)
++    /// instead of scanning the whole stack (see `pop_up_to`).
++    open_name_counts: HashMap<LocalName<'static>, usize>,
++    /// Distinct hereditary-jump address ranges currently contributed by any open item,
++    /// paired with the shallowest depth that introduced each. Descendant-combinator
++    /// matching iterates this flat list instead of walking every ancestor.
++    active_hereditary_jumps: Vec<(AddressRange, usize)>,
+ }
+ 
+ impl<E: ElementData> Stack<E> {
+@@ -230,6 +234,8 @@
+             root_child_counter: Default::default(),
+             typed_child_counters: enable_nth_of_type.map(TypedChildCounterMap::new),
+             items: LimitedVec::new(memory_limiter),
++            open_name_counts: HashMap::default(),
++            active_hereditary_jumps: Vec::new(),
+         }
+     }
+ 
+@@ -285,8 +291,16 @@
+     pub fn pop_up_to(
+         &mut self,
+         local_name: LocalName<'_>,
+-        popped_element_data_handler: impl FnMut(E),
++        mut popped_element_data_handler: impl FnMut(E),
+     ) {
++        // NOTE: a stray end tag that matches nothing on the stack is O(1) here.
++        // On a hit, `rposition` below only visits items that are about to be
++        // drained, so the scan cost is bounded by the drain cost and stays
++        // linear over the document.
++        if !self.open_name_counts.contains_key(&local_name) {
++            return;
++        }
++
+         let pop_to_index = self
+             .items
+             .iter()
+@@ -295,15 +309,31 @@
+             if let Some(c) = self.typed_child_counters.as_mut() {
+                 c.pop_to(index);
+             }
+-            self.items
+-                .drain(index..)
+-                .map(|i| i.element_data)
+-                .for_each(popped_element_data_handler);
++            self.active_hereditary_jumps.retain(|(_, d)| *d < index);
++            for item in self.items.drain(index..) {
++                match self.open_name_counts.raw_entry_mut().from_key(&item.local_name) {
++                    RawEntryMut::Occupied(mut e) => {
++                        if *e.get() <= 1 {
++                            e.remove();
++                        } else {
++                            *e.get_mut() -= 1;
++                        }
++                    }
++                    RawEntryMut::Vacant(_) => debug_assert!(false, "open_name_counts out of sync"),
++                }
++                popped_element_data_handler(item.element_data);
++            }
+         }
+     }
+ 
+     #[inline]
+     #[must_use]
++    pub fn active_hereditary_jumps(&self) -> &[(AddressRange, usize)] {
++        &self.active_hereditary_jumps
++    }
++
++    #[inline]
++    #[must_use]
+     pub fn items(&self) -> &[StackItem<'_, E>] {
+         &self.items
+     }
+@@ -316,15 +346,32 @@
+     #[inline]
+     pub fn push_item(
+         &mut self,
+-        mut item: StackItem<'static, E>,
++        item: StackItem<'static, E>,
+     ) -> Result<(), MemoryLimitExceededError> {
+-        if let Some(last) = self.items.last() {
+-            if last.has_ancestor_with_hereditary_jumps || !last.hereditary_jumps.is_empty() {
+-                item.has_ancestor_with_hereditary_jumps = true;
++        let depth = self.items.len();
++        self.items.push(item)?;
++
++        let item = self.items.last().expect("just pushed");
++        match self
++            .open_name_counts
++            .raw_entry_mut()
++            .from_key(&item.local_name)
++        {
++            RawEntryMut::Occupied(mut e) => *e.get_mut() += 1,
++            RawEntryMut::Vacant(e) => {
++                e.insert(item.local_name.clone(), 1);
+             }
+         }
+ 
+-        self.items.push(item)?;
++        for r in &item.hereditary_jumps {
++            if !self
++                .active_hereditary_jumps
++                .iter()
++                .any(|(active, _)| active == r)
++            {
++                self.active_hereditary_jumps.push((r.clone(), depth));
++            }
++        }
+         Ok(())
+     }
+ }
+@@ -361,31 +408,62 @@
+         item
+     }
+ 
++    fn active_hj(stack: &Stack<TestElementData>) -> Vec<AddressRange> {
++        stack
++            .active_hereditary_jumps()
++            .iter()
++            .map(|(r, _)| r.clone())
++            .collect()
++    }
++
+     #[test]
+-    #[allow(clippy::reversed_empty_ranges)]
+-    fn hereditary_jumps_flag() {
++    fn active_hereditary_jumps_dedup_and_prune() {
+         let mut stack = Stack::new(SharedMemoryLimiter::new(2048), None);
+ 
+-        stack.push_item(item("item1", 0)).unwrap();
++        stack.push_item(item("a", 0)).unwrap();
+ 
+-        let mut item2 = item("item2", 1);
+-        item2.hereditary_jumps.push(0..0);
+-        stack.push_item(item2).unwrap();
++        let mut b = item("b", 1);
++        b.hereditary_jumps.push(0..1);
++        stack.push_item(b).unwrap();
++        assert_eq!(active_hj(&stack), vec![0..1]);
++
++        let mut c = item("c", 2);
++        c.hereditary_jumps.push(0..1);
++        c.hereditary_jumps.push(2..4);
++        stack.push_item(c).unwrap();
++        assert_eq!(active_hj(&stack), vec![0..1, 2..4]);
+ 
+-        let mut item3 = item("item3", 2);
+-        item3.hereditary_jumps.push(0..0);
+-        stack.push_item(item3).unwrap();
++        stack.push_item(item("d", 3)).unwrap();
++        assert_eq!(active_hj(&stack), vec![0..1, 2..4]);
+ 
+-        stack.push_item(item("item4", 3)).unwrap();
++        stack.pop_up_to(local_name("c"), |_| {});
++        assert_eq!(active_hj(&stack), vec![0..1]);
+ 
+-        assert_eq!(
+-            stack
+-                .items()
+-                .iter()
+-                .map(|i| i.has_ancestor_with_hereditary_jumps)
+-                .collect::<Vec<_>>(),
+-            [false, false, true, true]
+-        );
++        stack.pop_up_to(local_name("a"), |_| {});
++        assert!(active_hj(&stack).is_empty());
++    }
++
++    #[test]
++    fn open_name_counts_track_push_and_drain() {
++        let mut stack = Stack::new(SharedMemoryLimiter::new(2048), None);
++
++        stack.push_item(item("a", 0)).unwrap();
++        stack.push_item(item("b", 1)).unwrap();
++        stack.push_item(item("a", 2)).unwrap();
++
++        stack.pop_up_to(local_name("c"), |_| unreachable!("should not pop"));
++        assert_eq!(stack.items().len(), 3);
++
++        let mut popped = Vec::new();
++        stack.pop_up_to(local_name("a"), |d| popped.push(d.0));
++        assert_eq!(popped, vec![2]);
++        assert_eq!(stack.items().len(), 2);
++
++        stack.pop_up_to(local_name("a"), |d| popped.push(d.0));
++        assert_eq!(popped, vec![2, 0, 1]);
++        assert!(stack.items().is_empty());
++
++        stack.pop_up_to(local_name("a"), |_| unreachable!("stack is empty"));
+     }
+ 
+     #[test]

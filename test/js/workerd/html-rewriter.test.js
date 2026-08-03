@@ -1271,3 +1271,54 @@ describe("tagName, endTag.name, and comment.text setters", () => {
     expect(savedComment.text).toBeNull();
   });
 });
+
+describe("HTMLRewriter pathological nesting stays linear", () => {
+  it("mixed-case custom element end tag still matches its start tag", () => {
+    // Custom elements (and any name containing '-', '_', 0/7/8/9, or >12 chars)
+    // take lol-html's LocalName::Bytes path, which must hash case-insensitively
+    // for the O(1) stray-end-tag guard in the selector VM stack.
+    let end = "";
+    const out = new HTMLRewriter()
+      .on("my-widget", {
+        element(el) {
+          el.onEndTag(t => {
+            end = t.name;
+          });
+        },
+      })
+      .transform("<My-Widget>x</MY-WIDGET><p>y</p>");
+    expect(end).toBe("my-widget");
+    expect(out).toBe("<My-Widget>x</MY-WIDGET><p>y</p>");
+  });
+
+  it("stray end tags with a deep open-element stack", () => {
+    // Each </b> used to trigger a full reverse scan of the open-element
+    // stack in lol-html's selectors_vm, so N unclosed <a> plus N stray </b>
+    // was O(N^2). At this N the old behaviour pins a core for >10s; after
+    // the fix the miss is O(1) and this completes in a few hundred ms.
+    const N = 80_000;
+    const doc = Buffer.alloc(7 * N, "<a></b>").toString();
+    const out = new HTMLRewriter().on("nomatch", { element() {} }).transform(doc);
+    expect(out.length).toBe(doc.length);
+    expect(out).toBe(doc);
+  });
+
+  it("descendant combinator over deeply nested matching elements", () => {
+    // Matching "div div" used to re-execute the same hereditary jump once
+    // per ancestor for every start tag, giving O(depth^2). With the
+    // deduplicated active-jump set it is O(depth).
+    const N = 25_000;
+    const open = Buffer.alloc(5 * N, "<div>").toString();
+    const close = Buffer.alloc(6 * N, "</div>").toString();
+    let matches = 0;
+    const out = new HTMLRewriter()
+      .on("div div", {
+        element() {
+          matches++;
+        },
+      })
+      .transform(open + close);
+    expect(matches).toBe(N - 1);
+    expect(out).toBe(open + close);
+  });
+});

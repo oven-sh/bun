@@ -1454,10 +1454,17 @@ impl<'a> Linker<'a> {
     /// but `claude` at the root of `@anthropic-ai/claude-code-linux-x64`,
     /// which has no `bin` field of its own).
     ///
-    /// Both candidates come from the root package's `bin` entry - its
+    /// All candidates come from the root package's `bin` entry - its
     /// value (`target`) and its key (`bin_name`):
     ///   1. `<package_dir>/<target>` - the path from the root `bin` field
     ///   2. `<package_dir>/<bin_name>` - the bin name at package root
+    ///   3. `<package_dir>/<basename(target)>` - the target's filename at
+    ///      package root (`@anthropic-ai/claude-code-win32-x64` ships
+    ///      `claude.exe` at root while the root package's `bin` is
+    ///      `bin/claude.exe`)
+    ///   4. (Windows) `<package_dir>/<bin_name>.exe` - esbuild ships
+    ///      `esbuild.exe` at the root of `@esbuild/win32-x64` while the root
+    ///      package's `bin` is the extensionless `bin/esbuild`
     ///
     /// Falls through to (1) when nothing exists so the existing
     /// `skipped_due_to_missing_bin` retry-without-redirect path still fires.
@@ -1483,6 +1490,27 @@ impl<'a> Linker<'a> {
 
         if !bin_name.is_empty() {
             let at_root = resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[bin_name]);
+            if sys::exists(at_root.as_bytes()) {
+                return at_root;
+            }
+        }
+
+        let target_basename = path::basename(target);
+        if !target_basename.is_empty() && target_basename.len() != target.len() {
+            let at_root =
+                resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target_basename]);
+            if sys::exists(at_root.as_bytes()) {
+                return at_root;
+            }
+        }
+
+        #[cfg(windows)]
+        if !bin_name.is_empty() && !strings::has_suffix_comptime(bin_name, b".exe") {
+            let mut exe_name = Vec::with_capacity(bin_name.len() + b".exe".len());
+            exe_name.extend_from_slice(bin_name);
+            exe_name.extend_from_slice(b".exe");
+            let at_root =
+                resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[&exe_name]);
             if sys::exists(at_root.as_bytes()) {
                 return at_root;
             }

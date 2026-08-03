@@ -161,6 +161,10 @@ enum EdgeMatch<'a> {
     /// A concrete package (pre-bound edges, locally resolved packages,
     /// downloaded packages): satisfied only by that same package.
     Exact { package_id: PackageID },
+    /// Never satisfied; classifies a same-named occupant as an npm package
+    /// (same-kind) or not, so a dist-tag peer can find its parent scope's
+    /// occupant before resolving anything.
+    AnyNpm,
 }
 
 /// The cursor runs two passes. The first places every edge the lockfile
@@ -852,7 +856,37 @@ impl GraphResolver {
         }
         let id = self.push_node(this, at, package_id);
         self.nodes[at as usize].slots.insert(folder_name_hash, id);
+        // Start the new node's manifest fetches now, ahead of the cursor
+        // reaching it, so the whole frontier fetches in parallel. Only names
+        // the owning node has yet to decide can still gain a slot above the
+        // child; those wait for the owner to finish (see `step`).
+        if self.pass == Pass::Decide {
+            let pending = self.pending_owner_names(this);
+            let edges: Vec<DependencyID> = self
+                .decide_edges_of(this, id)
+                .into_iter()
+                .filter(|&dep_id| {
+                    !pending
+                        .contains(&this.lockfile.buffers.dependencies[dep_id as usize].name_hash)
+                })
+                .collect();
+            self.prefetch_node_deps(this, id, &edges);
+        }
         Ok(())
+    }
+
+    /// Names of the edges the owning (current) node has yet to decide. Any
+    /// of them can still place a slot the current placement's children
+    /// would walk up to, so their prefetch waits for the owner to finish.
+    fn pending_owner_names(&self, this: &PackageManager) -> Vec<PackageNameHash> {
+        let Some(cursor) = &self.current else {
+            return Vec::new();
+        };
+        let dependencies = this.lockfile.buffers.dependencies.as_slice();
+        cursor.edges[cursor.index..]
+            .iter()
+            .map(|&dep_id| dependencies[dep_id as usize].name_hash)
+            .collect()
     }
 
     fn push_node(
@@ -1325,11 +1359,46 @@ impl GraphResolver {
         real_name_hash: PackageNameHash,
         version: &dependency::Version,
     ) -> Result<EdgeStep, crate::Error> {
+        // A dist-tag peer whose parent scope already holds a same-named npm
+        // package binds to it — silently if it is the tagged version, with
+        // a warning otherwise — creating and downloading nothing.
+        if dependency.behavior.is_peer() {
+            let start = self.lookup_start(node, true);
+            if let Walk::Conflict {
+                occupant,
+                same_kind: true,
+                ..
+            } = self.walk(this, start, dependency.name_hash, &EdgeMatch::AnyNpm)
+            {
+                let tagged =
+                    match tagged_version(this, real_name, real_name_hash, version, dependency)? {
+                        TaggedVersion::Version(version) => Some(version),
+                        TaggedVersion::Pending => {
+                            return Ok(EdgeStep::Blocked(WaitTarget::Manifest));
+                        }
+                        TaggedVersion::Unknown => None,
+                    };
+                let occupant_version = this.lockfile.packages.items_resolution()[occupant as usize]
+                    .npm()
+                    .version;
+                let matches = match tagged {
+                    Some(tag_version) => {
+                        let buf = this.lockfile.buffers.string_bytes.as_slice();
+                        tag_version.order(occupant_version, buf, buf).is_eq()
+                    }
+                    None => false,
+                };
+                if !matches {
+                    warn_incorrect_peer(this, occupant);
+                }
+                this.assign_resolution(dep_id, occupant);
+                return Ok(EdgeStep::Done);
+            }
+        }
+
         // A tag names a concrete version; resolve it first, then the edge
-        // behaves like an exact edge — a peer whose parent scope holds a
-        // different same-named package binds to it in `bind_resolved`. (A
-        // tag is never satisfied by a present range match, so only the
-        // update-target flag matters here.)
+        // behaves like an exact edge. (A tag is never satisfied by a present
+        // range match, so only the update-target flag matters here.)
         let update_target = self.is_update_target(this, dep_id, dependency);
         let package_id = match self.resolve_npm_package(
             this,
@@ -1557,6 +1626,15 @@ fn download_resolution(version: &dependency::Version) -> Resolution {
 
 fn edge_matches(this: &PackageManager, edge: &EdgeMatch, occupant: PackageID) -> Satisfies {
     match edge {
+        EdgeMatch::AnyNpm => {
+            if this.lockfile.packages.items_resolution()[occupant as usize].tag
+                == ResolutionTag::Npm
+            {
+                Satisfies::No
+            } else {
+                Satisfies::WrongKind
+            }
+        }
         EdgeMatch::Exact { package_id } => {
             if *package_id == occupant {
                 Satisfies::Yes
@@ -1885,7 +1963,6 @@ fn load_manifest<'a>(
         return Ok(ManifestState::Ready(cached.manifest.expect("usable")));
     }
     let loaded_manifest = cached.manifest.cloned();
-    let task_id = Task::Id::for_manifest(&name_str);
 
     if let Some(&failure) = this.failed_manifests.get(&real_name_hash) {
         return Ok(match failure {
@@ -1896,12 +1973,9 @@ fn load_manifest<'a>(
         });
     }
 
-    // A fetch for this name started earlier this session and has not
-    // finished: wait for it rather than starting another.
-    if this.network_dedupe_map.get(&task_id).is_some() {
-        return Ok(ManifestState::Pending);
-    }
-
+    // `fire_manifest_fetch` dedupes an in-flight fetch and OR-upgrades its
+    // required bit for this dependency, so a task an optional edge created
+    // becomes required once a required edge waits on it.
     fire_manifest_fetch(
         this,
         &name_str,
@@ -1991,13 +2065,6 @@ fn prefetch_manifest(
     let this_ptr: *mut PackageManager = this;
     let name_str: Vec<u8> = this.lockfile.str(&real_name).to_vec();
 
-    if this
-        .network_dedupe_map
-        .contains(&Task::Id::for_manifest(&name_str))
-    {
-        return Ok(());
-    }
-
     // SAFETY: `this_ptr` is the live exclusive `this` borrow.
     let cached = cached_manifest(
         unsafe { &mut *this_ptr },
@@ -2023,6 +2090,35 @@ fn prefetch_manifest(
 // ──────────────────────────────────────────────────────────────────────────
 // Version selection and package creation (registry)
 // ──────────────────────────────────────────────────────────────────────────
+
+enum TaggedVersion {
+    Version(Semver::Version),
+    Pending,
+    /// The manifest failed or does not carry the tag; no version to compare.
+    Unknown,
+}
+
+/// The version a dist-tag names, read from the manifest. Nothing is created.
+fn tagged_version(
+    this: &mut PackageManager,
+    real_name: SemverString,
+    real_name_hash: PackageNameHash,
+    version: &dependency::Version,
+    dependency: &Dependency,
+) -> Result<TaggedVersion, crate::Error> {
+    // The tag string lives in the lockfile's buffer; copy it out before the
+    // manifest lookup borrows the manager.
+    let tag: Vec<u8> = this.lockfile.str(&version.dist_tag().tag).to_vec();
+    let manifest = match load_manifest(this, real_name, real_name_hash, version, dependency)? {
+        ManifestState::Ready(manifest) => manifest,
+        ManifestState::Pending => return Ok(TaggedVersion::Pending),
+        ManifestState::Failed(_) => return Ok(TaggedVersion::Unknown),
+    };
+    Ok(match manifest.find_by_dist_tag(&tag) {
+        Some(found) => TaggedVersion::Version(found.version),
+        None => TaggedVersion::Unknown,
+    })
+}
 
 enum NpmFind<'a> {
     Version(Npm::FindResult<'a>),
@@ -2238,22 +2334,30 @@ fn create_npm_package(
             );
             debug_assert!(!this.network_dedupe_map.contains(&task_id));
 
+            let network_task = match run_tasks::generate_network_task_for_tarball(
+                this,
+                task_id,
+                manifest.str(&find_result.package.tarball_url),
+                dependency.behavior.is_required(),
+                dependency_id,
+                &package,
+                name_and_version_hash,
+                crate::network_task::Authorization::AllowAuthorization,
+            ) {
+                Ok(task) => task.expect("unreachable"),
+                // The dedupe entry exists before the task is built; a build
+                // error must mark it failed so a later edge on the same
+                // tarball fails fast instead of waiting on it.
+                Err(err) => {
+                    this.mark_network_task_failed(task_id);
+                    return Err(err.into());
+                }
+            };
+
             ResolvedPackageResult {
                 package,
                 is_first_time: true,
-                task: Some(ResolvedPackageTask::NetworkTask(
-                    run_tasks::generate_network_task_for_tarball(
-                        this,
-                        task_id,
-                        manifest.str(&find_result.package.tarball_url),
-                        dependency.behavior.is_required(),
-                        dependency_id,
-                        &package,
-                        name_and_version_hash,
-                        crate::network_task::Authorization::AllowAuthorization,
-                    )?
-                    .expect("unreachable"),
-                )),
+                task: Some(ResolvedPackageTask::NetworkTask(network_task)),
             }
         }
         install::PreinstallState::CalcPatchHash => ResolvedPackageResult {
@@ -2571,7 +2675,7 @@ fn fire_download_task(
                 return Ok(DownloadStep::Failed);
             }
 
-            if let Some(network_task) = run_tasks::generate_network_task_for_tarball(
+            let created = run_tasks::generate_network_task_for_tarball(
                 this,
                 task_id,
                 &url,
@@ -2585,7 +2689,18 @@ fn fire_download_task(
                 },
                 None,
                 crate::network_task::Authorization::NoAuthorization,
-            )? {
+            );
+            // The dedupe entry exists before the task is built; a build error
+            // must mark it failed so a later edge on the same tarball fails
+            // fast instead of waiting on a task that will never run.
+            let network_task = match created {
+                Ok(task) => task,
+                Err(err) => {
+                    this.mark_network_task_failed(task_id);
+                    return Err(err.into());
+                }
+            };
+            if let Some(network_task) = network_task {
                 // reshaped for borrowck — see `enqueue_tarball_for_download`.
                 let nt: *mut NetworkTask = network_task;
                 enqueue_network_task(this, nt);
@@ -2631,23 +2746,30 @@ fn fire_download_task(
                     this.task_batch.push(ThreadPool::Batch::from(task));
                 }
                 dependency::tarball::Uri::Remote(_) => {
-                    let network_task: Option<*mut NetworkTask> =
-                        run_tasks::generate_network_task_for_tarball(
-                            this,
-                            task_id,
-                            url,
-                            dependency.behavior.is_required(),
-                            dep_id,
-                            &Package {
-                                name: dependency.name,
-                                name_hash: dependency.name_hash,
-                                resolution: *res,
-                                ..Package::default()
-                            },
-                            None,
-                            crate::network_task::Authorization::NoAuthorization,
-                        )?
-                        .map(std::ptr::from_mut::<NetworkTask>);
+                    let created = run_tasks::generate_network_task_for_tarball(
+                        this,
+                        task_id,
+                        url,
+                        dependency.behavior.is_required(),
+                        dep_id,
+                        &Package {
+                            name: dependency.name,
+                            name_hash: dependency.name_hash,
+                            resolution: *res,
+                            ..Package::default()
+                        },
+                        None,
+                        crate::network_task::Authorization::NoAuthorization,
+                    );
+                    // See the GitHub arm: a build error must mark the
+                    // pre-inserted dedupe entry failed.
+                    let network_task = match created {
+                        Ok(task) => task.map(std::ptr::from_mut::<NetworkTask>),
+                        Err(err) => {
+                            this.mark_network_task_failed(task_id);
+                            return Err(err.into());
+                        }
+                    };
                     if let Some(network_task) = network_task {
                         enqueue_network_task(this, network_task);
                     }

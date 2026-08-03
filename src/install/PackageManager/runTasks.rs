@@ -1279,7 +1279,25 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         };
                         let dep_name = dep_name_handle.slice(string_buf);
                         let repo = git.repo.slice(string_buf);
-                        let resolved = git.resolved.slice(string_buf);
+                        // A lockfile-recorded git dep carries its resolved commit;
+                        // a migrated one (e.g. non-GitHub git deps from
+                        // yarn.lock) may not, so resolve it from the committish
+                        // against the fresh clone.
+                        let resolved_owned;
+                        let resolved: &[u8] = if git.resolved.is_empty() {
+                            use crate::repository_real::RepositoryExt as _;
+                            resolved_owned = crate::repository_real::Repository::find_commit(
+                                manager.env_mut(),
+                                manager.log_mut(),
+                                repo_fd,
+                                dep_name,
+                                git.committish.slice(string_buf),
+                                task.id,
+                            )?;
+                            &resolved_owned
+                        } else {
+                            git.resolved.slice(string_buf)
+                        };
                         let checkout_id = Task::Id::for_git_checkout(repo, resolved);
 
                         if manager.has_created_network_task(checkout_id, is_required) {

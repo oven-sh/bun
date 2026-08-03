@@ -17,6 +17,7 @@ import { join } from "path";
 
 type VersionMeta = {
   dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
   peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   optionalDependencies?: Record<string, string>;
@@ -744,5 +745,199 @@ describe.concurrent("lockfile fidelity", () => {
     expect(second.exitCode).toBe(0);
     expect(second.versions["newcomer/shared"]).toBe("shared@1.5.0");
     expect(Object.values(second.versions)).not.toContain("shared@1.9.0");
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Optional dependencies and optional peers
+// ──────────────────────────────────────────────────────────────────────────
+
+describe.concurrent("optional dependencies", () => {
+  // An optional dependency that resolves installs like a normal one.
+  scenario("a resolvable optional dependency installs", async () => {
+    const registry: RegistrySpec = {
+      extra: pkg(["1.0.0", "1.1.0"]),
+      host: pkg({ "1.0.0": { optionalDependencies: { extra: "^1.0.0" } } }),
+    };
+    const { versions } = await resolveUnderOrders(project({ dependencies: { host: "1.0.0" } }), registry);
+    expect(versions).toEqual({ host: "host@1.0.0", extra: "extra@1.1.0" });
+  });
+
+  // A missing optional dependency does not fail the install and does not
+  // appear in the tree.
+  scenario("a missing optional dependency is skipped without failing", async () => {
+    const registry: RegistrySpec = {
+      host: pkg({ "1.0.0": { optionalDependencies: { missing: "^1.0.0" } } }),
+    };
+    const { versions } = await resolveUnderOrders(project({ dependencies: { host: "1.0.0" } }), registry);
+    expect(versions).toEqual({ host: "host@1.0.0" });
+  });
+
+  // An optional peer that a sibling provides binds to it; nothing extra
+  // installs and there is no warning.
+  scenario("an optional peer provided by a sibling binds to it", async () => {
+    const registry: RegistrySpec = {
+      provider: pkg(["2.0.0"]),
+      plugin: pkg({
+        "1.0.0": {
+          peerDependencies: { provider: "^2.0.0" },
+          peerDependenciesMeta: { provider: { optional: true } },
+        },
+      }),
+    };
+    const { versions, err } = await resolveUnderOrders(
+      project({ dependencies: { provider: "2.0.0", plugin: "1.0.0" } }),
+      registry,
+    );
+    expect(versions).toEqual({ provider: "provider@2.0.0", plugin: "plugin@1.0.0" });
+    expect(err).not.toContain("incorrect peer dependency");
+  });
+
+  // An optional peer nobody provides is not auto-installed.
+  scenario("an unprovided optional peer is not installed", async () => {
+    const registry: RegistrySpec = {
+      provider: pkg(["2.0.0"]),
+      plugin: pkg({
+        "1.0.0": {
+          peerDependencies: { provider: "^2.0.0" },
+          peerDependenciesMeta: { provider: { optional: true } },
+        },
+      }),
+    };
+    const { versions } = await resolveUnderOrders(project({ dependencies: { plugin: "1.0.0" } }), registry);
+    expect(versions).toEqual({ plugin: "plugin@1.0.0" });
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Dev dependencies and overrides
+// ──────────────────────────────────────────────────────────────────────────
+
+describe.concurrent("dev dependencies and overrides", () => {
+  // Root devDependencies resolve; a dependency's own devDependencies do not.
+  scenario("root devDependencies resolve but transitive ones do not", async () => {
+    const registry: RegistrySpec = {
+      tool: pkg(["1.0.0"]),
+      hidden: pkg(["1.0.0"]),
+      lib: pkg({ "1.0.0": { devDependencies: { hidden: "^1.0.0" } } }),
+    };
+    const { versions, requested } = await resolveUnderOrders(
+      project({ dependencies: { lib: "1.0.0" }, devDependencies: { tool: "1.0.0" } }),
+      registry,
+    );
+    expect(versions).toEqual({ lib: "lib@1.0.0", tool: "tool@1.0.0" });
+    expect(requested.has("hidden")).toBe(false);
+  });
+
+  // An override pins a transitive dependency's version regardless of the
+  // range that requested it.
+  scenario("an override pins a transitive dependency version", async () => {
+    const registry: RegistrySpec = {
+      shared: pkg(["1.0.0", "1.5.0", "2.0.0"]),
+      user: pkg({ "1.0.0": { dependencies: { shared: "^1.0.0" } } }),
+    };
+    const { versions } = await resolveUnderOrders(
+      project({ dependencies: { user: "1.0.0" }, overrides: { shared: "1.0.0" } }),
+      registry,
+    );
+    expect(versions).toEqual({ user: "user@1.0.0", shared: "shared@1.0.0" });
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Fan-out, chains, and mixed tag/range scopes
+// ──────────────────────────────────────────────────────────────────────────
+
+describe.concurrent("shapes", () => {
+  // A long dependency chain resolves fully, every link hoisted to the top
+  // level since no names collide.
+  scenario("a deep chain with no conflicts hoists every link", async () => {
+    const registry: RegistrySpec = {
+      d: pkg(["1.0.0"]),
+      c: pkg({ "1.0.0": { dependencies: { d: "^1.0.0" } } }),
+      b: pkg({ "1.0.0": { dependencies: { c: "^1.0.0" } } }),
+      a: pkg({ "1.0.0": { dependencies: { b: "^1.0.0" } } }),
+    };
+    const { versions } = await resolveUnderOrders(project({ dependencies: { a: "1.0.0" } }), registry);
+    expect(versions).toEqual({ a: "a@1.0.0", b: "b@1.0.0", c: "c@1.0.0", d: "d@1.0.0" });
+  });
+
+  // Many packages fan out to one shared dependency with compatible ranges:
+  // a single shared copy, chosen deterministically.
+  scenario("a wide fan-in to one compatible dependency shares a single copy", async () => {
+    const registry: RegistrySpec = {
+      hub: pkg(["3.0.0", "3.4.0", "3.9.0"]),
+      ...Object.fromEntries(
+        Array.from({ length: 8 }, (_, i) => [`spoke-${i + 1}`, pkg({ "1.0.0": { dependencies: { hub: "^3.0.0" } } })]),
+      ),
+    };
+    const { versions } = await resolveUnderOrders(
+      project({ dependencies: Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`spoke-${i + 1}`, "1.0.0"])) }),
+      registry,
+    );
+    expect(versions["hub"]).toBe("hub@3.9.0");
+    for (let i = 1; i <= 8; i++) {
+      expect(versions[`spoke-${i}`]).toBe(`spoke-${i}@1.0.0`);
+      expect(versions[`spoke-${i}/hub`]).toBeUndefined();
+    }
+  });
+
+  // A three-way version split: the first two names each claim a level, the
+  // rest nest — decided by the cursor's fixed order, never by arrival.
+  scenario("three conflicting majors resolve in a stable order", async () => {
+    const registry: RegistrySpec = {
+      core: pkg(["1.0.0", "2.0.0", "3.0.0"]),
+      first: pkg({ "1.0.0": { dependencies: { core: "^1.0.0" } } }),
+      second: pkg({ "1.0.0": { dependencies: { core: "^2.0.0" } } }),
+      third: pkg({ "1.0.0": { dependencies: { core: "^3.0.0" } } }),
+    };
+    const { versions } = await resolveUnderOrders(
+      project({ dependencies: { first: "1.0.0", second: "1.0.0", third: "1.0.0" } }),
+      registry,
+    );
+    expect(versions).toEqual({
+      first: "first@1.0.0",
+      second: "second@1.0.0",
+      third: "third@1.0.0",
+      core: "core@1.0.0",
+      "second/core": "core@2.0.0",
+      "third/core": "core@3.0.0",
+    });
+  });
+
+  // The root's own dependency claims the top level even when transitive
+  // dependencies want a different major.
+  scenario("the root's own version claims the top level over transitive wants", async () => {
+    const registry: RegistrySpec = {
+      shared: pkg(["1.0.0", "2.0.0"]),
+      "needs-new": pkg({ "1.0.0": { dependencies: { shared: "^2.0.0" } } }),
+    };
+    const { versions } = await resolveUnderOrders(
+      project({ dependencies: { shared: "1.0.0", "needs-new": "1.0.0" } }),
+      registry,
+    );
+    expect(versions).toEqual({
+      shared: "shared@1.0.0",
+      "needs-new": "needs-new@1.0.0",
+      "needs-new/shared": "shared@2.0.0",
+    });
+  });
+
+  // A dist-tag at the root and a conflicting range in a dependency: the
+  // root's tagged version stays on top, the range nests.
+  scenario("a root dist-tag stays on top while a conflicting range nests", async () => {
+    const registry: RegistrySpec = {
+      shared: pkg(["1.0.0", "2.5.0"], { latest: "2.5.0", legacy: "1.0.0" }),
+      "wants-old": pkg({ "1.0.0": { dependencies: { shared: "^1.0.0" } } }),
+    };
+    const { versions } = await resolveUnderOrders(
+      project({ dependencies: { shared: "latest", "wants-old": "1.0.0" } }),
+      registry,
+    );
+    expect(versions).toEqual({
+      shared: "shared@2.5.0",
+      "wants-old": "wants-old@1.0.0",
+      "wants-old/shared": "shared@1.0.0",
+    });
   });
 });

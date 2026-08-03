@@ -1083,8 +1083,11 @@ pub unsafe fn spawn_process_posix(
         if p.is_file() {
             if let Ok(bytes) = std::fs::read(p) {
                 if bytes.len() > 4 && bytes[..4] == [0x7f, 0x45, 0x4c, 0x46] {
-                    if !ohos_sign::has_codesign(&bytes) {
-                        let _ = ohos_sign::sign_selfsign_inplace(p);
+                    // Unconditional re-sign: a stale .codesign section
+                    // defeats has_codesign() while the signature no longer
+                    // covers the file, and exec then fails with EACCES.
+                    if let Err(err) = ohos_sign::sign_selfsign_inplace_with_strip(p) {
+                        eprintln!("ohos-selfsign: sign {}: {err}", p.display());
                     }
                 }
             }

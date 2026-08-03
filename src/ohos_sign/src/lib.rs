@@ -85,8 +85,17 @@ pub extern "C" fn ohos_ensure_elf_signed(path: *const core::ffi::c_char) -> bool
     if bytes.len() < 4 || bytes[..4] != [0x7f, 0x45, 0x4c, 0x46] {
         return false;
     }
-    if has_codesign(&bytes) {
-        return true;
+    // Re-sign unconditionally: a stale .codesign section (e.g. from a
+    // previous sign of a different build, or a file that was modified after
+    // signing) makes has_codesign() report true while the signature no
+    // longer covers the file — the kernel then rejects the dlopen with
+    // EPERM. Strip any old section and re-sign; sign_selfsign_with_strip is
+    // a no-op strip when none is present.
+    match sign_selfsign_inplace_with_strip(path) {
+        Ok(()) => true,
+        Err(err) => {
+            eprintln!("ohos-selfsign: sign {}: {err}", path.display());
+            false
+        }
     }
-    sign_selfsign_inplace(path).is_ok()
 }

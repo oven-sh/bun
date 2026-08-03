@@ -6356,10 +6356,12 @@ pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
         fn ensure_signed(path: &ZStr) {
             let path_str = core::str::from_utf8(path.as_bytes()).unwrap_or("");
             let p = std::path::Path::new(path_str);
-            if ohos_sign::has_codesign(&std::fs::read(p).unwrap_or_default()) {
-                return;
+            // Unconditional re-sign: a stale .codesign section defeats
+            // has_codesign() while the signature no longer covers the file,
+            // and the kernel then rejects the dlopen with EPERM.
+            if let Err(err) = ohos_sign::sign_selfsign_inplace_with_strip(p) {
+                eprintln!("ohos-selfsign: sign {}: {err}", p.display());
             }
-            let _ = ohos_sign::sign_selfsign_inplace(p);
         }
         ensure_signed(filename);
         // SAFETY: filename is NUL-terminated.

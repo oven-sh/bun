@@ -103,10 +103,12 @@ test("happy-dom Window (vm.createContext on the Window object) works", async () 
     url: "http://localhost/",
     settings: { disableJavaScriptFileLoading: true },
   });
-  expect(vm.isContext(window)).toBe(true);
-  const { document, localStorage } = window;
-  localStorage.clear();
-  document.body.innerHTML = `<div id="x">ok</div>`;
-  expect(document.getElementById("x")?.textContent).toBe("ok");
-  await window.happyDOM.close();
+  try {
+    expect(vm.isContext(window)).toBe(true);
+    const { document } = window;
+    document.body.innerHTML = `<div id="x">ok</div>`;
+    expect(document.getElementById("x")?.textContent).toBe("ok");
+  } finally {
+    await window.happyDOM.close();
+  }
 });

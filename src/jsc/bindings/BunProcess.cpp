@@ -1668,11 +1668,9 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                     }
                 } else {
                     if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end() && listenerCount == 0) {
-                        // The watch-mode sticky signal keeps its OS handler
-                        // installed for the process lifetime; only the handler
-                        // teardown is skipped. The map entry is still removed —
-                        // it is the "has JS listeners" source of truth that
-                        // e.g. the self-kill profile flush consults.
+                        // The watch-mode sticky signal keeps its OS handler installed; only the
+                        // handler teardown is skipped. The map entry is still removed — it is the
+                        // "has JS listeners" source of truth that e.g. self-kill flush consults.
                         if (signalNumber != watchModeStickySignal) {
 #if !OS(WINDOWS)
                             if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
@@ -4524,12 +4522,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
 #else
     int ownPid = uv_os_getpid();
 #endif
-    // Node parity: a self-directed signal with no JS handler will most likely
-    // terminate this process, so flush the CPU/heap profiles first (node's
-    // Kill binding runs RunAtExit in this case).
-    // `signalToContextIdsMap` is only mutated (and its mutations only guarded)
-    // on the main thread; a worker must not race the read against a rehash.
-    // Workers never set profiler configs, so skipping the flush there is fine.
+    // Node's Kill binding runs RunAtExit for a self-directed unhandled signal, so flush profiles
+    // first. `signalToContextIdsMap` is mutated only on the main thread; workers never set
+    // profiler configs, so skipping the flush there avoids a rehash race.
     if (signal > 0 && (pid == 0 || pid == -1 || pid == ownPid || pid == -ownPid)
         && !(Bun__isMainThreadVM() && signalToContextIdsMap && signalToContextIdsMap->contains(signal))) {
         Bun__writeProfilesBeforeSelfKill();

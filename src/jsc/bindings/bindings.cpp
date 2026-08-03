@@ -750,12 +750,9 @@ static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, Marked
     if (a1.size() != a2.size()) {
         return false;
     }
-    // Own-property-scoped reads: a plain get() would walk the prototype
-    // chain and match `a1 = [1, x: 1]` against `a2` inheriting `x` while
-    // owning some other key. GetOwnProperty slots enforce name-for-name
-    // ownership and read the value in one lookup. DontEnum is rejected too:
-    // the name lists exclude non-enumerable properties, so a non-enumerable
-    // own property on the other side must not satisfy an enumerable name.
+    // Own-property-scoped reads: a plain get() would walk the prototype chain and let an inherited
+    // key satisfy an own one. GetOwnProperty enforces name-for-name ownership in one lookup;
+    // DontEnum is rejected since the name lists exclude non-enumerable properties.
     for (size_t i = 0; i < a1.size(); i++) {
         JSC::PropertyName propertyName(a1[i]);
         PropertySlot slot2(o2, PropertySlot::InternalMethodType::GetOwnProperty);
@@ -1010,10 +1007,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
 
         if constexpr (checkPrototypes) {
-            // node compares own enumerable non-index string and symbol
-            // properties via getOwnNonIndexProperties; the Bun.deepEquals
-            // symbol-only block below walks the prototype chain and would
-            // also duplicate the symbol pass.
+            // node compares own enumerable non-index string+symbol props via getOwnNonIndexProperties;
+            // the Bun.deepEquals symbol-only block below walks the prototype chain, so diverge here.
             return nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, o1, o2);
         }
 
@@ -1534,10 +1529,8 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     }
     case DataViewType: {
         if constexpr (!checkPrototypes) {
-            // Bun.deepEquals / bun:test have always compared DataViews as
-            // plain objects (own properties only); keep that surface
-            // unchanged and reserve the byte comparison for the node-parity
-            // instantiations.
+            // Bun.deepEquals / bun:test compare DataViews as plain objects; reserve the byte
+            // comparison for the node-parity instantiations.
             break;
         }
         if (c2Type != DataViewType) {
@@ -1837,11 +1830,8 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return true;
         }
 
-        // For float arrays, when not in strict mode, IEEE == handles +0/-0
-        // as equal and NaN as not equal to itself. All other dtypes (and
-        // strict mode) compare raw bytes. Every content result funnels into
-        // the single tail below so the node-parity instantiations never skip
-        // the own-property comparison.
+        // Float arrays in non-strict mode use IEEE == (+0/-0 equal, NaN != NaN); everything else
+        // compares raw bytes. All results funnel to one tail so node-parity never skips own props.
         bool contentsEqual;
         if (!isStrict && (c1Type == Float16ArrayType || c1Type == Float32ArrayType || c1Type == Float64ArrayType)) {
             if (c1Type == Float16ArrayType) {
@@ -1896,11 +1886,9 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
         if constexpr (checkPrototypes || isStrict) {
-            // Only these modes compare extra own properties on boxed primitives.
-            // Guarded so a plain boxed string does not fall through to the property
-            // walk, which would enumerate every character index; node does walk
-            // those indices, so `break` (not nonIndexOwnPropertiesEqual) when
-            // extras exist so an out-of-range index still fails the compare.
+            // Only these modes compare extra own props on boxed primitives. Guarded so a plain
+            // boxed string skips the per-char-index walk; `break` (not nonIndexOwnPropertiesEqual)
+            // when extras exist so an out-of-range index still fails the compare, like node.
             if (hasExtraOwnProperties(c1->structure()) || hasExtraOwnProperties(c2->structure())) {
                 break;
             }

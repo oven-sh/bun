@@ -787,6 +787,32 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     },
   );
 
+  it("Bun.write(path, HTMLRewriter.transform(resp)) still resolves after out.body is touched", async () => {
+    using dir = tempDir("bun-write-htmlrewriter-body", {});
+    const dest = join(String(dir), "out.html");
+    const { promise: gate, resolve: openGate } = Promise.withResolvers();
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          async function* () {
+            yield "<html><body>";
+            await gate;
+            yield "<p>hi</p></body></html>";
+          },
+          { headers: { "content-type": "text/html" } },
+        ),
+    });
+    const resp = await fetch(server.url);
+    const out = new HTMLRewriter().on("*", {}).transform(resp);
+    const write = Bun.write(dest, out);
+    expect(out.body).toBeInstanceOf(ReadableStream);
+    openGate();
+    const written = await write;
+    expect(written).toBe(35);
+    expect(await Bun.file(dest).text()).toBe("<html><body><p>hi</p></body></html>");
+  });
+
   it("BunFile.name survives concurrent write() calls + GC", async () => {
     using dir = tempDir("bun-file-name-concurrent-write-gc", {});
     const filePath = join(String(dir), "out.txt");

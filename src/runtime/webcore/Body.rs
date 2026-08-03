@@ -283,7 +283,11 @@ impl PendingValue {
         self.on_start_buffering = None;
         self.on_start_streaming = None;
         self.on_readable_stream_available = None;
-        self.task = None;
+        if self.on_receive_value.is_none() {
+            // A registered `on_receive_value` means `task` is the consumer's
+            // ctx (overwriting the producer), read by `resolve()`.
+            self.task = None;
+        }
         self.producer = streams::SourceHandle::None;
     }
 

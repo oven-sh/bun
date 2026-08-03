@@ -571,6 +571,8 @@ void readableStreamDefaultControllerClearAlgorithms(JSReadableStreamDefaultContr
     controller->m_algorithms.method2.clear();
     controller->m_algorithms.algorithmContext.clear();
     controller->m_strategySizeAlgorithm.clear();
+    if (auto* stream = controller->m_stream.get())
+        readableStreamClearSourceBarriers(stream);
 }
 
 void readableStreamDefaultControllerClose(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller)

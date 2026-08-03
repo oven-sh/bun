@@ -78,7 +78,7 @@ impl ErrorReportRequest {
 
     /// `ctx` must be the pointer returned by `heap::alloc` in `run`; called
     /// exactly once (success path here, or via `on_error` on abort/error).
-    pub(crate) fn finalize(ctx: *mut ErrorReportRequest) {
+    fn finalize(ctx: *mut ErrorReportRequest) {
         // SAFETY: `ctx` is the original Box allocation produced by `run`; no
         // live borrow of `*ctx` exists (BodyReaderHandler hands us the raw
         // pointer, never `&mut self`). Only reachable via `on_body`/`on_error`,
@@ -99,7 +99,7 @@ impl ErrorReportRequest {
     /// with no live `&`/`&mut` into the allocation. On `Ok(())` return this
     /// consumes `ctx` via `finalize`; on `Err` the caller (BodyReaderMixin)
     /// retains ownership and will call `on_error`.
-    pub(crate) unsafe fn run_with_body(
+    unsafe fn run_with_body(
         ctx: *mut ErrorReportRequest,
         body: &[u8],
         r: AnyResponse,
@@ -402,7 +402,7 @@ impl ErrorReportRequest {
     }
 }
 
-pub(crate) fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_store::Key> {
+fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_store::Key> {
     if !source_url.starts_with(browser_url) {
         return None;
     }

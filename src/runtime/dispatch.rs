@@ -176,7 +176,7 @@ use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for Fil
 /// Per-arm result for [`run_task`]: `Continue` means proceed to drain
 /// microtasks and the next item; `EarlyReturn` is the HotReloadTask special
 /// case — microtasks must NOT drain.
-pub enum RunTaskResult {
+pub(crate) enum RunTaskResult {
     Continue,
     EarlyReturn,
 }
@@ -194,7 +194,7 @@ pub enum RunTaskResult {
 // function's hot residue (AnyTask/ManagedTask/CppTask + fs/napi) fits in 1-2
 // pages.
 #[inline(never)]
-pub fn run_task(
+pub(crate) fn run_task(
     task: Task,
     el: &mut EventLoop,
     vm: &mut VirtualMachine,
@@ -578,10 +578,12 @@ fn run_task_cold(task: Task) {
 
         // ── bake dev-server ──────────────────────────────────────────────
         task_tag::BakeHotReloadEvent => {
-            // SAFETY: §Dispatch — tag identifies pointee; the event is an inline
-            // element of `DevServer.watcher_atomics.events[_]` and `run` itself
-            // re-derives `&mut DevServer` from the BACKREF, so pass the raw
-            // pointer to avoid materialising an aliasing `&mut` here.
+            // SAFETY: §Dispatch — tag identifies pointee; the event lives in a
+            // heap `WatcherAtomics` that can outlive its `DevServer`. `run`
+            // either re-derives `&mut DevServer` from the BACKREF or (when the
+            // owner has been dropped) only reclaims the heap `WatcherAtomics`,
+            // so pass the raw pointer to avoid materialising an aliasing
+            // `&mut` here.
             unsafe { BakeHotReloadEvent::run(cast_ptr!(BakeHotReloadEvent)) };
         }
 
@@ -601,7 +603,7 @@ const _: () = assert!(
 // `tick_queue_with_count` — the full drain loop.
 // ────────────────────────────────────────────────────────────────────────────
 
-pub fn tick_queue_with_count(
+pub(crate) fn tick_queue_with_count(
     el: &mut EventLoop,
     vm: &mut VirtualMachine,
     counter: &mut u32,
@@ -645,7 +647,7 @@ pub fn tick_queue_with_count(
 /// (guaranteed by `FilePoll::on_update`, the only caller).
 #[cfg(not(windows))]
 #[unsafe(no_mangle)]
-pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
+pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
     // SAFETY: contract above.
     let poll_ref = unsafe { &mut *poll };
     let owner = poll_ref.owner;
@@ -734,23 +736,12 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         poll_tag::GET_ADDR_INFO_REQUEST => {
             #[cfg(target_os = "macos")]
             {
-                let loader = owner.ptr.cast::<crate::dns_jsc::GetAddrInfoRequest>();
-                get_addr_info_request::BackendLibInfo::on_machport_change(loader);
+                let shared = owner.ptr.cast::<crate::dns_jsc::dns_sd::SharedConnection>();
+                crate::dns_jsc::dns_sd::SharedConnection::on_readable(shared);
             }
             #[cfg(not(target_os = "macos"))]
             {
-                debug_assert!(false, "GetAddrInfoRequest poll on non-mac");
-            }
-        }
-        poll_tag::REQUEST => {
-            #[cfg(target_os = "macos")]
-            {
-                let req = owner.ptr.cast::<crate::dns_jsc::internal::Request>();
-                crate::dns_jsc::internal::MacAsyncDNS::on_machport_change(req);
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                debug_assert!(false, "InternalDNSRequest poll on non-mac");
+                debug_assert!(false, "dns_sd SharedConnection poll on non-mac");
             }
         }
         poll_tag::TERMINAL_POLL => poll_arm!(TerminalPoll),
@@ -784,7 +775,7 @@ use crate::webcore::blob::write_file::WriteFile;
 /// # Safety
 /// `poll` is the `io_poll` field of a live owner of type `tag`.
 #[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io::Poll) {
+unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io::Poll) {
     match tag {
         bun_io::PollableTag::ReadFile => {
             // SAFETY: per fn contract.
@@ -809,7 +800,7 @@ pub(crate) unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: 
 /// # Safety
 /// `poll` is the `io_poll` field of a live owner of type `tag`.
 #[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_io_pollable_on_io_error(
+unsafe fn __bun_io_pollable_on_io_error(
     tag: bun_io::PollableTag,
     poll: *mut bun_io::Poll,
     err: &bun_sys::Error,
@@ -847,7 +838,7 @@ pub(crate) unsafe fn __bun_io_pollable_on_io_error(
 /// `task` was produced by `enqueue_immediate_task` from a live
 /// `timer::ImmediateObject`; `vm` is the live per-thread VM.
 #[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_run_immediate_task(
+unsafe fn __bun_run_immediate_task(
     task: *mut (),
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) -> bool {
@@ -870,7 +861,7 @@ pub(crate) unsafe fn __bun_run_immediate_task(
 /// `timer::ImmediateObject` whose event-loop ref has not yet been released;
 /// `vm` is the live per-thread VM with `RuntimeState` still installed.
 #[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_cancel_pending_immediate(
+unsafe fn __bun_cancel_pending_immediate(
     task: *mut (),
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) {
@@ -891,10 +882,7 @@ pub(crate) unsafe fn __bun_cancel_pending_immediate(
 /// `timer` was published by `WTFTimer::update` into `imminent_gc_timer` and
 /// remains live until consumed; `vm` is the live per-thread VM.
 #[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_run_wtf_timer(
-    timer: *mut (),
-    vm: *mut bun_jsc::virtual_machine::VirtualMachine,
-) {
+unsafe fn __bun_run_wtf_timer(timer: *mut (), vm: *mut bun_jsc::virtual_machine::VirtualMachine) {
     // SAFETY: per fn contract — the only producer (`WTFTimer::update`) stores a
     // `*mut crate::timer::WTFTimer`, so the cast is the identity.
     let real = timer.cast::<crate::timer::WTFTimer>();
@@ -920,7 +908,7 @@ pub(crate) unsafe fn __bun_run_wtf_timer(
 /// `*mut VirtualMachine`. The handler may free the container — do not touch
 /// `t` after the per-arm call returns.
 #[unsafe(no_mangle)]
-pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()) {
+pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()) {
     use crate::timer::{ImmediateObject, TimeoutObject, TimerObjectInternals, WTFTimer};
 
     /// Recover the embedding container from `t` (the popped timer slot).
@@ -985,11 +973,6 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
                 AbortSignalTimeout::run(c, vm)
             })
         }
-        EventLoopTimerTag::GcOneShot => {
-            timer_arm!(GarbageCollectionController, gc_timer, |c, _now, _vm| {
-                GarbageCollectionController::on_gc_timer(c)
-            })
-        }
         EventLoopTimerTag::GcRepeating => {
             timer_arm!(
                 GarbageCollectionController,
@@ -1013,6 +996,22 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
         EventLoopTimerTag::UpgradedDuplex => {
             timer_arm!(UpgradedDuplex, event_loop_timer, |c, _now, _vm| (*c)
                 .on_timeout())
+        }
+        EventLoopTimerTag::DnsSdConnection => {
+            #[cfg(target_os = "macos")]
+            {
+                timer_arm!(
+                    crate::dns_jsc::dns_sd::SharedConnection,
+                    early_out_timer,
+                    |c, _now, _vm| crate::dns_jsc::dns_sd::SharedConnection::on_early_out(c)
+                )
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                if cfg!(debug_assertions) {
+                    unreachable!("DnsSdConnection timer on non-macOS");
+                }
+            }
         }
         // R-2: shared deref — `check_timeouts` re-enters via `ares_process_fd`.
         EventLoopTimerTag::DNSResolver => {
@@ -1129,7 +1128,7 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
 /// # Safety
 /// `t` points at a live [`EventLoopTimer`] currently linked into a `TimerHeap`.
 #[unsafe(no_mangle)]
-pub unsafe fn __bun_js_timer_epoch(
+pub(crate) unsafe fn __bun_js_timer_epoch(
     _tag: EventLoopTimerTag,
     t: *const EventLoopTimer,
 ) -> Option<u32> {
@@ -1148,7 +1147,7 @@ pub unsafe fn __bun_js_timer_epoch(
 /// `el` and `vm` must point at live `EventLoop`/`VirtualMachine` instances
 /// with no other `&mut` held across this call.
 #[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_tick_queue_with_count(
+unsafe fn __bun_tick_queue_with_count(
     el: *mut EventLoop,
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
     counter: &mut u32,
@@ -1170,7 +1169,7 @@ pub(crate) unsafe fn __bun_tick_queue_with_count(
 /// would have dropped. Tags not yet listed leak their box at exit; add them
 /// as LSan surfaces them.
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
+fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
     use bun_event_loop::task_tag;
     match task.tag {
         // `callback` (HTTP thread) won the `has_schedule_callback` CAS and
@@ -1188,7 +1187,7 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
         }
         // `AsyncFSTask`s are `Box::leak`'d in `create()` and freed by
         // `destroy()` (called from `run_from_js_thread`'s scopeguard).
-        // `destroy()` resets `JSPromiseStrong` (touches the JSC HandleSet)
+        // `destroy()` resets `JSPromiseStrong` (touches the StrongRootBlock list)
         // and unrefs the loop `KeepAlive`, both of which are still valid
         // here — we're before `destructOnExit`. Before
         // `release_queued_tasks_for_shutdown` existed these boxes stayed

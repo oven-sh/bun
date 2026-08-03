@@ -100,38 +100,38 @@ fn pm_run_scripts(m: &PackageManager) -> bool {
 
 // (`&[u8]` / `&ZStr` at fn boundaries; owned forms use Box<[u8]> / Box<ZStr>)
 
-pub struct PackCommand;
+pub(crate) struct PackCommand;
 
 // ───────────────────────────────────────────────────────────────────────────
 // Context
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct Context<'a> {
-    pub manager: &'a mut PackageManager,
+pub(crate) struct Context<'a> {
+    pub(crate) manager: &'a mut PackageManager,
     // allocator param dropped — global mimalloc (see PORTING.md §Allocators)
-    pub command_ctx: Command::Context<'a>,
+    pub(crate) command_ctx: Command::Context<'a>,
 
     /// `bun pack` does not require a lockfile, but
     /// it's possible we will need it for finding
     /// workspace versions. This is the only valid lockfile
     /// pointer in this file. `manager.lockfile` is incorrect
-    pub lockfile: Option<&'a Lockfile>,
+    pub(crate) lockfile: Option<&'a Lockfile>,
 
-    pub bundled_deps: Vec<BundledDep>,
+    pub(crate) bundled_deps: Vec<BundledDep>,
 
-    pub stats: Stats,
+    pub(crate) stats: Stats,
 }
 
 #[derive(Default, Clone, Copy)]
 pub struct Stats {
-    pub unpacked_size: usize,
-    pub total_files: usize,
-    pub packed_size: usize,
-    pub bundled_deps: usize,
+    pub(crate) unpacked_size: usize,
+    pub(crate) total_files: usize,
+    pub(crate) packed_size: usize,
+    pub(crate) bundled_deps: usize,
 }
 
 impl<'a> Context<'a> {
-    pub fn print_summary(
+    pub(crate) fn print_summary(
         stats: Stats,
         maybe_shasum: Option<&[u8; sha::SHA1::DIGEST]>,
         maybe_integrity: Option<&[u8; sha::SHA512::DIGEST]>,
@@ -177,7 +177,7 @@ impl<'a> Context<'a> {
         }
     }
 
-    pub fn print_tarball_path(path: impl fmt::Display, log_level: LogLevel) {
+    pub(crate) fn print_tarball_path(path: impl fmt::Display, log_level: LogLevel) {
         // Quiet/silent output must be only the tarball path so `$(bun pm pack --quiet)` works.
         if log_level != LogLevel::Silent && log_level != LogLevel::Quiet {
             bun_core::pretty!("\n");
@@ -189,8 +189,8 @@ impl<'a> Context<'a> {
 #[derive(Clone)]
 pub struct BundledDep {
     pub name: Box<[u8]>,
-    pub was_packed: bool,
-    pub from_root_package_json: bool,
+    pub(crate) was_packed: bool,
+    pub(crate) from_root_package_json: bool,
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -198,7 +198,7 @@ pub struct BundledDep {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl PackCommand {
-    pub fn exec_with_manager(
+    pub(crate) fn exec_with_manager(
         ctx: Command::Context<'_>,
         manager: &mut PackageManager,
     ) -> crate::Result<()> {
@@ -425,14 +425,14 @@ pub(crate) struct PackQueue {
     heap: std::collections::BinaryHeap<PackQueueItem>,
 }
 impl PackQueue {
-    pub(crate) fn add(&mut self, item: PackQueueItem) -> Result<(), AllocError> {
+    fn add(&mut self, item: PackQueueItem) -> Result<(), AllocError> {
         self.heap.push(item);
         Ok(())
     }
-    pub(crate) fn count(&self) -> usize {
+    fn count(&self) -> usize {
         self.heap.len()
     }
-    pub(crate) fn remove_or_null(&mut self) -> Option<PackQueueItem> {
+    fn remove_or_null(&mut self) -> Option<PackQueueItem> {
         self.heap.pop()
     }
 }
@@ -2461,8 +2461,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 package_version: package_version.into(),
                 abs_tarball_path: ZStr::boxed(abs_tarball_dest.as_bytes()),
                 tarball_bytes: Box::new([]),
-                shasum: [0u8; sha::SHA1::DIGEST],
-                integrity: [0u8; sha::SHA512::DIGEST],
                 uses_workspaces: false,
                 publish_script,
                 postpublish_script,
@@ -2936,8 +2934,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             package_version: package_version.into(),
             abs_tarball_path: ZStr::boxed(abs_tarball_dest.as_bytes()),
             tarball_bytes: tarball_bytes.unwrap_or_default().into_boxed_slice(),
-            shasum,
-            integrity,
             uses_workspaces: false,
             publish_script,
             postpublish_script,
@@ -3539,9 +3535,9 @@ fn edit_root_package_json(
 /// A glob pattern used to ignore or include files in the project tree.
 /// Might come from .npmignore, .gitignore, or `files` in package.json
 // Note: `CowSliceZ<u8>` is not `Clone`; manual borrow via `as_positive`.
-pub struct Pattern {
-    pub glob: CowString,
-    pub flags: PatternFlags,
+pub(crate) struct Pattern {
+    pub(crate) glob: CowString,
+    pub(crate) flags: PatternFlags,
 }
 
 bitflags::bitflags! {
@@ -3559,7 +3555,7 @@ bitflags::bitflags! {
 }
 
 impl Pattern {
-    pub fn from_utf8(pattern: &[u8]) -> Result<Option<Pattern>, AllocError> {
+    pub(crate) fn from_utf8(pattern: &[u8]) -> Result<Option<Pattern>, AllocError> {
         let mut remain = pattern;
         let mut has_leading_doublestar_could_start_with_bang = false;
         let (has_leading_or_middle_slash, has_trailing_slash, add_negate) = 'check_slashes: {
@@ -3641,7 +3637,7 @@ impl Pattern {
     }
 
     /// Invert a negated pattern to a positive pattern
-    pub fn as_positive(&self) -> Pattern {
+    pub(crate) fn as_positive(&self) -> Pattern {
         debug_assert!(self.flags.contains(PatternFlags::NEGATED) && self.glob.length() > 0);
         Pattern {
             glob: self.glob.borrow_subslice(1, None), // remove the leading `!`
@@ -3658,7 +3654,7 @@ impl Pattern {
 // IgnorePatterns
 // ───────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct IgnorePatterns {
+struct IgnorePatterns {
     pub list: Box<[Pattern]>,
     pub kind: IgnorePatternsKind,
     pub depth: usize,
@@ -3724,10 +3720,7 @@ impl IgnorePatterns {
     }
 
     /// ignore files are always ignored, don't need to worry about opening or reading twice
-    pub(crate) fn read_from_disk(
-        dir: &Dir,
-        dir_depth: usize,
-    ) -> Result<Option<IgnorePatterns>, AllocError> {
+    fn read_from_disk(dir: &Dir, dir_depth: usize) -> Result<Option<IgnorePatterns>, AllocError> {
         let mut patterns: Vec<Pattern> = Vec::new();
 
         let mut ignore_kind = IgnorePatternsKind::Npmignore;

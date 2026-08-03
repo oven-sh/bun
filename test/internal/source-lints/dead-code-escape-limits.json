@@ -18,7 +18,6 @@
   "src/patch/lib.rs": 2,
   "src/runtime/api/bun/Terminal.rs": 1,
   "src/runtime/cli/test/ChangedFilesFilter.rs": 1,
-  "src/runtime/dns_jsc/dns.rs": 5,
   "src/runtime/image/backend_coregraphics.rs": 14,
   "src/runtime/image/codecs.rs": 1,
   "src/runtime/node/fs_events.rs": 3,

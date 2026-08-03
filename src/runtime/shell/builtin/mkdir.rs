@@ -12,8 +12,8 @@ use core::ptr::NonNull;
 
 #[derive(Default)]
 pub struct Mkdir {
-    pub opts: Opts,
-    pub state: State,
+    pub(crate) opts: Opts,
+    pub(crate) state: State,
 }
 
 #[derive(Default)]
@@ -26,23 +26,23 @@ pub enum State {
 }
 
 pub struct Exec {
-    pub started: bool,
-    pub tasks_count: usize,
-    pub tasks_done: usize,
-    pub output_waiting: u16,
-    pub output_done: u16,
+    pub(crate) started: bool,
+    pub(crate) tasks_count: usize,
+    pub(crate) tasks_done: usize,
+    pub(crate) output_waiting: u16,
+    pub(crate) output_done: u16,
     /// Index into `Builtin::args` where filepath args start (storing the
     /// index keeps the lifetime tied to the Cmd's argv without a
     /// self-reference).
-    pub args_start: usize,
-    pub err: Option<bun_sys::Error>,
+    pub(crate) args_start: usize,
+    pub(crate) err: Option<bun_sys::Error>,
     /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
     /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
     /// directly (IOWriter.rs is out of scope here): `write_err`/`write_out`
     /// push, `on_io_writer_chunk` pops and forwards to
     /// `OutputTask::on_io_writer_chunk` so the box is reclaimed and the
     /// writeErr→writeOut→onDone state machine runs.
-    pub output_queue: std::collections::VecDeque<*mut OutputTask<Mkdir>>,
+    pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Mkdir>>,
 }
 
 impl Mkdir {
@@ -86,7 +86,7 @@ impl Mkdir {
         Builtin::write_failing_error(interp, cmd, Kind::Mkdir.usage_string(), 1)
     }
 
-    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         // NOTE: reshaped for borrowck — read scalars, drop the borrow,
         // then act.
         let action = match &mut Self::state_mut(interp, cmd).state {
@@ -158,11 +158,7 @@ impl Mkdir {
 
     /// The caller ([`ShellMkdirTask::run_from_main_thread`]) owns the heap
     /// allocation and drops it after this returns.
-    pub(crate) fn on_shell_mkdir_task_done(
-        interp: &Interpreter,
-        cmd: NodeId,
-        task: &mut ShellMkdirTask,
-    ) {
+    fn on_shell_mkdir_task_done(interp: &Interpreter, cmd: NodeId, task: &mut ShellMkdirTask) {
         let output = core::mem::take(&mut task.created_directories);
         let err = task.err.take();
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -277,7 +273,7 @@ pub(crate) struct ShellMkdirTask {
 }
 
 impl ShellMkdirTask {
-    pub(crate) fn create(
+    fn create(
         cmd: NodeId,
         opts: Opts,
         filepath: Vec<u8>,
@@ -298,7 +294,7 @@ impl ShellMkdirTask {
         bun_core::heap::into_raw(task)
     }
 
-    pub(crate) fn run_from_thread_pool(this: &mut ShellMkdirTask) {
+    fn run_from_thread_pool(this: &mut ShellMkdirTask) {
         use bun_paths::{Platform, platform, resolve_path};
         // We have to give an absolute path to our mkdir implementation for it
         // to work with cwd.
@@ -354,7 +350,7 @@ impl ShellMkdirTask {
 
     /// Reclaims ownership of the heap allocation produced by [`Self::create`]
     /// and forwards it to [`Mkdir::on_shell_mkdir_task_done`].
-    pub(crate) fn run_from_main_thread(this: NonNull<ShellMkdirTask>, interp: &Interpreter) {
+    fn run_from_main_thread(this: NonNull<ShellMkdirTask>, interp: &Interpreter) {
         // SAFETY: `this` is a live heap allocation produced by `Self::create`;
         // the dispatch contract guarantees it is not yet freed.
         let mut task = unsafe { bun_core::heap::take(this.as_ptr()) };
@@ -416,9 +412,9 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMkdirTask {
 pub struct Opts {
     /// `-p`, `--parents` — no error if existing, make parent directories as
     /// needed, with their file modes unaffected by any -m option.
-    pub parents: bool,
+    pub(crate) parents: bool,
     /// `-v`, `--verbose` — print a message for each created directory
-    pub verbose: bool,
+    pub(crate) verbose: bool,
 }
 
 impl FlagParser for Opts {

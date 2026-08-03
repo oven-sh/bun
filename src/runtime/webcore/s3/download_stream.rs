@@ -17,34 +17,32 @@ bun_core::declare_scope!(S3, hidden);
 pub struct S3HttpDownloadStreamingTask {
     // `MaybeUninit` because `AsyncHTTP` contains non-null references, so
     // `mem::zeroed()` can't be used here (mirrors `S3HttpSimpleTask`).
-    pub http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
+    pub(crate) http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
     /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
     /// the inert `Default` placeholder (overwritten before the task escapes).
-    pub vm: Option<bun_ptr::BackRef<VirtualMachine>>,
-    pub sign_result: SignResult,
-    pub headers: Headers,
-    pub callback_context: NonNull<()>,
+    pub(crate) vm: Option<bun_ptr::BackRef<VirtualMachine>>,
+    pub(crate) sign_result: SignResult,
+    pub(crate) headers: Headers,
+    pub(crate) callback_context: NonNull<()>,
     pub callback: fn(chunk: &MutableString, has_more: bool, err: Option<S3Error>, ctx: *mut c_void),
-    pub has_schedule_callback: AtomicBool,
-    pub signal_store: bun_http::signals::Store,
-    pub signals: Signals,
+    pub(crate) has_schedule_callback: AtomicBool,
+    pub(crate) signal_store: bun_http::signals::Store,
+    pub(crate) signals: Signals,
     pub poll_ref: KeepAlive,
 
-    pub response_buffer: MutableString,
-    pub mutex: Mutex,
-    pub reported_response_buffer: MutableString,
+    pub(crate) mutex: Mutex,
+    pub(crate) reported_response_buffer: MutableString,
     /// The HTTP-level failure, if any. Guarded by `mutex`; the `request_error`
     /// bit in `state` mirrors `request_error.is_some()`.
-    pub request_error: Option<bun_http::Error>,
-    pub state: AtomicU64,
+    pub(crate) request_error: Option<bun_http::Error>,
+    pub(crate) state: AtomicU64,
 
-    pub concurrent_task: ConcurrentTask,
-    pub range: Option<Box<[u8]>>,
-    pub proxy_url: Box<[u8]>,
+    pub(crate) concurrent_task: ConcurrentTask,
+    pub(crate) proxy_url: Box<[u8]>,
     /// Captured once on the main thread before the request is queued so the cancel
     /// path can call `schedule_shutdown_by_id` without dereferencing `http` (which
     /// `update_state` overwrites on the HTTP thread under `mutex`).
-    pub async_http_id: u32,
+    pub(crate) async_http_id: u32,
 }
 
 // Hot-dispatch tag for `ConcurrentTask::from`.
@@ -66,13 +64,11 @@ impl Default for S3HttpDownloadStreamingTask {
             headers: Headers::default(),
             callback_context: NonNull::dangling(),
             callback: |_, _, _, _| {},
-            range: None,
             proxy_url: Box::default(),
             has_schedule_callback: AtomicBool::new(false),
             signal_store: bun_http::signals::Store::default(),
             signals: Signals::default(),
             poll_ref: KeepAlive::default(),
-            response_buffer: MutableString::default(),
             mutex: Mutex::default(),
             reported_response_buffer: MutableString::default(),
             request_error: None,
@@ -84,15 +80,15 @@ impl Default for S3HttpDownloadStreamingTask {
 }
 
 impl S3HttpDownloadStreamingTask {
-    pub fn new(init: Self) -> Box<Self> {
+    pub(crate) fn new(init: Self) -> Box<Self> {
         Box::new(init)
     }
 
-    pub fn get_state(&self) -> State {
+    pub(crate) fn get_state(&self) -> State {
         State(self.state.load(Ordering::Acquire))
     }
 
-    pub fn set_state(&self, state: State) {
+    pub(crate) fn set_state(&self, state: State) {
         self.state.store(state.0, Ordering::Relaxed);
     }
 
@@ -264,7 +260,7 @@ impl S3HttpDownloadStreamingTask {
     fn process_http_callback(
         &mut self,
         async_http: &mut AsyncHTTP<'static>,
-        result: HTTPClientResult,
+        mut result: HTTPClientResult,
     ) -> bool {
         // lets lock and unlock to be safe we know the state is not in the middle of a callback when locked
         // The RAII guard unlocks on every
@@ -290,22 +286,9 @@ impl S3HttpDownloadStreamingTask {
             should_enqueue
         );
 
+        result.body_into(&mut self.reported_response_buffer.list);
         if should_enqueue {
-            if let Some(body) = result.body {
-                // `body` is `&this.response_buffer`, so a `ptr::read` + assign here would
-                // run Drop on the old `self.response_buffer`, freeing the Vec allocation
-                // that `body` (and the freshly-stored value) still point at — a
-                // use-after-free / double-free. Instead, append `body`'s bytes to
-                // `reported_response_buffer`, then reset the buffer, operating on `body`
-                // directly.
-                if !body.list.as_slice().is_empty() {
-                    let _ = self.reported_response_buffer.write(body.list.as_slice());
-                }
-                body.reset();
-                if self.reported_response_buffer.list.as_slice().is_empty() && !is_done {
-                    return false;
-                }
-            } else if !is_done {
+            if self.reported_response_buffer.list.is_empty() && !is_done {
                 return false;
             }
             if let Err(has_schedule_callback) = self.has_schedule_callback.compare_exchange(
@@ -365,7 +348,7 @@ impl Drop for S3HttpDownloadStreamingTask {
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
-        // response_buffer, reported_response_buffer, headers, sign_result, range, proxy_url:
+        // reported_response_buffer, headers, sign_result, range, proxy_url:
         // dropped automatically (Box/Vec-backed fields).
         // SAFETY: `http` is always initialised before the task is scheduled / dropped.
         let http = unsafe { self.http.assume_init_mut() };
@@ -385,7 +368,7 @@ impl Drop for S3HttpDownloadStreamingTask {
 ///   bits 49..64 : _reserved (u15)
 #[repr(transparent)]
 #[derive(Copy, Clone)]
-pub struct State(pub u64);
+pub struct State(pub(crate) u64);
 
 impl State {
     const STATUS_CODE_SHIFT: u32 = 0;
@@ -393,28 +376,28 @@ impl State {
     const HAS_MORE_SHIFT: u32 = 48;
 
     #[inline]
-    pub(crate) const fn status_code(self) -> u32 {
+    const fn status_code(self) -> u32 {
         (self.0 >> Self::STATUS_CODE_SHIFT) as u32
     }
     #[inline]
-    pub(crate) fn set_status_code(&mut self, v: u32) {
+    fn set_status_code(&mut self, v: u32) {
         self.0 = (self.0 & !0xFFFF_FFFF) | (v as u64);
     }
     #[inline]
-    pub(crate) const fn request_error(self) -> u16 {
+    const fn request_error(self) -> u16 {
         (self.0 >> Self::REQUEST_ERROR_SHIFT) as u16
     }
     #[inline]
-    pub(crate) fn set_request_error(&mut self, v: u16) {
+    fn set_request_error(&mut self, v: u16) {
         self.0 = (self.0 & !(0xFFFF << Self::REQUEST_ERROR_SHIFT))
             | ((v as u64) << Self::REQUEST_ERROR_SHIFT);
     }
     #[inline]
-    pub(crate) const fn has_more(self) -> bool {
+    const fn has_more(self) -> bool {
         (self.0 >> Self::HAS_MORE_SHIFT) & 1 != 0
     }
     #[inline]
-    pub(crate) fn set_has_more(&mut self, v: bool) {
+    fn set_has_more(&mut self, v: bool) {
         self.0 = (self.0 & !(1 << Self::HAS_MORE_SHIFT)) | ((v as u64) << Self::HAS_MORE_SHIFT);
     }
 }

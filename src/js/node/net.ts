@@ -122,6 +122,8 @@ const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const owner_symbol = Symbol("owner_symbol");
 
+// Write-only by design: the onconnection write is a GC edge keeping the
+// native Listener reachable via accepted socket handles (see a93d2fa48e).
 const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
@@ -141,14 +143,12 @@ const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
-const kpendingRead = Symbol("kpendingRead");
 const kupgraded = Symbol("kupgraded");
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
 const kclosed = Symbol("closed");
 const kended = Symbol("ended");
-const kReaderInterest = Symbol("kReaderInterest");
 const kpendingSession = Symbol("pendingSession");
 const kSNIError = Symbol("kSNIError");
 const kALPNError = Symbol("kALPNError");
@@ -650,9 +650,6 @@ function SocketEmitEndNT(self, _err?) {
   }
   if (!self[kended]) {
     finishSocketEnd(self);
-    if (!self.allowHalfOpen && self[kReaderInterest] === false) {
-      setImmediate(destroyAbandonedNT, self);
-    }
   } else if (_err && !self.destroyed) {
     // An error excluded from the synthesis above (teardown noise, or no
     // listener attached): nothing more is coming, but the socket still has to
@@ -975,10 +972,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
             server.prependOnceListener("secureConnection", connectionListener);
           }
           server.emit("secureConnection", self);
-          // Same post-emit reader check onconnection does for plain net sockets.
-          if (self.readableFlowing !== null || self.listenerCount("data") > 0 || self.listenerCount("readable") > 0) {
-            self[kReaderInterest] = true;
-          }
         }
       }
       if (self.destroyed) return;
@@ -1216,29 +1209,10 @@ function onconnection(err, clientHandle) {
   }
   if (isTLS) initAcceptedTLSSocket(self, _socket);
 
-  // destroyAbandonedNT gate: === false (server-accepted only).
-  _socket[kReaderInterest] = false;
   self.emit("connection", _socket);
   if (!pauseOnConnect && !isTLS) {
     _socket.read(0);
   }
-  if (_socket.readableFlowing !== null || _socket.listenerCount("data") > 0 || _socket.listenerCount("readable") > 0) {
-    _socket[kReaderInterest] = true;
-  }
-}
-
-function destroyAbandonedNT(self) {
-  if (
-    self.destroyed ||
-    self[kReaderInterest] !== false ||
-    self.readableLength === 0 ||
-    self.readableFlowing !== null ||
-    self.listenerCount("data") > 0 ||
-    self.listenerCount("readable") > 0
-  ) {
-    return;
-  }
-  self.destroySoon();
 }
 
 // TODO: SocketHandlers2 is a bad name but its temporary. reworking the Server in a followup PR
@@ -1583,7 +1557,6 @@ function Socket(options?) {
   });
   this._parent = null;
   this._parentWrap = null;
-  this[kpendingRead] = undefined;
   this[kupgraded] = null;
 
   this[kSetNoDelay] = Boolean(noDelay);
@@ -4116,6 +4089,8 @@ function initSocketHandle(self) {
   const handle = self._handle;
   if (handle) {
     handle[owner_symbol] = self;
+    // A fresh handle (e.g. an autoSelectFamily retry) inherits a prior unref().
+    if (self[kUserUnrefed]) handle.unref?.();
   }
 }
 

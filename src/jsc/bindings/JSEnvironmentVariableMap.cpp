@@ -372,22 +372,15 @@ static SharedEnvStore* sharedEnvStoreFor(JSC::JSObject* object)
     return globalObject ? sharedEnvStoreFor(globalObject) : nullptr;
 }
 
-// node rejects anything but a full, fully-permissive data descriptor on
-// process.env (src/node_env_var.cc, EnvDefiner). Bun deliberately still accepts
-// accessors — see the "does not let the store shadow an accessor defined on
-// process.env" test — so only the data-descriptor half of node's rule is
-// enforced here: value present, and writable/enumerable/configurable all
-// present and true. Returns false with an exception pending on reject.
+// Node rejects all but a full writable+enumerable+configurable data descriptor
+// (https://github.com/nodejs/node/blob/main/src/node_env_var.cc EnvDefiner).
+// Bun diverges: accessors are still accepted. Returns false with a pending exception on reject.
 static bool validateEnvPropertyDescriptor(JSC::JSGlobalObject* globalObject, const JSC::PropertyDescriptor& descriptor, JSC::ThrowScope& scope)
 {
     static constexpr auto dataDescriptorMessage = "'process.env' only accepts a configurable, writable, and enumerable data descriptor"_s;
 
-    // Accessors are deliberately accepted (divergence documented above the
-    // JSSharedEnvMap declaration); everything else must be a full permissive
-    // data descriptor per node (node_env_var.cc EnvDefiner, verified on
-    // v26.3.0) — including attribute-only ({writable: false}) and empty ({})
-    // descriptors, which would otherwise silently make the var non-writable
-    // or non-enumerable.
+    // Accessors pass (Bun divergence); everything else — including attribute-only
+    // and empty descriptors — must be a full permissive data descriptor per node.
     if (descriptor.isAccessorDescriptor())
         return true;
     if (!descriptor.value()
@@ -630,10 +623,8 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
 
     auto* uid = propertyName.uid();
     if (propertyName.isSymbol() || !uid || descriptor.isAccessorDescriptor()) {
-        // The descriptor lands on the Base object, but getOwnPropertySlot reads the
-        // store first, so a store entry would shadow it. Move the entry onto Base as
-        // an enumerable data property first: the accessor then replaces it, keeping
-        // the key's enumerability, exactly as on the regular process.env.
+        // getOwnPropertySlot reads the store first, so a store entry would shadow the
+        // Base-landed accessor; hoist it to Base as an enumerable data property first.
         if (!propertyName.isSymbol() && uid) {
             if (auto* store = sharedEnvStoreFor(object)) {
                 String existing = store->get(String(uid));
@@ -767,11 +758,8 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     return store;
 }
 
-// The ordinary (non-SHARE_ENV) process.env. A plain object apart from
-// defineOwnProperty, which node intercepts to reject descriptors that are not
-// fully-permissive data descriptors; without a method-table hook the validation
-// has nowhere to live, so process.env needs its own class rather than a
-// constructEmptyObject().
+// Ordinary (non-SHARE_ENV) process.env: a plain object plus a defineOwnProperty
+// hook for node's descriptor validation (https://github.com/nodejs/node/blob/main/src/node_env_var.cc).
 class JSProcessEnvMap final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -827,10 +815,8 @@ public:
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, coerced, shouldThrow));
     }
 
-    // node's process.env fails [[PreventExtensions]], so Object.freeze /
-    // seal / preventExtensions throw plain TypeErrors and the map stays
-    // extensible (verified on v26.3.0; a failed freeze must not leave the
-    // env non-extensible, and the per-key define hook is never reached).
+    // Node's process.env fails [[PreventExtensions]] so freeze/seal throw and the
+    // map stays extensible (https://github.com/nodejs/node/blob/main/src/node_env_var.cc).
     static bool preventExtensions(JSC::JSObject*, JSC::JSGlobalObject*)
     {
         return false;
@@ -863,11 +849,8 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);
-    // Unlike the constructEmptyObject() this replaces, the storage is not
-    // pre-sized to the env count: JSNonFinalObject asserts it has no inline
-    // storage, so the vars below always land in the butterfly. Only JSFinalObject
-    // gets inline slots, and it is `final` — a defineOwnProperty hook and inline
-    // storage are mutually exclusive here.
+    // Not pre-sized: JSNonFinalObject has no inline storage (only JSFinalObject
+    // does, and it is `final`), so a defineOwnProperty hook precludes inline slots.
     JSC::JSObject* object = JSProcessEnvMap::create(vm, JSProcessEnvMap::createStructure(vm, globalObject, globalObject->objectPrototype()));
 
 #if OS(WINDOWS)

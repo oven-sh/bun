@@ -570,10 +570,8 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     if (executionContextId > -1) {
         const auto initializeWorker = [&](WebCore::Worker& worker) -> void {
             auto& options = worker.options();
-            // Outermost exception scope: this runs from Rust with no scope on
-            // the stack. The putDirect* family bypasses the defineOwnProperty
-            // hook, so descriptor validation cannot fire here; only allocation
-            // (jsString, index storage) can throw.
+            // Outermost scope (called from Rust with none on the stack). putDirect*
+            // bypasses the defineOwnProperty hook; only allocation can throw here.
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
             if (options.env.has_value()) {

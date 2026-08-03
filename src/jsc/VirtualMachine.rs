@@ -1790,11 +1790,9 @@ pub struct RuntimeHooks {
         transpiler: *mut Transpiler<'static>,
         graph: &'static dyn bun_resolver::StandaloneModuleGraph,
     ),
-    /// Parse a worker's own `execArgv` against the worker flag policy table
-    /// (`bun_runtime::cli::worker_exec_argv`, forward-dep) and return the
-    /// honoured per-worker subset. `None` derives the honoured defaults for an
-    /// inheriting worker from the process argv (preloads and the CPU profiler
-    /// are excluded there — the parent VM already carries both).
+    /// Parse a worker's `execArgv` (`bun_runtime::cli::worker_exec_argv`,
+    /// forward-dep); `None` derives an inheriting worker's defaults from the
+    /// process argv (preloads/cpu-prof excluded — the parent VM carries both).
     pub parse_worker_exec_argv:
         unsafe fn(exec_argv: Option<&[bun_core::WTFStringImpl]>) -> WorkerExecArgv,
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
@@ -2015,10 +2013,8 @@ fn get_origin_timestamp() -> u64 {
     (now - ORIGIN_RELATIVE_EPOCH).max(0) as u64
 }
 
-/// `performance.timeOrigin` is the PROCESS start time and every thread reports
-/// the same one — a worker's timeOrigin equals the main thread's in node, and
-/// `performance.now()` inside a worker is relative to that same origin. Capture
-/// it on the first VM so worker VMs inherit it instead of restarting the clock.
+/// `performance.timeOrigin` is the PROCESS start time, shared by every thread (a worker's equals the
+/// main thread's in node). Captured once on the first VM so worker VMs inherit instead of restarting.
 fn process_origin() -> (std::time::Instant, u64) {
     static ORIGIN: std::sync::OnceLock<(std::time::Instant, u64)> = std::sync::OnceLock::new();
     *ORIGIN.get_or_init(|| (std::time::Instant::now(), get_origin_timestamp()))

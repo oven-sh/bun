@@ -152,7 +152,7 @@ describe.concurrent("--cpu-prof", () => {
     // file where the default name yields 2 — it only thread-stamps the default.
     expect(profiles).toEqual([customName]);
     expect(exitCode).toBe(0);
-  }, 15_000);
+  });
 
   test("--cpu-prof-dir sets custom directory", async () => {
     using dir = tempDir("cpu-prof-dir", {

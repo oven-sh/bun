@@ -577,16 +577,17 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
     // property read must not propagate exceptions out of this function.
     auto& vm = JSC::getVM(workerGlobalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // A TerminationException can be pending here (CLEAR_IF_EXCEPTION at the
+    // call site cannot clear it); SerializedScriptValue::create enters JS and
+    // asserts on entry with one on the VM.
+    if (scope.exception())
+        return false;
 
     auto serialized = SerializedScriptValue::create(*workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
     CLEAR_IF_EXCEPTION(scope);
-    // Cloning an Error reads `stack`, so a throwing Error.prepareStackTrace takes
-    // the whole error down and the caller reports the pretty-printed text as the
-    // message instead. Node drops only the unreadable `stack`
-    // (lib/internal/error_serdes.js TryGetAllProperties); retry once with an own
-    // undefined `stack` so name/message/code still cross. Safe to mutate: the
-    // worker's own error event and the fallback message are both already
-    // materialized by the time we get here, and the thread is terminating.
+    // Cloning an Error reads `stack`; a throwing prepareStackTrace sinks the whole error. Node drops only
+    // `stack` (https://github.com/nodejs/node/blob/main/lib/internal/error_serdes.js TryGetAllProperties),
+    // so retry once with own undefined `stack`. Safe to mutate: fallback message is already materialized.
     if (!serialized && !scope.exception()) {
         if (auto* errorInstance = dynamicDowncast<JSC::ErrorInstance>(value)) {
             errorInstance->putDirect(vm, vm.propertyNames->stack, JSC::jsUndefined(), JSC::PropertyAttribute::DontEnum | 0);
@@ -786,6 +787,13 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
 {
     JSValue error = JSC::JSValue::decode(errorValue);
     WTF::String messageStr = message->transferToWTFString();
+    auto& vm = JSC::getVM(globalObject);
+    // terminate() may land mid-entry now that 'online' fires first; the pending
+    // TerminationException is non-clearable and the dispatch/serialize below enter
+    // JS (executeCallImpl asserts !exception()), so post parent-side only.
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return worker->dispatchErrorWithMessage(WTF::move(messageStr), {});
+
     ErrorEvent::Init init;
     init.message = messageStr.isolatedCopy();
     init.error = error;

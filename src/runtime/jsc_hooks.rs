@@ -1510,15 +1510,9 @@ unsafe fn apply_standalone_runtime_flags(
     crate::run_main::apply_standalone_runtime_flags(unsafe { &mut *transpiler }, graph);
 }
 
-/// Parse a Worker's `execArgv` and return the per-worker honoured subset
-/// (`Some` = the worker's own list; `None` = inheriting worker, derive from
-/// the process argv). Classification and honoured-flag extraction share one
-/// scanner in `cli::worker_exec_argv`, so the honoured set is always a
-/// subset of what `Bun__Worker__validateExecArgv` accepted.
-///
+/// Worker `execArgv` → honoured subset (`None` = inherit from process argv).
 /// # Safety
-/// Each `WTFStringImpl` in `exec_argv` is a live WTF string (the C++
-/// `Worker::create` array, kept alive for the worker's lifetime).
+/// Each `WTFStringImpl` in `exec_argv` is a live WTF string owned by C++ `Worker::create`.
 unsafe fn parse_worker_exec_argv(
     exec_argv: Option<&[bun_core::WTFStringImpl]>,
 ) -> bun_jsc::virtual_machine::WorkerExecArgv {

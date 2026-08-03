@@ -62,6 +62,10 @@
 #include "JavaScriptCore/JSMapIterator.h"
 #include "JavaScriptCore/JSModuleLoader.h"
 #include "JavaScriptCore/JSModuleRecord.h"
+#include "JavaScriptCore/ModuleRegistryEntry.h"
+#include "JavaScriptCore/RegExpPrototype.h"
+#include "JavaScriptCore/JSPromisePrototype.h"
+#include "BunProcess.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/JSONObject.h"
 #include "JavaScriptCore/JSObject.h"
@@ -2791,8 +2795,7 @@ void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global,
     moduleLoader->removeEntry(identifier);
 }
 
-// Kept across files = resolves into node_modules or is a built-in specifier.
-static ALWAYS_INLINE bool isKeptAcrossTestIsolation(const WTF::String& key)
+static ALWAYS_INLINE bool isKeptAcrossTestIsolation(const WTF::String& key, const BunString* skip, size_t skipLen)
 {
     if (key.isEmpty())
         return false;
@@ -2805,10 +2808,14 @@ static ALWAYS_INLINE bool isKeptAcrossTestIsolation(const WTF::String& key)
 #endif
     if (key.startsWith("node:"_s) || key.startsWith("bun:"_s) || key.startsWith("internal:"_s))
         return true;
+    for (size_t i = 0; i < skipLen; ++i) {
+        if (skip[i].toWTFString() == key)
+            return true;
+    }
     return false;
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__evictProjectModulesForTestIsolation(JSC::JSGlobalObject* globalObject, uint32_t* outEvictedEsm, uint32_t* outEvictedCjs)
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__evictProjectModulesForTestIsolation(JSC::JSGlobalObject* globalObject, const BunString* skip, size_t skipLen, uint32_t* outEvictedEsm, uint32_t* outEvictedCjs)
 {
     auto& vm = JSC::getVM(globalObject);
     auto* zigGlobal = defaultGlobalObject(globalObject);
@@ -2823,7 +2830,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__evictProjectModulesForTestIsolation
             if (!key.first)
                 continue;
             WTF::String keyString { key.first };
-            if (isKeptAcrossTestIsolation(keyString))
+            if (isKeptAcrossTestIsolation(keyString, skip, skipLen))
                 continue;
             evict.append(JSC::Identifier::fromString(vm, keyString));
         }
@@ -2838,28 +2845,32 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__evictProjectModulesForTestIsolation
     {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         auto* requireMap = zigGlobal->requireMap();
-        WTF::Vector<JSC::JSValue, 16> evict;
+        JSC::MarkedArgumentBuffer evict;
         auto iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), requireMap, JSC::IterationKind::Keys);
         if (scope.exception()) [[unlikely]] {
-            scope.clearException();
+            scope.clearExceptionExceptTermination();
         } else {
             JSC::JSValue keyValue;
             while (iter->next(globalObject, keyValue)) {
-                auto keyString = keyValue.toWTFString(globalObject);
-                if (scope.exception()) [[unlikely]] {
-                    scope.clearException();
+                if (!keyValue.isString()) {
+                    evict.append(keyValue);
                     continue;
                 }
-                if (isKeptAcrossTestIsolation(keyString))
+                auto keyString = asString(keyValue)->value(globalObject);
+                if (scope.exception()) [[unlikely]] {
+                    scope.clearExceptionExceptTermination();
+                    continue;
+                }
+                if (isKeptAcrossTestIsolation(keyString, skip, skipLen))
                     continue;
                 evict.append(keyValue);
             }
             if (scope.exception()) [[unlikely]]
-                scope.clearException();
-            for (auto& key : evict) {
-                requireMap->remove(globalObject, key);
+                scope.clearExceptionExceptTermination();
+            for (unsigned i = 0; i < evict.size(); ++i) {
+                requireMap->remove(globalObject, evict.at(i));
                 if (scope.exception()) [[unlikely]]
-                    scope.clearException();
+                    scope.clearExceptionExceptTermination();
             }
         }
         evictedCjs = evict.size();
@@ -2869,6 +2880,191 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__evictProjectModulesForTestIsolation
         *outEvictedEsm = evictedEsm;
     if (outEvictedCjs)
         *outEvictedCjs = evictedCjs;
+}
+
+namespace IsolationFingerprint {
+
+struct Digest {
+    uint64_t h = 0xcbf29ce484222325ull;
+    ALWAYS_INLINE void mix(uint64_t x)
+    {
+        h ^= x;
+        h *= 0x100000001b3ull;
+    }
+};
+
+static ALWAYS_INLINE uint64_t valueBits(JSC::JSValue v)
+{
+    return std::bit_cast<uint64_t>(JSC::JSValue::encode(v));
+}
+
+static void hashObject(Digest& d, JSC::VM& vm, JSC::JSGlobalObject* g, JSC::JSObject* obj)
+{
+    if (!obj) {
+        d.mix(0);
+        return;
+    }
+    // Reify before walking so forEachProperty sees a stable table regardless
+    // of which lazy static methods the test happened to touch.
+    if (!obj->staticPropertiesReified())
+        obj->reifyAllStaticProperties(g);
+    d.mix(obj->structureID().bits());
+    obj->structure()->forEachProperty(vm, [&](const JSC::PropertyTableEntry& entry) -> bool {
+        auto* key = entry.key();
+        d.mix(key ? key->hash() : 0);
+        d.mix(entry.attributes());
+        d.mix(valueBits(obj->getDirect(entry.offset())));
+        return true;
+    });
+}
+
+static void hashCtorAndProto(Digest& d, JSC::VM& vm, JSC::JSGlobalObject* g, JSC::JSObject* proto)
+{
+    hashObject(d, vm, g, proto);
+    if (!proto)
+        return;
+    auto ctor = proto->getDirect(vm, vm.propertyNames->constructor);
+    if (ctor.isObject())
+        hashObject(d, vm, g, asObject(ctor));
+    else
+        d.mix(valueBits(ctor));
+}
+
+static void hashGlobalSlot(Digest& d, JSC::VM& vm, JSC::JSGlobalObject* g, const JSC::Identifier& name, bool walkObject)
+{
+    JSC::PropertySlot slot(g, JSC::PropertySlot::InternalMethodType::VMInquiry, &vm);
+    if (!g->getOwnPropertySlot(g, g, name, slot)) {
+        d.mix(1);
+        return;
+    }
+    d.mix(slot.attributes());
+    if (slot.isAccessor()) {
+        d.mix(std::bit_cast<uintptr_t>(slot.getterSetter()));
+    } else if (slot.isCustom()) {
+        d.mix(2);
+    } else {
+        JSC::JSValue v = slot.getPureResult();
+        d.mix(valueBits(v));
+        if (walkObject && v.isObject())
+            hashObject(d, vm, g, asObject(v));
+    }
+}
+
+} // namespace IsolationFingerprint
+
+extern "C" [[ZIG_EXPORT(nothrow)]] uint64_t Bun__computeIsolationFingerprint(JSC::JSGlobalObject* globalObject)
+{
+    using namespace IsolationFingerprint;
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+
+    Digest d;
+
+    hashObject(d, vm, globalObject, globalObject);
+
+    auto hashCP = [&](JSC::JSObject* proto) {
+        hashCtorAndProto(d, vm, globalObject, proto);
+    };
+    hashCP(globalObject->objectPrototype());
+    hashCP(globalObject->functionPrototype());
+    hashCP(globalObject->arrayPrototype());
+    hashCP(globalObject->stringPrototype());
+    hashCP(globalObject->numberPrototype());
+    hashCP(globalObject->booleanPrototype());
+    hashCP(globalObject->symbolPrototype());
+    hashCP(globalObject->bigIntPrototype());
+    hashCP(globalObject->datePrototype());
+    hashCP(globalObject->regExpPrototype());
+    hashCP(globalObject->errorPrototype());
+    hashCP(globalObject->promisePrototype());
+    hashCP(globalObject->mapPrototype());
+    hashCP(globalObject->jsSetPrototype());
+    hashCP(globalObject->arrayBufferPrototype(JSC::ArrayBufferSharingMode::Default));
+
+    auto hashByName = [&](WTF::ASCIILiteral name, bool walkObject = true) {
+        hashGlobalSlot(d, vm, globalObject, JSC::Identifier::fromString(vm, name), walkObject);
+    };
+    hashByName("Math"_s);
+    hashByName("JSON"_s);
+    hashByName("Reflect"_s);
+    hashByName("console"_s);
+    hashByName("fetch"_s);
+    hashByName("WeakMap"_s);
+    hashByName("WeakSet"_s);
+    hashByName("EvalError"_s);
+    hashByName("RangeError"_s);
+    hashByName("ReferenceError"_s);
+    hashByName("SyntaxError"_s);
+    hashByName("TypeError"_s);
+    hashByName("URIError"_s);
+    // Identity only: these carry their own lazy static-table properties and
+    // reading them (e.g. `process.env`) would otherwise look like mutation.
+    hashByName("crypto"_s, false);
+    hashByName("Request"_s, false);
+    hashByName("Response"_s, false);
+    hashByName("Headers"_s, false);
+    hashByName("Buffer"_s, false);
+    hashByName("process"_s, false);
+
+    if (zigGlobal->hasProcessObject())
+        d.mix(zigGlobal->processObject()->wrapped().hasEventListeners() ? 3 : 0);
+
+    if (scope.exception()) [[unlikely]]
+        scope.clearExceptionExceptTermination();
+    return d.h;
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__forEachModuleKeyForTestIsolation(JSC::JSGlobalObject* globalObject, void* ctx, void (*cb)(void* ctx, const BunString* key))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+
+    for (auto& [key, entry] : globalObject->moduleLoader()->moduleMap()) {
+        if (!key.first)
+            continue;
+        auto s = Bun::toString(String { key.first });
+        cb(ctx, &s);
+    }
+
+    auto* requireMap = zigGlobal->requireMap();
+    auto iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), requireMap, JSC::IterationKind::Keys);
+    if (scope.exception()) [[unlikely]] {
+        scope.clearExceptionExceptTermination();
+        return;
+    }
+    JSC::JSValue keyValue;
+    while (iter->next(globalObject, keyValue)) {
+        if (!keyValue.isString())
+            continue;
+        auto str = asString(keyValue)->value(globalObject);
+        if (scope.exception()) [[unlikely]] {
+            scope.clearExceptionExceptTermination();
+            continue;
+        }
+        auto s = Bun::toString(str);
+        cb(ctx, &s);
+    }
+    if (scope.exception()) [[unlikely]]
+        scope.clearExceptionExceptTermination();
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__hasPendingModuleFetches(JSC::JSGlobalObject* globalObject)
+{
+    for (auto& [key, entry] : globalObject->moduleLoader()->moduleMap()) {
+        if (entry && entry->status() == JSC::ModuleRegistryEntry::Status::Fetching)
+            return true;
+    }
+    return false;
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__takeTestIsolationModuleMockDirty(JSC::JSGlobalObject* globalObject)
+{
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+    bool was = zigGlobal->testIsolationModuleMockDirty;
+    zigGlobal->testIsolationModuleMockDirty = false;
+    return was;
 }
 
 void JSC__VM__collectAsync(JSC::VM* vm)
@@ -6491,7 +6687,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
         *exception = JSC::JSValue::encode(evalException->value());
         // Set _error on the globalObject directly (not globalThis proxy)
         globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "_error"_s), evalException->value());
-        scope.clearException();
+        scope.clearExceptionExceptTermination();
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
@@ -6499,7 +6695,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
         *exception = JSC::JSValue::encode(scope.exception()->value());
         // Set _error on the globalObject directly (not globalThis proxy)
         globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "_error"_s), scope.exception()->value());
-        scope.clearException();
+        scope.clearExceptionExceptTermination();
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 

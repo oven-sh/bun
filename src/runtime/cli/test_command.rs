@@ -8,7 +8,7 @@ use bun_collections::{ArrayHashMap, BoundedArray, StringHashMap};
 use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{TestIsolationOutcome, VirtualMachine};
 use bun_jsc::{self as jsc};
 // `set_time_zone` / `delete_module_registry_entry` take the JSC-side
 // `ZigString` (repr(C)-identical to `bun_core::ZigString`, but with the
@@ -27,6 +27,21 @@ use bun_sys::{self, Fd, File};
 // Debug log scope for test-runner entrypoint loading.
 bun_output::declare_scope!(bun_test, hidden);
 bun_output::declare_scope!(test_isolate, hidden);
+
+pub(crate) fn emit_isolate_reuse_summary(vm: &VirtualMachine) {
+    let r = &vm.test_isolation_state.reuse;
+    if !r.enabled || bun_core::getenv_z(bun_core::zstr!("BUN_DEBUG_test_isolate")).is_none() {
+        return;
+    }
+    bun_core::pretty_errorln!(
+        "[test_isolate] isolate reuse summary: {} reused, {} fresh ({} fingerprint, {} mock.module, {} pending-fetch)",
+        r.reused_count,
+        r.fresh_count(),
+        r.fresh_fingerprint_count,
+        r.fresh_module_mock_count,
+        r.fresh_pending_fetch_count,
+    );
+}
 
 // ─── coverage façade ────────────────────────────────────────────────────────
 // Thin adapter over `bun_sourcemap_jsc::code_coverage` that preserves the
@@ -2320,6 +2335,9 @@ impl TestCommand {
         if ctx.test_options.isolate {
             vm.test_isolation_enabled = true;
             vm.auto_killer.enabled = true;
+            vm.test_isolation_state.reuse.enabled = !ctx.test_options.isolate_force_fresh_global
+                && bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_TEST_ISOLATE_REUSE_GLOBAL::get()
+                    .unwrap_or(false);
         }
 
         if ctx.test_options.coverage.enabled {
@@ -3099,20 +3117,26 @@ impl TestCommand {
                 debug_assert!(!files.is_empty());
 
                 let isolate = vm.test_isolation_enabled;
-                let reuse_global = isolate
-                    && bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_TEST_ISOLATE_REUSE_GLOBAL::get()
-                        .unwrap_or(false);
-                let mut reused_count: u32 = 0;
+                let reuse_global = vm.test_isolation_state.reuse.enabled;
+                // `first` = this file is the first to see its global. Under
+                // reuse it stays false after a reuse and flips back to true
+                // after a fresh-global fallback.
+                let mut next_is_first_on_global = true;
 
                 if files.len() > 1 {
                     for (i, file_name) in files[0..files.len() - 1].iter().enumerate() {
+                        let first = if reuse_global {
+                            core::mem::replace(&mut next_is_first_on_global, false)
+                        } else {
+                            isolate || i == 0
+                        };
                         if let Err(err) = TestCommand::run(
                             reporter,
                             vm,
                             file_name.as_bytes(),
                             bun_test::FirstLast {
-                                first: isolate || i == 0,
-                                last: isolate,
+                                first,
+                                last: isolate && !reuse_global,
                             },
                         ) {
                             handle_top_level_test_error_before_javascript_start(&err);
@@ -3122,39 +3146,54 @@ impl TestCommand {
                         if isolate {
                             crate::jsc_hooks::close_isolation_handles(vm);
                             if reuse_global {
-                                let (esm, cjs) = vm.reuse_global_for_test_isolation();
-                                reused_count += 1;
-                                bun_output::scoped_log!(
-                                    test_isolate,
-                                    "reused global (evicted {} esm, {} cjs)",
-                                    esm,
-                                    cjs
-                                );
+                                match vm.prepare_global_for_next_test_file() {
+                                    TestIsolationOutcome::Reused {
+                                        evicted_esm,
+                                        evicted_cjs,
+                                    } => {
+                                        bun_output::scoped_log!(
+                                            test_isolate,
+                                            "reused global (evicted {} esm, {} cjs)",
+                                            evicted_esm,
+                                            evicted_cjs
+                                        );
+                                    }
+                                    TestIsolationOutcome::Fresh(reason) => {
+                                        bun_output::scoped_log!(
+                                            test_isolate,
+                                            "fresh global ({})",
+                                            reason.as_str()
+                                        );
+                                        next_is_first_on_global = true;
+                                        reporter
+                                            .jest
+                                            .bun_test_root
+                                            .reset_hook_scope_for_test_isolation();
+                                    }
+                                }
                             } else {
                                 vm.swap_global_for_test_isolation();
+                                reporter
+                                    .jest
+                                    .bun_test_root
+                                    .reset_hook_scope_for_test_isolation();
                             }
-                            reporter
-                                .jest
-                                .bun_test_root
-                                .reset_hook_scope_for_test_isolation();
                         }
                     }
                 }
-                if reuse_global && reused_count > 0 {
-                    bun_output::scoped_log!(
-                        test_isolate,
-                        "reused global for {} of {} files",
-                        reused_count,
-                        files.len()
-                    );
-                }
+                emit_isolate_reuse_summary(vm);
 
+                let last_first = if reuse_global {
+                    next_is_first_on_global
+                } else {
+                    isolate || files.len() == 1
+                };
                 if let Err(err) = TestCommand::run(
                     reporter,
                     vm,
                     files[files.len() - 1].as_bytes(),
                     bun_test::FirstLast {
-                        first: isolate || files.len() == 1,
+                        first: last_first,
                         last: true,
                     },
                 ) {

@@ -8,7 +8,7 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_core::{Global, Output};
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{TestIsolationOutcome, VirtualMachine};
 use bun_options_types::context::MacroOptions;
 use bun_ptr::Interned;
 use bun_resolver::fs::FileSystem;
@@ -276,6 +276,9 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if opts.concurrent {
         argv.push(lit(b"--concurrent\0"));
     }
+    if opts.isolate_force_fresh_global {
+        argv.push(lit(b"--isolate=fresh-global\0"));
+    }
     if opts.randomize {
         argv.push(lit(b"--randomize\0"));
     }
@@ -492,6 +495,7 @@ struct WorkerLoop<'a> {
     reporter: &'a mut CommandLineReporter,
     vm: *mut VirtualMachine,
     cmds: WorkerCommands,
+    next_is_first_on_global: bool,
 }
 
 impl<'a> WorkerLoop<'a> {
@@ -533,6 +537,7 @@ impl<'a> WorkerLoop<'a> {
             let before = *self.reporter.summary();
             let before_unhandled = self.reporter.jest.unhandled_errors_between_tests;
 
+            let reuse_enabled = vm.test_isolation_state.reuse.enabled;
             // Workers always run with --isolate; every file is its own
             // complete run from the preload's perspective.
             if let Err(err) = TestCommand::run(
@@ -540,24 +545,29 @@ impl<'a> WorkerLoop<'a> {
                 vm,
                 self.cmds.pending_path.as_slice(),
                 FirstLast {
-                    first: true,
-                    last: true,
+                    first: !reuse_enabled || self.next_is_first_on_global,
+                    last: !reuse_enabled,
                 },
             ) {
                 test_command::handle_top_level_test_error_before_javascript_start(&err);
             }
+            self.next_is_first_on_global = false;
             crate::jsc_hooks::close_isolation_handles(vm);
-            if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_TEST_ISOLATE_REUSE_GLOBAL::get()
-                .unwrap_or(false)
-            {
-                let _ = vm.reuse_global_for_test_isolation();
+            if reuse_enabled {
+                if let TestIsolationOutcome::Fresh(_) = vm.prepare_global_for_next_test_file() {
+                    self.next_is_first_on_global = true;
+                    self.reporter
+                        .jest
+                        .bun_test_root
+                        .reset_hook_scope_for_test_isolation();
+                }
             } else {
                 vm.swap_global_for_test_isolation();
+                self.reporter
+                    .jest
+                    .bun_test_root
+                    .reset_hook_scope_for_test_isolation();
             }
-            self.reporter
-                .jest
-                .bun_test_root
-                .reset_hook_scope_for_test_isolation();
             self.reporter.jest.default_timeout_override = u32::MAX;
 
             if let Some(junit) = &mut self.reporter.reporters.junit {
@@ -591,6 +601,7 @@ impl<'a> WorkerLoop<'a> {
             }
             self.cmds.send(wf.finish());
         }
+        test_command::emit_isolate_reuse_summary(vm);
     }
 }
 
@@ -614,6 +625,9 @@ pub(crate) fn run_as_worker(
     let vm_ref = unsafe { &mut *vm };
     vm_ref.test_isolation_enabled = true;
     vm_ref.auto_killer.enabled = true;
+    vm_ref.test_isolation_state.reuse.enabled = !ctx.test_options.isolate_force_fresh_global
+        && bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_TEST_ISOLATE_REUSE_GLOBAL::get()
+            .unwrap_or(false);
 
     // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`
     // reader was dropped from the GC path (see web_worker.rs, which wires its
@@ -642,6 +656,7 @@ pub(crate) fn run_as_worker(
             pending_path: Vec::new(),
             done: false,
         },
+        next_is_first_on_global: true,
     };
     vm_ref.run_with_api_lock(|| wloop.begin());
 

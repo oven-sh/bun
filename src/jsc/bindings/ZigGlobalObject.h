@@ -787,6 +787,8 @@ public:
     bool hasOverriddenModuleWrapper = false;
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
+    // Set by JSMock__jsModuleMock; read-and-cleared at the --isolate file boundary.
+    bool testIsolationModuleMockDirty = false;
 
     // node:crypto deprecation warnings are emitted at most once per realm, like Node, whose
     // flags live in per-realm module state (lib/internal/crypto/keys.js). They must not be

@@ -53,8 +53,8 @@ hyperfine --warmup 1 \
 DFG/FTL. With a fresh global per file the dependency `JSModuleRecord`s (and
 the `FunctionExecutable` / `CodeBlock` chain hanging off them) are rebuilt and
 re-optimized every file; the experimental reuse path keeps the same global and
-evicts only project-source module entries, so dependency optimized code
-survives.
+evicts only project-source module entries, so dependencies keep their optimized
+code.
 
 To see the JIT-thread cost directly, compare user-CPU time (all threads) to
 wall time: the gap is almost entirely DFG/FTL worklist threads recompiling the

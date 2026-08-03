@@ -345,6 +345,51 @@ pub struct VirtualMachine {
 #[derive(Default)]
 pub struct TestIsolationState {
     pub saved_cwd: Option<Box<[u8]>>,
+    pub reuse: TestIsolationReuseState,
+}
+
+#[derive(Default)]
+pub struct TestIsolationReuseState {
+    /// Opt-in via `BUN_FEATURE_FLAG_EXPERIMENTAL_TEST_ISOLATE_REUSE_GLOBAL`.
+    /// `--isolate=fresh-global` forces this false even with the flag set.
+    pub enabled: bool,
+    /// Intrinsic digest taken after preloads; `None` until the first file completes.
+    pub baseline_fingerprint: Option<u64>,
+    /// Module keys loaded while `vm.is_in_preload` was true; exempt from eviction.
+    pub preload_module_keys: Vec<bun_core::String>,
+    pub reused_count: u32,
+    pub fresh_fingerprint_count: u32,
+    pub fresh_module_mock_count: u32,
+    pub fresh_pending_fetch_count: u32,
+}
+
+impl TestIsolationReuseState {
+    pub fn fresh_count(&self) -> u32 {
+        self.fresh_fingerprint_count + self.fresh_module_mock_count + self.fresh_pending_fetch_count
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestIsolationOutcome {
+    Reused { evicted_esm: u32, evicted_cjs: u32 },
+    Fresh(TestIsolationFreshReason),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestIsolationFreshReason {
+    Fingerprint,
+    ModuleMock,
+    PendingFetch,
+}
+
+impl TestIsolationFreshReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Fingerprint => "fingerprint",
+            Self::ModuleMock => "mock.module",
+            Self::PendingFetch => "pending-fetch",
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4551,7 +4596,14 @@ impl VirtualMachine {
 
         let _ = self.ensure_debugger(true);
 
-        if !self.transpiler.options.disable_transpilation {
+        let reuse = self.test_isolation_state.reuse.enabled;
+        // Reuse path with a captured baseline means preloads already ran
+        // against this global; their module records are in the registry and
+        // exempt from eviction, so skip load_preloads entirely.
+        let skip_preloads =
+            reuse && self.test_isolation_state.reuse.baseline_fingerprint.is_some();
+
+        if !self.transpiler.options.disable_transpilation && !skip_preloads {
             if let Some(hooks) = runtime_hooks() {
                 // SAFETY: hook contract.
                 let p = unsafe { (hooks.load_preloads)(self) }?;
@@ -4563,6 +4615,10 @@ impl VirtualMachine {
                     return Ok(p);
                 }
             }
+        }
+        if reuse && !skip_preloads {
+            self.snapshot_preload_module_keys();
+            self.capture_isolation_baseline_fingerprint();
         }
 
         // Note: reshaped for borrowck.
@@ -4758,11 +4814,6 @@ impl VirtualMachine {
         }
         if let Some(rare) = self.rare_data.as_deref_mut() {
             rare.listening_sockets_for_watch_mode.lock().clear();
-            // `setCallbacks` is once-only (node/src/quic/bindingdata.cc
-            // `BindingData::SetCallbacks`), so a holder left by the outgoing
-            // global makes the next file's call a no-op and dispatches
-            // node:quic events into the dead realm.
-            rare.node_quic_callbacks.deinit();
         }
         let _ = self.event_loop_mut().drain_microtasks();
 
@@ -4815,7 +4866,17 @@ impl VirtualMachine {
     /// See [`Self::cleanup_between_isolated_test_files`] for caller preconditions.
     pub fn swap_global_for_test_isolation(&mut self) {
         self.cleanup_between_isolated_test_files();
+        self.swap_global_for_test_isolation_inner();
+    }
 
+    fn swap_global_for_test_isolation_inner(&mut self) {
+        if let Some(rare) = self.rare_data.as_deref_mut() {
+            // `setCallbacks` is once-only (node/src/quic/bindingdata.cc
+            // `BindingData::SetCallbacks`), so a holder left by the outgoing
+            // global makes the next file's call a no-op and dispatches
+            // node:quic events into the dead realm.
+            rare.node_quic_callbacks.deinit();
+        }
         let old_global = self.global;
         // `old_global` valid for VM lifetime (safe ZST-handle deref);
         // `console` is the live per-VM ConsoleObject.
@@ -4845,20 +4906,96 @@ impl VirtualMachine {
     /// Experimental `--isolate` path: keep the current global and evict only
     /// project-source module records so dependency DFG/FTL code survives across
     /// files. Same caller preconditions as [`Self::swap_global_for_test_isolation`].
-    pub fn reuse_global_for_test_isolation(&mut self) -> (u32, u32) {
+    pub fn prepare_global_for_next_test_file(&mut self) -> TestIsolationOutcome {
+        debug_assert!(self.test_isolation_state.reuse.enabled);
         self.cleanup_between_isolated_test_files();
+
+        // SAFETY: `self.global` is the live per-VM global on the JS thread.
+        let (mock_dirty, pending, fp) = unsafe {
+            (
+                crate::cpp::raw::Bun__takeTestIsolationModuleMockDirty(self.global),
+                crate::cpp::raw::Bun__hasPendingModuleFetches(self.global),
+                crate::cpp::raw::Bun__computeIsolationFingerprint(self.global),
+            )
+        };
+
+        let reason = if mock_dirty {
+            Some(TestIsolationFreshReason::ModuleMock)
+        } else if pending {
+            Some(TestIsolationFreshReason::PendingFetch)
+        } else if self.test_isolation_state.reuse.baseline_fingerprint != Some(fp) {
+            Some(TestIsolationFreshReason::Fingerprint)
+        } else {
+            None
+        };
+
+        if let Some(reason) = reason {
+            self.swap_global_for_test_isolation_inner();
+            let reuse = &mut self.test_isolation_state.reuse;
+            match reason {
+                TestIsolationFreshReason::Fingerprint => reuse.fresh_fingerprint_count += 1,
+                TestIsolationFreshReason::ModuleMock => reuse.fresh_module_mock_count += 1,
+                TestIsolationFreshReason::PendingFetch => reuse.fresh_pending_fetch_count += 1,
+            }
+            reuse.baseline_fingerprint = None;
+            while let Some(key) = reuse.preload_module_keys.pop() {
+                key.deref();
+            }
+            return TestIsolationOutcome::Fresh(reason);
+        }
 
         let mut evicted_esm: u32 = 0;
         let mut evicted_cjs: u32 = 0;
-        // SAFETY: `self.global` is the live per-VM global on the JS thread.
+        let skip = &self.test_isolation_state.reuse.preload_module_keys;
+        // SAFETY: `self.global` live; `skip` is a contiguous `[bun_core::String]`
+        // which is ABI-identical to C++ `const BunString*` + len.
         unsafe {
             crate::cpp::raw::Bun__evictProjectModulesForTestIsolation(
                 self.global,
+                skip.as_ptr().cast(),
+                skip.len(),
                 &raw mut evicted_esm,
                 &raw mut evicted_cjs,
             );
         }
-        (evicted_esm, evicted_cjs)
+        self.test_isolation_state.reuse.reused_count += 1;
+        TestIsolationOutcome::Reused {
+            evicted_esm,
+            evicted_cjs,
+        }
+    }
+
+    /// Stable-baseline capture: digest twice (the first pass reifies lazy
+    /// static properties on every hashed intrinsic, so the second is stable).
+    pub fn capture_isolation_baseline_fingerprint(&mut self) {
+        // SAFETY: `self.global` is the live per-VM global on the JS thread.
+        unsafe {
+            crate::cpp::raw::Bun__computeIsolationFingerprint(self.global);
+            let fp = crate::cpp::raw::Bun__computeIsolationFingerprint(self.global);
+            self.test_isolation_state.reuse.baseline_fingerprint = Some(fp);
+            crate::cpp::raw::Bun__takeTestIsolationModuleMockDirty(self.global);
+        }
+    }
+
+    fn snapshot_preload_module_keys(&mut self) {
+        let keys = &mut self.test_isolation_state.reuse.preload_module_keys;
+        debug_assert!(keys.is_empty());
+        extern "C" fn cb(ctx: *mut core::ffi::c_void, key: *const bun_core::String) {
+            // SAFETY: `ctx` is the `&mut Vec` we passed below; `key` is the
+            // caller's live stack `BunString`.
+            unsafe { (*ctx.cast::<Vec<bun_core::String>>()).push((*key).dupe_ref()) };
+        }
+        // cppbind.ts mis-generates function-pointer params as
+        // `*const Option<fn>`; the hand-written decl here is the real ABI.
+        #[allow(clashing_extern_declarations)]
+        unsafe extern "C" {
+            safe fn Bun__forEachModuleKeyForTestIsolation(
+                global: *mut JSGlobalObject,
+                ctx: *mut core::ffi::c_void,
+                cb: extern "C" fn(*mut core::ffi::c_void, *const bun_core::String),
+            );
+        }
+        Bun__forEachModuleKeyForTestIsolation(self.global, core::ptr::from_mut(keys).cast(), cb);
     }
 
     /// Loads and evaluates a macro entry module, waiting for its promise.

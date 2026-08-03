@@ -168,10 +168,86 @@ static napi_value setup_single(napi_env env, napi_callback_info info) {
   return obj;
 }
 
+// Regression test for oven-sh/bun#34663 (node-sqlite3's CleanQueue shape).
+//
+// A wrap finalizer running during env cleanup calls a JS function via
+// napi_call_function and the JS throws (node-sqlite3: emitting 'error' on
+// an EventEmitter with no listener). node-addon-api then does:
+//   napi_is_exception_pending -> napi_get_and_clear_last_exception ->
+//   napi_throw (Error::ThrowAsJavaScriptException rethrows), aborting via
+//   napi_fatal_error if any step disagrees with the others.
+// Before the fix the thrown exception stayed on the JSC VM, where
+// napi_is_exception_pending (which skips the VM check during cleanup)
+// could not see it, and the rethrow was rejected. This finalizer performs
+// the same sequence with raw napi calls and prints each status.
+static napi_ref rethrow_fn_ref = NULL;
+
+static void finalize_rethrow(napi_env env, void *data, void *hint) {
+  (void)data;
+  (void)hint;
+
+  napi_value fn;
+  if (!rethrow_fn_ref ||
+      napi_get_reference_value(env, rethrow_fn_ref, &fn) != napi_ok || !fn) {
+    printf("rethrow: could not get function\n");
+    fflush(stdout);
+    return;
+  }
+
+  napi_value undef;
+  napi_get_undefined(env, &undef);
+
+  // The JS function throws; expect napi_pending_exception.
+  napi_status call_status = napi_call_function(env, undef, fn, 0, NULL, NULL);
+
+  // node-addon-api's Error::New(env): the exception must be visible here,
+  // or it falls into the napi_create_error path and aborts.
+  bool pending = false;
+  napi_status pending_status = napi_is_exception_pending(env, &pending);
+
+  napi_value exception = NULL;
+  napi_status get_status =
+      napi_get_and_clear_last_exception(env, &exception);
+
+  // Error::Error(env, value) takes a reference on the exception object.
+  napi_ref exception_ref = NULL;
+  napi_status ref_status =
+      napi_create_reference(env, exception, 1, &exception_ref);
+
+  // Error::ThrowAsJavaScriptException rethrows; a failure here is fatal in
+  // node-addon-api.
+  napi_status throw_status = napi_throw(env, exception);
+
+  printf("rethrow: call=%d is_pending=%d pending=%d get=%d ref=%d throw=%d\n",
+         call_status, pending_status, pending ? 1 : 0, get_status, ref_status,
+         throw_status);
+  fflush(stdout);
+}
+
+// setupRethrow(fnThatThrows: () => never): object
+static napi_value setup_rethrow(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  napi_get_cb_info(env, info, &argc, args, NULL, NULL);
+  if (argc < 1) {
+    napi_throw_error(env, NULL, "setupRethrow needs throwing fn");
+    return NULL;
+  }
+
+  napi_create_reference(env, args[0], 1, &rethrow_fn_ref);
+
+  napi_value obj;
+  napi_create_object(env, &obj);
+  napi_wrap(env, obj, NULL, finalize_rethrow, NULL, NULL);
+  return obj;
+}
+
 NAPI_MODULE_INIT(/* napi_env env, napi_value exports */) {
   napi_property_descriptor props[] = {
       {"setup", NULL, setup, NULL, NULL, NULL, napi_default, NULL},
       {"setupSingle", NULL, setup_single, NULL, NULL, NULL, napi_default, NULL},
+      {"setupRethrow", NULL, setup_rethrow, NULL, NULL, NULL, napi_default,
+       NULL},
   };
   napi_define_properties(env, exports, sizeof(props) / sizeof(props[0]), props);
   return exports;

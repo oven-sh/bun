@@ -2757,29 +2757,11 @@ impl ThreadSafeFunction {
             // env torn down; nothing to call into.
             return Ok(());
         };
-        if !is_first {
-            // Take the loop as a raw pointer so no borrow of `*this` lives
-            // across the microtask drain.
-            let loop_: *mut EventLoop = {
-                // SAFETY: scoped reborrow.
-                match unsafe { (*this).event_loop.as_mut() } {
-                    // SAFETY: BackRef invariant while `Some`; JS thread,
-                    // outside tick().
-                    Some(back_ref) => unsafe { back_ref.get_mut() },
-                    None => return Ok(()),
-                }
-            };
-            // SAFETY: the per-thread event loop outlives this call.
-            unsafe { (*loop_).drain_microtasks()? };
-        }
-        // SAFETY: env is valid while the TSF is live.
-        let global_object = unsafe { &*env }.to_js();
 
-        // `tracker` is `Copy`; the guard borrows only `global_object`.
-        let _dispatch = unsafe { (*this).tracker }.dispatch(global_object);
-
-        // Copy the callback target out (all `Copy` values) so no borrow of
-        // `*this` is live while user code runs.
+        // Copy the callback target out (all `Copy` values) BEFORE the
+        // microtask drain below: a nested dispatch inside it can finalize and
+        // clear `callback`, and the item we already dequeued must still be
+        // delivered. The `JSValue` copy on the stack stays rooted.
         enum Target {
             Js(JSValue),
             C(
@@ -2801,6 +2783,27 @@ impl ThreadSafeFunction {
                 unsafe { (*this).ctx },
             ),
         };
+
+        if !is_first {
+            // Take the loop as a raw pointer so no borrow of `*this` lives
+            // across the microtask drain.
+            let loop_: *mut EventLoop = {
+                // SAFETY: scoped reborrow.
+                match unsafe { (*this).event_loop.as_mut() } {
+                    // SAFETY: BackRef invariant while `Some`; JS thread,
+                    // outside tick().
+                    Some(back_ref) => unsafe { back_ref.get_mut() },
+                    None => return Ok(()),
+                }
+            };
+            // SAFETY: the per-thread event loop outlives this call.
+            unsafe { (*loop_).drain_microtasks()? };
+        }
+        // SAFETY: env is valid while the TSF is live.
+        let global_object = unsafe { &*env }.to_js();
+
+        // `tracker` is `Copy`; the guard borrows only `global_object`.
+        let _dispatch = unsafe { (*this).tracker }.dispatch(global_object);
 
         match target {
             Target::Js(js) => {
@@ -2897,11 +2900,18 @@ impl ThreadSafeFunction {
             // we've already scheduled it to run
             return;
         }
-        // Idle: no dispatch is queued. Running: the active dispatch loop
-        // usually picks the item up itself, but it can be blocked in a nested
-        // event loop waiting on a promise only this function can settle
-        // (#36828), so enqueue in this case too; a redundant dispatch finds an
-        // empty queue and is a cheap no-op.
+        if prev == DispatchState::Running as u8
+            && self.inflight_dispatch_tasks.load(Ordering::SeqCst) > 0
+        {
+            // The active dispatch loop usually picks the item up itself, but
+            // it can be blocked in a nested event loop waiting on a promise
+            // only this function can settle (#36828); the already-queued task
+            // covers that case, so don't add another.
+            return;
+        }
+        // Idle, or Running with no task queued to rescue a blocked loop:
+        // enqueue one. A redundant dispatch finds an empty queue and is a
+        // cheap no-op.
         let self_ptr: *mut Self = self;
         let Some(event_loop) = self.event_loop.as_ref() else {
             // env torn down: the loop is gone, nothing to schedule onto.

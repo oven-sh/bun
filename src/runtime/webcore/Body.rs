@@ -1691,9 +1691,10 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     fn check_body_stream_ref(&self, global_object: &JSGlobalObject) {
         if let Some(js_value) = self.js_ref() {
             if let Value::Locked(locked) = self.get_body_value() {
-                if let Some(stream) = locked.readable.get(global_object) {
-                    stream.value.ensure_still_alive();
-                    Self::stream_set_cached(js_value, global_object, stream.value);
+                // `Strong::get()` is a VMTraps safepoint; this runs post-alloc.
+                if let Some(stream_value) = locked.readable.value() {
+                    stream_value.ensure_still_alive();
+                    Self::stream_set_cached(js_value, global_object, stream_value);
                     locked.readable.downgrade();
                 }
             }

@@ -4899,6 +4899,13 @@ bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
     return vm->hasTerminationRequest();
 }
 
+[[ZIG_EXPORT(nothrow)]]
+void JSC__VM__rethrowTerminationException(JSC::VM* vm)
+{
+    if (vm->hasTerminationRequest() && !vm->hasPendingTerminationException())
+        vm->throwTerminationException();
+}
+
 void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1)
 {
     (*arg0).setExecutionForbidden();

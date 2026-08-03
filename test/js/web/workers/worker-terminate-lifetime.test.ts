@@ -177,6 +177,78 @@ test.skipIf(!isASAN)(
   timeout,
 );
 
+// Regression: InternalMicrotask::BunPerformMicrotaskJob (used by
+// queueMicrotask and by the C++ stream start/pull reaction jobs) catches any
+// exception from the job callback with an unconditional clearException(), so
+// when the caught exception is the TerminationException the microtask drain
+// never observes termination. A worker in a microtask-bound loop that
+// constructs a JS-source ReadableStream (or calls queueMicrotask) each turn
+// would spin forever with terminate() never resolving.
+// The Response / Request variants additionally cover a trap safepoint inside
+// check_body_stream_ref that fired the TerminationException after the native
+// Response/Request had been heap-allocated, tripping the generated
+// constructor's "Memory leak detected: new Response()" assertion.
+describe("terminate() resolves for a worker in a microtask-bound ReadableStream loop", () => {
+  const variants: Record<string, string> = {
+    "new ReadableStream({pull})": `new ReadableStream({ pull(c) { c.enqueue(1); c.close(); } })`,
+    "new ReadableStream({start})": `new ReadableStream({ start(c) { c.close(); } })`,
+    "new Response(new ReadableStream)": `new Response(new ReadableStream({ async pull() {} }))`,
+    "new Request(new ReadableStream)": `new Request("http://x", { method: "POST", body: new ReadableStream({ pull(c) { c.close(); } }), duplex: "half" })`,
+    "queueMicrotask": `queueMicrotask(() => {})`,
+  };
+  // A single hang is deterministic on an unfixed build (the loop is purely
+  // microtask-bound), so a small sweep of offsets is plenty.
+  const localRounds = slow ? 3 : 6;
+  const deadline = slow ? 10_000 : 4_000;
+
+  for (const [name, expr] of Object.entries(variants)) {
+    test.concurrent(
+      name,
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+            const { Worker } = require("node:worker_threads");
+            const src = 'require("node:worker_threads").parentPort.postMessage("up");' +
+              '(async () => { for (;;) { ' + ${JSON.stringify(expr)} + '; await 0; } })();';
+            for (let r = 0; r < ${localRounds}; r++) {
+              const w = new Worker(src, { eval: true });
+              await new Promise((res, rej) => {
+                w.once("message", res);
+                w.once("error", rej);
+                w.once("exit", (c) => rej(new Error("worker exited " + c + " before ready")));
+              });
+              w.on("error", () => {});
+              await Bun.sleep((r * 23) % 80);
+              const winner = await Promise.race([
+                w.terminate().then(() => "ok"),
+                Bun.sleep(${deadline}).then(() => "hung"),
+              ]);
+              if (winner !== "ok") {
+                console.log("HUNG round " + r);
+                process.exit(1);
+              }
+            }
+            console.log("PASS");
+            process.exit(0);
+          `,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe("PASS\n");
+        expect(exitCode).toBe(0);
+      },
+      timeout,
+    );
+  }
+});
+
 // Regression: Bun.serve() inside a worker, streaming a JS ReadableStream body,
 // then worker.terminate() mid-stream. Worker shutdown stops the server which
 // tears down the in-flight HTTP(S)ResponseSink and fires its JS onClose hook

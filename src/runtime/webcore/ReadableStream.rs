@@ -44,7 +44,7 @@ impl Default for Strong {
 }
 
 impl Strong {
-    fn value(&self) -> Option<JSValue> {
+    pub(crate) fn value(&self) -> Option<JSValue> {
         self.held.get().or_else(|| {
             if self.weak.is_empty() {
                 None

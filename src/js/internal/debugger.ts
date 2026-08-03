@@ -96,11 +96,8 @@ type CreateBackendFn = (
   receive: (...messages: string[]) => void,
 ) => unknown;
 
-// Reverse-connect mode (Bun dials the frontend's socket): re-dial on failure or
-// close so --inspect-wait/--inspect-brk cannot be left waiting forever for a
-// frontend that can no longer reach it, and so a frontend that restarts between
-// accept and Inspector.initialized can still attach. An fd cannot be re-dialed
-// once its peer is gone.
+// Reverse-connect: re-dial on failure/close so --inspect-wait/-brk cannot be
+// left waiting for a frontend that can no longer reach it. fd: is one-shot.
 function dialWithReconnect(
   connectionOptions,
   makeBackend: (receive: (...messages: string[]) => void) => Backend,

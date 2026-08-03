@@ -4007,6 +4007,49 @@ test_tsfn_null_js_callback_result(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static std::atomic<int> tsfn_many_count(0);
+
+static void tsfn_many_call_js(napi_env env, napi_value js_callback,
+                              void *context, void *data) {
+  tsfn_many_count.fetch_add(1);
+}
+
+// Enqueues enough items to cross Node's kMaxIterationCount so the dispatch
+// loop yields mid-drain and re-schedules. Asserts every callback fired and
+// (under ASAN) that the yield did not double-schedule a freed pointer.
+static napi_value test_tsfn_many_items(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  tsfn_many_count.store(0);
+  napi_value name;
+  NODE_API_CALL(
+      env, napi_create_string_utf8(env, "tsfn-many", NAPI_AUTO_LENGTH, &name));
+  napi_threadsafe_function tsfn;
+  NODE_API_CALL(env, napi_create_threadsafe_function(
+                         env, NULL, NULL, name, 0, 1, NULL,
+                         tsfn_nullcb_finalize, NULL, tsfn_many_call_js, &tsfn));
+  for (int i = 0; i < 1200; i++) {
+    NODE_API_CALL(
+        env, napi_call_threadsafe_function(tsfn, NULL, napi_tsfn_nonblocking));
+  }
+  NODE_API_CALL(env,
+                napi_release_threadsafe_function(tsfn, napi_tsfn_release));
+  return ok(env);
+}
+
+static napi_value test_tsfn_many_items_count(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value r;
+  NODE_API_CALL(env, napi_create_int32(env, tsfn_many_count.load(), &r));
+  return r;
+}
+
+static napi_value
+test_tsfn_many_items_result(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  printf("tsfn callbacks fired: %d\n", tsfn_many_count.load());
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_typedarray_info_byte_offset);
   REGISTER_FUNCTION(env, exports, test_dataview_info_byte_offset);
@@ -4092,6 +4135,9 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback);
   REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback_ran);
   REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback_result);
+  REGISTER_FUNCTION(env, exports, test_tsfn_many_items);
+  REGISTER_FUNCTION(env, exports, test_tsfn_many_items_count);
+  REGISTER_FUNCTION(env, exports, test_tsfn_many_items_result);
 }
 
 } // namespace napitests

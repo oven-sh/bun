@@ -1471,7 +1471,9 @@ node_api_create_external_string_latin1(napi_env env,
     if (length == 0) {
         *result = toNapi(JSC::jsEmptyString(JSC::getVM(globalObject)), globalObject);
         env->doFinalizer(finalize_callback, str, finalize_hint);
-        NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
+        // Ownership transferred; return ok even if doFinalizer promoted a
+        // pre-existing napi_throw to the VM, so the caller doesn't double-free.
+        return napi_set_last_error(env, napi_ok);
     }
 
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const Latin1Character*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
@@ -1515,7 +1517,9 @@ node_api_create_external_string_utf16(napi_env env,
     if (length == 0) {
         *result = toNapi(JSC::jsEmptyString(JSC::getVM(globalObject)), globalObject);
         env->doFinalizer(finalize_callback, str, finalize_hint);
-        NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
+        // Ownership transferred; return ok even if doFinalizer promoted a
+        // pre-existing napi_throw to the VM, so the caller doesn't double-free.
+        return napi_set_last_error(env, napi_ok);
     }
 
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {

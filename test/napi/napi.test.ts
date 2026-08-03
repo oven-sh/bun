@@ -1652,6 +1652,11 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       const output = await checkSameOutput("test_tsfn_null_js_callback_driver", []);
       expect(output).toContain("js_callback == NULL: 1");
     });
+
+    it("threadsafe function drains >1000 queued items across the kMaxIterationCount yield", async () => {
+      const output = await checkSameOutput("test_tsfn_many_items_driver", []);
+      expect(output).toContain("tsfn callbacks fired: 1200");
+    });
   });
 
   describe("napi_is_arraybuffer", () => {

@@ -228,10 +228,9 @@ pub enum Values {
     /// with '-' is never consumed as the value (Node's behavior for `-e`):
     /// the parse fails with a missing value instead.
     OneNoDashValue,
-    /// Like [`Values::OneOptional`], but a separate following argument is
-    /// consumed as the value when it does not start with '-' (Node's behavior
-    /// for `-p`), and in a short cluster the attached remainder stays part of
-    /// the cluster (`-pe` is `-p` followed by `-e`).
+    /// Like [`Values::OneOptional`], but a separate following arg is only the
+    /// value when it does not start with '-' (Node's `-p`), and a short-cluster
+    /// remainder stays in the cluster (`-pe` is `-p` then `-e`).
     OneOptionalNoDashValue,
 }
 

@@ -3898,11 +3898,9 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
 
-// `bun --print`: register the Node-style print of the eval entry point's
-// completion value (internal/eval_print.ts attaches beforeExit/exit listeners,
-// like Node's runScriptInContext). No-op unless eval-and-print mode is active.
-// `awaitFirst` is set when `result` is the module's async capability promise
-// (top-level await) rather than a value the user wrote.
+// `bun --print`: hand the eval entry's completion value to internal/eval_print.ts
+// (prints on beforeExit/exit, like Node's runScriptInContext). `awaitFirst` is set
+// when `result` is a TLA module's async-capability promise, not a user value.
 extern "C" void Bun__registerEvalPrintOnExit(Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedResult, bool awaitFirst)
 {
     if (!JSC::Options::evalMode())

@@ -867,12 +867,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
                 )
             {
-                // `diag.arg()` is the argument as written with its leading
-                // dashes stripped. Node echoes it verbatim, so the long form
-                // keeps a trailing '=' ("node --eval=" reports
-                // "--eval= requires an argument"); the short form reports the
-                // single flag that wanted the value rather than the cluster
-                // it arrived in.
+                // Node echoes the arg verbatim (long keeps trailing '=',
+                // short reports the single flag, not its cluster):
+                // https://github.com/nodejs/node/blob/main/src/node_options-inl.h
                 let node_flag: Option<Vec<u8>> = match (diag.short(), diag.long()) {
                     (Some(short @ (b'e' | b'p')), _) => Some(vec![b'-', short]),
                     (_, Some(b"eval" | b"print" | b"inspect-port" | b"debug-port")) => {
@@ -1243,16 +1240,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         }
 
-        // Node registers `--print` as a boolean and `--print <arg>` as an alias
-        // for `-pe`, i.e. `--print --eval <arg>`, so -p turns on print mode and
-        // may also carry the script (`bun -p 42`, `bun -pe 42`, `bun -p -e 42`).
-        //
-        // Divergence: because both spellings feed one upstream `--eval` string,
-        // Node takes whichever came last, so `node -p 7 -e 9` prints 9. Bun's
-        // parser keeps the two options in separate slots and has no relative
-        // order between them, so a script on -p wins and it prints 7. Every
-        // other shape matches; passing the script twice is not a form Node's
-        // own suite exercises.
+        // Node's `--print <arg>` is an alias for `-pe` (src/node_options.cc).
+        // Divergence: `node -p 7 -e 9` prints 9 (last wins); Bun keeps -p/-e in
+        // separate slots so -p's script wins — not a form Node's suite exercises.
         let print_arg = args.option(b"--print");
         let eval_arg = args.option(b"--eval");
         if print_arg.is_some() || eval_arg.is_some() {
@@ -1357,10 +1347,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             Global::exit(1);
         }
 
-        // Node.js permission-model flags. The model itself is not implemented
-        // (--permission is accepted and ignored, like other unrecognized Node
-        // flags), but --allow-fs-* without --permission is rejected the same
-        // way Node rejects it (ERR_MISSING_OPTION).
+        // Node permission-model flags: the model is not implemented, but
+        // --allow-fs-* without --permission is rejected like Node (ERR_MISSING_OPTION).
         if !args.flag(b"--permission") {
             for allow_flag in [&b"--allow-fs-read"[..], b"--allow-fs-write"] {
                 if !args.options(allow_flag).is_empty() {
@@ -1375,10 +1363,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         }
 
-        // `--inspect-port` / `--debug-port` (Node alias) set the default
-        // debugger target used when --inspect/--inspect-wait/--inspect-brk is
-        // passed without its own [host:]port. They do not activate the
-        // debugger on their own, matching Node.
+        // `--inspect-port` / `--debug-port` (Node alias): default [host:]port
+        // for --inspect* without its own target; does not itself activate the
+        // debugger (https://github.com/nodejs/node/blob/main/src/node_options.cc).
         let inspect_port_value: Option<&[u8]> =
             match (args.option(b"--inspect-port"), args.option(b"--debug-port")) {
                 (Some(value), _) => {

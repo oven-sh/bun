@@ -2959,16 +2959,12 @@ impl RunCommand {
         Self::boot(ctx, entry, None)
     }
 
-    /// `--check` / `-c` (Node.js compatibility): read the entry point (or
-    /// stdin), then boot the VM with a no-op eval entry so `--require` /
-    /// `--preload` modules still execute the way they do under `node --check`.
-    /// `Run::start` performs the actual syntax check against the stored source
-    /// instead of executing anything user-provided.
+    /// `--check` / `-c`: read the entry (or stdin), boot with a no-op eval so
+    /// `--require` preloads still run like `node --check`, then syntax-check in
+    /// `Run::start`. https://github.com/nodejs/node/blob/main/lib/internal/main/check_syntax.js
     pub fn exec_check(ctx: &mut ContextData) -> crate::Result<()> {
-        // RunCommand prepends a literal "run" positional; the user's file (if
-        // any) is the first positional after it. AutoCommand / RunAsNodeCommand
-        // have no such prefix. Strip it in place so both the file lookup below
-        // and `exec_eval`'s positional → passthrough merge see only user args.
+        // RunCommand prepends a literal "run" positional (Auto/RunAsNode do
+        // not); strip it so the file lookup and `exec_eval` see only user args.
         if ctx
             .positionals
             .first()
@@ -3041,13 +3037,9 @@ impl RunCommand {
         };
         let _ = CHECK_SYNTAX_TARGET.set((source, display_name, module_type));
 
-        // No-op eval entry: nothing user-visible executes, but preloads run and
-        // the JSC global the syntax check needs exists. Sanitize any eval state
-        // that leaked in from argument parsing so this stays an inert stand-in:
-        // a bare `-p` would otherwise leave `eval_and_print` set and print
-        // `undefined`, and `process._eval` would expose the no-op `"\n"` to
-        // `--require` preloads. Routing `interactive_script` to empty makes
-        // `process._eval` report `undefined` (see `node_process::get_eval`).
+        // No-op eval entry so preloads run and a JSC global exists. Sanitize
+        // eval state leaked from arg parsing (bare `-p`, `process._eval`):
+        // empty `interactive_script` makes `process._eval` report `undefined`.
         ctx.runtime_options.eval.eval_and_print = false;
         ctx.runtime_options.eval.provided = false;
         ctx.runtime_options.eval.interactive_script = Some(Box::default());
@@ -3182,11 +3174,9 @@ const EVAL_TRIGGER: &[u8] = b"\\[eval]";
 #[cfg(not(windows))]
 const EVAL_TRIGGER: &[u8] = b"/[eval]";
 
-/// `--check` target: (source bytes, display name shown in errors, module type
-/// where 0 = detect, 1 = CommonJS, 2 = ES module). Set once during CLI startup
-/// in `exec_check` before `boot()`, read in `Run::start` after the (no-op)
-/// entry evaluates. CLI-process state, not per-VM state: `--check` only ever
-/// applies to the single CLI entry point.
+/// `--check` target: (source, display name, module type 0=detect/1=CJS/2=ESM).
+/// Set in `exec_check` before `boot()`, read in `Run::start`. CLI-process
+/// (not per-VM) state: `--check` only ever applies to the one CLI entry point.
 static CHECK_SYNTAX_TARGET: std::sync::OnceLock<(Box<[u8]>, Box<[u8]>, i32)> =
     std::sync::OnceLock::new();
 

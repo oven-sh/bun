@@ -1,11 +1,5 @@
-// Implements the printing half of `bun --print` / `bun -p`.
-//
-// Matches Node.js (lib/internal/process/execution.js, runScriptInContext): the
-// completion value of the eval entry point is printed with console.log
-// formatting (node:util inspect; promises are not awaited or unwrapped) on the
-// first "beforeExit", or on "exit" when the process exits before the event
-// loop drains, so `--print 'setTimeout(process.exit, 100); somePromise'` still
-// prints the pending promise.
+// `bun --print` / `-p`: print the eval entry's completion value on beforeExit/exit.
+// Matches https://github.com/nodejs/node/blob/main/lib/internal/process/execution.js (runScriptInContext).
 const { formatWithOptions } = require("node:util");
 
 let registered = false;
@@ -29,11 +23,9 @@ function registerEvalPrint(result: unknown, awaitFirst: boolean = false) {
   };
 
   if (awaitFirst && $isPromise(result)) {
-    // Top-level-await eval entry: the captured value is the module's async
-    // capability promise, not a value the user wrote. Print its resolution
-    // (Bun extension - Node rejects --print with ESM input entirely) and keep
-    // printing the promise itself if it never settles. If module evaluation
-    // rejects, the loader already reports the error, so skip the print.
+    // Top-level-await eval entry (Bun extension; Node rejects --print with ESM):
+    // print the async-capability promise's resolution, or the pending promise if
+    // it never settles. On rejection the loader already reports the error.
     (result as Promise<unknown>).$then(
       value => {
         result = value;

@@ -35,10 +35,9 @@ static void printSyntaxError(const WTF::String& filename, const JSC::ParserError
     fprintf(stderr, "%s:%d\n\nSyntaxError: %s\n", filenameUtf8.data(), error.line(), messageUtf8.data());
 }
 
-// Called from the CLI (`Run::start`) after the VM booted and `--require`
-// preloads ran. `moduleType` is 0 = detect, 1 = CommonJS, 2 = ES module
-// (from `--input-type` or the file extension). Returns 0 when the source
-// parses, 1 when it does not (after printing the error to stderr).
+// Called from `Run::start` after preloads ran. `moduleType`: 0 detect, 1 CJS,
+// 2 ESM. Returns 0 on success, 1 on parse error (after printing to stderr).
+// Node ref: https://github.com/nodejs/node/blob/main/lib/internal/main/check_syntax.js
 extern "C" int32_t Bun__checkSyntaxForCLI(Zig::GlobalObject* globalObject, const unsigned char* sourcePtr, size_t sourceLen, const unsigned char* namePtr, size_t nameLen, int32_t moduleType)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -87,10 +86,8 @@ extern "C" int32_t Bun__checkSyntaxForCLI(Zig::GlobalObject* globalObject, const
     if (JSC::checkSyntax(vm, wrapped, commonJSError))
         return 0;
 
-    // Detect mode: the package "type" is not re-derived here, so accept the
-    // source if it parses as an ES module instead. (A source that is invalid
-    // for its real module type but valid for the other one therefore passes;
-    // refine when full module-type detection is wired into --check.)
+    // Detect mode: package "type" is not re-derived; accept if it parses as
+    // ESM instead. TODO: refine once full module-type detection is wired in.
     if (moduleType == 0) {
         JSC::ParserError moduleError;
         if (checkAsModule(moduleError))

@@ -374,28 +374,8 @@ where
         }))
     }
 
-    /// Bind the value of a param declared with Node's value semantics
-    /// ([`clap::Values::OneNoDashValue`] / [`clap::Values::OneOptionalNoDashValue`]).
-    ///
-    /// Mirrors nodejs/node v26.3.0 `src/node_options-inl.h`:
-    ///
-    /// * An `=`-attached value binds verbatim. For the required form an empty
-    ///   one is an error rather than an empty value (`node --eval=` exits 9)
-    ///   — lines 456-461; the optional form is a boolean upstream, so
-    ///   `--print=` is just no value.
-    /// * A separate following argument that starts with '-' is never the
-    ///   value; it is a missing value instead (`node -e -p` exits 9) — line
-    ///   470. This is why an expression like `-42` must be passed as
-    ///   `--eval=-42`.
-    /// * A separate following argument may escape that rule with a leading
-    ///   backslash, which is then stripped: `node -p "\-42"` prints -42. The
-    ///   `=` form does not unescape, so `--eval=\-42` keeps the backslash —
-    ///   line 474.
-    /// * For the optional form (upstream's `--print <arg>` alias) an *empty*
-    ///   following argument is additionally not consumed — line 393. It stays
-    ///   a positional, which is why `node -p "" -e 42` prints `undefined`:
-    ///   the positional ends option parsing before `-e` is seen.
-    ///
+    /// Bind a [`clap::Values::OneNoDashValue`] / `OneOptionalNoDashValue` value
+    /// per Node's rules: https://github.com/nodejs/node/blob/main/src/node_options-inl.h
     /// `attached` is the `=`-attached value, if the caller found one.
     fn node_style_value(
         &mut self,

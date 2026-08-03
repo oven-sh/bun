@@ -128,6 +128,9 @@ function normalizeSSLMode(value: string): SSLMode {
   switch (value) {
     case "disable":
       return SSLMode.disable;
+    case "allow":
+    // libpq "allow" tries plaintext first then TLS; "prefer" is the closest
+    // mode we implement (either outcome is accepted).
     case "prefer":
       return SSLMode.prefer;
     case "require":
@@ -144,7 +147,11 @@ function normalizeSSLMode(value: string): SSLMode {
     }
   }
 
-  throw $ERR_INVALID_ARG_VALUE("sslmode", value, "must be one of: disable, prefer, require, verify-ca, verify-full");
+  throw $ERR_INVALID_ARG_VALUE(
+    "sslmode",
+    value,
+    "must be one of: disable, allow, prefer, require, verify-ca, verify-full",
+  );
 }
 
 export type { SQLHelper };

@@ -296,6 +296,7 @@ describe("SQL adapter environment variable precedence", () => {
   describe("PGSSLMODE", () => {
     test.each([
       ["disable", 0],
+      ["allow", 1],
       ["prefer", 1],
       ["require", 2],
       ["verify-ca", 3],

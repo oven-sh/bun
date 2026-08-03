@@ -968,9 +968,7 @@ impl Task {
                                     }
 
                                     InstallMethod::Copyfile => {
-                                        // The failed hardlink walk advanced `folder_dir`'s
-                                        // directory cursor; reopen it or the copy walk
-                                        // sees no entries.
+                                        // The failed hardlink walk advanced the dir cursor; reopen or the copy walk sees no entries
                                         let folder_dir = match bun_sys::open_dir_for_iteration(
                                             Fd::cwd(),
                                             path,

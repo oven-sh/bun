@@ -35,7 +35,6 @@ pub(crate) fn freemem() -> u64 {
 
 mod _impl {
     use super::*;
-    use crate::node::ErrorCode;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use bun_core::ZStr;
     use bun_core::ZigString;
@@ -179,14 +178,7 @@ mod _impl {
         /// `#[repr(C)]`.
         #[repr(C)]
         pub struct UserInfoOptions {
-            pub encoding: BunString,
-        }
-        impl Default for UserInfoOptions {
-            fn default() -> Self {
-                Self {
-                    encoding: BunString::empty(),
-                }
-            }
+            pub(crate) encoding: BunString,
         }
     }
 
@@ -227,7 +219,7 @@ mod _impl {
     }
 
     impl CPUTimes {
-        pub(crate) fn to_value(self, global_this: &JSGlobalObject) -> JSValue {
+        fn to_value(self, global_this: &JSGlobalObject) -> JSValue {
             let ret = JSValue::create_empty_object(global_this, 5);
             ret.put(
                 global_this,
@@ -273,8 +265,7 @@ mod _impl {
             Err(_) => {
                 let err = SystemError {
                     message: BunString::static_("Failed to get CPU information").into(),
-                    code: BunString::static_(<&'static str>::from(ErrorCode::ERR_SYSTEM_ERROR))
-                        .into(),
+                    code: BunString::static_("ERR_SYSTEM_ERROR").into(),
                     ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance(global)))
@@ -1392,7 +1383,7 @@ mod _impl {
         Ok(ret)
     }
 
-    pub fn release() -> BunString {
+    pub(crate) fn release() -> BunString {
         let mut name_buffer = [0u8; HOST_NAME_MAX];
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1431,7 +1422,7 @@ mod _impl {
         pub(crate) safe fn set_process_priority(pid: i32, priority: i32) -> i32;
     }
 
-    pub(crate) fn set_process_priority_impl(pid: i32, priority: i32) -> bun_sys::E {
+    fn set_process_priority_impl(pid: i32, priority: i32) -> bun_sys::E {
         if pid < 0 {
             return bun_sys::E::ESRCH;
         }
@@ -1534,7 +1525,7 @@ mod _impl {
         }
     }
 
-    pub fn uptime(global: &JSGlobalObject) -> JsResult<f64> {
+    pub(crate) fn uptime(global: &JSGlobalObject) -> JsResult<f64> {
         #[cfg(windows)]
         {
             let mut uptime_value: f64 = 0.0;

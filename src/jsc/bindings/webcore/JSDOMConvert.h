@@ -34,7 +34,6 @@
 #include "JSDOMConvertEnumeration.h"
 #include "JSDOMConvertEventListener.h"
 #include "JSDOMConvertInterface.h"
-#include "JSDOMConvertJSON.h"
 #include "JSDOMConvertNull.h"
 #include "JSDOMConvertNullable.h"
 #include "JSDOMConvertNumbers.h"
@@ -42,9 +41,7 @@
 #include "JSDOMConvertOptional.h"
 #include "JSDOMConvertRecord.h"
 #include "JSDOMConvertSequences.h"
-#include "JSDOMConvertSerializedScriptValue.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMConvertUnion.h"
-#include "JSDOMConvertWebGL.h"
 
 #include "JSDOMConvertBufferSource+JSBuffer.h"

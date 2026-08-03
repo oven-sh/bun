@@ -22,11 +22,9 @@ using namespace WebCore;
 
 // External C functions declarations
 extern "C" {
-SYSV_ABI void* JSS3File__construct(JSC::JSGlobalObject*, JSC::CallFrame* callframe);
 SYSV_ABI EncodedJSValue JSS3File__presign(void* ptr, JSC::JSGlobalObject*, JSC::CallFrame* callframe);
 SYSV_ABI EncodedJSValue JSS3File__stat(void* ptr, JSC::JSGlobalObject*, JSC::CallFrame* callframe);
 SYSV_ABI EncodedJSValue JSS3File__bucket(void* ptr, JSC::JSGlobalObject*);
-SYSV_ABI bool JSS3File__hasInstance(EncodedJSValue, JSC::JSGlobalObject*, EncodedJSValue);
 }
 
 // Forward declarations
@@ -129,17 +127,6 @@ JSValue constructS3FileInternal(JSC::JSGlobalObject* lexicalGlobalObject, void* 
     return JSS3File::create(vm, globalObject, structure, ptr);
 }
 
-JSValue constructS3File(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    void* ptr = JSS3File__construct(globalObject, callframe);
-    RETURN_IF_EXCEPTION(scope, {});
-    ASSERT(ptr);
-
-    return constructS3FileInternal(globalObject, ptr);
-}
-
 JSC::Structure* JSS3File::createStructure(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -148,14 +135,6 @@ JSC::Structure* JSS3File::createStructure(JSC::JSGlobalObject* globalObject)
     auto* protoStructure = JSS3FilePrototype::createStructure(vm, globalObject, superPrototype);
     auto* prototype = JSS3FilePrototype::create(vm, globalObject, protoStructure);
     return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info(), NonArray);
-}
-
-static bool customHasInstance(JSObject* object, JSGlobalObject* globalObject, JSValue value)
-{
-    if (!value.isObject())
-        return false;
-
-    return JSS3File__hasInstance(JSValue::encode(object), globalObject, JSValue::encode(value));
 }
 
 Structure* createJSS3FileStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -192,11 +171,6 @@ const JSC::ClassInfo JSS3FilePrototype::s_info = { "S3File"_s, &Base::s_info, nu
 const JSC::ClassInfo JSS3File::s_info = { "S3File"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSS3File) };
 
 extern "C" {
-SYSV_ABI EncodedJSValue BUN__createJSS3File(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
-{
-    return JSValue::encode(constructS3File(globalObject, callframe));
-};
-
 SYSV_ABI EncodedJSValue BUN__createJSS3FileUnsafely(JSC::JSGlobalObject* globalObject, void* ptr)
 {
     return JSValue::encode(constructS3FileInternal(globalObject, ptr));

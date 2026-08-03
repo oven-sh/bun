@@ -315,15 +315,6 @@ impl MimallocArena {
         unsafe { heap_alloc_maybe_aligned(self.heap_ptr(), len, align) }
     }
 
-    /// In-place expand/shrink, no relocation.
-    /// Returns `true` if the block now has at least `new_len` bytes.
-    #[inline]
-    pub fn resize_in_place(&self, ptr: NonNull<u8>, _old_len: usize, new_len: usize) -> bool {
-        // SAFETY: `ptr` was allocated by this arena (caller contract), and is
-        // therefore a real mimalloc block head.
-        unsafe { !mimalloc::mi_expand(ptr.as_ptr().cast(), new_len).is_null() }
-    }
-
     /// `mi_heap_realloc_aligned` on this arena's heap.
     #[inline]
     fn remap(&self, ptr: NonNull<u8>, _old_len: usize, new_len: usize, align: usize) -> *mut u8 {
@@ -345,7 +336,7 @@ impl MimallocArena {
 
     /// `bumpalo::Bump::alloc_layout` parity.
     #[inline]
-    pub fn alloc_layout(&self, layout: Layout) -> NonNull<u8> {
+    pub(crate) fn alloc_layout(&self, layout: Layout) -> NonNull<u8> {
         let p = self.aligned_alloc(layout.size(), layout.align());
         NonNull::new(p).unwrap_or_else(|| crate::out_of_memory())
     }
@@ -446,16 +437,6 @@ impl MimallocArena {
         // SAFETY: `MaybeUninit<T>` has the same layout as `T` and imposes no
         // initialization invariant.
         unsafe { core::slice::from_raw_parts_mut(dst.as_ptr(), len) }
-    }
-
-    // ── StdAllocator vtable bridge ────────────────────────────────────────
-
-    /// Does `alloc` dispatch through one of
-    /// this module's vtables (per-heap or process-global mimalloc)?
-    #[inline]
-    pub fn is_instance(alloc: &crate::StdAllocator) -> bool {
-        core::ptr::eq(alloc.vtable, &raw const HEAP_ALLOCATOR_VTABLE)
-            || core::ptr::eq(alloc.vtable, &raw const GLOBAL_MIMALLOC_VTABLE)
     }
 }
 
@@ -592,94 +573,6 @@ unsafe fn heap_alloc_maybe_aligned(heap: *mut mimalloc::Heap, len: usize, align:
         );
     }
     p.cast()
-}
-
-// ── StdAllocator vtable (per-arena) ──────────────────────────────────────
-
-unsafe fn vtable_alloc(ctx: *mut c_void, len: usize, a: crate::Alignment, _ra: usize) -> *mut u8 {
-    // SAFETY: `ctx` is the `*const MimallocArena` stashed by
-    // `std_allocator()`; the `StdAllocator` borrow it was built from is
-    // still live (contract: an `Allocator` does not outlive its backing).
-    let arena = unsafe { &*ctx.cast::<MimallocArena>() };
-    arena.aligned_alloc(len, a.to_byte_units())
-}
-
-unsafe fn vtable_resize(
-    ctx: *mut c_void,
-    buf: &mut [u8],
-    _a: crate::Alignment,
-    new_len: usize,
-    _ra: usize,
-) -> bool {
-    // SAFETY: see `vtable_alloc`.
-    let arena = unsafe { &*ctx.cast::<MimallocArena>() };
-    arena.resize_in_place(
-        // SAFETY: `buf` is a live arena allocation per the vtable contract.
-        unsafe { NonNull::new_unchecked(buf.as_mut_ptr()) },
-        buf.len(),
-        new_len,
-    )
-}
-
-unsafe fn vtable_remap(
-    ctx: *mut c_void,
-    buf: &mut [u8],
-    a: crate::Alignment,
-    new_len: usize,
-    _ra: usize,
-) -> *mut u8 {
-    // SAFETY: see `vtable_alloc`.
-    let arena = unsafe { &*ctx.cast::<MimallocArena>() };
-    arena.remap(
-        // SAFETY: `buf` is a live arena allocation per the vtable contract.
-        unsafe { NonNull::new_unchecked(buf.as_mut_ptr()) },
-        buf.len(),
-        new_len,
-        a.to_byte_units(),
-    )
-}
-
-unsafe fn vtable_free(_ctx: *mut c_void, buf: &mut [u8], a: crate::Alignment, _ra: usize) {
-    // SAFETY: vtable contract — `buf` was allocated by this arena's
-    // `mi_heap_malloc[_aligned]`. `mi_free` is thread-safe.
-    unsafe { crate::basic::mi_free_checked(buf.as_mut_ptr().cast(), buf.len(), a.to_byte_units()) }
-}
-
-/// Per-arena thunks; `ctx` is the
-/// `*const MimallocArena` stashed by `std_allocator()`.
-pub(crate) static HEAP_ALLOCATOR_VTABLE: crate::AllocatorVTable = crate::AllocatorVTable {
-    alloc: vtable_alloc,
-    resize: vtable_resize,
-    remap: vtable_remap,
-    free: vtable_free,
-};
-
-// ── Global-mimalloc vtable ────────────────────────────────────────────────
-// Process-wide `mi_malloc`/`mi_free` — no heap ctx. Used by
-// `get_thread_local_default()` / `Default::allocator()`.
-
-unsafe fn global_vtable_alloc(
-    _ctx: *mut c_void,
-    len: usize,
-    a: crate::Alignment,
-    _ra: usize,
-) -> *mut u8 {
-    crate::default_alloc::malloc_aligned(len, a.to_byte_units()).cast()
-}
-
-pub(crate) static GLOBAL_MIMALLOC_VTABLE: crate::AllocatorVTable = crate::AllocatorVTable {
-    alloc: global_vtable_alloc,
-    resize: crate::basic::MimallocAllocator::resize_with_default_allocator,
-    remap: crate::basic::MimallocAllocator::remap_with_default_allocator,
-    free: crate::basic::default_allocator_free,
-};
-
-/// Both vtable addresses this module hands out, for
-/// `bun_safety::register_alloc_vtable` (so `has_ptr` recognises either form;
-/// see `is_instance` above which checks both).
-#[inline]
-pub fn std_vtables() -> [&'static crate::AllocatorVTable; 2] {
-    [&HEAP_ALLOCATOR_VTABLE, &GLOBAL_MIMALLOC_VTABLE]
 }
 
 // ── ArenaVec helpers ─────────────────────────────────────────────────────

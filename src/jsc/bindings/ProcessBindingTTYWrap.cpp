@@ -190,8 +190,6 @@ const ClassInfo TTYWrapObject::s_info = {
     &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(TTYWrapObject)
 };
 
-JSC::EncodedJSValue Process_functionInternalGetWindowSize(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
-
 JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
 {
 #if OS(WINDOWS)

@@ -155,11 +155,10 @@ pub mod bun {
     pub use terminal::Terminal;
 
     pub mod h2_frame_parser {
-        pub use crate::api::h2_frame_parser_body::ErrorCode;
         pub use crate::api::h2_frame_parser_body::H2FrameParser;
         // js2native thunks (`$rust(h2_frame_parser.rs, …)` in generated_js2native.rs).
-        pub use crate::api::h2_frame_parser_body::h2_frame_parser_constructor;
-        pub use crate::api::h2_frame_parser_body::js_assert_settings;
+        pub(crate) use crate::api::h2_frame_parser_body::h2_frame_parser_constructor;
+        pub(crate) use crate::api::h2_frame_parser_body::js_assert_settings;
     }
     pub use h2_frame_parser::H2FrameParser;
 }
@@ -216,7 +215,7 @@ pub use crate::webview::host_process as WebViewHostProcess;
 // and hands `(&arena, &mut log, &source)` to a per-format closure that does the
 // format-specific parse, error match (StackOverflow / OOM / SyntaxError vs
 // log.to_js), and tail conversion.
-pub(crate) fn with_text_format_source<R>(
+fn with_text_format_source<R>(
     global: &bun_jsc::JSGlobalObject,
     frame: &bun_jsc::CallFrame,
     path: &'static [u8],
@@ -294,7 +293,7 @@ fn estring_to_js(
     }
 }
 
-pub(crate) fn expr_to_js(
+fn expr_to_js(
     expr: bun_ast::Expr,
     global: &bun_jsc::JSGlobalObject,
 ) -> bun_jsc::JsResult<bun_jsc::JSValue> {

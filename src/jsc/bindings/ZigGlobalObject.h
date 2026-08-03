@@ -442,6 +442,10 @@ public:
     }
 
     bool asyncHooksNeedsCleanup = false;
+    // Flipped from JS (diagnostics_channel) when tracing:module.import:* has
+    // subscribers, so moduleLoaderImportModule can skip the tracing path with
+    // a single bool read.
+    bool hasModuleImportSubscribers = false;
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
 

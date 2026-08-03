@@ -22,9 +22,12 @@ var BufferIsEncoding = Buffer.isEncoding;
 var kEmptyObject = ObjectCreate(null);
 var signals = OsModule.constants.signals;
 
-const dc = require("node:diagnostics_channel");
-const childProcessChannel = dc.channel("child_process");
-const childProcessSpawn = dc.tracingChannel("child_process.spawn");
+let childProcessChannel, childProcessSpawn;
+function initChildProcessChannels() {
+  const dc = require("node:diagnostics_channel");
+  childProcessChannel = dc.channel("child_process");
+  childProcessSpawn = dc.tracingChannel("child_process.spawn");
+}
 
 var ArrayPrototypeJoin = Array.prototype.join;
 var ArrayPrototypeIncludes = Array.prototype.includes;
@@ -1113,6 +1116,7 @@ class ChildProcess extends EventEmitter {
 
   constructor() {
     super();
+    if (!childProcessChannel) initChildProcessChannels();
     if (childProcessChannel.hasSubscribers) {
       childProcessChannel.publish({
         process: this,

@@ -149,6 +149,7 @@ class ActiveChannel {
     this._subscribers = ArrayPrototypeSlice.$call(this._subscribers);
     ArrayPrototypePush.$call(this._subscribers, subscription);
     channels.incRef(this.name);
+    this._onSubscribersChanged?.();
   }
 
   unsubscribe(subscription) {
@@ -162,6 +163,7 @@ class ActiveChannel {
 
     channels.decRef(this.name);
     maybeMarkInactive(this);
+    this._onSubscribersChanged?.();
 
     return true;
   }
@@ -170,6 +172,7 @@ class ActiveChannel {
     const replacing = this._stores.$has(store);
     if (!replacing) channels.incRef(this.name);
     this._stores.$set(store, transform);
+    this._onSubscribersChanged?.();
   }
 
   unbindStore(store) {
@@ -181,6 +184,7 @@ class ActiveChannel {
 
     channels.decRef(this.name);
     maybeMarkInactive(this);
+    this._onSubscribersChanged?.();
 
     return true;
   }
@@ -218,11 +222,16 @@ class ActiveChannel {
 class Channel {
   _subscribers;
   _stores;
+  // Optional internal hook called whenever subscribe/unsubscribe/bindStore/
+  // unbindStore changes this channel's subscriber set (Bun-internal; see
+  // internal/module_tracing).
+  _onSubscribersChanged;
   name;
 
   constructor(name) {
     this._subscribers = undefined;
     this._stores = undefined;
+    this._onSubscribersChanged = undefined;
     this.name = name;
 
     channels.set(name, this);
@@ -653,13 +662,16 @@ function tracingChannel(nameOrChannels) {
   return new TracingChannel(nameOrChannels);
 }
 
-// Hand the module loaders their tracing channels; they cannot afford to load
-// this module just to discover that nobody subscribed. In Node the CJS and ESM
+// Hand the module loaders their tracing channels. module_tracing swaps the
+// require() implementation and flips the C++ import flag only when these gain
+// subscribers, so the loaders carry no per-call check. In Node the CJS and ESM
 // loaders own these channels instead.
 {
   const moduleTracing = require("internal/module_tracing");
-  moduleTracing.requireChannel = tracingChannel("module.require");
-  moduleTracing.importChannel = tracingChannel("module.import");
+  const names = ["start", "end", "asyncStart", "asyncEnd", "error"];
+  moduleTracing.install(tracingChannel("module.require"), tracingChannel("module.import"), (tc, cb) => {
+    for (const n of names) tc[n]._onSubscribersChanged = cb;
+  });
 }
 
 export default {

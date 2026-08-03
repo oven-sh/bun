@@ -20,10 +20,13 @@ const {
 const { ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
-const dc = require("node:diagnostics_channel");
-const onServerRequestStartChannel = dc.channel("http.server.request.start");
-const onServerResponseCreatedChannel = dc.channel("http.server.response.created");
-const onServerResponseFinishChannel = dc.channel("http.server.response.finish");
+let onServerRequestStartChannel, onServerResponseCreatedChannel, onServerResponseFinishChannel;
+function initHttpServerChannels() {
+  const dc = require("node:diagnostics_channel");
+  onServerRequestStartChannel = dc.channel("http.server.request.start");
+  onServerResponseCreatedChannel = dc.channel("http.server.response.created");
+  onServerResponseFinishChannel = dc.channel("http.server.response.finish");
+}
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const {
@@ -927,6 +930,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         http_req.upgrade = is_upgrade;
 
         if (!is_upgrade) {
+          if (!onServerResponseCreatedChannel) initHttpServerChannels();
           // Node publishes response.created from the ServerResponse constructor,
           // which it only reaches after the upgrade check; Bun constructs the
           // response unconditionally, so publish here instead.

@@ -65,10 +65,13 @@ const setDefaultAutoSelectFamilyAttemptTimeout = $rust("node_net_binding.rs", "s
 let tlsKeylogPath: string | undefined;
 let tlsKeylogWarned = false;
 
-const dc = require("node:diagnostics_channel");
-const netClientSocketChannel = dc.channel("net.client.socket");
-const netServerSocketChannel = dc.channel("net.server.socket");
-const netServerListen = dc.tracingChannel("net.server.listen");
+let netClientSocketChannel, netServerSocketChannel, netServerListen;
+function initNetChannels() {
+  const dc = require("node:diagnostics_channel");
+  netClientSocketChannel = dc.channel("net.client.socket");
+  netServerSocketChannel = dc.channel("net.server.socket");
+  netServerListen = dc.tracingChannel("net.server.listen");
+}
 function appendTlsKeylog(line: Buffer) {
   if (!tlsKeylogWarned) {
     tlsKeylogWarned = true;
@@ -1886,6 +1889,7 @@ Socket.prototype.connect = function connect(...args) {
     const [options, connectListener] =
       $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
 
+    if (!netClientSocketChannel) initNetChannels();
     if (netClientSocketChannel.hasSubscribers) {
       netClientSocketChannel.publish({
         socket: this,
@@ -3788,6 +3792,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
 
+  if (!netServerListen) initNetChannels();
   if (netServerListen.hasSubscribers) {
     // Node publishes the options object produced by normalizeArgs(); reuse the
     // caller's object when one was given, otherwise reconstruct its shape.

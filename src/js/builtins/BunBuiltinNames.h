@@ -143,7 +143,6 @@ using namespace JSC;
     macro(originalColumn) \
     macro(originalLine) \
     macro(overridableRequire) \
-    macro(overridableRequireImpl) \
     macro(parse) \
     macro(partitioned) \
     macro(path) \

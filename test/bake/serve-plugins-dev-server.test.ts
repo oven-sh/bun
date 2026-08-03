@@ -283,7 +283,10 @@ test.concurrent(
       `,
       "server.ts": `
         import * as fs from "node:fs";
+        import * as path from "node:path";
         import { getDevServerDeinitCount } from "bun:internal-for-testing";
+        const entered = path.join(import.meta.dir, "entered");
+        const stopped = path.join(import.meta.dir, "stopped");
         const server = Bun.serve({
           port: 0,
           development: true,
@@ -309,7 +312,7 @@ test.concurrent(
           .catch(e => (e as Error).name);
         // Wait until the plugin has actually been entered: that only happens
         // after the request was deferred, so the DeferredRequest is in place.
-        while (!fs.existsSync("entered")) {
+        while (!fs.existsSync(entered)) {
           await new Promise(r => setTimeout(r, 5));
         }
 
@@ -319,7 +322,7 @@ test.concurrent(
         server.stop();
         // Now let the plugin throw so on_plugins_rejected drains the list with
         // the listener already gone.
-        fs.writeFileSync("stopped", "");
+        fs.writeFileSync(stopped, "");
 
         const result = await pending;
         let deinit = false;

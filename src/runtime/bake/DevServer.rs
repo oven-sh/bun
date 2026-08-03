@@ -3176,13 +3176,14 @@ impl DeferredRequest {
             Handler::ServerHandler(mut saved) => {
                 let resp = saved.response;
                 let ctx = saved.ctx;
-                // Deref both (prepare_and_save +1, defer_request +1) first so
-                // `detach_response` clears the uWS callbacks before the 500.
+                // Write while ctx is still ref'd so the final `deref`'s
+                // `deinit()` (microtask drain, `detach_response`) cannot
+                // outrun the raw response handle.
                 saved.deinit();
-                ctx.deref();
                 resp.write_status(b"500 Internal Server Error");
                 resp.write_header_int(b"Content-Length", 0);
                 resp.end_without_body(true);
+                ctx.deref();
             }
             Handler::BundledHtmlPage(r) => {
                 r.response.write_status(b"500 Internal Server Error");

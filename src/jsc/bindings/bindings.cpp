@@ -2795,17 +2795,28 @@ void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global,
     moduleLoader->removeEntry(identifier);
 }
 
+static bool containsNodeModulesSegment(const WTF::String& key)
+{
+#if OS(WINDOWS)
+    auto isSep = [](UChar c) { return c == '/' || c == '\\'; };
+    size_t pos = 0;
+    while ((pos = key.findIgnoringASCIICase("node_modules"_s, pos)) != WTF::notFound) {
+        if (pos > 0 && isSep(key[pos - 1]) && pos + 12 < key.length() && isSep(key[pos + 12]))
+            return true;
+        pos += 12;
+    }
+    return false;
+#else
+    return key.contains("/node_modules/"_s);
+#endif
+}
+
 static ALWAYS_INLINE bool isKeptAcrossTestIsolation(const WTF::String& key, const BunString* skip, size_t skipLen)
 {
     if (key.isEmpty())
         return false;
-#if OS(WINDOWS)
-    if (key.containsIgnoringASCIICase("/node_modules/"_s) || key.containsIgnoringASCIICase("\\node_modules\\"_s))
+    if (containsNodeModulesSegment(key))
         return true;
-#else
-    if (key.contains("/node_modules/"_s))
-        return true;
-#endif
     if (key.startsWith("node:"_s) || key.startsWith("bun:"_s) || key.startsWith("internal:"_s))
         return true;
     for (size_t i = 0; i < skipLen; ++i) {
@@ -2908,8 +2919,12 @@ static void hashObject(Digest& d, JSC::VM& vm, JSC::JSGlobalObject* g, JSC::JSOb
     }
     // Reify before walking so forEachProperty sees a stable table regardless
     // of which lazy static methods the test happened to touch.
-    if (!obj->staticPropertiesReified())
+    if (!obj->staticPropertiesReified()) {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         obj->reifyAllStaticProperties(g);
+        if (scope.exception()) [[unlikely]]
+            scope.clearExceptionExceptTermination();
+    }
     d.mix(obj->structureID().bits());
     obj->structure()->forEachProperty(vm, [&](const JSC::PropertyTableEntry& entry) -> bool {
         auto* key = entry.key();

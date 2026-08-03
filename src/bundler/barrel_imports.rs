@@ -617,9 +617,8 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // IS_EXPORT_STAR_TARGET check covers this only when the star exporter
     // parses before the target; record the request here so the outcome does
     // not depend on parse-completion order.
-    let star_record_indices: Vec<u32> = this.graph.ast.items_export_star_import_records()
-        [result_source_index as usize]
-        .to_vec();
+    let star_record_indices: Vec<u32> =
+        this.graph.ast.items_export_star_import_records()[result_source_index as usize].to_vec();
     for star_idx in star_record_indices {
         if star_idx as usize >= file_import_records.len() {
             continue;
@@ -806,9 +805,8 @@ pub(crate) fn schedule_barrel_deferred_imports(
                         });
                     }
                 }
-                for &star_idx in this.graph.ast.items_export_star_import_records()
-                    [barrel_idx as usize]
-                    .iter()
+                for &star_idx in
+                    this.graph.ast.items_export_star_import_records()[barrel_idx as usize].iter()
                 {
                     if (star_idx as usize) >= irs.len() {
                         continue;

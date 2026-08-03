@@ -256,8 +256,6 @@ async function resolveUnderOrders(
 const project = (deps: Record<string, unknown>) =>
   ({ "package.json": JSON.stringify({ name: "root", version: "0.0.0", ...deps }) }) as Record<string, string>;
 
-
-
 // ──────────────────────────────────────────────────────────────────────────
 // Peers
 // ──────────────────────────────────────────────────────────────────────────

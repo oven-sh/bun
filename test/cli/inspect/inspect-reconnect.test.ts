@@ -18,7 +18,7 @@ describe.skipIf(!isPosix)("inspector reverse-connect re-dial", () => {
       env: (p: string) => ({ ...bunEnv, BUN_INSPECT_CONNECT_TO: `unix://${p}` }),
     },
   ] as const) {
-    test(`bun ${label} re-dials after the frontend drops the connection before Inspector.initialized`, async () => {
+    test.concurrent(`bun ${label} re-dials after the frontend drops the connection before Inspector.initialized`, async () => {
       using dir = tempDir("inspect-reconnect", {});
       const sock = join(String(dir), "frontend.sock");
       const { promise: evaluated, resolve: resolveEvaluated } = Promise.withResolvers<unknown>();

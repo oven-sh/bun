@@ -599,8 +599,9 @@ class Debugger {
 
   #close(connection: ConnectionOwner): void {
     const { data } = connection;
-    const { backend } = data;
+    const { backend, client } = data;
     backend?.close();
+    client?.close();
   }
 
   #error(connection: ConnectionOwner, error: Error): void {
@@ -737,39 +738,66 @@ function nodeVersionInfo(): unknown {
 
 function webSocketWriter(ws: ServerWebSocket<unknown>): Writer {
   return {
-    write: message => !!ws.sendText(message),
+    write: message => ws.sendText(message) !== 0,
     close: () => ws.close(),
+    abort: () => ws.terminate(),
   };
 }
 
+// Past this many pending JS-side characters the frontend is considered stalled
+// and dropped. uWS already buffers up to its own 16 MB backpressureLimit before
+// sendText() starts returning DROPPED, so this is the second-stage backlog on
+// top of that. The combined bound keeps a frozen/unreachable frontend from
+// growing the inspected process's heap with every console line it emits.
+const maxPendingWriterChars = 32 * 1024 * 1024;
+
 function bufferedWriter(writer: Writer): Writer {
   let draining = false;
+  let closed = false;
   let pendingMessages: string[] = [];
+  let pendingChars = 0;
 
   return {
     write: message => {
+      if (closed) return false;
       if (draining || !writer.write(message)) {
+        pendingChars += message.length;
+        if (pendingChars > maxPendingWriterChars) {
+          closed = true;
+          pendingMessages.length = 0;
+          pendingChars = 0;
+          (writer.abort ?? writer.close)();
+          return false;
+        }
         pendingMessages.push(message);
       }
       return true;
     },
     drain: () => {
+      if (closed) return;
       draining = true;
       try {
-        for (let i = 0; i < pendingMessages.length; i++) {
-          if (!writer.write(pendingMessages[i])) {
-            pendingMessages = pendingMessages.slice(i);
-            return;
-          }
+        let i = 0;
+        for (; i < pendingMessages.length; i++) {
+          if (!writer.write(pendingMessages[i])) break;
+          pendingChars -= pendingMessages[i].length;
         }
-        pendingMessages.length = 0;
+        if (i === pendingMessages.length) {
+          pendingMessages.length = 0;
+          pendingChars = 0;
+        } else if (i > 0) {
+          pendingMessages = pendingMessages.slice(i);
+        }
       } finally {
         draining = false;
       }
     },
     close: () => {
+      if (closed) return;
+      closed = true;
       writer.close();
       pendingMessages.length = 0;
+      pendingChars = 0;
     },
   };
 }
@@ -917,4 +945,5 @@ type Writer = {
   write: (message: string) => boolean;
   drain?: () => void;
   close: () => void;
+  abort?: () => void;
 };

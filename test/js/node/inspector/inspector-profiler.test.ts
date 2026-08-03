@@ -346,8 +346,11 @@ describe("node:inspector", () => {
 
     test("Profiler.setSamplingInterval requires positive interval", async () => {
       await post(session, "Profiler.enable");
-      await expect(post(session, "Profiler.setSamplingInterval", { interval: 0 })).rejects.toThrow();
-      await expect(post(session, "Profiler.setSamplingInterval", { interval: -1 })).rejects.toThrow();
+      for (const interval of [undefined, null, "500", 0, -1, NaN, Infinity, -Infinity]) {
+        await expect(post(session, "Profiler.setSamplingInterval", { interval })).rejects.toThrow(
+          "interval must be a positive number",
+        );
+      }
     });
 
     test("double Profiler.start is a no-op", async () => {
@@ -359,7 +362,6 @@ describe("node:inspector", () => {
     });
 
     test("profiler can be restarted after stop", async () => {
-      // First run
       await post(session, "Profiler.enable");
       await post(session, "Profiler.start");
       let sum = 0;
@@ -367,13 +369,11 @@ describe("node:inspector", () => {
       const result1 = await post(session, "Profiler.stop");
       expect(result1).toHaveProperty("profile");
 
-      // Second run
       await post(session, "Profiler.start");
       for (let i = 0; i < 1000; i++) sum += i;
       const result2 = await post(session, "Profiler.stop");
       expect(result2).toHaveProperty("profile");
 
-      // Both profiles should be valid
       expect(result1.profile.nodes.length).toBeGreaterThanOrEqual(1);
       expect(result2.profile.nodes.length).toBeGreaterThanOrEqual(1);
     });

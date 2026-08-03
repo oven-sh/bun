@@ -1113,22 +1113,20 @@ class InspectorCDPAdapter {
       }
 
       case "Debugger.getPossibleBreakpoints": {
-        const start = params.start;
-        let end = params.end;
+        const start = this.#toGeneratedLocation(params.start);
+        let end = params.end ? this.#toGeneratedLocation(params.end) : undefined;
         if (!end) {
-          const script = this.#scripts.$get(start?.scriptId);
+          // script.endLine/endColumn are JSC's generated end, already in the
+          // backend's coordinate space: no #toGeneratedLocation needed (EOF
+          // has no mapping to translate through anyway).
+          const script = this.#scripts.$get(params.start?.scriptId);
           end = {
-            scriptId: start?.scriptId,
+            scriptId: params.start?.scriptId,
             lineNumber: script ? script.endLine : (start?.lineNumber ?? 0) + 1,
             columnNumber: script ? script.endColumn : 0,
           };
         }
-        this.#sendToBackend(
-          "Debugger.getBreakpointLocations",
-          { start: this.#toGeneratedLocation(start), end: this.#toGeneratedLocation(end) },
-          id,
-          method,
-        );
+        this.#sendToBackend("Debugger.getBreakpointLocations", { start, end }, id, method);
         return;
       }
 
@@ -1328,8 +1326,10 @@ class InspectorCDPAdapter {
         }
         this.#scripts.$set(params.scriptId, {
           cdpUrl,
-          endLine,
-          endColumn,
+          // JSC's generated end, kept for getBreakpointLocations: the original
+          // EOF has no mapping, so it cannot be translated back to generated.
+          endLine: params.endLine ?? 0,
+          endColumn: params.endColumn ?? 0,
           source,
           mappings: source === undefined ? undefined : decoded!.mappings,
           map: undefined,

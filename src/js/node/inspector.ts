@@ -1392,7 +1392,7 @@ class Session extends EventEmitter {
         if (isCPUProfilerRunning())
           return $ERR_INSPECTOR_COMMAND("-32000: Cannot change sampling interval while profiler is running");
         const interval = (params as any)?.interval;
-        if (typeof interval !== "number" || interval <= 0)
+        if (typeof interval !== "number" || !Number.isFinite(interval) || interval <= 0)
           return $ERR_INSPECTOR_COMMAND("-32602: interval must be a positive number");
         setCPUSamplingInterval(interval);
         return {};

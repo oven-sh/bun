@@ -1026,10 +1026,8 @@ static JSValue fetchESMSourceCode(
         auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateNativeModule_##name, JSC::SourceOrigin(), WTF::move(moduleKey))); \
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));                                                     \
     }
-// The node: native builtins memoize their exports object in the
-// InternalModuleRegistry (the object require() returns); build the ESM
-// namespace from that same object so `import x from 'node:buffer'` and
-// `require('node:buffer')` are reference-equal, like Node.
+// Build the ESM namespace from the InternalModuleRegistry-memoized exports so
+// `import x from 'node:buffer'` === `require('node:buffer')`, matching Node.
 #define CASE_REGISTRY(name)                                                                                                                                                                                    \
     case (SyntheticModuleType::name): {                                                                                                                                                                        \
         auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateInternalModuleSourceCode(globalObject, InternalModuleRegistry::Field::name), JSC::SourceOrigin(), WTF::move(moduleKey))); \

@@ -707,10 +707,8 @@ JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
     return true;
 }
 
-// Node exposes `Module.prototype.require`; the shared overridable require
-// (also reachable via the module-namespace `Module.prototype` object in
-// NodeModuleModule.cpp) already dispatches off `this`, so surface it here for
-// `new Module().require(...)` / `module.require(...)`.
+// Node exposes `Module.prototype.require`; surface the shared overridable require (dispatches off `this`).
+// https://github.com/nodejs/node/blob/main/lib/internal/modules/cjs/loader.js
 JSC_DEFINE_CUSTOM_GETTER(getterRequire, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue, JSC::PropertyName))
 {
     return JSValue::encode(globalObject->getDirect(

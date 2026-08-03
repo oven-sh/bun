@@ -3572,10 +3572,8 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
     globalObject->vm().queueMicrotask(WTF::move(task));
 }
 
-// A file:// module specifier keeps its ?query/#fragment in Bun's
-// path-with-?query module-cache-key form, so distinct URLs stay distinct
-// module instances (Node keys ES modules by the full URL). The fragment
-// rides in the query slot because the resolver splits keys only on '?'.
+// Node keys ES modules by full URL (https://github.com/nodejs/node/blob/main/lib/internal/modules/esm/resolve.js),
+// so keep ?query/#fragment in the cache key; fragment rides in the query slot since the resolver only splits on '?'.
 static WTF::String fileURLToModuleKey(const WTF::URL& url)
 {
     auto path = url.fileSystemPath();

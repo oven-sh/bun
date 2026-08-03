@@ -4015,8 +4015,10 @@ static void tsfn_many_call_js(napi_env env, napi_value js_callback,
 }
 
 // Enqueues enough items to cross Node's kMaxIterationCount so the dispatch
-// loop yields mid-drain and re-schedules. Asserts every callback fired and
-// (under ASAN) that the yield did not double-schedule a freed pointer.
+// loop yields mid-drain and re-schedules. 2000 is a multiple of the cap so the
+// second tick's 1000th dispatch is the final item: that path queues the
+// finalizer inside dispatch_one() and then hits the closing == Closed guard on
+// the yield, so ASAN would catch a double-schedule on the freed TSFN.
 static napi_value test_tsfn_many_items(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   tsfn_many_count.store(0);
@@ -4027,7 +4029,7 @@ static napi_value test_tsfn_many_items(const Napi::CallbackInfo &info) {
   NODE_API_CALL(env, napi_create_threadsafe_function(
                          env, NULL, NULL, name, 0, 1, NULL,
                          tsfn_nullcb_finalize, NULL, tsfn_many_call_js, &tsfn));
-  for (int i = 0; i < 1200; i++) {
+  for (int i = 0; i < 2000; i++) {
     NODE_API_CALL(
         env, napi_call_threadsafe_function(tsfn, NULL, napi_tsfn_nonblocking));
   }

@@ -1415,7 +1415,7 @@ nativeTests.test_tsfn_null_js_callback_driver = async () => {
 nativeTests.test_tsfn_many_items_driver = async () => {
   nativeTests.test_tsfn_many_items();
   for (let i = 0; i < 1000; i++) {
-    if (nativeTests.test_tsfn_many_items_count() >= 1200) break;
+    if (nativeTests.test_tsfn_many_items_count() >= 2000) break;
     await new Promise(resolve => setImmediate(resolve));
   }
   nativeTests.test_tsfn_many_items_result();

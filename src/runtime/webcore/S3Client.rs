@@ -6,7 +6,9 @@ use crate::webcore::blob::BlobExt as _;
 use crate::webcore::blob::store::S3Ext as _;
 use crate::webcore::s3::MultiPartUploadOptions;
 use crate::webcore::s3::client::{ACL, S3Credentials, StorageClass};
-use bun_jsc::{CallFrame, ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{
+    CallFrame, ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult, Local, Scope,
+};
 
 use super::s3_file as S3File;
 
@@ -337,24 +339,25 @@ impl S3Client {
         Ok(())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn file(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn file<'s>(
         ptr: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-        let vm = global.bun_vm();
+        let vm = scope.unscoped_bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
                 if args.len() == 0 {
-                    return Err(global
+                    return Err(scope
                         .err(ErrorCode::MISSING_ARGS, format_args!("Expected a path "))
                         .throw());
                 }
-                return Err(global.throw_invalid_arguments(format_args!("Expected a path")));
+                return Err(scope.throw_invalid_arguments(format_args!("Expected a path")));
             }
         };
         let options = args.next_eat();
@@ -378,23 +381,24 @@ impl S3Client {
         // that owns the heap pointer), same as `S3File::construct_internal_js`.
         // SAFETY: `blob` is a freshly leaked `*mut Blob` from `Blob::new`;
         // `to_js` hands ownership of that pointer to the C++ wrapper.
-        Ok(unsafe { &mut *blob }.to_js(global))
+        Ok(scope.local(unsafe { &mut *blob }.to_js(global)))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn presign(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn presign<'s>(
         ptr: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-        let vm = global.bun_vm();
+        let vm = scope.unscoped_bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
                 if args.len() == 0 {
-                    return Err(global
+                    return Err(scope
                         .err(
                             ErrorCode::MISSING_ARGS,
                             format_args!("Expected a path to presign"),
@@ -402,7 +406,7 @@ impl S3Client {
                         .throw());
                 }
                 return Err(
-                    global.throw_invalid_arguments(format_args!("Expected a path to presign"))
+                    scope.throw_invalid_arguments(format_args!("Expected a path to presign"))
                 );
             }
         };
@@ -420,30 +424,31 @@ impl S3Client {
             ptr.storage_class,
             ptr.request_payer,
         )?;
-        S3File::get_presign_url_from(&mut blob, global, options)
+        S3File::get_presign_url_from(&mut blob, global, options).map(|v| scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn exists(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn exists<'s>(
         ptr: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-        let vm = global.bun_vm();
+        let vm = scope.unscoped_bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
                 if args.len() == 0 {
-                    return Err(global
+                    return Err(scope
                         .err(
                             ErrorCode::MISSING_ARGS,
                             format_args!("Expected a path to check if it exists"),
                         )
                         .throw());
                 }
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(scope.throw_invalid_arguments(format_args!(
                     "Expected a path to check if it exists"
                 )));
             }
@@ -460,30 +465,31 @@ impl S3Client {
             ptr.storage_class,
             ptr.request_payer,
         )?;
-        S3File::S3BlobStatTask::exists(global, &blob)
+        S3File::S3BlobStatTask::exists(global, &blob).map(|v| scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn size(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn size<'s>(
         ptr: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-        let vm = global.bun_vm();
+        let vm = scope.unscoped_bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
                 if args.len() == 0 {
-                    return Err(global
+                    return Err(scope
                         .err(
                             ErrorCode::MISSING_ARGS,
                             format_args!("Expected a path to check the size of"),
                         )
                         .throw());
                 }
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(scope.throw_invalid_arguments(format_args!(
                     "Expected a path to check the size of"
                 )));
             }
@@ -500,30 +506,31 @@ impl S3Client {
             ptr.storage_class,
             ptr.request_payer,
         )?;
-        S3File::S3BlobStatTask::size(global, &mut blob)
+        S3File::S3BlobStatTask::size(global, &mut blob).map(|v| scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn stat(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn stat<'s>(
         ptr: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-        let vm = global.bun_vm();
+        let vm = scope.unscoped_bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
                 if args.len() == 0 {
-                    return Err(global
+                    return Err(scope
                         .err(
                             ErrorCode::MISSING_ARGS,
                             format_args!("Expected a path to check the stat of"),
                         )
                         .throw());
                 }
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(scope.throw_invalid_arguments(format_args!(
                     "Expected a path to check the stat of"
                 )));
             }
@@ -540,22 +547,23 @@ impl S3Client {
             ptr.storage_class,
             ptr.request_payer,
         )?;
-        S3File::S3BlobStatTask::stat(global, &blob)
+        S3File::S3BlobStatTask::stat(global, &blob).map(|v| scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn write(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn write<'s>(
         ptr: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-        let vm = global.bun_vm();
+        let vm = scope.unscoped_bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
-                return Err(global
+                return Err(scope
                     .err(
                         ErrorCode::MISSING_ARGS,
                         format_args!("Expected a path to write to"),
@@ -564,7 +572,7 @@ impl S3Client {
             }
         };
         let Some(data) = args.next_eat() else {
-            return Err(global
+            return Err(scope
                 .err(
                     ErrorCode::MISSING_ARGS,
                     format_args!("Expected a Blob-y thing to write"),
@@ -596,14 +604,16 @@ impl S3Client {
                 mode: None,
             },
         )
+        .map(|v| scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn list_objects(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn list_objects<'s>(
         ptr: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         let args = callframe.arguments_as_array::<2>();
 
         let object_keys = args[0];
@@ -626,21 +636,23 @@ impl S3Client {
             .data
             .as_s3()
             .list_objects(store, global, object_keys, options)
+            .map(|v| scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn unlink(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn unlink<'s>(
         ptr: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-        let vm = global.bun_vm();
+        let vm = scope.unscoped_bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
-                return Err(global
+                return Err(scope
                     .err(
                         ErrorCode::MISSING_ARGS,
                         format_args!("Expected a path to unlink"),
@@ -661,7 +673,11 @@ impl S3Client {
             ptr.request_payer,
         )?;
         let store = blob.store.get().as_ref().unwrap();
-        store.data.as_s3().unlink(store, global, options)
+        store
+            .data
+            .as_s3()
+            .unlink(store, global, options)
+            .map(|v| scope.local(v))
     }
 
     // ── Static methods ────────────────────────────────────────────────────

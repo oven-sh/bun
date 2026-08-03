@@ -1112,12 +1112,12 @@ class Session extends EventEmitter {
     if (this.#adapter !== undefined) {
       inProcessAdapters.delete(this.#adapter);
       this.#adapter = undefined;
-      // Node fails pending callbacks with ERR_INSPECTOR_CLOSED: https://github.com/nodejs/node/blob/main/lib/inspector.js
+      // Node's C++ session answers in-flight commands with -32000 before the JS-side
+      // ERR_INSPECTOR_CLOSED path can fire (verified empirically on v26.3.0).
       const pending = this.#pendingResults;
       this.#pendingResults = new SafeMap();
-      const closedError = $ERR_INSPECTOR_CLOSED();
       for (const done of pending.values()) {
-        process.nextTick(done, closedError);
+        process.nextTick(done, { code: -32000, message: "Execution context was destroyed." });
       }
       if (inProcessAdapters.size === 0) disconnectInProcessInspector();
     }

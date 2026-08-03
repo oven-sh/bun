@@ -93,17 +93,6 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
             {
                 return core::ptr::null_mut();
             }
-            match k {
-                RecordKind::ImportInfoSingle
-                | RecordKind::ImportInfoSingleTypeScript
-                | RecordKind::ImportInfoNamespace
-                | RecordKind::ImportInfoNamespaceDefer
-                | RecordKind::ExportInfoIndirect
-                | RecordKind::ExportInfoLocal
-                | RecordKind::ExportInfoNamespace
-                | RecordKind::ExportInfoStar => {}
-                _ => return core::ptr::null_mut(),
-            }
             i += len;
         }
     }

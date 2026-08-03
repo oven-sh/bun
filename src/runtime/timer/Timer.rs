@@ -42,8 +42,7 @@ impl All {
     /// Number of `setTimeout`/`setInterval` objects currently keeping the
     /// event loop alive (alive and not `unref()`ed). Backs the `'Timeout'`
     /// entries of `process.getActiveResourcesInfo()`.
-    #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__Timer__getActiveTimeoutCount() -> u32 {
+    pub(crate) fn active_timeout_count() -> u32 {
         let all = timer_all();
         if all.is_null() {
             return 0;
@@ -55,8 +54,7 @@ impl All {
     /// Number of pending `setImmediate` objects currently keeping the event
     /// loop alive. Backs the `'Immediate'` entries of
     /// `process.getActiveResourcesInfo()`.
-    #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__Timer__getActiveImmediateCount() -> u32 {
+    pub(crate) fn active_immediate_count() -> u32 {
         let all = timer_all();
         if all.is_null() {
             return 0;
@@ -631,9 +629,7 @@ pub(crate) mod internal_bindings {
     ) -> JsResult<JSValue> {
         let _ = global_this;
         let _ = call_frame;
-        Ok(JSValue::js_number(f64::from(
-            All::Bun__Timer__getActiveTimeoutCount(),
-        )))
+        Ok(JSValue::js_number(f64::from(All::active_timeout_count())))
     }
 
     /// Pending `setImmediate` count for `process.getActiveResourcesInfo()`.
@@ -644,8 +640,6 @@ pub(crate) mod internal_bindings {
     ) -> JsResult<JSValue> {
         let _ = global_this;
         let _ = call_frame;
-        Ok(JSValue::js_number(f64::from(
-            All::Bun__Timer__getActiveImmediateCount(),
-        )))
+        Ok(JSValue::js_number(f64::from(All::active_immediate_count())))
     }
 }

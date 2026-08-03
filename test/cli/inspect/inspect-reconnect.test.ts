@@ -50,7 +50,7 @@ describe.skipIf(!isPosix)("inspector reverse-connect re-dial", () => {
               );
             },
             data: (socket, bytes) => framer.onData(socket, bytes),
-            error: () => {},
+            error: (_socket, error) => resolveEvaluated({ listenerError: String(error) }),
             close: () => {},
           },
         });

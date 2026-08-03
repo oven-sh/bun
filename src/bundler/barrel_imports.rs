@@ -409,8 +409,10 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // Borrowck: `path_to_source_index_map` borrows
     // `&mut this.graph`; wrap in `BackRef` so the long-lived read borrow
     // doesn't conflict with `&mut this.requested_exports` /
-    // `&mut this.graph.ast` below. The map is not mutated for the duration of
-    // this fn.
+    // `&mut this.graph.ast` below. The map struct sits at a stable address in
+    // `graph.build_graphs[target]`; `resolve_barrel_records` may grow it
+    // through its own `&mut` reborrow, but no `&mut` is live when this
+    // `BackRef` is dereferenced (`record_target` re-derefs fresh each call).
     let path_to_source_index_map: Option<
         bun_ptr::BackRef<crate::PathToSourceIndexMap::PathToSourceIndexMap>,
     > = if dev_handle.is_some() {

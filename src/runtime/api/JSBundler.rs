@@ -552,10 +552,7 @@ pub mod js_bundler {
                             match promise
                                 .unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled)
                             {
-                                // wait_for_promise returns early once the VM's
-                                // TerminationException has fired (execution_forbidden),
-                                // leaving the promise Pending. Propagate instead of
-                                // panicking so the terminating worker unwinds cleanly.
+                                // wait_for_promise returns early on VM termination; propagate.
                                 jsc::PromiseResult::Pending => {
                                     return Err(JsError::Terminated);
                                 }

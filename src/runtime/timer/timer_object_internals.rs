@@ -940,6 +940,35 @@ impl TimerObjectInternals {
         Ok(this_value)
     }
 
+    /// Setter body for `Timeout#_idleStart`. Node computes a timer's deadline
+    /// as `_idleStart + _idleTimeout`, so writing `_idleStart` moves the
+    /// deadline. Next.js relies on `t2._idleStart = t1._idleStart` to make two
+    /// `setTimeout(fn)` calls fire in the same event-loop turn (before any
+    /// `setImmediate` scheduled from `t1`'s callback).
+    pub(crate) fn set_idle_start(&self, idle_start_ms: f64) {
+        if self.flags.get().kind() == Kind::SetImmediate
+            || self.flags.get().has_cleared_timer()
+            || self.event_loop_timer_state() != EventLoopTimerState::ACTIVE
+            || !idle_start_ms.is_finite()
+        {
+            return;
+        }
+
+        let state = crate::jsc_hooks::runtime_state();
+        debug_assert!(!state.is_null(), "RuntimeState not installed");
+
+        let scheduled_time =
+            Timespec::EPOCH.add_ms(idle_start_ms as i64 + i64::from(self.interval.get()));
+        // SAFETY: `state` is the boxed per-thread `RuntimeState`; fresh
+        // `&mut` to `.timer` for this call only. The timer is ACTIVE so
+        // `update()` removes then re-inserts with no refcount change.
+        unsafe {
+            (*state)
+                .timer
+                .update(self.event_loop_timer(), &scheduled_time)
+        };
+    }
+
     pub(crate) fn do_refresh(
         &self,
         global_object: &JSGlobalObject,

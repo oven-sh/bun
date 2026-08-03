@@ -4600,8 +4600,12 @@ impl VirtualMachine {
         // Reuse path with a captured baseline means preloads already ran
         // against this global; their module records are in the registry and
         // exempt from eviction, so skip load_preloads entirely.
-        let skip_preloads =
-            reuse && self.test_isolation_state.reuse.baseline_fingerprint.is_some();
+        let skip_preloads = reuse
+            && self
+                .test_isolation_state
+                .reuse
+                .baseline_fingerprint
+                .is_some();
 
         if !self.transpiler.options.disable_transpilation && !skip_preloads {
             if let Some(hooks) = runtime_hooks() {

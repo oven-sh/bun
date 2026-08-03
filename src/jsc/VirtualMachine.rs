@@ -1440,11 +1440,9 @@ impl VirtualMachine {
                 (self.on_unhandled_rejection)(self, global_object, err);
                 return false;
             }
-            // `err` can arrive as the JSC::Exception wrapper here (the
-            // handler's throw is re-reported through
-            // `report_active_exception_as_unhandled`); unwrap so the printer
-            // sees the Error instance — its own stack and properties — instead
-            // of the wrapper's rethrow-site capture.
+            // `err` may be the JSC::Exception wrapper (handler throw re-reported
+            // via `report_active_exception_as_unhandled`); unwrap so the printer
+            // sees the Error's own stack/properties, not the rethrow-site capture.
             self.run_error_handler(err.to_error().unwrap_or(err), None);
             // SAFETY: `global_object` is the live VM global; `process_exit` is
             // `bun_runtime::node::process::exit` (main-thread `noreturn`).

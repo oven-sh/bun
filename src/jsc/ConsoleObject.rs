@@ -1829,10 +1829,9 @@ pub mod formatter {
         /// printed as a string. Set true in the error printer so that
         /// `ShellError` prints a more readable message.
         pub(crate) format_buffer_as_text: bool,
-        /// Render like Node's uncaught-exception report: the error's own
-        /// `name` is printed verbatim (`Error: boom`, never Bun's lowercase
-        /// `error:` alias) and string properties are single-quoted
-        /// (`code: 'ENOENT'`). Set only on the uncaught/unhandled print path.
+        /// Node-style uncaught report: verbatim `err.name` (no lowercase `error:`
+        /// alias), single-quoted strings (`code: 'ENOENT'`). Uncaught path only.
+        /// https://github.com/nodejs/node/blob/main/lib/internal/util/inspect.js
         pub node_uncaught_style: bool,
     }
 

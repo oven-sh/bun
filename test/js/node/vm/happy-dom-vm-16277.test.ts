@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import vm from "node:vm";
 import { bunEnv, bunExe } from "harness";
+import vm from "node:vm";
 
 // Regression tests for https://github.com/oven-sh/bun/issues/16277
 //

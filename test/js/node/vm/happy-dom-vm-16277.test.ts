@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { Window } from "happy-dom";
 import { bunEnv, bunExe } from "harness";
 import vm from "node:vm";
 
@@ -92,4 +93,20 @@ test("stack materialized in ErrorInstance::finalizeUnconditionally does not cras
   expect(stdout).toBe("64 string\n");
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
+});
+
+test("happy-dom Window (vm.createContext on the Window object) works", async () => {
+  // happy-dom's `new Window()` is the only place in the test suite that calls
+  // vm.createContext on a large real-world object and runs a Script in it.
+  // Kept here (without the external fetch) so that integration path stays covered.
+  const window = new Window({
+    url: "http://localhost/",
+    settings: { disableJavaScriptFileLoading: true },
+  });
+  expect(vm.isContext(window)).toBe(true);
+  const { document, localStorage } = window;
+  localStorage.clear();
+  document.body.innerHTML = `<div id="x">ok</div>`;
+  expect(document.getElementById("x")?.textContent).toBe("ok");
+  await window.happyDOM.close();
 });

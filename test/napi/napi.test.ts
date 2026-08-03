@@ -523,11 +523,8 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     // completion would enqueue into a freed EventLoop) or its JSC heap (the
     // ArrayBuffer backing store would be finalized while the addon is still
     // writing it). WebWorker::shutdown now waits for every queued
-    // napi_async_work's pool-thread callback to finish and then runs
-    // complete() on the shutdown drain, matching Node.js. The positive
-    // assertion on stdout catches every crash mode (panic, ASAN abort,
-    // SIGSEGV) without matching on "panic" in stderr; on an unfixed build
-    // the subprocess aborts before printing PASS.
+    // napi_async_work's pool-thread callback to finish before teardown. On an
+    // unfixed build the subprocess aborts before printing PASS.
     it("worker.terminate() with execute callbacks in flight waits for them and does not UAF", async () => {
       const addon = join(__dirname, "napi-app/build/Debug/test_async_work_worker_terminate.node");
       const workerSrc = /* js */ `
@@ -565,7 +562,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       `;
       await using proc = spawn({
         cmd: [bunExe(), "-e", script],
-        env: { ...bunEnv, ADDON: addon, WORKER_SRC: workerSrc },
+        // complete() is not invoked on the terminate path (see PR body), so the
+        // addon's per-work calloc leaks by design. LSan stays off so the crash
+        // assertion below is what decides pass/fail.
+        env: { ...bunEnv, ADDON: addon, WORKER_SRC: workerSrc, ASAN_OPTIONS: "detect_leaks=0:allow_user_segv_handler=1" },
         stdout: "pipe",
         stderr: "pipe",
       });

@@ -1700,4 +1700,54 @@ describe("bundler", () => {
     },
     run: { stdout: "alpha_gamma BETA_VALUE_MARKER" },
   });
+
+  // Companion to the test above for the `export *` shape of #36832: the inner
+  // barrel parses first (discovered directly by the entry) and defers its
+  // unrequested re-exports before the star exporter or the namespace import
+  // are known. The namespace request must still reach the `export *` target
+  // and un-defer its records.
+  itBundled("barrel/NamespaceImportRequestsExportStarTargets", {
+    files: {
+      "/entry.js": /* js */ `
+        import { gamma } from 'pkg-b';
+        import { use } from './big.js';
+        console.log(gamma, use());
+      `,
+      "/big.js":
+        `import * as ns from 'pkg-a';\n` +
+        `export function use() { return take(ns); }\n` +
+        `function take(obj) { return obj.beta; }\n` +
+        Array.from({ length: 5000 }, (_, i) => `export const filler_${i} = ${i};`).join("\n"),
+      "/node_modules/pkg-a/package.json": JSON.stringify({
+        name: "pkg-a",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/pkg-a/index.js": /* js */ `
+        export * from 'pkg-b';
+      `,
+      "/node_modules/pkg-b/package.json": JSON.stringify({
+        name: "pkg-b",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/pkg-b/index.js": /* js */ `
+        export { gamma } from './gamma.js';
+        export { beta } from './beta.js';
+      `,
+      "/node_modules/pkg-b/gamma.js": /* js */ `
+        export const gamma = "gamma";
+      `,
+      "/node_modules/pkg-b/beta.js": /* js */ `
+        export const beta = "BETA_STAR_MARKER";
+      `,
+    },
+    target: "bun",
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("BETA_STAR_MARKER");
+    },
+    run: { stdout: "gamma BETA_STAR_MARKER" },
+  });
 });

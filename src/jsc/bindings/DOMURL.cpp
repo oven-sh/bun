@@ -47,29 +47,20 @@ static bool hasValidParsedHost(const URL& url)
     return !url.hasSpecialScheme();
 }
 
-// WebKit's URLParser runs the host through the platform ICU, whose
-// IdnaMappingTable can predate Unicode 15.1/16.0 (node v26 semantics via
-// ada::idna): old data rejects U+180E outright and maps U+1E9E to "ss".
-// When the authority component of `urlString` contains a delta source code
-// point, return a copy with the Unicode 16 delta applied to the host span
-// only (path/query/fragment are percent-encoded by the parser and must stay
-// untouched). Returns a null String when no rewrite is needed, which is the
-// case for every URL that stays on the common path.
+// Platform ICU may predate Unicode 15.1/16.0 (node v26 uses ada::idna): apply the Unicode 16
+// IDNA delta to the host span only when it contains a delta source code point. Returns a null
+// String when no rewrite is needed (the common path). See NodeURL.cpp for the delta table.
 static String applyIDNADeltaToURLAuthority(const String& urlString, StringView specialBaseScheme = {})
 {
-    // A percent-encoded delta source (e.g. `%E1%A0%8E` for U+180E) is
-    // all-ASCII and intentionally excluded: the delta scans for literal code
-    // units only. The durable fix is bundling Unicode-16 ICU data so the
-    // parser's own percent-decode + domain-to-ASCII handles it uniformly.
+    // Percent-encoded delta sources are all-ASCII and intentionally excluded; the durable fix
+    // is bundling Unicode-16 ICU data so the parser's own domain-to-ASCII handles it uniformly.
     if (urlString.is8Bit() || !urlString.length())
         return {};
 
     StringView view { urlString };
 
-    // The URL parser strips tab/CR/LF everywhere (spec step 3) then leading
-    // C0/space (step 1); mirror both so an embedded tab in the scheme or the
-    // `//` run does not defeat the special-scheme match below. `stripped`
-    // owns the copy when one is needed so `view` stays valid.
+    // Mirror https://url.spec.whatwg.org/#concept-basic-url-parser steps 1/3 (strip C0/tab/CR/LF)
+    // so an embedded tab in the scheme or `//` run does not defeat the special-scheme match below.
     auto isTabOrNewline = [](char16_t ch) { return ch == '\t' || ch == '\n' || ch == '\r'; };
     String stripped;
     if (view.find(isTabOrNewline) != notFound) {
@@ -80,14 +71,9 @@ static String applyIDNADeltaToURLAuthority(const String& urlString, StringView s
     while (scan < view.length() && (view[scan] <= 0x20))
         scan++;
 
-    // Non-special-scheme URLs have opaque hosts and never run IDNA (the host
-    // is UTF-8 percent-encoded verbatim), so only the six special schemes are
-    // eligible. For those, the WHATWG parser's special-authority-ignore-slashes
-    // state consumes any run of '/' and '\\' (including zero) after the colon
-    // and parses whatever follows as the host. One exception: when the input's
-    // scheme equals the base's scheme, the parser enters the relative state
-    // instead unless "//" follows, so the remainder is a path, not a host.
-    // A scheme-relative "//" inherits the base's scheme.
+    // Only the six special schemes run IDNA (https://url.spec.whatwg.org/#special-scheme). The
+    // special-authority-ignore-slashes state consumes any '/'|'\\' run after ':'; same-scheme-as-base
+    // without "//" enters the relative state (path, not host). Scheme-relative "//" inherits base.
     auto isSlash = [](char16_t ch) { return ch == '/' || ch == '\\'; };
     // file: routes through file state/file slash state/file host state: only
     // exactly two slashes then a non-slash introduce a host; file:///x and
@@ -158,11 +144,8 @@ static String applyIDNADeltaToURLAuthority(const String& urlString, StringView s
     if (hostStart < view.length() && view[hostStart] == '[')
         return {};
 
-    // The port span must stay verbatim: the delta's ignored-class entries
-    // (U+180E, U+206A..U+206F) are stripped, which would turn an invalid
-    // non-digit port character into a valid port. With bracketed hosts
-    // already excluded, the last ':' in the remaining span is the port
-    // separator.
+    // Port span must stay verbatim: the delta strips ignored-class code points, which would turn
+    // an invalid non-digit port char into a valid port. Last ':' is the port separator here.
     auto hostAndPort = view.substring(hostStart, authorityEnd - hostStart);
     size_t portColon = hostAndPort.reverseFind(':');
     size_t hostEnd = portColon == notFound ? authorityEnd : hostStart + portColon;

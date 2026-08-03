@@ -56,14 +56,9 @@ fn import_kind_label(kind: ImportKind) -> &'static [u8] {
     }
 }
 
-/// Host-agnostic bare-specifier check for Node ESM error shaping. Node
-/// classifies specifiers platform-independently (URL-based), so this must not
-/// vary by host: relative (`./`, `../`, `.`, `..`), separator-led (`/`, `\`),
-/// and ASCII-letter drive forms (`C:/`, `C:\`) are path-like; everything else
-/// is a package. Unlike host-native `bun_paths::is_absolute`, the drive byte
-/// must be alphabetic — its Windows arm accepts any byte before `:`, which
-/// made `:://x` classify as a module on Windows but a package on POSIX
-/// (Node says "Cannot find package '::'" on both).
+/// Host-agnostic bare-specifier check for Node ESM error shaping. Must not vary by host:
+/// relative, separator-led, and ASCII-letter drive forms are path-like; everything else is a
+/// package. Unlike `bun_paths::is_absolute`, the drive byte must be alphabetic.
 fn is_bare_esm_specifier(s: &[u8]) -> bool {
     let is_sep = |b: u8| b == b'/' || b == b'\\';
     match s {

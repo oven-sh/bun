@@ -2097,10 +2097,8 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             // ObjectPrototype is allowed because %Object.prototype% is an immutable
             // prototype exotic object that the spec carves out of this rejection.
             if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info()) {
-                // A MessageChannel's ports would need transferring, and that is
-                // the error node reports for one found in a message (its
-                // MessageChannel is a plain object whose ports are discovered
-                // during the clone walk).
+                // node reports this error for a MessageChannel found in a message
+                // (its ports would need transferring).
                 if (inObject->inherits<JSMessageChannel>()) {
                     WebCore::propagateException(*m_lexicalGlobalObject, scope,
                         Exception { DataCloneError, "Object that needs transfer was found in message but not listed in transferList"_s });

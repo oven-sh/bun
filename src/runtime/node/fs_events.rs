@@ -399,12 +399,17 @@ impl FSEventsLoop {
             if task.is_null() {
                 break;
             }
-            // SAFETY: task is a valid *mut ConcurrentTask from the queue
-            let task = unsafe { &mut *task };
-            task.task.run();
-            if task.auto_delete {
-                // SAFETY: was heap-allocated in enqueue_task_concurrent
-                drop(unsafe { bun_core::heap::take(std::ptr::from_mut::<ConcurrentTask>(task)) });
+            // SAFETY: task is a valid *mut ConcurrentTask from the queue; this
+            // thread owns it exclusively once popped. Scoped accesses so no
+            // reference is live when the node is freed below.
+            let auto_delete = unsafe {
+                (*task).task.run();
+                (*task).auto_delete
+            };
+            if auto_delete {
+                // SAFETY: was heap-allocated in enqueue_task_concurrent; freed
+                // through the queue pointer (allocation provenance).
+                drop(unsafe { bun_core::heap::take(task) });
             }
         }
     }

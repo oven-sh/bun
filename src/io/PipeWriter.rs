@@ -300,7 +300,7 @@ pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
     pub handle: PollOrFd,
     /// `None` only between `Default` and `set_parent`; every dispatch path
     /// assumes it is set (see SAFETY comments at the call sites).
-    pub parent: Option<bun_ptr::ParentRef<Parent>>,
+    pub parent: Option<bun_ptr::ParentRef<Parent, bun_ptr::Mut>>,
     pub(crate) is_done: bool,
     pub(crate) pollable: bool,
     pub(crate) closed_without_reporting: bool,
@@ -523,9 +523,9 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     pub fn set_parent(&mut self, parent: *mut Parent) {
         // Reject null up front: every dispatch path past this point assumes
         // `self.parent` is set (see the type-invariant doc on `parent_event_loop`).
-        self.parent = Some(bun_ptr::ParentRef::from(
-            core::ptr::NonNull::new(parent).expect("set_parent: parent must not be null"),
-        ));
+        let parent = core::ptr::NonNull::new(parent).expect("set_parent: parent must not be null");
+        // SAFETY: caller passes the live owning `Parent` (write provenance).
+        self.parent = Some(unsafe { bun_ptr::ParentRef::from_raw_mut(parent.as_ptr()) });
         // reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle

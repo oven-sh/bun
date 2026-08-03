@@ -297,7 +297,7 @@ pub struct PackageManager {
     // Set once in `init()`/`init_with_runtime()` to the process-singleton
     // `DotEnv.Loader` (leaked allocation; outlives the manager). `BackRef`
     // encapsulates the liveness invariant so `env()` is a safe accessor.
-    pub env: Option<bun_ptr::BackRef<dot_env::Loader>>,
+    pub env: Option<bun_ptr::BackRef<dot_env::Loader, bun_ptr::Mut>>,
     pub progress: Progress,
     pub(crate) downloads_node: Option<*mut ProgressNode>, // BORROW_FIELD — points into self.progress
     pub scripts_node: Option<NonNull<ProgressNode>>, // points to a caller stack-local Progress node; only valid while that caller frame is live

@@ -52,7 +52,7 @@ struct ProcessInfo {
 // self-referential; kept as raw pointers per LIFETIMES.tsv (BACKREF).
 pub(crate) struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
-    state: bun_ptr::BackRef<State<'a>>,
+    state: bun_ptr::BackRef<State<'a>, bun_ptr::Mut>,
 
     stdout: BufferedReader,
     stderr: BufferedReader,
@@ -959,8 +959,8 @@ pub(crate) fn run_scripts_with_filter(
     // Borrows; `state` is not moved after this point.
     let mut handles_vec: Vec<ProcessHandle> = Vec::with_capacity(scripts.len());
     // SAFETY: `state` is not moved after this point; outlives every `ProcessHandle`.
-    let state_ptr: bun_ptr::BackRef<State> =
-        unsafe { bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!(state)) };
+    let state_ptr: bun_ptr::BackRef<State, bun_ptr::Mut> =
+        unsafe { bun_ptr::BackRef::from_raw_mut(core::ptr::addr_of_mut!(state)) };
     let mut map: StringHashMap<Vec<*mut ProcessHandle>> = StringHashMap::default();
     for script in scripts.iter() {
         handles_vec.push(ProcessHandle {

@@ -103,9 +103,10 @@ macro_rules! dispatch {
         let this = $self;
         macro_rules! arm {
             ($Ty:ty) => {{
-                // SAFETY: tag matched; ptr is non-null and exclusively
-                // accessed for the duration of the dispatch arm.
-                let $ctx = unsafe { &mut *this.ptr.cast::<$Ty>() };
+                // SAFETY: tag matched; ptr is non-null and live for the
+                // duration of the dispatch arm. `RequestContext` is
+                // interior-mutable, so a shared reborrow suffices.
+                let $ctx = unsafe { &*this.ptr.cast::<$Ty>() };
                 type $T = $Ty;
                 let _ = core::marker::PhantomData::<$T>;
                 $body
@@ -148,8 +149,10 @@ macro_rules! dispatch {
 impl AnyRequestContext {
     pub(crate) fn set_additional_on_abort_callback(self, cb: Option<AdditionalOnAbortCallback>) {
         dispatch!(self, (), |_T, ctx| {
-            debug_assert!(ctx.additional_on_abort.is_none());
-            ctx.additional_on_abort = cb;
+            if let Some(old) = ctx.additional_on_abort.replace(cb) {
+                debug_assert!(false, "additional_on_abort set twice");
+                old.deref();
+            }
         })
     }
 
@@ -183,7 +186,7 @@ impl AnyRequestContext {
 
     pub(crate) fn detach_request(self) {
         dispatch!(self, (), |_T, ctx| {
-            ctx.req = None;
+            ctx.req.set(None);
         })
     }
 
@@ -194,10 +197,9 @@ impl AnyRequestContext {
                 // H3 populates url/headers eagerly
                 return;
             }
-            // `ctx.req` is `Option<*mut Req<SSL,H3>>` where
             // `Req<_,_> = c_void` (erased handle). For non-H3 the underlying
             // type is always `uws::Request`, so the cast is purely nominal.
-            ctx.req = Some(req.cast::<c_void>());
+            ctx.req.set(Some(req.cast::<c_void>()));
         })
     }
 
@@ -207,7 +209,7 @@ impl AnyRequestContext {
                 // url/headers already on the Request
                 return None;
             }
-            ctx.req.map(|p| p.cast::<uws::Request>())
+            ctx.req.get().map(|p| p.cast::<uws::Request>())
         })
     }
 
@@ -235,7 +237,7 @@ impl AnyRequestContext {
     /// JS thread.
     pub(crate) fn dev_server_mut(self) -> Option<*mut crate::bake::DevServer::DevServer> {
         dispatch!(self, None, |_T, ctx| {
-            let server = ctx.server?.as_ptr();
+            let server = ctx.server.get()?.as_ptr();
             // SAFETY: `ctx.server` is a non-null backref that outlives this context
             // and `dev_server` is a `Box` field never moved while requests are in
             // flight, so dereferencing for exclusive access on the JS thread is sound.

@@ -589,7 +589,7 @@ impl Terminal {
         // instrumentation showed the final terminal entering close_internal
         // with READER_DONE already true and zero dispatches for the whole
         // run. See OHOS_TEST_TODO.md T03.
-        terminal.reader.with_mut(|r| r.read());
+        unsafe { IOReader::read(terminal.reader.as_ptr()) };
 
         // Replay an exit notification that fired during startup, before the
         // wrapper and callbacks above existed. `writer.start()`,
@@ -745,9 +745,8 @@ impl Terminal {
         let guard = scopeguard::guard((), |()| self.deref_());
         if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
             // SAFETY: single JS thread; re-entrant user JS (data callback may
-            // call `terminal.close()`) is handled via the raw-pointer dispatch
-            // convention used by `__bun_run_file_poll` for BUFFERED_READER.
-            unsafe { (*self.reader.as_ptr()).read() };
+            // call `terminal.close()`) is handled by `read`'s raw dispatch.
+            unsafe { IOReader::read(self.reader.as_ptr()) };
             if self.flags.get().contains(Flags::CLOSED) {
                 return;
             }
@@ -759,7 +758,7 @@ impl Terminal {
         let flags = self.flags.get();
         if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
             // SAFETY: same as the `read()` call above.
-            unsafe { (*self.reader.as_ptr()).read() };
+            unsafe { IOReader::read(self.reader.as_ptr()) };
         }
         // An inline terminal whose child has exited no longer keeps the event
         // loop alive; the polls stay registered so grandchild output still

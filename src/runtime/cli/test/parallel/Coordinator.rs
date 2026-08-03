@@ -119,13 +119,16 @@ impl<'a> Coordinator<'a> {
 
     pub(crate) fn drive(&mut self) {
         let _ = self.spawn_worker();
+        self.run_pending_reaps();
         while !self.is_done() {
             if abort_handler::SHOULD_ABORT.load(Ordering::Acquire) {
                 self.abort_all();
                 return;
             }
             self.vm.event_loop_ref().tick();
+            self.run_pending_reaps();
             self.maybe_scale_up();
+            self.run_pending_reaps();
             if self.is_done() {
                 break;
             }
@@ -147,6 +150,7 @@ impl<'a> Coordinator<'a> {
             } else {
                 self.vm.event_loop_ref().auto_tick();
             }
+            self.run_pending_reaps();
         }
     }
 
@@ -517,16 +521,37 @@ impl<'a> Coordinator<'a> {
     }
 
     pub(crate) fn try_reap(&mut self, w: &mut Worker) {
-        // SpawnStatus is not Copy (Err arm owns a path); take()
-        // instead of pattern-match-by-copy.
-        if w.exit_status.is_none() || !w.ipc.done {
+        if w.exit_status.is_none() || !w.ipc.done.get() {
             return;
         }
-        let status = w.exit_status.take().expect("checked above");
-        self.reap_worker(w, &status);
+        w.reap_pending = true;
     }
 
-    fn reap_worker(&mut self, w: &mut Worker, status: &SpawnStatus) {
+    fn run_pending_reaps(&mut self) {
+        let n = self.spawned_count as usize;
+        for i in 0..n {
+            // SAFETY: `i < spawned_count <= workers.len()`. `base` is re-derived
+            // each iteration: `reap_worker`'s slot walks (`as_mut_ptr` in the
+            // abort paths) retag the buffer, popping any earlier derivation.
+            let w: *mut Worker = unsafe { self.workers.as_mut_ptr().add(i) };
+            // SAFETY: `w` is a live slot; short place accesses only.
+            let status = unsafe {
+                if !core::mem::take(&mut (*w).reap_pending) {
+                    continue;
+                }
+                // SpawnStatus is not Copy (Err arm owns a path); take()
+                // instead of pattern-match-by-copy.
+                (*w).exit_status
+                    .take()
+                    .expect("reap_pending set only after exit_status")
+            };
+            self.reap_worker(i, &status);
+        }
+    }
+
+    fn reap_worker(&mut self, slot: usize, status: &SpawnStatus) {
+        // SAFETY: `slot < spawned_count <= workers.len()`; fresh root derivation, like each reborrow below.
+        let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
         // Decrement here (not in onProcessExit) so drive() keeps pumping until
         // the IPC pipe has been drained and this reap actually runs.
         self.live_workers -= 1;
@@ -551,12 +576,16 @@ impl<'a> Coordinator<'a> {
                 self.account_crash(idx, status);
             }
             Output::flush();
+            // SAFETY: fresh root derivation — `account_crash` can reach `bail_out`, which retags the slots.
+            let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
             w.inflight = None;
             if panicked {
                 self.abort_on_worker_panic(idx, status);
             }
         }
 
+        // SAFETY: fresh derivation — `abort_on_worker_panic` above retags the slots.
+        let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
         if let Some(p) = w.process.take() {
             // SAFETY: `p` is the live `*mut Process` from `to_process`; sole owner now.
             unsafe {
@@ -567,6 +596,8 @@ impl<'a> Coordinator<'a> {
 
         let mut respawned = false;
         if !self.bailed && self.has_undispatched_files() {
+            // SAFETY: fresh derivation — `has_undispatched_files` read the slots.
+            let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
             w.ipc = Default::default();
             // from_mut: keep write provenance on the stored backref (see spawn_worker).
             let w_ptr = std::ptr::from_mut::<Worker>(w).cast_const();
@@ -589,6 +620,8 @@ impl<'a> Coordinator<'a> {
             // Explicit early release: `w` is a borrowed slot in self.workers, so
             // Drop won't fire until Coordinator teardown. Assigning defaults
             // drops the old values now (pipe FDs, capture buffer).
+            // SAFETY: fresh derivation — `abort_queued_files` may retag the slots.
+            let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
             w.ipc = Default::default();
             w.out = WorkerPipe::new(core::ptr::null());
             w.err = WorkerPipe::new(core::ptr::null());

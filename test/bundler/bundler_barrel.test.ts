@@ -1638,4 +1638,66 @@ describe("bundler", () => {
     compile: true,
     run: { stdout: "ok" },
   });
+
+  // Regression for #36832: a namespace import of a barrel must re-request every
+  // re-exported name from the module it comes from, even when that module sits
+  // behind a second barrel that was already parsed with only a partial request
+  // set. Parse-completion order decides which case you get, so this test
+  // biases the order: the file holding "import * as ns" is made large enough
+  // that every small barrel file is parsed (and its unused re-exports
+  // deferred) long before the namespace request arrives. Without the fix the
+  // inner barrel's deferred records are never un-deferred, the module body is
+  // silently dropped, and the output references undeclared symbols.
+  itBundled("barrel/NamespaceImportUndefersChainedBarrels", {
+    files: {
+      "/entry.js": /* js */ `
+        import { alpha } from 'pkg-a';
+        import { use } from './big.js';
+        console.log(alpha, use());
+      `,
+      "/big.js":
+        `import * as ns from 'pkg-a';\n` +
+        `export function use() { return take(ns); }\n` +
+        `function take(obj) { return obj.beta; }\n` +
+        Array.from({ length: 5000 }, (_, i) => `export const filler_${i} = ${i};`).join("\n"),
+      "/node_modules/pkg-a/package.json": JSON.stringify({
+        name: "pkg-a",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/pkg-a/index.js": /* js */ `
+        export { alpha } from './alpha.js';
+        export { beta } from 'pkg-b';
+      `,
+      "/node_modules/pkg-a/alpha.js": /* js */ `
+        import { gamma } from 'pkg-b';
+        export const alpha = "alpha_" + gamma;
+      `,
+      "/node_modules/pkg-b/package.json": JSON.stringify({
+        name: "pkg-b",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/pkg-b/index.js": /* js */ `
+        export { gamma } from './gamma.js';
+        export { beta } from './beta.js';
+      `,
+      "/node_modules/pkg-b/gamma.js": /* js */ `
+        export const gamma = "gamma";
+      `,
+      "/node_modules/pkg-b/beta.js": /* js */ `
+        export const beta = "BETA_VALUE_MARKER";
+      `,
+    },
+    target: "bun",
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      // The body of pkg-b/beta.js must land in the output; when its record
+      // stays deferred the module is dropped while ns.beta still references
+      // its symbol.
+      api.expectFile("/out/entry.js").toContain("BETA_VALUE_MARKER");
+    },
+    run: { stdout: "alpha_gamma BETA_VALUE_MARKER" },
+  });
 });

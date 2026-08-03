@@ -612,6 +612,41 @@ pub(crate) fn schedule_barrel_deferred_imports(
         }
     }
 
+    // `export * from` re-exports every name of the target, so the target must
+    // be treated as fully requested. applyBarrelOptimization's
+    // IS_EXPORT_STAR_TARGET check covers this only when the star exporter
+    // parses before the target; record the request here so the outcome does
+    // not depend on parse-completion order.
+    let star_record_indices: Vec<u32> = this.graph.ast.items_export_star_import_records()
+        [result_source_index as usize]
+        .to_vec();
+    for star_idx in star_record_indices {
+        if star_idx as usize >= file_import_records.len() {
+            continue;
+        }
+        let ir = &file_import_records.as_slice()[star_idx as usize];
+        if ir.flags.contains(import_record::Flags::IS_INTERNAL) {
+            continue;
+        }
+        let target = if ir.source_index.is_valid() {
+            ir.source_index.get()
+        } else if let Some(map) = path_to_source_index_map {
+            match map.get_path(&ir.path) {
+                Some(t) => t,
+                None => continue,
+            }
+        } else {
+            continue;
+        };
+        let (_, value) = RequestedExports::entry(&mut this.requested_exports, target);
+        *value = RequestedExports::All;
+        queue.push(BarrelWorkItem {
+            barrel_source_index: target,
+            alias: b"",
+            is_star: true,
+        });
+    }
+
     // Also seed the BFS with exports previously requested from THIS file
     // that couldn't propagate because this file wasn't parsed yet.
     // This handles the case where file A requests export "d" from file B,
@@ -667,6 +702,13 @@ pub(crate) fn schedule_barrel_deferred_imports(
         if qi >= initial_queue_len {
             let (found, value) = RequestedExports::entry(&mut this.requested_exports, barrel_idx);
             if item_is_star {
+                // An already-All barrel has had (or will have, once parsed)
+                // its full namespace propagated; skipping keeps star
+                // propagation terminating on `export *` cycles.
+                if found && matches!(value, RequestedExports::All) {
+                    qi += 1;
+                    continue;
+                }
                 *value = RequestedExports::All;
             } else {
                 match value {
@@ -700,6 +742,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         if item_is_star {
             // Read flags by index, then mutate (borrowck).
             let len = barrel_ir.len();
+            let mut un_deferred_any = false;
             for idx in 0..len {
                 let flags = barrel_ir.as_slice()[idx].flags;
                 if flags.contains(import_record::Flags::IS_UNUSED)
@@ -707,8 +750,93 @@ pub(crate) fn schedule_barrel_deferred_imports(
                 {
                     if un_defer_record(barrel_ir, u32::try_from(idx).unwrap()) {
                         barrels_to_resolve.put(barrel_idx, ())?;
+                        un_deferred_any = true;
                     }
                 }
+            }
+            // Un-deferred records have no source_index until resolved; resolve
+            // now so the namespace request can keep propagating below.
+            if un_deferred_any {
+                newly_scheduled +=
+                    resolve_barrel_records(this, barrel_idx, &mut barrels_to_resolve);
+            }
+
+            // A namespace request covers every export of this barrel, so each
+            // re-exported name must be requested from the module it comes
+            // from, and `export *` targets must be fully requested in turn.
+            // Without this, names this barrel re-exports from an
+            // already-parsed inner barrel are never requested there and the
+            // inner barrel's records stay deferred while the namespace object
+            // still references their symbols.
+            struct StarPush {
+                target: u32,
+                alias: Option<bun_ast::StoreStr>,
+                is_star: bool,
+            }
+            let mut pushes: Vec<StarPush> = Vec::new();
+            {
+                let irs = &this.graph.ast.items_import_records()[barrel_idx as usize];
+                let named_exports = &this.graph.ast.items_named_exports()[barrel_idx as usize];
+                let named_imports = &this.graph.ast.items_named_imports()[barrel_idx as usize];
+                for entry in named_exports.values() {
+                    let Some(imp) = named_imports.get(&entry.ref_) else {
+                        continue;
+                    };
+                    if imp.import_record_index as usize >= irs.len() {
+                        continue;
+                    }
+                    let rec = &irs.as_slice()[imp.import_record_index as usize];
+                    if rec.flags.contains(import_record::Flags::IS_INTERNAL) {
+                        continue;
+                    }
+                    if !rec.source_index.is_valid() {
+                        continue;
+                    }
+                    if imp.alias_is_star {
+                        pushes.push(StarPush {
+                            target: rec.source_index.get(),
+                            alias: None,
+                            is_star: true,
+                        });
+                    } else if imp.alias.is_some() {
+                        pushes.push(StarPush {
+                            target: rec.source_index.get(),
+                            alias: imp.alias,
+                            is_star: false,
+                        });
+                    }
+                }
+                for &star_idx in this.graph.ast.items_export_star_import_records()
+                    [barrel_idx as usize]
+                    .iter()
+                {
+                    if (star_idx as usize) >= irs.len() {
+                        continue;
+                    }
+                    let rec = &irs.as_slice()[star_idx as usize];
+                    if rec.flags.contains(import_record::Flags::IS_INTERNAL) {
+                        continue;
+                    }
+                    if rec.source_index.is_valid() {
+                        pushes.push(StarPush {
+                            target: rec.source_index.get(),
+                            alias: None,
+                            is_star: true,
+                        });
+                    }
+                }
+            }
+            for p in pushes {
+                queue.push(BarrelWorkItem {
+                    barrel_source_index: p.target,
+                    // SAFETY-equivalent to the existing alias pushes: arena-
+                    // backed `StoreStr` valid for the bundler-arena lifetime.
+                    alias: match p.alias {
+                        Some(a) => a.slice(),
+                        None => b"",
+                    },
+                    is_star: p.is_star,
+                });
             }
             qi += 1;
             continue;

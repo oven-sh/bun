@@ -49,6 +49,7 @@ impl Mutex {
     /// Tries to acquire the mutex without blocking the caller's thread.
     /// Returns `false` if the calling thread would have to block to acquire it.
     /// Otherwise, returns `true` and the caller should `unlock()` the Mutex to release it.
+    #[cfg(debug_assertions)]
     pub fn try_lock(&self) -> bool {
         self.impl_.try_lock()
     }
@@ -157,7 +158,7 @@ pub(crate) struct DebugImpl {
 
 #[cfg(debug_assertions)]
 impl DebugImpl {
-    pub(crate) const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             locking_thread: AtomicU64::new(0),
             impl_: ReleaseImpl::new(),
@@ -218,6 +219,7 @@ unsafe impl Send for WindowsImpl {}
 unsafe extern "system" {
     safe fn AcquireSRWLockExclusive(lock: &core::cell::UnsafeCell<bun_sys::windows::SRWLOCK>);
     // Returns BOOLEAN (u8), not BOOL — compare against 0, not the i32 `FALSE`.
+    #[cfg(debug_assertions)]
     safe fn TryAcquireSRWLockExclusive(
         lock: &core::cell::UnsafeCell<bun_sys::windows::SRWLOCK>,
     ) -> u8;
@@ -225,12 +227,13 @@ unsafe extern "system" {
 
 #[cfg(windows)]
 impl WindowsImpl {
-    pub(crate) const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             srwlock: core::cell::UnsafeCell::new(bun_sys::windows::SRWLOCK_INIT),
         }
     }
 
+    #[cfg(debug_assertions)]
     fn try_lock(&self) -> bool {
         TryAcquireSRWLockExclusive(&self.srwlock) != 0
     }
@@ -276,6 +279,7 @@ pub(crate) struct OsUnfairLock {
 // — so `safe fn` discharges the link-time proof and callers need no `unsafe`.
 #[cfg(target_vendor = "apple")]
 unsafe extern "C" {
+    #[cfg(debug_assertions)]
     safe fn os_unfair_lock_trylock(lock: &core::cell::UnsafeCell<OsUnfairLock>) -> bool;
     safe fn os_unfair_lock_lock(lock: &core::cell::UnsafeCell<OsUnfairLock>);
     safe fn os_unfair_lock_unlock(lock: &core::cell::UnsafeCell<OsUnfairLock>);
@@ -283,12 +287,13 @@ unsafe extern "C" {
 
 #[cfg(target_vendor = "apple")]
 impl DarwinImpl {
-    pub(crate) const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             oul: core::cell::UnsafeCell::new(OsUnfairLock { _opaque: 0 }),
         }
     }
 
+    #[cfg(debug_assertions)]
     fn try_lock(&self) -> bool {
         os_unfair_lock_trylock(&self.oul)
     }
@@ -310,7 +315,7 @@ pub struct FutexImpl {
 
 #[cfg(not(any(windows, target_vendor = "apple")))]
 impl FutexImpl {
-    pub(crate) const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             state: AtomicU32::new(0),
         }
@@ -396,17 +401,17 @@ impl FutexImpl {
 
 // These have to be a size known to C.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
+unsafe extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
     // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer.
     unsafe { (*ptr).lock() }
 }
 
 // These have to be a size known to C.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
+unsafe extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
     // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer that this thread locked.
     unsafe { (*ptr).unlock() }
 }
 
 #[unsafe(no_mangle)]
-pub(crate) static Bun__lock__size: usize = core::mem::size_of::<ReleaseImpl>();
+static Bun__lock__size: usize = core::mem::size_of::<ReleaseImpl>();

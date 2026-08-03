@@ -17,14 +17,14 @@ bun_output::declare_scope!(Store, visible);
 
 #[derive(Copy, Clone)]
 pub struct Ids {
-    pub dep_id: DependencyID,
-    pub pkg_id: PackageID,
+    pub(crate) dep_id: DependencyID,
+    pub(crate) pkg_id: PackageID,
 }
 
 pub struct Store {
     /// Accessed from multiple threads
-    pub entries: entry::List,
-    pub nodes: node::List,
+    pub(crate) entries: entry::List,
+    pub(crate) nodes: node::List,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -71,20 +71,20 @@ impl<T> fmt::Debug for NewId<T> {
 impl<T> NewId<T> {
     const MAX: u32 = u32::MAX;
 
-    pub const ROOT: Self = Self(0, PhantomData);
-    pub const INVALID: Self = Self(Self::MAX, PhantomData);
+    pub(crate) const ROOT: Self = Self(0, PhantomData);
+    pub(crate) const INVALID: Self = Self(Self::MAX, PhantomData);
 
-    pub fn from(id: u32) -> Self {
+    pub(crate) fn from(id: u32) -> Self {
         debug_assert!(id != Self::MAX);
         Self(id, PhantomData)
     }
 
-    pub fn get(self) -> u32 {
+    pub(crate) fn get(self) -> u32 {
         debug_assert!(self != Self::INVALID);
         self.0
     }
 
-    pub fn try_get(self) -> Option<u32> {
+    pub(crate) fn try_get(self) -> Option<u32> {
         if self == Self::INVALID {
             None
         } else {
@@ -158,7 +158,7 @@ pub(crate) trait OrderedArraySetCtx<T: Copy> {
 }
 
 pub struct OrderedArraySet<T> {
-    pub list: Vec<T>,
+    pub(crate) list: Vec<T>,
 }
 
 impl<T: Clone> Clone for OrderedArraySet<T> {
@@ -176,7 +176,7 @@ impl<T> Default for OrderedArraySet<T> {
 }
 
 impl<T> OrderedArraySet<T> {
-    pub(crate) const EMPTY: Self = Self { list: Vec::new() };
+    const EMPTY: Self = Self { list: Vec::new() };
 
     pub(crate) fn init_capacity(n: usize) -> Result<Self, AllocError> {
         // allocator param dropped — global mimalloc
@@ -339,14 +339,14 @@ pub mod entry {
             Self(int)
         }
 
-        pub(crate) fn cast(self) -> u64 {
+        fn cast(self) -> u64 {
             self.0
         }
     }
 
     pub struct StorePathFormatter<'a> {
-        pub entry_id: Id,
-        pub store: &'a Store,
+        pub(crate) entry_id: Id,
+        pub(crate) store: &'a Store,
         pub lockfile: &'a Lockfile,
     }
 
@@ -488,11 +488,11 @@ pub mod entry {
 
     #[derive(Copy, Clone)]
     pub struct DependenciesItem {
-        pub entry_id: Id,
+        pub(crate) entry_id: Id,
 
         // TODO: this can be removed, and instead dep_id can be retrieved through:
         // entry_id -> node_id -> node_dep_ids
-        pub dep_id: DependencyID,
+        pub(crate) dep_id: DependencyID,
     }
 
     pub(crate) struct DependenciesOrderedArraySetCtx<'a> {
@@ -545,7 +545,7 @@ pub mod entry {
 }
 
 pub use entry::Entry;
-pub use entry::EntryColumns;
+pub(crate) use entry::EntryColumns;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Node
@@ -601,14 +601,14 @@ pub mod node {
 
     #[derive(Copy, Clone)]
     pub struct TransitivePeer {
-        pub dep_id: DependencyID,
-        pub pkg_id: PackageID,
-        pub auto_installed: bool,
+        pub(crate) dep_id: DependencyID,
+        pub(crate) pkg_id: PackageID,
+        pub(crate) auto_installed: bool,
     }
 
-    pub struct TransitivePeerOrderedArraySetCtx<'a> {
-        pub string_buf: &'a [u8],
-        pub pkg_names: &'a [SemverString],
+    pub(crate) struct TransitivePeerOrderedArraySetCtx<'a> {
+        pub(crate) string_buf: &'a [u8],
+        pub(crate) pkg_names: &'a [SemverString],
     }
 
     impl<'a> OrderedArraySetCtx<TransitivePeer> for TransitivePeerOrderedArraySetCtx<'a> {
@@ -635,4 +635,4 @@ pub mod node {
 }
 
 pub use node::Node;
-pub use node::NodeColumns;
+pub(crate) use node::NodeColumns;

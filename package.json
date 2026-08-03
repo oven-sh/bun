@@ -35,6 +35,7 @@
     "ci:logs": "bun scripts/find-build.ts --logs",
     "ci:watch": "bun scripts/find-build.ts --watch",
     "ci:slowest": "bun scripts/ci-slowest-tests.ts",
+    "ci:parallel-allowlist": "node scripts/update-parallel-allowlist.mjs",
     "pr:comments": "bun scripts/pr-comments.ts",
     "watch": "cargo watch -x 'check --workspace --message-format=short'",
     "watch-windows": "cargo watch -x \"check --workspace --target x86_64-pc-windows-msvc --message-format=short\"",

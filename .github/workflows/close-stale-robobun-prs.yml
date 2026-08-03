@@ -1,4 +1,7 @@
 name: Close stale robobun PRs
+permissions:
+  contents: read
+
 on:
   schedule:
     - cron: "30 0 * * *"

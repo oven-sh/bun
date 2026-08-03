@@ -21,11 +21,7 @@
 #include "JSEventListener.h"
 
 #include "BunProcess.h"
-// #include "BeforeUnloadEvent.h"
-// #include "ContentSecurityPolicy.h"
 #include "EventNames.h"
-// #include "Frame.h"
-// #include "HTMLElement.h"
 #include "JSDOMConvertNullable.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMGlobalObject.h"
@@ -114,16 +110,6 @@ inline void JSEventListener::visitJSFunctionImpl(Visitor& visitor)
 
 void JSEventListener::visitJSFunction(AbstractSlotVisitor& visitor) { visitJSFunctionImpl(visitor); }
 void JSEventListener::visitJSFunction(SlotVisitor& visitor) { visitJSFunctionImpl(visitor); }
-
-// static void handleBeforeUnloadEventReturnValue(BeforeUnloadEvent& event, const String& returnValue)
-// {
-//     if (returnValue.isNull())
-//         return;
-
-//     event.preventDefault();
-//     if (event.returnValue().isEmpty())
-//         event.setReturnValue(returnValue);
-// }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEmitUncaughtException, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -291,19 +277,6 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     }
 
     // Do return value handling for event handlers (https://html.spec.whatwg.org/#the-event-handler-processing-algorithm).
-
-    // if (event.type() == eventNames().beforeunloadEvent) {
-    //     // This is a OnBeforeUnloadEventHandler, and therefore the return value must be coerced into a String.
-    //     if (is<BeforeUnloadEvent>(event)) {
-    //         String resultStr = convert<IDLNullable<IDLDOMString>>(*lexicalGlobalObject, retval);
-    //         if (scope.exception()) [[unlikely]] {
-    //             if (handleExceptionIfNeeded(scope.exception()))
-    //                 return;
-    //         }
-    //         handleBeforeUnloadEventReturnValue(downcast<BeforeUnloadEvent>(event), resultStr);
-    //     }
-    //     return;
-    // }
 
     if (retval.isFalse())
         event.preventDefault();

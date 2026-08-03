@@ -4,7 +4,7 @@ use super::{throw, Expect};
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_be_within(
+    pub(crate) fn to_be_within(
         &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -16,8 +16,7 @@ impl Expect {
             "<green>start<r><d>, <r><green>end<r>",
         )?;
 
-        let _arguments = frame.arguments_old::<2>();
-        let arguments = _arguments.slice();
+        let arguments = frame.arguments();
 
         if arguments.len() < 1 {
             return Err(global.throw_invalid_arguments(format_args!(

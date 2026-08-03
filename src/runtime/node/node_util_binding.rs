@@ -9,8 +9,7 @@ use bun_dotenv::env_loader as envloader;
 
 #[bun_jsc::host_fn]
 pub(crate) fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<1>();
-    let arguments = arguments.slice();
+    let arguments = frame.arguments();
     if arguments.is_empty() {
         return Err(global.throw_not_enough_arguments("internalErrorName", 1, arguments.len()));
     }
@@ -136,14 +135,14 @@ fn split(
     bun_string_jsc::to_js_array(global, OwnedString::as_raw_slice(&lines))
 }
 
-pub(crate) struct SplitNewlineIterator<'a, T> {
+struct SplitNewlineIterator<'a, T> {
     buffer: &'a [T],
     index: Option<usize>,
 }
 
 impl<'a, T: Copy + PartialEq + From<u8>> SplitNewlineIterator<'a, T> {
     /// Returns a slice of the next field, or null if splitting is complete.
-    pub(crate) fn next(&mut self) -> Option<&'a [T]> {
+    fn next(&mut self) -> Option<&'a [T]> {
         let start = self.index?;
 
         if let Some(delim_start) = self.buffer[start..]
@@ -178,7 +177,7 @@ pub(crate) fn normalize_encoding(global: &JSGlobalObject, frame: &CallFrame) -> 
 }
 
 #[bun_jsc::host_fn]
-pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let content = frame.argument(0);
     validators::validate_string(global, content, "content")?;
 
@@ -186,13 +185,11 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     // before slicing.
     let str = content.to_js_string(global)?.to_slice(global);
 
-    let mut map = envloader::Map::init();
-    let mut p = envloader::Loader::init(&mut map);
+    let mut p = envloader::Loader::init();
     p.load_from_string::<true, false>(str.slice())?;
-    drop(p);
 
-    let obj = JSValue::create_empty_object(global, map.map.count());
-    for (k, v) in map.map.iter() {
+    let obj = JSValue::create_empty_object(global, p.map.map.count());
+    for (k, v) in p.map.map.iter() {
         obj.put(
             global,
             ZigString::init_utf8(k),

@@ -23,29 +23,27 @@ use bun_resolver::fs::FileSystem;
 use bun_sys::FdDirExt;
 type Error = crate::Error;
 
-const MAX_DECOMPRESSED_TARBALL_SIZE: usize = 2 * 1024 * 1024 * 1024;
-
 pub struct ExtractTarball {
-    pub name: StringOrTinyString,
-    pub resolution: Resolution,
+    pub(crate) name: StringOrTinyString,
+    pub(crate) resolution: Resolution,
     /// Borrowed view of `PackageManager`'s cache directory fd; the manager
     /// owns and closes it, so this stays a non-owning raw `Fd`.
-    pub cache_dir: Fd,
+    pub(crate) cache_dir: Fd,
     /// Borrowed view of `PackageManager`'s temp directory fd (same ownership
     /// story as `cache_dir`).
-    pub temp_dir: Fd,
-    pub dependency_id: DependencyID,
-    pub skip_verify: bool, // = false
-    pub in_trusted_dependencies: bool,
-    pub integrity: Integrity, // = Integrity::default()
-    pub url: StringOrTinyString,
+    pub(crate) temp_dir: Fd,
+    pub(crate) dependency_id: DependencyID,
+    pub(crate) skip_verify: bool, // = false
+    pub(crate) in_trusted_dependencies: bool,
+    pub(crate) integrity: Integrity, // = Integrity::default()
+    pub(crate) url: StringOrTinyString,
     /// BACKREF: PackageManager owns the task pool that owns this struct.
-    pub package_manager: bun_ptr::BackRef<PackageManager>,
+    pub(crate) package_manager: bun_ptr::BackRef<PackageManager>,
 }
 
 impl ExtractTarball {
     #[inline]
-    pub fn run(&self, log: &mut bun_ast::Log, bytes: &[u8]) -> Result<ExtractData, Error> {
+    pub(crate) fn run(&self, log: &mut bun_ast::Log, bytes: &[u8]) -> Result<ExtractData, Error> {
         if !self.skip_verify && self.integrity.tag.is_supported() {
             if !self.integrity.verify(bytes) {
                 log.add_error_fmt(
@@ -188,7 +186,7 @@ impl ExtractTarball {
     /// package. Shared by the buffered `extract()` path below and the
     /// streaming extractor in `TarballStream.rs` so both pick identical
     /// temp-dir and cache-folder names.
-    pub fn name_and_basename(&self) -> (&[u8], &[u8]) {
+    pub(crate) fn name_and_basename(&self) -> (&[u8], &[u8]) {
         let name: &[u8] = if !self.name.slice().is_empty() {
             self.name.slice()
         } else {
@@ -281,12 +279,9 @@ impl ExtractTarball {
             };
 
             use bun_libarchive::Archiver;
-            use bun_zlib as Zlib;
             let mut zlib_pool = Npm::Registry::BodyPool::get();
             zlib_pool.reset();
             // `defer Npm.Registry.BodyPool.release(zlib_pool)` → PoolGuard's Drop releases.
-
-            let mut esimated_output_size: usize = 0;
 
             let time_started_for_verbose_logs: u64 = if PackageManager::verbose_install() {
                 bun_core::Timespec::now_allow_mocked_time().ns()
@@ -294,77 +289,53 @@ impl ExtractTarball {
                 0
             };
 
-            {
-                // Last 4 bytes of a gzip-compressed file are the uncompressed size.
-                if tgz_bytes.len() > 16 {
-                    // If the file claims to be larger than 16 bytes and smaller than 64 MB, we'll preallocate the buffer.
-                    // If it's larger than that, we'll do it incrementally. We want to avoid OOMing.
-                    let last_4_bytes: u32 = u32::from_ne_bytes(
-                        tgz_bytes[tgz_bytes.len() - 4..][..4]
-                            .try_into()
-                            .expect("infallible: size matches"),
-                    );
-                    if last_4_bytes > 16 && last_4_bytes < 64 * 1024 * 1024 {
-                        // It's okay if this fails. We will just allocate as we go and that will error if we run out of memory.
-                        esimated_output_size = last_4_bytes as usize;
-                        if zlib_pool.list.capacity() == 0 {
-                            let _ = zlib_pool.list.try_reserve_exact(last_4_bytes as usize);
-                        } else {
-                            let _ = zlib_pool.ensure_unused_capacity(last_4_bytes as usize);
+            // libarchive gunzips on the fly (`BufferReadStream::open_read`),
+            // so hand it the compressed bytes and never buffer the full tar.
+            // Small tarballs still try libdeflate first for speed; the gzip
+            // ISIZE trailer (size mod 2^32) is only trusted when small.
+            let mut decompressed_in_memory = false;
+            if bun_core::FeatureFlags::is_libdeflate_enabled() && tgz_bytes.len() > 16 {
+                let isize: u32 = u32::from_le_bytes(
+                    tgz_bytes[tgz_bytes.len() - 4..][..4]
+                        .try_into()
+                        .expect("infallible: size matches"),
+                );
+                if isize > 16 && isize < 64 * 1024 * 1024 {
+                    if zlib_pool.list.capacity() == 0 {
+                        let _ = zlib_pool.list.try_reserve_exact(isize as usize);
+                    } else {
+                        let _ = zlib_pool.ensure_unused_capacity(isize as usize);
+                    }
+                    if zlib_pool.list.capacity() > 16 {
+                        use bun_libdeflate_sys::libdeflate;
+                        if let Some(mut decompressor) = libdeflate::OwnedDecompressor::new() {
+                            zlib_pool.list.clear();
+                            let result = decompressor.decompress_to_vec(
+                                tgz_bytes,
+                                &mut zlib_pool.list,
+                                libdeflate::Encoding::Gzip,
+                            );
+                            if result.status == libdeflate::Status::Success {
+                                decompressed_in_memory = true;
+                            }
                         }
                     }
                 }
             }
 
-            let mut needs_to_decompress = true;
-            if bun_core::FeatureFlags::is_libdeflate_enabled()
-                && zlib_pool.list.capacity() > 16
-                && esimated_output_size > 0
-            {
-                use bun_libdeflate_sys::libdeflate;
-                if let Some(mut decompressor) = libdeflate::OwnedDecompressor::new() {
-                    zlib_pool.list.clear();
-                    let result = decompressor.decompress_to_vec(
-                        tgz_bytes,
-                        &mut zlib_pool.list,
-                        libdeflate::Encoding::Gzip,
-                    );
-                    if result.status == libdeflate::Status::Success {
-                        needs_to_decompress = false;
-                    }
-                    // If libdeflate fails for any reason, fallback to zlib.
-                }
-            }
-
-            if needs_to_decompress {
+            let tar_input: &[u8] = if decompressed_in_memory {
+                &zlib_pool.list
+            } else {
                 zlib_pool.list.clear();
-                let mut zlib_entry =
-                    Zlib::ZlibReaderArrayList::init(tgz_bytes, &mut zlib_pool.list)?;
-                zlib_entry.max_output_size = MAX_DECOMPRESSED_TARBALL_SIZE;
-                if let Err(err) = zlib_entry.read_all(true) {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "{} decompressing \"{}\" to \"{}\"",
-                            err,
-                            bun_fmt::s(name),
-                            bun_core::fmt::fmt_path_u8(tmpname.as_bytes(), Default::default()),
-                        ),
-                    );
-                    return Err(crate::Error::InstallFailed);
-                }
-            }
+                tgz_bytes
+            };
 
             if PackageManager::verbose_install() {
-                let decompressing_ended_at: u64 = bun_core::Timespec::now_allow_mocked_time().ns();
-                let elapsed = decompressing_ended_at - time_started_for_verbose_logs;
                 bun_core::pretty_errorln!(
-                    "[{}] Extract {}<r> (decompressed {} tgz file in {})",
+                    "[{}] Extract {}<r> ({} tgz file)",
                     bun_fmt::s(name),
                     bun_fmt::s(tmpname.as_bytes()),
                     bun_core::fmt::size(tgz_bytes.len(), Default::default()),
-                    bun_core::fmt::fmt_duration_one_decimal(elapsed),
                 );
             }
 
@@ -395,7 +366,7 @@ impl ExtractTarball {
                     };
 
                     let _ = Archiver::extract_to_dir(
-                        &zlib_pool.list,
+                        tar_input,
                         extract_destination.fd(),
                         None,
                         &mut dirname_reader,
@@ -433,7 +404,7 @@ impl ExtractTarball {
                 }
                 _ => {
                     let _ = Archiver::extract_to_dir(
-                        &zlib_pool.list,
+                        tar_input,
                         extract_destination.fd(),
                         None,
                         &mut (),
@@ -474,7 +445,7 @@ impl ExtractTarball {
     /// Rename the freshly-extracted temp directory into the cache, read
     /// `package.json` if required, and build the `ExtractData` result. Shared
     /// between the buffered and streaming extraction paths.
-    pub fn move_to_cache_directory(
+    pub(crate) fn move_to_cache_directory(
         &self,
         log: &mut bun_ast::Log,
         tmpname: &ZStr,

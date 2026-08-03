@@ -502,6 +502,9 @@ bun::N_AVX2::IndexOfSpaceOrNewlineOrNonASCIIImpl                     [AVX, AVX2]
 bun::N_AVX2::LowerAscii16Impl                                                 [AVX, AVX2]
 bun::N_AVX2::LowerAsciiImpl                                                   [AVX, AVX2]
 bun::N_AVX2::MemMemImpl                                              [AVX, AVX2]
+bun::N_AVX2::MemRMemImpl                                             [AVX, AVX2]
+bun::N_AVX2::MemMem16Impl                                            [AVX, AVX2, BMI2]
+bun::N_AVX2::MemRMem16Impl                                           [AVX, AVX2, BMI2]
 bun::N_AVX2::JsonIndexImpl                                           [AVX, AVX2, BMI1, BMI2]
 bun::N_AVX2::VisibleLatin1WidthExcludeANSIImpl                       [AVX, AVX2, BMI1, BMI2]
 bun::N_AVX2::VisibleLatin1WidthImpl                                  [AVX, AVX2]
@@ -536,6 +539,10 @@ bun::N_AVX3::IndexOfSpaceOrNewlineOrNonASCIIImpl                     [AVX, AVX51
 bun::N_AVX3::LowerAscii16Impl                                                 [AVX, AVX512BW, AVX512F, AVX512VL]
 bun::N_AVX3::LowerAsciiImpl                                                   [AVX, AVX512BW, AVX512F, AVX512VL]
 bun::N_AVX3::MemMemImpl                                              [AVX, AVX512BW, AVX512F, BMI1]
+bun::N_AVX3::MemRMemImpl                                             [AVX, AVX512BW, AVX512F, BMI2]
+bun::N_AVX3::MemMem16Impl                                            [AVX, AVX512BW, AVX512F, BMI1]
+bun::N_AVX3::MemRMem16Impl                                           [AVX, AVX512F]
+bun::N_AVX3::MemMemReverse<unsigned short>                           [AVX, AVX512BW, AVX512F, BMI2]
 bun::N_AVX3::JsonIndexImpl                                           [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3::VisibleLatin1WidthExcludeANSIImpl                       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3::VisibleLatin1WidthImpl                                  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
@@ -570,6 +577,9 @@ bun::N_AVX3_DL::IndexOfSpaceOrNewlineOrNonASCIIImpl                  [AVX, AVX51
 bun::N_AVX3_DL::LowerAscii16Impl                                              [AVX, AVX512BW, AVX512F, AVX512VL]
 bun::N_AVX3_DL::LowerAsciiImpl                                                [AVX, AVX512BW, AVX512F, AVX512VL]
 bun::N_AVX3_DL::MemMemImpl                                           [AVX, AVX512BW, AVX512F, BMI1]
+bun::N_AVX3_DL::MemRMemImpl                                          [AVX, AVX512BW, AVX512F, BMI2]
+bun::N_AVX3_DL::MemMem16Impl                                         [AVX, AVX512BW, AVX512F, BMI1]
+bun::N_AVX3_DL::MemRMem16Impl                                        [AVX, AVX512F]
 bun::N_AVX3_DL::JsonIndexImpl                                        [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2, GFNI]
 bun::N_AVX3_DL::VisibleLatin1WidthExcludeANSIImpl                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3_DL::VisibleLatin1WidthImpl                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
@@ -604,6 +614,9 @@ bun::N_AVX3_SPR::IndexOfSpaceOrNewlineOrNonASCIIImpl                 [AVX, AVX51
 bun::N_AVX3_SPR::LowerAscii16Impl                                             [AVX, AVX512BW, AVX512F, AVX512VL]
 bun::N_AVX3_SPR::LowerAsciiImpl                                               [AVX, AVX512BW, AVX512F, AVX512VL]
 bun::N_AVX3_SPR::MemMemImpl                                          [AVX, AVX512BW, AVX512F, BMI1]
+bun::N_AVX3_SPR::MemRMemImpl                                         [AVX, AVX512BW, AVX512F, BMI2]
+bun::N_AVX3_SPR::MemMem16Impl                                        [AVX, AVX512BW, AVX512F, BMI1]
+bun::N_AVX3_SPR::MemRMem16Impl                                       [AVX, AVX512F]
 bun::N_AVX3_SPR::JsonIndexImpl                                       [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2, GFNI]
 bun::N_AVX3_SPR::VisibleLatin1WidthExcludeANSIImpl                   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3_SPR::VisibleLatin1WidthImpl                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
@@ -638,6 +651,9 @@ bun::N_AVX3_ZEN4::IndexOfSpaceOrNewlineOrNonASCIIImpl                [AVX, AVX51
 bun::N_AVX3_ZEN4::LowerAscii16Impl                                            [AVX, AVX512BW, AVX512F, AVX512VL]
 bun::N_AVX3_ZEN4::LowerAsciiImpl                                              [AVX, AVX512BW, AVX512F, AVX512VL]
 bun::N_AVX3_ZEN4::MemMemImpl                                         [AVX, AVX512BW, AVX512F, BMI1]
+bun::N_AVX3_ZEN4::MemRMemImpl                                        [AVX, AVX512BW, AVX512F, BMI2]
+bun::N_AVX3_ZEN4::MemMem16Impl                                       [AVX, AVX512BW, AVX512F, BMI1]
+bun::N_AVX3_ZEN4::MemRMem16Impl                                      [AVX, AVX512F]
 bun::N_AVX3_ZEN4::JsonIndexImpl                                      [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2, GFNI]
 bun::N_AVX3_ZEN4::VisibleLatin1WidthExcludeANSIImpl                  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3_ZEN4::VisibleLatin1WidthImpl                             [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
@@ -830,7 +846,7 @@ __std_minmax_8i                                                                 
 
 # ----------------------------------------------------------------------------
 # MSVC CRT libm + mem*/str* SIMD variants. Gate: __isa_available.
-# (45 symbols)
+# (44 symbols)
 # ----------------------------------------------------------------------------
 __remainder_piby2_fma3      [AVX, FMA]
 __remainder_piby2_fma3_bdl  [AVX, FMA]
@@ -873,13 +889,32 @@ sinf                        [AVX, FMA]
 sinh_fma                    [AVX, FMA]
 sinhf_fma                   [AVX, FMA]
 strnlen                     [AVX, AVX2]
-strpbrk                     [AVX, AVX2]   # UCRT vectorized str routine, runtime-gated on __isa_available
 tan                         [AVX, FMA]
 tanf                        [AVX, FMA]
 tanh_fma                    [AVX, FMA]
 tanhf_fma                   [AVX, FMA]
 wcslen                      [AVX, AVX2]
 wcsnlen                     [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# MSVC CRT strspn family. Data-in-.text false positive, NOT a gate.
+#
+# ucrt/string/amd64/strspn.c (compiled 3x for strspn/strcspn/strpbrk) is
+# SSE2-only; its `switch (shift)` over _mm_srli_si128/_mm_slli_si128 lowers
+# to an indirect `jmp *table[rbp + rax*4]` where MSVC stores the table as
+# three arrays of 4-byte image-relative RVAs in .text right after the
+# function's `ret`. Those RVAs change with link layout, and linear sweep
+# desyncs into them: entry bytes `C7 F8 ..`/`C6 F8 ..` decode as
+# XBEGIN/XABORT (handled in is_impossible_feature); `C4/C5/62/8F ..` can
+# decode as stray VEX/EVEX/XOP. Blanket-pass: the source has no post-SSE2
+# path to grow past, so a ceiling here just means the next layout that
+# decodes as FMA/BMI2/AVX512* re-flakes.
+# (3 symbols)
+# ----------------------------------------------------------------------------
+strcspn
+strpbrk
+strspn
 
 
 # ----------------------------------------------------------------------------

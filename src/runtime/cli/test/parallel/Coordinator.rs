@@ -320,6 +320,12 @@ impl<'a> Coordinator<'a> {
         }
     }
 
+    fn record_timing(&mut self, file_idx: u32, dispatched_at: i64) {
+        if let Some(t) = self.reporter.timings.as_mut() {
+            t.record_since(self.files[file_idx as usize].as_bytes(), dispatched_at);
+        }
+    }
+
     pub(crate) fn rel_path(&self, file_idx: u32) -> &[u8] {
         bun_paths::resolve_path::relative(
             bun_paths::fs::FileSystem::instance().top_level_dir(),
@@ -448,6 +454,7 @@ impl<'a> Coordinator<'a> {
                     summary.files += files;
                 }
                 self.reporter.jest.unhandled_errors_between_tests += unhandled;
+                self.record_timing(idx, w.dispatched_at);
 
                 w.inflight = None;
                 self.files_done += 1;
@@ -536,6 +543,7 @@ impl<'a> Coordinator<'a> {
             if was_bailed && !panicked {
                 self.account_unfinished(idx, b"aborted: sibling worker panicked");
             } else {
+                self.record_timing(idx, w.dispatched_at);
                 self.account_crash(idx, status);
             }
             Output::flush();

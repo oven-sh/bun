@@ -1,2 +1,4 @@
 suite/
 node_modules/
+app/src/
+app/tests/

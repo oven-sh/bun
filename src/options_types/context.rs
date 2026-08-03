@@ -438,6 +438,10 @@ pub struct TestOptions {
     /// and only every Nth file (starting from M-1) is run. index is
     /// 1-based; both are validated at parse time so `1 <= index <= count`.
     pub shard: Option<Shard>,
+    /// `bun test --timings=<path>`: per-file durations (ms) used to balance `--shard` and order `--parallel`.
+    pub timings_file: Option<Box<[u8]>>,
+    /// `bun test --update-timings`: merge this run's measured per-file durations into `timings_file`.
+    pub update_timings: bool,
 
     pub reporters: Reporters,
     pub reporter_outfile: Option<Box<[u8]>>,
@@ -502,6 +506,8 @@ impl Default for TestOptions {
             test_worker: false,
             changed: None,
             shard: None,
+            timings_file: None,
+            update_timings: false,
             reporters: Reporters::default(),
             reporter_outfile: None,
         }

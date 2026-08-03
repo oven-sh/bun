@@ -609,6 +609,12 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!(
         "--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs."
     ),
+    parse_param!(
+        "--timings <STR>                  JSON file of per-file durations (ms). Balances --shard by total time and makes --parallel start the slowest files first."
+    ),
+    parse_param!(
+        "--update-timings                 After the run, merge each file's measured duration into the --timings file (creating it if missing)."
+    ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(
     TEST_ONLY_PARAMS,
@@ -1778,6 +1784,20 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             Global::exit(1);
         }
         ctx.test_options.shard = Some(Shard { index, count });
+    }
+    if let Some(path) = args.option(b"--timings") {
+        if path.is_empty() {
+            bun_core::pretty_errorln!("<r><red>error<r>: --timings expects a file path");
+            Global::exit(1);
+        }
+        ctx.test_options.timings_file = Some(path.into());
+    }
+    ctx.test_options.update_timings = args.flag(b"--update-timings");
+    if ctx.test_options.update_timings && ctx.test_options.timings_file.is_none() {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: --update-timings requires --timings, e.g. --timings=.bun-test-timings.json --update-timings"
+        );
+        Global::exit(1);
     }
     ctx.test_options.update_snapshots = args.flag(b"--update-snapshots");
     ctx.test_options.run_todo = args.flag(b"--todo");

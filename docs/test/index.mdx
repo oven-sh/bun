@@ -116,6 +116,8 @@ bun test --timeout 20
 
 ## Concurrent test execution
 
+To run test **files** across CPU cores, see [`--parallel`](/test/parallel). The flags below control concurrency of tests _within_ a file.
+
 By default, Bun runs all tests sequentially within each test file. Concurrent execution runs async tests in parallel, which speeds up test suites with independent tests.
 
 ### `--concurrent` flag

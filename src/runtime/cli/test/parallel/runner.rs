@@ -94,6 +94,24 @@ pub(crate) fn run_as_coordinator(
     if !ctx.test_options.randomize {
         sorted.sort_by(|a, b| bun_core::order(a.as_bytes(), b.as_bytes()));
     }
+    // With --timings the contiguous chunks are cut by total duration instead
+    // of file count, and each chunk is dispatched slowest-first (cache hits
+    // depend on which worker runs a file, not the order within the worker).
+    let ranges: Vec<FileRange> = match reporter.timings.as_ref() {
+        Some(t) if !t.is_empty() && !ctx.test_options.randomize => {
+            let ranges = t.partition(&sorted, k);
+            for r in &ranges {
+                t.sort_slowest_first(&mut sorted[r.lo as usize..r.hi as usize]);
+            }
+            ranges
+        }
+        _ => (0..k)
+            .map(|idx| FileRange {
+                lo: idx * n / k,
+                hi: (idx + 1) * n / k,
+            })
+            .collect(),
+    };
 
     let mut workers: Vec<Worker> = Vec::with_capacity(k as usize);
     // Populate fully BEFORE constructing Coordinator so it can hold
@@ -105,10 +123,7 @@ pub(crate) fn run_as_coordinator(
             // BACKREF (LIFETIMES.tsv: *const Coordinator<'static>) — patched below
             coord: core::ptr::null(),
             idx,
-            range: FileRange {
-                lo: idx * n / k,
-                hi: (idx + 1) * n / k,
-            },
+            range: ranges[idx as usize],
             out: WorkerPipe::new(core::ptr::null()),
             err: WorkerPipe::new(core::ptr::null()),
             process: None,

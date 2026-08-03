@@ -544,12 +544,16 @@ impl JSBundleCompletionTask {
         // SAFETY: `vm` is the live per-thread VM (`global_this.bun_vm_ptr()`).
         this.poll_ref
             .unref(unsafe { jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm) });
+        if this.html_build_task.is_some() {
+            // The HTML-bundle path borrows `plugins` from `ServePluginsState::Loaded`;
+            // clear it before `deinit` (cancelled or not) so only the owner destroys it.
+            this.plugins = None;
+        }
         if this.cancelled {
             return Ok(());
         }
 
         if let Some(html_build_task) = this.html_build_task {
-            this.plugins = None;
             // SAFETY: `html_build_task` is a backref set by `HTMLBundle::Route` which
             // bumped its own refcount before scheduling and stays alive until this returns.
             // R-2: deref as shared — `on_complete` takes `&self`.

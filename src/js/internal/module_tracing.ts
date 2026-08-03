@@ -35,7 +35,9 @@ function onRequireSubscribersChanged() {
   if (has === requireWrapped) return;
   const Module = require("node:module");
   if (has) {
-    baseRequire = Module.prototype.require;
+    // Capture once: a user wrapper installed between subscribe cycles may
+    // delegate to tracingRequire, so re-capturing it here would recurse.
+    baseRequire ??= Module.prototype.require;
     Module.prototype.require = tracingRequire;
     requireWrapped = true;
   } else {

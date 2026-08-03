@@ -1,8 +1,6 @@
-// `require('internal/test/snapshot')` — port of Node.js v26.3.0's
-// lib/internal/test_runner/snapshot.js. Consumed by `node:test` for
-// `t.assert.snapshot()` / `t.assert.fileSnapshot()` and by the
-// `--expose-internals` shim, which serves it as
-// `internal/test_runner/snapshot` for vendored node tests.
+// Port of https://github.com/nodejs/node/blob/main/lib/internal/test_runner/snapshot.js
+// Consumed by node:test's t.assert.snapshot()/fileSnapshot() and exposed as
+// `internal/test_runner/snapshot` through the --expose-internals shim.
 const { kEmptyObject } = require("internal/shared");
 const { validateArray, validateFunction, validateObject, validateString } = require("internal/validators");
 const { strictEqual } = require("node:assert");

@@ -393,8 +393,14 @@ impl PostgresSQLConnection {
                 bun_core::TimespecMockMode::AllowMockedTime,
                 i64::from(interval),
             );
-            self.vm_mut().timer().insert(t);
         });
+        if interval != 0 {
+            // whole-struct provenance: the fire path recovers the container from this pointer.
+            let t = core::ptr::addr_of!(self.timer)
+                .cast::<EventLoopTimer>()
+                .cast_mut();
+            self.vm_mut().timer().insert(t);
+        }
     }
 
     bun_jsc::cached_prop_hostfns! {
@@ -489,16 +495,20 @@ impl PostgresSQLConnection {
         if self.max_lifetime_interval_ms == 0 {
             return;
         }
+        if self.max_lifetime_timer.get().state == EventLoopTimerState::ACTIVE {
+            return;
+        }
         self.max_lifetime_timer.with_mut(|t| {
-            if t.state == EventLoopTimerState::ACTIVE {
-                return;
-            }
             t.next = bun_core::Timespec::ms_from_now(
                 bun_core::TimespecMockMode::AllowMockedTime,
                 i64::from(self.max_lifetime_interval_ms),
             );
-            self.vm_mut().timer().insert(t);
         });
+        // whole-struct provenance: the fire path recovers the container from this pointer.
+        let t = core::ptr::addr_of!(self.max_lifetime_timer)
+            .cast::<EventLoopTimer>()
+            .cast_mut();
+        self.vm_mut().timer().insert(t);
     }
 
     pub fn on_connection_timeout(&self) {
@@ -1185,11 +1195,9 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             pending_requests: Cell::new(0),
             poll_ref: JsCell::new(KeepAlive::default()),
             global_object: BackRef::new(global_object),
-            // `vm` is the `&mut VirtualMachine` from `bun_vm().as_mut()` above —
-            // the JS-thread singleton with full write provenance. `BackRef::new_mut`
-            // captures the `NonNull` so `vm_mut()` can later route through the same
-            // canonical `VirtualMachine::as_mut()` accessor.
-            vm: BackRef::new_mut(vm),
+            vm: BackRef::from(
+                core::ptr::NonNull::new(VirtualMachine::get_mut_ptr()).expect("vm singleton"),
+            ),
             statements: JsCell::new(PreparedStatementsMap::default()),
             prepared_statement_id: Cell::new(0),
             pending_activity_count: AtomicU32::new(0),

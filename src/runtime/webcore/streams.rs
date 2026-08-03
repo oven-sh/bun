@@ -512,8 +512,9 @@ impl Writable {
             // undefined == noop, but we probably won't send it
             Writable::Done => JSValue::TRUE,
             Writable::Pending(pending) => {
-                // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM classification
-                let prom = unsafe { &mut *pending }.promise(global_this);
+                // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM
+                // classification; exclusive borrow scoped to the call.
+                let prom = unsafe { (*pending).promise(global_this) };
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                 JSPromise::opaque_ref(prom).to_js()
             }
@@ -780,8 +781,9 @@ impl StreamResult {
             StreamResult::IntoArray(array) => Ok(JSValue::from(array.len)),
             StreamResult::IntoArrayAndDone(array) => Ok(JSValue::from(array.len)),
             StreamResult::Pending(pending) => {
-                // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM classification
-                let promise = unsafe { &mut **pending }.promise(global_this);
+                // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM
+                // classification; exclusive borrow scoped to the call.
+                let promise = unsafe { (**pending).promise(global_this) };
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                 let promise_js = JSPromise::opaque_ref(promise).to_js();
                 promise_js.protect();
@@ -889,10 +891,10 @@ pub enum SourceHandle {
     /// The `'static` bound erases the `&JSGlobalObject` borrow carried in
     /// `Subprocess<'a>`; the pointed-at allocation outlives this handle.
     Subprocess(BackRef<crate::api::bun::subprocess::Subprocess<'static>>),
-    ShellWritable(BackRef<crate::shell::subproc::Writable>),
-    FetchResponseBody(BackRef<crate::webcore::fetch::fetch_tasklet::FetchTasklet>),
+    ShellWritable(BackRef<crate::shell::subproc::Writable, bun_ptr::Mut>),
+    FetchResponseBody(BackRef<crate::webcore::fetch::fetch_tasklet::FetchTasklet, bun_ptr::Mut>),
     ServerRequestBody(crate::server::AnyRequestContext),
-    S3DownloadBody(BackRef<crate::webcore::s3::client::S3DownloadStreamWrapper>),
+    S3DownloadBody(BackRef<crate::webcore::s3::client::S3DownloadStreamWrapper, bun_ptr::Mut>),
 }
 
 impl SourceHandle {
@@ -1847,24 +1849,27 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     /// `this` must point at the live sink owned by the `RequestContext`.
     pub(crate) unsafe fn abort(this: *mut Self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "onAborted()");
-        // SAFETY: caller contract — `this` is live, and every borrow formed here
-        // ends before the signal close below, which may free `*this`.
-        let sink = unsafe { &mut *this };
-        sink.done = true;
-        sink.res = None;
-        sink.unregister_auto_flusher();
-
-        sink.aborted = true;
+        // SAFETY: caller contract — `this` is live, and every access here is scoped
+        // so no borrow spans the signal close below, which may free `*this`.
+        unsafe {
+            (*this).done = true;
+            (*this).res = None;
+            (*this).unregister_auto_flusher();
+            (*this).aborted = true;
+        }
 
         // Only JsTerminated escapes flush_promise; there is no JS caller to
         // surface it to from a socket-close callback, so teardown continues.
-        let _ = sink.flush_promise();
-        sink.finalize();
+        // SAFETY: nothing above freed `*this`; exclusive borrow scoped to the call.
+        let _ = unsafe { (*this).flush_promise() };
+        // SAFETY: as above.
+        unsafe { (*this).finalize() };
 
         // Close the source last and through a stack copy: the close fires the JS
         // onClose callback, and the teardown it can re-enter frees this sink, so
         // no reference into the allocation may be live across the call.
-        let mut source = sink.source;
+        // SAFETY: as above; `source` is copied out before the close.
+        let mut source = unsafe { (*this).source };
         source.close(None);
     }
 
@@ -2108,7 +2113,7 @@ pub struct NetworkSink {
     // Stored as `BackRef`
     // (set-once); while `Some` the sink holds a counted ref on the intrusively
     // ref-counted `MultiPartUpload`, released in `detach_writable`.
-    pub task: Option<BackRef<bun_s3::MultiPartUpload>>,
+    pub task: Option<BackRef<bun_s3::MultiPartUpload, bun_ptr::Mut>>,
     pub(crate) source: SourceHandle,
     // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
     pub global_this: Option<BackRef<JSGlobalObject>>,
@@ -2175,17 +2180,6 @@ impl NetworkSink {
         self.task.as_ref().map(BackRef::get)
     }
 
-    /// Exclusive borrow of the upload task, if attached.
-    ///
-    /// SAFETY (invariant): the `MultiPartUpload` is single-threaded and the sink
-    /// is its sole writer once attached; `&mut self` ensures no overlapping
-    /// borrow from this sink. Mirrors the prior `task.as_ptr().as_mut()` sites.
-    #[inline]
-    fn task_mut(&mut self) -> Option<&mut bun_s3::MultiPartUpload> {
-        // SAFETY: see doc comment — exclusive while `&mut self` held.
-        self.task.as_mut().map(|p| unsafe { p.get_mut() })
-    }
-
     pub(crate) fn new(init: NetworkSink) -> Box<NetworkSink> {
         Box::new(init)
     }
@@ -2226,26 +2220,34 @@ impl NetworkSink {
     /// Narrowed like
     /// `flushPromise`; promise resolution only fails on VM termination.
     pub(crate) fn on_writable(
-        task: &mut bun_s3::MultiPartUpload,
-        this: &mut NetworkSink,
+        task: &bun_s3::MultiPartUpload,
+        this: *mut NetworkSink,
         flushed: u64,
     ) -> core::result::Result<(), jsc::JsTerminated> {
         bun_core::scoped_log!(
             NetworkSinkLog,
             "onWritable flushed: {} state: {}",
             flushed,
-            task.state as u8
+            task.state.get() as u8
         );
         let _ = task;
-        if this.flush_promise.has_value() {
-            let global = this.global_this.expect("global_this set at construction");
-            this.flush_promise
-                .resolve(&global, JSValue::js_number(flushed as f64))?;
-        }
-        this.pending.run();
+        // SAFETY: `this` is the live sink; each access is scoped and ends
+        // before the re-entrant wake below.
+        let mut source = unsafe {
+            if (*this).flush_promise.has_value() {
+                let global = (*this)
+                    .global_this
+                    .expect("global_this set at construction");
+                (*this)
+                    .flush_promise
+                    .resolve(&global, JSValue::js_number(flushed as f64))?;
+            }
+            (*this).pending.run();
+            (*this).source
+        };
         // Wake the upstream source (JS controller onPull or native ByteStream
         // resume). No-op when `source` is `None` (the `writer()` path).
-        this.source.ready(None, None);
+        source.ready(None, None);
         Ok(())
     }
 
@@ -2312,7 +2314,7 @@ impl NetworkSink {
         // the pump paths consume `Backpressure`/`Done`.
         let has_source = !matches!(self.source, SourceHandle::None);
 
-        let result = match self.task_mut() {
+        let result = match self.task_ref() {
             Some(task) => task.write_bytes(bytes, false),
             None => return Writable::Owned(len),
         };
@@ -2335,7 +2337,7 @@ impl NetworkSink {
         let len = bytes.len() as BlobSizeType;
         let has_source = !matches!(self.source, SourceHandle::None);
 
-        let result = match self.task_mut() {
+        let result = match self.task_ref() {
             Some(task) => task.write_latin1(bytes, false),
             None => return Writable::Owned(len),
         };
@@ -2358,7 +2360,7 @@ impl NetworkSink {
         let has_source = !matches!(self.source, SourceHandle::None);
         // we must always buffer UTF-16
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
-        let result = match self.task_mut() {
+        let result = match self.task_ref() {
             Some(task) => task.write_utf16(bytes, false),
             None => return Writable::Owned(len),
         };
@@ -2382,7 +2384,7 @@ impl NetworkSink {
         self.pending.result = Writable::Done;
         self.pending.run();
         // flush everything and send EOF
-        if let Some(task) = self.task_mut() {
+        if let Some(task) = self.task_ref() {
             let _ = task.write_bytes(b"", true);
             // bun.handleOom → Rust aborts on OOM
         }
@@ -2416,36 +2418,35 @@ impl NetworkSink {
                 Some(StreamError::Error(e)) => Some(e),
                 _ => None,
             };
-            // SAFETY: `end()` does not free `*this` or re-enter the sink.
-            let _ = unsafe { &mut *this }.end(sys_err);
+            // SAFETY: `end()` does not free `*this` or re-enter the sink;
+            // exclusive borrow scoped to the call.
+            let _ = unsafe { (*this).end(sys_err) };
             return;
         }
-        let (task_ref, wrapper) = {
-            // SAFETY: short reborrow for field writes; no re-entry in this block.
-            let this_ref = unsafe { &mut *this };
-            this_ref.ended = true;
-            this_ref.source.clear();
-            let Some(task_ref) = this_ref.task else {
+        // SAFETY: scoped accesses for field writes; no re-entry in this block.
+        let (task_ref, wrapper) = unsafe {
+            (*this).ended = true;
+            (*this).source.clear();
+            let Some(task_ref) = (*this).task else {
                 return;
             };
             let wrapper = task_ref
                 .callback_context
+                .get()
                 .cast::<crate::webcore::s3::client::S3UploadStreamWrapper>();
             if let Some(err) = &err {
-                this_ref.done = true;
-                let global = this_ref
+                (*this).done = true;
+                let global = (*this)
                     .global_this
                     .expect("NetworkSink.global_this set at construction");
                 let js_err = err.to_js(&global);
                 if !js_err.is_empty_or_undefined_or_null() {
-                    this_ref.upstream_error.set(&global, js_err);
+                    (*this).upstream_error.set(&global, js_err);
                 }
             }
             (task_ref, wrapper)
         };
-        // SAFETY: `task_ref` is a separate counted allocation; `fail()` may
-        // deref it but the sink holds its own +1 until `detach_sink`.
-        let task = unsafe { &mut *task_ref.as_ptr() };
+        let task = task_ref.get();
         if err.is_some() {
             let _ = task.fail(bun_s3_signing::error::S3Error {
                 code: b"UnknownError",
@@ -2474,7 +2475,7 @@ impl NetworkSink {
             if !self.ended {
                 self.ended = true;
                 // we need to send EOF
-                if let Some(task) = self.task_mut() {
+                if let Some(task) = self.task_ref() {
                     let _ = task.write_bytes(b"", true);
                 }
                 self.source.close(None);
@@ -2493,7 +2494,7 @@ impl NetworkSink {
         // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
         if let Some(task) = self.task_ref() {
             //TODO: we could do better here
-            return task.buffered.memory_cost();
+            return task.buffered.get().memory_cost();
         }
         0
     }
@@ -2602,10 +2603,6 @@ impl BufferAction {
 
     pub fn value(&self) -> JSValue {
         self.promise.value()
-    }
-
-    pub fn get(&self) -> *mut JSPromise {
-        std::ptr::from_mut(self.promise.get())
     }
 
     pub(crate) fn swap(&mut self) -> *mut JSPromise {

@@ -1303,13 +1303,9 @@ impl WebWorker {
             // or observes m_isShuttingDown under m_lock and drops. Idempotent;
             // teardownJSCVM sets it again.
             Bun__JSCTaskScheduler__markShuttingDown(vm.global());
-            // Wait for in-flight WorkPool jobs scheduled from this VM
-            // (napi_async_work today; see `work_pool_pending`). The pool-thread
-            // callback reads this VM's `EventLoop` and JSC-heap-backed buffers
-            // the addon may hold; both are freed below (teardownJSCVM / step-5
-            // dealloc). Runs before the drain so the completion each job posts
-            // is picked up by `__bun_release_task_at_shutdown` while JSC is
-            // still live.
+            // Join in-flight WorkPool jobs (napi_async_work; see
+            // `work_pool_pending`) whose pool-thread callback reads this VM's
+            // EventLoop / JSC heap, both freed below.
             vm.event_loop_shared().wait_for_pending_work_pool_tasks();
             // Reclaim queued CppTasks (the per-worker stdio/messaging
             // MessagePort drain tasks that can be in self.tasks mid-tick when

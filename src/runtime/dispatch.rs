@@ -1331,19 +1331,6 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             unsafe { Bun__deleteDeferredWorkTask(task.ptr.cast::<JSCDeferredWorkTask>()) };
             true
         }
-        // A `napi_async_work` completion that reached the queue after the
-        // worker's last tick (the `work_pool_pending` barrier guarantees the
-        // post lands before this drain). Run the addon's `complete` callback
-        // so it can free its per-work native state; JSC is still live here.
-        task_tag::NapiAsyncWork => {
-            // SAFETY: tag identifies pointee; the pool-thread callback ran
-            // (it posted this entry and `work_pool_task_unref()`'d), so the
-            // threadpool no longer holds the embedded `task` field.
-            unsafe {
-                napi_async_work::run_from_js_for_shutdown(task.ptr.cast::<napi_async_work>())
-            };
-            true
-        }
         // Same reclaim `drop_concurrent_cpp_tasks` performs, but for tasks
         // that were already batch-moved into `self.tasks`. Must run before
         // JSC teardown: a Worker `dispatchExit` lambda's `~Ref<Worker>` walks

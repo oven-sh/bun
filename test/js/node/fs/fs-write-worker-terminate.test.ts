@@ -89,12 +89,12 @@ process.exit(foreign ? 1 : 0);
           stdout: "pipe",
           stderr: "pipe",
         });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-        const out = stdout + stderr;
-        expect(out).not.toContain("FOREIGN");
-        expect(out).not.toContain("use-after-free");
-        if (exitCode === 0) expect(stdout).toContain("PASS");
+        expect(stdout + stderr).not.toContain("FOREIGN");
+        // Prove the oracle reached its verdict and drained at least one chunk;
+        // a crash or worker-spawn failure before this point must fail the test.
+        expect(stdout).toMatch(/^PASS reads=[1-9]\d*$/m);
       }, 30_000);
     }
   },

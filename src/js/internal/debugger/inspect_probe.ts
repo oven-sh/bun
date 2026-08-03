@@ -958,11 +958,8 @@ class ProbeInspectorSession {
           ? SideEffectFreeRegExpPrototypeSymbolReplace(/\\/g, target.suffix, "/")
           : target.suffix;
       const escapedPath = SideEffectFreeRegExpPrototypeSymbolReplace(/([/\\.?*()^${}|[\]])/g, normalizedFile, "\\$1");
-      // The leading group already accepts either separator, but the separators
-      // *inside* a multi-segment suffix were pinned to "/". Windows script URLs
-      // can use either, so a suffix like "dir/file.js" never matched a URL
-      // spelled "...\dir\file.js". Only on win32: a backslash is a legal
-      // filename character on POSIX and must stay literal there.
+      // Separators *inside* a multi-segment suffix were pinned to "/", so "dir/file.js" never
+      // matched a Windows script URL spelled "...\dir\file.js". POSIX keeps "\" literal.
       const pathPattern =
         process.platform === "win32"
           ? SideEffectFreeRegExpPrototypeSymbolReplace(/\\\//g, escapedPath, "[\\/\\\\]")

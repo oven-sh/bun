@@ -365,12 +365,9 @@ function returnCallSites(_error, sites) {
   return sites;
 }
 
-// Node's NetworkAgent captures the caller's stack for the event's initiator
-// (network_agent.cc: captureStackTrace(true)); frame urls are V8 script
-// names, so CommonJS files appear as absolute paths, not file:// URLs.
-// Skips through itself rather than the calling domain method: the
-// guardEventParams wrapper exits via a proper tail call, so its frame is
-// not on the stack to match against.
+// Node captures the caller's stack for initiator (src/inspector/network_agent.cc); frame urls
+// are V8 script names (absolute paths for CJS, not file://). Skips through itself because the
+// guardEventParams wrapper tail-calls away and isn't on the stack to match.
 function captureNetworkInitiator(): object {
   let stack: object | undefined;
   try {

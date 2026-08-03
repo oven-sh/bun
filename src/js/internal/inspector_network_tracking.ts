@@ -1,7 +1,6 @@
-// Port of Node v26.3.0 lib/internal/inspector_network_tracking.js. Node turns
-// this on at startup under --experimental-network-inspection; Bun enables it
-// when a session enables the Network domain and disables it when the last
-// such session is gone, so the clients pay nothing while no one inspects.
+// Port of https://github.com/nodejs/node/blob/main/lib/internal/inspector_network_tracking.js
+// Node enables at startup under --experimental-network-inspection; Bun toggles with the
+// first/last Network.enable so clients pay nothing while no one inspects.
 let enabled = false;
 
 function enable() {

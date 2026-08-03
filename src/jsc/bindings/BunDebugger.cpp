@@ -583,14 +583,9 @@ public:
         if (message.length() == 0 || discarding)
             return;
         m_buffered.append(message.isolatedCopy());
-        // Messages produced outside a synchronous dispatch (e.g.
-        // Debugger.scriptParsed during compilation, a deferred awaitPromise
-        // reply) would otherwise wait for the next command: wake the JS side
-        // with one microtask. A posted event-loop task would lose the race
-        // with process exit (V8 hands Node the reply from the resolving
-        // microtask, so nothing else needs to be keeping the loop alive).
-        // Not from the pause loop, which delivers synchronously instead (a
-        // microtask cannot run while the thread is parked).
+        // Messages produced outside a synchronous dispatch (scriptParsed, deferred awaitPromise)
+        // would wait for the next command: wake JS with one microtask — an event-loop task would
+        // lose the race with process exit. The pause loop delivers synchronously instead.
         if (!dispatchDepth && !inPauseLoop && !drainPosted && onMessages) {
             JSC::JSObject* callback = onMessages.get();
             if (!callback)

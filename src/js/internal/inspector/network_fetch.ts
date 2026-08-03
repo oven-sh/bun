@@ -1,8 +1,6 @@
-// Network-domain instrumentation for the global fetch(). Node instruments
-// undici through its diagnostics_channel events; Bun's fetch is native and
-// publishes none, so instead the global is swapped for a delegating wrapper
-// while inspection is enabled (same pattern as node:inspector's console
-// hooks). The events emitted mirror lib/internal/inspector/network_undici.js.
+// Network-domain instrumentation for fetch(). Bun's native fetch has no diagnostics_channel,
+// so the global is swapped for a wrapper while inspection is enabled. Events mirror
+// https://github.com/nodejs/node/blob/main/lib/internal/inspector/network_undici.js
 const { kResourceType, getMonotonicTime, getNextRequestId, sniffMimeType } = require("internal/inspector/network");
 const { Network } = require("node:inspector");
 

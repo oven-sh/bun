@@ -6132,10 +6132,9 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 JSValue::js_number(old_state as f64),
             );
         } else if code == crate::api::h2::wire::ErrorCode::NoError.as_u32() {
-            // A peer RST_STREAM(NO_ERROR) is a clean close (node/nghttp2 deliver a normal
-            // stream close with rstCode 0, 'end' before 'close' and no 'error' event):
-            // dispatch the same full close the END_STREAM path uses. The legacy parser's
-            // handle_rst_stream_frame makes the same distinction.
+            // Peer RST_STREAM(NO_ERROR) is a clean close (node/nghttp2 deliver rstCode 0, 'end'
+            // before 'close', no 'error'): dispatch the same full close as END_STREAM. The
+            // legacy parser's handle_rst_stream_frame makes the same distinction.
             self.dispatch_with_extra(
                 JSH2FrameParser::Gc::onStreamEnd,
                 stream_ctx,

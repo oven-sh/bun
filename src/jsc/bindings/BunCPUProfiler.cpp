@@ -318,11 +318,9 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
     auto stackTraces = profiler->releaseStackTraces();
     profiler->clearData();
 
-    // One final synthetic sample of the current JS stack. The sampling thread
-    // only wakes once per interval, so a profile stopped shortly after
-    // starting can contain no samples at all; V8 records the stop call site,
-    // and profile consumers (including Node's tests) rely on the stopping
-    // script appearing in the profile.
+    // One final synthetic sample of the current JS stack: the sampling thread only wakes once
+    // per interval, so a profile stopped right after starting can be empty. V8 records the stop
+    // call site and Node's tests rely on the stopping script appearing in the profile.
     if (vm.topCallFrame) {
         WTF::Vector<JSC::SamplingProfiler::StackFrame> frames;
         JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {

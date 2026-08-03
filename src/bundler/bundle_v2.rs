@@ -7483,10 +7483,38 @@ pub mod bv2_impl {
 
         if path.is_file() || is_node {
             let mut buf2 = bun_paths::path_buffer_pool::get();
-            let rel = bun_paths::resolve_path::relative_platform_buf::<
-                bun_paths::resolve_path::platform::Loose,
-                false,
-            >(&mut **buf2, top_level_dir, path.text);
+            let mut spill: Vec<u8>;
+            let mut to_spill: Vec<u8>;
+            let need = path
+                .text
+                .len()
+                .saturating_add(top_level_dir.len().saturating_mul(2))
+                .saturating_add(8);
+            let rel: &[u8] = if path.text.len() < bun_paths::MAX_PATH_BYTES {
+                let out: &mut [u8] = if need <= buf2.0.len() {
+                    &mut buf2.0[..]
+                } else {
+                    spill = vec![0u8; need];
+                    &mut spill[..]
+                };
+                bun_paths::resolve_path::relative_platform_buf::<
+                    bun_paths::resolve_path::platform::Loose,
+                    false,
+                >(out, top_level_dir, path.text)
+            } else {
+                spill = vec![0u8; need];
+                to_spill = vec![0u8; need];
+                bun_paths::resolve_path::relative_platform_buf_with_scratch::<
+                    bun_paths::resolve_path::platform::Loose,
+                    false,
+                >(
+                    &mut spill[..],
+                    top_level_dir,
+                    path.text,
+                    &mut buf2.0[..],
+                    &mut to_spill[..],
+                )
+            };
             let mut path_clone: crate::bun_fs::Path<'_> = *path;
             if target == options::Target::ServerComponentsSsr {
                 let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);

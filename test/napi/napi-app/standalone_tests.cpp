@@ -3724,14 +3724,11 @@ test_napi_node26_semantic_parity(const Napi::CallbackInfo &info) {
   BlockingStdoutScope blocking_stdout;
 #endif
 
-  napi_value v_null, v_undef, v_num, v_str, v_str_empty, v_true, v_one, v_obj;
+  napi_value v_null, v_undef, v_num, v_str_empty, v_one, v_obj;
   NODE_API_CALL(env, napi_get_null(env, &v_null));
   NODE_API_CALL(env, napi_get_undefined(env, &v_undef));
   NODE_API_CALL(env, napi_create_double(env, 42.5, &v_num));
-  NODE_API_CALL(env,
-                napi_create_string_utf8(env, "abc", NAPI_AUTO_LENGTH, &v_str));
   NODE_API_CALL(env, napi_create_string_utf8(env, "", 0, &v_str_empty));
-  NODE_API_CALL(env, napi_get_boolean(env, true, &v_true));
   NODE_API_CALL(env, napi_create_int32(env, 1, &v_one));
   NODE_API_CALL(env, napi_create_object(env, &v_obj));
 
@@ -3759,12 +3756,7 @@ test_napi_node26_semantic_parity(const Napi::CallbackInfo &info) {
     napi_status s = napi_create_symbol(env, v_str_empty, &sym);
     report_status(env, "create_symbol(\"\")", s);
     if (s == napi_ok) {
-      napi_value global, sym_ctor, proto, desc_key, desc;
-      NODE_API_CALL(env, napi_get_global(env, &global));
-      NODE_API_CALL(env,
-                    napi_get_named_property(env, global, "Symbol", &sym_ctor));
-      NODE_API_CALL(
-          env, napi_get_named_property(env, sym_ctor, "prototype", &proto));
+      napi_value desc_key, desc;
       NODE_API_CALL(env, napi_create_string_utf8(env, "description",
                                                  NAPI_AUTO_LENGTH, &desc_key));
       NODE_API_CALL(env, napi_get_property(env, sym, desc_key, &desc));

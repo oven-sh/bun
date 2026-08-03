@@ -8,11 +8,8 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(NapiRef);
 
 void NapiRef::ref()
 {
-    // Node's Reference::Ref(): once the weak referent has been collected the
-    // persistent is empty, so ref() returns 0 without incrementing. We held a
-    // weak handle iff weakValueRef has a tag; when that handle has since been
-    // cleared by GC, get() is empty. Callers of napi_reference_ref read back
-    // refCount, so leaving it unchanged yields 0.
+    // Node's Reference::Ref(): once the weak referent is collected, return 0
+    // without incrementing.
     if (refCount == 0 && !weakValueRef.isClear() && !weakValueRef.get()) {
         NAPI_LOG("ref %p (referent collected)", this);
         return;

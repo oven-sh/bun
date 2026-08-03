@@ -2045,8 +2045,7 @@ extern "C" fn napi_get_buffer_info(
     let Some(array_buf) = value.as_array_buffer(env.to_js()) else {
         return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);
     };
-    // Node's node::Buffer::HasInstance accepts any ArrayBufferView (typed
-    // arrays and DataView) but rejects a bare ArrayBuffer.
+    // node::Buffer::HasInstance is IsArrayBufferView: reject a bare ArrayBuffer.
     if array_buf.typed_array_type == jsc::JSType::ArrayBuffer {
         return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);
     }
@@ -2525,8 +2524,7 @@ impl ThreadSafeFunction {
             return;
         }
 
-        // Node's kMaxIterationCount: cap per tick so a producer that enqueues
-        // faster than we drain cannot starve the rest of the event loop.
+        // Node's kMaxIterationCount: yield after this many callbacks per tick.
         const MAX_ITERATION_COUNT: u32 = 1000;
         let mut is_first = true;
         let mut iterations: u32 = 0;
@@ -2543,8 +2541,13 @@ impl ThreadSafeFunction {
                     .store(DispatchState::Pending as u8, Ordering::SeqCst);
                 iterations += 1;
                 if iterations >= MAX_ITERATION_COUNT {
-                    // Yield: flip Pending -> Idle so schedule_dispatch
-                    // re-enqueues a fresh tick for the remainder.
+                    // dispatch_one() may have drained the final item and already
+                    // enqueued the finalizer task (closing == Closed); a second
+                    // dispatch on that pointer would run on freed memory.
+                    if self_.closing.load(Ordering::SeqCst) == ClosingState::Closed as u8 {
+                        return;
+                    }
+                    // Flip to Idle so schedule_dispatch re-enqueues the remainder.
                     self_
                         .dispatch_state
                         .store(DispatchState::Idle as u8, Ordering::SeqCst);
@@ -2708,9 +2711,7 @@ impl ThreadSafeFunction {
                 // SAFETY: `env` is held alive by `self.env` (`NapiEnvRef`) for the TSF's lifetime.
                 let env_ref = unsafe { &*env };
                 let _hs = NapiHandleScope::open_scoped(env_ref);
-                // Node passes a null napi_value for js_callback when no func was
-                // supplied at creation. Addons gate on `js_callback != NULL`, so
-                // an encoded `undefined` (a non-zero napi_value) would be wrong.
+                // No func at creation => null js_callback (Node), not encoded undefined.
                 let js = match cb_js.get() {
                     Some(v) => napi_value::create(env_ref, v),
                     None => napi_value(0),

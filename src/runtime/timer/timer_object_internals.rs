@@ -940,11 +940,8 @@ impl TimerObjectInternals {
         Ok(this_value)
     }
 
-    /// Setter body for `Timeout#_idleStart`. Node computes a timer's deadline
-    /// as `_idleStart + _idleTimeout`, so writing `_idleStart` moves the
-    /// deadline. Next.js relies on `t2._idleStart = t1._idleStart` to make two
-    /// `setTimeout(fn)` calls fire in the same event-loop turn (before any
-    /// `setImmediate` scheduled from `t1`'s callback).
+    /// Node's deadline is `_idleStart + _idleTimeout`; writing `_idleStart`
+    /// must move the heap entry so `t2._idleStart = t1._idleStart` works.
     pub(crate) fn set_idle_start(&self, idle_start_ms: f64) {
         if self.flags.get().kind() == Kind::SetImmediate
             || self.flags.get().has_cleared_timer()

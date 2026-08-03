@@ -412,8 +412,15 @@ const SocketHandlers: SocketHandler = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) {
-      socket.pause();
+    try {
+      if (!self.push(buffer)) {
+        socket.pause();
+      }
+    } catch (e) {
+      // push -> 'data' listeners -> user code; a throw here is a Node-compat
+      // uncaughtException (Node's onStreamRead runs via MakeCallback), not a
+      // Bun.listen handler error.
+      reportUncaughtException(e);
     }
   },
   drain(socket) {
@@ -729,8 +736,12 @@ const ServerHandlers: SocketHandler<NetSocket> = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) {
-      socket.pause();
+    try {
+      if (!self.push(buffer)) {
+        socket.pause();
+      }
+    } catch (e) {
+      reportUncaughtException(e);
     }
   },
   keylog(socket, line) {
@@ -1251,7 +1262,11 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const { self } = socket.data;
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) socket.pause();
+    try {
+      if (!self.push(buffer)) socket.pause();
+    } catch (e) {
+      reportUncaughtException(e);
+    }
   },
   drain(socket) {
     $debug("Bun.Socket drain");

@@ -219,6 +219,15 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.set_signal_aborted(reason))
     }
 
+    /// Lazily create + wire the context's `AbortSignal` on first
+    /// `request.signal` access. Returns `None` when there is no live context.
+    pub(crate) fn ensure_ctx_signal(
+        self,
+        global: &crate::server::jsc::JSGlobalObject,
+    ) -> Option<core::ptr::NonNull<crate::webcore::AbortSignal>> {
+        dispatch!(self, None, |_T, ctx| ctx.ensure_ctx_signal(global))
+    }
+
     pub(crate) fn dev_server(self) -> Option<&'static crate::bake::DevServer::DevServer> {
         dispatch!(self, None, |_T, ctx| ctx.dev_server().map(|r| {
             // SAFETY: the server backref outlives any AnyRequestContext (held only

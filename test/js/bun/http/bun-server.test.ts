@@ -266,6 +266,206 @@ describe.concurrent("Server", () => {
     }
   });
 
+  describe("lazy request.signal", () => {
+    // Helper: issue a GET over a raw socket, wait for the handler to observe
+    // it, then close the socket and wait for the disconnect to register.
+    async function connectAndDisconnect<T>(server: Server, gotReq: Promise<T>): Promise<T> {
+      const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+      const socket = await Bun.connect({
+        hostname: server.hostname,
+        port: server.port,
+        socket: {
+          data() {},
+          close: () => onClose(),
+          error: () => onClose(),
+        },
+      });
+      socket.write(`GET / HTTP/1.1\r\nHost: ${server.hostname}\r\n\r\n`);
+      const req = await gotReq;
+      socket.end();
+      await closed;
+      return req;
+    }
+
+    const connectionClosedReason = { name: "AbortError", code: 20, message: "The connection was closed." };
+
+    test("first access after client disconnect observes aborted", async () => {
+      // Signals are created lazily; an abort that happens before the first
+      // `request.signal` access must still be observable afterwards.
+      const { promise: gotReq, resolve: resolveReq } = Promise.withResolvers<Request>();
+      let unpark!: (value: Response) => void;
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          resolveReq(req);
+          // Park the handler; deliberately do NOT touch req.signal here.
+          return new Promise<Response>(resolve => {
+            unpark = resolve;
+          });
+        },
+      });
+      const req = await connectAndDisconnect(server, gotReq);
+
+      // The server notices the disconnect asynchronously; await the condition.
+      while (!req.signal.aborted) await Bun.sleep(5);
+      // identical observable surface to a signal that existed before the abort
+      expect(req.signal).toBe(req.signal);
+      const reason = req.signal.reason;
+      expect(reason).toBeInstanceOf(DOMException);
+      expect({ name: reason.name, code: reason.code, message: reason.message }).toEqual(connectionClosedReason);
+      expect(() => req.signal.throwIfAborted()).toThrow(reason);
+      // listeners added to an already-aborted signal never fire
+      let lateFired = false;
+      req.signal.addEventListener("abort", () => {
+        lateFired = true;
+      });
+      await Bun.sleep(10);
+      expect(lateFired).toBe(false);
+      unpark(new Response("late"));
+    });
+
+    test("first access after a normal response completes stays non-aborted", async () => {
+      const { promise: gotReq, resolve: resolveReq } = Promise.withResolvers<Request>();
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          resolveReq(req);
+          return new Response("ok");
+        },
+      });
+      expect(await fetch(server.url).then(r => r.text())).toBe("ok");
+      const req = await gotReq;
+      expect(req.signal.aborted).toBe(false);
+      expect(req.signal.reason).toBeUndefined();
+      expect(req.signal).toBe(req.signal);
+    });
+
+    test("req.clone() taken before any signal access observes server abort", async () => {
+      const { promise: gotPair, resolve: resolvePair } = Promise.withResolvers<{ req: Request; clone: Request }>();
+      let unpark!: (value: Response) => void;
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          // Clone before anyone touches req.signal.
+          resolvePair({ req, clone: req.clone() });
+          return new Promise<Response>(resolve => {
+            unpark = resolve;
+          });
+        },
+      });
+      const { req, clone } = await connectAndDisconnect(server, gotPair);
+      while (!req.signal.aborted) await Bun.sleep(5);
+      expect(clone.signal.aborted).toBe(true);
+      expect(clone.signal).toBe(req.signal);
+      unpark(new Response("late"));
+    });
+
+    test("req.clone() taken after signal access shares server aborts", async () => {
+      const { promise: gotPair, resolve: resolvePair } = Promise.withResolvers<{ req: Request; clone: Request }>();
+      let unpark!: (value: Response) => void;
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const signal = req.signal; // materialize first
+          expect(signal.aborted).toBe(false);
+          resolvePair({ req, clone: req.clone() });
+          return new Promise<Response>(resolve => {
+            unpark = resolve;
+          });
+        },
+      });
+      const { req, clone } = await connectAndDisconnect(server, gotPair);
+      while (!req.signal.aborted) await Bun.sleep(5);
+      expect(clone.signal.aborted).toBe(true);
+      unpark(new Response("late"));
+    });
+
+    test("fetch(req) inside a handler inherits the server abort", async () => {
+      const { promise: gotSignal, resolve: resolveSignal } = Promise.withResolvers<AbortSignal>();
+      let unpark!: (value: Response) => void;
+      using upstream = Bun.serve({
+        port: 0,
+        fetch(req) {
+          resolveSignal(req.signal);
+          return new Promise<Response>(resolve => {
+            unpark = resolve;
+          });
+        },
+      });
+      const upstreamUrl = upstream.url;
+      let fetchErr: unknown;
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          // fetch builds its Request from the incoming one, inheriting req.signal.
+          return fetch(upstreamUrl, req).catch(e => {
+            fetchErr = e;
+            return new Response("aborted", { status: 499 });
+          });
+        },
+      });
+      await connectAndDisconnect(server, gotSignal);
+      const upstreamSignal = await gotSignal;
+      while (!upstreamSignal.aborted) await Bun.sleep(5);
+      expect(upstreamSignal.aborted).toBe(true);
+      while (fetchErr === undefined) await Bun.sleep(5);
+      expect((fetchErr as Error).name).toBe("AbortError");
+      unpark(new Response("late"));
+    });
+
+    test("upgraded request's signal aborts when the WebSocket closes", async () => {
+      const { promise: gotReq, resolve: resolveReq } = Promise.withResolvers<Request>();
+      using server = Bun.serve({
+        port: 0,
+        fetch(req, server) {
+          resolveReq(req);
+          if (server.upgrade(req)) return;
+          return new Response("expected upgrade", { status: 400 });
+        },
+        websocket: { message() {} },
+      });
+
+      const ws = new WebSocket(`ws://${server.hostname}:${server.port}`);
+      const { promise: wsClosed, resolve: onWsClose } = Promise.withResolvers<void>();
+      const { promise: wsOpened, resolve: onWsOpen, reject: rejectOpen } = Promise.withResolvers<void>();
+      ws.onopen = () => onWsOpen();
+      ws.onerror = e => rejectOpen(e);
+      ws.onclose = () => onWsClose();
+      await wsOpened;
+      const req = await gotReq;
+      ws.close();
+      await wsClosed;
+
+      while (!req.signal.aborted) await Bun.sleep(5);
+      expect(req.signal.aborted).toBe(true);
+      const reason = req.signal.reason;
+      expect(reason).toBeInstanceOf(DOMException);
+      expect({ name: reason.name, code: reason.code, message: reason.message }).toEqual(connectionClosedReason);
+    });
+
+    test("survives GC pressure", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          // exercise both shapes: with and without signal materialization
+          const url = new URL(req.url);
+          if (url.pathname === "/touch") {
+            req.signal.addEventListener("abort", () => {});
+            return new Response(String(req.signal.aborted));
+          }
+          return new Response("untouched");
+        },
+      });
+      for (let i = 0; i < 200; i++) {
+        const path = i % 2 ? "/touch" : "/plain";
+        const res = await fetch(`${server.url.origin}${path}`);
+        expect(await res.text()).toBe(i % 2 ? "false" : "untouched");
+        if (i % 50 === 0) Bun.gc(true);
+      }
+      Bun.gc(true);
+    });
+  });
+
   test("abort signal on server with direct stream", async () => {
     {
       let signalOnServer = false;

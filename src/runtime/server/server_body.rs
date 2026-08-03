@@ -13,9 +13,7 @@ use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
 use crate::webcore::response::HeadersRef;
-use crate::webcore::{
-    self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response,
-};
+use crate::webcore::{self as WebCore, AnyBlob, Blob, FetchHeaders, Request, Response};
 use ::bstr::BStr;
 use bun_collections::HashMap;
 use bun_core::{Output, fmt as bun_fmt};
@@ -119,7 +117,6 @@ trait RequestCtxOps: RequestCtx {
     fn defer_deinit_ptr(&mut self) -> &mut Option<DeferDeinitFlag>;
     fn set_request_body(&mut self, body: Option<crate::webcore::body::BodyHiveHandle>);
     fn request_body_mut(&mut self) -> Option<&mut BodyValue>;
-    fn set_signal(&mut self, sig: *mut AbortSignal);
     fn set_request_weakref(&mut self, req: *mut Request);
     fn clear_req(&mut self);
     fn set_is_web_browser_navigation(&mut self, v: bool);
@@ -206,14 +203,6 @@ where
         self.request_body
             .as_ref()
             .map(|h| unsafe { &mut (*h.as_ptr()).value })
-    }
-    #[inline]
-    fn set_signal(&mut self, sig: *mut AbortSignal) {
-        // `AbortSignal::new` returns a raw +1 ref to a C++-refcounted opaque;
-        // `RequestContext.signal` stores it as `Option<NonNull<AbortSignal>>`
-        // and pairs the unref in RequestContext cleanup (`shim::signal_release`,
-        // which drops both the pending-activity count and the intrusive ref).
-        self.signal = NonNull::new(sig);
     }
     #[inline]
     fn set_request_weakref(&mut self, req: *mut Request) {
@@ -2186,6 +2175,18 @@ where
         // --- After this point, do not throw an exception
         // See https://github.com/oven-sh/bun/issues/1339
         upgrader.upgrade_context = Some(usize::MAX as *mut WebSocketUpgradeContext);
+        // Signals are lazy; the WebSocket needs one (it fires ConnectionClosed
+        // on ws close), so materialize it now and mirror a `+1` into the
+        // Request so post-upgrade `request.signal` observes the same abort.
+        if let Some(sig) = upgrader.ensure_ctx_signal(global) {
+            if request.signal.get().is_none() {
+                // SAFETY: ctx holds a live `+1`; `ref_()` bumps once more for
+                // the Request's RAII handle (paired with `AbortSignalRef::Drop`).
+                request.signal.set(Some(unsafe {
+                    jsc::AbortSignalRef::adopt((*sig.as_ptr()).ref_())
+                }));
+            }
+        }
         let signal = upgrader.signal.take();
         upgrader.resp = None;
 
@@ -3194,20 +3195,12 @@ where
         // same slot. Paired drop in `RequestContext::deinit` / `Request::finalize`.
         ctx.set_request_body(Some(body_hive.clone()));
 
-        let signal = AbortSignal::new(&self.global());
-        ctx.set_signal(signal);
-        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
-        bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
-
-        // Bump once for the Request's owned
-        // copy and adopt into RAII so it pairs with `Request::Drop`'s unref.
-        // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
-        let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
+        // The AbortSignal is created lazily on first `request.signal` access
+        // (`Request::materialize_server_signal`) or on WebSocket upgrade.
         let request_object_box = Request::new(Request::init(
             ctx.ctx_method(),
             AnyRequestContext::init(std::ptr::from_ref::<Ctx>(ctx)),
             SSL,
-            Some(signal_for_req),
             body_hive,
         ));
         // Leak so the ctx (which outlives this stack frame) can hold the
@@ -3455,22 +3448,12 @@ where
         // same slot. Paired drop in `RequestContext::deinit` / `Request::finalize`.
         ctx.request_body = Some(body_hive.clone());
 
-        let signal = AbortSignal::new(&this.global());
-        // The
-        // RequestContext owns one ref so aborts during the WS-upgrade fallback
-        // fetch path propagate.
-        ctx.signal = NonNull::new(signal);
-        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
-        bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
-        // Bump once for the Request's copy and
-        // adopt into RAII so it pairs with `Request::Drop`'s unref.
-        // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
-        let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
+        // The AbortSignal is created lazily on first `request.signal` access
+        // (`Request::materialize_server_signal`) or on WebSocket upgrade.
         let request_object_box = Request::new(Request::init(
             ctx.method,
             AnyRequestContext::init(std::ptr::from_ref(ctx)),
             SSL,
-            Some(signal_for_req),
             body_hive,
         ));
         ctx.upgrade_context = Some(upgrade_ctx);

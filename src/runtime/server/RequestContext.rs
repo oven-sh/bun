@@ -1662,6 +1662,19 @@ where
         true
     }
 
+    /// Default HTTP status when a `Bun.file()` response body can't be opened.
+    fn sendfile_errno_status(&self, errno: bun_sys::E) -> u16 {
+        // After error() has run we're serving its file; that failing is a handler fault.
+        if self.flags.has_called_error_handler() {
+            return 500;
+        }
+        match errno {
+            bun_sys::E::ENOENT | bun_sys::E::ENOTDIR | bun_sys::E::EISDIR => 404,
+            bun_sys::E::EACCES | bun_sys::E::EPERM => 403,
+            _ => 500,
+        }
+    }
+
     pub(crate) fn do_sendfile(&mut self, blob: Blob) {
         if self.is_aborted_or_ended() {
             return;
@@ -1693,10 +1706,11 @@ where
             ) {
                 bun_sys::Result::Ok(fd_) => fd_,
                 bun_sys::Result::Err(err) => {
+                    let status = self.sendfile_errno_status(err.get_errno());
                     let js_err = err
                         .with_path(file.pathlike.path().slice())
                         .to_js(global_this);
-                    return self.run_error_handler(js_err);
+                    return self.run_error_handler_with_status_code(js_err, status);
                 }
             }
         };
@@ -1750,7 +1764,11 @@ where
                 let mut sys: jsc::SystemError = err.to_system_error().into();
                 sys.message =
                     BunString::static_("Cannot stream a directory as a response body").into();
-                return self.run_error_handler(sys.to_error_instance(global_this));
+                let status = self.sendfile_errno_status(bun_sys::E::EISDIR);
+                return self.run_error_handler_with_status_code(
+                    sys.to_error_instance(global_this),
+                    status,
+                );
             }
             (bun_io::FileType::File, false)
         };
@@ -3473,6 +3491,13 @@ where
                     }
                     self.end_without_body(self.should_close_connection());
                 }
+                403 => {
+                    if !self.flags.has_written_status() {
+                        resp.write_status(b"403 Forbidden");
+                        self.flags.set_has_written_status(true);
+                    }
+                    self.end_without_body(self.should_close_connection());
+                }
                 _ => {
                     const BODY: &[u8] = b"Something went wrong!";
                     if !self.flags.has_written_status() {
@@ -3541,6 +3566,12 @@ where
         // `ServerLike::vm()` is the process-static VM `BackRef`; `as_mut()` is
         // the single audited `&mut VirtualMachine` accessor.
         let vm = server.vm().as_mut();
+        // 404/403 are expected outcomes (missing/unreadable Bun.file): no report, no dev page.
+        if matches!(status, 403 | 404) {
+            self.render_production_error(status);
+            vm.log_mut().unwrap().reset();
+            return;
+        }
         if DEBUG_MODE {
             let mut exception_list_upstream: jsc::ExceptionList = Vec::new();
             let prev_exception_list = vm.on_unhandled_rejection_exception_list;
@@ -3568,9 +3599,7 @@ where
             log.reset();
             return;
         }
-        if status != 404 {
-            (vm.on_unhandled_rejection)(vm, global_this, value);
-        }
+        (vm.on_unhandled_rejection)(vm, global_this, value);
         self.render_production_error(status);
         vm.log_mut().unwrap().reset();
     }
@@ -3597,7 +3626,8 @@ where
                 let _keep = jsc::EnsureStillAlive(result);
                 if !result.is_empty_or_undefined_or_null() {
                     if let Some(err) = result.to_error() {
-                        self.finish_running_error_handler(err, status);
+                        // error() itself threw: a handler fault, not `status`.
+                        self.finish_running_error_handler(err, 500);
                         return;
                     } else if let Some(promise) = result.as_any_promise() {
                         Self::process_on_error_promise(self, result, promise, value, status);
@@ -3693,7 +3723,8 @@ where
                 return;
             }
             jsc::PromiseResult::Rejected(err) => {
-                ctx.finish_running_error_handler(err, status);
+                // error() rejected: a handler fault, not `status`.
+                ctx.finish_running_error_handler(err, 500);
                 return;
             }
         }

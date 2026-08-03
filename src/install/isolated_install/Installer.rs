@@ -932,6 +932,16 @@ impl Task {
                                                         | sys::Errno::EACCES
                                                         | sys::Errno::EPERM
                                                 ) {
+                                                    // the hardlink walk advanced the dir cursor; rewind it for
+                                                    // the copy walk (Windows restarts the scan on its own)
+                                                    #[cfg(not(windows))]
+                                                    if let sys::Result::Err(err) =
+                                                        sys::set_file_offset(folder_dir, 0)
+                                                    {
+                                                        return Ok(Yield::failure(
+                                                            TaskError::LinkPackage(err),
+                                                        ));
+                                                    }
                                                     backend = InstallMethod::Copyfile;
                                                     continue 'backend;
                                                 }
@@ -968,20 +978,6 @@ impl Task {
                                     }
 
                                     InstallMethod::Copyfile => {
-                                        // The failed hardlink walk advanced the dir cursor; reopen or the copy walk sees no entries
-                                        let folder_dir = match bun_sys::open_dir_for_iteration(
-                                            Fd::cwd(),
-                                            path,
-                                        ) {
-                                            sys::Result::Ok(fd) => fd,
-                                            sys::Result::Err(err) => {
-                                                return Ok(Yield::failure(TaskError::LinkPackage(
-                                                    err,
-                                                )));
-                                            }
-                                        };
-                                        let _folder_dir_guard = sys::CloseOnDrop::new(folder_dir);
-
                                         #[cfg(windows)]
                                         let mut src_path = OsAutoAbsPath::init();
                                         #[cfg(not(windows))]

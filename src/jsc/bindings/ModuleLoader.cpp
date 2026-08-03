@@ -418,6 +418,11 @@ static JSValue handleVirtualModuleResult(
                     return commonJSModule;
                 }
             }
+            if (wasModuleMock) {
+                commonJSModule->setExportsObject(object);
+                commonJSModule->hasEvaluated = true;
+                return commonJSModule;
+            }
         }
 
         JSC::ensureStillAliveHere(object);

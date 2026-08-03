@@ -21,17 +21,31 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
         RETURN_IF_EXCEPTION(throwScope, void());
         gcUnprotectNullTolerant(object);
 
+        bool hasAccessor = false;
         for (auto& entry : properties.releaseData()->propertyNameVector()) {
             exportNames.append(entry);
 
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            JSValue value = object->get(globalObject, entry);
+            PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+            bool has = object->methodTable()->getOwnPropertySlot(object, globalObject, entry, slot);
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+                exportValues.append(jsUndefined());
+                continue;
+            }
+            if (has && slot.isAccessor())
+                hasAccessor = true;
+            JSValue value = has ? slot.getValue(globalObject, entry) : object->get(globalObject, entry);
             if (scope.exception()) [[unlikely]] {
                 (void)scope.tryClearException();
                 value = jsUndefined();
             }
             exportValues.append(value);
         }
+
+        // Trailing value with no matching name: SyntheticModuleRecord::m_liveExportsSource.
+        if (hasAccessor)
+            exportValues.append(object);
     };
 }
 

@@ -166,3 +166,209 @@ test("mocking a builtin", async () => {
   const { readFile } = await import("node:fs/promises");
   expect(await readFile("hello.txt", "utf8")).toBe("hello world");
 });
+
+// https://github.com/oven-sh/bun/issues/9874
+test("mock.module: accessor exports are live bindings (ESM)", async () => {
+  mock.module("mock-module-live-esm", () => {
+    let foo = "foo";
+    return {
+      get foo() {
+        return foo;
+      },
+      updateFoo: () => {
+        foo = "bar";
+      },
+    };
+  });
+
+  const esm = await import("mock-module-live-esm");
+  expect(esm.foo).toBe("foo");
+  esm.updateFoo();
+  expect(esm.foo).toBe("bar");
+});
+
+test("mock.module: accessor exports are live bindings (CJS)", () => {
+  mock.module("mock-module-live-cjs", () => {
+    let foo = "foo";
+    return {
+      get foo() {
+        return foo;
+      },
+      updateFoo: () => {
+        foo = "bar";
+      },
+    };
+  });
+
+  const cjs = require("mock-module-live-cjs");
+  expect(cjs.foo).toBe("foo");
+  cjs.updateFoo();
+  expect(cjs.foo).toBe("bar");
+});
+
+test("mock.module: data properties and accessor properties coexist", async () => {
+  mock.module("mock-module-live-mixed", () => {
+    let v = "a";
+    return {
+      plain: 42,
+      get live() {
+        return v;
+      },
+      set: (next: string) => {
+        v = next;
+      },
+    };
+  });
+
+  const esm = await import("mock-module-live-mixed");
+  expect({ plain: esm.plain, live: esm.live }).toEqual({ plain: 42, live: "a" });
+  esm.set("b");
+  expect({ plain: esm.plain, live: esm.live }).toEqual({ plain: 42, live: "b" });
+
+  const cjs = require("mock-module-live-mixed");
+  expect({ plain: cjs.plain, live: cjs.live }).toEqual({ plain: 42, live: "b" });
+  cjs.set("c");
+  expect({ plain: cjs.plain, live: cjs.live }).toEqual({ plain: 42, live: "c" });
+  expect(esm.live).toBe("c");
+});
+
+test("mock.module: re-mock after an accessor-backed mock replaces the live source", async () => {
+  mock.module("mock-module-live-remock", () => {
+    let v = 1;
+    return {
+      get x() {
+        return v;
+      },
+      bump: () => v++,
+    };
+  });
+  const ns = await import("mock-module-live-remock");
+  expect(ns.x).toBe(1);
+  ns.bump();
+  expect(ns.x).toBe(2);
+
+  mock.module("mock-module-live-remock", () => ({ x: 100, bump: () => {} }));
+  expect(ns.x).toBe(100);
+
+  let w = "a";
+  mock.module("mock-module-live-remock", () => ({
+    get x() {
+      return w;
+    },
+    bump: () => {
+      w = "b";
+    },
+  }));
+  expect(ns.x).toBe("a");
+  ns.bump();
+  expect(ns.x).toBe("b");
+});
+
+test("mock.module: spyOn on an accessor-backed mock namespace", async () => {
+  mock.module("mock-module-live-spy", () => {
+    let v = 1;
+    return {
+      get x() {
+        return v;
+      },
+      bump: () => v++,
+    };
+  });
+  const ns = await import("mock-module-live-spy");
+  const spy = spyOn(ns, "bump");
+  ns.bump();
+  expect(spy).toHaveBeenCalledTimes(1);
+  expect(ns.x).toBe(2);
+  mock.restore();
+  ns.bump();
+  expect(ns.x).toBe(3);
+});
+
+test("mock.module: partial re-mock of a data-only synthetic module keeps other keys", async () => {
+  mock.module("mock-module-partial-remock", () => ({ a: 1, b: 2 }));
+  const ns = await import("mock-module-partial-remock");
+  expect({ a: ns.a, b: ns.b }).toEqual({ a: 1, b: 2 });
+
+  mock.module("mock-module-partial-remock", () => ({ a: 99 }));
+  expect({ a: ns.a, b: ns.b }).toEqual({ a: 99, b: 2 });
+});
+
+test("mock.module: partial re-mock after an accessor-backed mock keeps un-overridden keys", async () => {
+  mock.module("mock-module-partial-accessor", () => {
+    let v = 1;
+    return {
+      get a() {
+        return v;
+      },
+      b: 2,
+      bump: () => v++,
+    };
+  });
+  const ns = await import("mock-module-partial-accessor");
+  ns.bump();
+  expect({ a: ns.a, b: ns.b }).toEqual({ a: 2, b: 2 });
+
+  mock.module("mock-module-partial-accessor", () => ({ a: 99 }));
+  expect({ a: ns.a, b: ns.b }).toEqual({ a: 99, b: 2 });
+});
+
+test("mock.module: re-mock with an accessor after a hot data-only read invalidates the namespace IC", async () => {
+  mock.module("mock-module-ic-invalidate", () => ({ x: 1, bump: () => {} }));
+  const ns = await import("mock-module-ic-invalidate");
+
+  function readX() {
+    return ns.x;
+  }
+
+  let sum = 0;
+  for (let i = 0; i < 500000; i++) sum += readX();
+  expect(sum).toBe(500000);
+
+  let v = 100;
+  mock.module("mock-module-ic-invalidate", () => ({
+    get x() {
+      return v;
+    },
+    bump() {
+      v++;
+    },
+  }));
+
+  expect(readX()).toBe(100);
+  ns.bump();
+  expect(readX()).toBe(101);
+  for (let i = 0; i < 10; i++) ns.bump();
+  expect(readX()).toBe(111);
+});
+
+test("mock.module: captured require() result does not track a subsequent re-mock", () => {
+  mock.module("mock-module-cjs-capture", () => ({ wow: () => 42 }));
+  const cjs = require("mock-module-cjs-capture");
+  expect(cjs.wow()).toBe(42);
+
+  mock.module("mock-module-cjs-capture", () => ({ wow: () => 43 }));
+  expect(cjs.wow()).toBe(42);
+  expect(require("mock-module-cjs-capture").wow()).toBe(43);
+});
+
+test("mock.module: re-mock does not mutate the previous factory object", async () => {
+  mock.module("mock-module-no-mutate", () => {
+    let v = 1;
+    return {
+      get x() {
+        return v;
+      },
+      bump: () => v++,
+    };
+  });
+  const cjs = require("mock-module-no-mutate");
+  const ns = await import("mock-module-no-mutate");
+  expect(cjs.x).toBe(1);
+  expect(ns.x).toBe(1);
+
+  mock.module("mock-module-no-mutate", () => ({ x: 100 }));
+  expect(cjs.x).toBe(1);
+  cjs.bump();
+  expect(cjs.x).toBe(2);
+  expect(ns.x).toBe(100);
+});

@@ -1523,6 +1523,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             } else {
                 value = slot.getValue(globalObject, propertyKey);
             }
+            RETURN_IF_EXCEPTION(scope, {});
 
             if (dynamicDowncast<JSMockFunction>(value)) {
                 return JSValue::encode(value);

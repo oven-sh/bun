@@ -7008,3 +7008,55 @@ describe("RedisClient URL parsing", () => {
     }
   });
 });
+
+describe("RedisClient argument validation", () => {
+  function syncThrow(fn: () => unknown): unknown {
+    try {
+      const p = fn();
+      // Swallow the eventual rejection so a failing assertion below isn't
+      // followed by an unhandled-rejection crash.
+      (p as Promise<unknown>)?.catch?.(() => {});
+    } catch (e) {
+      return e;
+    }
+    return undefined;
+  }
+
+  // Argument validation runs before any network I/O, so no server is needed.
+  test("expire() rejects NaN/undefined seconds instead of sending `EXPIRE key 0`", () => {
+    const client = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
+    try {
+      expect(syncThrow(() => client.expire("k", NaN))).toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining('"seconds"'),
+      });
+      // @ts-expect-error: testing runtime behavior with a missing argument
+      expect(syncThrow(() => client.expire("k"))).toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining('"seconds"'),
+      });
+      // @ts-expect-error: testing runtime behavior with an explicit undefined
+      expect(syncThrow(() => client.expire("k", undefined))).toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining('"seconds"'),
+      });
+    } finally {
+      client.close();
+    }
+  });
+
+  test("expire() still rejects other bad seconds values", () => {
+    const client = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
+    try {
+      expect(syncThrow(() => client.expire("k", -5))).toMatchObject({ code: "ERR_OUT_OF_RANGE" });
+      expect(syncThrow(() => client.expire("k", 1.9))).toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+      // @ts-expect-error: testing runtime behavior with invalid types
+      expect(syncThrow(() => client.expire("k", "10"))).toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+      // @ts-expect-error: testing runtime behavior with invalid types
+      expect(syncThrow(() => client.expire("k", null))).toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+      expect(syncThrow(() => client.expire("k", Infinity))).toMatchObject({ code: "ERR_OUT_OF_RANGE" });
+    } finally {
+      client.close();
+    }
+  });
+});

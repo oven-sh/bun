@@ -258,3 +258,160 @@ test("resolve() after abort does not crash and cleans up", async () => {
 
   expect(server.pendingRequests).toBe(0);
 });
+
+test("pendingRequests drops when client aborts a parked direct-stream pull()", async () => {
+  // readDirectStream's async-pull branch returns a promise chained off the user's pull()
+  // promise. If the client disconnects while pull() is suspended on a promise that is
+  // still rooted (e.g. the resolver is stashed in user state), that chain never settles,
+  // so the NativePromiseContext reaction keeps the RequestContext at ref_count 1 until
+  // the user releases the resolver. on_abort's sink branch bumps aborted_with_live_ctx so
+  // the user-visible server.pendingRequests drops immediately; the structural
+  // pending_requests (which gates deinit_if_we_can) still waits for the ctx to deinit.
+  const parked: Array<() => void> = [];
+  const pullEntered: Array<() => void> = [];
+
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    async fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(c) {
+            c.write("x");
+            await c.flush();
+            pullEntered.shift()?.();
+            await new Promise<void>(r => parked.push(r));
+          },
+        }),
+        { headers: { "Content-Length": "100000" } },
+      );
+    },
+  });
+
+  const iterations = 3;
+  for (let i = 0; i < iterations; i++) {
+    const { promise: entered, resolve: markEntered } = Promise.withResolvers<void>();
+    pullEntered.push(markEntered);
+    const ac = new AbortController();
+    const res = await fetch(server.url, { signal: ac.signal });
+    const reader = res.body!.getReader();
+    await reader.read();
+    await entered;
+    ac.abort();
+    await reader.closed.catch(() => {});
+  }
+
+  // pull() is still suspended (its resolver is rooted in `parked`), so the
+  // pull promise and its reaction chain are still alive. The getter must
+  // nonetheless read 0 once on_abort has run.
+  await waitForPendingRequests(server, 0);
+  expect(parked.length).toBe(iterations);
+
+  // Releasing the pull() resolver lets the reaction chain settle and deinit
+  // the RequestContext; deinit balances aborted_with_live_ctx before
+  // on_request_complete runs, so the getter stays at 0.
+  for (const r of parked.splice(0)) r();
+  await Bun.sleep(0);
+  Bun.gc(true);
+  await Bun.sleep(0);
+  expect(server.pendingRequests).toBe(0);
+
+  // A follow-up request proves pending_requests did not underflow.
+  const ok = await fetch(server.url);
+  await ok.body?.cancel();
+  for (const r of parked.splice(0)) r();
+  await waitForPendingRequests(server, 0);
+});
+
+for (const stopFirst of [true, false]) {
+  test(`server stays alive while a parked direct-stream ctx outlives the abort (${stopFirst ? "stop-then-abort" : "abort-then-stop"})`, async () => {
+    // The user-visible server.pendingRequests drops on abort, but the internal
+    // pending_requests (which gates deinit_if_we_can's js_value downgrade)
+    // stays > 0 until the RequestContext deinits. Both orderings of stop() vs
+    // abort must leave the NewServer live until the parked ctx's backref is
+    // released.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let release;
+        let seenAbort;
+        const gate = new Promise(r => (release = r));
+        const abortSeen = new Promise(r => (seenAbort = r));
+        let server = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          async fetch(req) {
+            req.signal.addEventListener("abort", seenAbort, { once: true });
+            return new Response(new ReadableStream({
+              type: "direct",
+              async pull(c) {
+                c.write("x");
+                await c.flush();
+                await gate;
+              },
+            }), { headers: { "Content-Length": "100000" } });
+          },
+        });
+        const port = server.port;
+        const ac = new AbortController();
+        const r = (await fetch("http://127.0.0.1:" + port, { signal: ac.signal })).body.getReader();
+        await r.read();
+        ${stopFirst ? "server.stop();" : ""}
+        ac.abort();
+        await r.closed.catch(() => {});
+        await abortSeen;
+        ${stopFirst ? "" : "server.stop();"}
+        if (server.pendingRequests !== 0) throw new Error("pendingRequests=" + server.pendingRequests);
+        server = undefined;
+        for (let i = 0; i < 5; i++) { Bun.gc(true); await Bun.sleep(0); }
+        release();
+        for (let i = 0; i < 5; i++) { Bun.gc(true); await Bun.sleep(0); }
+        console.log("ok");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  });
+}
+
+test("direct-stream pull() that resolves normally still releases exactly once", async () => {
+  // The non-abort twin: pull() settles, handle_resolve_stream runs, deinit
+  // calls on_request_complete once. A mismatched early decrement in on_abort
+  // that leaked into the non-abort path would underflow pending_requests.
+  using server = Bun.serve({
+    port: 0,
+    async fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(c) {
+            c.write("hello");
+            await c.flush();
+            await Bun.sleep(0);
+            c.write(" world");
+          },
+        }),
+      );
+    },
+  });
+
+  const res = await fetch(server.url);
+  expect(await res.text()).toBe("hello world");
+  expect(res.status).toBe(200);
+  await waitForPendingRequests(server, 0);
+
+  // A second request proves pending_requests did not underflow on the first.
+  const res2 = await fetch(server.url);
+  expect(await res2.text()).toBe("hello world");
+  await waitForPendingRequests(server, 0);
+});

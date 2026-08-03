@@ -856,7 +856,11 @@ where
             cb.deref();
         }
 
+        let counted_aborted = self.flags.counted_aborted_live();
         if let Some(server) = self.server.take() {
+            if counted_aborted {
+                server.note_aborted_ctx_released();
+            }
             // server is a BACKREF; pool put + onRequestComplete
             server
                 .release_request_context(std::ptr::from_mut::<Self>(self).cast::<c_void>(), HTTP3);
@@ -1422,6 +1426,14 @@ where
         if let Some(sink_ptr) = this.sink {
             // The sink abort runs the stream's JS onClose through its signal.
             any_js_calls.set(true);
+            // A parked direct pull() can hold this ctx (via the
+            // NativePromiseContext reaction) until user code releases the
+            // resolver; `pending_requests` must stay > 0 until deinit (it
+            // gates `deinit_if_we_can`), so only the getter's offset moves.
+            if !this.flags.counted_aborted_live() {
+                this.flags.set_counted_aborted_live(true);
+                server.note_request_aborted_with_live_ctx();
+            }
             // SAFETY: `sink_ptr` is the live JSSink allocated by do_render_stream
             // (repr(transparent) over the sink). `abort` takes the raw pointer
             // because the teardown it can re-enter frees the sink.
@@ -4625,6 +4637,9 @@ bitflags::bitflags! {
         const REQUEST_BODY_PAUSED         = 1 << 16;
         /// `on_start_buffering` fired (`.text()` etc.); skip pre-stream backpressure.
         const REQUEST_BODY_BUFFER_ALL     = 1 << 17;
+        /// `on_abort` has counted this context in `aborted_with_live_ctx`;
+        /// `deinit` balances it.
+        const COUNTED_ABORTED_LIVE        = 1 << 18;
     }
 }
 
@@ -4713,6 +4728,11 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         request_body_buffer_all,
         set_request_body_buffer_all,
         REQUEST_BODY_BUFFER_ALL
+    );
+    flag_accessor!(
+        counted_aborted_live,
+        set_counted_aborted_live,
+        COUNTED_ABORTED_LIVE
     );
 
     #[inline]

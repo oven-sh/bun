@@ -117,12 +117,14 @@ pub fn queue_task(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) 
 pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValue {
     crate::mark_binding!();
 
-    if !value.is_termination_exception() {
-        let _ = global
-            .bun_vm()
-            .as_mut()
-            .uncaught_exception(global, value, false);
+    if value.is_termination_exception() {
+        crate::cpp::JSC__VM__rethrowTerminationException(global.vm());
+        return JSValue::UNDEFINED;
     }
+    let _ = global
+        .bun_vm()
+        .as_mut()
+        .uncaught_exception(global, value, false);
     JSValue::UNDEFINED
 }
 

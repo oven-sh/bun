@@ -1688,13 +1688,10 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// Migrate any `Locked.readable` strong ref
     /// into the GC-traced `js.gc.stream` slot to break the cycle (the JS
     /// wrapper owns the stream; native side must not hold it strongly).
-    ///
-    /// Runs after the native object is heap-allocated, so it must not hit a
-    /// VMTraps safepoint: `Strong::value()` is a pure read, `Strong::get()`
-    /// would re-tag via `from_js` and is one.
     fn check_body_stream_ref(&self, global_object: &JSGlobalObject) {
         if let Some(js_value) = self.js_ref() {
             if let Value::Locked(locked) = self.get_body_value() {
+                // `Strong::get()` is a VMTraps safepoint; this runs post-alloc.
                 if let Some(stream_value) = locked.readable.value() {
                     stream_value.ensure_still_alive();
                     Self::stream_set_cached(js_value, global_object, stream_value);

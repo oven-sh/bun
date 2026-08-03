@@ -4899,8 +4899,6 @@ bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
     return vm->hasTerminationRequest();
 }
 
-// Re-establish a TerminationException that was spent by an unconditional
-// clearException() (BunPerformMicrotaskJob) so the microtask drain observes it.
 [[ZIG_EXPORT(nothrow)]]
 void JSC__VM__rethrowTerminationException(JSC::VM* vm)
 {

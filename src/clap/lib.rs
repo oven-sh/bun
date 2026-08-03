@@ -374,6 +374,8 @@ impl Default for Help {
 pub struct ParseOptions<'a> {
     pub diagnostic: Option<&'a mut Diagnostic>,
     pub stop_after_positional_at: usize,
+    /// Route everything after a literal `--` to `remaining()` instead of `positionals()`.
+    pub passthrough_after_double_dash: bool,
 }
 
 // Help/usage/error rendering — none of this is on the cold-start hot chain
@@ -455,6 +457,7 @@ pub fn parse<Id: 'static>(
         ParseOptions {
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
+            passthrough_after_double_dash: opt.passthrough_after_double_dash,
         },
     )?;
     Ok(Args { clap })
@@ -474,6 +477,7 @@ pub fn parse_with_table<Id: 'static>(
         ParseOptions {
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
+            passthrough_after_double_dash: opt.passthrough_after_double_dash,
         },
     )?;
     Ok(Args { clap })

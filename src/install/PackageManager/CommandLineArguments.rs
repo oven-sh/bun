@@ -1002,6 +1002,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             clap::ParseOptions {
                 diagnostic: Some(&mut diag),
                 stop_after_positional_at: 0,
+                passthrough_after_double_dash: false,
             },
         ) {
             Ok(a) => {

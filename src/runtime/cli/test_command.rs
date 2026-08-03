@@ -2287,7 +2287,8 @@ impl TestCommand {
                 ..Default::default()
             })?
         };
-        vm.argv = core::mem::take(&mut ctx.passthrough);
+        // Clone (not take): build_worker_argv reads ctx.passthrough to forward `-- <args>`.
+        vm.argv = ctx.passthrough.clone();
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
         vm.preload = ctx.preloads.clone();
         vm.transpiler.options.rewrite_jest_for_tests = true;
@@ -2356,6 +2357,21 @@ impl TestCommand {
         // Start the debugger before we scan for files
         // But, don't block the main thread waiting if they used --inspect-wait.
         vm.ensure_debugger(false)?;
+
+        // Hint when an arg after `--` looks like a test file the user meant as a filter.
+        if ctx.positionals.len() < 2 {
+            if let Some(arg) = ctx.passthrough.iter().find(|a| {
+                strings::contains(a, b".test.")
+                    || strings::contains(a, b".spec.")
+                    || strings::contains(a, b"_test.")
+                    || strings::contains(a, b"_spec.")
+            }) {
+                pretty_errorln!(
+                    "<blue>note<r><d>:<r> {} after <d>--<r> is placed in process.argv, not used as a test filter. Put it before <d>--<r> to use it as a filter.",
+                    bun_fmt::quote(arg),
+                );
+            }
+        }
 
         let mut scanner = Scanner::init(&vm.transpiler, ctx.positionals.len()).expect("oom");
         // SAFETY: lifetime-erase; `path_ignore_patterns_view` lives in this never-returning

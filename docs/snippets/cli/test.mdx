@@ -1,8 +1,10 @@
 # CLI Usage
 
 ```bash
-bun test <patterns>
+bun test <patterns> [-- <args>]
 ```
+
+Arguments after `--` are forwarded to `process.argv` inside your tests instead of being treated as file filters.
 
 ### Execution Control
 

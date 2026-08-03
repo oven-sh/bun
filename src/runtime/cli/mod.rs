@@ -2018,7 +2018,7 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
             Tag::TestCommand => {
                 pretty!(
                     "\
-<b>Usage<r>: <b><green>bun test<r> <cyan>[flags]<r> <blue>[\\<patterns\\>]<r>
+<b>Usage<r>: <b><green>bun test<r> <cyan>[flags]<r> <blue>[\\<patterns\\>]<r> <d>[-- \\<args\\>]<r>
   Run all matching test files and print the results to stdout"
                 );
                 Output::flush();
@@ -2036,6 +2036,9 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
 
   <d>Run all test files, only including tests whose names includes \"baz\"<r>
   <b><green>bun test<r> <cyan>--test-name-pattern<r> <blue>baz<r>
+
+  <d>Forward arguments to process.argv in your tests<r>
+  <b><green>bun test<r> <d>--<r> <blue>--my-flag value<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
 "

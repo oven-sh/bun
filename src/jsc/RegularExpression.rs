@@ -58,7 +58,7 @@ impl RegularExpression {
     }
 
     #[inline]
-    pub fn is_valid(&mut self) -> bool {
+    pub(crate) fn is_valid(&mut self) -> bool {
         Yarr__RegularExpression__isValid(self)
     }
 
@@ -75,7 +75,7 @@ impl RegularExpression {
 
     /// Destroys the FFI-allocated handle. Caller must not use `this` afterwards.
     #[inline]
-    pub unsafe fn destroy(this: *mut Self) {
+    pub(crate) unsafe fn destroy(this: *mut Self) {
         // SAFETY: `this` is a valid live Yarr RegularExpression handle; consumed here.
         unsafe { Yarr__RegularExpression__deinit(this) }
     }
@@ -90,7 +90,7 @@ impl RegularExpression {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_regex_compile(pattern: BunString) -> Option<core::ptr::NonNull<()>> {
+fn __bun_regex_compile(pattern: BunString) -> Option<core::ptr::NonNull<()>> {
     // Initialize JSC before first compile (idempotent).
     crate::initialize(false);
     match RegularExpression::init(pattern, Flags::None) {
@@ -100,7 +100,7 @@ pub(crate) fn __bun_regex_compile(pattern: BunString) -> Option<core::ptr::NonNu
 }
 
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_regex_matches(regex: core::ptr::NonNull<()>, input: &BunString) -> bool {
+fn __bun_regex_matches(regex: core::ptr::NonNull<()>, input: &BunString) -> bool {
     // `RegularExpression` is an `opaque_ffi!` ZST handle; `opaque_mut` is the
     // centralised non-null deref proof. `regex` was produced by
     // `__bun_regex_compile` and remains live until `__bun_regex_drop`.
@@ -108,7 +108,7 @@ pub(crate) fn __bun_regex_matches(regex: core::ptr::NonNull<()>, input: &BunStri
 }
 
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_regex_drop(regex: core::ptr::NonNull<()>) {
+fn __bun_regex_drop(regex: core::ptr::NonNull<()>) {
     // SAFETY: `regex` was produced by `__bun_regex_compile`; consumed here.
     unsafe { RegularExpression::destroy(regex.as_ptr().cast()) }
 }

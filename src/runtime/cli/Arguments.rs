@@ -40,7 +40,7 @@ pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
     Ok(option_loader.to_api())
 }
 
-pub(crate) fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<api::JsxRuntime> {
+fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<api::JsxRuntime> {
     if s == b"automatic" {
         Ok(api::JsxRuntime::Automatic)
     } else if s == b"fallback" || s == b"classic" {
@@ -89,7 +89,7 @@ macro_rules! maybe_verbose_error_trace {
     };
 }
 
-pub(crate) const BASE_PARAMS_: &[ParamType] = concat_params!(
+const BASE_PARAMS_: &[ParamType] = concat_params!(
     maybe_debug_params!(),
     &[
         parse_param!(
@@ -108,16 +108,11 @@ pub(crate) const BASE_PARAMS_: &[ParamType] = concat_params!(
     &[parse_param!("<POS>...")],
 );
 
-const DEBUG_PARAMS: &[ParamType] = &[
-    parse_param!(
-        "--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string"
-    ),
-    parse_param!(
-        "--breakpoint-print <STR>...       DEBUG MODE: breakpoint when printing something that includes this string"
-    ),
-];
+const DEBUG_PARAMS: &[ParamType] = &[parse_param!(
+    "--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string"
+)];
 
-pub(crate) const TRANSPILER_PARAMS_: &[ParamType] = &[
+const TRANSPILER_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--main-fields <STR>...             Main fields to lookup in package.json. Defaults to --target dependent"
     ),
@@ -162,7 +157,7 @@ pub(crate) const TRANSPILER_PARAMS_: &[ParamType] = &[
     ),
 ];
 
-pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
+const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--watch                           Automatically restart the process on file change"
     ),
@@ -309,7 +304,7 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--stack-trace-limit <STR>"),
 ];
 
-pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
+const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
     parse_param!(
         "-F, --filter <STR>...             Run a script in all workspace packages matching the pattern"
     ),
@@ -365,7 +360,7 @@ pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
     parse_param!("--test-coverage-lines <STR>"),
 ];
 
-pub(crate) const AUTO_ONLY_PARAMS: &[ParamType] = concat_params!(
+const AUTO_ONLY_PARAMS: &[ParamType] = concat_params!(
     &[
         // parse_param!("--all"),
         parse_param!("--silent                          Don't print the script command"),
@@ -384,7 +379,7 @@ pub(crate) const AUTO_PARAMS: &[ParamType] = concat_params!(
     BASE_PARAMS_
 );
 
-pub(crate) const RUN_ONLY_PARAMS: &[ParamType] = concat_params!(
+const RUN_ONLY_PARAMS: &[ParamType] = concat_params!(
     &[
         parse_param!("--silent                          Don't print the script command"),
         parse_param!(
@@ -453,6 +448,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!(
             "--compile-executable-path <STR>  Path to a Bun executable to use for cross-compilation instead of downloading"
+        ),
+        parse_param!(
+            "--asset <STR>...                 Embed a file or directory into the compiled executable, preserving its relative path (requires --compile)"
         ),
         parse_param!("--bytecode                       Use a bytecode cache"),
         parse_param!(
@@ -565,7 +563,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
     ],
     maybe_bake_debug_params!(),
 );
-pub(crate) const BUILD_PARAMS: &[ParamType] =
+const BUILD_PARAMS: &[ParamType] =
     concat_params!(BUILD_ONLY_PARAMS, TRANSPILER_PARAMS_, BASE_PARAMS_);
 
 // TODO: update test completions
@@ -641,7 +639,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs."
     ),
 ];
-pub(crate) const TEST_PARAMS: &[ParamType] = concat_params!(
+const TEST_PARAMS: &[ParamType] = concat_params!(
     TEST_ONLY_PARAMS,
     RUNTIME_PARAMS_,
     TRANSPILER_PARAMS_,
@@ -649,7 +647,7 @@ pub(crate) const TEST_PARAMS: &[ParamType] = concat_params!(
 );
 
 /// Fallback table for `Command::tag_params`.
-pub(crate) const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
+const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
     concat_params!(BASE_PARAMS_, RUNTIME_PARAMS_, TRANSPILER_PARAMS_);
 
 // ─── pre-converted tables (rodata) ───────────────────────────────────────────
@@ -680,18 +678,18 @@ pub(crate) const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".rodata.startup")
 )]
-pub static AUTO_TABLE: &clap::ConvertedTable = clap::comptime_table!(AUTO_PARAMS);
-pub static RUN_TABLE: &clap::ConvertedTable = clap::comptime_table!(RUN_PARAMS, cold);
-pub static BUILD_TABLE: &clap::ConvertedTable = clap::comptime_table!(BUILD_PARAMS, cold);
-pub static TEST_TABLE: &clap::ConvertedTable = clap::comptime_table!(TEST_PARAMS, cold);
-pub(crate) static BASE_RUNTIME_TRANSPILER_TABLE: &clap::ConvertedTable =
+pub(crate) static AUTO_TABLE: &clap::ConvertedTable = clap::comptime_table!(AUTO_PARAMS);
+pub(crate) static RUN_TABLE: &clap::ConvertedTable = clap::comptime_table!(RUN_PARAMS, cold);
+pub(crate) static BUILD_TABLE: &clap::ConvertedTable = clap::comptime_table!(BUILD_PARAMS, cold);
+pub(crate) static TEST_TABLE: &clap::ConvertedTable = clap::comptime_table!(TEST_PARAMS, cold);
+static BASE_RUNTIME_TRANSPILER_TABLE: &clap::ConvertedTable =
     clap::comptime_table!(BASE_RUNTIME_TRANSPILER_PARAMS, cold);
 
 /// Per-tag pre-converted clap table (rodata, built at compile time via
 /// `comptime_table!`). This is what `parse` consumes so the startup path never
 /// hits `ConvertedTable::build`'s alloc/sort/lock.
 #[inline]
-pub(crate) fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
+fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
     match cmd {
         CommandTag::AutoCommand => AUTO_TABLE,
         CommandTag::RunCommand | CommandTag::RunAsNodeCommand => RUN_TABLE,
@@ -707,13 +705,13 @@ pub(crate) fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
 // `#[no_mangle]` symbol layout is unchanged for the C++ side that reads these
 // as plain `bool`. Rust writes go through `.store(.., Relaxed)`.
 #[unsafe(no_mangle)]
-pub(crate) static Bun__Node__ZeroFillBuffers: core::sync::atomic::AtomicBool =
+static Bun__Node__ZeroFillBuffers: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
-pub(crate) static Bun__Node__ProcessNoDeprecation: core::sync::atomic::AtomicBool =
+static Bun__Node__ProcessNoDeprecation: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
-pub(crate) static Bun__Node__ProcessThrowDeprecation: core::sync::atomic::AtomicBool =
+static Bun__Node__ProcessThrowDeprecation: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 #[repr(u8)]
@@ -724,7 +722,7 @@ pub(crate) enum BunCAStore {
     System,
 }
 #[unsafe(no_mangle)]
-pub(crate) static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
+static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
     core::sync::atomic::AtomicU8::new(BunCAStore::Bundled as u8);
 #[unsafe(no_mangle)]
 pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
@@ -741,7 +739,7 @@ pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
 /// param table, and the per-`cmd` blocks below are guarded by
 /// `if matches!(cmd, …)`.
-pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformOptions> {
+pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformOptions> {
     let mut diag = clap::Diagnostic::default();
     let table = tag_table(cmd);
 
@@ -1587,10 +1585,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
 
     if bun_core::env::SHOW_CRASH_TRACE {
         // argv slices are process-lifetime.
-        let _ = cli::debug_flags::RESOLVE_BREAKPOINTS
-            .set(args.options(b"--breakpoint-resolve").to_vec());
-        let _ =
-            cli::debug_flags::PRINT_BREAKPOINTS.set(args.options(b"--breakpoint-print").to_vec());
+        bun_core::debug_flags::set_resolve_breakpoints(
+            args.options(b"--breakpoint-resolve").to_vec(),
+        );
     }
 
     Ok(opts)
@@ -2096,6 +2093,17 @@ fn parse_build_command_options(
         ctx.bundler_options.compile_exec_argv = Some(compile_exec_argv.into());
     }
 
+    {
+        let assets = args.options(b"--asset");
+        if !assets.is_empty() {
+            if !ctx.bundler_options.compile {
+                Output::err_generic("--asset requires --compile", ());
+                Global::crash();
+            }
+            ctx.bundler_options.compile_assets = slice_to_owned(assets);
+        }
+    }
+
     // Handle --compile-autoload-dotenv flags
     {
         let has_positive = args.flag(b"--compile-autoload-dotenv");
@@ -2189,15 +2197,6 @@ fn parse_build_command_options(
     }
 
     if args.flag(b"--windows-hide-console") {
-        // --windows-hide-console technically doesnt depend on WinAPI, but since since --windows-icon
-        // does, all of these customization options have been gated to windows-only
-        if !cfg!(windows) {
-            Output::err_generic(
-                "Using --windows-hide-console is only available when compiling on Windows",
-                (),
-            );
-            Global::crash();
-        }
         if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
             Output::err_generic(
                 "--windows-hide-console requires a Windows compile target",
@@ -2405,19 +2404,30 @@ fn parse_build_command_options(
         ctx.bundler_options.code_splitting = true;
     }
 
-    if let Some(entry_naming) = args.option(b"--entry-naming") {
-        ctx.bundler_options.entry_naming =
-            strings::concat(&[b"./", strings::remove_leading_dot_slash(entry_naming)]);
-    }
-
-    if let Some(chunk_naming) = args.option(b"--chunk-naming") {
-        ctx.bundler_options.chunk_naming =
-            strings::concat(&[b"./", strings::remove_leading_dot_slash(chunk_naming)]);
-    }
-
-    if let Some(asset_naming) = args.option(b"--asset-naming") {
-        ctx.bundler_options.asset_naming =
-            strings::concat(&[b"./", strings::remove_leading_dot_slash(asset_naming)]);
+    for (flag, slot) in [
+        (
+            b"--entry-naming".as_slice(),
+            &mut ctx.bundler_options.entry_naming,
+        ),
+        (
+            b"--chunk-naming".as_slice(),
+            &mut ctx.bundler_options.chunk_naming,
+        ),
+        (
+            b"--asset-naming".as_slice(),
+            &mut ctx.bundler_options.asset_naming,
+        ),
+    ] {
+        if let Some(value) = args.option(flag) {
+            if let Some((pos, tail)) = options::find_unterminated_placeholder(value) {
+                Output::err_generic(
+                    "{}: unterminated \"{}\" placeholder (missing \"]\") at position {}",
+                    (BStr::new(flag), BStr::new(tail), pos),
+                );
+                Global::exit(1);
+            }
+            *slot = strings::concat(&[b"./", strings::remove_leading_dot_slash(value)]);
+        }
     }
 
     if args.flag(b"--server-components") {

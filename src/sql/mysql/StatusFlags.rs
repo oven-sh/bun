@@ -57,7 +57,7 @@ impl StatusFlags {
         self._value
     }
 
-    pub fn from_int(flags: u16) -> Self {
+    pub(crate) fn from_int(flags: u16) -> Self {
         Self { _value: flags }
     }
 }

@@ -132,8 +132,6 @@ void JSReadRequest::chunkSteps(JSGlobalObject* globalObject, JSValue chunk)
         return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onByteTeeReadChunkMicrotask(), chunk, m_context.get());
     case ReadRequestKind::ReadStreamIntoSink:
         return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadStreamIntoSinkChunk(), chunk, m_context.get());
-    case ReadRequestKind::ResumableSinkPump:
-        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onResumableSinkChunk(), chunk, m_context.get());
     case ReadRequestKind::AsyncIterator: {
         auto* context = uncheckedDowncast<InternalFieldTuple>(m_context.get());
         auto* promise = uncheckedDowncast<JSPromise>(context->getInternalField(1));
@@ -143,6 +141,8 @@ void JSReadRequest::chunkSteps(JSGlobalObject* globalObject, JSValue chunk)
         queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorResolveMicrotask(), result, promise);
         return;
     }
+    case ReadRequestKind::TextDecode:
+        RELEASE_AND_RETURN(scope, textDecodeReadRequestChunkSteps(globalObject, uncheckedDowncast<JSReadableStreamDefaultController>(m_context.get()), chunk));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -204,8 +204,6 @@ void JSReadRequest::closeSteps(JSGlobalObject* globalObject)
     }
     case ReadRequestKind::ReadStreamIntoSink:
         return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadStreamIntoSinkClose(), jsUndefined(), m_context.get());
-    case ReadRequestKind::ResumableSinkPump:
-        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onResumableSinkClose(), jsUndefined(), m_context.get());
     case ReadRequestKind::AsyncIterator: {
         auto* context = uncheckedDowncast<InternalFieldTuple>(m_context.get());
         auto* iterator = uncheckedDowncast<JSReadableStreamAsyncIterator>(context->getInternalField(0));
@@ -218,6 +216,8 @@ void JSReadRequest::closeSteps(JSGlobalObject* globalObject)
         queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorResolveMicrotask(), result, promise);
         return;
     }
+    case ReadRequestKind::TextDecode:
+        RELEASE_AND_RETURN(scope, textDecodeReadRequestCloseSteps(globalObject, uncheckedDowncast<JSReadableStreamDefaultController>(m_context.get())));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -237,8 +237,6 @@ void JSReadRequest::errorSteps(JSGlobalObject* globalObject, JSValue error)
         return;
     case ReadRequestKind::ReadStreamIntoSink:
         return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadStreamIntoSinkRejected(), error, m_context.get());
-    case ReadRequestKind::ResumableSinkPump:
-        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onResumableSinkReadRejected(), error, m_context.get());
     case ReadRequestKind::AsyncIterator: {
         auto* context = uncheckedDowncast<InternalFieldTuple>(m_context.get());
         auto* iterator = uncheckedDowncast<JSReadableStreamAsyncIterator>(context->getInternalField(0));
@@ -247,6 +245,17 @@ void JSReadRequest::errorSteps(JSGlobalObject* globalObject, JSValue error)
         readableStreamDefaultReaderRelease(globalObject, iterator->m_reader.get());
         RETURN_IF_EXCEPTION(scope, void());
         queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorRejectMicrotask(), error, promise);
+        return;
+    }
+    case ReadRequestKind::TextDecode: {
+        auto* controller = uncheckedDowncast<JSReadableStreamDefaultController>(m_context.get());
+        auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
+        readableStreamDefaultControllerError(globalObject, controller, error);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (reader && reader->m_stream) {
+            readableStreamDefaultReaderRelease(globalObject, reader);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
         return;
     }
     }

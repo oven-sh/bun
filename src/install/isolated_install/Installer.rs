@@ -1390,6 +1390,10 @@ impl Task {
 
                             // fallthrough copyfile
                             _ => {
+                                // close the fd the failed hardlink attempt left behind
+                                if let Some(old) = cached_package_dir.take() {
+                                    old.close();
+                                }
                                 *cached_package_dir = match bun_sys::open_dir_for_iteration(
                                     cache_dir,
                                     pkg_cache_dir_subpath.slice(),

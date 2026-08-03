@@ -182,6 +182,7 @@ function guardCallback(callback) {
 }
 
 const nodeModulesRE = /[\\/]node_modules[\\/]/;
+const ErrorCaptureStackTrace = Error.captureStackTrace;
 function returnStackFrames(_err: unknown, frames: unknown[]) {
   return frames;
 }
@@ -189,20 +190,26 @@ function returnStackFrames(_err: unknown, frames: unknown[]) {
 // Port of node's IsInsideNodeModules (src/node_util.cc): test whether the
 // first real user frame (skipping node:/internal/native frames) lives inside
 // a node_modules directory. Uses prepareStackTrace CallSites so no stack
-// string is materialized; globals restored in finally.
+// string is materialized; globals restored in finally. The body is guarded
+// so a tampered Error.* (deleted captureStackTrace, non-writable
+// stackTraceLimit, accessor prepareStackTrace) never escapes to callers
+// like url.parse that never touched Error.* before.
 function isInsideNodeModules(frameLimit: number): boolean {
   const prevLimit = Error.stackTraceLimit;
   const prevPrepare = Error.prepareStackTrace;
-  let frames: { getFileName(): string | null }[];
+  let frames: { getFileName(): string | null }[] | undefined;
   try {
     Error.stackTraceLimit = frameLimit;
     Error.prepareStackTrace = returnStackFrames;
     const target: { stack?: unknown } = {};
-    Error.captureStackTrace(target, isInsideNodeModules);
+    ErrorCaptureStackTrace(target, isInsideNodeModules);
     frames = target.stack as typeof frames;
+  } catch {
   } finally {
-    Error.stackTraceLimit = prevLimit;
-    Error.prepareStackTrace = prevPrepare;
+    try {
+      Error.stackTraceLimit = prevLimit;
+      Error.prepareStackTrace = prevPrepare;
+    } catch {}
   }
   if (!$isJSArray(frames)) return false;
   for (const frame of frames) {

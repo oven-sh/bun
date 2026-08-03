@@ -54,6 +54,8 @@
 
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
+#include "ZigGlobalObject.h"
+#include "InternalModuleRegistry.h"
 // #include "WebCoreOpaqueRootInlines.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSArray.h>
@@ -145,6 +147,49 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_markResourceTiming, (JSG
     return JSValue::encode(jsUndefined());
 }
 
+// node:perf_hooks' module body overwrites this accessor with the real data property.
+static JSC::EncodedJSValue jsPerformancePrototypeLoadNodePerfHooks(JSGlobalObject* lexicalGlobalObject, PropertyName propertyName)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::NodePerfHooks);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    JSObject* prototype = JSPerformance::prototype(vm, *globalObject);
+    JSValue value = prototype->getDirect(vm, propertyName);
+    if (!value || value.isCustomGetterSetter()) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(value);
+}
+
+static JSC_DEFINE_CUSTOM_GETTER(jsPerformance_eventLoopUtilization, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue, PropertyName propertyName))
+{
+    return jsPerformancePrototypeLoadNodePerfHooks(lexicalGlobalObject, propertyName);
+}
+
+static JSC_DEFINE_CUSTOM_GETTER(jsPerformance_timerify, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue, PropertyName propertyName))
+{
+    return jsPerformancePrototypeLoadNodePerfHooks(lexicalGlobalObject, propertyName);
+}
+
+static JSC_DEFINE_CUSTOM_GETTER(jsPerformance_nodeTiming, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue, PropertyName propertyName))
+{
+    return jsPerformancePrototypeLoadNodePerfHooks(lexicalGlobalObject, propertyName);
+}
+
+// Shadow on the receiver so assignment matches Node's writable data slot.
+static JSC_DEFINE_CUSTOM_SETTER(setJSPerformance_nodePerfHooksLazy, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName propertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    JSObject* thisObject = JSValue::decode(thisValue).getObject();
+    if (!thisObject) [[unlikely]]
+        return false;
+    thisObject->putDirect(vm, propertyName, JSValue::decode(encodedValue), 0);
+    return true;
+}
+
 // -- end copied --
 
 class JSPerformancePrototype final : public JSC::JSNonFinalObject {
@@ -229,6 +274,14 @@ void JSPerformancePrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSPerformance::info(), JSPerformancePrototypeTableValues, *this);
+
+    auto nodePerfHooksAttrs = PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum | 0;
+    putDirectCustomAccessor(vm, Identifier::fromString(vm, "eventLoopUtilization"_s),
+        CustomGetterSetter::create(vm, jsPerformance_eventLoopUtilization, setJSPerformance_nodePerfHooksLazy), nodePerfHooksAttrs);
+    putDirectCustomAccessor(vm, Identifier::fromString(vm, "timerify"_s),
+        CustomGetterSetter::create(vm, jsPerformance_timerify, setJSPerformance_nodePerfHooksLazy), nodePerfHooksAttrs);
+    putDirectCustomAccessor(vm, Identifier::fromString(vm, "nodeTiming"_s),
+        CustomGetterSetter::create(vm, jsPerformance_nodeTiming, setJSPerformance_nodePerfHooksLazy), nodePerfHooksAttrs);
     // bool hasDisabledRuntimeProperties = false;
     // if (!(globalObject())->inherits<JSDOMWindowBase>()) {
     //     hasDisabledRuntimeProperties = true;

@@ -1688,7 +1688,7 @@ pub struct WindowsNamedPipeListeningContext {
     pub(crate) listener: Option<bun_ptr::BackRef<Listener>>,
     pub global_this: GlobalRef,
     /// JSC_BORROW: process-lifetime singleton; `&'static` so call sites read
-    /// `self.vm.is_shutting_down()` without a raw-pointer deref.
+    /// `self.vm.<method>()` without a raw-pointer deref.
     pub(crate) vm: &'static VirtualMachine,
     pub ctx: Option<NonNull<boring_sys::SSL_CTX>>, // server reuses the same ctx
 }

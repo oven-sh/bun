@@ -1,5 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
+import { once } from "node:events";
 import fs from "node:fs";
 import net from "node:net";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
@@ -928,6 +929,12 @@ devTest("client disconnect on a deferred framework route releases the RequestCon
     // Client goes away mid-bundle → RequestContext::on_abort runs the
     // DeferredRequest abort callback and drops the SavedRequest.
     sock.destroy();
+    await once(sock, "close");
+    // Force the server's event loop to turn so the FIN is processed (and
+    // DeferredRequest::abort has run) before the plugin gate is released.
+    // /_dev_server_test_set is a plain route added by the harness bootstrap,
+    // so it returns without touching the bundler.
+    await dev.fetch("/_dev_server_test_set");
 
     // Let bundling finish so the deferred list is drained (Handler is now
     // Aborted; the drain loop skips it).

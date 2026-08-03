@@ -1326,16 +1326,6 @@ impl AsyncModule {
 
         // SAFETY: per-thread VM.
         if unsafe { (*jsc_vm).is_watcher_enabled() } {
-            // SAFETY: per-thread VM.
-            let mut resolved_source = unsafe {
-                (*jsc_vm).ref_counted_resolved_source::<false>(
-                    printer.ctx.get_written(),
-                    BunString::init(specifier),
-                    path.text,
-                    None,
-                )
-            };
-
             if let Some(fd_) = input_fd {
                 if bun_paths::is_absolute(path.text)
                     && !strings::contains(path.text, b"node_modules")
@@ -1367,13 +1357,26 @@ impl AsyncModule {
                 }
             }
 
-            resolved_source.is_commonjs_module = is_commonjs_module;
-
-            return Ok(resolved_source);
+            // `ref_counted_resolved_source` wraps bytes as Latin-1; non-ASCII
+            // printer output falls through to `clone_utf8` below.
+            let written = printer.ctx.get_written();
+            if bun_core::strings::is_all_ascii(written) {
+                // SAFETY: per-thread VM.
+                let mut resolved_source = unsafe {
+                    (*jsc_vm).ref_counted_resolved_source::<false>(
+                        written,
+                        BunString::init(specifier),
+                        path.text,
+                        None,
+                    )
+                };
+                resolved_source.is_commonjs_module = is_commonjs_module;
+                return Ok(resolved_source);
+            }
         }
 
         Ok(ResolvedSource {
-            source_code: BunString::clone_latin1(printer.ctx.get_written()),
+            source_code: BunString::clone_utf8(printer.ctx.get_written()),
             specifier: BunString::init(specifier),
             source_url: BunString::init(path.text),
             is_commonjs_module,

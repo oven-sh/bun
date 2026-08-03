@@ -48,7 +48,9 @@ bun_core::declare_scope!(cache, visible);
 /// bindings from the compiled bytecode after the module-loader rewrite, so the
 /// record no longer carries them; blobs written in the old numbering must not
 /// be read back.
-const EXPECTED_VERSION: u32 = 24;
+/// Version 25: Raw template literals and regex literals are no longer rewritten
+/// to unicode escapes, so cached output may contain non-ASCII UTF-8.
+const EXPECTED_VERSION: u32 = 25;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -1054,10 +1056,13 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             }
             debug_assert!(this.entry.is_none());
 
-            // Borrowed Latin-1 view: `to_file` only reads `byte_slice()` + the encoding
-            // tag (unmarked 8-bit ZigString -> Encoding::LATIN1, same as clone_latin1),
-            // and `output_code_bytes` outlives the synchronous `to_file` call.
-            let output_code = BunString::ascii(output_code_bytes);
+            // Borrowed view; `output_code_bytes` outlives the synchronous
+            // `to_file` call. Non-ASCII output is tagged UTF8 on disk.
+            let output_code = if bun_core::strings::is_all_ascii(output_code_bytes) {
+                BunString::ascii(output_code_bytes)
+            } else {
+                BunString::borrow_utf8(output_code_bytes)
+            };
             let result = RuntimeTranspilerCache::to_file(
                 this.input_byte_length.unwrap(),
                 this.input_hash.unwrap(),

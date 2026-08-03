@@ -164,6 +164,10 @@ impl Value {
                 if bytes.is_empty() {
                     return BunString::EMPTY;
                 }
+                if !bun_core::strings::is_all_ascii(bytes) {
+                    // Non-ASCII printer output is UTF-8, not Latin-1.
+                    return BunString::clone_utf8(bytes);
+                }
                 extern "C" fn noop(_: *mut c_void, _: *mut c_void, _: usize) {}
                 // latin1 = true.
                 BunString::create_external::<*mut c_void>(

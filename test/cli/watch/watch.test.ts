@@ -129,8 +129,10 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
 // each aborting thread via pthread_exit and the exec then completes. Two
 // aborts are needed because the crash handler's existing SA_RESETHAND SIGABRT
 // hook absorbs a single one.
-it.skipIf(!isLinux || !cc)("survives abort() from another thread during --watch reload", async () => {
-  const SHIM_C = /* c */ `
+it.skipIf(!isLinux || !cc)(
+  "survives abort() from another thread during --watch reload",
+  async () => {
+    const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <pthread.h>
@@ -163,58 +165,60 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
   return real_execve(path, argv, envp);
 }
 `;
-  const WATCHEE = `
+    const WATCHEE = `
 process.stdout.write("gen " + GEN + " up\\n");
 setInterval(() => {}, 1000);
 `;
-  using dir = tempDir("watch-reload-abort", {
-    "shim.c": SHIM_C,
-    "watchee.mjs": WATCHEE.replace("GEN", "1"),
-  });
-  const shimPath = join(String(dir), "shim.so");
-  await using ccProc = Bun.spawn({
-    cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(String(dir), "shim.c"), "-ldl", "-lpthread"],
-    env: bunEnv,
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
-  if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+    using dir = tempDir("watch-reload-abort", {
+      "shim.c": SHIM_C,
+      "watchee.mjs": WATCHEE.replace("GEN", "1"),
+    });
+    const shimPath = join(String(dir), "shim.so");
+    await using ccProc = Bun.spawn({
+      cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(String(dir), "shim.c"), "-ldl", "-lpthread"],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
+    if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
 
-  const existing = bunEnv.LD_PRELOAD;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--watch", "--no-clear-screen", "watchee.mjs"],
-    cwd: String(dir),
-    env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    const existing = bunEnv.LD_PRELOAD;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "watchee.mjs"],
+      cwd: String(dir),
+      env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const target = 3;
-  let gen = 1;
-  let sawTarget = false;
-  let stderrText = "";
-  (async () => {
-    for await (const chunk of proc.stderr) stderrText += new TextDecoder().decode(chunk);
-  })();
-  for await (const chunk of proc.stdout) {
-    const text = new TextDecoder().decode(chunk);
-    if (text.includes(`gen ${gen} up`)) {
-      if (gen >= target) {
-        sawTarget = true;
-        proc.kill("SIGKILL");
-        break;
+    const target = 3;
+    let gen = 1;
+    let sawTarget = false;
+    let stderrText = "";
+    (async () => {
+      for await (const chunk of proc.stderr) stderrText += new TextDecoder().decode(chunk);
+    })();
+    for await (const chunk of proc.stdout) {
+      const text = new TextDecoder().decode(chunk);
+      if (text.includes(`gen ${gen} up`)) {
+        if (gen >= target) {
+          sawTarget = true;
+          proc.kill("SIGKILL");
+          break;
+        }
+        gen++;
+        await Bun.write(join(String(dir), "watchee.mjs"), WATCHEE.replace("GEN", String(gen)));
       }
-      gen++;
-      await Bun.write(join(String(dir), "watchee.mjs"), WATCHEE.replace("GEN", String(gen)));
     }
-  }
-  await proc.exited;
+    await proc.exited;
 
-  expect({ sawTarget, restartsCompleted: gen - 1, signalCode: proc.signalCode, stderr: stderrText.trim() }).toEqual({
-    sawTarget: true,
-    restartsCompleted: target - 1,
-    signalCode: "SIGKILL",
-    stderr: "",
-  });
-}, 30_000);
+    expect({ sawTarget, restartsCompleted: gen - 1, signalCode: proc.signalCode, stderr: stderrText.trim() }).toEqual({
+      sawTarget: true,
+      restartsCompleted: target - 1,
+      signalCode: "SIGKILL",
+      stderr: "",
+    });
+  },
+  30_000,
+);

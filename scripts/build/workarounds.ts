@@ -226,6 +226,24 @@ export const workarounds: Workaround[] = [
       `(options.detached block), replace the local 0x80 with libc::POSIX_SPAWN_SETSID, ` +
       `drop the explanatory comments, and delete this entry.`,
   },
+  {
+    id: "lolhtml-integration-point-stale-hint",
+    issue: "https://github.com/cloudflare/lol-html/pull/329",
+    description:
+      "lol-html skips selector matching for the second of two consecutive SVG/MathML " +
+      "integration-point siblings (stale got_flags_from_hint in the dispatcher). " +
+      "Patched locally until the upstream PR ships in a release.",
+    applies: () => true,
+    expectedToBeFixed: cfg => {
+      // The pin is the v3.0.0 tag; any bump past it should carry #329 (or
+      // this check makes whoever bumps verify, which is the point).
+      const v = lockedCrateVersion(cfg, "lol_html");
+      return v !== undefined && satisfiesRange(v, ">3.0.0");
+    },
+    cleanup:
+      `Delete patches/lolhtml/integration-point-stale-hint-flag.patch, the patches: list in ` +
+      `scripts/build/deps/lolhtml.ts, and this entry.`,
+  },
 ];
 
 /**

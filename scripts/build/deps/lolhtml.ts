@@ -21,7 +21,8 @@
 
 import type { Dependency } from "../source.ts";
 
-const LOLHTML_COMMIT = "77127cd2b8545998756e8d64e36ee2313c4bb312";
+// v3.0.0
+const LOLHTML_COMMIT = "02f139c4437b2da666a50d32e11d9158cbe0a393";
 
 export const lolhtml: Dependency = {
   name: "lolhtml",
@@ -32,6 +33,8 @@ export const lolhtml: Dependency = {
     repo: "cloudflare/lol-html",
     commit: LOLHTML_COMMIT,
   }),
+
+  patches: ["patches/lolhtml/integration-point-stale-hint-flag.patch"],
 
   // No separate build — compiled as part of the workspace cargo build via
   // `bun_runtime`/`bun_bundler`'s path dep on `vendor/lolhtml`.

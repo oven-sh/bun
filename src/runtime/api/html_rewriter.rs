@@ -667,25 +667,28 @@ impl BufferOutputSink {
         // `SinkRef` carries the raw `sink` (`heap::into_raw` root) so every
         // `(*sink).field` access shares its provenance; `run_output_sink`
         // reaches the rewriter through a raw pointer, never `&mut *sink`.
+        let mut settings = lol_html::Settings::new()
+            .with_encoding(lol_html::AsciiCompatibleEncoding::utf_8())
+            .with_memory_settings(
+                lol_html::MemorySettings::new()
+                    .with_preallocated_parsing_buffer_size(
+                        if input_size as u64 == webcore::blob::MAX_SIZE {
+                            1024
+                        } else {
+                            input_size.max(1024) as usize
+                        },
+                    )
+                    .with_max_allowed_memory_usage(u32::MAX as usize),
+            )
+            .with_strict(false);
+        for handler in element_content_handlers {
+            settings = settings.append_element_content_handler(handler);
+        }
+        for handler in document_content_handlers {
+            settings = settings.append_document_content_handler(handler);
+        }
         let rewriter = bun_core::heap::into_raw(Box::new(lol_html::HtmlRewriter::new(
-            lol_html::Settings {
-                element_content_handlers,
-                document_content_handlers,
-                encoding: lol_html::AsciiCompatibleEncoding::utf_8(),
-                memory_settings: lol_html::MemorySettings {
-                    preallocated_parsing_buffer_size: if input_size as u64
-                        == webcore::blob::MAX_SIZE
-                    {
-                        1024
-                    } else {
-                        input_size.max(1024) as usize
-                    },
-                    max_allowed_memory_usage: u32::MAX as usize,
-                },
-                strict: false,
-                enable_esi_tags: false,
-                adjust_charset_on_meta_tag: false,
-            },
+            settings,
             SinkRef(sink),
         )));
         // SAFETY: sink is a live heap allocation (refcount >= 1).

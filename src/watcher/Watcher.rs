@@ -247,10 +247,9 @@ impl Watcher {
                     let _ = unsafe { Watcher::thread_main(this as *mut Watcher) };
                 })
         };
-        // A --watch reload execve's and immediately re-enters here; under CI
-        // load the new process's first pthread_create can see a transient
-        // EAGAIN before the old image's threads are fully reaped. One short
-        // retry covers that without masking a real resource exhaustion.
+        // A --watch reload execve's and immediately re-enters here; under CI load the first
+        // pthread_create can see a transient EAGAIN before the old image's threads are reaped.
+        // One short retry covers that without masking real resource exhaustion.
         let handle = spawn().or_else(|first| {
             std::thread::sleep(std::time::Duration::from_millis(10));
             spawn().map_err(|_| first)

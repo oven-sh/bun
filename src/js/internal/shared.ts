@@ -147,14 +147,9 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
 
 const kEmptyObject = ObjectFreeze(Object.create(null));
 
-// Node invokes fs/dns callbacks off the libuv completion via InternalMakeCallback:
-// a throw leaves callback->Call() empty, failing the InternalCallbackScope, and
-// the pending exception surfaces through TriggerUncaughtException instead of a
-// promise rejection. Bun runs these callbacks from a promise reaction, where an
-// unguarded throw would only reject that promise (an unhandledRejection).
-// https://github.com/nodejs/node/blob/v26.3.0/src/api/callback.cc#L255-L268
-// fs dispatch: https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc#L724-L741
-// dns dispatch: https://github.com/nodejs/node/blob/v26.3.0/src/cares_wrap.cc#L1881
+// Node invokes fs/dns callbacks via InternalMakeCallback, so a throw becomes uncaughtException
+// (not unhandledRejection); Bun runs them from a promise reaction so we reroute the throw.
+// https://github.com/nodejs/node/blob/main/src/api/callback.cc
 const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
 
 // Wrap a node-style callback so a throw inside it takes the uncaught path. The
@@ -187,13 +182,9 @@ function returnStackFrames(_err: unknown, frames: unknown[]) {
   return frames;
 }
 
-// Port of node's IsInsideNodeModules (src/node_util.cc): test whether the
-// first real user frame (skipping node:/internal/native frames) lives inside
-// a node_modules directory. Uses prepareStackTrace CallSites so no stack
-// string is materialized; globals restored in finally. The body is guarded
-// so a tampered Error.* (deleted captureStackTrace, non-writable
-// stackTraceLimit, accessor prepareStackTrace) never escapes to callers
-// like url.parse that never touched Error.* before.
+// Port of node's IsInsideNodeModules: first real user frame inside node_modules?
+// Guarded so a tampered Error.* never escapes to callers like url.parse.
+// https://github.com/nodejs/node/blob/main/src/node_util.cc
 function isInsideNodeModules(frameLimit: number): boolean {
   let prevLimit: unknown, prevPrepare: unknown;
   let frames: { getFileName(): string | null }[] | undefined;

@@ -37,11 +37,9 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             total_stmts_count += part.stmts.len();
         }
 
-        // A prologue "use strict" was consumed into module-scope strict mode
-        // and dropped from the statement list, but node's repl still
-        // evaluates the directive as a string expression ('use strict' is
-        // the printed result when it is the last statement). Reinject it at
-        // the front, exactly like the CJS wrapper's preserve_strict_mode.
+        // A prologue "use strict" was consumed into module-scope strict mode and dropped, but
+        // node's repl still evaluates the directive as a string expression. Reinject it at the
+        // front, like the CJS wrapper's preserve_strict_mode.
         let reinject_strict = self.module_scope().strict_mode
             == js_ast::StrictModeKind::ExplicitStrictMode
             && !(!parts.is_empty()

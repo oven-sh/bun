@@ -347,13 +347,6 @@ pub struct TestIsolationState {
     pub saved_cwd: Option<Box<[u8]>>,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// FFI declarations
-// ──────────────────────────────────────────────────────────────────────────
-
-// `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle, so
-// `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*` and C++
-// mutating VM/process state through it is interior mutation invisible to Rust.
 /// How an uncaught error reached [`VirtualMachine::uncaught_exception`].
 /// Forwarded to `Bun__handleUncaughtException` (BunProcess.cpp) for
 /// --abort-on-uncaught-exception ordering (node V8 Isolate::Throw / node_errors.cc).
@@ -367,6 +360,13 @@ pub enum UncaughtExceptionOrigin {
     EntryPointRejection = 2,
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// FFI declarations
+// ──────────────────────────────────────────────────────────────────────────
+
+// `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle, so
+// `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*` and C++
+// mutating VM/process state through it is interior mutation invisible to Rust.
 unsafe extern "C" {
     safe fn Bun__handleUncaughtException(
         global: &JSGlobalObject,

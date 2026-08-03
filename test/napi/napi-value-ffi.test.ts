@@ -87,7 +87,8 @@ describe.skipIf(isFFIUnavailable)("cc() bundled N-API headers", () => {
 // against and what cc() bundles for `#include <node_api.h>`. Compile a file
 // that references the Node 26 type surface directly against them so the build
 // asserts they stay in sync with upstream.
-describe.skipIf(isWindows)("in-tree N-API headers", () => {
+const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+describe.skipIf(isWindows || !systemCC)("in-tree N-API headers", () => {
   it("provide the Node 26 type surface and modern NAPI_MODULE_INIT()", async () => {
     const bunHeaders = resolve(__dirname, "../../src/runtime/napi");
     expect(existsSync(join(bunHeaders, "node_api.h"))).toBe(true);
@@ -96,12 +97,11 @@ describe.skipIf(isWindows)("in-tree N-API headers", () => {
     const out = join(String(dir), "addon.node");
     await using compile = Bun.spawn({
       cmd: [
-        process.env.CC || "cc",
+        systemCC!,
         "-shared",
         "-fPIC",
         ...(process.platform === "darwin" ? ["-undefined", "dynamic_lookup"] : []),
         `-I${bunHeaders}`,
-        "-DNODE_GYP_MODULE_NAME=addon",
         join(__dirname, "napi-app/bundled_napi_headers_node26.c"),
         "-o",
         out,
@@ -110,9 +110,13 @@ describe.skipIf(isWindows)("in-tree N-API headers", () => {
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([compile.stderr.text(), compile.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([
+      compile.stdout.text(),
+      compile.stderr.text(),
+      compile.exited,
+    ]);
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
 
     // NAPI_MODULE_INIT() must emit node_api_module_get_api_version_v1 returning
     // the NAPI_VERSION the addon was built for; dlopen it and call it.

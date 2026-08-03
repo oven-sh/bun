@@ -133,14 +133,15 @@ export function unstableParse(this: Transpiler, code: any, opts: any) {
     },
     has(target, prop) {
       if (prop === "toJSON" || prop === "__off") return true;
-      if (typeof prop !== "string") return false;
-      const off = target.__off;
-      const n = dv.getUint16(off, true);
-      let p = off + 4;
-      for (let i = 0; i < n; i++, p += 12) {
-        if (keyNames[dv.getUint8(p)] === prop) return true;
+      if (typeof prop === "string") {
+        const off = target.__off;
+        const n = dv.getUint16(off, true);
+        let p = off + 4;
+        for (let i = 0; i < n; i++, p += 12) {
+          if (keyNames[dv.getUint8(p)] === prop) return true;
+        }
       }
-      return false;
+      return Reflect.has(target, prop);
     },
     ownKeys(target) {
       return ownKeysOf(target.__off);

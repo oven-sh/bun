@@ -387,6 +387,8 @@ describe("Bun.Transpiler.unstable_parse", () => {
     expect(`${n}`).toBe("[object Object]");
     expect(n.hasOwnProperty("kind")).toBe(true);
     expect(n.hasOwnProperty("nope")).toBe(false);
+    expect("toString" in n).toBe(true);
+    expect("nope" in n).toBe(false);
     expect(n.nope).toBeUndefined();
   });
 

@@ -137,6 +137,9 @@ test("a stalled inspector frontend is disconnected instead of buffering console 
     }
     expect(rssDelta).toBeLessThanOrEqual(rssLimit);
     expect(closed).toBe(true);
+    // The frontend was dropped; the inspected process itself must still be
+    // running, otherwise a crash would have produced the same observables.
+    expect({ exitCode: child.exitCode, signalCode: child.signalCode }).toEqual({ exitCode: null, signalCode: null });
   } finally {
     sock.destroy();
     child.kill("SIGKILL");

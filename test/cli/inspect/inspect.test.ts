@@ -454,6 +454,56 @@ describe("unix domain socket without websocket", () => {
       const path = randomSocketPath();
       await runTest(path, [], { ...bunEnv, BUN_INSPECT: "unix:" + path });
     });
+
+    for (const flag of ["--inspect-wait", "--inspect-brk"]) {
+      test(`bun ${flag}=unix: re-dials after the frontend drops the connection before Inspector.initialized`, async () => {
+        const path = randomSocketPath();
+        const { promise: secondDial, resolve: resolveSecondDial } = Promise.withResolvers<void>();
+        let dials = 0;
+        let attached;
+        const framer = new SocketFramer(message => {});
+        using listener = Bun.listen({
+          unix: path,
+          socket: {
+            open: socket => {
+              dials++;
+              if (dials === 1) {
+                // Simulate a frontend that accepted but went away before sending
+                // Inspector.initialized (e.g. an editor extension restart).
+                socket.end();
+                return;
+              }
+              attached = socket;
+              resolveSecondDial();
+              framer.send(socket, JSON.stringify({ id: 1, method: "Inspector.enable" }));
+              framer.send(socket, JSON.stringify({ id: 2, method: "Inspector.initialized" }));
+            },
+            data: (socket, bytes) => framer.onData(socket, bytes),
+            error: () => {},
+            close: () => {},
+          },
+        });
+
+        await using inspectee = spawn({
+          cmd: [bunExe(), `${flag}=unix:${path}`, "-e", "console.error('USER-CODE-STARTED')"],
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+
+        await secondDial;
+
+        let stderr = "";
+        for await (const chunk of inspectee.stderr) {
+          stderr += new TextDecoder().decode(chunk);
+          if (stderr.includes("USER-CODE-STARTED")) break;
+        }
+
+        expect(stderr).toContain("USER-CODE-STARTED");
+        expect(dials).toBeGreaterThanOrEqual(2);
+        attached?.end?.();
+      });
+    }
   }
 });
 

@@ -1047,9 +1047,10 @@ impl ServePlugins {
         let plugin = JSBundler::Plugin::create(global, bun_jsc::BunPluginTarget::Browser);
         // `Plugin` is an `opaque_ffi!` ZST; boxing the handle lets the enum own it
         // by value. `Box<ZST>` drop is a no-op, so release goes through
-        // `Plugin::destroy` (see `handle_on_reject` / `Drop for ServePlugins`).
+        // `Plugin::destroy` (guard below / `handle_on_reject` / `Drop for ServePlugins`).
         // SAFETY: `Plugin::create` returns a non-null +1 handle.
         let plugin: Box<JSBundler::Plugin> = unsafe { bun_core::heap::take(plugin) };
+        let plugin = scopeguard::guard(plugin, |p| JSBundler::Plugin::destroy(Box::into_raw(p)));
         let mut bunstring_array: Vec<BunString> = Vec::with_capacity(plugin_list.len());
         for raw_plugin in &plugin_list {
             bunstring_array.push(BunString::init(&***raw_plugin));
@@ -1059,7 +1060,7 @@ impl ServePlugins {
 
         self.state = ServePluginsState::Pending {
             promise: jsc::JSPromiseStrong::init(global),
-            plugin,
+            plugin: scopeguard::ScopeGuard::into_inner(plugin),
             html_bundle_routes: Vec::new(),
             dev_server: None,
         };

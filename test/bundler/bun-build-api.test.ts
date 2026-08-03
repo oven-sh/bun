@@ -1614,7 +1614,9 @@ test.skipIf(!isASAN)(
       });
 
       if (/AddressSanitizer|runtime error:|SUMMARY: /.test(stderr)) sawSanitizerReport = true;
-      if (stdout.includes("ok") && stderr.trim() === "") sawCleanExit = true;
+      if (stdout.includes("ok") && stderr.trim() === "" && proc.exitCode === 0 && proc.signalCode === null) {
+        sawCleanExit = true;
+      }
 
       const pluginFrames = stderr.split("\n").filter(l => /JSBundlerPlugin\.cpp|BundlerPlugin::|FilterRegExp/.test(l));
       if (pluginFrames.length > 0) {

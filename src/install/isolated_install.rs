@@ -100,9 +100,8 @@ struct StackFrame {
     hasher: Wyhash,
 }
 
-/// Lockfile string hash of the DefinitelyTyped package name for `name`:
+/// Lockfile string hash of the DefinitelyTyped name for `name`:
 /// `react` -> `@types/react`, `@scope/pkg` -> `@types/scope__pkg`.
-/// `None` when the mangled name is too long to be a real package name.
 fn types_package_name_hash(name: &[u8]) -> Option<PackageNameHash> {
     const PREFIX: &[u8] = b"@types/";
     let mut buf = [0u8; 256];
@@ -1206,8 +1205,7 @@ pub(crate) fn install_isolated_packages(
             // them the same as lockfile-trusted packages for eligibility.
             let trusted_from_update = manager.find_trusted_dependencies_from_update_requests();
 
-            // Name hashes of every `@types/*` package in the lockfile. Only
-            // non-empty for projects using DefinitelyTyped packages.
+            // Name hashes of every `@types/*` package in the lockfile.
             let mut types_pkg_name_hashes: ArrayHashMap<PackageNameHash, ()> =
                 ArrayHashMap::default();
             for pkg_idx in 0..lockfile.packages.len() {
@@ -1324,16 +1322,13 @@ pub(crate) fn install_isolated_packages(
                                 {
                                     break 'eligible false;
                                 }
-                                // TypeScript type-checks this entry's declaration
-                                // files at their realpath inside `<cache>/links/`
-                                // and resolves their imports by walking
-                                // node_modules upward from there, falling back to
-                                // `@types/*`. That walk never re-enters the
-                                // project, so a peer import typed by a
-                                // project-installed `@types/*` package would
-                                // silently resolve as untyped. Keep such entries
-                                // project-local, where the hidden hoisted layer
-                                // (`node_modules/.bun/node_modules`) is reachable.
+                                // A peer import in this entry's declarations may
+                                // be typed by a project-installed `@types/*`
+                                // package. TypeScript's upward node_modules walk
+                                // from `<cache>/links/` can't reach it, so keep
+                                // the entry project-local, where the hidden
+                                // hoisted layer can (docs/pm/global-store.mdx,
+                                // "What stays project-local").
                                 if types_pkg_name_hashes.count() > 0 {
                                     let peers = &node_peers[node_id.get() as usize];
                                     'next_peer: for peer in peers.slice() {
@@ -1351,10 +1346,8 @@ pub(crate) fn install_isolated_packages(
                                         {
                                             continue;
                                         }
-                                        // An entry that depends on the `@types`
-                                        // package itself (a lib declaring
-                                        // `@types/react` in its real deps) keeps
-                                        // it resolvable inside the store.
+                                        // The entry's own `@types` dep is
+                                        // resolvable inside the store.
                                         for dep in entry_dependencies[idx].slice() {
                                             if dependencies[dep.dep_id as usize].name_hash
                                                 == types_name_hash

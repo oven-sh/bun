@@ -429,11 +429,8 @@ class BunWebSocket extends EventEmitter {
   }
 
   once(event, listener) {
-    // EventEmitter.prototype.once wraps `listener` and calls `this.on(...)`,
-    // which is the overridden `on` above and arms the native bridge. Arming
-    // a separate bridge here would mean two bridges for one native event, and
-    // the second `emit("error", ...)` would find no listener (the once
-    // wrapper already removed itself) and throw "Unhandled error".
+    // super.once() calls this.on() which arms the native bridge; arming a second bridge here would
+    // re-emit after the once wrapper removed itself and throw "Unhandled error".
     return super.once(event, listener);
   }
 

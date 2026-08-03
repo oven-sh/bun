@@ -4,12 +4,9 @@ const LazyTransform = require("internal/streams/lazy_transform");
 const { guardCallback } = require("internal/shared");
 const { defineCustomPromisifyArgs } = require("internal/promisify");
 
-// The native async crypto jobs invoke their callback via EventLoop::run_callback,
-// which routes a throw to the keep-alive uncaught path; wrap the callback so a
-// throw is a fatal uncaughtException like node's AfterThreadPoolWork ->
-// MakeCallback. Applied only when the trailing arg is already callable so sync
-// overloads (randomBytes(size), randomInt(max)) and native validation of a
-// non-callable callback are unchanged.
+// Wrap the trailing callback so a throw is a fatal uncaughtException like Node's AfterThreadPoolWork ->
+// MakeCallback (https://github.com/nodejs/node/blob/main/src/node_crypto.cc). Only wraps when already
+// callable so sync overloads and native non-callable validation are unchanged.
 function guardLastCallback(native) {
   function wrapped() {
     const last = arguments.length - 1;

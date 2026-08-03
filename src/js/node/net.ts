@@ -300,10 +300,8 @@ function onClientHandshakeComplete(self, socket, verifyError) {
   self._secureEstablished = true;
   self[kVerifyError] = verifyError ?? null;
   self.alpnProtocol = socket.alpnProtocol;
-  // Node has no try/catch around these emits; a listener throw reaches
-  // InternalCallbackScope as uncaughtException (TLSWrap completion runs via
-  // MakeCallback). reportUncaughtException mirrors that without letting the
-  // throw fall through to Bun.connect's handshake-to-error-handler contract.
+  // Node's TLSWrap completion runs via MakeCallback so a listener throw is an uncaughtException;
+  // mirror that here instead of falling through to Bun.connect's handshake-to-error-handler contract.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
   try {
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1662-L1673
@@ -976,10 +974,8 @@ const ServerHandlers: SocketHandler<NetSocket> = {
           try {
             server.emit("secureConnection", self);
           } catch (e) {
-            // A throw from the user's secureConnection listener is a
-            // Node-compat uncaughtException (Node's TLSWrap completion runs
-            // via MakeCallback); don't let it fall through to the Bun-native
-            // socket handler keep-alive path.
+            // Node's TLSWrap completion runs via MakeCallback: a listener throw is an
+            // uncaughtException, not a fall-through to the Bun-native socket handler keep-alive path.
             reportUncaughtException(e);
           }
         }

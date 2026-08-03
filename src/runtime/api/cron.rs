@@ -1829,10 +1829,8 @@ impl CronJob {
                         return;
                     }
                     let global_ref = vm.global();
-                    // SAFETY: single JS thread; `&mut` derived via the thread-local
-                    // raw pointer (avoids `&T` → `&mut T` provenance laundering).
-                    // Matches setTimeout (NodeTimerObject): a cron handler throw
-                    // with no uncaughtException listener is fatal.
+                    // SAFETY: single JS thread; `&mut` via the thread-local raw pointer.
+                    // Matches setTimeout (NodeTimerObject): a throw with no listener is fatal.
                     let _ = VirtualMachine::get().as_mut().uncaught_exception_fatal(
                         global_ref,
                         err,

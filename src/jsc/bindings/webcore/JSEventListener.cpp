@@ -120,11 +120,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEmitUncaughtException, (JSC::JSGlobalObject *
     return JSValue::encode(JSC::jsUndefined());
 }
 
-// Node's EventTarget catches a listener throw and defers it via
-// process.nextTick(() => { throw err }) (lib/internal/event_target.js
-// emitUncaughtException) so innerInvokeEventListeners's per-listener loop and
-// code after a synchronous dispatchEvent()/abort() complete first, then the
-// process fatal-exits on the next tick.
+// Node defers a listener throw via process.nextTick so the dispatch loop and post-dispatch code
+// complete first: https://github.com/nodejs/node/blob/main/lib/internal/event_target.js (emitUncaughtException)
 static void queueUncaughtExceptionNextTick(JSC::JSGlobalObject* lexicalGlobalObject, JSValue exception)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);

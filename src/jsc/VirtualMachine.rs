@@ -2013,10 +2013,8 @@ fn get_origin_timestamp() -> u64 {
     (now - ORIGIN_RELATIVE_EPOCH).max(0) as u64
 }
 
-/// `performance.timeOrigin` is the PROCESS start time and every thread reports
-/// the same one — a worker's timeOrigin equals the main thread's in node, and
-/// `performance.now()` inside a worker is relative to that same origin. Capture
-/// it on the first VM so worker VMs inherit it instead of restarting the clock.
+/// `performance.timeOrigin` is the PROCESS start time, shared by every thread (a worker's equals the
+/// main thread's in node). Captured once on the first VM so worker VMs inherit instead of restarting.
 fn process_origin() -> (std::time::Instant, u64) {
     static ORIGIN: std::sync::OnceLock<(std::time::Instant, u64)> = std::sync::OnceLock::new();
     *ORIGIN.get_or_init(|| (std::time::Instant::now(), get_origin_timestamp()))

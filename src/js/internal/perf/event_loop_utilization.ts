@@ -1,14 +1,6 @@
-// Shared by perf_hooks and worker_threads, as node shares
-// lib/internal/perf/event_loop_utilization.js between the two.
-//
-// `elu` is [elapsedSinceLoopStartMs, idleMs] from native, or null when the loop
-// has not turned yet — node's equivalent of its `loopStart <= 0` branch, and it
-// is checked first there too, so elu(u, u) before the loop turns is {0,0,0}
-// rather than NaN.
-//
-// The divisions are deliberately unguarded: node returns NaN for a zero total
-// (verified on v26.3.0 — eventLoopUtilization(u, u) after the loop has turned
-// yields NaN), so collapsing that to 0 would diverge.
+// Shared by perf_hooks and worker_threads; see https://github.com/nodejs/node/blob/main/lib/internal/perf/event_loop_utilization.js
+// `elu` is [elapsedSinceLoopStartMs, idleMs] or null before the loop turns (node's `loopStart <= 0` branch → {0,0,0}).
+// Divisions are unguarded: node returns NaN for a zero total, collapsing to 0 would diverge.
 function internalEventLoopUtilization(elu, util1, util2) {
   if (elu === null) {
     return { idle: 0, active: 0, utilization: 0 };

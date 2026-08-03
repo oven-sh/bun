@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSURLSearchParams.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
@@ -305,9 +304,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_getBody(JSC
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto* nameString = argument0.value().toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    const auto name = nameString->view(lexicalGlobalObject);
+    auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLUSVString>>(*lexicalGlobalObject, throwScope, impl.get(name))));
 }
@@ -327,9 +324,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_getAllBody(
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto* nameString = argument0.value().toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    const auto name = nameString->view(lexicalGlobalObject);
+    auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLUSVString>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getAll(name))));
 }
@@ -349,9 +344,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_hasBody(JSC
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto* nameString = argument0.value().toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    const auto name = nameString->view(lexicalGlobalObject);
+    auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
 
     String value;
@@ -655,38 +648,8 @@ void JSURLSearchParamsOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* co
     uncacheWrapper(world, &jsURLSearchParams->wrapped(), jsURLSearchParams);
 }
 
-// #if ENABLE(BINDING_INTEGRITY)
-// #if PLATFORM(WIN)
-// #pragma warning(disable : 4483)
-// extern "C" {
-// extern void (*const __identifier("??_7URLSearchParams@WebCore@@6B@")[])();
-// }
-// #else
-// extern "C" {
-// extern void* _ZTVN7WebCore15URLSearchParamsE[];
-// }
-// #endif
-// #endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<URLSearchParams>&& impl)
 {
-
-    //     if constexpr (std::is_polymorphic_v<URLSearchParams>) {
-    // #if ENABLE(BINDING_INTEGRITY)
-    //         // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-    // #if PLATFORM(WIN)
-    //         void* expectedVTablePointer = __identifier("??_7URLSearchParams@WebCore@@6B@");
-    // #else
-    //         // void* expectedVTablePointer = &_ZTVN7WebCore15URLSearchParamsE[2];
-    // #endif
-
-    //         // If you hit this assertion you either have a use after free bug, or
-    //         // URLSearchParams has subclasses. If URLSearchParams has subclasses that get passed
-    //         // to toJS() we currently require URLSearchParams you to opt out of binding hardening
-    //         // by adding the SkipVTableValidation attribute to the interface IDL definition
-    //         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-    // #endif
-    // }
     return createWrapper<URLSearchParams>(globalObject, WTF::move(impl));
 }
 

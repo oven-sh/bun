@@ -45,11 +45,6 @@
 using namespace JSC;
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length);
 
-extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__WTFStringImpl__hasPrefix(const WTF::StringImpl* impl, const char* bytes, size_t length)
-{
-    return impl->startsWith({ bytes, length });
-}
-
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__deref(WTF::StringImpl* impl)
 {
     impl->deref();
@@ -335,16 +330,33 @@ bool isCrossThreadShareable(const WTF::String& string)
     return true;
 }
 
+// An isolated copy still gets handed to (possibly several) receiving threads —
+// BroadcastChannel fans a single SerializedScriptValue out to N contexts, each
+// of which deserializes the same stored string — so the copy needs the same
+// pre-hash + never-atomize treatment as a directly-shared original. Otherwise
+// the receivers race the lazy m_hashAndFlags update (debug: ASSERT(!hasHash())
+// in setHash; e.g. two workers switch()ing on the same BroadcastChannel
+// message). Static strings are immortal, pre-hashed and safe to share as-is.
+static Ref<WTF::StringImpl> isolatedCopyForSharing(WTF::StringImpl& impl)
+{
+    Ref<WTF::StringImpl> copy = impl.isolatedCopy();
+    if (!copy->isStatic()) {
+        copy->hash();
+        copy->setNeverAtomize();
+    }
+    return copy;
+}
+
 Ref<WTF::StringImpl> toCrossThreadShareable(Ref<WTF::StringImpl> impl)
 {
     if (impl->isAtom() || impl->isSymbol())
-        return impl->isolatedCopy();
+        return isolatedCopyForSharing(impl);
 
     if (impl->bufferOwnership() == StringImpl::BufferSubstring)
-        return impl->isolatedCopy();
+        return isolatedCopyForSharing(impl);
 
     if (impl->length() < kMinCrossThreadShareableLength)
-        return impl->isolatedCopy();
+        return isolatedCopyForSharing(impl);
 
     // 3) Ensure we won't lazily touch hash/flags on the consumer thread
     // Force hash computation on this thread before sharing
@@ -356,18 +368,20 @@ Ref<WTF::StringImpl> toCrossThreadShareable(Ref<WTF::StringImpl> impl)
 
 WTF::String toCrossThreadShareable(const WTF::String& string)
 {
-    if (string.length() < kMinCrossThreadShareableLength)
-        return string.isolatedCopy();
-
     auto* impl = string.impl();
+    if (!impl)
+        return string;
+
+    if (string.length() < kMinCrossThreadShareableLength)
+        return isolatedCopyForSharing(*impl);
 
     // 1) Never share AtomStringImpl/symbols - they have special thread-unsafe behavior
     if (impl->isAtom() || impl->isSymbol())
-        return string.isolatedCopy();
+        return isolatedCopyForSharing(*impl);
 
     // 2) Don't share slices
     if (impl->bufferOwnership() == StringImpl::BufferSubstring)
-        return string.isolatedCopy();
+        return isolatedCopyForSharing(*impl);
 
     // 3) Ensure we won't lazily touch hash/flags on the consumer thread
     // Force hash computation on this thread before sharing
@@ -663,14 +677,6 @@ extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString* relativeStr
     return Bun::toStringRef(url.string());
 }
 
-extern "C" BunString URL__hash(WTF::URL* url)
-{
-    const auto& fragment = url->fragmentIdentifier().isEmpty()
-        ? emptyString()
-        : url->fragmentIdentifierWithLeadingNumberSign().toStringWithoutCopying();
-    return Bun::toStringRef(fragment);
-}
-
 extern "C" BunString URL__fragmentIdentifier(WTF::URL* url)
 {
     const auto& fragment = url->fragmentIdentifier().isEmpty()
@@ -712,11 +718,6 @@ extern "C" BunString URL__username(WTF::URL* url)
 extern "C" BunString URL__password(WTF::URL* url)
 {
     return Bun::toStringRef(url->password());
-}
-
-extern "C" BunString URL__search(WTF::URL* url)
-{
-    return Bun::toStringRef(url->query().toStringWithoutCopying());
 }
 
 /// Returns the host WITHOUT the port.

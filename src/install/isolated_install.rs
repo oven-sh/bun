@@ -3,11 +3,11 @@
 // machine drives.
 // ───────────────────────────────────────────────────────────────────────────
 #[path = "isolated_install/FileCloner.rs"]
-pub mod file_cloner;
+pub(crate) mod file_cloner;
 #[path = "isolated_install/FileCopier.rs"]
 pub mod file_copier;
 #[path = "isolated_install/Hardlinker.rs"]
-pub mod hardlinker;
+pub(crate) mod hardlinker;
 #[path = "isolated_install/Installer.rs"]
 pub mod installer;
 #[path = "isolated_install/Store.rs"]
@@ -15,7 +15,7 @@ pub mod store;
 #[path = "isolated_install/Symlinker.rs"]
 pub mod symlinker;
 
-pub use file_copier::FileCopier;
+pub(crate) use file_copier::FileCopier;
 pub use store::Store;
 /// Alias so `crate::isolated_install::store::EntryId` (used by
 /// `TaskCallbackContext` in lib.rs) resolves to the real `entry::Id` newtype.
@@ -152,7 +152,7 @@ impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
         id: Task::Id,
         name: &[u8],
         resolution: &Resolution,
-        err: bun_core::Error,
+        err: crate::Error,
         url: &[u8],
     ) {
         ctx.on_package_download_error(id, name, resolution, err, url);
@@ -169,11 +169,11 @@ impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
 
 struct Wait<'a, 'b> {
     installer: &'a mut store::Installer<'b>,
-    err: Option<bun_core::Error>,
+    err: Option<crate::Error>,
 }
 
 impl<'a, 'b> Wait<'a, 'b> {
-    pub(crate) fn is_done(&mut self) -> bool {
+    fn is_done(&mut self) -> bool {
         // `Installer.manager` is a BACKREF raw pointer; `manager_mut()`
         // materializes the unique `&mut PackageManager` for this main-thread
         // tick without aliasing `&mut Installer`.
@@ -2009,11 +2009,6 @@ pub(crate) fn install_isolated_packages(
         let installed = DynamicBitSet::init_empty(lockfile.packages.len())?;
         let trusted_dependencies_from_update_requests =
             manager.find_trusted_dependencies_from_update_requests();
-        // Reuse the `NonNull` already stored in `manager.scripts_node` rather
-        // than taking a fresh `&mut scripts_node` below — a second `&mut` from
-        // the local would pop the stored raw's Stacked Borrows tag, and the
-        // run-tasks tick callback dereferences that raw via `scripts_node_mut()`.
-        let scripts_node_ptr = manager.scripts_node;
         // `Installer.manager` is a BACKREF raw pointer; copying `manager_ptr`
         // does not move `manager`, so the body keeps using `manager` via the
         // shadow-reborrow below.
@@ -2025,11 +2020,6 @@ pub(crate) fn install_isolated_packages(
             installed,
             install_node: if show_progress {
                 Some(&mut install_node)
-            } else {
-                None
-            },
-            scripts_node: if show_progress {
-                scripts_node_ptr
             } else {
                 None
             },
@@ -2105,14 +2095,15 @@ pub(crate) fn install_isolated_packages(
             {
                 let mut unsafe_folder_name: Option<&[u8]> = None;
                 let name = pkg_name.slice(string_buf);
-                if !name.is_empty() && !crate::dependency::is_safe_install_folder_name(name) {
+                if !name.is_empty() && !crate::package_installer::alias_is_safe_install_target(name)
+                {
                     unsafe_folder_name = Some(name);
                 } else {
                     for dep in entry_dependencies[entry_id.get() as usize].slice() {
                         let dep_name = lockfile_ro.buffers.dependencies[dep.dep_id as usize]
                             .name
                             .slice(string_buf);
-                        if !crate::dependency::is_safe_install_folder_name(dep_name) {
+                        if !crate::package_installer::alias_is_safe_install_target(dep_name) {
                             unsafe_folder_name = Some(dep_name);
                             break;
                         }
@@ -2192,51 +2183,12 @@ pub(crate) fn install_isolated_packages(
 
                     let uses_global_store = installer.entry_uses_global_store(entry_id);
 
-                    // An entry that lost global-store eligibility since the
-                    // previous install (newly patched, newly trusted, a dep
-                    // that became a workspace package) still has a stale
-                    // `node_modules/.bun/<storepath>` symlink/junction into
-                    // `<cache>/links/`. The existence check below would pass
-                    // *through* it and skip the task, leaving the project to
-                    // run against the shared entry (and, if the task did run,
-                    // write the new project-local tree through the link into
-                    // the shared cache). Treat the stale link as
-                    // needs-install so `link_package` detaches and rebuilds.
-                    let has_stale_gvs_link = !uses_global_store
-                        && 'stale: {
-                            if installer.global_store_path.is_none() {
-                                break 'stale false;
-                            }
-                            let mut local: paths::AutoAbsPath =
-                                paths::AutoAbsPath::init_top_level_dir();
-                            installer.append_local_store_entry_path(&mut local, entry_id);
-                            #[cfg(windows)]
-                            {
-                                break 'stale if let Some(a) =
-                                    sys::get_file_attributes(local.slice_z())
-                                {
-                                    a.is_reparse_point
-                                } else {
-                                    false
-                                };
-                            }
-                            #[cfg(not(windows))]
-                            {
-                                break 'stale if let Ok(st) = sys::lstat(local.slice_z()) {
-                                    sys::posix::s_islnk(st.st_mode as u32)
-                                } else {
-                                    false
-                                };
-                            }
-                        };
-
                     let needs_install = installer.manager().options.enable.force_install()
                         // A freshly-created `node_modules/.bun` only implies the
                         // *project-local* entries are missing; global virtual-
                         // store entries persist across `rm -rf node_modules` and
                         // should still take the cheap symlink-only path.
                         || (is_new_bun_modules && !uses_global_store)
-                        || has_stale_gvs_link
                         || matches!(patch_info, installer::PatchInfo::Remove(_))
                         || 'needs_install: {
                             let mut store_path: AbsPath = AbsPath::init_top_level_dir();
@@ -2273,7 +2225,42 @@ pub(crate) fn install_isolated_packages(
                                     !sys::exists_z(store_path.slice_z())
                                 }
                             };
-                        };
+                        }
+                        // An entry that lost global-store eligibility since the
+                        // previous install (newly patched, newly trusted, a dep
+                        // that became a workspace package, or `globalStore`
+                        // turned off entirely) still has a stale
+                        // `node_modules/.bun/<storepath>` symlink/junction into
+                        // `<cache>/links/`. The existence check above passes
+                        // *through* it, so a skipped entry would keep running
+                        // against the shared store (and a later rebuild would
+                        // write the project-local tree through the link into
+                        // the shared cache). Treat the stale link as
+                        // needs-install so `link_package` detaches and rebuilds.
+                        // Evaluated last so only entries about to be skipped
+                        // pay the lstat; rebuilt entries are detached by the
+                        // build path regardless.
+                        || (!uses_global_store && {
+                            let mut local: paths::AutoAbsPath =
+                                paths::AutoAbsPath::init_top_level_dir();
+                            installer.append_local_store_entry_path(&mut local, entry_id);
+                            #[cfg(windows)]
+                            {
+                                if let Some(a) = sys::get_file_attributes(local.slice_z()) {
+                                    a.is_reparse_point
+                                } else {
+                                    false
+                                }
+                            }
+                            #[cfg(not(windows))]
+                            {
+                                if let Ok(st) = sys::lstat(local.slice_z()) {
+                                    sys::posix::s_islnk(st.st_mode as u32)
+                                } else {
+                                    false
+                                }
+                            }
+                        });
 
                     if !needs_install {
                         if uses_global_store {
@@ -2419,8 +2406,17 @@ pub(crate) fn install_isolated_packages(
                                 patch_info.name_and_version_hash(),
                             ) {
                                 Ok(()) => {}
-                                Err(e) if e == bun_core::err!(OutOfMemory) => {
+                                Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     return Err(AllocError);
+                                }
+                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                    // .monotonic is okay because an error means the task isn't
+                                    // running on another thread.
+                                    entry_steps[entry_id.get() as usize]
+                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                    installer
+                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    continue;
                                 }
                                 Err(err) => {
                                     // error.InvalidURL
@@ -2469,8 +2465,17 @@ pub(crate) fn install_isolated_packages(
                                 patch_info.name_and_version_hash(),
                             ) {
                                 Ok(()) => {}
-                                Err(e) if e == bun_core::err!(OutOfMemory) => {
+                                Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     bun_core::out_of_memory()
+                                }
+                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                    // .monotonic is okay because an error means the task isn't
+                                    // running on another thread.
+                                    entry_steps[entry_id.get() as usize]
+                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                    installer
+                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    continue;
                                 }
                                 Err(err) => {
                                     Output::err(
@@ -2513,8 +2518,17 @@ pub(crate) fn install_isolated_packages(
                                 patch_info.name_and_version_hash(),
                             ) {
                                 Ok(()) => {}
-                                Err(e) if e == bun_core::err!(OutOfMemory) => {
+                                Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     bun_core::out_of_memory()
+                                }
+                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                    // .monotonic is okay because an error means the task isn't
+                                    // running on another thread.
+                                    entry_steps[entry_id.get() as usize]
+                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                    installer
+                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    continue;
                                 }
                                 Err(err) => {
                                     Output::err(

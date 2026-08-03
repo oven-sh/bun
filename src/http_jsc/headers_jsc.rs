@@ -71,6 +71,13 @@ pub fn from_fetch_headers(
     let names_ptr: *mut api::StringPointer = sliced.items_raw::<"name", api::StringPointer>();
     // SAFETY: same `items_raw` contract as above; `value` column is a disjoint allocation.
     let values_ptr: *mut api::StringPointer = sliced.items_raw::<"value", api::StringPointer>();
+    // Zero-init so any slot `copy_to` fails to write (iterator skip, count
+    // desync) reads as `{0, 0}` — a valid empty slice — rather than garbage.
+    // SAFETY: both columns hold exactly `header_count` `StringPointer` slots.
+    unsafe {
+        core::ptr::write_bytes(names_ptr, 0, header_count as usize);
+        core::ptr::write_bytes(values_ptr, 0, header_count as usize);
+    }
     if let Some(h) = h_ptr {
         // SAFETY: `h` is a valid `&FetchHeaders` for the call; columns sized by `count` above.
         unsafe { (*h).copy_to(names_ptr, values_ptr, headers.buf.as_mut_ptr()) };
@@ -138,11 +145,11 @@ pub fn to_fetch_headers(
     .ok_or(JsError::Thrown)
 }
 
-pub(crate) struct H2TestingAPIs;
+struct H2TestingAPIs;
 
 impl H2TestingAPIs {
     // No attribute needed — generate-js2native.ts scans by signature shape.
-    pub(crate) fn live_counts(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    fn live_counts(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         use bun_http::h2_client;
         let obj = JSValue::create_empty_object(global, 2);
         // h2 atomics
@@ -161,16 +168,13 @@ impl H2TestingAPIs {
     }
 }
 
-pub(crate) struct H3TestingAPIs;
+struct H3TestingAPIs;
 
 impl H3TestingAPIs {
     /// Named distinctly from H2's `live_counts` because generate-js2native.ts
     /// mangles `[^A-Za-z]` to `_`, so the H2 and H3 client paths produce
     /// the same path prefix and the function name has to differ.
-    pub(crate) fn quic_live_counts(
-        global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    fn quic_live_counts(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         use bun_http::h3_client;
         let obj = JSValue::create_empty_object(global, 2);
         // h3 atomics are `AtomicU32`; widen to u64 for `js_number_from_uint64`.

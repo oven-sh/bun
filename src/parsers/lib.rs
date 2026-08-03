@@ -1,32 +1,26 @@
 #![warn(unused_must_use)]
 #![allow(unexpected_cfgs)]
+#![feature(allocator_api)]
 
-// ───── json_lexer ─────────────────────────────────────────────────────────
-// JSON-only subset of `bun_js_parser::js_lexer`. Breaks the
-// GENUINE T4 cycle (`bun_js_parser` → `bun_interchange` → `bun_js_parser`)
-// so `json.rs` can build without an upward dep. See module doc-comment.
-// Crate-private: implementation detail of `json.rs`; no external consumers.
-mod json_lexer;
+pub mod error;
+pub use error::{Error, Result};
 
-// ───── json ───────────────────────────────────────────────────────────────
-// Real port — wired against `crate::json_lexer` (the cycle-break above) and
-// `bun_ast::js_ast`; resolves against the local lexer so `bun_js_parser`
-// is not an upward dep.
+pub mod json_index;
+mod json_stage2;
+
+#[cfg(test)]
+mod native_test_shims;
+
 #[path = "json.rs"]
 pub mod json;
 
-/// Downstream Rust crates name it both `json` and `json_parser`; alias the
-/// latter here.
 pub use json as json_parser;
 
-// ───── json5 ──────────────────────────────────────────────────────────────
 #[path = "json5.rs"]
 pub mod json5;
 
-// ───── toml ───────────────────────────────────────────────────────────────
 #[path = "toml.rs"]
 pub mod toml;
 
-// ───── yaml ───────────────────────────────────────────────────────────────
 #[path = "yaml.rs"]
 pub mod yaml;

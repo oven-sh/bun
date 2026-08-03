@@ -1,5 +1,10 @@
 import { heapStats } from "bun:jsc";
 
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
+
 const { SERVER } = process.env;
 
 if (typeof SERVER === "undefined" || !SERVER?.length) {
@@ -35,7 +40,7 @@ async function getBaseline() {
 
   Bun.gc(true);
 
-  return process.memoryUsage.rss();
+  return rss();
 }
 
 const baseline = await getBaseline();
@@ -63,7 +68,7 @@ if (oks !== COUNT) {
 
 await Bun.sleep(10);
 Bun.gc(true);
-const delta = process.memoryUsage.rss() - baseline;
+const delta = rss() - baseline;
 if ((heapStats().objectTypeCounts.Response ?? 0) > 5) {
   throw new Error("Too many Response objects: " + heapStats().objectTypeCounts.Response);
 }

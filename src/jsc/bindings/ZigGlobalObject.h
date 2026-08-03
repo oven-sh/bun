@@ -68,6 +68,7 @@ struct node_module;
 #include <node_api.h>
 #include "BakeAdditionsToGlobalObject.h"
 #include "WriteBarrierList.h"
+#include "streams/JSStreamsRuntime.h"
 
 namespace Bun {
 class JSCommonJSExtensions;
@@ -250,6 +251,10 @@ public:
     JSC::Structure* H3ResponseSinkStructure() const { return m_JSH3ResponseSinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* H3ResponseSink() { return m_JSH3ResponseSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue H3ResponseSinkPrototype() const { return m_JSH3ResponseSinkClassStructure.prototypeInitializedOnMainThread(this); }
+
+    JSC::Structure* FetchRequestBodySinkStructure() const { return m_JSFetchRequestBodySinkClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* FetchRequestBodySink() { return m_JSFetchRequestBodySinkClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue FetchRequestBodySinkPrototype() const { return m_JSFetchRequestBodySinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableNetworkSinkControllerPrototype() const { return m_JSFetchTaskletChunkedRequestControllerPrototype.getInitializedOnMainThread(this); }
 
     JSC::Structure* JSBufferListStructure() const { return m_JSBufferListClassStructure.getInitializedOnMainThread(this); }
@@ -259,6 +264,8 @@ public:
     JSC::Structure* JSStringDecoderStructure() const { return m_JSStringDecoderClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* JSStringDecoder() const { return m_JSStringDecoderClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSStringDecoderPrototype() const { return m_JSStringDecoderClassStructure.prototypeInitializedOnMainThread(this); }
+
+    JSC::JSObject* JSFFICStringConstructor() const { return m_JSFFICStringConstructor.getInitializedOnMainThread(this); }
 
     JSC::Structure* NodeVMScriptStructure() const { return m_NodeVMScriptClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* NodeVMScript() const { return m_NodeVMScriptClassStructure.constructorInitializedOnMainThread(this); }
@@ -272,7 +279,7 @@ public:
     JSC::JSObject* NodeVMSyntheticModule() const { return m_NodeVMSyntheticModuleClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMSyntheticModulePrototype() const { return m_NodeVMSyntheticModuleClassStructure.prototypeInitializedOnMainThread(this); }
 
-    JSC::JSMap* readableStreamNativeMap() const { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
+    WebCore::JSStreamsRuntime* streamsRuntime() { return &m_streamsRuntime; }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
     // The JSC module loader registry is no longer a JS Map. Use
     // moduleLoader()->registryEntry(key) / moduleMap() / removeEntry(key) /
@@ -361,7 +368,6 @@ public:
     JSObject* subtleCrypto() { return m_subtleCryptoObject.getInitializedOnMainThread(this); }
 
     JSC::EncodedJSValue assignToStream(JSValue stream, JSValue controller);
-    JSC::EncodedJSValue assignStreamToResumableSink(JSValue stream, JSValue sink);
     WebCore::EventTarget& eventTarget();
 
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
@@ -412,8 +418,12 @@ public:
         Bun__HTTPRequestContextDebugH3__onRejectStream,
         Bun__HTTPRequestContextDebugH3__onResolve,
         Bun__HTTPRequestContextDebugH3__onResolveStream,
+        Bun__FetchTasklet__onResolveRequestStream,
+        Bun__FetchTasklet__onRejectRequestStream,
+        Bun__S3UploadStream__onResolveStream,
+        Bun__S3UploadStream__onRejectStream,
     };
-    static constexpr size_t promiseFunctionsSize = 42;
+    static constexpr size_t promiseFunctionsSize = 46;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 
@@ -483,14 +493,6 @@ public:
     V(public, Bun::BakeAdditionsToGlobalObject, m_bakeAdditions)                                             \
                                                                                                              \
     /* TODO: these should use LazyProperty */                                                                \
-    V(private, WriteBarrier<JSFunction>, m_assignToStream)                                                   \
-    V(private, WriteBarrier<JSFunction>, m_assignStreamToResumableSink)                                      \
-    V(public, WriteBarrier<JSFunction>, m_readableStreamToArrayBuffer)                                       \
-    V(public, WriteBarrier<JSFunction>, m_readableStreamToBytes)                                             \
-    V(public, WriteBarrier<JSFunction>, m_readableStreamToBlob)                                              \
-    V(public, WriteBarrier<JSFunction>, m_readableStreamToJSON)                                              \
-    V(public, WriteBarrier<JSFunction>, m_readableStreamToText)                                              \
-    V(public, WriteBarrier<JSFunction>, m_readableStreamToFormData)                                          \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleResolveFilenameFunction)                           \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleRunMainFunction)                                   \
@@ -519,6 +521,9 @@ public:
     /* Supports getEnvironmentData() and setEnvironmentData(), and is cloned into newly-created */           \
     /* Workers. Initialized in createNodeWorkerThreadsBinding. */                                            \
     V(private, WriteBarrier<JSMap>, m_nodeWorkerEnvironmentData)                                             \
+    /* setupMainThreadPort's drain callback; run once by WebWorker__dispatchOnline */                        \
+    /* after entry-module evaluation. Stored here (not on globalThis) so user code can't clobber it. */      \
+    V(private, WriteBarrier<JSObject>, m_nodeWorkerEntryEvaluatedHook)                                       \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \
@@ -562,8 +567,16 @@ public:
     V(private, LazyClassStructure, m_JSHTTPSResponseSinkClassStructure)                                      \
     V(private, LazyClassStructure, m_JSNetworkSinkClassStructure)                                            \
     V(private, LazyClassStructure, m_JSH3ResponseSinkClassStructure)                                         \
+    V(private, LazyClassStructure, m_JSFetchRequestBodySinkClassStructure)                                   \
                                                                                                              \
     V(private, LazyClassStructure, m_JSStringDecoderClassStructure)                                          \
+    V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSFFICStringConstructor)                              \
+    V(public, LazyClassStructure, m_JSDatabaseSyncClassStructure)                                            \
+    V(public, LazyClassStructure, m_JSStatementSyncClassStructure)                                           \
+    V(public, LazyClassStructure, m_JSStatementSyncIteratorClassStructure)                                   \
+    V(public, LazyClassStructure, m_JSNodeSqliteSessionClassStructure)                                       \
+    V(public, LazyClassStructure, m_JSNodeSqliteLimitsClassStructure)                                        \
+    V(public, LazyClassStructure, m_JSNodeSqliteTagStoreClassStructure)                                      \
     V(private, LazyClassStructure, m_NapiClassStructure)                                                     \
     V(private, LazyClassStructure, m_callSiteStructure)                                                      \
     V(public, LazyClassStructure, m_JSBufferClassStructure)                                                  \
@@ -582,6 +595,7 @@ public:
     V(public, LazyClassStructure, m_JSCipherClassStructure)                                                  \
     V(public, LazyClassStructure, m_JSKeyObjectClassStructure)                                               \
     V(public, LazyClassStructure, m_JSSecretKeyObjectClassStructure)                                         \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_JSAsymmetricKeyObjectPrototype)                        \
     V(public, LazyClassStructure, m_JSPublicKeyObjectClassStructure)                                         \
     V(public, LazyClassStructure, m_JSPrivateKeyObjectClassStructure)                                        \
     V(public, LazyClassStructure, m_JSMIMEParamsClassStructure)                                              \
@@ -594,6 +608,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_jsonlParseResultStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pathParsedObjectStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketHandlersStructure)                           \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_nativeMicrotaskTrampoline)                          \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskVariadicFunction)                   \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectFunction)                                \
@@ -601,7 +616,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeColorFunction)                    \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeNoColorFunction)                  \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_wasmStreamingConsumeStreamFunction)                 \
-    V(private, LazyPropertyOfGlobalObject<JSMap>, m_lazyReadableStreamPrototypeMap)                          \
+    V(private, WebCore::JSStreamsRuntime, m_streamsRuntime)                                                  \
     V(private, LazyPropertyOfGlobalObject<JSMap>, m_requireMap)                                              \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSArrayBufferControllerPrototype)                     \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSHTTPSResponseControllerPrototype)                   \
@@ -732,6 +747,7 @@ public:
     JSC::Structure* jsonlParseResultStructure() { return m_jsonlParseResultStructure.get(this); }
     JSC::Structure* pathParsedObjectStructure() { return m_pathParsedObjectStructure.get(this); }
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }
+    JSC::Structure* JSSocketHandlersStructure() { return m_JSSocketHandlersStructure.get(this); }
 
     // We need to know if the napi module registered itself or we registered it.
     // To do that, we count the number of times we register a module.
@@ -744,6 +760,8 @@ public:
 
     JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }
     void setNodeWorkerEnvironmentData(JSMap* data);
+    JSObject* nodeWorkerEntryEvaluatedHook() { return m_nodeWorkerEntryEvaluatedHook.get(); }
+    void setNodeWorkerEntryEvaluatedHook(JSObject* hook);
 
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
     Bun::Http2CommonStrings& http2CommonStrings() { return m_http2CommonStrings; }
@@ -770,6 +788,12 @@ public:
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
 
+    // node:crypto deprecation warnings are emitted at most once per realm, like Node, whose
+    // flags live in per-realm module state (lib/internal/crypto/keys.js). They must not be
+    // process-wide statics: each worker thread has its own realm and warns independently.
+    bool hasWarnedCryptoKeyDeprecation = false;
+    bool hasWarnedNonExtractableCryptoKeyDeprecation = false;
+
     // WeakGCMap<uint64_t, JSObject> — JS-level dedup of SecureContext by
     // config digest. WeakGCMap self-registers with the heap, so no
     // visitChildren wiring needed (and it must NOT keep its values alive).
@@ -786,6 +810,21 @@ private:
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
     Bun::WriteBarrierList<JSC::JSPromise> m_aboutToBeNotifiedRejectedPromises;
+
+public:
+    // While handleRejectedPromises() is iterating its drained snapshot, this
+    // points at the not-yet-processed tail so promiseRejectionTracker(Handle)
+    // can suppress a spurious 'rejectionHandled' for a promise whose
+    // 'unhandledRejection' has not fired yet. Linked through `outer` to handle
+    // re-entrant handleRejectedPromises() calls.
+    struct InFlightRejections {
+        JSC::MarkedArgumentBuffer* buffer;
+        size_t index;
+        InFlightRejections* outer;
+    };
+
+private:
+    InFlightRejections* m_rejectedPromisesBeingProcessed { nullptr };
 };
 
 class EvalGlobalObject : public GlobalObject {

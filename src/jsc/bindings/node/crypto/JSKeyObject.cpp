@@ -17,6 +17,11 @@ const JSC::ClassInfo JSKeyObject::s_info = { "KeyObject"_s, &Base::s_info, nullp
 void JSKeyObject::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
+
+    if (auto data = m_handle.data()) {
+        m_sizeForGC = sizeof(KeyObjectData) + data->symmetricKey.sizeInBytes() + data->asymmetricKey.size();
+        vm.heap.reportExtraMemoryAllocated(this, m_sizeForGC);
+    }
 }
 
 template<typename Visitor>
@@ -25,6 +30,8 @@ void JSKeyObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSKeyObject* thisObject = uncheckedDowncast<JSKeyObject>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+
+    visitor.reportExtraMemoryVisited(thisObject->m_sizeForGC);
 }
 
 DEFINE_VISIT_CHILDREN(JSKeyObject);

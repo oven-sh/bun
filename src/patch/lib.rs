@@ -2,6 +2,10 @@
 
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
+
+pub mod error;
+pub use error::{Error, Result};
+
 use core::mem;
 
 use bun_collections::bit_set::ArrayBitSet;
@@ -17,9 +21,6 @@ bun_core::declare_scope!(Patch, visible);
 type ByteBitSet = ArrayBitSet<256, 4>;
 
 const WHITESPACE: &[u8] = b" \t\n\r";
-
-// TODO: calculate this for different systems
-const PAGE_SIZE: usize = 16384;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PatchFilePart / PatchFile
@@ -40,7 +41,7 @@ pub enum PatchFilePart<'a> {
 
 #[derive(Default)]
 pub struct PatchFile<'a> {
-    pub parts: Vec<PatchFilePart<'a>>,
+    pub(crate) parts: Vec<PatchFilePart<'a>>,
 }
 
 #[cfg_attr(unix, allow(dead_code))]
@@ -154,13 +155,19 @@ impl<'a> PatchFile<'a> {
                     let Some(hunk) = &file_creation.hunk else {
                         continue;
                     };
+                    // A crafted `@@ -0,0 +0,0 @@` header with no body parses to a
+                    // hunk with zero parts; treat it as an empty file rather than
+                    // indexing `parts[0]`.
+                    let Some(first_part) = hunk.parts.first() else {
+                        continue;
+                    };
 
-                    let last_line = hunk.parts[0].lines.len().saturating_sub(1);
-                    let no_newline_at_end_of_file = hunk.parts[0].no_newline_at_end_of_file;
+                    let last_line = first_part.lines.len().saturating_sub(1);
+                    let no_newline_at_end_of_file = first_part.no_newline_at_end_of_file;
 
                     let count = {
                         let mut total: usize = 0;
-                        for (i, line) in hunk.parts[0].lines.iter().enumerate() {
+                        for (i, line) in first_part.lines.iter().enumerate() {
                             total += line.len();
                             total += (i < last_line) as usize;
                         }
@@ -168,14 +175,11 @@ impl<'a> PatchFile<'a> {
                         total
                     };
 
-                    // PERF: small (<= PAGE_SIZE) allocations could use an arena.
-                    let _ = PAGE_SIZE;
-
                     // TODO: this additional allocation is probably not necessary in all cases and should be avoided or use stack buffer
                     let file_contents: Vec<u8> = {
                         let mut contents = vec![0u8; count];
                         let mut i: usize = 0;
-                        for (idx, line) in hunk.parts[0].lines.iter().enumerate() {
+                        for (idx, line) in first_part.lines.iter().enumerate() {
                             contents[i..i + line.len()].copy_from_slice(line);
                             i += line.len();
                             if idx < last_line || !no_newline_at_end_of_file {
@@ -282,12 +286,6 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     #[cfg(unix)]
     let _ = state; // suppress unused on posix
 
-    // Purposefully use `bun.default_allocator` here because if the file size is big like
-    // 1gb we don't want to have 1gb hanging around in memory until arena is cleared
-    //
-    // But if the file size is small, like less than a single page, it's probably ok
-    // to use the arena
-    let _use_arena: bool = stat.st_size as usize <= PAGE_SIZE;
     let filebuf: Vec<u8> = match read_file_alloc(patch_dir, &file_path, 1024 * 1024 * 1024 * 4) {
         Ok(b) => b,
         Err(_) => {
@@ -306,22 +304,22 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
         }
         file_line_count = count;
 
-        // Adjust to account for the changes
+        // Adjust to account for the changes. This is only a capacity hint for
+        // `lines` below; saturate so a header that claims more deletions than
+        // the file has cannot panic (bounds are enforced during the splice).
         for hunk in &patch.hunks {
-            count = usize::try_from(
-                i64::try_from(count).expect("int cast") + i64::from(hunk.header.patched.len)
-                    - i64::from(hunk.header.original.len),
-            )
-            .unwrap();
+            count = count
+                .saturating_add(hunk.header.patched.len as usize)
+                .saturating_sub(hunk.header.original.len as usize);
             for part in &hunk.parts {
                 let part: &PatchMutationPart = part;
                 match part.ty {
                     PartType::Deletion => {
                         // deleting the no newline pragma so we are actually adding a line
-                        count += if part.no_newline_at_end_of_file { 1 } else { 0 };
+                        count = count.saturating_add(part.no_newline_at_end_of_file as usize);
                     }
                     PartType::Insertion => {
-                        count -= if part.no_newline_at_end_of_file { 1 } else { 0 };
+                        count = count.saturating_sub(part.no_newline_at_end_of_file as usize);
                     }
                     PartType::Context => {}
                 }
@@ -517,15 +515,15 @@ impl<'a> FileDeets<'a> {
 
 #[derive(Default)]
 pub struct PatchMutationPart<'a> {
-    pub ty: PartType,
-    pub lines: Vec<&'a [u8]>,
+    pub(crate) ty: PartType,
+    pub(crate) lines: Vec<&'a [u8]>,
     /// This technically can only be on the last part of a hunk
-    pub no_newline_at_end_of_file: bool,
+    pub(crate) no_newline_at_end_of_file: bool,
 }
 
 /// Ensure context, insertion, deletion values are in sync with HunkLineType enum
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Default, strum::IntoStaticStr)]
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum PartType {
     #[default]
     Context = 0,
@@ -535,14 +533,14 @@ pub enum PartType {
 
 #[derive(Default)]
 pub struct Hunk<'a> {
-    pub header: Header,
-    pub parts: Vec<PatchMutationPart<'a>>,
+    pub(crate) header: Header,
+    pub(crate) parts: Vec<PatchMutationPart<'a>>,
 }
 
 #[derive(Copy, Clone)]
 pub struct HeaderRange {
-    pub start: u32,
-    pub len: u32,
+    pub(crate) start: u32,
+    pub(crate) len: u32,
 }
 
 impl Default for HeaderRange {
@@ -553,19 +551,19 @@ impl Default for HeaderRange {
 
 #[derive(Copy, Clone, Default)]
 pub struct Header {
-    pub original: HeaderRange,
-    pub patched: HeaderRange,
+    pub(crate) original: HeaderRange,
+    pub(crate) patched: HeaderRange,
 }
 
 impl Header {
-    pub const EMPTY: Header = Header {
+    pub(crate) const EMPTY: Header = Header {
         original: HeaderRange { start: 1, len: 0 },
         patched: HeaderRange { start: 1, len: 0 },
     };
 }
 
 impl<'a> Hunk<'a> {
-    pub(crate) fn verify_integrity(&self) -> bool {
+    fn verify_integrity(&self) -> bool {
         let mut original_length: usize = 0;
         let mut patched_length: usize = 0;
 
@@ -601,11 +599,11 @@ pub enum FileMode {
 }
 
 impl FileMode {
-    pub(crate) fn to_bun_mode(self) -> sys::Mode {
+    fn to_bun_mode(self) -> sys::Mode {
         sys::Mode::try_from(self as u32).expect("int cast")
     }
 
-    pub(crate) fn from_u32(mode: u32) -> Option<FileMode> {
+    fn from_u32(mode: u32) -> Option<FileMode> {
         match mode {
             0o644 => Some(FileMode::NonExecutable),
             0o755 => Some(FileMode::Executable),
@@ -619,37 +617,37 @@ impl FileMode {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct FileRename<'a> {
-    pub from_path: &'a [u8],
-    pub to_path: &'a [u8],
+    pub(crate) from_path: &'a [u8],
+    pub(crate) to_path: &'a [u8],
 }
 // Does not allocate — no Drop needed.
 
 pub struct FileModeChange<'a> {
-    pub path: &'a [u8],
-    pub old_mode: FileMode,
-    pub new_mode: FileMode,
+    pub(crate) path: &'a [u8],
+    pub(crate) old_mode: FileMode,
+    pub(crate) new_mode: FileMode,
 }
 // Does not allocate — no Drop needed.
 
 pub struct FilePatch<'a> {
-    pub path: &'a [u8],
-    pub hunks: Vec<Hunk<'a>>,
-    pub before_hash: Option<&'a [u8]>,
-    pub after_hash: Option<&'a [u8]>,
+    pub(crate) path: &'a [u8],
+    pub(crate) hunks: Vec<Hunk<'a>>,
+    pub(crate) before_hash: Option<&'a [u8]>,
+    pub(crate) after_hash: Option<&'a [u8]>,
 }
 
 pub struct FileDeletion<'a> {
-    pub path: &'a [u8],
-    pub mode: FileMode,
-    pub hunk: Option<Box<Hunk<'a>>>,
-    pub hash: Option<&'a [u8]>,
+    pub(crate) path: &'a [u8],
+    pub(crate) mode: FileMode,
+    pub(crate) hunk: Option<Box<Hunk<'a>>>,
+    pub(crate) hash: Option<&'a [u8]>,
 }
 
 pub struct FileCreation<'a> {
-    pub path: &'a [u8],
-    pub mode: FileMode,
-    pub hunk: Option<Box<Hunk<'a>>>,
-    pub hash: Option<&'a [u8]>,
+    pub(crate) path: &'a [u8],
+    pub(crate) mode: FileMode,
+    pub(crate) hunk: Option<Box<Hunk<'a>>>,
+    pub(crate) hash: Option<&'a [u8]>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -880,12 +878,6 @@ pub enum ParseErr {
     bad_file_mode,
 }
 
-impl From<ParseErr> for bun_core::Error {
-    fn from(e: ParseErr) -> Self {
-        bun_core::err!(from e)
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // parsePatchFile / patchFileSecondPass
 // ──────────────────────────────────────────────────────────────────────────
@@ -1046,6 +1038,7 @@ fn parse_file_mode(mode: &[u8]) -> Option<FileMode> {
 
 fn is_safe_patch_path(path: &[u8]) -> bool {
     !path.is_empty()
+        && !path.contains(&0)
         && !paths::is_absolute_loose(path)
         && !path
             .split(|&c| c == b'/' || c == b'\\')
@@ -1097,19 +1090,19 @@ struct LookbackIterator<'a> {
 }
 
 impl<'a> LookbackIterator<'a> {
-    pub(crate) fn from_inner(inner: ScalarSplitIter<'a>) -> Self {
+    fn from_inner(inner: ScalarSplitIter<'a>) -> Self {
         Self {
             inner,
             prev_index: 0,
         }
     }
 
-    pub(crate) fn next(&mut self) -> Option<&'a [u8]> {
+    fn next(&mut self) -> Option<&'a [u8]> {
         self.prev_index = self.inner.index.unwrap_or(self.prev_index);
         self.inner.next()
     }
 
-    pub(crate) fn back(&mut self) {
+    fn back(&mut self) {
         self.inner.index = Some(self.prev_index);
     }
 }
@@ -1171,7 +1164,7 @@ impl<'a> PatchLinesParser<'a> {
         };
     }
 
-    pub(crate) fn parse(&mut self, file_: &'a [u8], opts: ParseOpts) -> Result<(), ParseErr> {
+    fn parse(&mut self, file_: &'a [u8], opts: ParseOpts) -> Result<(), ParseErr> {
         if file_.is_empty() {
             return Ok(());
         }
@@ -1525,8 +1518,7 @@ fn parse_hunk_header_line<'a>(line_: &'a [u8]) -> Result<Hunk<'a>, ParseErr> {
 fn parse_diff_hashes(line: &[u8]) -> Option<(&[u8], &[u8])> {
     // index 2de83dd..842652c 100644
     //       ^
-    //       we expect that we are here
-    debug_assert!(!line.starts_with(b"index "));
+    //       the caller has already stripped the leading "index "
 
     // From @pnpm/patch-package the regex is this:
     // const match = line.match(/(\w+)\.\.(\w+)/)
@@ -1567,19 +1559,12 @@ fn parse_diff_hashes(line: &[u8]) -> Option<(&[u8], &[u8])> {
     if b_part_start >= line.len() {
         return None;
     }
-    let lmao_bro = &line[b_part_start..];
-    core::hint::black_box(lmao_bro);
     let b_part_end = match strings::index_of_any(&line[b_part_start..], b" \n\r\t") {
         Some(pos) => pos + b_part_start,
         None => line.len(),
     };
 
     let b_part = &line[b_part_start..b_part_end];
-    for &c in a_part {
-        if !valid_chars.is_set(c as usize) {
-            return None;
-        }
-    }
     for &c in b_part {
         if !valid_chars.is_set(c as usize) {
             return None;
@@ -1643,7 +1628,7 @@ pub fn spawn_opts(
     new_folder: &[u8],
     cwd: &ZStr,
     git: &ZStr,
-    loop_: &mut bun_event_loop::AnyEventLoop<'static>,
+    loop_: &mut bun_event_loop::AnyEventLoop,
 ) -> (bun_spawn::sync::Options, Vec<*const core::ffi::c_char>) {
     let argv: Vec<Box<[u8]>> = {
         const ARGV: &[&[u8]] = &[
@@ -1722,7 +1707,7 @@ pub fn diff_post_process(
     result: &mut bun_spawn::sync::Result,
     old_folder: &[u8],
     new_folder: &[u8],
-) -> Result<core::result::Result<Vec<u8>, Vec<u8>>, bun_core::Error> {
+) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let mut stdout: Vec<u8> = Vec::new();
     let mut stderr: Vec<u8> = Vec::new();
 
@@ -1741,26 +1726,12 @@ pub fn diff_post_process(
     Ok(Ok(stdout))
 }
 
-// Returns owned `Vec<u8>` pairs (NUL-appended when SENTINEL).
-pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
-    old_folder_: &[u8],
-    new_folder_: &[u8],
-) -> [Vec<u8>; 2] {
-    let bump: usize = if SENTINEL { 1 } else { 0 };
-
+pub fn git_diff_preprocess_paths(old_folder_: &[u8], new_folder_: &[u8]) -> [Vec<u8>; 2] {
     #[cfg(windows)]
     let old_folder: Vec<u8> = {
-        // backslash in the path fucks everything up
-        let mut cpy = vec![0u8; old_folder_.len() + bump];
-        cpy[..old_folder_.len()].copy_from_slice(old_folder_);
+        // Normalize Windows separators before passing paths to `git diff`.
+        let mut cpy = old_folder_.to_vec();
         paths::slashes_to_posix_in_place(&mut cpy[..]);
-        if SENTINEL {
-            cpy[old_folder_.len()] = 0;
-            // The sentinel slice's `.len` excludes the NUL. Truncate so
-            // `Vec::len()` matches; the NUL byte stays in
-            // spare capacity for callers that need a C string via `.as_ptr()`.
-            cpy.truncate(old_folder_.len());
-        }
         cpy
     };
     #[cfg(not(windows))]
@@ -1768,39 +1739,22 @@ pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
 
     #[cfg(windows)]
     let new_folder: Vec<u8> = {
-        let mut cpy = vec![0u8; new_folder_.len() + bump];
-        cpy[..new_folder_.len()].copy_from_slice(new_folder_);
+        let mut cpy = new_folder_.to_vec();
         paths::slashes_to_posix_in_place(&mut cpy[..]);
-        if SENTINEL {
-            cpy[new_folder_.len()] = 0;
-            // `.len` excludes the sentinel.
-            cpy.truncate(new_folder_.len());
-        }
         cpy
     };
     #[cfg(not(windows))]
     let new_folder: Vec<u8> = new_folder_.to_vec();
 
-    #[cfg(unix)]
-    if SENTINEL {
-        // Append NUL.
-        let mut o = old_folder;
-        o.push(0);
-        let mut n = new_folder;
-        n.push(0);
-        return [o, n];
-    }
-
-    let _ = bump;
     [old_folder, new_folder]
 }
 
 pub fn git_diff_internal(
     old_folder_: &[u8],
     new_folder_: &[u8],
-    loop_: &mut bun_event_loop::AnyEventLoop<'static>,
-) -> Result<core::result::Result<Vec<u8>, Vec<u8>>, bun_core::Error> {
-    let paths = git_diff_preprocess_paths::<false>(old_folder_, new_folder_);
+    loop_: &mut bun_event_loop::AnyEventLoop,
+) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
+    let paths = git_diff_preprocess_paths(old_folder_, new_folder_);
     let old_folder = &paths[0][..];
     let new_folder = &paths[1][..];
 
@@ -1813,7 +1767,7 @@ pub fn git_diff_internal(
         b"",
         b"git",
     )
-    .ok_or_else(|| bun_core::err!(FileNotFound))?;
+    .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
 
     const ARGV: &[&[u8]] = &[
         b"-c",
@@ -1929,31 +1883,21 @@ fn git_diff_postprocess(
     stdout: &mut Vec<u8>,
     old_folder: &[u8],
     new_folder: &[u8],
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let old_folder_trimmed = strings::trim(old_folder, b"/");
     let new_folder_trimmed = strings::trim(new_folder, b"/");
 
-    let mut old_buf = PathBuffer::uninit();
-    let mut new_buf = PathBuffer::uninit();
+    let mut old_buf: Vec<u8> = Vec::with_capacity(old_folder_trimmed.len() + 3);
+    old_buf.extend_from_slice(b"a/");
+    old_buf.extend_from_slice(old_folder_trimmed);
+    old_buf.push(b'/');
 
-    let (a_old_folder_slash, b_new_folder_slash) = {
-        let ob = &mut old_buf[..];
-        ob[0] = b'a';
-        ob[1] = b'/';
-        ob[2..2 + old_folder_trimmed.len()].copy_from_slice(old_folder_trimmed);
-        ob[2 + old_folder_trimmed.len()] = b'/';
+    let mut new_buf: Vec<u8> = Vec::with_capacity(new_folder_trimmed.len() + 3);
+    new_buf.extend_from_slice(b"b/");
+    new_buf.extend_from_slice(new_folder_trimmed);
+    new_buf.push(b'/');
 
-        let nb = &mut new_buf[..];
-        nb[0] = b'b';
-        nb[1] = b'/';
-        nb[2..2 + new_folder_trimmed.len()].copy_from_slice(new_folder_trimmed);
-        nb[2 + new_folder_trimmed.len()] = b'/';
-
-        (
-            &old_buf[0..2 + old_folder_trimmed.len() + 1],
-            &new_buf[0..2 + new_folder_trimmed.len() + 1],
-        )
-    };
+    let (a_old_folder_slash, b_new_folder_slash) = (&old_buf[..], &new_buf[..]);
 
     // const @"$old_folder/" = @"a/$old_folder/"[2..];
     // const @"$new_folder/" = @"b/$new_folder/"[2..];

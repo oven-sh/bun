@@ -71,7 +71,6 @@ public:
 
     const JSC::SourceCode& source() const { return m_source; }
     WTF::Vector<uint8_t>& cachedData() { return m_options.cachedData; }
-    RefPtr<JSC::CachedBytecode> cachedBytecode() const { return m_cachedBytecode; }
     JSC::ProgramExecutable* cachedExecutable() const { return m_cachedExecutable.get(); }
     bool cachedDataProduced() const { return m_cachedDataProduced; }
     void cachedDataProduced(bool value) { m_cachedDataProduced = value; }

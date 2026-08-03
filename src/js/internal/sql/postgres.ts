@@ -26,7 +26,7 @@ const {
   createConnection: createPostgresConnection,
   createQuery: createPostgresQuery,
   init: initPostgres,
-} = $zig("postgres.zig", "createBinding") as PostgresDotZig;
+} = $rust("postgres.rs", "createBinding") as PostgresDotZig;
 
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
@@ -410,6 +410,9 @@ class PostgresAdapter
   }
 
   escapeIdentifier(str: string) {
+    if (str.includes("\0")) {
+      throw $ERR_INVALID_ARG_VALUE("name", str, "must not contain null bytes");
+    }
     return '"' + str.replaceAll('"', '""').replaceAll(".", '"."') + '"';
   }
 

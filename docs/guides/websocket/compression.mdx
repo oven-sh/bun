@@ -4,7 +4,7 @@ sidebarTitle: Enable compression
 mode: center
 ---
 
-Per-message compression can be enabled with the `perMessageDeflate` parameter. When set, all messages will be compressed using the [permessage-deflate](https://tools.ietf.org/html/rfc7692) WebSocket extension.
+Set the `perMessageDeflate` parameter to compress all messages with the [permessage-deflate](https://tools.ietf.org/html/rfc7692) WebSocket extension.
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.serve({

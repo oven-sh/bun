@@ -11,9 +11,9 @@
 //!
 //! Lives in `bun_runtime` (not `bun_collections`) because it needs the JSC
 //! types; `bun_runtime` already depends on both `bun_collections` and
-//! `bun_jsc`. Registered via `$newZigFunction("collections/linear_fifo.zig",
-//! "TestingAPIs.orderedRemoveProbe", 1)` — the `.zig` path is only the codegen
-//! key; the implementation is this Rust function (see `dispatch_js2native.rs`).
+//! `bun_jsc`. Registered via `$newRustFunction("collections/linear_fifo.rs",
+//! "TestingAPIs.orderedRemoveProbe", 1)` — the path is only the codegen key;
+//! the implementation is this Rust function (see `dispatch_js2native.rs`).
 
 use bun_collections::linear_fifo::{LinearFifo, StaticBuffer};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
@@ -32,7 +32,10 @@ type ProbeFifo = LinearFifo<i32, StaticBuffer<i32, 16>>;
 ///       write 12, read 12, write 8 → head=12 count=8, remove offset 5.
 ///
 /// Any other scenario value returns an empty array.
-pub fn ordered_remove_probe(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn ordered_remove_probe(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     let scenario = frame.argument(0).to_int32();
 
     let mut fifo = ProbeFifo::init();

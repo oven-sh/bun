@@ -738,7 +738,8 @@ _bun() {
     cmd)
         local -a scripts_list
         IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes i))
-        scripts="scripts:scripts:((${scripts_list//:/\\\\:}))"
+        scripts="scripts:scripts:compadd -a scripts_list"
+        local -a files_list
         IFS=$'\n' files_list=($(SHELL=zsh bun getcompletes j))
 
         main_commands=(
@@ -761,7 +762,7 @@ _bun() {
             'help\:"Show all supported flags and commands" '
         )
         main_commands=($main_commands)
-        _alternative "$scripts" "args:command:(($main_commands))" "files:files:(($files_list))"
+        _alternative "$scripts" "args:command:(($main_commands))" "files:files:compadd -a files_list"
 
         ;;
     args)
@@ -942,12 +943,12 @@ _bun_list_bunfig_toml() {
 }
 
 _bun_run_param_script_completion() {
-    local -a scripts_list
+    local -a scripts_list bins
     IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes s))
     IFS=$'\n' bins=($(SHELL=zsh bun getcompletes b))
 
-    _alternative "scripts:scripts:((${scripts_list//:/\\\\:}))"
-    _alternative "bin:bin:((${bins//:/\\\\:}))"
+    _alternative "scripts:scripts:compadd -a scripts_list"
+    _alternative "bin:bin:compadd -a bins"
     _alternative "files:file:_files -g '*.(js|ts|jsx|tsx|wasm)'"
 }
 
@@ -958,8 +959,8 @@ _bun_link_param_package_completion() {
     global_node_modules=$install_dir/install/global/node_modules
 
     local -a packages_full_path=(${global_node_modules}/*(N))
-    packages=$(echo $packages_full_path | tr ' ' '\n' | xargs  basename)
-    _alternative "dirs:directory:(($packages))"
+    local -a packages=(${packages_full_path:t})
+    _alternative "dirs:directory:compadd -a packages"
 }
 
 _bun_remove_param_package_completion() {
@@ -969,10 +970,11 @@ _bun_remove_param_package_completion() {
 
     # TODO: move to "bun getcompletes"
     if [ -f "package.json" ]; then
-        local dependencies=$(jq -r '.dependencies | keys[]' package.json)
-        local dev_dependencies=$(jq -r '.devDependencies | keys[]' package.json)
-        _alternative "deps:dependency:(($dependencies))"
-        _alternative "deps:dependency:(($dev_dependencies))"
+        local -a dependencies dev_dependencies
+        IFS=$'\n' dependencies=($(jq -r '.dependencies | keys[]' package.json))
+        IFS=$'\n' dev_dependencies=($(jq -r '.devDependencies | keys[]' package.json))
+        _alternative "deps:dependency:compadd -a dependencies"
+        _alternative "deps:dependency:compadd -a dev_dependencies"
     fi
 }
 

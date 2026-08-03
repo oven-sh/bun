@@ -5,6 +5,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/WallTime.h>
 #include <wtf/text/StringToIntegerConversion.h>
+#include <JavaScriptCore/DateConversion.h>
 #include <JavaScriptCore/DateInstance.h>
 #include "HTTPParsers.h"
 namespace WebCore {
@@ -101,7 +102,6 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
     bool httpOnly = false;
     double maxAge = std::numeric_limits<double>::quiet_NaN();
     bool partitioned = false;
-    bool hasMaxAge = false;
     ASSERT(value.isEmpty() || isValidHTTPHeaderValue(value));
     // Parse attributes if there are any
     if (firstSemicolonPos != notFound) {
@@ -122,6 +122,9 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
                 attributeValue = emptyString();
             }
 
+            // RFC 6265 5.2: each attribute is recorded independently, last occurrence wins.
+            // Max-Age's precedence over Expires (5.3) governs the computed expiry time, so it
+            // must not drop the Expires attribute, and must not depend on attribute order.
             if (attributeName == "domain"_s) {
                 if (!attributeValue.isEmpty()) {
                     domain = attributeValue.convertToASCIILowercase();
@@ -129,7 +132,7 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
             } else if (attributeName == "path"_s) {
                 if (!attributeValue.isEmpty() && attributeValue.startsWith('/'))
                     path = attributeValue;
-            } else if (attributeName == "expires"_s && !hasMaxAge && !attributeValue.isEmpty()) {
+            } else if (attributeName == "expires"_s && !attributeValue.isEmpty()) {
                 if (!attributeValue.is8Bit()) [[unlikely]] {
                     auto asLatin1 = attributeValue.latin1();
                     double parsed = WTF::parseDate({ reinterpret_cast<const Latin1Character*>(asLatin1.data()), asLatin1.length() });
@@ -146,7 +149,6 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
             } else if (attributeName == "max-age"_s) {
                 if (auto parsed = WTF::parseIntegerAllowingTrailingJunk<int64_t>(attributeValue); parsed.has_value()) {
                     maxAge = static_cast<double>(parsed.value());
-                    hasMaxAge = true;
                 }
             } else if (attributeName == "secure"_s) {
                 secure = true;
@@ -170,6 +172,12 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
 
 bool Cookie::isExpired() const
 {
+    // RFC 6265 5.3: Max-Age takes precedence over Expires when both are present. A
+    // non-positive Max-Age expires the cookie immediately; a positive one is measured
+    // from when the cookie was created, so it is never already expired.
+    if (!std::isnan(m_maxAge))
+        return m_maxAge <= 0;
+
     if (m_expires == Cookie::emptyExpiresAtValue)
         return false; // Session cookie
 
@@ -267,11 +275,11 @@ void Cookie::appendTo(JSC::VM& vm, StringBuilder& builder) const
     // Add expires if present
     if (hasExpiry()) {
         builder.append("; Expires="_s);
-        // In a real implementation, this would convert the timestamp to a proper date string
-        // For now, just use a numeric timestamp
+        // RFC 6265 wants an IMF-fixdate ("Thu, 01 Jan 1970 00:00:00 GMT"). Reuse the
+        // Date.prototype.toUTCString() formatter, which emits exactly that.
         WTF::GregorianDateTime dateTime;
         vm.dateCache.msToGregorianDateTime(m_expires, WTF::TimeType::UTCTime, dateTime);
-        builder.append(WTF::makeRFC2822DateString(dateTime.weekDay(), dateTime.monthDay(), dateTime.month(), dateTime.year(), dateTime.hour(), dateTime.minute(), dateTime.second(), dateTime.utcOffsetInMinute()));
+        builder.append(JSC::formatDateTime(dateTime, JSC::DateTimeFormat::DateAndTime, /* asUTCVariant */ true, vm.dateCache));
     }
 
     // Add Max-Age if present

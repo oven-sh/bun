@@ -1,11 +1,12 @@
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
 const RoundRobinHandle = require("internal/cluster/RoundRobinHandle");
+const SharedHandle = require("internal/cluster/SharedHandle");
 const path = require("node:path");
 const { throwNotImplemented, kHandle } = require("internal/shared");
 
-const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperPrimary", 4);
-const onInternalMessage = $newZigFunction("node_cluster_binding.zig", "onInternalMessagePrimary", 3);
+const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
+const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
 
 let child_process;
 
@@ -79,13 +80,6 @@ function setupSettingsNT(settings) {
 function createWorkerProcess(id, env) {
   const workerEnv = { ...process.env, ...env, NODE_UNIQUE_ID: `${id}` };
   const execArgv = [...cluster.settings.execArgv];
-
-  // if (cluster.settings.inspectPort === null) {
-  //   throw new ERR_SOCKET_BAD_PORT("Port", null, true);
-  // }
-  // if (isUsingInspector(cluster.settings.execArgv)) {
-  //   ArrayPrototypePush(execArgv, `--inspect-port=${getInspectPort(cluster.settings.inspectPort)}`);
-  // }
 
   child_process ??= require("node:child_process");
   return child_process.fork(cluster.settings.exec, cluster.settings.args, {
@@ -247,7 +241,20 @@ function queryServer(worker, message) {
     // UDP is exempt from round-robin connection balancing for what should
     // be obvious reasons: it's connectionless. There is nothing to send to
     // the workers except raw datagrams and that's pointless.
-    if (schedulingPolicy !== SCHED_RR || message.addressType === "udp4" || message.addressType === "udp6") {
+    if (message.addressType === "udp4" || message.addressType === "udp6") {
+      if (process.platform === "win32") {
+        // Sharing a dgram descriptor with a worker is not supported on
+        // Windows. Node's write of the handle fails with ENOTSUP on the
+        // primary-side Worker object and the worker never gets a reply —
+        // node's test-dgram-bind-shared-ports.js asserts exactly that.
+        const error = new Error(`write ENOTSUP - cannot share a dgram socket with a worker on Windows`);
+        error.code = "ENOTSUP";
+        error.syscall = "write";
+        worker.emit("error", error);
+        return;
+      }
+      handle = new SharedHandle(key, address, message);
+    } else if (schedulingPolicy !== SCHED_RR) {
       throwNotImplemented("node:cluster SCHED_NONE");
     } else {
       handle = new RoundRobinHandle(key, address, message);
@@ -301,6 +308,13 @@ function close(worker, message) {
 }
 
 function send(worker, message, handle?, cb?) {
+  if (handle) {
+    // Descriptor-bearing replies travel as a NODE_HANDLE envelope so the
+    // worker pairs the descriptor with the message and acks it; the inner
+    // message is marked NODE_CLUSTER so it is dispatched as a cluster-internal
+    // message rather than a process 'message' event.
+    message = { cmd: "NODE_HANDLE", type: "dgram.Native", message: { ...message, cmd: "NODE_CLUSTER" } };
+  }
   return sendHelper(worker.process[kHandle], message, handle, cb);
 }
 

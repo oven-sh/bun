@@ -77,3 +77,55 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     });
   });
 });
+
+// The cases documented at https://bun.sh/docs/api/utils#bun-deepequals as the
+// differences between the default and strict modes.
+describe("Bun.deepEquals strict mode", () => {
+  it("ignores an extra undefined property only when not strict", () => {
+    const a = { entries: [1, 2] };
+    const b = { entries: [1, 2], extra: undefined };
+    expect(Bun.deepEquals(a, b)).toBe(true);
+    expect(Bun.deepEquals(a, b, true)).toBe(false);
+  });
+
+  it("distinguishes a missing property from an undefined one", () => {
+    expect(Bun.deepEquals({}, { a: undefined })).toBe(true);
+    expect(Bun.deepEquals({}, { a: undefined }, true)).toBe(false);
+  });
+
+  it("distinguishes a missing array element from an undefined one", () => {
+    expect(Bun.deepEquals(["asdf"], ["asdf", undefined])).toBe(true);
+    expect(Bun.deepEquals(["asdf"], ["asdf", undefined], true)).toBe(false);
+  });
+
+  it("distinguishes a hole from an undefined element", () => {
+    expect(Bun.deepEquals([, 1], [undefined, 1])).toBe(true);
+    expect(Bun.deepEquals([, 1], [undefined, 1], true)).toBe(false);
+  });
+
+  it("distinguishes a class instance from an object literal", () => {
+    class Foo {
+      a = 1;
+    }
+    expect(Bun.deepEquals(new Foo(), { a: 1 })).toBe(true);
+    expect(Bun.deepEquals(new Foo(), { a: 1 }, true)).toBe(false);
+  });
+
+  it("is symmetric", () => {
+    const a = { entries: [1, 2] };
+    const b = { entries: [1, 2], extra: undefined };
+    expect(Bun.deepEquals(b, a)).toBe(true);
+    expect(Bun.deepEquals(b, a, true)).toBe(false);
+  });
+
+  it("recurses into nested values", () => {
+    expect(Bun.deepEquals({ a: { b: 1 } }, { a: { b: 1, c: undefined } })).toBe(true);
+    expect(Bun.deepEquals({ a: { b: 1 } }, { a: { b: 1, c: undefined } }, true)).toBe(false);
+  });
+
+  // Matches Node's util.isDeepStrictEqual, which rejects a null prototype
+  // against Object.prototype.
+  it.failing("distinguishes a null-prototype object from an object literal", () => {
+    expect(Bun.deepEquals(Object.create(null), {}, true)).toBe(false);
+  });
+});

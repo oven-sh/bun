@@ -69,10 +69,6 @@ if ($debug) {
 // ------------------------------
 // TODO: Look at Pipe to see if we can support passing Node Pipe objects to stdio param
 
-// TODO: Add these params after support added in Bun.spawn
-// uid <number> Sets the user identity of the process (see setuid(2)).
-// gid <number> Sets the group identity of the process (see setgid(2)).
-
 // stdio <Array> | <string> Child's stdio configuration (see options.stdio).
 // Support wrapped ipc types (e.g. net.Socket, dgram.Socket, TTY, etc.)
 // IPC FD passing support
@@ -157,12 +153,14 @@ function spawn(file, args, options) {
       }
     }, timeout).unref();
 
-    child.once("exit", () => {
+    const clear = () => {
       if (timeoutId) {
         clearTimeout(timeoutId);
         timeoutId = null;
       }
-    });
+    };
+    child.once("exit", clear);
+    child.once("close", clear);
   }
 
   const signal = options.signal;
@@ -171,7 +169,9 @@ function spawn(file, args, options) {
       process.nextTick(onAbortListener);
     } else {
       signal.addEventListener("abort", onAbortListener, { once: true });
-      child.once("exit", () => signal.removeEventListener("abort", onAbortListener));
+      const remove = () => signal.removeEventListener("abort", onAbortListener);
+      child.once("exit", remove);
+      child.once("close", remove);
     }
 
     function onAbortListener() {
@@ -566,6 +566,9 @@ function spawnSync(file, args, options) {
       env: options[kBunEnv] || options.env || undefined,
       cwd: options.cwd || undefined,
       stdio: bunStdio,
+      detached: options.detached,
+      uid: options.uid,
+      gid: options.gid,
       windowsVerbatimArguments: options.windowsVerbatimArguments,
       windowsHide: options.windowsHide,
       argv0: options.args[0],
@@ -634,8 +637,8 @@ function spawnSync(file, args, options) {
 
   return result;
 }
-const etimedoutErrorCode = $newZigFunction("node_util_binding.zig", "etimedoutErrorCode", 0);
-const enobufsErrorCode = $newZigFunction("node_util_binding.zig", "enobufsErrorCode", 0);
+const etimedoutErrorCode = $newRustFunction("node_util_binding.rs", "etimedoutErrorCode", 0);
+const enobufsErrorCode = $newRustFunction("node_util_binding.rs", "enobufsErrorCode", 0);
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1121,27 +1124,28 @@ class ChildProcess extends EventEmitter {
     {
       if (this.#stdin) {
         this.#stdin.destroy();
-      } else {
+      } else if (this.#stdioOptions[0] === "pipe") {
         this.#stdioOptions[0] = "destroyed";
       }
 
       // If there was an error while spawning the subprocess, then we will never have any IO to drain.
       if (err) {
-        this.#stdioOptions[1] = this.#stdioOptions[2] = "destroyed";
+        if (this.#stdioOptions[1] === "pipe") this.#stdioOptions[1] = "destroyed";
+        if (this.#stdioOptions[2] === "pipe") this.#stdioOptions[2] = "destroyed";
       }
 
       const stdout = this.#stdout,
         stderr = this.#stderr;
 
       if (stdout === undefined) {
-        this.#stdout = this.#getBunSpawnIo(1, this.#encoding, true);
-      } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout?.destroyed) {
+        this.#stdout = this.#getBunSpawnIo(1, true);
+      } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout.destroyed && stdout.readable) {
         stdout.resume?.();
       }
 
       if (stderr === undefined) {
-        this.#stderr = this.#getBunSpawnIo(2, this.#encoding, true);
-      } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr?.destroyed) {
+        this.#stderr = this.#getBunSpawnIo(2, true);
+      } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr.destroyed && stderr.readable) {
         stderr.resume?.();
       }
     }
@@ -1173,7 +1177,7 @@ class ChildProcess extends EventEmitter {
     this.#maybeClose();
   }
 
-  #getBunSpawnIo(i, encoding, autoResume = false) {
+  #getBunSpawnIo(i, autoResume = false) {
     if ($debug && !this.#handle) {
       if (this.#handle === null) {
         $debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
@@ -1243,7 +1247,7 @@ class ChildProcess extends EventEmitter {
               return stream;
             }
 
-            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, { encoding });
+            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, {});
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();
@@ -1282,7 +1286,6 @@ class ChildProcess extends EventEmitter {
   #stdout;
   #stderr;
   #stdioObject;
-  #encoding;
   #stdioOptions;
 
   #createStdioObject() {
@@ -1310,7 +1313,7 @@ class ChildProcess extends EventEmitter {
           result[i] = this.stderr;
           continue;
         default:
-          result[i] = this.#getBunSpawnIo(i, this.#encoding, false);
+          result[i] = this.#getBunSpawnIo(i, false);
           continue;
       }
     }
@@ -1318,15 +1321,15 @@ class ChildProcess extends EventEmitter {
   }
 
   get stdin() {
-    return (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false));
+    return (this.#stdin ??= this.#getBunSpawnIo(0, false));
   }
 
   get stdout() {
-    return (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false));
+    return (this.#stdout ??= this.#getBunSpawnIo(1, false));
   }
 
   get stderr() {
-    return (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false));
+    return (this.#stderr ??= this.#getBunSpawnIo(2, false));
   }
 
   get stdio() {
@@ -1378,7 +1381,6 @@ class ChildProcess extends EventEmitter {
     var env = options[kBunEnv] || parseEnvPairs(envPairs) || process.env;
 
     const detachedOption = options.detached;
-    this.#encoding = options.encoding || undefined;
     this.#stdioOptions = bunStdio;
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
@@ -1406,6 +1408,8 @@ class ChildProcess extends EventEmitter {
         cwd: options.cwd || undefined,
         env: env,
         detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
+        uid: options.uid,
+        gid: options.gid,
         onExit: (handle, exitCode, signalCode, err) => {
           this.#handle = handle;
           this.pid = this.#handle.pid;
@@ -1485,6 +1489,11 @@ class ChildProcess extends EventEmitter {
           this.#stdioOptions[2] = "undefined";
         }
       } else {
+        if (exCode !== undefined) {
+          // Node throws errors that are not in the deferred list above
+          // synchronously, with `syscall: "spawn"` (no file appended).
+          ex.syscall = "spawn";
+        }
         throw ex;
       }
     }
@@ -1552,9 +1561,11 @@ class ChildProcess extends EventEmitter {
 
     const handle = this.#handle;
     if (handle) {
+      // Bun.spawn's `killed` is true once the process has exited or been
+      // terminated by a signal. Node treats kill() on a dead process as
+      // ESRCH: return false and leave `.killed` untouched.
       if (handle.killed) {
-        this.killed = true;
-        return true;
+        return false;
       }
 
       try {
@@ -1591,7 +1602,7 @@ class ChildProcess extends EventEmitter {
     Object.defineProperties(this.prototype, {
       stdin: {
         get: function () {
-          const value = (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false));
+          const value = (this.#stdin ??= this.#getBunSpawnIo(0, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdin", {
             value: value,
@@ -1606,7 +1617,7 @@ class ChildProcess extends EventEmitter {
       },
       stdout: {
         get: function () {
-          const value = (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false));
+          const value = (this.#stdout ??= this.#getBunSpawnIo(1, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdout", {
             value: value,
@@ -1621,7 +1632,7 @@ class ChildProcess extends EventEmitter {
       },
       stderr: {
         get: function () {
-          const value = (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false));
+          const value = (this.#stderr ??= this.#getBunSpawnIo(2, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stderr", {
             value: value,
@@ -1775,6 +1786,8 @@ function normalizeStdio(stdio): string[] {
         return ["ignore", "ignore", "ignore"];
       case "pipe":
         return ["pipe", "pipe", "pipe"];
+      case "overlapped":
+        return ["overlapped", "overlapped", "overlapped"];
       case "inherit":
         return ["inherit", "inherit", "inherit"];
       default:

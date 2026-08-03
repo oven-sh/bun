@@ -22,7 +22,7 @@ pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     let [value, replacer, space_value] = call_frame.arguments_as_array::<3>();
 
     value.ensure_still_alive();
@@ -60,7 +60,7 @@ pub(crate) fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsRe
     stringifier.builder.to_string(global)
 }
 
-pub(crate) struct Stringifier {
+struct Stringifier {
     stack_check: StackCheck,
     builder: wtf::StringBuilder,
     indent: usize,
@@ -72,7 +72,7 @@ pub(crate) struct Stringifier {
     space: Space,
 }
 
-pub(crate) enum Space {
+enum Space {
     Minified,
     Number(u32),
     /// +1 WTF ref owned for the lifetime of the `Stringifier`.
@@ -80,7 +80,7 @@ pub(crate) enum Space {
 }
 
 impl Space {
-    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
+    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
         let space = space_value.unwrap_boxed_primitive(global)?;
         if space.is_number() {
             // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
@@ -125,7 +125,7 @@ impl Default for AnchorAlias {
 }
 
 impl AnchorAlias {
-    pub(crate) fn init(origin: ValueOrigin) -> AnchorAlias {
+    fn init(origin: ValueOrigin) -> AnchorAlias {
         AnchorAlias {
             anchored: false,
             used: false,
@@ -184,7 +184,7 @@ impl From<JsError> for StringifyError {
 bun_core::oom_from_alloc!(StringifyError);
 
 impl Stringifier {
-    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
+    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
         let mut prop_names: StringHashMap<usize> = StringHashMap::default();
         // always rename anchors named "root" to avoid collision with
         // root anchor/alias
@@ -204,7 +204,7 @@ impl Stringifier {
     // deinit: all fields have Drop (`space: Space::Str` holds an
     // `OwnedString`); no explicit impl needed.
 
-    pub(crate) fn find_anchors_and_aliases(
+    fn find_anchors_and_aliases(
         &mut self,
         global: &JSGlobalObject,
         value: JSValue,
@@ -315,11 +315,7 @@ impl Stringifier {
         Ok(())
     }
 
-    pub(crate) fn stringify(
-        &mut self,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> Result<(), StringifyError> {
+    fn stringify(&mut self, global: &JSGlobalObject, value: JSValue) -> Result<(), StringifyError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
         }
@@ -641,16 +637,16 @@ impl Stringifier {
                 0x7f => self.builder.append_latin1(b"\\x7f"), // delete
                 0x85 => self.builder.append_latin1(b"\\N"),  // next line
                 0xa0 => self.builder.append_latin1(b"\\_"),  // non-breaking space
-                0xa8 => self.builder.append_latin1(b"\\L"),  // line separator
-                0xa9 => self.builder.append_latin1(b"\\P"),  // paragraph separator
+                0x2028 => self.builder.append_latin1(b"\\L"), // line separator
+                0x2029 => self.builder.append_latin1(b"\\P"), // paragraph separator
 
                 0x20..=0x21
                 | 0x23..=0x5b
                 | 0x5d..=0x7e
                 | 0x80..=0x84
                 | 0x86..=0x9f
-                | 0xa1..=0xa7
-                | 0xaa..=u16::MAX => self.builder.append_uchar(c),
+                | 0xa1..=0x2027
+                | 0x202a..=u16::MAX => self.builder.append_uchar(c),
             }
         }
 
@@ -883,8 +879,8 @@ fn string_needs_quotes(str: &BunString) -> bool {
             | 0x7f
             | 0x85
             | 0xa0
-            | 0xa8
-            | 0xa9 => return true,
+            | 0x2028
+            | 0x2029 => return true,
 
             _ => {
                 i += 1;
@@ -1028,7 +1024,7 @@ fn is_inf_suffix(str: &BunString, i: usize) -> bool {
 }
 
 #[bun_jsc::host_fn]
-pub fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     // reject_nullish=false preserves YAML's coerce-undefined-to-"undefined" behavior.
     super::with_text_format_source(
         global,
@@ -1070,7 +1066,7 @@ pub fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
     )
 }
 
-pub(crate) struct ParserCtx<'a> {
+struct ParserCtx<'a> {
     seen_objects: HashMap<*const c_void, JSValue>,
     stack_check: StackCheck,
 
@@ -1145,11 +1141,7 @@ impl<'a> ParserCtx<'a> {
         };
     }
 
-    pub(crate) fn to_js(
-        &mut self,
-        args: &mut MarkedArgumentBuffer,
-        expr: Expr,
-    ) -> Result<JSValue, ToJsError> {
+    fn to_js(&mut self, args: &mut MarkedArgumentBuffer, expr: Expr) -> Result<JSValue, ToJsError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ToJsError::StackOverflow);
         }

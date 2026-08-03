@@ -607,6 +607,103 @@ describe("bun test", () => {
       });
       expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error: Oops!::/m);
     });
+    test("should annotate an error message containing non-ASCII bytes", () => {
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          test("fail", () => {
+            throw "hello é world";
+          });
+        `,
+        env: {
+          FORCE_COLOR: "1",
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+      expect(annotation).toMatch(/^::error file=.*,line=\d+,col=\d+,title=error: hello é world::%0A {6}at /);
+    });
+    test("should annotate an error message containing emoji and newlines", () => {
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          test("fail", () => {
+            throw "before 😋 after\\nsecond 😋 line";
+          });
+        `,
+        env: {
+          FORCE_COLOR: "1",
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+      expect(annotation).toMatch(
+        /^::error file=.*,line=\d+,col=\d+,title=error: before 😋 after::second 😋 line%0A {6}at /,
+      );
+    });
+    test("should percent-encode metacharacters in the annotation file property", () => {
+      const stderr = runTest({
+        input: [
+          {
+            filename: "odd,name%path.test.ts",
+            contents: `
+              import { test } from "bun:test";
+              test("fail", () => {
+                throw new Error("boom");
+              });
+            `,
+          },
+        ],
+        env: {
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+      expect(annotation).toMatch(
+        /^::error file=(.*[\\/])?odd%2Cname%25path\.test\.ts,line=\d+,col=\d+,title=error: boom::/,
+      );
+    });
+    test("should percent-encode metacharacters in the annotation title", () => {
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          test("fail", () => {
+            const err = new Error("alpha: one, two 100%\\nbeta: three, four");
+            err.name = "Odd:Name,With%Chars";
+            throw err;
+          });
+        `,
+        env: {
+          FORCE_COLOR: "1",
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+      expect(annotation).toMatch(
+        /^::error file=.*,line=\d+,col=\d+,title=Odd%3AName%2CWith%25Chars: alpha%3A one%2C two 100%25::beta: three, four%0A {6}at /,
+      );
+    });
+    test("should keep a function name containing a newline on the annotation line", () => {
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          function inner() {
+            throw new Error("boom");
+          }
+          Object.defineProperty(inner, "name", { value: "odd\\nname" });
+          test("fail", () => {
+            inner();
+          });
+        `,
+        env: {
+          FORCE_COLOR: "1",
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+      expect(annotation).toMatch(/^::error file=.*,line=\d+,col=\d+,title=error: boom::/);
+      expect(annotation).toContain("%0A      at odd%0Aname (");
+    });
     test("should annotate a test timeout", () => {
       const stderr = runTest({
         input: `
@@ -1291,7 +1388,7 @@ describe("bun test", () => {
   });
 
   test("--tsconfig-override works", () => {
-    const dir = tempDirWithFiles("test-tsconfig-override", {
+    using dir = tempDir("test-tsconfig-override", {
       "math.test.ts": `
         import { describe, test, expect } from "bun:test";
         import { add } from "@utils/math";
@@ -1357,7 +1454,7 @@ describe("bun test", () => {
   });
 
   test("--tsconfig-override works with monorepo spec tsconfig", () => {
-    const dir = tempDirWithFiles("test-tsconfig-monorepo", {
+    using dir = tempDir("test-tsconfig-monorepo", {
       "packages/app/src/index.ts": `
         export function getMessage() {
           return "Hello from app";
@@ -1421,6 +1518,51 @@ describe("bun test", () => {
     const output = stdout + stderr;
     expect(output).toContain("1 pass");
     expect(output).toContain("app message");
+  });
+
+  test("runs process.on('exit') handlers", async () => {
+    using dir = tempDir("bun-test-exit-handler", {
+      "exit.test.ts": `
+        import { test } from "bun:test";
+        process.on("exit", () => console.log("exit handler ran"));
+        test("a test", () => {});
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "exit.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("exit handler ran");
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("an exit handler can fail the run, like node's common.mustCall()", async () => {
+    using dir = tempDir("bun-test-exit-handler-code", {
+      "exit-code.test.ts": `
+        import { test } from "bun:test";
+        process.on("exit", () => process.exit(1));
+        test("a passing test", () => {});
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "exit-code.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Windows prints the banner to stdout; only assert nothing test-shaped leaks.
+    expect(stdout).not.toContain("pass");
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(1);
   });
 });
 

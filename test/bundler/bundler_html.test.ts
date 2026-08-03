@@ -377,6 +377,47 @@ export const initNav = () => console.log('Navigation initialized');`,
     },
   });
 
+  // https://github.com/oven-sh/bun/issues/34111
+  // With code splitting, the HTML <script src> must reference the chunk that
+  // actually contains the entry module, not a shared chunk that happens to
+  // sort before it.
+  {
+    const pageCount = 10;
+    const files: Record<string, string> = {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head></head>
+  <body>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>`,
+      "/main.ts":
+        `console.log("MAIN_ENTRY_EXECUTED");\n` +
+        Array.from({ length: pageCount }, (_, p) => `import("./pages/page${p}");`).join("\n"),
+      "/shared.ts": `export function shared() { return 1000; }`,
+    };
+    for (let p = 0; p < pageCount; p++) {
+      // The last two pages share a module so a non-entry shared chunk exists.
+      files[`/pages/page${p}.ts`] =
+        p >= pageCount - 2
+          ? `import { shared } from "../shared";\nexport default shared() + ${p};`
+          : `export default ${p};`;
+    }
+    itBundled("html/script-src-is-entry-chunk-with-splitting", {
+      outdir: "out/",
+      files,
+      entryPoints: ["/index.html"],
+      splitting: true,
+      onAfterBundle(api) {
+        const html = api.readFile("out/index.html");
+        const src = html.match(/<script[^>]*\bsrc="\.?\/?([^"]+)"/)?.[1];
+        expect(src).toBeDefined();
+        expect(api.readFile("out/" + src!)).toContain("MAIN_ENTRY_EXECUTED");
+      },
+    });
+  }
+
   // Test multiple HTML entries with shared chunks
   itBundled("html/shared-chunks", {
     outdir: "out/",

@@ -120,8 +120,8 @@ bun remove <package>
   Skip lifecycle scripts in the project's <code>package.json</code> (dependency scripts are never run)
 </ParamField>
 
-<ParamField path="--concurrent-scripts" type="number" default="5">
-  Maximum number of concurrent jobs for lifecycle scripts (default 5)
+<ParamField path="--concurrent-scripts" type="number">
+  Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)
 </ParamField>
 
 ### Scope & Path

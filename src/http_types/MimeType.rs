@@ -2,27 +2,10 @@ use std::borrow::Cow;
 
 use bun_core::strings;
 
-// Cyclebreak: `by_loader` needs `bun_ast::Loader`, but
-// adding that dep creates a cargo cycle
-// (http_types → options_types → zlib → io → uws_sys → http_types). The Loader
-// enum is `#[repr(u8)]` with stable discriminants (pinned by
-// `bun-native-bundler-plugin-api/bundler_plugin.h`), so we mirror the handful
-// of variants `by_loader` actually inspects as local `u8` constants and accept
-// the raw discriminant. Callers pass `loader as u8`.
-mod loader_disc {
-    pub(super) const JSX: u8 = 0;
-    pub(super) const JS: u8 = 1;
-    pub(super) const TS: u8 = 2;
-    pub(super) const TSX: u8 = 3;
-    pub(super) const CSS: u8 = 4;
-    pub(super) const JSON: u8 = 6;
-}
-
 // ───────────────────────────────────────────────────────────────────────────
-// `Table` (= generated `mime_type_list_enum::MimeTypeList`). The Rust side is a
-// hand-rolled stand-in (`&'static str` newtype) until
-// `src/codegen/generate-compact-string-table.ts` emits `.rs`. See the
-// note at the top of `mime_type_list_enum.rs`.
+// `Table` (= `mime_type_list_enum::MimeTypeList`). Hand-maintained `&'static
+// str` newtype derived from `mime_type_list.txt`; see the note at the top of
+// `mime_type_list_enum.rs`.
 // ───────────────────────────────────────────────────────────────────────────
 pub use super::mime_type_list_enum::MimeTypeList as Table;
 use bun_collections::StringHashMap;
@@ -30,8 +13,8 @@ use bun_collections::StringHashMap;
 // `mime_type_list_enum.rs` exposes `const fn from_mime_literal(&'static str)`,
 // an UNCHECKED literal wrapper: a typo'd literal still compiles and simply
 // never matches anything at runtime (comparison is string equality, not an
-// enum compare). The checked, packed-enum form is pending the codegen `.rs`
-// backend — see the header of `mime_type_list_enum.rs`.
+// enum compare). A checked, packed-enum form is not implemented; see the
+// PERF note at the top of `mime_type_list_enum.rs`.
 macro_rules! t {
     ($s:literal) => {
         Table::from_mime_literal($s)
@@ -49,7 +32,7 @@ pub type Map = StringHashMap<Table>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Compact {
-    pub value: Table,
+    pub(crate) value: Table,
 }
 
 impl Compact {
@@ -156,7 +139,7 @@ pub enum Category {
 }
 
 impl Category {
-    pub fn from_table(entry: Table) -> Category {
+    pub(crate) fn from_table(entry: Table) -> Category {
         bun_core::comptime_string_map! {
             static CATEGORY_OVERRIDES: Category = {
                 b"text/javascript" => Category::Javascript,
@@ -187,7 +170,7 @@ impl Category {
 }
 
 impl Category {
-    pub fn init(str: &[u8]) -> Category {
+    pub(crate) fn init(str: &[u8]) -> Category {
         if let Some(slash) = strings::index_of_char(str, b'/') {
             let category = &str[0..slash as usize];
             let mut after_slash: &[u8] = if str.len() > slash as usize + 1 {
@@ -262,13 +245,6 @@ impl Category {
         Category::Other
     }
 
-    pub fn is_text_like(self) -> bool {
-        matches!(
-            self,
-            Category::Javascript | Category::Html | Category::Text | Category::Css | Category::Json
-        )
-    }
-
     pub fn autoset_filename(self) -> bool {
         !matches!(
             self,
@@ -291,8 +267,7 @@ pub const OTHER: MimeType = MimeType::init_comptime(b"application/octet-stream",
 pub const CSS: MimeType = MimeType::init_comptime(b"text/css;charset=utf-8", Category::Css);
 pub const JAVASCRIPT: MimeType =
     MimeType::init_comptime(b"text/javascript;charset=utf-8", Category::Javascript);
-pub(crate) const ICO: MimeType =
-    MimeType::init_comptime(b"image/vnd.microsoft.icon", Category::Image);
+const ICO: MimeType = MimeType::init_comptime(b"image/vnd.microsoft.icon", Category::Image);
 pub const HTML: MimeType = MimeType::init_comptime(b"text/html;charset=utf-8", Category::Html);
 // we transpile json to javascript so that it is importable without import assertions.
 pub const JSON: MimeType =
@@ -451,32 +426,16 @@ impl MimeType {
     }
 }
 
-// TODO: improve this
-// Cyclebreak: takes the `#[repr(u8)]` discriminant of
-// `bun_ast::Loader` to avoid a same-tier cargo cycle (see
-// `loader_disc` at top of file). Callers: `by_loader(loader as u8, ext)`.
-pub fn by_loader(loader: u8, ext: &[u8]) -> MimeType {
-    use loader_disc as L;
-    match loader {
-        L::TSX | L::TS | L::JS | L::JSX | L::JSON => JAVASCRIPT,
-        L::CSS => CSS,
-        _ => by_extension(ext),
-    }
-}
-
 pub fn by_extension(ext_without_leading_dot: &[u8]) -> MimeType {
     by_extension_no_default(ext_without_leading_dot).unwrap_or(OTHER)
 }
 
 pub fn by_extension_no_default(ext_without_leading_dot: &[u8]) -> Option<MimeType> {
-    if let Some(entry) = EXTENSIONS.get(ext_without_leading_dot) {
+    if let Some(entry) = EXTENSIONS.get_ascii_case_insensitive(ext_without_leading_dot) {
         return Some(Compact::from(*entry).to_mime_type());
     }
     None
 }
-
-// this is partially auto-generated
-pub use super::mime_type_list_enum::ALL;
 
 // TODO: use a precomputed static hash map for this
 // its too many branches to use ComptimeStringMap

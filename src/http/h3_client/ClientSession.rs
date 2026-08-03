@@ -7,7 +7,6 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use bun_core::err;
 use bun_core::strings;
 use bun_uws::quic;
 
@@ -31,24 +30,28 @@ pub struct ClientSession {
     ref_count: Cell<u32>,
     /// Null while DNS is in flight; set once `us_quic_connect_addr` returns.
     // FFI handle that becomes dangling after onConnClose; raw is intentional.
-    pub qsocket: Option<NonNull<quic::Socket>>,
-    pub hostname: Vec<u8>,
-    pub port: u16,
-    pub reject_unauthorized: bool,
-    pub handshake_done: bool,
-    pub closed: bool,
-    pub registry_index: u32,
+    pub(crate) qsocket: Option<NonNull<quic::Socket>>,
+    pub(crate) hostname: Vec<u8>,
+    pub(crate) port: u16,
+    pub(crate) reject_unauthorized: bool,
+    pub(crate) handshake_done: bool,
+    pub(crate) closed: bool,
+    pub(crate) registry_index: u32,
 
     /// Requests waiting for `onStreamOpen` to hand them a stream. Order is
     /// FIFO; `lsquic_conn_make_stream` was already called once per entry.
     // BACKREF/INTRUSIVE: Stream is heap-allocated by Stream::new and destroyed in detach().
-    pub pending: Vec<*mut Stream>,
+    pub(crate) pending: Vec<*mut Stream>,
 }
 
 impl ClientSession {
     /// `bun.TrivialNew(@This())` — heap-allocate and return raw; pointer is
     /// stashed in the `quic.Socket` ext slot and the `ClientContext` registry.
-    pub fn new(hostname: Vec<u8>, port: u16, reject_unauthorized: bool) -> *mut ClientSession {
+    pub(crate) fn new(
+        hostname: Vec<u8>,
+        port: u16,
+        reject_unauthorized: bool,
+    ) -> *mut ClientSession {
         bun_core::heap::into_raw(Box::new(ClientSession {
             ref_count: Cell::new(1),
             qsocket: None,
@@ -62,7 +65,7 @@ impl ClientSession {
         }))
     }
 
-    pub fn matches(&self, hostname: &[u8], port: u16, reject_unauthorized: bool) -> bool {
+    pub(crate) fn matches(&self, hostname: &[u8], port: u16, reject_unauthorized: bool) -> bool {
         !self.closed
             && self.port == port
             && self.reject_unauthorized == reject_unauthorized
@@ -77,12 +80,12 @@ impl ClientSession {
     /// `quic::Socket` is an FFI-owned allocation distinct from `self`, so the
     /// returned `&mut` does not alias `self`. HTTP-thread-only.
     #[inline]
-    pub(super) fn qsocket_mut<'s>(&self) -> Option<&'s mut quic::Socket> {
+    fn qsocket_mut<'s>(&self) -> Option<&'s mut quic::Socket> {
         // Route through the shared [`quic_socket_mut`] accessor; see INVARIANT.
         self.qsocket.map(|qs| quic_socket_mut(qs.as_ptr()))
     }
 
-    pub fn has_headroom(&self) -> bool {
+    pub(crate) fn has_headroom(&self) -> bool {
         if self.closed {
             return false;
         }
@@ -102,7 +105,7 @@ impl ClientSession {
     /// Queue `client` for a stream on this connection. The lsquic stream is
     /// created asynchronously, so the request goes into `pending` until
     /// `onStreamOpen` pops it.
-    pub fn enqueue(&mut self, client: &mut HTTPClient) {
+    pub(crate) fn enqueue(&mut self, client: &mut HTTPClient) {
         debug_assert!(!self.closed);
         client.h3 = None;
         client.flags.protocol = Protocol::Http3;
@@ -120,7 +123,7 @@ impl ClientSession {
         }
     }
 
-    pub fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool) {
+    pub(crate) fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool) -> bool {
         for &stream_ptr in self.pending.iter() {
             let stream = stream_mut(stream_ptr);
             let Some(client) = stream.client else {
@@ -130,17 +133,34 @@ impl ClientSession {
             if client.async_http_id != async_http_id {
                 continue;
             }
-            if !client.state.original_request_body.is_stream() {
-                return;
-            }
             if let crate::HTTPRequestBody::Stream(s) = &mut client.state.original_request_body {
                 s.ended = ended;
+                if let Some(qs) = stream.qstream_mut() {
+                    encode::drain_send_body(stream, qs);
+                }
             }
-            if let Some(qs) = stream.qstream_mut() {
-                encode::drain_send_body(stream, qs);
-            }
-            return;
+            return true;
         }
+        false
+    }
+
+    pub(crate) fn resume_receive_by_http_id(&mut self, async_http_id: u32) -> bool {
+        for &stream_ptr in self.pending.iter() {
+            let stream = stream_mut(stream_ptr);
+            let Some(client) = stream.client else {
+                continue;
+            };
+            if client_mut(client).async_http_id != async_http_id {
+                continue;
+            }
+            if core::mem::take(&mut stream.read_paused) {
+                if let Some(qs) = stream.qstream_mut() {
+                    qs.want_read(true);
+                }
+            }
+            return true;
+        }
+        false
     }
 
     pub(super) fn detach(&mut self, stream: *mut Stream) {
@@ -172,7 +192,7 @@ impl ClientSession {
         unsafe { ClientSession::deref(self) };
     }
 
-    pub fn fail(&mut self, stream: *mut Stream, err: bun_core::Error) {
+    pub(crate) fn fail(&mut self, stream: *mut Stream, err: crate::Error) {
         // Capture the client ptr before detach() invalidates `stream`.
         let client = stream_mut(stream).client;
         stream_mut(stream).abort();
@@ -189,7 +209,7 @@ impl ClientSession {
     /// standard h2/h3 client behavior for the GOAWAY / stateless-reset /
     /// port-reuse race where a pooled session goes stale between the
     /// `matches()` check and the first stream open.
-    pub fn retry_or_fail(&mut self, stream: *mut Stream, err: bun_core::Error) {
+    pub(crate) fn retry_or_fail(&mut self, stream: *mut Stream, err: crate::Error) {
         // Shaped for Stacked Borrows like `fail` below — `detach()`
         // re-derives `&mut HTTPClient` from the same raw ptr to null `h3`, which
         // would invalidate any `&mut HTTPClient` held across it. Hold the raw
@@ -232,7 +252,7 @@ impl ClientSession {
         // `host` drops here (was `defer bun.default_allocator.free(host)`).
     }
 
-    pub fn abort_by_http_id(&mut self, async_http_id: u32) -> bool {
+    pub(crate) fn abort_by_http_id(&mut self, async_http_id: u32) -> bool {
         // `fail` mutates `pending`, so it cannot be called while the iterator
         // holds `&self.pending`, and only one entry can match — so locate
         // first via raw-ptr reads, then act.
@@ -251,7 +271,7 @@ impl ClientSession {
             }
         }
         if !found.is_null() {
-            self.fail(found, err!(Aborted));
+            self.fail(found, crate::Error::Aborted);
             return true;
         }
         false
@@ -261,7 +281,7 @@ impl ClientSession {
     /// `done` = the lsquic stream is gone; deliver whatever is buffered then
     /// detach. Mirrors H2's `ClientSession.deliverStream` so the HTTPClient state
     /// machine sees the same call sequence regardless of transport.
-    pub fn deliver(&mut self, stream: *mut Stream, done: bool) {
+    pub(crate) fn deliver(&mut self, stream: *mut Stream, done: bool) {
         let st = stream_mut(stream);
         let Some(client_ptr) = st.client else {
             if done {
@@ -276,12 +296,14 @@ impl ClientSession {
         let client = client_mut(client_ptr);
 
         if client.signals.get(Signal::Aborted) {
-            return self.fail(stream, err!(Aborted));
+            return self.fail(stream, crate::Error::Aborted);
         }
 
         if st.status_code != 0 && !st.headers_delivered {
             st.headers_delivered = true;
-            let result = match apply_headers(st, client) {
+            let (result, response) = match client
+                .apply_multiplexed_headers(u32::from(st.status_code), &st.decoded_headers)
+            {
                 Ok(r) => r,
                 Err(e) => return self.fail(stream, e),
             };
@@ -292,7 +314,7 @@ impl ClientSession {
                     let client = client_mut(client_ptr);
                     return client.do_redirect_h3();
                 }
-                client.clone_metadata();
+                client.clone_metadata(&response);
                 client.state.flags.received_last_chunk = true;
                 if result == HeaderResult::Finished {
                     client.state.content_length = Some(0);
@@ -302,7 +324,7 @@ impl ClientSession {
                 let client = client_mut(client_ptr);
                 return finish(client);
             }
-            client.clone_metadata();
+            client.clone_metadata(&response);
             if client.signals.get(Signal::HeaderProgress) {
                 client.progress_update_h3();
             }
@@ -314,9 +336,9 @@ impl ClientSession {
                 return self.retry_or_fail(
                     stream,
                     if st.status_code == 0 {
-                        err!(HTTP3StreamReset)
+                        crate::Error::HTTP3StreamReset
                     } else {
-                        err!(ConnectionClosed)
+                        crate::Error::ConnectionClosed
                     },
                 );
             }
@@ -357,7 +379,9 @@ impl ClientSession {
             self.detach(stream);
             // SAFETY: re-derive — detach() invalidated the prior Unique tag.
             let client = client_mut(client_ptr);
-            client.state.flags.received_last_chunk = true;
+            if let Err(err) = client.state.finalize_body_on_eof() {
+                return client.fail_from_h2(err);
+            }
             return finish(client);
         }
     }
@@ -447,20 +471,10 @@ pub(super) fn session_mut<'a>(p: *mut ClientSession) -> &'a mut ClientSession {
     unsafe { &mut *p }
 }
 
-fn apply_headers(
-    stream: &mut Stream,
-    client: &mut HTTPClient,
-) -> Result<HeaderResult, bun_core::Error> {
-    // SAFETY: decoded_headers borrow the lsquic hset, which is deep-copied by
-    // `clone_metadata` inside the same lsquic callback before lsquic frees it
-    // — see `HTTPClient::apply_multiplexed_headers` contract.
-    client.apply_multiplexed_headers(u32::from(stream.status_code), &stream.decoded_headers)
-}
-
 fn finish(client: &mut HTTPClient) {
     if let Some(cl) = client.state.content_length {
         if client.state.total_body_received != cl {
-            return client.fail_from_h2(err!(HTTP3ContentLengthMismatch));
+            return client.fail_from_h2(crate::Error::HTTP3ContentLengthMismatch);
         }
     }
     client.progress_update_h3();

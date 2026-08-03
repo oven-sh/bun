@@ -38,7 +38,7 @@ mod _impl {
     #[derive(bun_ptr::CellRefCounted)]
     #[ref_count(destroy = Self::deinit)]
     pub struct NativeZlib {
-        pub ref_count: Cell<u32>,
+        pub(crate) ref_count: Cell<u32>,
         // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
         // centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
@@ -47,7 +47,6 @@ mod _impl {
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
         pub write_in_progress: Cell<bool>,
         pub pending_close: Cell<bool>,
-        pub pending_reset: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
     }
@@ -62,7 +61,10 @@ mod _impl {
     impl NativeZlib {
         // NB: no `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]` derive emits
         // the constructor shim that calls `<NativeZlib>::constructor(g, f)` directly.
-        pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
+        pub(crate) fn constructor(
+            global: &JSGlobalObject,
+            frame: &CallFrame,
+        ) -> JsResult<Box<Self>> {
             let arguments = frame.arguments_undef::<4>();
 
             let mode = arguments.ptr[0];
@@ -99,7 +101,6 @@ mod _impl {
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
                 pending_close: Cell::new(false),
-                pending_reset: Cell::new(false),
                 closed: Cell::new(false),
                 task: JsCell::new(WorkPoolTask {
                     node: Default::default(),
@@ -109,14 +110,14 @@ mod _impl {
         }
 
         //// adding this didnt help much but leaving it here to compare the number with later
-        pub fn estimated_size(&self) -> usize {
+        pub(crate) fn estimated_size(&self) -> usize {
             // @sizeOf(@cImport(@cInclude("deflate.h")).internal_state) @ cloudflare/zlib @ 92530568d2c128b4432467b76a3b54d93d6350bd
             const INTERNAL_STATE_SIZE: usize = 3309;
             mem::size_of::<Self>() + INTERNAL_STATE_SIZE
         }
 
         #[bun_jsc::host_fn(method)]
-        pub fn init(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        pub(crate) fn init(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             let arguments = frame.arguments_undef::<7>();
             let this_value = frame.this();
 
@@ -130,6 +131,9 @@ mod _impl {
                 )
                 .throw());
             }
+            // Racing an in-flight async write would alias `&mut Context`
+            // across threads; a closed `Context` cannot be re-initialized.
+            CompressionStream::<Self>::throw_unless_idle(self, global)?;
 
             let window_bits =
                 validators::validate_int32(global, arguments.ptr[0], "windowBits", None, None)?;
@@ -183,6 +187,18 @@ mod _impl {
                         ));
                     }
                 };
+                // `deflateSetDictionary`/`inflateSetDictionary` take a `uInt`
+                // length; reject anything larger before `Context::init` copies it.
+                if dictionary_buf.byte_len > u32::MAX as usize {
+                    return Err(global.throw_range_error(
+                        dictionary_buf.byte_len as i64,
+                        bun_jsc::RangeErrorOptions {
+                            field_name: b"dictionary.byteLength",
+                            max: i64::from(u32::MAX),
+                            ..Default::default()
+                        },
+                    ));
+                }
                 Some(dictionary_buf.byte_slice())
             };
 
@@ -195,12 +211,22 @@ mod _impl {
 
             self.stream
                 .with_mut(|s| s.init(level, window_bits, mem_level, strategy, dictionary));
+            // `Context::init` leaves `mode` at `NONE` when `deflateInit2_` /
+            // `inflateInit2_` rejects its arguments; mark the wrapper closed so
+            // the next operation is rejected instead of re-entering `NONE`.
+            if self.stream.with_mut(|s| s.mode == c::NodeMode::NONE) {
+                self.closed.set(true);
+            }
 
             Ok(JSValue::UNDEFINED)
         }
 
         #[bun_jsc::host_fn(method)]
-        pub fn params(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        pub(crate) fn params(
+            &self,
+            global: &JSGlobalObject,
+            frame: &CallFrame,
+        ) -> JsResult<JSValue> {
             let arguments = frame.arguments_undef::<2>();
 
             if arguments.len != 2 {
@@ -211,6 +237,9 @@ mod _impl {
                     )
                     .throw());
             }
+            // `set_params` calls `deflateParams` on the same `z_stream` an
+            // in-flight async write's `deflate()` is using.
+            CompressionStream::<Self>::throw_unless_idle(self, global)?;
 
             let level = validators::validate_int32(global, arguments.ptr[0], "level", None, None)?;
             let strategy =
@@ -250,12 +279,12 @@ pub use _impl::NativeZlib;
 // ─── non-JSC body (real): zlib stream Context ─────────────────────────────
 
 pub struct Context {
-    pub mode: c::NodeMode,
-    pub state: c::z_stream,
-    pub err: c::ReturnCode,
+    pub(crate) mode: c::NodeMode,
+    pub(crate) state: c::z_stream,
+    pub(crate) err: c::ReturnCode,
     pub flush: c::FlushValue,
     pub dictionary: Vec<u8>,
-    pub gzip_id_bytes_read: u8,
+    pub(crate) gzip_id_bytes_read: u8,
 }
 
 impl Default for Context {
@@ -280,7 +309,7 @@ impl Context {
         &self.dictionary
     }
 
-    pub fn init(
+    pub(crate) fn init(
         &mut self,
         level: c_int,
         window_bits: c_int,
@@ -342,7 +371,7 @@ impl Context {
         let _ = self.set_dictionary();
     }
 
-    pub fn set_dictionary(&mut self) -> Error {
+    pub(crate) fn set_dictionary(&mut self) -> Error {
         use c::NodeMode::*;
         // Reshaped for borrowck — capture raw ptr/len before
         // re-borrowing `self.state` mutably.
@@ -371,7 +400,7 @@ impl Context {
         Error::ok()
     }
 
-    pub fn set_params(&mut self, level: c_int, strategy: c_int) -> Error {
+    pub(crate) fn set_params(&mut self, level: c_int, strategy: c_int) -> Error {
         use c::NodeMode::*;
         self.err = c::ReturnCode::Ok;
         match self.mode {
@@ -447,6 +476,10 @@ impl Context {
             Some(p) => p.as_mut_ptr(),
             None => core::ptr::null_mut(),
         };
+    }
+
+    pub fn flush_value_is_valid(flush: u32) -> bool {
+        flush <= 6
     }
 
     pub fn set_flush(&mut self, flush: c_int) {
@@ -609,7 +642,14 @@ impl Context {
             BROTLI_ENCODE | BROTLI_DECODE => {}
             ZSTD_COMPRESS | ZSTD_DECOMPRESS => {}
         }
-        debug_assert!(status == c::ReturnCode::Ok || status == c::ReturnCode::DataError);
+        // Ok: normal. DataError: pending output discarded by inflateEnd.
+        // StreamError: a handle whose init() threw before deflateInit2_/
+        // inflateInit2_ ran, so the zeroed z_stream has nothing to free.
+        debug_assert!(
+            status == c::ReturnCode::Ok
+                || status == c::ReturnCode::DataError
+                || status == c::ReturnCode::StreamError
+        );
         self.mode = NONE;
     }
 }

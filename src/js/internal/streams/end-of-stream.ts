@@ -346,7 +346,10 @@ function eosWeb(stream, options, callback) {
       process.nextTick(() => callback.$apply(stream, args));
     }
   };
-  PromisePrototypeThen.$call(stream[kIsClosedPromise].promise, resolverFn, resolverFn);
+  // Bun's web streams carry the closed promise natively rather than on Node's symbol, which a
+  // userland or polyfilled stream may still define.
+  const closedPromise = stream[kIsClosedPromise]?.promise ?? $webStreamClosedPromise(stream);
+  PromisePrototypeThen.$call(closedPromise, resolverFn, resolverFn);
   return nop;
 }
 

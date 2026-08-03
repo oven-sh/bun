@@ -6,9 +6,6 @@
 // This file is only compatible with 64 bit CPUs
 // It must be kept in sync with JSCJSValue.h
 // https://github.com/oven-sh/WebKit/blob/main/Source/JavaScriptCore/runtime/JSCJSValue.h
-#ifdef IS_CALLBACK
-#define INJECT_BEFORE int c = 500; // This is a callback, so we need to inject code before the call
-#endif
 #define IS_BIG_ENDIAN 0
 #define USE_JSVALUE64 1
 #define USE_JSVALUE32_64 0
@@ -71,10 +68,6 @@ BUN_FFI_IMPORT extern struct NapiEnv Bun__thisFFIModuleNapiEnv;
 #endif
 
 
-#ifdef INJECT_BEFORE
-// #include <stdint.h>
-#endif
-// #include <tcclib.h>
 
 // This value is 2^49, used to encode doubles such that the encoded value will
 // begin with a 15-bit pattern within the range 0x0002..0xFFFC.
@@ -95,6 +88,11 @@ BUN_FFI_IMPORT extern struct NapiEnv Bun__thisFFIModuleNapiEnv;
 // If all bits in the mask are set, this indicates an integer number,
 // if any but not all are set this value is a double precision number.
 #define NumberTag 0xfffe000000000000ll
+
+// The canonical quiet NaN (PureNaN.h). This is the only NaN that is safe to
+// NaN-box: any other payload can collide with the tag ranges above and decode
+// as a cell pointer, an immediate, or an Int32 instead of a double.
+#define PureNaN   0x7ff8000000000000ll
 
 typedef  void* JSCell;
 
@@ -139,17 +137,6 @@ typedef void* JSContext;
   int64_t *argsPtr = (int64_t*)((size_t*)callFrame + Bun_FFI_PointerOffsetToArgumentsList)
 
 
-#ifdef IS_CALLBACK
-void* callback_ctx;
-BUN_FFI_IMPORT ZIG_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args);
-// We wrap 
-static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args)  __attribute__((__always_inline__));
-static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args) {
-  EncodedJSValue return_value;
-  return_value.asZigRepr = FFI_Callback_call(ctx, argCount, args);
-  return return_value;
-}
-#endif
 
 static bool JSVALUE_IS_CELL(EncodedJSValue val) __attribute__((__always_inline__));
 static bool JSVALUE_IS_INT32(EncodedJSValue val) __attribute__((__always_inline__)); 
@@ -252,12 +239,25 @@ static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {
 static EncodedJSValue DOUBLE_TO_JSVALUE(double val) {
    EncodedJSValue res;
    res.asDouble = val;
+   // Mirrors JSC's purifyNaN(): a NaN payload taken from native memory would
+   // otherwise be NaN-boxed as-is and decode as a forged JSValue.
+   if (val != val) {
+     res.asInt64 = PureNaN;
+   }
    res.asInt64 += DoubleEncodeOffset;
    return res;
 }
 
 static int32_t JSVALUE_TO_INT32(EncodedJSValue val) {
-  return val.asInt64;
+  if (JSVALUE_IS_INT32(val)) {
+    return (int32_t)val.asInt64;
+  }
+  // Decode a double-encoded integer (JIT tier-up, Math.* provenance, etc.);
+  // int64_t intermediate keeps u32 callers (uint32_t)JSVALUE_TO_INT32(...) defined.
+  val.asInt64 -= DoubleEncodeOffset;
+  // NaN check also catches undefined/null/bool, whose decoded bits are all NaNs.
+  if (val.asDouble != val.asDouble) return 0;
+  return (int32_t)(int64_t)val.asDouble;
 }
 
 static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {
@@ -291,6 +291,13 @@ static EncodedJSValue BOOLEAN_TO_JSVALUE(bool val) {
 
 
 static double JSVALUE_TO_DOUBLE(EncodedJSValue val) {
+  // Numbers that fit in an int32 are int32-tagged, not double-encoded
+  // (see JSVALUE_TO_INT64). Subtracting DoubleEncodeOffset from an
+  // int32-tagged value yields an impure NaN, not the number.
+  if (JSVALUE_IS_INT32(val)) {
+    return (double)JSVALUE_TO_INT32(val);
+  }
+
   val.asInt64 -= DoubleEncodeOffset;
   return val.asDouble;
 }
@@ -355,10 +362,7 @@ static EncodedJSValue INT64_TO_JSVALUE(void* jsGlobalObject, int64_t val) {
   return INT64_TO_JSVALUE_SLOW(jsGlobalObject, val);
 }
 
-#ifndef IS_CALLBACK
 BUN_FFI_IMPORT ZIG_REPR_TYPE JSFunctionCall(void* jsGlobalObject, void* callFrame);
-
-#endif
 
 
 // --- Generated Code ---

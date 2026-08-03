@@ -1,6 +1,6 @@
 //! `comptime_string_map!` / `comptime_string_set!` expansion.
 //!
-//! Port of `src/collections/comptime_string_map.zig`: keys are grouped by
+//! Port of Zig's `ComptimeStringMap`: keys are grouped by
 //! length at expansion time so a lookup is one `match key.len()` (a jump
 //! table) followed by constant-length byte-slice compares, which LLVM lowers
 //! to word-sized loads compared against immediates — no hashing, no memcmp

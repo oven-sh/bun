@@ -2,7 +2,7 @@ import { $ } from "bun";
 import { patchInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import fs from "fs/promises";
-import { tempDirWithFiles as __tempDirWithFiles, bunEnv, bunExe } from "harness";
+import { tempDirWithFiles as __tempDirWithFiles, bunEnv, bunExe, tempDir } from "harness";
 import { join as __join } from "node:path";
 const { parse, apply, makeDiff } = patchInternals;
 
@@ -80,12 +80,12 @@ function removeCapacity(patch: any): any {
 describe("apply", () => {
   test("edgecase", async () => {
     const newcontents = "module.exports = x => x % 420 === 0;";
-    const tempdir2 = tempDirWithFiles("patch-test2", {
+    await using tempdir2 = tempDir("patch-test2", {
       ".bun/install/cache/is-even@1.0.0": {
         "index.js": "module.exports = x => x % 2 === 0;",
       },
     });
-    const tempdir = tempDirWithFiles("patch-test", {
+    await using tempdir = tempDir("patch-test", {
       a: {},
       ["node_modules/is-even"]: {
         "index.js": newcontents,
@@ -103,7 +103,7 @@ describe("apply", () => {
   });
 
   test("empty", async () => {
-    const tempdir = tempDirWithFiles("patch-test", {
+    await using tempdir = tempDir("patch-test", {
       a: {},
       b: {},
     });
@@ -126,7 +126,7 @@ describe("apply", () => {
         "a/byebye.txt": "goodbye :(",
         "b/hey.txt": "hello!",
       };
-      const tempdir = tempDirWithFiles("patch-test", files);
+      await using tempdir = tempDir("patch-test", files);
 
       const afolder = join(tempdir, "a");
       const bfolder = join(tempdir, "b");
@@ -151,7 +151,7 @@ describe("apply", () => {
         "a": {},
         "b/newfile.txt": "hey im new here!",
       };
-      const tempdir = tempDirWithFiles("patch-test", files);
+      await using tempdir = tempDir("patch-test", files);
 
       const afolder = join(tempdir, "a");
       const bfolder = join(tempdir, "b");
@@ -168,7 +168,7 @@ describe("apply", () => {
         "a": {},
         "b/newfile.txt": "hey im new here!\nhello",
       };
-      const tempdir = tempDirWithFiles("patch-test", files);
+      await using tempdir = tempDir("patch-test", files);
 
       const afolder = join(tempdir, "a");
       const bfolder = join(tempdir, "b");
@@ -187,7 +187,7 @@ describe("apply", () => {
         "a/hey.txt": "hello!",
         "b/heynow.txt": "hello!",
       };
-      const tempdir = tempDirWithFiles("patch-test", files);
+      await using tempdir = tempDir("patch-test", files);
 
       const afolder = join(tempdir, "a");
       const bfolder = join(tempdir, "b");
@@ -203,7 +203,7 @@ describe("apply", () => {
     });
 
     test("to a destination dir longer than the path buffer throws instead of crashing", async () => {
-      const tempdir = tempDirWithFiles("patch-test", { "from.txt": "hello!" });
+      await using tempdir = tempDir("patch-test", { "from.txt": "hello!" });
 
       await using proc = Bun.spawn({
         cmd: [
@@ -234,6 +234,35 @@ describe("apply", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("to a path containing a NUL byte throws EINVAL and leaves the source in place", async () => {
+      const tempdir = tempDirWithFiles("patch-test", { "from.txt": "hello!" });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { patchInternals } from "bun:internal-for-testing";
+           import { existsSync } from "node:fs";
+           const dir = ${JSON.stringify(tempdir)};
+           const patchfile = "rename from from.txt\\nrename to to\\u0000.txt\\n";
+           try {
+             patchInternals.apply(patchfile, dir);
+             console.log("no-error");
+           } catch (e) {
+             console.log("caught: " + e.code);
+           }
+           console.log("from-exists: " + existsSync(dir + "/from.txt"));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim().split("\n")).toEqual(["caught: EINVAL", "from-exists: true"]);
+      expect(exitCode).toBe(0);
+    });
+
     test("folders", async () => {
       const files = {
         "a/foo/hey.txt": "hello!",
@@ -244,7 +273,7 @@ describe("apply", () => {
         "b/bar/hi.txt": "hello!",
         "b/bar/lmao.txt": "lmao!",
       };
-      const tempdir = tempDirWithFiles("patch-test", files);
+      await using tempdir = tempDir("patch-test", files);
 
       const afolder = join(tempdir, "a");
       const bfolder = join(tempdir, "b");
@@ -286,7 +315,7 @@ describe("apply", () => {
         "b/hi.txt": "hi!",
       };
 
-      const tempdir = tempDirWithFiles("patch-test", files);
+      await using tempdir = tempDir("patch-test", files);
 
       const afolder = join(tempdir, "a");
       const bfolder = join(tempdir, "b");
@@ -308,7 +337,7 @@ describe("apply", () => {
       const afile = `hello!\n`;
       const bfile = `hello!\nwassup?\n`;
 
-      const tempdir = tempDirWithFiles("patch-test", {
+      await using tempdir = tempDir("patch-test", {
         "a/hello.txt": afile,
         "b/hello.txt": bfile,
       });
@@ -327,7 +356,7 @@ describe("apply", () => {
       const afile = `hello!\nwassup?\n`;
       const bfile = `hello!\n`;
 
-      const tempdir = tempDirWithFiles("patch-test", {
+      await using tempdir = tempDir("patch-test", {
         "a/hello.txt": afile,
         "b/hello.txt": bfile,
       });
@@ -346,7 +375,7 @@ describe("apply", () => {
       const afile = `hello!\n`;
       const bfile = `lol\nhello!\nwassup?\n`;
 
-      const tempdir = tempDirWithFiles("patch-test", {
+      await using tempdir = tempDir("patch-test", {
         "a/hello.txt": afile,
         "b/hello.txt": bfile,
       });
@@ -365,7 +394,7 @@ describe("apply", () => {
       const afile = `hello!\nwassup?\nlmao\n`;
       const bfile = `wassup?\n`;
 
-      const tempdir = tempDirWithFiles("patch-test", {
+      await using tempdir = tempDir("patch-test", {
         "a/hello.txt": afile,
         "b/hello.txt": bfile,
       });
@@ -426,7 +455,7 @@ describe("apply", () => {
 19.5 lol hi
 20`;
 
-      const tempdir = tempDirWithFiles("patch-test", {
+      await using tempdir = tempDir("patch-test", {
         "a/hello.txt": afile,
         "b/hello.txt": bfile,
       });
@@ -487,7 +516,7 @@ describe("apply", () => {
 19.5 lol hi
 20`;
 
-      const tempdir = tempDirWithFiles("patch-test", {
+      await using tempdir = tempDir("patch-test", {
         "a/hello.txt": afile,
         "b/hello.txt": bfile,
       });
@@ -536,6 +565,85 @@ describe("apply", () => {
       "bad-patchfile-arg: coerce-fail",
     ]);
     expect(exitCode).toBe(0);
+  });
+
+  // A crafted patch from an untrusted source must never panic the process. Both
+  // cases below used to crash `bun install` when applying patchedDependencies.
+  describe.concurrent("malformed patches do not crash", () => {
+    test("file creation hunk with empty parts creates an empty file", async () => {
+      await using dir = tempDir("patch-empty-parts", { ".keep": "" });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { patchInternals } from "bun:internal-for-testing";
+           import { readFileSync } from "node:fs";
+           const patch = [
+             "diff --git a/newfile.txt b/newfile.txt",
+             "new file mode 100644",
+             "--- /dev/null",
+             "+++ b/newfile.txt",
+             "@@ -0,0 +0,0 @@",
+             "",
+           ].join("\\n");
+           try {
+             const ok = patchInternals.apply(patch, ${JSON.stringify(dir)});
+             console.log("ok=" + ok + " contents=" + JSON.stringify(readFileSync(${JSON.stringify(dir)} + "/newfile.txt", "utf8")));
+           } catch (e) {
+             console.log("threw: " + e.code + " " + e.message);
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: 'ok=true contents=""',
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("header deleting more lines than the target file has returns EINVAL", async () => {
+      await using dir = tempDir("patch-underflow", { "target.txt": "only line\n" });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { patchInternals } from "bun:internal-for-testing";
+           const body = [" only line"];
+           for (let i = 0; i < 9; i++) body.push("-deleted " + i);
+           const patch = [
+             "diff --git a/target.txt b/target.txt",
+             "--- a/target.txt",
+             "+++ b/target.txt",
+             "@@ -1,10 +1,1 @@",
+             ...body,
+             "",
+           ].join("\\n");
+           try {
+             patchInternals.apply(patch, ${JSON.stringify(dir)});
+             console.log("no-error");
+           } catch (e) {
+             console.log("caught: " + e.code);
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: "caught: EINVAL",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 });
 
@@ -812,6 +920,14 @@ describe("parse", () => {
         ],
       },
     });
+  });
+
+  // After stripping the "index " prefix the remainder can itself start with "index ",
+  // which used to trip a bogus debug assertion in parse_diff_hashes.
+  test("does not crash when an index line repeats the 'index ' prefix", () => {
+    for (const line of ["index index ", "index index \n", "index index 2de83dd..842652c 100644\n"]) {
+      expect(removeCapacity(JSON.parse(parse(line)))).toEqual({ parts: { items: [] } });
+    }
   });
 
   // A `---`/`+++` header line can be shorter than "--- a/"/"+++ b/" (no path after the marker).

@@ -24,6 +24,9 @@
 #include "ErrorStackTrace.h"
 #include "headers-handwritten.h"
 
+#include <wtf/Scope.h>
+#include <wtf/Threading.h>
+
 using namespace JSC;
 using namespace WebCore;
 
@@ -90,7 +93,7 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
         if (prepareStackTraceCallData.type != JSC::CallData::Type::None) {
             // In Node, if you console.log(error.stack) inside Error.prepareStackTrace
             // it will display the stack as a formatted string, so we have to do the same.
-            errorObject->putDirect(vm, vm.propertyNames->stack, stackStringValue, 0);
+            errorObject->putDirect(vm, vm.propertyNames->stack, stackStringValue, JSC::PropertyAttribute::DontEnum | 0);
 
             JSC::MarkedArgumentBuffer arguments;
             arguments.append(errorObject);
@@ -576,6 +579,22 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
 {
     UNUSED_PARAM(bunErrorData);
 
+    // ErrorInstance::finalizeUnconditionally calls this from Heap::runEndPhase, which nulls
+    // the current thread's atom string table and runs on whichever thread conducts the GC.
+    // Releasing the last ref of an atom string there crashes in AtomStringImpl::remove(),
+    // so install the VM's table for the duration; the mutator is suspended for the whole
+    // end phase, so this is race-free (same as JSLock::didAcquireLock).
+    // https://github.com/oven-sh/bun/issues/17087
+    auto& thread = WTF::Thread::currentSingleton();
+    WTF::AtomStringTable* previousAtomStringTable = thread.atomStringTable();
+    bool needsVMAtomStringTable = previousAtomStringTable != vm.atomStringTable();
+    if (needsVMAtomStringTable) [[unlikely]]
+        thread.setCurrentAtomStringTable(vm.atomStringTable());
+    auto restoreAtomStringTable = WTF::makeScopeExit([&] {
+        if (needsVMAtomStringTable)
+            thread.setCurrentAtomStringTable(previousAtomStringTable);
+    });
+
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 
@@ -628,6 +647,10 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& s
     line_in = line.oneBasedInt();
     column_in = column.oneBasedInt();
 
+    // materializeErrorInfoIfNeeded putDirect()s this unconditionally; an empty JSValue
+    // in property storage crashes the next read. https://github.com/oven-sh/bun/issues/34095
+    if (!result) [[unlikely]]
+        return jsUndefined();
     return result;
 }
 
@@ -718,7 +741,7 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         errorObject->setStackFrames(vm, {});
     }
     RETURN_IF_EXCEPTION(scope, {});
-    errorObject->putDirect(vm, vm.propertyNames->stack, result, 0);
+    errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
     return JSValue::encode(result);
 }
 
@@ -727,7 +750,7 @@ JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * g
     auto& vm = JSC::getVM(globalObject);
     JSValue decodedValue = JSValue::decode(thisValue);
     if (auto* object = decodedValue.getObject()) {
-        object->putDirect(vm, vm.propertyNames->stack, JSValue::decode(value), 0);
+        object->putDirect(vm, vm.propertyNames->stack, JSValue::decode(value), JSC::PropertyAttribute::DontEnum | 0);
     }
 
     return true;
@@ -767,7 +790,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
             String sourceURL;
             JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject, nullptr);
             RETURN_IF_EXCEPTION(scope, {});
-            errorObject->putDirect(vm, vm.propertyNames->stack, result, 0);
+            errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
         } else {
             // Not yet materialized — safe to install new frames with a lazy getter.
             instance->setStackFrames(vm, WTF::move(stackTrace));
@@ -780,7 +803,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
             }
             RETURN_IF_EXCEPTION(scope, {});
 
-            instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, globalObject->m_lazyStackCustomGetterSetter.get(globalObject), JSC::PropertyAttribute::CustomAccessor | 0);
+            instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, globalObject->m_lazyStackCustomGetterSetter.get(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor | 0);
         }
     } else {
         OrdinalNumber line;
@@ -788,7 +811,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         String sourceURL;
         JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject, nullptr);
         RETURN_IF_EXCEPTION(scope, {});
-        errorObject->putDirect(vm, vm.propertyNames->stack, result, 0);
+        errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());

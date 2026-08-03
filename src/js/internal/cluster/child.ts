@@ -2,8 +2,8 @@ const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
 const path = require("node:path");
 
-const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
-const onInternalMessage = $newZigFunction("node_cluster_binding.zig", "onInternalMessageChild", 2);
+const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperChild", 3);
+const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessageChild", 2);
 
 const FunctionPrototype = Function.prototype;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -36,7 +36,7 @@ cluster._setupWorker = function () {
 
   // make sure the process.once("disconnect") doesn't count as a ref
   // before calling, check if the channel is refd. if it isn't, then unref it after calling process.once();
-  $newZigFunction("node_cluster_binding.zig", "channelIgnoreOneDisconnectEventListener", 0)();
+  $newRustFunction("node_cluster_binding.rs", "channelIgnoreOneDisconnectEventListener", 0)();
   process.once("disconnect", () => {
     process.channel = null;
     worker.emit("disconnect");

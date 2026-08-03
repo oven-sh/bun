@@ -1,10 +1,9 @@
 // A modified port of ci-info@4.0.0 (https://github.com/watson/ci-info)
 // Only gets the CI name, `isPR` is not implemented.
-// Main implementation is in src/codegen/ci_info.ts
+// Table maintained in `ci_info_generated` below
 
 use bun_core::env_var;
-// The CI table in `cli::ci_info_generated` mirrors the generated module
-// produced by src/codegen/ci_info.ts.
+// The CI table in `cli::ci_info_generated` mirrors watson/ci-info vendors.json
 use super::ci_info_generated as generated;
 
 static DETECT_CI_ONCE: bun_core::Once<Option<&'static [u8]>> =

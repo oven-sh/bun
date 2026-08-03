@@ -3078,6 +3078,14 @@ declare module "bun" {
     executablePath?: string;
     outfile?: string;
     /**
+     * Files or directories to embed into the executable under their original
+     * relative paths. At runtime they are reachable via `node:fs` and
+     * `Bun.file()` relative to `import.meta.dir`.
+     *
+     * Equivalent CLI flag: `--asset` (repeatable)
+     */
+    assets?: string[];
+    /**
      * Whether the standalone executable loads .env files when it runs
      *
      * Equivalent CLI flags: `--compile-autoload-dotenv`, `--no-compile-autoload-dotenv`
@@ -7004,8 +7012,12 @@ declare module "bun" {
        * Use this to abort the subprocess when another part of the program is
        * aborted, such as a `fetch`.
        *
-       * If the signal is aborted, the process is killed with the signal
-       * specified by `killSignal` (defaults to SIGTERM).
+       * If the signal is already aborted when `spawn` is called, no process is
+       * created and an `AbortError` (with `cause` set to `signal.reason`) is
+       * thrown synchronously.
+       *
+       * If the signal is aborted after the process starts, the process is
+       * killed with the signal specified by `killSignal` (defaults to SIGTERM).
        *
        * @example
        * ```ts

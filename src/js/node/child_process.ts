@@ -1151,13 +1151,13 @@ class ChildProcess extends EventEmitter {
         stderr = this.#stderr;
 
       if (stdout === undefined) {
-        this.#stdout = this.#getBunSpawnIo(1, this.#encoding, true);
+        this.#stdout = this.#getBunSpawnIo(1, true);
       } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout.destroyed && stdout.readable) {
         stdout.resume?.();
       }
 
       if (stderr === undefined) {
-        this.#stderr = this.#getBunSpawnIo(2, this.#encoding, true);
+        this.#stderr = this.#getBunSpawnIo(2, true);
       } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr.destroyed && stderr.readable) {
         stderr.resume?.();
       }
@@ -1190,7 +1190,7 @@ class ChildProcess extends EventEmitter {
     this.#maybeClose();
   }
 
-  #getBunSpawnIo(i, encoding, autoResume = false) {
+  #getBunSpawnIo(i, autoResume = false) {
     if ($debug && !this.#handle) {
       if (this.#handle === null) {
         $debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
@@ -1260,7 +1260,7 @@ class ChildProcess extends EventEmitter {
               return stream;
             }
 
-            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, { encoding });
+            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, {});
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();
@@ -1299,7 +1299,6 @@ class ChildProcess extends EventEmitter {
   #stdout;
   #stderr;
   #stdioObject;
-  #encoding;
   #stdioOptions;
   #stdinPumps;
   #stdoutPumps;
@@ -1381,7 +1380,7 @@ class ChildProcess extends EventEmitter {
           result[i] = this.stderr;
           continue;
         default:
-          result[i] = this.#getBunSpawnIo(i, this.#encoding, false);
+          result[i] = this.#getBunSpawnIo(i, false);
           continue;
       }
     }
@@ -1389,15 +1388,15 @@ class ChildProcess extends EventEmitter {
   }
 
   get stdin() {
-    return (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false));
+    return (this.#stdin ??= this.#getBunSpawnIo(0, false));
   }
 
   get stdout() {
-    return (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false));
+    return (this.#stdout ??= this.#getBunSpawnIo(1, false));
   }
 
   get stderr() {
-    return (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false));
+    return (this.#stderr ??= this.#getBunSpawnIo(2, false));
   }
 
   get stdio() {
@@ -1459,7 +1458,6 @@ class ChildProcess extends EventEmitter {
     var env = options[kBunEnv] || parseEnvPairs(envPairs) || process.env;
 
     const detachedOption = options.detached;
-    this.#encoding = options.encoding || undefined;
     this.#stdioOptions = bunStdio;
     if (wrappedStdio !== undefined) {
       // Mark wrapped positions up front so the getters read null (node's
@@ -1699,7 +1697,7 @@ class ChildProcess extends EventEmitter {
     Object.defineProperties(this.prototype, {
       stdin: {
         get: function () {
-          const value = (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false));
+          const value = (this.#stdin ??= this.#getBunSpawnIo(0, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdin", {
             value: value,
@@ -1714,7 +1712,7 @@ class ChildProcess extends EventEmitter {
       },
       stdout: {
         get: function () {
-          const value = (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false));
+          const value = (this.#stdout ??= this.#getBunSpawnIo(1, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdout", {
             value: value,
@@ -1729,7 +1727,7 @@ class ChildProcess extends EventEmitter {
       },
       stderr: {
         get: function () {
-          const value = (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false));
+          const value = (this.#stderr ??= this.#getBunSpawnIo(2, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stderr", {
             value: value,
@@ -1772,23 +1770,17 @@ const nodeToBunLookup = {
   ipc: "ipc",
 };
 
-// Messages whose `cmd` carries the reserved "NODE_" prefix are routed to
-// "internalMessage" rather than "message", as node does.
 const INTERNAL_IPC_PREFIX = "NODE_";
 
 function isInternalIpcMessage(message) {
   if (message === null || typeof message !== "object") return false;
-  // Own-property only so a polluted Object.prototype.cmd can't reroute messages.
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L980-L987
+  // Own-property check: a polluted Object.prototype.cmd cannot reroute messages.
   if (!ObjectHasOwn(message, "cmd")) return false;
   const cmd = message.cmd;
   if (typeof cmd !== "string" || cmd.length <= INTERNAL_IPC_PREFIX.length) return false;
   return StringPrototypeStartsWith.$call(cmd, INTERNAL_IPC_PREFIX);
 }
 
-// Resolve the descriptor behind a stream handed to us as stdio. Another
-// subprocess's `.stdin` carries no `fd`, but it is a WriteStream over a
-// FileSink that knows the pipe's write end.
 function streamFdOf(item): number | undefined {
   // fd -1 is the "no usable CRT fd" sentinel (Windows uv handles, closed
   // streams); fall through to pumping rather than inheriting it.
@@ -1799,8 +1791,7 @@ function streamFdOf(item): number | undefined {
   const handleFd = handle ? handle.fd : undefined;
   if (typeof handleFd === "number" && handleFd >= 0) return handleFd;
 
-  // A destroyed stream's sink still reports its original fd number even
-  // though the kernel may have reassigned it.
+  // Refuse a destroyed stream's sink fd: the number may be recycled.
   if (item.destroyed) return undefined;
 
   const sink = item[require("internal/fs/streams").kWriteStreamFastPath];
@@ -1839,8 +1830,6 @@ function nodeToBun(
   if (typeof item === "number") {
     return item;
   }
-  // A Writable satisfies isNodeStreamReadable too (both carry .on/.pipe), so
-  // resolve the fd the same way for either and only pick a name for the error.
   if (isNodeStreamReadable(item) || isNodeStreamWritable(item)) {
     const fd = streamFdOf(item);
     if (fd !== undefined) return fd;
@@ -1944,6 +1933,8 @@ function normalizeStdio(stdio): string[] {
         return ["ignore", "ignore", "ignore"];
       case "pipe":
         return ["pipe", "pipe", "pipe"];
+      case "overlapped":
+        return ["overlapped", "overlapped", "overlapped"];
       case "inherit":
         return ["inherit", "inherit", "inherit"];
       default:

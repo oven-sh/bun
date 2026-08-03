@@ -10,7 +10,7 @@
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { gcTick, isASAN, tempDir } from "harness";
+import { gcTick, isASAN, rss, tempDir } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 
@@ -544,16 +544,16 @@ describe("memory hygiene", () => {
   async function leakCheck(body: () => Promise<unknown>, warm = 2000, run = 1500) {
     for (let i = 0; i < warm; i++) {
       await body();
-      if ((i & 127) === 0) gcTick(true);
+      if ((i & 127) === 0) gcTick();
     }
-    gcTick(true);
-    const before = process.memoryUsage().rss;
+    gcTick();
+    const before = rss();
     for (let i = 0; i < run; i++) {
       await body();
-      if ((i & 127) === 0) gcTick(true);
+      if ((i & 127) === 0) gcTick();
     }
-    gcTick(true);
-    return process.memoryUsage().rss - before;
+    gcTick();
+    return rss() - before;
   }
 
   test("decode/encode cycles plateau (no per-call leak after warmup)", async () => {
@@ -571,7 +571,7 @@ describe("memory hygiene", () => {
   });
 
   test("constructor with throwing getter cleans up under repetition", () => {
-    const before = process.memoryUsage().rss;
+    const before = rss();
     for (let i = 0; i < 10_000; i++) {
       try {
         new Bun.Image(tinyPng, {
@@ -580,10 +580,10 @@ describe("memory hygiene", () => {
           },
         });
       } catch {}
-      if ((i & 1023) === 0) gcTick(true);
+      if ((i & 1023) === 0) gcTick();
     }
-    gcTick(true);
-    expect(process.memoryUsage().rss - before).toBeLessThan((isASAN ? 256 : 64) * 1024 * 1024);
+    gcTick();
+    expect(rss() - before).toBeLessThan((isASAN ? 256 : 64) * 1024 * 1024);
   });
 });
 

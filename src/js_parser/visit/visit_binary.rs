@@ -94,17 +94,15 @@ pub struct BinaryExpressionVisitor {
     /// `StoreRef` is the safe arena back-reference: `Copy` + `Deref`/`DerefMut`
     /// encapsulate the AST-store invariant, so call sites need no raw-pointer
     /// round-trip to forge an `'arena` borrow.
-    pub e: StoreRef<E::Binary>,
-    pub loc: bun_ast::Loc,
-    // `in` is a Rust keyword; named `in_`.
-    pub in_: ExprIn,
+    pub(crate) e: StoreRef<E::Binary>,
+    pub(crate) loc: bun_ast::Loc,
 
     /// Input for visiting the left child
-    pub left_in: ExprIn,
+    pub(crate) left_in: ExprIn,
 }
 
 impl BinaryExpressionVisitor {
-    pub fn visit_right_and_finish<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+    pub(crate) fn visit_right_and_finish<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
         v: &mut Self,
         p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
     ) -> Expr {
@@ -136,8 +134,7 @@ impl BinaryExpressionVisitor {
         // Mark the control flow as dead if the branch is never taken
         match e_.op {
             Op::Code::BinLogicalOr => {
-                let side_effects = SideEffects::to_boolean(p, &e_.left.data);
-                if side_effects.ok && side_effects.value {
+                if SideEffects::to_boolean(p, &e_.left.data).is_some_and(|k| k.value) {
                     // "true || dead"
                     let old = p.is_control_flow_dead;
                     p.is_control_flow_dead = true;
@@ -148,8 +145,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinLogicalAnd => {
-                let side_effects = SideEffects::to_boolean(p, &e_.left.data);
-                if side_effects.ok && !side_effects.value {
+                if SideEffects::to_boolean(p, &e_.left.data).is_some_and(|k| !k.value) {
                     // "false && dead"
                     let old = p.is_control_flow_dead;
                     p.is_control_flow_dead = true;
@@ -160,8 +156,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinNullishCoalescing => {
-                let side_effects = SideEffects::to_null_or_undefined(p, &e_.left.data);
-                if side_effects.ok && !side_effects.value {
+                if SideEffects::to_null_or_undefined(p, &e_.left.data).is_some_and(|k| !k.value) {
                     // "notNullOrUndefined ?? dead"
                     let old = p.is_control_flow_dead;
                     p.is_control_flow_dead = true;
@@ -240,21 +235,15 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinLooseEq => {
-                let equality =
-                    data_eql::<false, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
-                if equality.ok {
-                    if equality.is_require_main_and_module {
+                match data_eql::<false, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
+                    Equality::RequireMainAndModule => {
                         p.ignore_usage_of_runtime_require();
                         p.ignore_usage(p.module_ref);
                         return p.value_for_import_meta_main(false, v.loc);
                     }
-
-                    return p.new_expr(
-                        E::Boolean {
-                            value: equality.equal,
-                        },
-                        v.loc,
-                    );
+                    Equality::Equal => return p.new_expr(E::Boolean { value: true }, v.loc),
+                    Equality::NotEqual => return p.new_expr(E::Boolean { value: false }, v.loc),
+                    Equality::Unknown => {}
                 }
 
                 if p.options.features.minify_syntax {
@@ -276,21 +265,15 @@ impl BinaryExpressionVisitor {
                 // TODO: warn about typeof string
             }
             Op::Code::BinStrictEq => {
-                let equality =
-                    data_eql::<true, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
-                if equality.ok {
-                    if equality.is_require_main_and_module {
+                match data_eql::<true, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
+                    Equality::RequireMainAndModule => {
                         p.ignore_usage(p.module_ref);
                         p.ignore_usage_of_runtime_require();
                         return p.value_for_import_meta_main(false, v.loc);
                     }
-
-                    return p.new_expr(
-                        E::Boolean {
-                            value: equality.equal,
-                        },
-                        v.loc,
-                    );
+                    Equality::Equal => return p.new_expr(E::Boolean { value: true }, v.loc),
+                    Equality::NotEqual => return p.new_expr(E::Boolean { value: false }, v.loc),
+                    Equality::Unknown => {}
                 }
 
                 if p.options.features.minify_syntax {
@@ -305,21 +288,15 @@ impl BinaryExpressionVisitor {
                 // TODO: warn about typeof string
             }
             Op::Code::BinLooseNe => {
-                let equality =
-                    data_eql::<false, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
-                if equality.ok {
-                    if equality.is_require_main_and_module {
+                match data_eql::<false, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
+                    Equality::RequireMainAndModule => {
                         p.ignore_usage(p.module_ref);
                         p.ignore_usage_of_runtime_require();
                         return p.value_for_import_meta_main(true, v.loc);
                     }
-
-                    return p.new_expr(
-                        E::Boolean {
-                            value: !equality.equal,
-                        },
-                        v.loc,
-                    );
+                    Equality::Equal => return p.new_expr(E::Boolean { value: false }, v.loc),
+                    Equality::NotEqual => return p.new_expr(E::Boolean { value: true }, v.loc),
+                    Equality::Unknown => {}
                 }
                 if p.options.features.minify_syntax {
                     // "typeof x != 'undefined'" => "typeof x < 'u'"
@@ -338,21 +315,15 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinStrictNe => {
-                let equality =
-                    data_eql::<true, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
-                if equality.ok {
-                    if equality.is_require_main_and_module {
+                match data_eql::<true, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
+                    Equality::RequireMainAndModule => {
                         p.ignore_usage(p.module_ref);
                         p.ignore_usage_of_runtime_require();
                         return p.value_for_import_meta_main(true, v.loc);
                     }
-
-                    return p.new_expr(
-                        E::Boolean {
-                            value: !equality.equal,
-                        },
-                        v.loc,
-                    );
+                    Equality::Equal => return p.new_expr(E::Boolean { value: false }, v.loc),
+                    Equality::NotEqual => return p.new_expr(E::Boolean { value: true }, v.loc),
+                    Equality::Unknown => {}
                 }
 
                 if p.options.features.minify_syntax {
@@ -363,8 +334,8 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinNullishCoalescing => {
-                let null_or_undefined = SideEffects::to_null_or_undefined(p, &e_.left.data);
-                if null_or_undefined.ok {
+                if let Some(null_or_undefined) = SideEffects::to_null_or_undefined(p, &e_.left.data)
+                {
                     if !null_or_undefined.value {
                         return e_.left;
                     } else if null_or_undefined.side_effects == SideEffects::NoSideEffects {
@@ -386,30 +357,29 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinLogicalOr => {
-                let side_effects = SideEffects::to_boolean(p, &e_.left.data);
-                if side_effects.ok && side_effects.value {
-                    return e_.left;
-                } else if side_effects.ok && side_effects.side_effects == SideEffects::NoSideEffects
-                {
-                    // "(0 || fn)()" => "fn()"
-                    // "(0 || this.fn)" => "this.fn"
-                    // "(0 || this.fn)()" => "(0, this.fn)()"
-                    if is_call_target && e_.right.has_value_for_this_in_call() {
-                        return Expr::join_with_comma(
-                            Expr {
-                                data: prefill::data::ZERO,
-                                loc: e_.left.loc,
-                            },
-                            e_.right,
-                        );
-                    }
+                if let Some(side_effects) = SideEffects::to_boolean(p, &e_.left.data) {
+                    if side_effects.value {
+                        return e_.left;
+                    } else if side_effects.side_effects == SideEffects::NoSideEffects {
+                        // "(0 || fn)()" => "fn()"
+                        // "(0 || this.fn)" => "this.fn"
+                        // "(0 || this.fn)()" => "(0, this.fn)()"
+                        if is_call_target && e_.right.has_value_for_this_in_call() {
+                            return Expr::join_with_comma(
+                                Expr {
+                                    data: prefill::data::ZERO,
+                                    loc: e_.left.loc,
+                                },
+                                e_.right,
+                            );
+                        }
 
-                    return e_.right;
+                        return e_.right;
+                    }
                 }
             }
             Op::Code::BinLogicalAnd => {
-                let side_effects = SideEffects::to_boolean(p, &e_.left.data);
-                if side_effects.ok {
+                if let Some(side_effects) = SideEffects::to_boolean(p, &e_.left.data) {
                     if !side_effects.value {
                         return e_.left;
                     } else if side_effects.side_effects == SideEffects::NoSideEffects {
@@ -729,7 +699,7 @@ impl BinaryExpressionVisitor {
         }
     }
 
-    pub fn check_and_prepare<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+    pub(crate) fn check_and_prepare<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
         v: &mut Self,
         p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
     ) -> Option<Expr> {

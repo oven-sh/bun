@@ -1,41 +1,47 @@
 import { describe, expect, test } from "bun:test";
-import { createServer } from "http";
+import { once } from "node:events";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 
 describe("HTTP numeric headers", () => {
   test("should handle numeric header names", async () => {
+    let received: { byString: unknown; byNumber: unknown; hasKey: boolean } | undefined;
+
+    // Capture header values in the handler and assert after the response
+    // completes so a failed assertion surfaces as a test failure instead of a
+    // hung fetch (res.end() would otherwise never run).
     const server = createServer((req, res) => {
-      // Get the custom header value
-      expect(req.headers["1234"]).toBe("Hello from client!");
-      expect("1234" in req.headers).toBe(true);
-      expect(req.headers[1234]).toBe("Hello from client!");
-
-      const customHeader = req.headers["1234"];
-
-      // Send response with the header value
+      received = {
+        byString: req.headers["1234"],
+        byNumber: req.headers[1234],
+        hasKey: "1234" in req.headers,
+      };
       res.writeHead(200, { "Content-Type": "text/plain" });
-      res.end(`Received header value: ${customHeader}`);
+      res.end(`Received header value: ${req.headers["1234"]}`);
     });
 
-    // Start server on random port
-    const port = await new Promise<number>(resolve => {
-      server.listen(0, () => {
-        const address = server.address();
-        if (address && typeof address === "object") {
-          resolve(address.port);
-        }
+    server.listen(0, "127.0.0.1");
+    try {
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+
+      const response = await fetch(`http://127.0.0.1:${port}/`, {
+        headers: {
+          "1234": "Hello from client!",
+          "Connection": "close",
+        },
       });
-    });
+      const data = await response.text();
 
-    // Make fetch request to the server
-    const response = await fetch(`http://localhost:${port}/`, {
-      headers: {
-        "1234": "Hello from client!",
-      },
-    });
-
-    const data = await response.text();
-    expect(data).toBe("Received header value: Hello from client!");
-
-    server.close();
+      expect(received).toEqual({
+        byString: "Hello from client!",
+        byNumber: "Hello from client!",
+        hasKey: true,
+      });
+      expect(data).toBe("Received header value: Hello from client!");
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
   });
 });

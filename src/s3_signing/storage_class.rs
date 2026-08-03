@@ -15,7 +15,7 @@ pub enum StorageClass {
 }
 
 impl StorageClass {
-    pub fn to_string(self) -> &'static [u8] {
+    pub(crate) fn to_string(self) -> &'static [u8] {
         match self {
             Self::STANDARD => b"STANDARD",
             Self::STANDARD_IA => b"STANDARD_IA",

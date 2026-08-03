@@ -100,7 +100,7 @@ impl InternalSocket {
         matches!(self, InternalSocket::Detached)
     }
     #[inline]
-    pub fn is_named_pipe(&self) -> bool {
+    pub(crate) fn is_named_pipe(&self) -> bool {
         #[cfg(windows)]
         return matches!(self, InternalSocket::Pipe(_));
         #[cfg(not(windows))]

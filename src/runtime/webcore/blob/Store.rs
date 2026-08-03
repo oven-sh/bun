@@ -540,7 +540,7 @@ impl BytesExt for Bytes {
 /// deallocator callback for buffers backed by a `Blob.Store`. C++ stashes a
 /// `*mut Store` as the deallocator context; this releases that ref.
 #[unsafe(no_mangle)]
-pub extern "C" fn BlobArrayBuffer_deallocator(
+pub(crate) extern "C" fn BlobArrayBuffer_deallocator(
     _bytes: *mut core::ffi::c_void,
     blob: *mut core::ffi::c_void,
 ) {

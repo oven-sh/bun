@@ -97,6 +97,7 @@ const rustSource = `\
 // index-aligned with the C++ \`errors[]\` table so \`Bun__createErrorWithCode\`
 // picks the correct ctor / name / code triple.
 
+#[allow(dead_code, unreachable_pub, unused)]
 impl ErrorCode {
 ${rustConsts}
     /// == C++ \`NODE_ERROR_COUNT\`.
@@ -105,11 +106,13 @@ ${rustConsts}
 
 // \`ERR_\`-prefixed aliases — some callers spell the full Node code string,
 // some use the stripped name. Both resolve to the same discriminant.
+#[allow(dead_code, unreachable_pub, unused)]
 impl ErrorCode {
 ${rustAliases}}
 
 /// \`error.code\` string table — index-aligned with the consts above and with
 /// C++ \`errors[].code\` in \`ErrorCode+Data.h\`.
+#[allow(dead_code, unreachable_pub, unused)]
 static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
 ${rustCodeStr}];
 `;

@@ -1,10 +1,10 @@
 import { file } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 test("custom matcher runs", async () => {
-  const dir = tempDirWithFiles("custom-matcher-preload-test-fixture", {
+  await using dir = tempDir("custom-matcher-preload-test-fixture", {
     "preload.ts": await file(join(import.meta.dir, "custom-matcher-preload-test-fixture-1.ts")).text(),
     "expect-extend.test.ts": await file(join(import.meta.dir, "custom-matcher-preload-test-fixture-2.ts")).text(),
     "bunfig.toml": `

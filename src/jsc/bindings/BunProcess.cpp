@@ -1215,6 +1215,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     auto* process = globalObject->processObject();
     auto& wrapped = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return true;
 
     // node parity (exitWithUndefinedFatalException): the internal fatal-exception
     // handler is monkey-patchable as process._fatalException. If user code
@@ -1225,6 +1227,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         JSValue fatalException = process->get(globalObject, Identifier::fromString(vm, "_fatalException"_s));
         if (fatalScope.exception()) {
             (void)fatalScope.tryClearException();
+            if (vm.hasPendingTerminationException()) [[unlikely]]
+                return true;
         } else if (!fatalException.isCallable()) {
             Bun__Process__exit(globalObject, 6);
             return true;
@@ -1242,6 +1246,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     auto uncaughtExceptionMonitor = Identifier::fromString(JSC::getVM(globalObject), "uncaughtExceptionMonitor"_s);
     if (wrapped.listenerCount(uncaughtExceptionMonitor) > 0) {
         wrapped.emit(uncaughtExceptionMonitor, args);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return true;
     }
 
     auto uncaughtExceptionIdent = Identifier::fromString(JSC::getVM(globalObject), "uncaughtException"_s);
@@ -1253,6 +1259,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
         if (auto ex = scope.exception()) {
             (void)scope.tryClearException();
+            if (vm.hasPendingTerminationException()) [[unlikely]]
+                return true;
             // if an exception is thrown in the uncaughtException handler, we abort
             Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
             Bun__Process__exit(lexicalGlobalObject, 1);
@@ -1314,6 +1322,8 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return;
     auto warning = JSC::createError(globalObject, "Unhandled promise rejection. This error originated either by "
                                                   "throwing inside of an async function without a catch block, "
                                                   "or by rejecting a promise which was not handled with .catch(). "
@@ -1324,19 +1334,27 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
     JSValue reasonStack {};
     auto is_errorlike = Bun__promises__isErrorLike(globalObject, JSValue::decode(reason));
     CLEAR_IF_EXCEPTION(scope);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return;
     if (is_errorlike) {
         reasonStack = JSValue::decode(reason).get(globalObject, vm.propertyNames->stack);
         CLEAR_IF_EXCEPTION(scope);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return;
         warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
     }
     if (!reasonStack) {
         reasonStack = JSValue::decode(Bun__noSideEffectsToString(vm, globalObject, reason));
         CLEAR_IF_EXCEPTION(scope);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return;
     }
     if (!reasonStack) reasonStack = jsUndefined();
 
     Process::emitWarning(globalObject, reasonStack, jsString(globalObject->vm(), "UnhandledPromiseRejectionWarning"_str), jsUndefined(), jsUndefined());
     CLEAR_IF_EXCEPTION(scope);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return;
     Process::emitWarningErrorInstance(globalObject, warning);
     CLEAR_IF_EXCEPTION(scope);
 }
@@ -1346,9 +1364,12 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return true;
     auto* process = globalObject->processObject();
 
-    auto eventType = Identifier::fromString(JSC::getVM(globalObject), "unhandledRejection"_s);
+    auto eventType = Identifier::fromString(vm, "unhandledRejection"_s);
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
         MarkedArgumentBuffer args;
@@ -1365,17 +1386,22 @@ extern "C" bool Bun__VM__allowRejectionHandledWarning(void* vm);
 
 extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue promise)
 {
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(lexicalGlobalObject));
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return true;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto* process = globalObject->processObject();
 
-    auto eventType = Identifier::fromString(JSC::getVM(globalObject), "rejectionHandled"_s);
+    auto eventType = Identifier::fromString(vm, "rejectionHandled"_s);
 
     if (Bun__VM__allowRejectionHandledWarning(globalObject->bunVM())) {
-        Process::emitWarning(globalObject, jsString(globalObject->vm(), String("Promise rejection was handled asynchronously"_s)), jsString(globalObject->vm(), String("PromiseRejectionHandledWarning"_s)), jsUndefined(), jsUndefined());
+        Process::emitWarning(globalObject, jsString(vm, String("Promise rejection was handled asynchronously"_s)), jsString(vm, String("PromiseRejectionHandledWarning"_s)), jsUndefined(), jsUndefined());
         CLEAR_IF_EXCEPTION(scope);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return true;
     }
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
@@ -3509,7 +3535,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * g
 
     result->putDirectOffset(vm, 0, jsNumber(std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec));
     result->putDirectOffset(vm, 1, jsNumber(std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec));
+#if OS(DARWIN)
+    // ru_maxrss is bytes on darwin; Node reports kilobytes everywhere.
+    result->putDirectOffset(vm, 2, jsNumber(rusage.ru_maxrss / 1024));
+#else
     result->putDirectOffset(vm, 2, jsNumber(rusage.ru_maxrss));
+#endif
     result->putDirectOffset(vm, 3, jsNumber(rusage.ru_ixrss));
     result->putDirectOffset(vm, 4, jsNumber(rusage.ru_idrss));
     result->putDirectOffset(vm, 5, jsNumber(rusage.ru_isrss));
@@ -4119,6 +4150,9 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* object = constructEmptyObject(globalObject);
 
+    // node:inspector serves a CDP endpoint, precise coverage and breakpoint
+    // pausing; the long tail of CDP domains (Network, NodeWorker, Target,
+    // tracing, DOMStorage, permissions) are not implemented yet.
     object->putDirect(vm, Identifier::fromString(vm, "inspector"_s), jsBoolean(true));
 #ifdef BUN_DEBUG
     object->putDirect(vm, Identifier::fromString(vm, "debug"_s), jsBoolean(true));
@@ -4135,6 +4169,7 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     object->putDirect(vm, Identifier::fromString(vm, "tls"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "cached_builtins"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "openssl_is_boringssl"_s), jsBoolean(true));
+    object->putDirect(vm, Identifier::fromString(vm, "quic"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "require_module"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "typescript"_s), jsString(vm, String("transform"_s)));
 
@@ -4391,8 +4426,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionEmitHelper, (JSGlobalObject * globalObj
     return JSValue::encode(ret);
 }
 
-// Keep in step with INTERNAL_IPC_PREFIX in src/js/node/child_process.ts, which
-// makes the same decision for the parent end of the channel.
 static constexpr auto kInternalIpcPrefix = "NODE_"_s;
 
 extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSValue value, EncodedJSValue handle)
@@ -4400,19 +4433,7 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
 
-    // Node reserves the "NODE_" cmd prefix for the channel's own traffic and
-    // routes such messages to "internalMessage" on both ends of the channel.
-    //
-    // Read `cmd` without entering JS, so this frame needs no throw scope. A
-    // throw scope here obliges the caller to perform an exception check, and
-    // the caller is Rust, which has no way to do that -- every IPC message
-    // then trips the exception-check validator.
-    //
-    // `message` is a value we just deserialized off the channel, so `cmd` is
-    // always a plain own property; a getter or a proxy trap cannot reach here.
-    // Unlike node's `message.cmd`, getDirect ignores the prototype chain, so a
-    // polluted `Object.prototype.cmd` cannot reroute a caller's messages to
-    // "internalMessage".
+    // getDirect: own-property only (prototype-pollution safe) + no throw scope for the Rust caller.
     auto& names = WebCore::builtinNames(vm);
     auto ident = vm.propertyNames->message;
     JSValue message = JSValue::decode(value);

@@ -143,6 +143,8 @@ pub enum HardcodedModule {
     NodeInspectorPromises,
     #[strum(serialize = "node:http2")]
     NodeHttp2,
+    #[strum(serialize = "node:quic")]
+    NodeQuic,
     #[strum(serialize = "node:diagnostics_channel")]
     NodeDiagnosticsChannel,
     #[strum(serialize = "node:dgram")]
@@ -180,6 +182,16 @@ pub enum HardcodedModule {
     BunInternalForTesting,
     #[strum(serialize = "internal:cluster/RoundRobinHandle")]
     InternalClusterRoundRobinHandle,
+    // Node internal modules exposed for the vendored Node.js test suite.
+    // Gated like `bun:internal-for-testing` (debug builds / --expose-internals).
+    #[strum(serialize = "internal:repl")]
+    NodeInternalRepl,
+    #[strum(serialize = "internal:repl/await")]
+    NodeInternalReplAwait,
+    #[strum(serialize = "internal:repl/history")]
+    NodeInternalReplHistory,
+    #[strum(serialize = "internal:util/inspect")]
+    NodeInternalUtilInspect,
     /// Node.js-internal testing shim (`require('internal/test/binding')`),
     /// gated behind '--expose-internals' like `bun:internal-for-testing`.
     #[strum(serialize = "internal/test/binding")]
@@ -202,6 +214,10 @@ bun_core::comptime_string_map! {
         b"bun:wrap" => HardcodedModule::BunWrap,
         b"bun:internal-for-testing" => HardcodedModule::BunInternalForTesting,
         b"internal:cluster/RoundRobinHandle" => HardcodedModule::InternalClusterRoundRobinHandle,
+        b"internal/repl" => HardcodedModule::NodeInternalRepl,
+        b"internal/repl/await" => HardcodedModule::NodeInternalReplAwait,
+        b"internal/repl/history" => HardcodedModule::NodeInternalReplHistory,
+        b"internal/util/inspect" => HardcodedModule::NodeInternalUtilInspect,
         b"internal/test/binding" => HardcodedModule::InternalTestBinding,
         // Node.js
         b"node:assert" => HardcodedModule::NodeAssert,
@@ -223,6 +239,7 @@ bun_core::comptime_string_map! {
         b"node:fs/promises" => HardcodedModule::NodeFsPromises,
         b"node:http" => HardcodedModule::NodeHttp,
         b"node:http2" => HardcodedModule::NodeHttp2,
+        b"node:quic" => HardcodedModule::NodeQuic,
         b"node:https" => HardcodedModule::NodeHttps,
         b"node:inspector" => HardcodedModule::NodeInspector,
         b"node:inspector/promises" => HardcodedModule::NodeInspectorPromises,
@@ -450,6 +467,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     // New Node.js builtins only resolve from the prefixed one.
     node_entry_only_prefix!("node:sqlite"),
     node_entry_only_prefix!("node:test"),
+    node_entry_only_prefix!("node:quic"),
     //
     node_entry!("assert"),
     node_entry!("assert/strict"),
@@ -716,6 +734,12 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
             node_only_prefix: false,
         },
     ),
+    // Node internal modules for the vendored Node.js test suite (gated in
+    // jsc_hooks like bun:internal-for-testing: debug / --expose-internals).
+    entry!("internal/repl"),
+    entry!("internal/repl/await"),
+    entry!("internal/repl/history"),
+    entry!("internal/util/inspect"),
     entry!("internal/test/binding"),
     (
         b"ffi",
@@ -818,6 +842,17 @@ const BUN_TEST_ALIASES: &[&[AliasKv]] = &[
     BUN_TEST_EXTRA_ALIAS_KVS,
 ];
 
+static EXPOSE_INTERNALS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Node's `--expose-internals`.
+pub fn expose_internals_enabled() -> bool {
+    EXPOSE_INTERNALS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_expose_internals_enabled(enabled: bool) {
+    EXPOSE_INTERNALS.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
 static STREAM_ITER_ENABLED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
@@ -839,7 +874,7 @@ pub fn set_stream_iter_enabled(enabled: bool) {
 /// builtins can consult the write-once CLI bit instead of the user-mutable
 /// `process.execArgv`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__streamIterEnabled() -> bool {
+pub(crate) extern "C" fn Bun__streamIterEnabled() -> bool {
     stream_iter_enabled()
 }
 

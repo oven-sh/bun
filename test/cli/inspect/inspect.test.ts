@@ -421,12 +421,24 @@ describe("Runtime.evaluate returnByValue with BigInt/Symbol", () => {
 
     const ws = new WebSocket(url);
     await new Promise<void>((resolve, reject) => {
-      ws.addEventListener("open", () => resolve());
-      ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+      ws.addEventListener("open", () => resolve(), { once: true });
+      ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })), { once: true });
+      ws.addEventListener("close", () => reject(new Error("WebSocket closed before open")), { once: true });
     });
     const reply = new Promise<any>((resolve, reject) => {
-      ws.addEventListener("message", ({ data }) => resolve(JSON.parse(data.toString())));
-      ws.addEventListener("close", () => reject(new Error("WebSocket closed before reply")));
+      ws.addEventListener(
+        "message",
+        ({ data }) => {
+          try {
+            resolve(JSON.parse(data.toString()));
+          } catch (cause) {
+            reject(new Error(`non-JSON inspector reply: ${data}`, { cause }));
+          }
+        },
+        { once: true },
+      );
+      ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })), { once: true });
+      ws.addEventListener("close", () => reject(new Error("WebSocket closed before reply")), { once: true });
     });
     ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression, returnByValue: true } }));
     const result = await reply;

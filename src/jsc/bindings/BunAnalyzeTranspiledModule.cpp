@@ -39,7 +39,7 @@ Identifier getFromIdentifierArray(VM& vm, Identifier* identifierArray, uint32_t 
     return identifierArray[n];
 }
 
-extern "C" JSModuleRecord* zig__ModuleInfoDeserialized__toJSModuleRecord(JSGlobalObject* globalObject, VM& vm, const Identifier& module_key, const SourceCode& source_code, VariableEnvironment& declared_variables, VariableEnvironment& lexical_variables, bun_ModuleInfoDeserialized* module_info);
+extern "C" JSModuleRecord* zig__ModuleInfoDeserialized__toJSModuleRecord(JSGlobalObject* globalObject, VM& vm, const Identifier& module_key, const SourceCode& source_code, bun_ModuleInfoDeserialized* module_info);
 extern "C" void zig__renderDiff(const char* expected_ptr, size_t expected_len, const char* received_ptr, size_t received_len, JSGlobalObject* globalObject);
 
 extern "C" Identifier* JSC__IdentifierArray__create(size_t len)
@@ -55,43 +55,29 @@ extern "C" void JSC__IdentifierArray__setFromUtf8(Identifier* identifierArray, s
     identifierArray[n] = Identifier::fromString(vm, AtomString::fromUTF8(std::span<const char>(str, len)));
 }
 
-extern "C" void JSC__VariableEnvironment__add(VariableEnvironment& environment, VM& vm, Identifier* identifierArray, uint32_t index)
+extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObject, VM& vm, const Identifier* moduleKey, const SourceCode& sourceCode, bool hasImportMeta, bool isTypescript, bool hasTLA)
 {
-    environment.add(getFromIdentifierArray(vm, identifierArray, index));
-}
-
-extern "C" VariableEnvironment* JSC_JSModuleRecord__declaredVariables(JSModuleRecord* moduleRecord)
-{
-    return const_cast<VariableEnvironment*>(&moduleRecord->declaredVariables());
-}
-extern "C" VariableEnvironment* JSC_JSModuleRecord__lexicalVariables(JSModuleRecord* moduleRecord)
-{
-    return const_cast<VariableEnvironment*>(&moduleRecord->lexicalVariables());
-}
-
-extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObject, VM& vm, const Identifier* moduleKey, const SourceCode& sourceCode, const VariableEnvironment& declaredVariables, const VariableEnvironment& lexicalVariables, bool hasImportMeta, bool isTypescript, bool hasTLA)
-{
-    JSModuleRecord* result = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), *moduleKey, sourceCode, declaredVariables, lexicalVariables, hasImportMeta ? ImportMetaFeature : 0);
+    JSModuleRecord* result = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), *moduleKey, sourceCode, hasImportMeta ? ImportMetaFeature : 0);
     result->m_isTypeScript = isTypescript;
     result->setHasTLA(hasTLA);
     return result;
 }
 
-extern "C" void JSC_JSModuleRecord__addIndirectExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t exportName, uint32_t importName, uint32_t moduleName)
+extern "C" void JSC_JSModuleRecord__addIndirectExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t exportName, uint32_t importName, uint32_t moduleName, uint8_t moduleRequestType)
 {
-    moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createIndirect(getFromIdentifierArray(moduleRecord->vm(), identifierArray, exportName), getFromIdentifierArray(moduleRecord->vm(), identifierArray, importName), getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName)));
+    moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createIndirect(getFromIdentifierArray(moduleRecord->vm(), identifierArray, exportName), getFromIdentifierArray(moduleRecord->vm(), identifierArray, importName), getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), static_cast<JSC::ScriptFetchParameters::Type>(moduleRequestType)));
 }
 extern "C" void JSC_JSModuleRecord__addLocalExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t exportName, uint32_t localName)
 {
     moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createLocal(getFromIdentifierArray(moduleRecord->vm(), identifierArray, exportName), getFromIdentifierArray(moduleRecord->vm(), identifierArray, localName)));
 }
-extern "C" void JSC_JSModuleRecord__addNamespaceExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t exportName, uint32_t moduleName)
+extern "C" void JSC_JSModuleRecord__addNamespaceExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t exportName, uint32_t moduleName, uint8_t moduleRequestType)
 {
-    moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createNamespace(getFromIdentifierArray(moduleRecord->vm(), identifierArray, exportName), getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName)));
+    moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createNamespace(getFromIdentifierArray(moduleRecord->vm(), identifierArray, exportName), getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), static_cast<JSC::ScriptFetchParameters::Type>(moduleRequestType)));
 }
-extern "C" void JSC_JSModuleRecord__addStarExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName)
+extern "C" void JSC_JSModuleRecord__addStarExport(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName, uint8_t moduleRequestType)
 {
-    moduleRecord->addStarExportEntry(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName));
+    moduleRecord->addStarExportEntry(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), static_cast<JSC::ScriptFetchParameters::Type>(moduleRequestType));
 }
 static inline AbstractModuleRecord::ModulePhase toModulePhase(bool phaseDefer)
 {
@@ -124,38 +110,47 @@ extern "C" void JSC_JSModuleRecord__addRequestedModuleHostDefined(JSModuleRecord
     moduleRecord->appendRequestedModule(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), std::move(attributes), toModulePhase(phaseDefer));
 }
 
-extern "C" void JSC_JSModuleRecord__addImportEntrySingle(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName)
+static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::JavaScript) == 1, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
+static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::WebAssembly) == 2, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
+static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::JSON) == 3, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
+static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::HostDefined) == 4, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
+
+extern "C" void JSC_JSModuleRecord__addImportEntrySingle(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName, uint8_t moduleRequestType)
 {
     moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
         .type = JSModuleRecord::ImportEntryType::Single,
+        .moduleRequestType = static_cast<JSC::ScriptFetchParameters::Type>(moduleRequestType),
         .moduleRequest = getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName),
         .importName = getFromIdentifierArray(moduleRecord->vm(), identifierArray, importName),
         .localName = getFromIdentifierArray(moduleRecord->vm(), identifierArray, localName),
     });
 }
-extern "C" void JSC_JSModuleRecord__addImportEntrySingleTypeScript(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName)
+extern "C" void JSC_JSModuleRecord__addImportEntrySingleTypeScript(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName, uint8_t moduleRequestType)
 {
     moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
         .type = JSModuleRecord::ImportEntryType::SingleTypeScript,
+        .moduleRequestType = static_cast<JSC::ScriptFetchParameters::Type>(moduleRequestType),
         .moduleRequest = getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName),
         .importName = getFromIdentifierArray(moduleRecord->vm(), identifierArray, importName),
         .localName = getFromIdentifierArray(moduleRecord->vm(), identifierArray, localName),
     });
 }
-extern "C" void JSC_JSModuleRecord__addImportEntryNamespace(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName)
+extern "C" void JSC_JSModuleRecord__addImportEntryNamespace(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName, uint8_t moduleRequestType)
 {
     moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
         .type = JSModuleRecord::ImportEntryType::Namespace,
+        .moduleRequestType = static_cast<JSC::ScriptFetchParameters::Type>(moduleRequestType),
         .moduleRequest = getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName),
         .importName = getFromIdentifierArray(moduleRecord->vm(), identifierArray, importName),
         .localName = getFromIdentifierArray(moduleRecord->vm(), identifierArray, localName),
     });
 }
-extern "C" void JSC_JSModuleRecord__addImportEntryNamespaceDefer(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName)
+extern "C" void JSC_JSModuleRecord__addImportEntryNamespaceDefer(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName, uint8_t moduleRequestType)
 {
     moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
         .type = JSModuleRecord::ImportEntryType::Namespace,
         .phase = AbstractModuleRecord::ModulePhase::Defer,
+        .moduleRequestType = static_cast<JSC::ScriptFetchParameters::Type>(moduleRequestType),
         .moduleRequest = getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName),
         .importName = getFromIdentifierArray(moduleRecord->vm(), identifierArray, importName),
         .localName = getFromIdentifierArray(moduleRecord->vm(), identifierArray, localName),
@@ -173,9 +168,6 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
         return promise;
     };
 
-    VariableEnvironment declaredVariables = VariableEnvironment();
-    VariableEnvironment lexicalVariables = VariableEnvironment();
-
     auto provider = static_cast<Zig::SourceProvider*>(sourceCode.provider());
 
     if (provider->m_resolvedSource.module_info == nullptr) {
@@ -184,7 +176,7 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
     }
 
     auto* moduleInfo = static_cast<bun_ModuleInfoDeserialized*>(provider->m_resolvedSource.module_info);
-    auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleKey, sourceCode, declaredVariables, lexicalVariables, moduleInfo);
+    auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleKey, sourceCode, moduleInfo);
     // Under --isolate the same SourceProvider is reused across globals via the
     // IsolatedModuleCache, so module_info must remain alive on the provider;
     // ~SourceProvider frees it. Otherwise, free now.
@@ -220,7 +212,7 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifi
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(error.toErrorObject(globalObject, sourceCode))));
     ASSERT(moduleProgramNode);
 
-    ModuleAnalyzer moduleAnalyzer(globalObject, moduleKey, sourceCode, moduleProgramNode->varDeclarations(), moduleProgramNode->lexicalVariables(), moduleProgramNode->features());
+    ModuleAnalyzer moduleAnalyzer(globalObject, moduleKey, sourceCode, moduleProgramNode->features());
     RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
 
     auto result = moduleAnalyzer.analyze(*moduleProgramNode);
@@ -254,30 +246,6 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
 {
     WTF::StringPrintStream stream;
 
-    {
-        Vector<String> sortedVars;
-        for (const auto& pair : moduleRecord->declaredVariables())
-            sortedVars.append(String(pair.key.get()));
-        std::sort(sortedVars.begin(), sortedVars.end(), [](const String& a, const String& b) {
-            return codePointCompare(a, b) < 0;
-        });
-        stream.print("  varDeclarations:\n");
-        for (const auto& name : sortedVars)
-            stream.print("  - ", name, "\n");
-    }
-
-    {
-        Vector<String> sortedVars;
-        for (const auto& pair : moduleRecord->lexicalVariables())
-            sortedVars.append(String(pair.key.get()));
-        std::sort(sortedVars.begin(), sortedVars.end(), [](const String& a, const String& b) {
-            return codePointCompare(a, b) < 0;
-        });
-        stream.print("  lexicalVariables:\n");
-        for (const auto& name : sortedVars)
-            stream.print("  - ", name, "\n");
-    }
-
     stream.print("  features: (not accessible)\n");
 
     stream.print("\nAnalyzing ModuleRecord key(", moduleRecord->moduleKey().impl(), ")\n");
@@ -309,7 +277,7 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
         for (const auto& pair : moduleRecord->importEntries()) {
             WTF::StringPrintStream line;
             auto& importEntry = pair.value;
-            line.print("      import(", importEntry.importName, "), local(", importEntry.localName, "), module(", importEntry.moduleRequest, ")");
+            line.print("      import(", importEntry.importName, "), local(", importEntry.localName, "), module(", importEntry.moduleRequest, "), type(", (uint8_t)importEntry.moduleRequestType, ")");
             if (importEntry.phase == AbstractModuleRecord::ModulePhase::Defer)
                 line.print(", phase(defer)");
             line.print("\n");
@@ -333,11 +301,11 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
             break;
 
         case AbstractModuleRecord::ExportEntry::Type::Indirect:
-            line.print("      [Indirect] ", "export(", exportEntry.exportName, "), import(", exportEntry.importName, "), module(", exportEntry.moduleName, ")\n");
+            line.print("      [Indirect] ", "export(", exportEntry.exportName, "), import(", exportEntry.importName, "), module(", exportEntry.moduleName, "), type(", (uint8_t)exportEntry.moduleRequestType, ")\n");
             break;
 
         case AbstractModuleRecord::ExportEntry::Type::Namespace:
-            line.print("      [Namespace] ", "export(", exportEntry.exportName, "), module(", exportEntry.moduleName, ")\n");
+            line.print("      [Namespace] ", "export(", exportEntry.exportName, "), module(", exportEntry.moduleName, "), type(", (uint8_t)exportEntry.moduleRequestType, ")\n");
             break;
         }
         sortedEntries.append(line.toString());
@@ -350,9 +318,9 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
 
     {
         Vector<String> sortedStarExports;
-        for (const auto& moduleName : moduleRecord->starExportEntries()) {
+        for (const auto& [moduleName, moduleRequestType] : moduleRecord->starExportEntries()) {
             WTF::StringPrintStream line;
-            line.print("      [Star] module(", moduleName.get(), ")\n");
+            line.print("      [Star] module(", moduleName.get(), "), type(", (uint8_t)moduleRequestType, ")\n");
             sortedStarExports.append(line.toString());
         }
         std::sort(sortedStarExports.begin(), sortedStarExports.end(), [](const String& a, const String& b) {

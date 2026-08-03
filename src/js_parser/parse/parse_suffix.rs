@@ -136,9 +136,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Remove unnecessary optional chains
         if p.options.features.minify_syntax {
-            let result = SideEffects::to_null_or_undefined(p, &left.data);
-            if result.ok && !result.value {
-                optional_start = None;
+            if let Some(result) = SideEffects::to_null_or_undefined(p, &left.data) {
+                if !result.value {
+                    optional_start = None;
+                }
             }
         }
 
@@ -440,7 +441,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // boxed arena slot: allocate first, then fill via DerefMut on StoreRef.
         let ternary = p.new_expr(
             E::If {
-                test_: prev,
+                test: prev,
                 yes: Expr::EMPTY,
                 no: Expr::EMPTY,
             },
@@ -1445,7 +1446,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    pub fn parse_suffix(
+    pub(crate) fn parse_suffix(
         &mut self,
         left: &mut Expr,
         level: Level,

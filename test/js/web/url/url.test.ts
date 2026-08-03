@@ -100,10 +100,28 @@ describe("url", () => {
     expect(new URL("file://\u1E9E/x").host).toBe("xn--zca");
     // Bracketed hosts go to the IPv6 parser, never IDNA.
     expect(() => new URL("http://[::\u180E1]/")).toThrow();
+    // tab/LF/CR are stripped from anywhere in the input before parsing, so an
+    // embedded tab in the scheme or between : and // must not defeat the delta.
+    expect(new URL("ht\ttp://\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    expect(new URL("http:\n//\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    // The port span is left verbatim: an ignored-class delta source
+    // (U+180E) in the port must still fail the WHATWG port state, not be
+    // stripped into a valid digit run. The same char in the host is fine.
+    expect(() => new URL("http://foo:8\u180E0/")).toThrow();
+    expect(new URL("http://foo\u180E:80/").href).toBe("http://foo/");
     // setter on a non-special scheme: opaque host stays verbatim.
     const u = new URL("foo://x/");
     u.hostname = "\u1E9E";
     expect(u.hostname).toBe("%E1%BA%9E");
+    // url.host setter: delta applies to the host span only, port stays
+    // verbatim so an ignored-class code point there is not stripped into a
+    // valid digit run.
+    const h1 = new URL("http://x/");
+    h1.host = "foo:8\u206A0";
+    expect(h1.port).toBe("8");
+    const h2 = new URL("http://x/");
+    h2.host = "foo\u1E9E:81";
+    expect(h2.host).toBe("xn--foo-7ka:81");
   });
 
   it("prints", () => {

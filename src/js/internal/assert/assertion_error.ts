@@ -47,6 +47,7 @@ const kReadableOperator = {
   notDeepEqual: 'Expected "actual" not to be loosely deep-equal to:',
   notIdentical: "Values have same structure but are not reference-equal:",
   notDeepEqualUnequal: "Expected values not to be loosely deep-equal:",
+  partialDeepStrictEqual: "Expected values to be partially and strictly deep-equal:",
 };
 
 const kMaxShortStringLength = 12;

@@ -971,13 +971,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
           if (typeof connectionListener === "function") {
             server.prependOnceListener("secureConnection", connectionListener);
           }
-          try {
-            server.emit("secureConnection", self);
-          } catch (e) {
-            // Node's TLSWrap completion runs via MakeCallback: a listener throw is an
-            // uncaughtException, not a fall-through to the Bun-native socket handler keep-alive path.
-            reportUncaughtException(e);
-          }
+          server.emit("secureConnection", self);
         }
       }
       if (self.destroyed) return;

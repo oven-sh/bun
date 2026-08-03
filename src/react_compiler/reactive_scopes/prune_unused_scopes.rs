@@ -22,7 +22,7 @@ struct State {
 
 /// Converts scopes without outputs into pruned-scopes (regular blocks).
 /// TS: `pruneUnusedScopes`
-pub fn prune_unused_scopes(
+pub(crate) fn prune_unused_scopes(
     func: &mut ReactiveFunction,
     env: &Environment,
 ) -> Result<(), crate::diagnostics::CompilerError> {

@@ -508,9 +508,7 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
       for (; nextFile < files.length; nextFile++) {
         reportAbortedFile(files[nextFile], opts, reporter, counts, state, nextFile + 1);
       }
-    }
-
-    if (state.interrupted) {
+    } else if (state.interrupted) {
       // node reports the file-level tests that were still running.
       counts.failed++;
       reporter.emitMessage("test:interrupted", {
@@ -622,19 +620,47 @@ async function runOneFile(
   reporter.emitMessage("test:enqueue", { __proto__: null, ...fileNode });
   reporter.emitMessage("test:dequeue", { __proto__: null, ...fileNode });
 
-  const proc = Bun.spawn({
-    cmd: args,
-    cwd: opts.cwd as string,
-    env: {
-      ...(opts.env ?? process.env),
-      BUN_TEST_DRAIN_EVENT_LOOP: "1",
-      [kRunChildEnv]: kRunChildEnvValue,
-      NODE_TEST_WORKER_ID: String((state.nextWorkerId++ % state.maxWorkerId) + 1),
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-    signal: opts.signal,
-  });
+  let proc;
+  try {
+    proc = Bun.spawn({
+      cmd: args,
+      cwd: opts.cwd as string,
+      env: {
+        ...(opts.env ?? process.env),
+        BUN_TEST_DRAIN_EVENT_LOOP: "1",
+        [kRunChildEnv]: kRunChildEnvValue,
+        NODE_TEST_WORKER_ID: String((state.nextWorkerId++ % state.maxWorkerId) + 1),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      signal: opts.signal,
+    });
+  } catch (err) {
+    // Bun.spawn throws synchronously on e.g. a nonexistent cwd; report it as a
+    // file-level fail (like the isolation:'none' twin's import catch) rather
+    // than let runFiles' outer catch destroy the whole stream.
+    const error = makeTestFailure((err as Error)?.message ?? String(err), "testCodeFailure");
+    fileCounts.tests++;
+    fileCounts.failed++;
+    fileCounts.topLevel++;
+    reporter.emitMessage("test:complete", {
+      __proto__: null,
+      ...fileNode,
+      type: undefined,
+      testNumber: ordinal,
+      details: { __proto__: null, duration_ms: 0, type: "test", passed: false, error },
+    });
+    reporter.emitMessage("test:start", { __proto__: null, ...fileNode });
+    reporter.emitMessage("test:fail", {
+      __proto__: null,
+      ...fileNode,
+      type: undefined,
+      testNumber: ++state.verdictNumber,
+      details: { __proto__: null, duration_ms: 0, type: "test", error },
+    });
+    addRunCounts(counts, fileCounts);
+    return;
+  }
   state.childProc = proc;
   state.fileNode = fileNode;
 
@@ -782,19 +808,32 @@ async function runOneFile(
   }
 }
 
-// Reverses the serializer's non-finite re-tagging (JSON emits null for
-// NaN/Infinity, so they cross the pipe as { nonFinite: "NaN" }).
+// Unwraps serializeExtraValue's _bunTag envelope: primitives crossed bare,
+// every non-primitive came wrapped, so user data cannot occupy the envelope
+// shape and a user's own { nonFinite: 'NaN' } round-trips unchanged.
 function reviveSerializedValue(value: unknown) {
-  return value !== null &&
-    typeof value === "object" &&
-    typeof (value as { nonFinite?: unknown }).nonFinite === "string" &&
-    Object.keys(value as object).length === 1
-    ? Number((value as { nonFinite: string }).nonFinite)
-    : value;
+  if (value !== null && typeof value === "object") {
+    const tag = (value as { _bunTag?: unknown })._bunTag;
+    const v = (value as { v: unknown }).v;
+    // A hostile marker line can forge { _bunTag: 'bi', v: 'x' }; return the
+    // envelope as-is rather than let BigInt() throw and destroy the run stream.
+    try {
+      if (tag === "nf") return Number(v);
+      if (tag === "bi") return BigInt(v as string);
+    } catch {
+      return value;
+    }
+    if (tag === "v") return v;
+  }
+  return value;
 }
 
 function rebuildError(serialized: any, depth = 0): Error {
-  const { message, stack, name, code, failureType, cause, generatedMessage, operator } = serialized;
+  // Child stdout is user-controlled: a hostile marker can send error:null.
+  if (serialized === null || typeof serialized !== "object") return new Error(String(serialized));
+  const { message, stack, name, code, failureType, cause } = serialized;
+  const generatedMessage = reviveSerializedValue(serialized.generatedMessage);
+  const operator = reviveSerializedValue(serialized.operator);
   const actual = reviveSerializedValue(serialized.actual);
   const expected = reviveSerializedValue(serialized.expected);
   const diff = reviveSerializedValue(serialized.diff);
@@ -812,15 +851,8 @@ function rebuildError(serialized: any, depth = 0): Error {
   if (operator !== undefined) error.operator = operator;
   if (diff !== undefined) error.diff = diff;
   if (failureType !== undefined) error.failureType = failureType;
-  if (cause !== undefined && depth < 8)
-    error.cause =
-      cause?.nonError === true
-        ? cause.bigint !== undefined
-          ? BigInt(cause.bigint)
-          : cause.num !== undefined
-            ? Number(cause.num)
-            : cause.value
-        : rebuildError(cause, depth + 1);
+  if (cause != null && depth < 8)
+    error.cause = cause.nonError === true ? reviveSerializedValue(cause) : rebuildError(cause, depth + 1);
   return error;
 }
 
@@ -834,6 +866,11 @@ function republishChildEvent(
   const { type, data } = event;
   Object.setPrototypeOf(data, null);
   data.file = file;
+  // Child stdout is user-controlled: a forged nesting/duration_ms would crash
+  // the reporter's .repeat()/jsToYaml. Clamp once here so the reporter port
+  // stays byte-faithful to upstream.
+  const rawNesting = data.nesting;
+  data.nesting = typeof rawNesting === "number" && rawNesting >= 0 && rawNesting <= 256 ? rawNesting | 0 : 0;
   const isVerdict = type === "test:pass" || type === "test:fail";
   if (isVerdict || type === "test:complete") {
     const isSuite = data.type === "suite";
@@ -872,10 +909,12 @@ function republishChildEvent(
     const detailType = isSuite ? "suite" : "test";
     const serialized = data.error;
     let error;
-    if (serialized !== undefined) {
+    if (serialized != null) {
       error = Error.isError(serialized) ? serialized : rebuildError(serialized);
     }
-    data.details = { __proto__: null, duration_ms: data.duration_ms, type: detailType, error };
+    const rawDuration = data.duration_ms;
+    const duration_ms = typeof rawDuration === "number" && Number.isFinite(rawDuration) ? rawDuration : 0;
+    data.details = { __proto__: null, duration_ms, type: detailType, error };
     if (type === "test:complete") data.details.passed = data.passed;
     delete data.error;
     delete data.duration_ms;
@@ -938,9 +977,10 @@ function emitRunChildPlanOnExit() {
 }
 
 // True when the run-child event synthesis should be active — either a run()
-// child streaming to its parent, or standalone mode reporting in-process.
+// child streaming to its parent, or standalone / in-process run() reporting
+// via the sink (mirrors inStandaloneMode's inProcessRunActive check).
 function runEventsEnabled(): boolean {
-  return runChildReporterEnabled || standaloneActive;
+  return runChildReporterEnabled || standaloneActive || inProcessRunActive;
 }
 
 // t.diagnostic(): routes through the reporter stream like every other per-test
@@ -1000,44 +1040,34 @@ function nestingOf(node: TestNode) {
   return depth;
 }
 
-// A non-Error cause crosses the pipe by value when JSON can carry it (node's
-// v8 serializer preserves primitives and plain objects); the envelope tags it
-// so the parent does not rebuild it as an Error. BigInt is re-tagged so the
-// parent restores the real value, and anything JSON cannot encode (cycles,
-// symbols, functions) degrades to its inspected string — JSON.stringify
-// throwing here would silently drop the whole event line on the pipe.
+// An Error cause recurses into serializeRunError; a non-Error one crosses the
+// pipe via the same _bunTag envelope as extras, with a nonError discriminant
+// so rebuildError knows to unwrap rather than recurse.
 function serializeRunCause(cause: unknown, depth: number) {
   if (Error.isError(cause)) return serializeRunError(cause, depth);
-  const t = typeof cause;
-  if (t === "bigint") return { __proto__: null, nonError: true, bigint: String(cause) };
-  // JSON silently turns NaN/Infinity into null (no throw); re-tag like BigInt
-  // so the parent restores the real value, as node's v8 serializer does.
-  if (t === "number" && !Number.isFinite(cause)) return { __proto__: null, nonError: true, num: String(cause) };
-  if (t !== "symbol" && t !== "function") {
-    try {
-      JSON.stringify(cause);
-      return { __proto__: null, nonError: true, value: cause };
-    } catch {
-      // fall through to the inspected-string form
-    }
-  }
-  return { __proto__: null, nonError: true, value: require("node:util").inspect(cause) };
+  return { __proto__: null, nonError: true, ...serializeExtraValue(cause) };
 }
 
 // deepStrictEqual carries objects in actual/expected: pass them by value when
 // JSON can carry them (node's v8 serializer preserves them), and degrade to
-// the inspected string otherwise instead of dropping the field.
+// the inspected string otherwise instead of dropping the field. Always wrapped
+// in the _bunTag envelope so the parent never confuses a user's object with
+// the serializer's own non-finite tag (reviveSerializedValue checks only the
+// envelope shape, which user data cannot occupy once wrapped here).
 function serializeExtraValue(value: unknown) {
   const t = typeof value;
+  // JSON emits null for non-finite numbers; tag so the parent revives.
+  if (t === "number" && !Number.isFinite(value)) return { __proto__: null, _bunTag: "nf", v: String(value) };
+  if (t === "bigint") return { __proto__: null, _bunTag: "bi", v: String(value) };
   if (t !== "symbol" && t !== "function") {
     try {
       JSON.stringify(value);
-      return value;
+      return { __proto__: null, _bunTag: "v", v: value };
     } catch {
       // fall through to the inspected-string form
     }
   }
-  return require("node:util").inspect(value);
+  return { __proto__: null, _bunTag: "v", v: require("node:util").inspect(value) };
 }
 
 // Errors cross the process boundary as plain JSON; the parent rebuilds an Error.
@@ -1054,16 +1084,17 @@ function serializeRunError(error: unknown, depth = 0) {
       name: error.name,
       cause: cause !== undefined && depth < 8 ? serializeRunCause(cause, depth + 1) : undefined,
     };
-    // Only JSON-safe primitives survive the pipe as-is (node uses the v8
-    // serializer); carry anything else via inspect() so the tap reporter's
-    // assertion-like block still renders expected/actual.
+    // JSON-safe primitives cross the pipe as-is; anything else goes through
+    // the _bunTag envelope so the reviver can distinguish serializer tags
+    // from user data (node uses the v8 serializer which needs no such tag).
     for (const key of kSerializedErrorExtras) {
       const value = (error as Record<string, unknown>)[key];
       const t = typeof value;
-      // JSON emits null for non-finite numbers; re-tag so the parent revives.
-      if (t === "number" && !Number.isFinite(value)) out[key] = { __proto__: null, nonFinite: String(value) };
-      else if (value === null || t === "string" || t === "number" || t === "boolean") out[key] = value;
-      else if (value !== undefined) out[key] = serializeExtraValue(value);
+      if (value === null || t === "string" || t === "boolean" || (t === "number" && Number.isFinite(value))) {
+        out[key] = value;
+      } else if (value !== undefined) {
+        out[key] = serializeExtraValue(value);
+      }
     }
     return out;
   }
@@ -1125,6 +1156,15 @@ function makeCancelledByParentError() {
 function reportCancelledNode(node: TestNode) {
   if (!runEventsEnabled()) return;
   reportQueueChain(node);
+  if (node.isSuite) {
+    // node's postRun() is post-order (children first), like maybeCompleteSuite.
+    // Set suiteReported before recursing so children's noteRunChildDone
+    // short-circuits at maybeCompleteSuite instead of re-emitting this suite.
+    node.suiteReported = true;
+    for (const child of node.standaloneChildren ?? []) {
+      reportCancelledNode(child.node);
+    }
+  }
   const data = {
     __proto__: null,
     name: node.name,
@@ -1139,16 +1179,35 @@ function reportCancelledNode(node: TestNode) {
   };
   emitRunChildEvent("test:complete", { ...data, passed: false });
   if (node.isSuite) {
-    node.suiteReported = true;
-    for (const child of node.standaloneChildren ?? []) {
-      reportCancelledNode(child.node);
-    }
     emitRunChildEvent("test:plan", {
       __proto__: null,
       nesting: nestingOf(node) + 1,
       count: node.childrenCount,
     });
   }
+  reportStartChain(node);
+  emitRunChildEvent("test:fail", data);
+  noteRunChildDone(node.parent, true);
+}
+
+// A file that failed to import under run({isolation:'none'}) reports as a
+// failing top-level test at its queue position (node's root.createSubtest);
+// routed through the sink so republishChildEvent numbers and counts it.
+function reportFailedImportNode(node: TestNode, error: unknown) {
+  reportQueueChain(node);
+  const data = {
+    __proto__: null,
+    name: node.name,
+    nesting: 0,
+    testNumber: nextTestNumberFor(node),
+    testId: runTestIdFor(node),
+    parentId: 0,
+    duration_ms: 0,
+    type: "test",
+    tags: node.tags,
+    error,
+  };
+  emitRunChildEvent("test:complete", { ...data, passed: false });
   reportStartChain(node);
   emitRunChildEvent("test:fail", data);
   noteRunChildDone(node.parent, true);
@@ -1274,6 +1333,9 @@ function maybeCompleteSuite(suite: TestNode): boolean {
   // A todo suite's advisory results never fail it (or the run) in node.
   const isTodo = suite.todoFlag || hasTodoAncestor(suite);
   if (isTodo) suite.childrenFailed = 0;
+  // A skipped suite passes with its directive regardless of cancelled children
+  // (node's Suite.run: if (this.skipped) { this.#cancel(); this.pass(); }).
+  if (suite.skipped) suite.childrenFailed = 0;
   // A suite under a failed before() reports cancelledByParent with zero
   // duration, like its tests (node's Suite#cancel); write the failure back so
   // the parent's accounting sees it even when the suite has no children.
@@ -3244,13 +3306,17 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     (node.abortController ??= new AbortController()).abort();
   }
 
+  const bodyFailure = failure;
   failure = applyExpectFailure(node, failure);
+  // Node's Test.fail() re-checks expectFailure on a later hook error, so an
+  // accepted-xfail test stays passing even when its after/afterEach throws.
+  const acceptedXfail = bodyFailure !== undefined && failure === undefined;
 
   // Node sets passed/error before running afterEach/after so hooks can
   // introspect the outcome (nodejs/node lib/internal/test_runner/test.js
   // pass()/fail() precede afterEach).
   node.passed = failure === undefined;
-  node.error = failure ?? null;
+  node.error = failure ?? (acceptedXfail ? bodyFailure : null);
   // Mark finished before hooks so a late t.test() from an after/afterEach
   // hook hits addTest()'s parentAlreadyFinished path (Node cancels these).
   node.finished = true;
@@ -3261,7 +3327,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       try {
         await runHook(hook, ancestor, ctx, "afterEach");
       } catch (err) {
-        failure ??= err;
+        if (!acceptedXfail) failure ??= err;
       }
     }
   }
@@ -3270,7 +3336,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     try {
       await runHook(hook, node, ctx, "after");
     } catch (err) {
-      failure ??= err;
+      if (!acceptedXfail) failure ??= err;
     }
   }
 
@@ -3282,11 +3348,11 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   try {
     node.mockTracker?.reset();
   } catch (err) {
-    failure ??= err;
+    if (!acceptedXfail) failure ??= err;
   }
 
   node.passed = failure === undefined;
-  node.error = failure ?? null;
+  node.error = failure ?? (acceptedXfail ? bodyFailure : null);
   reportNodeToRunParent(node, started);
   return failure;
 }
@@ -3406,7 +3472,12 @@ type StandaloneEntry = {
   isSuite: boolean;
   mode?: "skip";
   build?: Promise<unknown>;
+  // Set for a run({isolation:'none'}) file that threw at import; reports as a
+  // failing top-level test at its queue position, like node's createSubtest.
+  importError?: unknown;
 };
+
+const kImportFailedFn: TestFn = function importFailedNoop() {};
 
 let standaloneActive = false;
 let standaloneScheduled = false;
@@ -3472,7 +3543,12 @@ async function executeStandaloneQueue(root: TestNode): Promise<unknown> {
   } else {
     // Node's root Test.postRun cancels each pending subtest; matches the
     // suite-level setupFailed path in runStandaloneEntry.
-    for (const entry of standaloneQueue) reportCancelledNode(entry.node);
+    for (const entry of standaloneQueue) {
+      const { node, importError } = entry;
+      activeRunFile = node.filePath ?? null;
+      if (importError !== undefined) reportFailedImportNode(node, importError);
+      else reportCancelledNode(node);
+    }
   }
   standaloneQueue.length = 0;
   for (const hook of root.hooks.after) {
@@ -3519,6 +3595,11 @@ function standaloneQueueHasOnly(entries: StandaloneEntry[]): boolean {
 function pruneToOnly(entries: StandaloneEntry[]): StandaloneEntry[] {
   const kept: StandaloneEntry[] = [];
   for (const entry of entries) {
+    // A failed import always reports (node creates it as a real root subtest).
+    if (entry.importError !== undefined) {
+      kept.push(entry);
+      continue;
+    }
     const children = entry.node.standaloneChildren ?? [];
     if (entry.node.onlyFlag) {
       if (entry.isSuite && children.some(entryHasOnly)) {
@@ -3552,7 +3633,7 @@ function pruneStandaloneEntries(entries: StandaloneEntry[], filters: string[]): 
   const kept: StandaloneEntry[] = [];
   for (const entry of entries) {
     if (!entry.isSuite) {
-      if (tagsMatchFilters(entry.node.tags, filters)) kept.push(entry);
+      if (entry.importError !== undefined || tagsMatchFilters(entry.node.tags, filters)) kept.push(entry);
       continue;
     }
     const keptChildren = pruneStandaloneEntries(entry.node.standaloneChildren ?? [], filters);
@@ -3657,6 +3738,11 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     const files = discoverRunFiles(opts);
     const numbering = { verdictNumber: 0 };
     standaloneSink = inProcessSinkImpl.bind(undefined, reporter, counts, numbering);
+    // node's in-process runner does not consult the run signal for scheduling
+    // (observed on v26.3.0: with isolation 'none', a pre-aborted signal and a
+    // mid-run abort both leave every file running to a normal verdict and the
+    // summary succeeds). Ctrl+C for --test --test-isolation=none is the CLI
+    // driver's job: it exits promptly on SIGINT like node's harness.
     // node's root test is already running while files load, so before() hooks
     // registered at a file's top level execute immediately, in file order.
     callerRoot.started = true;
@@ -3682,36 +3768,17 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
         try {
           await import(file);
         } catch (err) {
-          // A file that fails to load is itself a failing test node. Emitted
-          // directly (not through republishChildEvent), so bump both the plan
-          // count and the shared verdict counter the sink numbers from.
-          counts.topLevel++;
-          const testNumber = ++numbering.verdictNumber;
-          const error = wrapTestError(err);
-          const fileNode = {
-            __proto__: null,
-            name: file,
-            nesting: 0,
-            file,
-            testId: ++runTestIdCounter,
-            parentId: 0,
-            tags: [],
-          };
-          reporter.emitMessage("test:enqueue", { ...fileNode, type: "test" });
-          reporter.emitMessage("test:dequeue", { ...fileNode, type: "test" });
-          reporter.emitMessage("test:complete", {
-            ...fileNode,
-            testNumber,
-            details: { __proto__: null, duration_ms: 0, type: "test", passed: false, error },
+          // A file that fails to load is itself a failing test. Queued at its
+          // position among successfully-imported files (node's createSubtest)
+          // so declaration order holds; republishChildEvent numbers/counts it.
+          const fileNode = new TestNode(file, callerRoot, kDefaultOptions, false, false);
+          fileNode.filePath = file;
+          standaloneQueue.push({
+            node: fileNode,
+            fn: kImportFailedFn,
+            isSuite: false,
+            importError: wrapTestError(err),
           });
-          reporter.emitMessage("test:start", { ...fileNode });
-          reporter.emitMessage("test:fail", {
-            ...fileNode,
-            testNumber,
-            details: { __proto__: null, duration_ms: 0, type: "test", error },
-          });
-          counts.tests++;
-          counts.failed++;
         }
       }
     } finally {
@@ -3755,12 +3822,9 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
       console.error(hookError);
       counts.failed++;
     }
-
     const durationMs = roundDurationMs(performance.now() - started);
-    // counts.topLevel covers both the republished entries and the failed-import
-    // file nodes emitted above (root.reportedCount only the former). Emitted
-    // directly so it carries no data.file, matching runFiles and the adjacent
-    // run-level summary (the sink would stamp the stale activeRunFile on it).
+    // Emitted directly so it carries no data.file, matching runFiles and the
+    // adjacent run-level summary (the sink would stamp the stale activeRunFile).
     reporter.emitMessage("test:plan", { __proto__: null, nesting: 0, count: counts.topLevel });
     emitRunDiagnostics(reporter, counts, durationMs);
     reporter.emitMessage("test:summary", {
@@ -3807,7 +3871,7 @@ function inProcessSinkImpl(
   type: string,
   data: unknown,
 ) {
-  republishChildEvent({ type, data }, activeRunFile ?? Bun.main, reporter, counts, numbering);
+  republishChildEvent({ type, data }, activeRunFile ?? currentImportFile ?? Bun.main, reporter, counts, numbering);
 }
 
 async function runStandalone() {
@@ -3881,8 +3945,12 @@ function standaloneSinkImpl(
 }
 
 async function runStandaloneEntry(entry: StandaloneEntry) {
-  const { node, fn, isSuite, mode } = entry;
+  const { node, fn, isSuite, mode, importError } = entry;
   activeRunFile = node.filePath ?? null;
+  if (importError !== undefined) {
+    reportFailedImportNode(node, importError);
+    return;
+  }
   if (mode === "skip") {
     // Never executes; its directive event is its completion.
     if (isSuite) node.suiteReported = true;
@@ -3922,7 +3990,7 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
     } catch (err) {
       if (!isTodoSuite) {
         node.childrenFailed++;
-        node.error = err;
+        node.error ??= err;
         setupFailed = true;
       }
     }
@@ -3935,7 +4003,7 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
         // A todo suite's hook failure is advisory, like in the run() child.
         if (!isTodoSuite) {
           node.childrenFailed++;
-          node.error = err;
+          node.error ??= err;
           setupFailed = true;
           break;
         }
@@ -3957,7 +4025,8 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
     } catch (err) {
       if (!isTodoSuite) {
         node.childrenFailed++;
-        node.error = err;
+        // First-wins (node's Test.fail()), matching runSuiteAfterHooks' twin.
+        node.error ??= err;
       }
     }
   }
@@ -4375,22 +4444,47 @@ function addSuite(
             return invokeSuiteFn(fn, suiteNode.getSuiteCtx());
           }
           function settleSuiteAfterHooks() {
-            // Settle from a bun:test afterAll registered after the body ran
-            // (FIFO puts it behind the suite's own after() hooks) so the
-            // suite's verdict accounts for hook failures, like the
-            // standalone twin's before -> children -> after -> settle order.
+            // Settle from a bun:test afterAll so it fires at the suite's
+            // execution turn. The suite's own after() hooks run here (not via
+            // separate bun:test afterAlls) so a post-await after() in an async
+            // describe body still runs before the verdict is emitted,
+            // matching the standalone twin's before -> children -> after ->
+            // settle order.
             if (!runEventsEnabled()) {
               noteSuiteCollectionSettled(suiteNode);
               return;
             }
             const { afterAll } = bunTest();
             afterAll(function settleSuite(done: (error?: unknown) => void) {
-              noteSuiteCollectionSettled(suiteNode);
               // Settle asynchronously like the other hook wrappers so
               // bun:test's native hook driver is not re-entered from its own
               // callback (on Windows a sync return from a nested describe's
               // last afterAll does not advance to the outer's afterAll).
-              Promise.resolve(undefined).then(done, done);
+              function settleAndDone() {
+                noteSuiteCollectionSettled(suiteNode);
+                Promise.resolve(undefined).then(done, done);
+              }
+              const hooks = suiteNode.hooks.after;
+              // An ancestor's before() already failed: node skips nested after
+              // hooks (the failing suite's OWN after runs from its own settle).
+              if (hooks.length === 0 || hasHookFailedAncestorSuite(suiteNode)) {
+                settleAndDone();
+                return;
+              }
+              const isTodo = suiteNode.todoFlag || hasTodoAncestor(suiteNode);
+              async function runSuiteAfterHooks() {
+                for (const hook of hooks) {
+                  try {
+                    await runHook(hook, suiteNode, suiteNode.getSuiteCtx(), "after");
+                  } catch (err) {
+                    if (!isTodo) {
+                      suiteNode.childrenFailed++;
+                      suiteNode.error ??= err;
+                    }
+                  }
+                }
+              }
+              runSuiteAfterHooks().then(settleAndDone, settleAndDone);
             });
           }
           // Records the body failure so maybeCompleteSuite emits the suite's
@@ -4593,34 +4687,20 @@ function after(arg0: unknown, arg1: unknown) {
     return;
   }
   if (runChildReporterEnabled && (owner.skipped || hasSkippedAncestorSuite(owner))) return;
+  // In run-child mode a collection suite's after() hooks are run by its
+  // settleSuite afterAll (registered before an async body's continuation),
+  // not as separate bun:test afterAlls — so a post-await after() still runs
+  // before the suite's verdict is emitted.
+  if (runChildReporterEnabled && owner.isSuite && owner.parent !== undefined) {
+    owner.hooks.after.push(hook);
+    return;
+  }
   const { afterAll } = bunTest();
   function runAfterAllHook(done: (error?: unknown) => void) {
-    // An ancestor's before() already failed: node skips nested after hooks
-    // too (the suite's OWN after still runs; hasHookFailedAncestorSuite walks
-    // from owner.parent).
-    if (runChildReporterEnabled && hasHookFailedAncestorSuite(owner)) {
-      // Settle asynchronously like every other done path (see runBeforeAllHook).
-      Promise.resolve(undefined).then(done, done);
-      return;
-    }
     function onHookDone() {
       done();
     }
     function onHookFailed(err: unknown) {
-      // A todo suite's results are advisory in node: its failing after hook
-      // must not fail the run (mirrors before()'s guard above).
-      if (runChildReporterEnabled && (owner.todoFlag || hasTodoAncestor(owner))) {
-        done();
-        return;
-      }
-      if (runChildReporterEnabled && owner.parent !== undefined) {
-        // Attribute to the suite; its deferred settle emits the hookFailed
-        // verdict after this hook returns.
-        owner.childrenFailed++;
-        owner.error ??= err as Error;
-        done();
-        return;
-      }
       done(err ?? new Error("after hook failed"));
     }
     Promise.resolve(runHook(hook, owner, hookArgFor(owner), "after")).then(onHookDone, onHookFailed);

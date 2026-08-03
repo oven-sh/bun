@@ -81,6 +81,10 @@ new!(pub BUN_ENABLE_CRASH_REPORTING: boolean, "BUN_ENABLE_CRASH_REPORTING", {});
 // so nothing it spawned outlives it. See `src/io/ParentDeathWatchdog.rs`.
 new!(pub BUN_FEATURE_FLAG_NO_ORPHANS: boolean, "BUN_FEATURE_FLAG_NO_ORPHANS", { default: false });
 new!(pub BUN_FEATURE_FLAG_DUMP_CODE: string, "BUN_FEATURE_FLAG_DUMP_CODE", {});
+// Counted down on each idle event-loop poll; while >0 the poll runs `heap.stopIfNecessary()` so pending finalizers get a turn (see `Bun__JSC_onBeforeWait`).
+new!(pub BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: unsigned, "BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS", {});
+new!(pub BUN_GC_TIMER_DISABLE: boolean, "BUN_GC_TIMER_DISABLE", {});
+new!(pub BUN_GC_TIMER_INTERVAL: unsigned, "BUN_GC_TIMER_INTERVAL", {});
 // TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
 // so we'll keep it for now.
 new!(pub BUN_INOTIFY_COALESCE_INTERVAL: unsigned, "BUN_INOTIFY_COALESCE_INTERVAL", { default: 100_000 });
@@ -120,8 +124,6 @@ new!(pub BUN_TMPDIR: string, "BUN_TMPDIR", {});
 // node:test sets this in the children its run() spawns (value "child-v8");
 // their reporter output is suppressed and the event loop drains before exit.
 new!(pub NODE_TEST_CONTEXT: string, "NODE_TEST_CONTEXT", {});
-
-new!(pub BUN_TRACY_PATH: string, "BUN_TRACY_PATH", {});
 new!(pub BUN_WATCHER_TRACE: string, "BUN_WATCHER_TRACE", {});
 new!(pub CI: boolean, "CI", {});
 new!(pub CI_COMMIT_SHA: string, "CI_COMMIT_SHA", {});
@@ -513,7 +515,7 @@ pub(crate) mod kind {
             pub empty_string_as: EmptyStringAs,
         }
         impl DeserOpts {
-            pub(crate) const DEFAULT: Self = Self {
+            const DEFAULT: Self = Self {
                 error_handling: ErrorHandling::DebugWarn,
                 empty_string_as: EmptyStringAs::Erroneous,
             };

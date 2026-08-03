@@ -27,7 +27,7 @@ pub enum BodyReceiveMode {
 
 impl BodyReceiveMode {
     #[inline]
-    pub fn from_u8(v: u8) -> Self {
+    pub(crate) fn from_u8(v: u8) -> Self {
         match v {
             1 => Self::Paused,
             2 => Self::BufferAll,
@@ -61,20 +61,20 @@ impl Signals {
         Some(bun_ptr::BackRef::from(ptr))
     }
 
-    pub fn get(self, field: Field) -> bool {
+    pub(crate) fn get(self, field: Field) -> bool {
         self.slot(field).is_some_and(|a| a.load(Ordering::Relaxed))
     }
 
     /// Store `value` into the named signal slot if present. No-op when the
     /// slot is `None`.
-    pub fn store(self, field: Field, value: bool, ordering: Ordering) {
+    pub(crate) fn store(self, field: Field, value: bool, ordering: Ordering) {
         if let Some(a) = self.slot(field) {
             a.store(value, ordering);
         }
     }
 
     #[inline]
-    pub fn is_receive_paused(self) -> bool {
+    pub(crate) fn is_receive_paused(self) -> bool {
         self.body_receive_mode
             .map(bun_ptr::BackRef::from)
             .is_some_and(|a| a.load(Ordering::Acquire) == BodyReceiveMode::Paused as u8)
@@ -86,7 +86,7 @@ pub struct Store {
     pub response_body_streaming: AtomicBool,
     pub aborted: AtomicBool,
     pub cert_errors: AtomicBool,
-    pub body_receive_mode: AtomicU8,
+    pub(crate) body_receive_mode: AtomicU8,
 }
 
 impl Default for Store {

@@ -42,7 +42,7 @@ impl<C: ReaderContext> NewReader<C> {
         self.wrapped.peek()
     }
 
-    pub fn read_z(self) -> Result<Data, AnyMySQLError> {
+    pub(crate) fn read_z(self) -> Result<Data, AnyMySQLError> {
         self.wrapped.read_z()
     }
 
@@ -96,7 +96,7 @@ impl<C: ReaderContext> NewReader<C> {
         Err(AnyMySQLError::InvalidEncodedLength)
     }
 
-    pub fn encoded_len_int(self) -> Result<u64, AnyMySQLError> {
+    pub(crate) fn encoded_len_int(self) -> Result<u64, AnyMySQLError> {
         if let Some(result) = decode_length_int(self.peek()) {
             self.skip(result.bytes_read);
             return Ok(result.value);
@@ -104,7 +104,7 @@ impl<C: ReaderContext> NewReader<C> {
         Err(AnyMySQLError::InvalidEncodedInteger)
     }
 
-    pub fn encoded_len_int_with_size(self, size: &mut usize) -> Result<u64, AnyMySQLError> {
+    pub(crate) fn encoded_len_int_with_size(self, size: &mut usize) -> Result<u64, AnyMySQLError> {
         if let Some(result) = decode_length_int(self.peek()) {
             self.skip(result.bytes_read);
             *size += result.bytes_read;

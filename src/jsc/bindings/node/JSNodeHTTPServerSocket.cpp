@@ -38,6 +38,7 @@ JSNodeHTTPServerSocket* JSNodeHTTPServerSocket::create(JSC::VM& vm, JSC::Structu
     }
     auto* object = new (JSC::allocateCell<JSNodeHTTPServerSocket>(vm)) JSNodeHTTPServerSocket(vm, structure, socket, is_ssl, response);
     object->finishCreation(vm);
+    object->syncPeerCertificateVerification();
     return object;
 }
 
@@ -336,12 +337,29 @@ const char* JSNodeHTTPServerSocket::sniServername() const
     return us_socket_sni_servername(socket);
 }
 
-const char* JSNodeHTTPServerSocket::peerCertificateVerificationError() const
+void JSNodeHTTPServerSocket::syncPeerCertificateVerification()
 {
-    if (!is_ssl || !socket) {
+    if (!is_ssl || upgraded || !socket || !us_socket_ssl_handshake_callback_has_fired(socket))
+        return;
+    auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<true>*>(us_socket_ext(socket));
+    if (!httpResponseData)
+        return;
+    peer_cert_verified = httpResponseData->peerCertVerified;
+    peerCertVerifyErrorCode = httpResponseData->peerCertVerifyErrorCode;
+}
+
+bool JSNodeHTTPServerSocket::isPeerCertificateVerified()
+{
+    syncPeerCertificateVerification();
+    return peer_cert_verified;
+}
+
+const char* JSNodeHTTPServerSocket::peerCertificateVerificationError()
+{
+    if (!is_ssl)
         return nullptr;
-    }
-    return us_socket_verify_error(socket).code;
+    syncPeerCertificateVerification();
+    return peerCertVerifyErrorCode;
 }
 
 JSNodeHTTPServerSocket::~JSNodeHTTPServerSocket()
@@ -491,6 +509,7 @@ static void notifyResponsesOnClose(JSNodeHTTPServerSocket* socket)
 
 void JSNodeHTTPServerSocket::onClose()
 {
+    syncPeerCertificateVerification();
     this->socket = nullptr;
     if (auto* res = this->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
         Bun__NodeHTTPResponse_setClosed(res->m_ctx);

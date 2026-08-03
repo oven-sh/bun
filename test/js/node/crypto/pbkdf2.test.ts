@@ -186,3 +186,16 @@ test("keylen=0 fails async via callback", async () => {
     );
   });
 });
+
+test("pbkdf2Sync reads the salt buffer only after every argument has been coerced", () => {
+  const salt = new Uint8Array(64).fill(3);
+  const password = new String("password");
+  password.toString = () => {
+    structuredClone(salt.buffer, { transfer: [salt.buffer] });
+    Bun.gc(true);
+    return "password";
+  };
+  const key = crypto.pbkdf2Sync(password, salt, 1, 32, "sha256");
+  expect(salt.byteLength).toBe(0);
+  expect(key).toStrictEqual(crypto.pbkdf2Sync("password", new Uint8Array(0), 1, 32, "sha256"));
+});

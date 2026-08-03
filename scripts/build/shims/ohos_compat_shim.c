@@ -73,6 +73,7 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <time.h>
 #include <unistd.h>
 
 #if !defined(__aarch64__)
@@ -1161,11 +1162,18 @@ ssize_t splice(int fd_in, off_t *off_in, int fd_out, off_t *off_out,
  *                       syscall(SYS_epoll_ctl) (Bun's Rust event loop) --
  *                       the syscall() override above funnels the latter
  *                       into the same bookkeeping.
- *   epoll_wait/pwait    when any pipe is registered on this epfd, clamp
- *                       long timeouts to EP_PIPE_POLL_MS and, on an empty
- *                       return, FIONREAD each registered pipe and
+ *   epoll_wait/pwait    when any pipe is registered on this epfd, poll
+ *                       internally in EP_PIPE_POLL_MS slices and, on an
+ *                       empty return, FIONREAD each registered pipe and
  *                       synthesize EPOLLIN with the registered udata for
- *                       those with bytes pending.
+ *                       those with bytes pending. The slicing is HIDDEN
+ *                       from the caller: an empty slice is answered by
+ *                       re-waiting, never by returning 0, until the
+ *                       caller's own timeout genuinely expires (an
+ *                       infinite wait must only return with an event or
+ *                       signal — libuv's uv__io_poll asserts exactly
+ *                       that, and the leaked premature 0 crashed pnpm
+ *                       with SIGABRT).
  *   poll/ppoll          after the real call, patch revents for FIFO fds
  *                       that asked for POLLIN, reported nothing, yet
  *                       have bytes pending (covers is_readable paths).
@@ -1356,23 +1364,67 @@ static int ep_shim_after_wait(int rc, int epfd, struct epoll_event *events,
 	return n;
 }
 
-typedef int (*epoll_wait_fn)(int, struct epoll_event *, int, int);
 typedef int (*epoll_pwait_fn)(int, struct epoll_event *, int, int,
 			      const sigset_t *);
+
+static long long ep_now_ms(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+/* Wait with the repair slice ep_shim_clamp_timeout() dictates, but WITHOUT
+ * leaking the slicing to the caller: an empty 250ms repair poll is answered
+ * by re-waiting, never by returning 0, until the caller's own timeout
+ * genuinely expires. A premature 0 violates the epoll_wait contract — for
+ * timeout == -1 the kernel returns only with an event or a signal — and
+ * crashed libuv (uv__io_poll: "assert(timeout != -1)" when nfds == 0;
+ * pnpm --version died with SIGABRT). */
+static int ep_shim_wait(int epfd, struct epoll_event *events, int maxevents,
+			int timeout, epoll_pwait_fn real,
+			const sigset_t *sigmask)
+{
+	int slice = ep_shim_clamp_timeout(epfd, timeout);
+	if (slice == timeout)
+		return ep_shim_after_wait(real(epfd, events, maxevents,
+					       timeout, sigmask),
+					  epfd, events, maxevents);
+
+	long long deadline = 0;
+	if (timeout > 0)
+		deadline = ep_now_ms() + timeout;
+
+	for (;;) {
+		int rc = ep_shim_after_wait(real(epfd, events, maxevents,
+						 slice, sigmask),
+					    epfd, events, maxevents);
+		if (rc != 0)
+			return rc; /* real events, synthesized events, or -1/errno */
+		if (timeout > 0) {
+			long long left = deadline - ep_now_ms();
+			if (left <= 0)
+				return 0; /* caller's own timeout really expired */
+			if (left < slice)
+				slice = (int)left;
+		}
+	}
+}
 
 int epoll_wait(int epfd, struct epoll_event *events, int maxevents,
 	       int timeout)
 {
-	static epoll_wait_fn real = NULL;
+	/* Route through the real epoll_pwait with a NULL mask — that IS
+	 * epoll_wait at the syscall level — so both overrides share the
+	 * same hidden-slicing loop. */
+	static epoll_pwait_fn real = NULL;
 	if (!real)
-		real = (epoll_wait_fn)dlsym(RTLD_NEXT, "epoll_wait");
+		real = (epoll_pwait_fn)dlsym(RTLD_NEXT, "epoll_pwait");
 	if (!real) {
 		errno = ENOSYS;
 		return -1;
 	}
-	timeout = ep_shim_clamp_timeout(epfd, timeout);
-	return ep_shim_after_wait(real(epfd, events, maxevents, timeout),
-				  epfd, events, maxevents);
+	return ep_shim_wait(epfd, events, maxevents, timeout, real, NULL);
 }
 
 int epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
@@ -1385,9 +1437,7 @@ int epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
 		errno = ENOSYS;
 		return -1;
 	}
-	timeout = ep_shim_clamp_timeout(epfd, timeout);
-	return ep_shim_after_wait(real(epfd, events, maxevents, timeout, sigmask),
-				  epfd, events, maxevents);
+	return ep_shim_wait(epfd, events, maxevents, timeout, real, sigmask);
 }
 
 /* poll/ppoll: the real call already blocked for the full timeout, so all

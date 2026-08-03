@@ -2652,7 +2652,7 @@ impl ThreadSafeFunction {
 
     pub(crate) fn dispatch_one(&mut self, is_first: bool, scheduled_backup: &mut bool) -> bool {
         let mut queue_finalizer_after_call = false;
-        let (task, remaining) = 'brk: {
+        let task = 'brk: {
             // `MutexGuard` holds the lock by raw pointer, so it does not borrow
             // `*self` across the `&mut self` calls below.
             let _g = self.lock.lock_guard();
@@ -2682,20 +2682,23 @@ impl ThreadSafeFunction {
                 self.blocking_condvar.signal();
             }
 
-            break 'brk (t, prev_count.saturating_sub(1));
-        };
+            if prev_count > 1 && !*scheduled_backup {
+                // `call` below can block indefinitely in a nested event loop
+                // (the callback, or a microtask it drains, can synchronously
+                // wait on a promise — e.g. bun:test's
+                // expect(promise).rejects). Items already queued behind this
+                // one would then be stranded, because pushes coalesce into
+                // the Pending state and rely on this drain loop. Schedule one
+                // backup dispatch so a nested loop can keep draining; if
+                // nothing blocks, it finds an empty queue and is a no-op.
+                // `schedule_dispatch` requires the lock, so this stays inside
+                // the guard.
+                *scheduled_backup = true;
+                self.schedule_dispatch();
+            }
 
-        if remaining > 0 && !*scheduled_backup {
-            // `call` below can block indefinitely in a nested event loop (the
-            // callback, or a microtask it drains, can synchronously wait on a
-            // promise — e.g. bun:test's expect(promise).rejects). Items already
-            // queued behind this one would then be stranded, because pushes
-            // coalesce into the Pending state and rely on this drain loop.
-            // Schedule one backup dispatch so a nested loop can keep draining;
-            // if nothing blocks, it finds an empty queue and is a no-op.
-            *scheduled_backup = true;
-            self.schedule_dispatch();
-        }
+            break 'brk t;
+        };
 
         if self.call(task, is_first).is_err() {
             return false;

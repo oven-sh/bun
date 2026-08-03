@@ -43,8 +43,8 @@ use bun_sys::windows::libuv::UvHandle as _;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct BufferedReaderVTable {
-    pub parent: *mut c_void,
-    pub kind: crate::BufferedReaderParentLinkKind,
+    pub(crate) parent: *mut c_void,
+    pub(crate) kind: crate::BufferedReaderParentLinkKind,
 }
 
 /// Trait that parent types implement to receive buffered-reader callbacks.
@@ -85,7 +85,7 @@ pub trait BufferedReaderParent {
 }
 
 impl BufferedReaderVTable {
-    pub(crate) fn init<T: BufferedReaderParent>() -> BufferedReaderVTable {
+    fn init<T: BufferedReaderParent>() -> BufferedReaderVTable {
         BufferedReaderVTable {
             parent: core::ptr::null_mut(),
             kind: T::KIND,
@@ -99,15 +99,15 @@ impl BufferedReaderVTable {
         unsafe { crate::BufferedReaderParentLink::new(self.kind, self.parent) }
     }
 
-    pub(crate) fn event_loop(&self) -> EventLoopHandle {
+    fn event_loop(&self) -> EventLoopHandle {
         self.link().event_loop()
     }
 
-    pub(crate) fn loop_(&self) -> *mut Loop {
+    fn loop_(&self) -> *mut Loop {
         self.link().loop_ptr()
     }
 
-    pub(crate) fn is_streaming_enabled(&self) -> bool {
+    fn is_streaming_enabled(&self) -> bool {
         self.link().has_on_read_chunk()
     }
 
@@ -115,15 +115,15 @@ impl BufferedReaderVTable {
     /// and hasMore is true, it means that there might be more data to read.
     ///
     /// Returning false prevents the reader from reading more data.
-    pub(crate) fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
+    fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
         self.link().on_read_chunk(chunk, has_more)
     }
 
-    pub(crate) fn on_reader_done(&self) {
+    fn on_reader_done(&self) {
         self.link().on_reader_done()
     }
 
-    pub(crate) fn on_reader_error(&self, err: sys::Error) {
+    fn on_reader_error(&self, err: sys::Error) {
         self.link().on_reader_error(err)
     }
 }
@@ -135,8 +135,8 @@ impl BufferedReaderVTable {
 pub struct PosixBufferedReader {
     pub handle: PollOrFd,
     pub _buffer: Vec<u8>,
-    pub _offset: usize,
-    pub vtable: BufferedReaderVTable,
+    pub(crate) _offset: usize,
+    pub(crate) vtable: BufferedReaderVTable,
     pub flags: PosixFlags,
     // MaxBuf uses hand-rolled dual-ownership (Subprocess + reader) via
     // `add_to_pipereader`/`remove_from_pipereader`, not Arc — see MaxBuf.rs.
@@ -161,7 +161,7 @@ bitflags::bitflags! {
 }
 
 impl PosixFlags {
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self::from_bits_truncate(PosixFlags::CLOSE_HANDLE.bits() | PosixFlags::KEEP_ALIVE.bits())
     }
 }
@@ -236,7 +236,7 @@ impl PosixBufferedReader {
         self.handle = PollOrFd::Fd(fd);
     }
 
-    pub fn get_file_type(&self) -> FileType {
+    pub(crate) fn get_file_type(&self) -> FileType {
         let flags = self.flags;
         if flags.contains(PosixFlags::SOCKET) {
             return FileType::Socket;
@@ -368,7 +368,7 @@ impl PosixBufferedReader {
         }
     }
 
-    pub fn done(&mut self) {
+    pub(crate) fn done(&mut self) {
         if !matches!(self.handle, PollOrFd::Closed) && self.flags.contains(PosixFlags::CLOSE_HANDLE)
         {
             self.close_handle();
@@ -388,7 +388,12 @@ impl PosixBufferedReader {
     /// dispatched. That callback may drop the last reference to the struct
     /// embedding `self` (the shell `PipeReader` does exactly that), so the
     /// caller must not touch `self` again after a `false` return.
-    pub fn register_poll(&mut self) -> bool {
+    pub(crate) fn register_poll(&mut self) -> bool {
+        // pause() may land from inside on_read_chunk's JS re-entry while the
+        // loop's own re-arm is still ahead on the stack.
+        if self.flags.contains(PosixFlags::IS_PAUSED) {
+            return true;
+        }
         // Hoist vtable-derived scalars and
         // normalize self.handle to Poll before taking the single &mut borrow,
         // so no raw-pointer escape is needed.
@@ -453,11 +458,17 @@ impl PosixBufferedReader {
 
     // Exists for consistently with Windows.
     pub fn has_pending_read(&self) -> bool {
-        matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_registered())
+        // `is_watching()` (registered && !needs-rearm) rather than
+        // `is_registered()`: a one-shot poll that has fired but not been
+        // re-armed will not deliver another callback, so callers that skip
+        // `read()` on "pending" must not be told one is in flight.
+        matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_watching())
     }
 
     pub fn watch(&mut self) {
-        if self.flags.contains(PosixFlags::POLLABLE) {
+        if self.flags.contains(PosixFlags::POLLABLE)
+            && !matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_watching())
+        {
             self.register_poll();
         }
     }
@@ -503,6 +514,9 @@ impl PosixBufferedReader {
     }
 
     pub fn on_poll(parent: &mut PosixBufferedReader, size_hint: isize, received_hup: bool) {
+        if parent.flags.contains(PosixFlags::IS_PAUSED) {
+            return;
+        }
         let fd = parent.get_fd();
         bun_sys::syslog!("onPoll({}) = {}", fd, size_hint);
 
@@ -662,7 +676,7 @@ impl PosixBufferedReader {
 
                         if streaming {
                             // Stream this chunk and register for next cycle
-                            let _ = parent.vtable.on_read_chunk(
+                            let keep_going = parent.vtable.on_read_chunk(
                                 &stack_buffer[..bytes_read],
                                 if received_hup && bytes_read < stack_buffer.len() {
                                     ReadState::Eof
@@ -670,6 +684,15 @@ impl PosixBufferedReader {
                                     ReadState::Progress
                                 },
                             );
+                            // Re-entrant JS inside on_read_chunk can close the
+                            // reader (nested on_pull -> read -> EOF); the
+                            // captured `fd` is then stale regardless of HUP.
+                            if parent.is_done() {
+                                return;
+                            }
+                            if !keep_going && !received_hup && !over_budget {
+                                return;
+                            }
                         } else {
                             parent
                                 ._buffer
@@ -725,6 +748,9 @@ impl PosixBufferedReader {
                                         ReadState::Progress
                                     },
                                 );
+                                if parent.is_done() {
+                                    return;
+                                }
                                 // Closing for `over_budget` outranks the
                                 // consumer asking us to stop: it must still
                                 // happen, or nothing ever caps the pipe.
@@ -886,15 +912,21 @@ impl PosixBufferedReader {
                                 // Once HUP is set the kernel
                                 // returns the remaining bytes then 0, so
                                 // draining to `bytes_read == 0` is bounded.
-                                if !parent.vtable.on_read_chunk(
+                                let keep_going = parent.vtable.on_read_chunk(
                                     &event_loop.pipe_read_buffer_mut()[..head_start],
                                     if received_hup {
                                         ReadState::Eof
                                     } else {
                                         ReadState::Progress
                                     },
-                                ) && !received_hup
-                                {
+                                );
+                                // Re-entrant close (nested on_pull -> read ->
+                                // EOF) invalidates the captured `fd`; stop
+                                // before the next recv regardless of HUP.
+                                if parent.is_done() {
+                                    return;
+                                }
+                                if !keep_going && !received_hup {
                                     return;
                                 }
                                 head_start = 0;
@@ -935,15 +967,18 @@ impl PosixBufferedReader {
                 }
 
                 if head_start > 0 {
-                    if !parent.vtable.on_read_chunk(
+                    let keep_going = parent.vtable.on_read_chunk(
                         &event_loop.pipe_read_buffer_mut()[..head_start],
                         if received_hup {
                             ReadState::Eof
                         } else {
                             ReadState::Progress
                         },
-                    ) && !received_hup
-                    {
+                    );
+                    if parent.is_done() {
+                        return;
+                    }
+                    if !keep_going && !received_hup {
                         return;
                     }
                 }
@@ -1034,7 +1069,7 @@ impl PosixBufferedReader {
                                 .vtable
                                 .on_read_chunk(&parent._buffer, ReadState::Progress);
                             parent._buffer.clear();
-                            if !keep_going {
+                            if parent.is_done() || !keep_going {
                                 return;
                             }
                             continue;
@@ -1101,13 +1136,13 @@ pub struct WindowsBufferedReader {
     /// The pointer to this pipe must be stable.
     /// It cannot change because we don't know what libuv will do with it.
     pub source: Option<Source>,
-    pub _offset: usize,
+    pub(crate) _offset: usize,
     pub _buffer: Vec<u8>,
     // for compatibility with Linux
     pub flags: WindowsFlags,
     pub maxbuf: Option<NonNull<MaxBuf>>,
 
-    pub vtable: BufferedReaderVTable,
+    pub(crate) vtable: BufferedReaderVTable,
 }
 
 bitflags::bitflags! {
@@ -1128,8 +1163,9 @@ bitflags::bitflags! {
     }
 }
 
+#[cfg(windows)]
 impl WindowsFlags {
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self::from_bits_truncate(WindowsFlags::CLOSE_HANDLE.bits() | WindowsFlags::IS_PAUSED.bits())
     }
 }
@@ -1261,7 +1297,7 @@ impl WindowsBufferedReader {
         MaxBuf::on_read_bytes(maxbuf, bytes_read as u64)
     }
 
-    fn _on_read_chunk(&mut self, buf: &[u8], has_more: ReadState) -> bool {
+    fn on_read_chunk(&mut self, buf: &[u8], has_more: ReadState) -> bool {
         if has_more == ReadState::Eof {
             self.flags.insert(WindowsFlags::RECEIVED_EOF);
         }
@@ -1301,7 +1337,7 @@ impl WindowsBufferedReader {
         self._buffer.shrink_to_fit();
     }
 
-    pub(crate) fn done(&mut self) {
+    fn done(&mut self) {
         if let Some(source) = &self.source {
             debug_assert!(source.is_closed());
         }
@@ -1316,10 +1352,7 @@ impl WindowsBufferedReader {
         self.vtable.on_reader_error(err);
     }
 
-    pub(crate) fn get_read_buffer_with_stable_memory_address(
-        &mut self,
-        suggested_size: usize,
-    ) -> &mut [u8] {
+    fn get_read_buffer_with_stable_memory_address(&mut self, suggested_size: usize) -> &mut [u8] {
         self.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
         // Spare capacity grows well past `suggested_size`, so an unclamped read
         // overshoots `maxBuffer` by however much the buffer had room for.
@@ -1618,7 +1651,7 @@ impl WindowsBufferedReader {
     }
 
     #[cfg(windows)]
-    pub(crate) fn start_reading(&mut self) -> sys::Result<()> {
+    fn start_reading(&mut self) -> sys::Result<()> {
         if self.flags.contains(WindowsFlags::IS_DONE)
             || !self.flags.contains(WindowsFlags::IS_PAUSED)
         {
@@ -1855,12 +1888,7 @@ impl WindowsBufferedReader {
         drop(unsafe { bun_core::heap::take(handle) });
     }
 
-    pub(crate) fn on_read(
-        &mut self,
-        amount: sys::Result<usize>,
-        slice: &mut [u8],
-        has_more: ReadState,
-    ) {
+    fn on_read(&mut self, amount: sys::Result<usize>, slice: &mut [u8], has_more: ReadState) {
         if let sys::Result::Err(err) = amount {
             self.on_error(err);
             return;
@@ -1888,7 +1916,7 @@ impl WindowsBufferedReader {
 
         let over_budget = self.charge_max_buffer(amount_result);
 
-        let should_continue = self._on_read_chunk(slice, has_more);
+        let should_continue = self.on_read_chunk(slice, has_more);
 
         // Streaming parents (shell IOReader, subprocess) cannot re-derive
         // `&mut Self` from inside the vtable callback to restart the pipe
@@ -1898,7 +1926,14 @@ impl WindowsBufferedReader {
         // grows by `amount_result` every chunk and never resets, so a 1 GB
         // `cat` holds 1 GB resident instead of ~64 KB. Clear it here, after
         // the streaming consumer has finished with `slice`.
-        if should_continue && has_more != ReadState::Eof && self.vtable.is_streaming_enabled() {
+        // `should_continue` no longer gates the clear: FileReader may say
+        // stop at its highwater mark while uv keeps delivering, and leaving
+        // `_buffer` uncleared would double-buffer (here + FileReader.buffered).
+        // Parents that want the reader paused call `reader().pause()`
+        // themselves; stopping here could free a parent whose caller still
+        // holds `this` (FileResponseStream on abort).
+        let _ = should_continue;
+        if has_more != ReadState::Eof && self.vtable.is_streaming_enabled() {
             self._buffer.clear();
         }
 

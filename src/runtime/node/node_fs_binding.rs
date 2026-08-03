@@ -141,7 +141,7 @@ where
 #[bun_jsc::JsClass(name = "NodeJSFS", no_constructor)]
 #[derive(Default)]
 pub struct Binding {
-    pub node_fs: JsCell<NodeFS>,
+    pub(crate) node_fs: JsCell<NodeFS>,
 }
 
 impl Binding {
@@ -149,7 +149,7 @@ impl Binding {
     // → provided by `#[bun_jsc::JsClass]` derive.
 
     // `pub const new = bun.TrivialNew(@This());`
-    pub fn new(init: Self) -> Box<Self> {
+    pub(crate) fn new(init: Self) -> Box<Self> {
         Box::new(init)
     }
 
@@ -170,12 +170,12 @@ impl Binding {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_dirent(_this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_dirent(_this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(crate::node::Dirent::get_constructor(global))
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_stats(_this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_stats(_this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(crate::node::StatsSmall::get_constructor(global))
     }
 
@@ -183,7 +183,7 @@ impl Binding {
 
     /// `callAsync(.cp)` — `AsyncCpTask::create` copies its paths via
     /// `to_thread_safe()`, so the arena is dropped with `slice`.
-    pub fn cp(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn cp(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
@@ -211,7 +211,11 @@ impl Binding {
     }
 
     /// `callSync(.cp)`.
-    pub fn cp_sync(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn cp_sync(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM.
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
@@ -232,7 +236,11 @@ impl Binding {
 
     /// `callAsync(.readdir)` — `args.recursive` selects
     /// `AsyncReaddirRecursiveTask` instead of the generic `AsyncFSTask`.
-    pub fn readdir(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn readdir(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
@@ -256,7 +264,10 @@ impl Binding {
 
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        if rd_args.recursive {
+        // /$bunfs/ is in-memory; readdir_inner handles it (recursive included).
+        let is_bunfs = bun_standalone_graph::Graph::get().is_some()
+            && bun_standalone_graph::is_bun_standalone_file_path(rd_args.path.slice());
+        if rd_args.recursive && !is_bunfs {
             return Ok(AsyncReaddirRecursiveTask::create(global, rd_args, vm));
         }
         Ok(async_::Readdir::create(global, this, rd_args, vm))
@@ -264,7 +275,11 @@ impl Binding {
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go
     /// through `FsArgument`/`dispatch`; call the inherent method directly.
-    pub fn watch(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn watch(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM.
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
@@ -287,7 +302,7 @@ impl Binding {
     }
 
     /// `callSync(.watchFile)`.
-    pub fn watch_file(
+    pub(crate) fn watch_file(
         this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -312,7 +327,7 @@ impl Binding {
     }
 
     /// `callSync(.unwatchFile)` — `Arguments == void`.
-    pub fn unwatch_file(
+    pub(crate) fn unwatch_file(
         this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -402,7 +417,7 @@ node_fs_bindings! {
 // `readdirSync` goes through the generic sync path; only the async side is
 // special-cased above.
 impl Binding {
-    pub const readdir_sync: NodeFSFunction =
+    pub(crate) const readdir_sync: NodeFSFunction =
         call_sync::<ret::Readdir, args::Readdir, { NodeFSFunctionEnum::Readdir }>();
     // pub const statfs = callAsync(.statfs);
     // pub const statfsSync = callSync(.statfs);

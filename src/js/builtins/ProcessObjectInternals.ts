@@ -642,9 +642,14 @@ export function installOnWarningListener(process, redirectPath, disabledArr) {
   // node:fs is only loaded when --redirect-warnings/NODE_REDIRECT_WARNINGS is
   // set; the common case (no redirect) never needs it.
   const appendFileSync = redirectPath ? require("node:fs").appendFileSync : undefined;
-  // Capture at install time so later tampering with globalThis.console
-  // cannot silence warnings.
-  const consoleError = console.error;
+  // process.stderr.write instead of console.error: with an inspector Session
+  // that has Runtime enabled, console.* is wrapped to emit
+  // Runtime.consoleAPICalled (inspector.ts). A throwing consoleAPICalled
+  // listener is surfaced via process.emitWarning, so writing through
+  // console.error here would re-enter the listener on the next tick and loop.
+  // process.stderr.write keeps hijackStderr observability and Windows console
+  // handling without touching the console hook.
+  const stderr = process.stderr;
   // --disable-warning names/codes as a Set: matches Node's SafeSet lookup
   // and avoids an FFI + utf8() encode per emit.
   const disabled = disabledArr && disabledArr.length ? new Set(disabledArr) : null;
@@ -662,9 +667,7 @@ export function installOnWarningListener(process, redirectPath, disabledArr) {
         // warning like Node's writeToFile.
       }
     }
-    // console.error goes through process.stderr, so hijackStderr in tests
-    // observes it and Windows console gets WriteConsoleW.
-    consoleError(message);
+    stderr.write(message + "\n");
   }
 
   function onWarning(warning) {

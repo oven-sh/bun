@@ -152,6 +152,43 @@ describe.concurrent("node-module-module", () => {
       ospath(root + "a/node_modules"),
       ospath(root + "node_modules"),
     ]);
+    // Node resolves `from` through `path.resolve`, so a trailing separator is
+    // dropped rather than producing an extra ".../<sep>/node_modules" entry.
+    expect(_nodeModulePaths("/a/b/c/d/")).toEqual(_nodeModulePaths("/a/b/c/d"));
+    expect(_nodeModulePaths(ospath("/a/b/c/d") + path.sep)).toEqual(_nodeModulePaths("/a/b/c/d"));
+  });
+
+  test("_nodeModulePaths() is stable across process.chdir()", async () => {
+    // process.chdir() re-seeds the resolver's cached top-level dir with a
+    // trailing separator; _nodeModulePaths("") then used to emit a duplicate
+    // `<cwd>//node_modules` entry, which surfaced as a `--parallel` flake when
+    // an earlier test file in the same worker had chdir'd.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const m = require("module");
+         const before = m._nodeModulePaths("");
+         const here = process.cwd();
+         process.chdir(require("os").tmpdir());
+         process.chdir(here);
+         process.stdout.write(JSON.stringify({
+           before,
+           empty: m._nodeModulePaths(""),
+           dot: m._nodeModulePaths("."),
+         }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { before, empty, dot } = JSON.parse(stdout);
+    expect(empty).toEqual(before);
+    expect(empty).toEqual(dot);
+    for (const p of empty) expect(p).not.toMatch(/[/\\]{2}node_modules$/);
+    expect(exitCode).toBe(0);
   });
 
   test("_nodeModulePaths() does not leak the input string", async () => {
@@ -160,14 +197,15 @@ describe.concurrent("node-module-module", () => {
     // dominates RSS noise within a few thousand iterations.
     const code = /* js */ `
         const m = require("module");
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const comp = Buffer.alloc(30, "a").toString();
         const base = "/" + Array(20).fill(comp).join("/");
         for (let i = 0; i < 200; i++) m._nodeModulePaths(base + i);
         Bun.gc(true); Bun.gc(true);
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 5000; i++) m._nodeModulePaths(base + i);
         Bun.gc(true); Bun.gc(true); Bun.gc(true);
-        process.stdout.write(String((process.memoryUsage.rss() - before) / 1024 / 1024));
+        process.stdout.write(String((rss() - before) / 1024 / 1024));
       `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--smol", "-e", code],

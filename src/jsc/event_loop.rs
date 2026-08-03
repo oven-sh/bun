@@ -597,21 +597,6 @@ impl EventLoop {
         }
     }
 
-    /// A finished HTTP transaction asks the GC heuristic to look at the heap -- but not yet:
-    /// the response's JS handling and microtasks have not run, so the garbage is not there to
-    /// see. Acted on at the next park (`drain_pending_gc_hint`). `&self`: callers run inside
-    /// `tick_queue_with_count`, which already holds the `&mut EventLoop`.
-    pub fn request_gc_hint(&self) {
-        self.vm_ref().as_mut().gc_controller.request_hint();
-    }
-
-    /// Acts on a hint left by `request_gc_hint`. Must run BEFORE the poll deadline is computed
-    /// (`timer::All::get_timeout`): the GC heuristic arms a one-shot timer, and a timer armed
-    /// after the deadline is not in it -- the loop would sleep straight past it.
-    pub fn drain_pending_gc_hint(&mut self) {
-        self.vm_ref().as_mut().gc_controller.drain_pending_hint();
-    }
-
     #[inline]
     pub fn process_gc_timer(&mut self) {
         self.vm_ref().as_mut().gc_controller.process_gc_timer();
@@ -1132,8 +1117,6 @@ impl EventLoop {
             self.hold_forever_poll(loop_);
         }
 
-        self.drain_pending_gc_hint();
-        self.process_gc_timer();
         self.process_gc_timer();
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
@@ -1306,7 +1289,7 @@ bun_event_loop::link_impl_JsEventLoop! {
                 .vm_ref()
                 .as_mut()
                 .rare_data()
-                .file_polls_
+                .file_polls
                 .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
                 .as_mut(),
         ),
@@ -1319,7 +1302,7 @@ bun_event_loop::link_impl_JsEventLoop! {
                     .vm_ref()
                     .as_mut()
                     .rare_data()
-                    .file_polls_
+                    .file_polls
                     .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
                     .as_mut(),
             );
@@ -1437,28 +1420,4 @@ pub(crate) fn __bun_spawn_sync_vm_set_event_loop(vm: *mut (), el: *mut ()) {
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: bool) -> bool {
     vm_from_ptr(vm).suppress_microtask_drain.replace(v)
-}
-
-/// C++ (webcore/streams) entries for the deferred task queue: register/unregister a task that
-/// runs right after the current microtask drain (see DeferredTaskQueue.rs). `ctx` identity is
-/// the key; the callee must unregister before `ctx` is freed.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__EventLoop__postDeferredTask(
-    vm: &VirtualMachine,
-    ctx: *mut core::ffi::c_void,
-    task: DeferredRepeatingTask,
-) -> bool {
-    vm.event_loop_ref()
-        .deferred_tasks
-        .post_task(core::ptr::NonNull::new(ctx), task)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__EventLoop__unregisterDeferredTask(
-    vm: &VirtualMachine,
-    ctx: *mut core::ffi::c_void,
-) -> bool {
-    vm.event_loop_ref()
-        .deferred_tasks
-        .unregister_task(core::ptr::NonNull::new(ctx))
 }

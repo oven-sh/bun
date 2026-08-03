@@ -21,7 +21,7 @@ use crate::shell::yield_::Yield;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ChildPtr {
     pub node: NodeId,
-    pub tag: ReaderTag,
+    pub(crate) tag: ReaderTag,
 }
 
 #[repr(u8)]
@@ -83,7 +83,7 @@ impl IOReader {
     // Forwards `this` to `Arc::decrement_strong_count` without dereferencing;
     // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn deinit_on_main_thread(this: *mut IOReader) {
+    pub(crate) fn deinit_on_main_thread(this: *mut IOReader) {
         // SAFETY: precondition above.
         unsafe { std::sync::Arc::decrement_strong_count(this) };
     }
@@ -125,7 +125,7 @@ impl IOReader {
             .expect("IOReader::keepalive after last Arc dropped")
     }
 
-    pub fn init(fd: Fd, evtloop: EventLoopHandle) -> std::sync::Arc<IOReader> {
+    pub(crate) fn init(fd: Fd, evtloop: EventLoopHandle) -> std::sync::Arc<IOReader> {
         let mut reader = ReaderImpl::init::<IOReader>();
         #[cfg(not(windows))]
         {
@@ -173,17 +173,17 @@ impl IOReader {
     // Forwards `interp` to `ParentRef::from_nullable_mut` without dereferencing;
     // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn set_interp(&self, interp: *mut Interpreter) {
+    pub(crate) fn set_interp(&self, interp: *mut Interpreter) {
         // SAFETY: precondition above.
         self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
     }
 
     #[inline]
-    pub fn fd(&self) -> Fd {
+    pub(crate) fn fd(&self) -> Fd {
         self.state().fd
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         let s = self.state();
         core::mem::size_of::<IOReader>()
             + s.buf.capacity()
@@ -212,7 +212,7 @@ impl IOReader {
     }
 
     /// Idempotent function to start the reading.
-    pub fn start(&self) -> Yield {
+    pub(crate) fn start(&self) -> Yield {
         #[cfg(not(windows))]
         {
             let r = self.reader();
@@ -245,7 +245,7 @@ impl IOReader {
     }
 
     /// Only adds if not already present.
-    pub fn add_reader(&self, reader: ChildPtr) {
+    pub(crate) fn add_reader(&self, reader: ChildPtr) {
         let s = self.state();
         if !s.readers.contains(&reader) {
             s.readers.push(reader);
@@ -253,7 +253,7 @@ impl IOReader {
     }
 
     /// Unregister a listener; no-op if it was never added.
-    pub fn remove_reader(&self, reader: ChildPtr) {
+    pub(crate) fn remove_reader(&self, reader: ChildPtr) {
         let s = self.state();
         if let Some(idx) = s.readers.iter().position(|r| *r == reader) {
             s.readers.swap_remove(idx);

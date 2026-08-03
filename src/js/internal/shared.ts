@@ -204,13 +204,15 @@ function isInsideNodeModules(frameLimit: number): boolean {
     } catch {}
   }
   if (!$isJSArray(frames)) return false;
-  for (const frame of frames) {
-    const filename = frame.getFileName();
-    if (!filename || filename.startsWith("node:") || filename.startsWith("internal:") || filename === "native") {
-      continue;
+  try {
+    for (const frame of frames) {
+      const filename = frame.getFileName();
+      if (!filename || filename.startsWith("node:") || filename.startsWith("internal:") || filename === "native") {
+        continue;
+      }
+      return nodeModulesRE.test(filename);
     }
-    return nodeModulesRE.test(filename);
-  }
+  } catch {}
   return false;
 }
 

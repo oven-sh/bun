@@ -31,8 +31,6 @@ test("dead Rust symbols in runtime/node + resolver do not reappear", () => {
     ["src/runtime/node/types.rs", /impl VectorArrayBuffer \{\n    pub fn to_js\(/],
     ["src/resolver/fs.rs", /pub fn statBatch\(fs: \*FileSystemEntry/],
   ];
-  const resurrected = checks
-    .filter(([file, re]) => re.test(src(file)))
-    .map(([file, re]) => `${file}: ${re.source}`);
+  const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);
 });

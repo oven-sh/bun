@@ -108,7 +108,6 @@ void ConsoleObject::recordEnd(JSGlobalObject*, Ref<ScriptArguments>&&) {}
 void ConsoleObject::screenshot(JSGlobalObject*, Ref<ScriptArguments>&&)
 {
 }
-void ConsoleObject::warnUnimplemented(const String& method) {}
 
 void ConsoleObject::profile(JSC::JSGlobalObject* globalObject, const String& title)
 {

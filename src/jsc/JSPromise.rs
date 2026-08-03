@@ -103,18 +103,6 @@ impl Strong {
         self.swap().reject(global, Ok(err))
     }
 
-    /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
-    pub fn reject_task(
-        &mut self,
-        global: &JSGlobalObject,
-        val: JSValue,
-    ) -> Result<(), JsTerminated> {
-        // The safe wrapper funnels through the single audited deref in
-        // `enter_event_loop_scope`.
-        let _guard = VirtualMachine::get().enter_event_loop_scope();
-        self.reject(global, Ok(val))
-    }
-
     pub fn resolve(&mut self, global: &JSGlobalObject, val: JSValue) -> Result<(), JsTerminated> {
         self.swap().resolve(global, val)
     }
@@ -280,7 +268,7 @@ impl JSPromise {
     /// not by Rust ownership. Centralizes the per-call-site
     /// `unsafe { (*p).status() }` deref so callers don't open-code it.
     #[inline]
-    pub fn status_ptr(p: *mut JSPromise) -> Status {
+    pub(crate) fn status_ptr(p: *mut JSPromise) -> Status {
         // `p` is a non-null GC-managed cell tracked by the VM (caller obtained
         // it from a strong-ref VM field or a fresh
         // `JSInternalPromise__resolvedPromise` return value).

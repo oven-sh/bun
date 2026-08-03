@@ -16,8 +16,8 @@ pub struct NewWriter<C: WriterContext> {
 
 #[derive(Copy, Clone)]
 pub struct LengthWriter<C: WriterContext> {
-    pub index: usize,
-    pub context: NewWriter<C>,
+    pub(crate) index: usize,
+    pub(crate) context: NewWriter<C>,
 }
 
 impl<C: WriterContext> LengthWriter<C> {
@@ -51,12 +51,12 @@ impl<C: WriterContext> NewWriter<C> {
     }
 
     #[inline]
-    pub fn offset(self) -> usize {
+    pub(crate) fn offset(self) -> usize {
         C::offset(self.wrapped)
     }
 
     #[inline]
-    pub fn pwrite(self, data: &[u8], i: usize) -> Result<(), AnyPostgresError> {
+    pub(crate) fn pwrite(self, data: &[u8], i: usize) -> Result<(), AnyPostgresError> {
         C::pwrite(self.wrapped, data, i)
     }
 

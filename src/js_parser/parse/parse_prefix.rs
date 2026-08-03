@@ -529,7 +529,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     fn pfx_t_function(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
-        p.parse_fn_expr(loc, false, bun_ast::Range::NONE)
+        p.parse_fn_expr(loc, false)
     }
 
     fn pfx_t_class(p: &mut Self) -> PResult<Expr> {
@@ -991,7 +991,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // Before splitting this up, this used 3 KB of stack space per call.
-    pub fn parse_prefix(
+    pub(crate) fn parse_prefix(
         &mut self,
         level: Level,
         errors: Option<&mut DeferredErrors>,

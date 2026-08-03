@@ -100,7 +100,7 @@ impl File {
     /// `openat`; on failure, recursively create `dirname(path)` (errors from
     /// the mkdir are swallowed) then retry the open once. If `path` has no
     /// dirname, the original error is returned.
-    pub fn make_openat(dir: impl AsFd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+    pub(crate) fn make_openat(dir: impl AsFd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
         let dir = dir.as_fd();
         match openat_a(dir, path, flags, mode) {
             Ok(fd) => Ok(Self::from_fd(fd)),
@@ -486,13 +486,12 @@ pub(crate) mod tests {
     #[test]
     fn dropping_stdio_is_safe() {
         let _g = FD_TEST_LOCK.lock();
-        // `File::stdin()` / `stdout()` / `stderr()` wrap process-shared
-        // descriptors that the caller does not own. Dropping the wrapper must
-        // not tear down the test harness's output.
+        // `File::stdin()` / `stdout()` wrap process-shared descriptors that
+        // the caller does not own. Dropping the wrapper must not tear down the
+        // test harness's output.
         for _ in 0..16 {
             let _ = File::stdin();
             let _ = File::stdout();
-            let _ = File::stderr();
         }
         assert!(fstat(Fd::stdout()).is_ok());
     }

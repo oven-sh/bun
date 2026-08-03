@@ -25,7 +25,7 @@ const EVENTLIST_BYTES_SIZE: usize = (Event::LARGEST_SIZE / 2) * max_count;
 
 /// Aligned to `align_of::<Event>()` so casts from the buffer base are sound.
 #[repr(C, align(4))]
-pub struct EventListBytes(pub [u8; EVENTLIST_BYTES_SIZE]);
+pub struct EventListBytes(pub(crate) [u8; EVENTLIST_BYTES_SIZE]);
 const _: () = assert!(align_of::<Event>() == 4);
 // SAFETY: EventListBytes is a `[u8; N]` newtype; the all-zero bit pattern is valid.
 unsafe impl bun_core::Zeroable for EventListBytes {}
@@ -39,22 +39,22 @@ struct ReadPtr {
 pub(crate) type Platform = INotifyWatcher;
 
 pub struct INotifyWatcher {
-    pub fd: Fd,
-    pub loaded: bool,
+    pub(crate) fd: Fd,
+    pub(crate) loaded: bool,
 
     // Avoid statically allocating because it increases the binary size.
-    pub eventlist_bytes: Box<EventListBytes>,
+    pub(crate) eventlist_bytes: Box<EventListBytes>,
     /// pointers into the next chunk of events
     // BACKREF: raw pointers into `eventlist_bytes`; self-referential, never freed individually.
-    pub eventlist_ptrs: [*const Event; max_count],
+    pub(crate) eventlist_ptrs: [*const Event; max_count],
     /// if defined, it means `read` should continue from this offset before asking
     /// for more bytes. this is only hit under high watching load.
     /// see `test-fs-watch-recursive-linux-parallel-remove.js`
     read_ptr: Option<ReadPtr>,
 
-    pub watch_count: AtomicU32,
+    pub(crate) watch_count: AtomicU32,
     /// nanoseconds
-    pub coalesce_interval: isize,
+    pub(crate) coalesce_interval: isize,
 }
 
 impl Default for INotifyWatcher {
@@ -102,7 +102,7 @@ impl Event {
     // unaligned reads are ever observed, switch these to take `*const Event`
     // + read_unaligned.
 
-    pub fn name(&self) -> &ZStr {
+    pub(crate) fn name(&self) -> &ZStr {
         debug_assert!(
             self.name_len > 0,
             "INotifyWatcher.Event.name() called with name_len == 0, you should check it before calling this function."
@@ -119,7 +119,7 @@ impl Event {
         }
     }
 
-    pub fn size(&self) -> u32 {
+    pub(crate) fn size(&self) -> u32 {
         u32::try_from(size_of::<Event>()).expect("int cast") + self.name_len
     }
 }
@@ -204,7 +204,7 @@ impl INotifyWatcher {
         })
     }
 
-    pub(crate) fn read(&mut self) -> bun_sys::Result<&[*const Event]> {
+    fn read(&mut self) -> bun_sys::Result<&[*const Event]> {
         debug_assert!(self.loaded);
         // This is what replit does as of Jaunary 2023.
         // 1) CREATE .http.ts.3491171321~
@@ -384,10 +384,6 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     events_buf[..events_len].copy_from_slice(events);
     let events = &events_buf[..events_len];
 
-    // reshaped for borrowck — copy the (small) column to a local Vec
-    // so the borrow of `this.watchlist` ends before we mutably borrow other
-    // `this` fields inside the batching loop below.
-    //
     // The snapshot is taken locked. `on_file_update` may evict watchlist entries via
     // `remove_at_index` + `flush_evictions` (the dir-event path appends *and*
     // evicts the matched file watch). The enqueued reload then re-imports the
@@ -398,10 +394,12 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     // 128 `max_count` batch size, so the dir-event-only batch is common) the
     // unlocked read raced the realloc and the process occasionally died with
     // a non-zero exit code. Snapshot under the same mutex `add_file` takes.
-    let eventlist_index: Vec<EventListIndex> = {
+    {
         let _guard = this.mutex.lock_guard();
-        this.watchlist.items_eventlist_index().to_vec()
-    };
+        this.eventlist_index_scratch.clear();
+        this.eventlist_index_scratch
+            .extend_from_slice(this.watchlist.items_eventlist_index());
+    }
 
     let mut event_id: usize = 0;
     let mut events_processed: usize = 0;
@@ -441,7 +439,8 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 }
             }
 
-            let idx = match eventlist_index
+            let idx = match this
+                .eventlist_index_scratch
                 .iter()
                 .position(|&x| x == event.watch_descriptor)
             {
@@ -524,7 +523,7 @@ fn process_inotify_event_batch(
     Ok(())
 }
 
-pub(crate) fn watch_event_from_inotify_event(event: &Event, index: WatchItemIndex) -> WatchEvent {
+fn watch_event_from_inotify_event(event: &Event, index: WatchItemIndex) -> WatchEvent {
     use bun_sys::linux::IN;
     let mut op = Op::empty();
     if (event.mask & IN::DELETE_SELF) > 0 || (event.mask & IN::DELETE) > 0 {

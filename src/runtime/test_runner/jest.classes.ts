@@ -286,7 +286,7 @@ export default [
     },
     proto: {
       pass: {
-        fn: "_pass",
+        fn: "pass",
         length: 1,
       },
       fail: {

@@ -277,6 +277,18 @@ impl Default for PendingValue {
 }
 
 impl PendingValue {
+    /// Called once `readable` is set and the producer hooks have fired: the
+    /// ByteStream's `NewSource.producer` owns delivery from here, and the
+    /// producer these point at (e.g. a `FetchTasklet`) may be freed before a
+    /// later consumer (`Bun.write`, `ValueBufferer`) looks at them.
+    fn detach_producer(&mut self) {
+        self.on_start_buffering = None;
+        self.on_start_streaming = None;
+        self.on_readable_stream_available = None;
+        self.task = None;
+        self.producer = streams::SourceHandle::None;
+    }
+
     /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global` back-pointer.
     #[inline]
     pub(crate) fn global(&self) -> &JSGlobalObject {
@@ -912,13 +924,7 @@ impl Value {
         if let Some(on_readable_stream_available) = locked.on_readable_stream_available.take() {
             on_readable_stream_available(locked.task.unwrap(), global_this, readable);
         }
-        // Delivery is now owned by the ByteStream's `NewSource.producer`; the
-        // producer hooks and `task` here point at (e.g.) a `FetchTasklet` that
-        // can be freed once the transfer completes, so a later consumer
-        // (`Bun.write`, `ValueBufferer`) must not call them.
-        locked.on_start_buffering = None;
-        locked.task = None;
-        locked.producer = streams::SourceHandle::None;
+        locked.detach_producer();
 
         // In text mode the returned stream emits strings, so it must not be
         // cached as the body's byte stream (consulted by `.body`, `bodyUsed`,
@@ -1552,10 +1558,7 @@ impl Value {
                 locked.readable.get(global_this).unwrap(),
             );
         }
-        // See `locked_to_native_stream`: the ByteStream now owns delivery.
-        locked.on_start_buffering = None;
-        locked.task = None;
-        locked.producer = streams::SourceHandle::None;
+        locked.detach_producer();
 
         let teed = match locked.readable.tee(global_this)? {
             Some(t) => t,

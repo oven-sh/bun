@@ -145,6 +145,7 @@ pub mod coreutils_error_map {
         "EPROTONOSUPPORT" => "Protocol not supported",
         "ESOCKTNOSUPPORT" => "Socket type not supported",
         "EOPNOTSUPP" => "Operation not supported",
+        "ENOTSUP" => "Operation not supported",
         "EPFNOSUPPORT" => "Protocol family not supported",
         "EAFNOSUPPORT" => "Address family not supported by protocol",
         "EADDRINUSE" => "Address already in use",

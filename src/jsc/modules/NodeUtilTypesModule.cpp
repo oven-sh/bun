@@ -430,7 +430,8 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
         materialized = true;
         entriesStart = gcBuffer.size();
         auto iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), actualMap, JSC::IterationKind::Entries);
-        RETURN_IF_EXCEPTION(scope, false);
+        if (scope.exception()) [[unlikely]]
+            return false;
         JSValue key, value;
         while (iter->nextKeyValue(globalObject, key, value)) {
             gcBuffer.append(key);
@@ -665,13 +666,9 @@ static bool setSubsetAndProps(JSC::JSGlobalObject* globalObject, JSC::MarkedArgu
 static bool isSpecialValue(JSValue value)
 {
     // `typeof x !== "object"`: primitives, null, and callables are decided
-    // by full strict deep equality. Errors, Dates, and RegExps have their
-    // own arms above; the Error check remains for the one-sided case where
-    // only the non-Error side reaches here.
-    if (!value.isObject() || value.isCallable())
-        return true;
-    JSC::JSCell* cell = value.asCell();
-    return cell->inherits<JSC::ErrorInstance>() || cell->type() == JSC::ErrorInstanceType;
+    // by full strict deep equality. Every specific type (Error, Date, RegExp,
+    // boxed primitives, ...) has already been handled by its own arm above.
+    return !value.isObject() || value.isCallable();
 }
 
 static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
@@ -852,8 +849,8 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
     if (actualIsArray)
         return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, arraySubsequence);
 
-    // At least one side is a primitive, null, Error, RegExp, or Date: full
-    // strict deep equality decides.
+    // At least one side is a primitive, null, or callable: full strict deep
+    // equality decides.
     if (isSpecialValue(actual) || isSpecialValue(expected)) {
         bool equal = JSC__JSValue__strictDeepEquals(JSValue::encode(actual), JSValue::encode(expected), globalObject);
         RETURN_IF_EXCEPTION(scope, false);

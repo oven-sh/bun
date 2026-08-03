@@ -251,19 +251,6 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
     this.open();
   } else {
     if (fastPath) {
-      // // there is a chance that this fd is not actually correct but it will be a number
-      // if (fastPath !== true) {
-      //   // @ts-expect-error undocumented. to make this public please make it a
-      //   // getter. couldn't figure that out sorry
-      //   this.fd = fastPath._getFd();
-      // } else {
-      //   if (fs.open !== open || fs.write !== write || fs.fsync !== fsync || fs.close !== close) {
-      //     this[kWriteStreamFastPath] = undefined;
-      //     break fast;
-      //   }
-      //   // @ts-expect-error
-      //   this.fd = (this[kWriteStreamFastPath] = Bun.file(this.path).writer())._getFd();
-      // }
       callback();
       this.emit("open", this.fd);
       this.emit("ready");
@@ -473,9 +460,22 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     this.pos = start;
   }
 
+  // A writer cannot be opened for every fd a caller may hand us -- a read-only
+  // descriptor is the common case, and node's tty.WriteStream accepts one. Fall
+  // back to the general path there, which surfaces the failure at write time the
+  // way node does, rather than throwing from the constructor.
+  let fastWriter;
+  if (fastPath && fd != null) {
+    try {
+      fastWriter = Bun.file(fd).writer();
+    } catch {
+      fastPath = false;
+    }
+  }
+
   // Enable fast path
   if (fastPath) {
-    this[kWriteStreamFastPath] = fd ? Bun.file(fd).writer() : true;
+    this[kWriteStreamFastPath] = fd != null ? fastWriter : true;
     this._write = underscoreWriteFast;
     this._writev = undefined;
     this.write = writeFast as any;

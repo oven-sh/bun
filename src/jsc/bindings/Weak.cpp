@@ -56,6 +56,9 @@ static JSC::WeakHandleOwner* getWeakRefOwner()
 static JSC::WeakHandleOwner* getWeakRefOwner(WeakRefType type)
 {
     switch (type) {
+    case WeakRefType::None:
+        // Passive weak: no finalize callback. JSC::Weak accepts a null owner.
+        return nullptr;
     case WeakRefType::FetchResponse: {
         return getWeakRefOwner<WeakRefType::FetchResponse>();
     }

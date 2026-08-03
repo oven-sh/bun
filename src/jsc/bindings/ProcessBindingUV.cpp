@@ -173,7 +173,10 @@ JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::Cal
 
 JSObject* create(VM& vm, JSGlobalObject* globalObject)
 {
-    auto bindingObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
+    // Non-zero inline capacity: a zero-capacity object trips the
+    // hasInlineStorage() assertion in JSObject::inlineStorage when JS
+    // spreads it ({...process.binding("uv")} in internal/test/binding.ts).
+    auto bindingObject = JSC::constructEmptyObject(globalObject);
     EnsureStillAliveScope ensureStillAlive(bindingObject);
     bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, "errname"_s), JSC::JSFunction::create(vm, globalObject, 1, "errname"_s, jsErrname, ImplementationVisibility::Public));
 

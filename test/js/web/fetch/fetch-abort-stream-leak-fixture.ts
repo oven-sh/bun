@@ -1,6 +1,11 @@
 // https://github.com/oven-sh/bun/issues/32659
 import { heapStats } from "bun:jsc";
 
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
+
 const ITER = Number(process.env.ITERATIONS ?? "60");
 const MAX_GROWTH_MB = Number(process.env.MAX_GROWTH_MB ?? "55");
 const CHUNK = new Uint8Array(512 * 1024);
@@ -27,7 +32,7 @@ using server = Bun.serve({
 const held: unknown[] = [];
 
 Bun.gc(true);
-const rss0 = process.memoryUsage().rss;
+const rss0 = rss();
 
 for (let n = 0; n < ITER; n++) {
   sent = 0;
@@ -53,7 +58,7 @@ Bun.gc(true);
 await Bun.sleep(1);
 Bun.gc(true);
 
-const growthMB = (process.memoryUsage().rss - rss0) / 1024 / 1024;
+const growthMB = (rss() - rss0) / 1024 / 1024;
 const heapMB = heapStats().heapSize / 1024 / 1024;
 console.log(`held=${held.length / 2} growthMB=${growthMB.toFixed(1)} heapMB=${heapMB.toFixed(1)}`);
 

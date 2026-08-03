@@ -8,6 +8,13 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(NapiRef);
 
 void NapiRef::ref()
 {
+    // Node's Reference::Ref(): once the weak referent has been collected the
+    // persistent is empty, so ref() returns 0 without incrementing. Callers of
+    // napi_reference_ref read back refCount, so leaving it unchanged yields 0.
+    if (!value()) {
+        NAPI_LOG("ref %p (referent collected)", this);
+        return;
+    }
     NAPI_LOG("ref %p %u -> %u", this, refCount, refCount + 1);
     ++refCount;
     if (refCount == 1 && !weakValueRef.isClear()) {

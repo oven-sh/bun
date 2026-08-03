@@ -3710,6 +3710,283 @@ static napi_value test_napi_status_codes_node26(const Napi::CallbackInfo &info) 
   return ok(env);
 }
 
+// Verifies behavioral parity with Node.js for a grab-bag of N-API functions
+// whose observable result (not just status code) differed from Node:
+// empty-key named set, symbol description handling, external-string argument
+// validation, buffer-info type gate, ToObject coercion for define/freeze/
+// seal/type-tag/set-prototype, result write-on-exception ordering, and
+// module_file_name non-null. Output is compared byte-for-byte against Node
+// by checkSameOutput.
+static napi_value
+test_napi_node26_semantic_parity(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+#ifndef _WIN32
+  BlockingStdoutScope blocking_stdout;
+#endif
+
+  napi_value v_null, v_undef, v_num, v_str, v_str_empty, v_true, v_one, v_obj;
+  NODE_API_CALL(env, napi_get_null(env, &v_null));
+  NODE_API_CALL(env, napi_get_undefined(env, &v_undef));
+  NODE_API_CALL(env, napi_create_double(env, 42.5, &v_num));
+  NODE_API_CALL(env,
+                napi_create_string_utf8(env, "abc", NAPI_AUTO_LENGTH, &v_str));
+  NODE_API_CALL(env, napi_create_string_utf8(env, "", 0, &v_str_empty));
+  NODE_API_CALL(env, napi_get_boolean(env, true, &v_true));
+  NODE_API_CALL(env, napi_create_int32(env, 1, &v_one));
+  NODE_API_CALL(env, napi_create_object(env, &v_obj));
+
+  // napi_set_named_property with "" key
+  report_status(env, "set_named_property(\"\")",
+                napi_set_named_property(env, v_obj, "", v_one));
+  {
+    napi_value key, got;
+    NODE_API_CALL(env, napi_create_string_utf8(env, "", 0, &key));
+    NODE_API_CALL(env, napi_get_property(env, v_obj, key, &got));
+    int32_t n = 0;
+    napi_get_value_int32(env, got, &n);
+    printf("obj[\"\"]=%d\n", n);
+  }
+
+  // napi_create_symbol
+  {
+    napi_value sym;
+    report_status(env, "create_symbol(undefined)",
+                  napi_create_symbol(env, v_undef, &sym));
+    report_status(env, "create_symbol(null)",
+                  napi_create_symbol(env, v_null, &sym));
+    report_status(env, "create_symbol(number)",
+                  napi_create_symbol(env, v_num, &sym));
+    napi_status s = napi_create_symbol(env, v_str_empty, &sym);
+    report_status(env, "create_symbol(\"\")", s);
+    if (s == napi_ok) {
+      napi_value global, sym_ctor, proto, desc_key, desc;
+      NODE_API_CALL(env, napi_get_global(env, &global));
+      NODE_API_CALL(env,
+                    napi_get_named_property(env, global, "Symbol", &sym_ctor));
+      NODE_API_CALL(
+          env, napi_get_named_property(env, sym_ctor, "prototype", &proto));
+      NODE_API_CALL(env, napi_create_string_utf8(env, "description",
+                                                 NAPI_AUTO_LENGTH, &desc_key));
+      NODE_API_CALL(env, napi_get_property(env, sym, desc_key, &desc));
+      napi_valuetype t;
+      NODE_API_CALL(env, napi_typeof(env, desc, &t));
+      char buf[8] = {0};
+      size_t len = 0;
+      if (t == napi_string)
+        napi_get_value_string_utf8(env, desc, buf, sizeof(buf), &len);
+      printf("create_symbol(\"\") description: type=%d len=%zu\n", (int)t, len);
+    }
+  }
+
+  // node_api_create_external_string_latin1 argument validation
+  {
+    napi_value out;
+    bool copied;
+    report_status(env, "ext_string_latin1(NULL,0)",
+                  node_api_create_external_string_latin1(
+                      env, NULL, 0, NULL, NULL, &out, &copied));
+    static char sbuf[1] = {0};
+    report_status(env, "ext_string_latin1(ptr,INT_MAX+1)",
+                  node_api_create_external_string_latin1(
+                      env, sbuf, ((size_t)INT_MAX) + 1u, NULL, NULL, &out,
+                      &copied));
+    static char16_t sbuf16[1] = {0};
+    report_status(env, "ext_string_utf16(ptr,INT_MAX+1)",
+                  node_api_create_external_string_utf16(
+                      env, sbuf16, ((size_t)INT_MAX) + 1u, NULL, NULL, &out,
+                      &copied));
+  }
+
+  // napi_get_buffer_info type gate
+  {
+    napi_value ab;
+    void *d;
+    size_t sz;
+    NODE_API_CALL(env, napi_create_arraybuffer(env, 8, &d, &ab));
+    report_status(env, "get_buffer_info(ArrayBuffer)",
+                  napi_get_buffer_info(env, ab, &d, &sz));
+    napi_value ta;
+    NODE_API_CALL(env,
+                  napi_create_typedarray(env, napi_uint8_array, 8, ab, 0, &ta));
+    report_status(env, "get_buffer_info(Uint8Array)",
+                  napi_get_buffer_info(env, ta, &d, &sz));
+    napi_value dv;
+    NODE_API_CALL(env, napi_create_dataview(env, 8, ab, 0, &dv));
+    report_status(env, "get_buffer_info(DataView)",
+                  napi_get_buffer_info(env, dv, &d, &sz));
+  }
+
+  // ToObject coercion: define_properties / freeze / seal / type_tag /
+  // set_prototype accept primitives, throw+object_expected for null/undefined
+  {
+    napi_value v;
+    NODE_API_CALL(env, napi_create_int32(env, 7, &v));
+    napi_property_descriptor desc = {"x",  NULL, NULL,         NULL,
+                                     NULL, v,    napi_default, NULL};
+    report_status(env, "define_properties(number)",
+                  napi_define_properties(env, v_num, 1, &desc));
+    report_status(env, "define_properties(null)",
+                  napi_define_properties(env, v_null, 1, &desc));
+    report_status(env, "object_freeze(number)",
+                  napi_object_freeze(env, v_num));
+    report_status(env, "object_freeze(null)", napi_object_freeze(env, v_null));
+    report_status(env, "object_seal(number)", napi_object_seal(env, v_num));
+    report_status(env, "object_seal(undefined)",
+                  napi_object_seal(env, v_undef));
+    napi_type_tag tag = {1, 2};
+    report_status(env, "type_tag_object(number)",
+                  napi_type_tag_object(env, v_num, &tag));
+    report_status(env, "type_tag_object(null)",
+                  napi_type_tag_object(env, v_null, &tag));
+    bool match;
+    report_status(env, "check_object_type_tag(number)",
+                  napi_check_object_type_tag(env, v_num, &tag, &match));
+    report_status(env, "check_object_type_tag(null)",
+                  napi_check_object_type_tag(env, v_null, &tag, &match));
+    napi_value proto;
+    NODE_API_CALL(env, napi_create_object(env, &proto));
+    report_status(env, "node_api_set_prototype(number)",
+                  node_api_set_prototype(env, v_num, proto));
+    report_status(env, "node_api_set_prototype(null)",
+                  node_api_set_prototype(env, v_null, proto));
+  }
+
+  // napi_new_instance / napi_get_named_property / napi_has_named_property do
+  // not touch *result when the call fails with an exception.
+  {
+    napi_value thrower;
+    NODE_API_CALL(
+        env, napi_create_function(
+                 env, "Throws", NAPI_AUTO_LENGTH,
+                 [](napi_env e, napi_callback_info) -> napi_value {
+                   napi_throw_error(e, NULL, "ctor");
+                   return NULL;
+                 },
+                 NULL, &thrower));
+    napi_value sentinel = reinterpret_cast<napi_value>(0xdeadbeef);
+    napi_value r = sentinel;
+    napi_status s = napi_new_instance(env, thrower, 0, NULL, &r);
+    bool pending;
+    napi_is_exception_pending(env, &pending);
+    if (pending) {
+      napi_value e;
+      napi_get_and_clear_last_exception(env, &e);
+    }
+    printf("new_instance(throws): status=%d result_written=%d\n", (int)s,
+           r != sentinel);
+
+    // Proxy whose has/get traps throw
+    napi_value script, proxy;
+    NODE_API_CALL(
+        env, napi_create_string_utf8(
+                 env,
+                 "new Proxy({}, {has: () => { throw new Error('h'); }, "
+                 "get: () => { throw new Error('g'); }})",
+                 NAPI_AUTO_LENGTH, &script));
+    NODE_API_CALL(env, napi_run_script(env, script, &proxy));
+    r = sentinel;
+    s = napi_get_named_property(env, proxy, "k", &r);
+    napi_is_exception_pending(env, &pending);
+    if (pending) {
+      napi_value e;
+      napi_get_and_clear_last_exception(env, &e);
+    }
+    printf("get_named_property(throws): status=%d result_written=%d\n", (int)s,
+           r != sentinel);
+    bool br = true;
+    s = napi_has_named_property(env, proxy, "k", &br);
+    napi_is_exception_pending(env, &pending);
+    if (pending) {
+      napi_value e;
+      napi_get_and_clear_last_exception(env, &e);
+    }
+    printf("has_named_property(throws): status=%d result_written=%d\n", (int)s,
+           br != true);
+  }
+
+  // node_api_get_module_file_name never writes NULL
+  {
+    const char *fn = reinterpret_cast<const char *>(0x1);
+    napi_status s = node_api_get_module_file_name(env, &fn);
+    printf("module_file_name: status=%d is_null=%d\n", (int)s, fn == NULL);
+  }
+
+  return ok(env);
+}
+
+// Returns a weak napi_ref to a fresh object so the JS side can GC and then
+// inspect napi_reference_ref behaviour after the referent is collected.
+static napi_value
+test_create_weak_ref_for_gc(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value obj;
+  NODE_API_CALL(env, napi_create_object(env, &obj));
+  napi_ref ref;
+  NODE_API_CALL(env, napi_create_reference(env, obj, 0, &ref));
+  napi_value ext;
+  NODE_API_CALL(env,
+                napi_create_external(env, reinterpret_cast<void *>(ref), NULL,
+                                     NULL, &ext));
+  return ext;
+}
+
+static napi_value
+test_reference_ref_after_collect(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  void *p;
+  NODE_API_CALL(env, napi_get_value_external(env, info[1], &p));
+  napi_ref ref = reinterpret_cast<napi_ref>(p);
+
+  napi_value v = NULL;
+  NODE_API_CALL(env, napi_get_reference_value(env, ref, &v));
+  napi_valuetype t = napi_undefined;
+  if (v) napi_typeof(env, v, &t);
+  uint32_t count = 999;
+  NODE_API_CALL(env, napi_reference_ref(env, ref, &count));
+  printf("get_reference_value is undefined=%d reference_ref count=%u\n",
+         (v == NULL || t == napi_undefined), count);
+  uint32_t count2 = 999;
+  NODE_API_CALL(env, napi_reference_ref(env, ref, &count2));
+  printf("second reference_ref count=%u\n", count2);
+  NODE_API_CALL(env, napi_delete_reference(env, ref));
+  return ok(env);
+}
+
+static std::atomic<int> tsfn_nullcb_was_null(-1);
+
+static void tsfn_nullcb_call_js(napi_env env, napi_value js_callback,
+                                void *context, void *data) {
+  tsfn_nullcb_was_null.store(js_callback == NULL ? 1 : 0);
+}
+
+static void tsfn_nullcb_finalize(napi_env env, void *data, void *hint) {}
+
+static napi_value
+test_tsfn_null_js_callback(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  tsfn_nullcb_was_null.store(-1);
+  napi_value name;
+  NODE_API_CALL(env, napi_create_string_utf8(env, "tsfn-nullcb",
+                                             NAPI_AUTO_LENGTH, &name));
+  napi_threadsafe_function tsfn;
+  NODE_API_CALL(env, napi_create_threadsafe_function(
+                         env, NULL, NULL, name, 0, 1, NULL,
+                         tsfn_nullcb_finalize, NULL, tsfn_nullcb_call_js,
+                         &tsfn));
+  NODE_API_CALL(
+      env, napi_call_threadsafe_function(tsfn, NULL, napi_tsfn_nonblocking));
+  NODE_API_CALL(env,
+                napi_release_threadsafe_function(tsfn, napi_tsfn_release));
+  return ok(env);
+}
+
+static napi_value
+test_tsfn_null_js_callback_result(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  printf("js_callback == NULL: %d\n", tsfn_nullcb_was_null.load());
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_typedarray_info_byte_offset);
   REGISTER_FUNCTION(env, exports, test_dataview_info_byte_offset);
@@ -3788,6 +4065,11 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_node_api_create_object_with_properties);
   REGISTER_FUNCTION(env, exports, test_node_api_sharedarraybuffer);
   REGISTER_FUNCTION(env, exports, test_napi_status_codes_node26);
+  REGISTER_FUNCTION(env, exports, test_napi_node26_semantic_parity);
+  REGISTER_FUNCTION(env, exports, test_create_weak_ref_for_gc);
+  REGISTER_FUNCTION(env, exports, test_reference_ref_after_collect);
+  REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback);
+  REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback_result);
 }
 
 } // namespace napitests

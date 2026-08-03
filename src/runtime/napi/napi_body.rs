@@ -2045,6 +2045,11 @@ extern "C" fn napi_get_buffer_info(
     let Some(array_buf) = value.as_array_buffer(env.to_js()) else {
         return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);
     };
+    // Node's node::Buffer::HasInstance accepts any ArrayBufferView (typed
+    // arrays and DataView) but rejects a bare ArrayBuffer.
+    if array_buf.typed_array_type == jsc::JSType::ArrayBuffer {
+        return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);
+    }
 
     write_out(data, array_buf.ptr);
     write_out(length, array_buf.byte_len);
@@ -2520,7 +2525,11 @@ impl ThreadSafeFunction {
             return;
         }
 
+        // Node's kMaxIterationCount: cap per tick so a producer that enqueues
+        // faster than we drain cannot starve the rest of the event loop.
+        const MAX_ITERATION_COUNT: u32 = 1000;
         let mut is_first = true;
+        let mut iterations: u32 = 0;
 
         // Run the tasks.
         loop {
@@ -2532,6 +2541,16 @@ impl ThreadSafeFunction {
                 self_
                     .dispatch_state
                     .store(DispatchState::Pending as u8, Ordering::SeqCst);
+                iterations += 1;
+                if iterations >= MAX_ITERATION_COUNT {
+                    // Yield: flip Pending -> Idle so schedule_dispatch
+                    // re-enqueues a fresh tick for the remainder.
+                    self_
+                        .dispatch_state
+                        .store(DispatchState::Idle as u8, Ordering::SeqCst);
+                    self_.schedule_dispatch();
+                    return;
+                }
             } else {
                 // We're done running tasks, for now. Transition Running → Idle
                 // via CAS instead of an unconditional store: between
@@ -2558,11 +2577,6 @@ impl ThreadSafeFunction {
                 // state was bumped to Pending by enqueue()/release(); re-dispatch.
             }
         }
-
-        // Node sets a maximum number of runs per ThreadSafeFunction to 1,000.
-        // We don't set a max. I would like to see an issue caused by not
-        // setting a max before we do set a max. It is better for performance to
-        // not add unnecessary event loop ticks.
     }
 
     pub(crate) fn is_closing(&self) -> bool {
@@ -2691,17 +2705,17 @@ impl ThreadSafeFunction {
                 js: cb_js,
                 napi_threadsafe_function_call_js,
             } => {
-                let js: JSValue = cb_js.get().unwrap_or(JSValue::UNDEFINED);
-
                 // SAFETY: `env` is held alive by `self.env` (`NapiEnvRef`) for the TSF's lifetime.
                 let env_ref = unsafe { &*env };
                 let _hs = NapiHandleScope::open_scoped(env_ref);
-                napi_threadsafe_function_call_js(
-                    env,
-                    napi_value::create(env_ref, js),
-                    self.ctx,
-                    task,
-                );
+                // Node passes a null napi_value for js_callback when no func was
+                // supplied at creation. Addons gate on `js_callback != NULL`, so
+                // an encoded `undefined` (a non-zero napi_value) would be wrong.
+                let js = match cb_js.get() {
+                    Some(v) => napi_value::create(env_ref, v),
+                    None => napi_value(0),
+                };
+                napi_threadsafe_function_call_js(env, js, self.ctx, task);
             }
         }
         Ok(())

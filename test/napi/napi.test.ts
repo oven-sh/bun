@@ -1611,6 +1611,47 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     });
   });
 
+  describe("semantic parity with Node.js", () => {
+    it("matches Node for symbol description, ToObject coercion, external-string args, buffer-info gate, result-on-exception, empty named key, and module filename", async () => {
+      const output = await checkSameOutput("test_napi_node26_semantic_parity", []);
+      expect(output).toContain('set_named_property(""): status=0 pending=0');
+      expect(output).toContain('obj[""]=1');
+      expect(output).toContain("create_symbol(undefined): status=3 pending=0");
+      expect(output).toContain("create_symbol(null): status=3 pending=0");
+      expect(output).toContain('create_symbol(""): status=0 pending=0');
+      expect(output).toContain('create_symbol("") description: type=4 len=0');
+      expect(output).toContain("ext_string_latin1(NULL,0): status=0 pending=0");
+      expect(output).toContain("ext_string_latin1(ptr,INT_MAX+1): status=1 pending=0");
+      expect(output).toContain("ext_string_utf16(ptr,INT_MAX+1): status=1 pending=0");
+      expect(output).toContain("get_buffer_info(ArrayBuffer): status=1 pending=0");
+      expect(output).toContain("get_buffer_info(Uint8Array): status=0 pending=0");
+      expect(output).toContain("get_buffer_info(DataView): status=0 pending=0");
+      expect(output).toContain("define_properties(number): status=0 pending=0");
+      expect(output).toContain("define_properties(null): status=2 pending=1");
+      expect(output).toContain("object_freeze(number): status=0 pending=0");
+      expect(output).toContain("object_freeze(null): status=2 pending=1");
+      expect(output).toContain("object_seal(number): status=0 pending=0");
+      expect(output).toContain("type_tag_object(number): status=0 pending=0");
+      expect(output).toContain("type_tag_object(null): status=10 pending=1");
+      expect(output).toContain("check_object_type_tag(number): status=0 pending=0");
+      expect(output).toContain("node_api_set_prototype(number): status=0 pending=0");
+      expect(output).toContain("node_api_set_prototype(null): status=2 pending=1");
+      expect(output).toContain("result_written=0");
+      expect(output).toContain("module_file_name: status=0 is_null=0");
+    });
+
+    it("napi_reference_ref returns 0 after the referent is collected", async () => {
+      const output = await checkSameOutput("test_reference_ref_after_collect_driver", []);
+      expect(output).toContain("reference_ref count=0");
+      expect(output).toContain("second reference_ref count=0");
+    });
+
+    it("threadsafe function call_js receives NULL js_callback when created without a func", async () => {
+      const output = await checkSameOutput("test_tsfn_null_js_callback_driver", []);
+      expect(output).toContain("js_callback == NULL: 1");
+    });
+  });
+
   describe("napi_is_arraybuffer", () => {
     it("distinguishes ArrayBuffer from SharedArrayBuffer and typed arrays", async () => {
       // https://github.com/oven-sh/bun/issues/32624

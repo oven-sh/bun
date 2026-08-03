@@ -3947,13 +3947,9 @@ unsafe fn get_loader_and_virtual_source<'a>(
         loader_for_path(&path, unsafe { &(*jsc_vm).transpiler.options.loaders });
     let mut virtual_source: Option<&'a bun_ast::Source> = None;
 
-    // `data:` URL: node derives the module format from the MIME type rather than
-    // from the body, and rejects anything it has no format for
-    // (lib/internal/modules/esm/load.js `mimeToFormat`):
-    //   text/javascript -> module, application/json -> json, application/wasm -> wasm.
-    // Without this the MIME is ignored entirely, so `data:application/json,{"a":1}`
-    // was parsed as JavaScript and `data:text/plain,…` silently ran as a script.
-    // text/css has no node equivalent and stays mapped to Bun's CSS loader.
+    // data: URLs pick their loader from the MIME type and reject unknown types, per
+    // https://github.com/nodejs/node/blob/main/lib/internal/modules/esm/get_format.js
+    // (mimeToFormat). text/css is a Bun extension.
     if let Ok(Some(data_url)) = bun_resolver::data_url::DataURL::parse(path.text) {
         use bun_http_types::MimeType::Category;
         loader = Some(match data_url.decode_mime_type().category {
@@ -4221,12 +4217,8 @@ unsafe fn transpile_file(
     } {
         Ok(lr) => lr,
         Err(err) => {
-            // node re-derives the media type from the URL when it reports an
-            // unusable data: URL format, so the message names the MIME rather
-            // than the (falsy) format: `Unknown module format: text/plain for
-            // URL data:text/plain,`. See `throwUnknownModuleFormat` in
-            // lib/internal/modules/esm/load.js and the `ERR_UNKNOWN_MODULE_FORMAT`
-            // (RangeError) entry in lib/internal/errors.js.
+            // ERR_UNKNOWN_MODULE_FORMAT (RangeError) names the MIME, not the format:
+            // https://github.com/nodejs/node/blob/main/lib/internal/modules/esm/load.js (throwUnknownModuleFormat).
             let js = if matches!(err, crate::Error::UnknownDataURLModuleFormat) {
                 let specifier_bytes = _specifier.slice();
                 // node's capture is `([^/]+\/[^;,]+)`, i.e. the media type only —
@@ -4314,10 +4306,8 @@ unsafe fn transpile_file(
 
     // ── module_type sniff from extension / package.json ─────────────────────
     let module_type: ModuleType = 'brk: {
-        // A `data:` URL is always an ES module in node, so `module.exports = …`
-        // inside one is a ReferenceError rather than being CommonJS-sniffed.
-        // (Ignored for the json/wasm/css loaders, which are not wrappable —
-        // see `module_type_only_for_wrappables`.)
+        // data: URLs are always ESM in node (no CJS sniff); json/wasm/css loaders
+        // ignore this via `module_type_only_for_wrappables`.
         if lr.path.text.starts_with(b"data:") {
             break 'brk ModuleType::Esm;
         }

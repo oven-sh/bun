@@ -42,10 +42,8 @@ static std::pair<Ref<MessagePort>, Ref<MessagePort>> generateMessagePorts(Script
 Ref<MessageChannel> MessageChannel::create(ScriptExecutionContext& context)
 {
     auto channel = adoptRef(*new MessageChannel(context));
-    // node's MessagePort is an AsyncWrap, so constructing a channel emits a
-    // MESSAGEPORT async_hooks `init` for each end with the port as the resource.
-    // Bun creates a port's JS wrapper lazily (on `channel.port1`), so this has to
-    // materialize both of them — it only runs when a hook is enabled.
+    // node emits a MESSAGEPORT async_hooks `init` per end (src/node_messaging.cc);
+    // wrappers are lazy in Bun so materialize both here. No-op without an enabled hook.
     Bun::emitMessagePortAsyncHooksInit(context, channel->port1(), channel->port2());
     return channel;
 }

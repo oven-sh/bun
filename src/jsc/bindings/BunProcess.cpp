@@ -1650,17 +1650,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (JSC::JSGlobalObject * lexicalG
         process->wrapped().emit(ident, args);
         return JSValue::encode(jsUndefined());
     } else if (!Bun__NODE_NO_WARNINGS()) {
-        // node prints the warning through the global console object, not the fd:
-        // lib/internal/process/warning.js `writeOut()` calls
-        // `require('internal/console/global').error(message)`.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/warning.js#L53-L56
-        // That routing is observable: a worker thread replaces globalThis.console
-        // with one bound to its captured stdio (src/js/node/worker_threads.ts), so
-        // writing the process-wide fd 2 here made worker warnings bypass
-        // `worker.stderr` entirely. Use `warn` rather than node's `error` because
-        // Bun's console.error renders an Error with a source-code preview block,
-        // which would change the bytes of every warning; `warn` is the level this
-        // call site already used and prints the same text as before.
+        // node routes warnings through console, not fd 2, so worker warnings reach worker.stderr:
+        // https://github.com/nodejs/node/blob/main/lib/internal/process/warning.js (writeOut).
+        // Use `warn` (not node's `error`) so Bun's Error source-preview doesn't alter the bytes.
         JSValue consoleValue = globalObject->get(globalObject, JSC::Identifier::fromString(vm, "console"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (JSObject* consoleObject = consoleValue.getObject()) {

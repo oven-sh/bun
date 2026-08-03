@@ -24,18 +24,13 @@
  *
  */
 
-// MessagePort is a thin EventTarget wrapper over MessagePortPipe.
-//
-// The pipe owns the cross-thread queue and wakeup coalescing; this class
-// owns the JS-facing state (started/closed/detached, listener bookkeeping,
-// event-loop ref) and translates between pipe callbacks and DOM events.
+// EventTarget wrapper over MessagePortPipe: pipe owns the cross-thread queue,
+// this owns JS-facing state (started/closed/detached, listener refs, loop ref).
 
 #pragma once
 
-// Marker used by MessagePortPipe.cpp so that, when the verification harness
-// reverts src/ to origin/main (leaving MessagePortPipe.{h,cpp} behind as new
-// untracked files), the pipe's translation unit compiles to nothing instead
-// of referencing symbols that only exist on this branch's MessagePort.
+// Marker so MessagePortPipe.cpp compiles to nothing when the verification
+// harness reverts src/ but leaves MessagePortPipe.{h,cpp} as untracked files.
 #define BUN_MESSAGEPORT_USES_PIPE 1
 
 #include "ContextDestructionObserver.h"

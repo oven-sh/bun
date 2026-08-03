@@ -31,10 +31,6 @@ find test/ -type f \
      -o -name "*.test.mjs" -o -name "*.test.cjs" -o -name "*.spec.mjs" -o -name "*.spec.cjs" \
      -o -name "*.test.mts" -o -name "*.test.cts" -o -name "*.spec.mts" -o -name "*.spec.cts" \) \
   ! -path "*/node_modules/*" \
-  ! -name "*fuzzy-wuzzy*" \
-  ! -path "*/fixtures/*" \
-  ! -path "*/snapshots/*" \
-  ! -path "*/node-napi-tests/*" \
   | sort > "$PDIR/test_files.txt"
 
 TOTAL_FILES=$(wc -l < "$PDIR/test_files.txt")

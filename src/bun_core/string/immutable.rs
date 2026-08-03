@@ -842,8 +842,10 @@ pub fn starts_with_case_insensitive_ascii(self_: &[u8], prefix: &[u8]) -> bool {
 }
 
 pub fn ends_with_case_insensitive_ascii(self_: &[u8], suffix: &[u8]) -> bool {
+    // `check_len = true` so an empty suffix returns true instead of tripping
+    // the comparator's non-empty debug assertion.
     self_.len() >= suffix.len()
-        && eql_case_insensitive_ascii(&self_[self_.len() - suffix.len()..], suffix, false)
+        && eql_case_insensitive_ascii(&self_[self_.len() - suffix.len()..], suffix, true)
 }
 
 pub use crate::strings_impl::{
@@ -2597,6 +2599,16 @@ mod tests {
         assert_eq!(super::first_non_ascii(b"ab\xC3"), Some(2));
         assert!(super::eql_case_insensitive_ascii(b"A", b"a", true));
         assert!(!super::eql_case_insensitive_ascii(b"Ab", b"a", true));
+    }
+
+    #[test]
+    fn ends_with_case_insensitive_ascii_handles_empty_and_oversized_suffixes() {
+        assert!(super::ends_with_case_insensitive_ascii(b"bunx.EXE", b"bunx.exe"));
+        assert!(super::ends_with_case_insensitive_ascii(b"C:\\bin\\BUNX.EXE", b"bunx.exe"));
+        assert!(!super::ends_with_case_insensitive_ascii(b"bun", b"bunx"));
+        assert!(super::ends_with_case_insensitive_ascii(b"bunx", b""));
+        assert!(super::ends_with_case_insensitive_ascii(b"", b""));
+        assert!(!super::ends_with_case_insensitive_ascii(b"", b"bunx"));
     }
 
     #[test]

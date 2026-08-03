@@ -156,12 +156,9 @@ const kPerfHooksNetConnectContext = Symbol("kPerfHooksNetConnectContext");
 const khandshakeTimer = Symbol("khandshakeTimer");
 const kerrorEmitted = Symbol("kerrorEmitted");
 const kUserUnrefed = Symbol("kUserUnrefed");
-// process._getActiveHandles() / getActiveResourcesInfo() registry. Sockets
-// and servers register while they hold a live native handle; kHandleKind
-// carries node's resource-kind string ('PipeWrap' for unix/pipe transports).
-// Loaded on first registration, not at module scope: requiring node:net must
-// not pull in the registry (and its native count bindings) for processes
-// that never create a socket.
+// process._getActiveHandles()/getActiveResourcesInfo() registry. Lazy-loaded so
+// `require('node:net')` alone does not pull in the registry's native bindings.
+// Node ref: https://github.com/nodejs/node/blob/main/lib/net.js
 let activeHandles;
 function registerHandle(handle, kind, unrefFlag) {
   (activeHandles ??= require("internal/active_handles")).registerHandle(handle, kind, unrefFlag);
@@ -2142,10 +2139,8 @@ Socket.prototype.connect = function connect(...args) {
     initSocketHandle(this);
   }
 
-  // node creates the TCP/Pipe wrap synchronously in connect(), so a socket
-  // that is still resolving DNS or waiting on SYN is already visible to
-  // getActiveResourcesInfo(); destroy() unregisters on connect failure and
-  // the open handler's registerHandle is a no-op re-link once established.
+  // Node creates the TCP/Pipe wrap synchronously in connect() (lib/net.js), so a
+  // connecting socket is already visible; open handler's registerHandle is a no-op re-link.
   this[kHandleKind] = pipe ? "PipeWrap" : "TCPSocketWrap";
   registerHandle(this, this[kHandleKind], kUserUnrefed);
 

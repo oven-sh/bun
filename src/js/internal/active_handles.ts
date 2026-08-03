@@ -1,7 +1,6 @@
-// Node v26.3.0 parity (lib/internal/process/per_thread.js, env.cc handle wrap
-// queue): live node:net handle registry plus assembly for process._getActiveHandles(),
-// process._getActiveRequests() and process.getActiveResourcesInfo(). Intrusive
-// doubly-linked list keyed by symbols: register/unregister add no GC cells.
+// Handle registry for process._getActiveHandles()/_getActiveRequests()/getActiveResourcesInfo().
+// Node ref: https://github.com/nodejs/node/blob/main/lib/internal/process/per_thread.js
+// and https://github.com/nodejs/node/blob/main/src/env.cc (handle_wrap_queue).
 
 const getActiveTimeoutCount = $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.getActiveTimeoutCount", 0);
 const getActiveImmediateCount = $newRustFunction(
@@ -23,10 +22,8 @@ const head: any = {};
 head[kPrev] = head;
 head[kNext] = head;
 
-// Request wraps, named like node's so ecosystem constructor-name filtering
-// works on process._getActiveRequests(). fs requests are count-derived from
-// the native pool, so instances are created on demand; dns lookups register
-// live wraps at dispatch and drop them at settle.
+// Named to match Node's wraps so constructor-name filtering on _getActiveRequests() works.
+// fs entries are count-derived (no live wrap); dns entries register the live wrap at dispatch.
 class FSReqCallback {}
 class GetAddrInfoReqWrap {}
 class GetNameInfoReqWrap {}
@@ -105,10 +102,8 @@ function getActiveResourcesInfo() {
 }
 
 function getActiveRequests() {
-  // One entry per in-flight async request. fs requests complete through a
-  // native promise with no user-visible wrap, so each fs entry is a fresh
-  // FSReqCallback instance; dns entries are the live wraps registered at
-  // dispatch.
+  // fs requests have no user-visible wrap (native promise), so each fs entry is a
+  // fresh FSReqCallback instance; dns entries are the live wraps registered at dispatch.
   const requests: unknown[] = [];
   for (let i = 0, n = getPendingFsRequestCount(); i < n; i++) {
     requests.push(new FSReqCallback());

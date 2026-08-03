@@ -228,10 +228,8 @@ mod _impl {
         bun_jsc::to_js_host_fn_result(global_object, create_exec_argv(global_object))
     }
 
-    /// execArgv args that consume an extra argument, so `--` as their pending
-    /// value is not treated as the option-parsing terminator. Built lazily
-    /// from the `AUTO_PARAMS` table: `--long` / `-s` for every param with a
-    /// value.
+    /// execArgv options that consume a following value, so `--` as their pending
+    /// value is kept (not the option terminator). Built from `AUTO_PARAMS`.
     static EXEC_ARGV_VALUE_PARAMS: std::sync::LazyLock<bun_collections::StringSet> =
         std::sync::LazyLock::new(|| {
             let mut set = bun_collections::StringSet::new();
@@ -260,11 +258,8 @@ mod _impl {
             if let Some(exec_argv) = worker.exec_argv() {
                 use bun_core::WTFStringImplExt as _;
 
-                // `--` terminates option parsing here too: Node truncates a
-                // worker's execArgv at the first `--` instead of reporting it.
-                // Same carve-out as the main-thread branch below: `--` that is
-                // the pending value of a value-taking option stays, so execArgv
-                // round-trips through fork().
+                // Node truncates a worker's execArgv at the first `--` (src/node_options.cc);
+                // same carve-out as below: `--` as a pending option value stays.
                 let mut end = exec_argv.len();
                 let mut prev: Option<Vec<u8>> = None;
                 for (i, &wtf) in exec_argv.iter().enumerate() {
@@ -355,12 +350,8 @@ mod _impl {
             // emulate `defer prev = arg` by setting at end of each iteration body
             let arg: &[u8] = arg;
 
-            // `--` terminates option parsing: Node drops it and treats the
-            // next token as the script, so it must not land in execArgv.
-            // Unless it is the value of a pending value-taking option -- Node
-            // rejects that command line outright ("--conditions requires an
-            // argument"), but Bun's CLI accepts it, and dropping the value
-            // here would stop execArgv from round-tripping through fork().
+            // `--` terminates option parsing (Node drops it; src/node_options.cc). Exception:
+            // `--` as a pending option value is kept so execArgv round-trips through fork().
             if arg == b"--" && !prev.is_some_and(|p| EXEC_ARGV_VALUE_PARAMS.contains(p)) {
                 break;
             }

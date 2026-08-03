@@ -86,11 +86,9 @@ const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const { kIncomingMessage } = require("node:_http_common");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 
-// node's http.Server owns a real TCP/Pipe listen handle, so it appears in
-// process.getActiveResourcesInfo()/_getActiveHandles() ("TCPServerWrap", or
-// "PipeWrap" for unix sockets; verified on node v26.3.0). Bun's http.Server
-// rides Bun.serve with no net.Server backend, so it registers with the shared
-// handle registry directly; `_unref` mirrors ref()/unref() like net.Server.
+// Bun's http.Server rides Bun.serve (no net.Server), so register with the handle
+// registry directly as "TCPServerWrap"/"PipeWrap"; `_unref` mirrors net.Server.
+// Node ref: https://github.com/nodejs/node/blob/main/lib/_http_server.js
 let activeHandles;
 function registerServerHandle(server, kind) {
   (activeHandles ??= require("internal/active_handles")).registerHandle(server, kind, "_unref");

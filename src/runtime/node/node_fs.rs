@@ -1799,10 +1799,8 @@ mod _async_tasks {
             let global_object: &JSGlobalObject = unsafe { &*go_ptr.cast::<JSGlobalObject>() };
             let success = (*self.result.get_mut()).is_ok();
             let promise_value = self.promise.value();
-            // Captured as a raw pointer because the scope guard's `destroy(self)`
-            // drops the `Strong` wrapper at function exit. The `JSPromise` itself
-            // lives on the JS heap and is kept alive past that point by
-            // `promise_value.ensure_still_alive()`.
+            // Raw pointer: the scope guard's `destroy(self)` drops the `Strong` wrapper at
+            // exit; the `JSPromise` cell is kept alive by `promise_value.ensure_still_alive()`.
             let promise: *mut bun_jsc::JSPromise = self.promise.get();
             let result = match self.result.get_mut() {
                 // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
@@ -2654,10 +2652,8 @@ mod _async_tasks {
             let global_object = global_object.get();
             let success = self.pending_err.is_none();
             let promise_value = self.promise.value();
-            // Raw-pointer capture: see `AsyncCpTask::run_from_js_thread` for rationale —
-            // the guard's `Self::destroy` at scope exit drops only the `Strong`
-            // wrapper; the `JSPromise` cell outlives it via
-            // `promise_value.ensure_still_alive()`.
+            // Raw-pointer capture: see `AsyncCpTask::run_from_js_thread` — the guard's destroy
+            // drops the `Strong` wrapper; the cell outlives it via `promise_value.ensure_still_alive()`.
             let promise: *mut bun_jsc::JSPromise = self.promise.get();
             let result = if let Some(err) = &mut self.pending_err {
                 // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.

@@ -315,10 +315,8 @@ function lookup(hostname, options, callback) {
     return;
   }
 
-  // node parks a GetAddrInfoReqWrap for every in-flight lookup, visible via
-  // process.getActiveResourcesInfo()/_getActiveRequests() until it settles.
-  // The native call can throw synchronously, so the wrap registers only once
-  // the promise exists - never before the fallible step.
+  // Node parks a GetAddrInfoReqWrap per in-flight lookup (lib/dns.js); register
+  // only after dns.lookup() returns since it can throw synchronously.
   const promise = dns.lookup(hostname, options);
   activeHandles ??= require("internal/active_handles");
   const reqWrap = activeHandles.noteRequestStart(new activeHandles.GetAddrInfoReqWrap());

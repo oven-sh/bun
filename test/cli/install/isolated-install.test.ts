@@ -1804,6 +1804,35 @@ describe("global virtual store", () => {
     expect(readlinkSync(join(bunDir, "no-deps@1.0.0"))).toMatch(/links[\/\\]no-deps@1\.0\.0-[0-9a-f]{16}$/);
   });
 
+  // Scoped peer names use DefinitelyTyped mangling: `@scoped/no-deps` is
+  // typed by `@types/scoped__no-deps`.
+  test("entries with scoped @types-typed peers stay project-local", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-scoped-peer-types",
+        dependencies: {
+          "scoped-peer-deps": "1.0.0",
+          "@scoped/no-deps": "1.0.0",
+          "@types/scoped__no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const peerEntry = (await readdirSorted(bunDir)).find(e => e.startsWith("scoped-peer-deps@1.0.0"));
+    expect(peerEntry).toBeDefined();
+
+    expect(lstatSync(join(bunDir, peerEntry!)).isSymbolicLink()).toBe(false);
+    expect(lstatSync(join(bunDir, peerEntry!)).isDirectory()).toBe(true);
+    expect(existsSync(join(bunDir, peerEntry!, "node_modules", "@scoped", "no-deps", "package.json"))).toBe(true);
+    expect(existsSync(join(bunDir, "node_modules", "@types", "scoped__no-deps", "package.json"))).toBe(true);
+  });
+
   test("peer entries without a matching @types package stay in the global store", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 

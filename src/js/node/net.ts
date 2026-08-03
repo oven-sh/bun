@@ -2445,6 +2445,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       connection.on("drain", events[2]);
       connection.on("close", events[3]);
       this._handle = result;
+      registerHandle(this, "TCPSocketWrap", kUserUnrefed);
       this.emit(kUpgradeAttached);
       return;
     }

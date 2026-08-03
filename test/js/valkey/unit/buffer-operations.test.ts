@@ -223,7 +223,12 @@ describe("Valkey: Blob argument serialization", () => {
       // nonexistent path is still a file-backed Blob
       expect(() => client.set("missing", Bun.file(join(String(dir), "no.txt")))).toThrow(expected);
       // S3-backed Blob (no network: the throw happens in argument conversion)
-      const s3 = new Bun.S3Client({ accessKeyId: "x", secretAccessKey: "y", bucket: "b", endpoint: "http://127.0.0.1:1" });
+      const s3 = new Bun.S3Client({
+        accessKeyId: "x",
+        secretAccessKey: "y",
+        bucket: "b",
+        endpoint: "http://127.0.0.1:1",
+      });
       expect(() => client.set("s3", s3.file("some-key"))).toThrow(expected);
       // other prototype methods route through the same converter
       expect(() => client.getBuffer(Bun.file(fpath))).toThrow(expected);

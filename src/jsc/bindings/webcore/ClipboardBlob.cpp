@@ -13,6 +13,7 @@ extern "C" void Blob__implGetSpan(BlobImpl*, const uint8_t** outPtr, size_t* out
 extern "C" bool Blob__implNeedsToReadFile(BlobImpl*);
 extern "C" void Blob__implGetContentType(BlobImpl*, const uint8_t** outPtr, size_t* outLength);
 extern "C" void* Blob__fromBytesWithNormalizedType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const uint8_t* mime, size_t mimeLength, bool normalize);
+extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(JSC::JSGlobalObject*, void*);
 
 std::span<const uint8_t> clipboardBlobBytes(Blob& blob)
 {
@@ -58,6 +59,14 @@ Ref<Blob> createClipboardBlob(JSC::JSGlobalObject* globalObject, std::span<const
     Blob__deref(impl);
     RELEASE_ASSERT(blob);
     return blob.releaseNonNull();
+}
+
+JSC::JSValue clipboardBlobToJS(JSC::JSGlobalObject* globalObject, Blob& blob)
+{
+    auto* impl = blob.impl();
+    if (!impl)
+        return JSC::jsNull();
+    return JSC::JSValue::decode(Blob__create(globalObject, Blob__dupe(impl)));
 }
 
 bool clipboardBlobTypeMatches(const String& declared, const String& requested)

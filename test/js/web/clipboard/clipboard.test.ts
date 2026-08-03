@@ -199,6 +199,8 @@ describe("ClipboardItem", () => {
     // returned types are asserted exactly as Blob reports them.
     const plain = await item.getType("text/plain");
     expect(plain).toBeInstanceOf(Blob);
+    // Spec: getType() returns a Blob, not a File (and browsers agree).
+    expect(plain).not.toBeInstanceOf(File);
     expect(plain.type).toBe("text/plain;charset=utf-8");
     expect(await plain.text()).toBe("as a string");
     const html = await item.getType("text/html");

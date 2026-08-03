@@ -26,9 +26,9 @@
 #include "config.h"
 #include "ClipboardItemPlatformDataSource.h"
 
+#include "ClipboardBlob.h"
 #include "ClipboardItem.h"
 #include "ExceptionCode.h"
-#include "JSDOMConvertInterface.h"
 #include "JSDOMPromiseDeferred.h"
 #include "blob.h"
 #include <wtf/CompletionHandler.h>
@@ -69,7 +69,12 @@ void ClipboardItemPlatformDataSource::getType(const String& type, Ref<DeferredPr
     }
 
     // The read already produced a Blob of exactly this type.
-    promise->resolve<IDLInterface<Blob>>(m_data[matchIndex].value.get());
+    auto* globalObject = promise->globalObject();
+    if (!globalObject) {
+        promise->reject(ExceptionCode::InvalidStateError);
+        return;
+    }
+    promise->resolveWithJSValue(clipboardBlobToJS(globalObject, m_data[matchIndex].value.get()));
 }
 
 void ClipboardItemPlatformDataSource::collectDataForWriting(Clipboard&, CollectCompletionHandler&& completion)

@@ -126,7 +126,7 @@ void ClipboardItemBindingsDataSource::getType(const String& type, Ref<DeferredPr
         if (terminated)
             return;
         if (blob) {
-            promise->resolve<IDLInterface<Blob>>(*blob);
+            promise->resolveWithJSValue(clipboardBlobToJS(globalObject, *blob));
             return;
         }
         if (error) {

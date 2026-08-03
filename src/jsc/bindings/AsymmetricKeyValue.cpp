@@ -105,6 +105,7 @@ AsymmetricKeyValue::AsymmetricKeyValue(WebCore::CryptoKey& cryptoKey)
     case CryptoAlgorithmIdentifier::ML_DSA_44:
     case CryptoAlgorithmIdentifier::ML_DSA_65:
     case CryptoAlgorithmIdentifier::ML_DSA_87:
+    case CryptoAlgorithmIdentifier::ML_KEM_512:
     case CryptoAlgorithmIdentifier::ML_KEM_768:
     case CryptoAlgorithmIdentifier::ML_KEM_1024:
         key = downcast<WebCore::CryptoKeyAKP>(cryptoKey).platformKey();

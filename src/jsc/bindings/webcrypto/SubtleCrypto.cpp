@@ -341,6 +341,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::ML_DSA_44:
         case CryptoAlgorithmIdentifier::ML_DSA_65:
         case CryptoAlgorithmIdentifier::ML_DSA_87:
+        case CryptoAlgorithmIdentifier::ML_KEM_512:
         case CryptoAlgorithmIdentifier::ML_KEM_768:
         case CryptoAlgorithmIdentifier::ML_KEM_1024:
             result = makeUnique<CryptoAlgorithmParameters>(params);
@@ -441,6 +442,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::ML_DSA_44:
         case CryptoAlgorithmIdentifier::ML_DSA_65:
         case CryptoAlgorithmIdentifier::ML_DSA_87:
+        case CryptoAlgorithmIdentifier::ML_KEM_512:
         case CryptoAlgorithmIdentifier::ML_KEM_768:
         case CryptoAlgorithmIdentifier::ML_KEM_1024:
             result = makeUnique<CryptoAlgorithmParameters>(params);
@@ -493,6 +495,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
     case Operations::Encapsulate:
     case Operations::Decapsulate:
         switch (*identifier) {
+        case CryptoAlgorithmIdentifier::ML_KEM_512:
         case CryptoAlgorithmIdentifier::ML_KEM_768:
         case CryptoAlgorithmIdentifier::ML_KEM_1024:
             result = makeUnique<CryptoAlgorithmParameters>(params);
@@ -703,6 +706,7 @@ static bool isSupportedExportKey(JSGlobalObject& state, CryptoAlgorithmIdentifie
     case CryptoAlgorithmIdentifier::ML_DSA_44:
     case CryptoAlgorithmIdentifier::ML_DSA_65:
     case CryptoAlgorithmIdentifier::ML_DSA_87:
+    case CryptoAlgorithmIdentifier::ML_KEM_512:
     case CryptoAlgorithmIdentifier::ML_KEM_768:
     case CryptoAlgorithmIdentifier::ML_KEM_1024:
         return true;
@@ -1706,6 +1710,7 @@ void SubtleCrypto::getPublicKey(JSC::JSGlobalObject& state, CryptoKey& key, Vect
     case CryptoAlgorithmIdentifier::ML_DSA_44:
     case CryptoAlgorithmIdentifier::ML_DSA_65:
     case CryptoAlgorithmIdentifier::ML_DSA_87:
+    case CryptoAlgorithmIdentifier::ML_KEM_512:
     case CryptoAlgorithmIdentifier::ML_KEM_768:
     case CryptoAlgorithmIdentifier::ML_KEM_1024:
         importParams = makeUnique<CryptoAlgorithmParameters>();
@@ -2147,6 +2152,7 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
         case CryptoAlgorithmIdentifier::ML_DSA_44:
         case CryptoAlgorithmIdentifier::ML_DSA_65:
         case CryptoAlgorithmIdentifier::ML_DSA_87:
+        case CryptoAlgorithmIdentifier::ML_KEM_512:
         case CryptoAlgorithmIdentifier::ML_KEM_768:
         case CryptoAlgorithmIdentifier::ML_KEM_1024:
             return true;

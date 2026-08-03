@@ -999,6 +999,7 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
         case CryptoAlgorithmIdentifier::ML_DSA_44:
         case CryptoAlgorithmIdentifier::ML_DSA_65:
         case CryptoAlgorithmIdentifier::ML_DSA_87:
+        case CryptoAlgorithmIdentifier::ML_KEM_512:
         case CryptoAlgorithmIdentifier::ML_KEM_768:
         case CryptoAlgorithmIdentifier::ML_KEM_1024: {
             // Node's 'KeyObject' import path wraps the handle directly.
@@ -1528,7 +1529,7 @@ KeyObject KeyObject::getKeyObjectHandleFromRaw(JSGlobalObject* globalObject, Thr
     } else if (int pqcNid = pqcKeyTypeToNid(asymmetricKeyType, /* ignoreCase */ true)) {
         nid = pqcNid;
     } else if (isUnavailablePqcKeyType(asymmetricKeyType)) {
-        // SLH-DSA and ML-KEM-512 have no EVP_PKEY support in vendored BoringSSL.
+        // SLH-DSA has no EVP_PKEY support in vendored BoringSSL.
         ERR::INVALID_ARG_VALUE(scope, globalObject, "key"_s, jsUndefined(), "Unsupported key type"_s);
         return {};
     } else if (isUnsupportedRawKeyType(asymmetricKeyType)) {

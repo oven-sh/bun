@@ -25,6 +25,7 @@ int pqcKeyTypeToNid(const WTF::StringView& name, bool ignoreCase)
         { "ml-dsa-44"_s, EVP_PKEY_ML_DSA_44 },
         { "ml-dsa-65"_s, EVP_PKEY_ML_DSA_65 },
         { "ml-dsa-87"_s, EVP_PKEY_ML_DSA_87 },
+        { "ml-kem-512"_s, EVP_PKEY_ML_KEM_512 },
         { "ml-kem-768"_s, EVP_PKEY_ML_KEM_768 },
         { "ml-kem-1024"_s, EVP_PKEY_ML_KEM_1024 },
     };
@@ -44,6 +45,8 @@ ASCIILiteral pqcNidToKeyTypeName(int nid)
         return "ml-dsa-65"_s;
     case EVP_PKEY_ML_DSA_87:
         return "ml-dsa-87"_s;
+    case EVP_PKEY_ML_KEM_512:
+        return "ml-kem-512"_s;
     case EVP_PKEY_ML_KEM_768:
         return "ml-kem-768"_s;
     case EVP_PKEY_ML_KEM_1024:
@@ -60,7 +63,7 @@ bool isMlDsaNid(int nid)
 
 bool isMlKemNid(int nid)
 {
-    return nid == EVP_PKEY_ML_KEM_768 || nid == EVP_PKEY_ML_KEM_1024;
+    return nid == EVP_PKEY_ML_KEM_512 || nid == EVP_PKEY_ML_KEM_768 || nid == EVP_PKEY_ML_KEM_1024;
 }
 
 const EVP_PKEY_ALG* pqcNidToAlg(int nid)
@@ -72,6 +75,8 @@ const EVP_PKEY_ALG* pqcNidToAlg(int nid)
         return EVP_pkey_ml_dsa_65();
     case EVP_PKEY_ML_DSA_87:
         return EVP_pkey_ml_dsa_87();
+    case EVP_PKEY_ML_KEM_512:
+        return EVP_pkey_ml_kem_512();
     case EVP_PKEY_ML_KEM_768:
         return EVP_pkey_ml_kem_768();
     case EVP_PKEY_ML_KEM_1024:

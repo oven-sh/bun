@@ -77,7 +77,7 @@ public:
     bool m_calledDone : 1 { false };
     // End-of-tick auto-flush (the JS-facing analogue of the HTTP sink's AutoFlusher):
     // armed by write() when data is buffered below the HWM while a consumer waits; the
-    // deferred task runs right after the current microtask drain and delivers it.
+    // process.nextTick job delivers it during the same microtask/nextTick drain.
     bool m_endOfTickFlushArmed : 1 { false };
     bool m_finalChunkArmed : 1 { false };
 

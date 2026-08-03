@@ -22,7 +22,7 @@ pub mod kevent_watcher;
 pub mod windows_watcher;
 
 #[path = "WatcherTrace.rs"]
-pub mod watcher_trace;
+pub(crate) mod watcher_trace;
 
 #[path = "Watcher.rs"]
 pub mod watcher_impl;

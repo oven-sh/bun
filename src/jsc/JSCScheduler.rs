@@ -37,10 +37,7 @@ impl JSCDeferredWorkTask {
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__eventLoop__incrementRefConcurrently(
-    jsc_vm: &VirtualMachine,
-    delta: c_int,
-) {
+extern "C" fn Bun__eventLoop__incrementRefConcurrently(jsc_vm: &VirtualMachine, delta: c_int) {
     crate::mark_binding!();
     // C++ passes a non-null live `VirtualMachine*`; ABI-compatible with `&T`.
     // `event_loop_shared()` is the safe accessor over the VM-owned EventLoop.
@@ -53,7 +50,7 @@ pub(crate) extern "C" fn Bun__eventLoop__incrementRefConcurrently(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
+extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
     jsc_vm: &VirtualMachine,
     task: *mut JSCDeferredWorkTask,
 ) {
@@ -68,7 +65,7 @@ pub(crate) extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
 /// `paused` must point to a live `bool`; C++ writes `true` through it from a
 /// callback inside `tick()`.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
+unsafe extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
     crate::mark_binding!();
     // SAFETY: see fn contract.
     unsafe {

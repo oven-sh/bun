@@ -2153,10 +2153,6 @@ impl Stream {
         if let Some(signal) = self.signal.take() {
             drop(signal);
         }
-        // unsafe to ask GC to run if we are already inside GC
-        if !FINALIZING {
-            VirtualMachine::get().event_loop_mut().process_gc_timer();
-        }
     }
 }
 
@@ -2837,7 +2833,7 @@ impl H2FrameParser {
         CORK_OFFSET.with(|c| c.set(0));
     }
 
-    pub(crate) fn _generic_flush<S: NativeSocketWrite>(&self, mut socket: S) -> usize {
+    pub(crate) fn generic_flush<S: NativeSocketWrite>(&self, mut socket: S) -> usize {
         let buffer_len = self.write_buffer.get().slice()[self.write_buffer_offset.get()..].len();
         if buffer_len > 0 {
             let result: i32 = socket.write_maybe_corked(
@@ -2875,7 +2871,7 @@ impl H2FrameParser {
         buffer_len
     }
 
-    pub(crate) fn _generic_write<S: NativeSocketWrite>(&self, mut socket: S, bytes: &[u8]) -> bool {
+    pub(crate) fn generic_write<S: NativeSocketWrite>(&self, mut socket: S, bytes: &[u8]) -> bool {
         bun_output::scoped_log!(H2FrameParser, "_genericWrite {}", bytes.len());
 
         let global = self.global();
@@ -3002,10 +2998,10 @@ impl H2FrameParser {
         let mut written = self.uncork();
         written += match self.native_socket.get() {
             BunSocket::TlsWriteonly(socket) | BunSocket::Tls(socket) => {
-                self._generic_flush(socket.get())
+                self.generic_flush(socket.get())
             }
             BunSocket::TcpWriteonly(socket) | BunSocket::Tcp(socket) => {
-                self._generic_flush(socket.get())
+                self.generic_flush(socket.get())
             }
             BunSocket::None => {
                 // consider that backpressure is gone and flush data queue
@@ -3054,10 +3050,10 @@ impl H2FrameParser {
         let _keepalive = self.keepalive();
         match self.native_socket.get() {
             BunSocket::TlsWriteonly(socket) | BunSocket::Tls(socket) => {
-                self._generic_write(socket.get(), bytes)
+                self.generic_write(socket.get(), bytes)
             }
             BunSocket::TcpWriteonly(socket) | BunSocket::Tcp(socket) => {
-                self._generic_write(socket.get(), bytes)
+                self.generic_write(socket.get(), bytes)
             }
             BunSocket::None => {
                 let global = self.global();
@@ -3186,7 +3182,7 @@ impl H2FrameParser {
         self.deref();
     }
 
-    /// A `write_maybe_corked` in `_generic_write`/`_generic_flush` returned a fatal
+    /// A `write_maybe_corked` in `generic_write`/`generic_flush` returned a fatal
     /// errno (< -1: the kernel rejected the send - peer gone). No retry can succeed,
     /// and when the failure is only visible on the write side (a peer reset the read
     /// path has not observed yet - routine on Windows, where the RST completes the
@@ -3509,7 +3505,7 @@ impl Payload {
     }
 }
 
-/// Trait to abstract over TLSSocket / TCPSocket for `_generic_flush`/`_generic_write`.
+/// Trait to abstract over TLSSocket / TCPSocket for `generic_flush`/`generic_write`.
 pub(crate) trait NativeSocketWrite {
     fn write_maybe_corked(&mut self, buf: &[u8]) -> i32;
 }
@@ -8173,6 +8169,17 @@ impl H2FrameParser {
                 };
                 let value_slice = value_str.to_slice(global_object);
                 let value = value_slice.slice();
+                if !is_valid_header_value(value) {
+                    return Err(global_object
+                        .err(
+                            JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                            format_args!(
+                                "Invalid value for header \"{}\"",
+                                BStr::new(validated_name)
+                            ),
+                        )
+                        .throw());
+                }
                 if this
                     .encode_header_into_list(
                         &mut encoded_headers,
@@ -9035,7 +9042,8 @@ impl H2FrameParser {
                     let signal_ = unsafe { &mut *signal_ptr };
                     if signal_.aborted() {
                         stream.state = StreamState::IDLE;
-                        let wrapped = Bun__wrapAbortError(global_object, signal_.abort_reason());
+                        let wrapped =
+                            Bun__wrapAbortError(global_object, signal_.js_reason(global_object));
                         this.abort_stream(&mut stream, wrapped);
                         return Ok(JSValue::js_number(stream_id as f64));
                     }

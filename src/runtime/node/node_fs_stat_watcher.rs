@@ -67,7 +67,7 @@ pub struct StatWatcherScheduler {
     vm: BackRef<VirtualMachine>,
     watchers: WatcherQueue,
 
-    pub event_loop_timer: EventLoopTimer,
+    pub(crate) event_loop_timer: EventLoopTimer,
 
     ref_count: ThreadSafeRefCount<StatWatcherScheduler>,
 }
@@ -177,7 +177,7 @@ impl StatWatcherScheduler {
         self.vm.get()
     }
 
-    pub fn init(vm: *mut VirtualMachine) -> RefPtr<StatWatcherScheduler> {
+    pub(crate) fn init(vm: *mut VirtualMachine) -> RefPtr<StatWatcherScheduler> {
         RefPtr::new(StatWatcherScheduler {
             current_interval: AtomicI32::new(0),
             work_pool_in_flight: AtomicBool::new(false),
@@ -214,7 +214,7 @@ impl StatWatcherScheduler {
     /// # Safety
     /// `this` must point to a live `StatWatcherScheduler` (caller holds a ref)
     /// and `watcher` must point to a live `StatWatcher`.
-    pub fn append(this: *mut Self, watcher: *mut StatWatcher) {
+    pub(crate) fn append(this: *mut Self, watcher: *mut StatWatcher) {
         // BACKREF — `watcher` is a live ref-counted StatWatcher (we ref() it
         // below). R-2: shared `&` only — all field access goes through
         // Cell/Atomic. `ParentRef` Deref collapses the per-site raw deref.
@@ -340,7 +340,7 @@ impl StatWatcherScheduler {
         }
     }
 
-    pub fn timer_callback(&mut self) {
+    pub(crate) fn timer_callback(&mut self) {
         let has_been_cleared = self.event_loop_timer.state == EventLoopTimerState::CANCELLED
             || self.vm().script_execution_status() != jsc::ScriptExecutionStatus::Running;
 
@@ -474,7 +474,7 @@ impl StatWatcherScheduler {
     ///
     /// # Safety
     /// `vm` is the live per-thread VM. Must be called on the JS thread.
-    pub unsafe fn shutdown_for_exit(vm: *mut VirtualMachine) {
+    pub(crate) unsafe fn shutdown_for_exit(vm: *mut VirtualMachine) {
         // SAFETY: per fn contract; main-thread only. Touch the raw `rare_data`
         // option directly so a never-used VM does not lazy-allocate `RareData`
         // here just to find an empty slot.
@@ -538,7 +538,7 @@ impl StatWatcherScheduler {
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct StatWatcher {
-    pub next: bun_threading::Link<StatWatcher>, // INTRUSIVE link for UnboundedQueue
+    pub(crate) next: bun_threading::Link<StatWatcher>, // INTRUSIVE link for UnboundedQueue
 
     // JSC_BORROW per LIFETIMES.tsv — VM outlives the watcher. `BackRef` gives
     // safe `&VirtualMachine` projection (Deref) at every read site. Constructed
@@ -630,7 +630,7 @@ mod js {
 impl StatWatcher {
     /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global_this` back-pointer.
     #[inline]
-    pub(crate) fn global_this(&self) -> &JSGlobalObject {
+    fn global_this(&self) -> &JSGlobalObject {
         // `BackRef` invariant: global outlives every `StatWatcher` (JSC_BORROW).
         self.global_this.get()
     }
@@ -666,7 +666,7 @@ impl StatWatcher {
     // opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
-    pub(crate) fn ref_(this: *mut Self) {
+    fn ref_(this: *mut Self) {
         // SAFETY: per fn contract.
         unsafe { ThreadSafeRefCount::<Self>::ref_(this) };
     }
@@ -678,7 +678,7 @@ impl StatWatcher {
     // opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
-    pub(crate) fn deref(this: *mut Self) {
+    fn deref(this: *mut Self) {
         // SAFETY: per fn contract.
         unsafe { ThreadSafeRefCount::<Self>::deref(this) };
     }
@@ -701,7 +701,7 @@ impl StatWatcher {
     /// # Safety
     /// `task` must be a fresh heap-allocated `ConcurrentTask` not yet enqueued
     /// elsewhere; the queue takes ownership of it.
-    pub(crate) fn enqueue_task_concurrent(
+    fn enqueue_task_concurrent(
         &self,
         task: NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
     ) {
@@ -712,14 +712,14 @@ impl StatWatcher {
     ///
     /// This field is sometimes set from aonther thread, so we should copy by
     /// value instead of referencing by pointer.
-    pub(crate) fn get_last_stat(&self) -> PosixStat {
+    fn get_last_stat(&self) -> PosixStat {
         let value = self.last_stat.lock();
         *value
         // unlock on Drop of guard
     }
 
     /// Set the last stat.
-    pub(crate) fn set_last_stat(&self, stat: &PosixStat) {
+    fn set_last_stat(&self, stat: &PosixStat) {
         let mut value = self.last_stat.lock();
         *value = *stat;
         // unlock on Drop of guard
@@ -923,7 +923,7 @@ impl StatWatcher {
     }
 
     /// Called from any thread
-    pub(crate) fn restat(&self) {
+    fn restat(&self) {
         log!("recalling stat");
         let stat = restat_impl(&self.path);
         let res = match stat {
@@ -1005,7 +1005,7 @@ impl StatWatcher {
             .map_err(Into::into)
     }
 
-    pub(crate) fn init(args: &Arguments) -> Result<*mut StatWatcher, crate::Error> {
+    fn init(args: &Arguments) -> Result<*mut StatWatcher, crate::Error> {
         log!("init");
 
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -1104,11 +1104,11 @@ fn restat_impl(path: &ZStr) -> bun_sys::Maybe<PosixStat> {
 
 pub struct Arguments {
     pub path: PathLike,
-    pub listener: JSValue,
+    pub(crate) listener: JSValue,
 
-    pub persistent: bool,
-    pub bigint: bool,
-    pub interval: i32,
+    pub(crate) persistent: bool,
+    pub(crate) bigint: bool,
+    pub(crate) interval: i32,
 
     // JSC_BORROW per LIFETIMES.tsv — global outlives the parsed `Arguments`;
     // `BackRef` gives safe `&JSGlobalObject` projection at every read site.
@@ -1172,7 +1172,7 @@ impl Arguments {
         })
     }
 
-    pub fn create_stat_watcher(self) -> Result<JSValue, crate::Error> {
+    pub(crate) fn create_stat_watcher(self) -> Result<JSValue, crate::Error> {
         // BACKREF — `init` returns the live heap watcher (refcount==1);
         // `ParentRef` Deref gives safe field access for the `this_value` read.
         let obj = ParentRef::from(
@@ -1195,7 +1195,7 @@ bun_threading::owned_task!(InitialStatTask, task);
 impl InitialStatTask {
     /// # Safety
     /// `watcher` must point to a live `StatWatcher`.
-    pub(crate) fn create_and_schedule(watcher: *mut StatWatcher) {
+    fn create_and_schedule(watcher: *mut StatWatcher) {
         // SAFETY: per fn contract; we bump its intrusive refcount, held across
         // the task lifetime (balanced by `deref()` in run_owned's closed path or
         // by the main-thread `initial_stat_*_on_main_thread` callbacks).

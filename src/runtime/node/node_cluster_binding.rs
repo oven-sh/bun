@@ -595,6 +595,15 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             }
             addr_z[..addr_bytes.len()].copy_from_slice(addr_bytes);
 
+            // c-ares' inet_pton is pure C; bun_core keeps it private so declare
+            // the extern locally.
+            unsafe extern "C" {
+                fn ares_inet_pton(
+                    af: c_int,
+                    src: *const core::ffi::c_char,
+                    dst: *mut core::ffi::c_void,
+                ) -> c_int;
+            }
             // SAFETY: `ss` is a zeroed sockaddr_storage large enough for
             let parsed = unsafe {
                 if family == libc::AF_INET6 {
@@ -602,7 +611,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                         &mut *(&raw mut ss).cast::<libc::sockaddr_in6>();
                     sin6.sin6_family = libc::AF_INET6 as libc::sa_family_t;
                     sin6.sin6_port = (port as u16).to_be();
-                    bun_core::strings::ares_inet_pton(
+                    ares_inet_pton(
                         libc::AF_INET6,
                         addr_z.as_ptr().cast(),
                         (&raw mut sin6.sin6_addr).cast(),
@@ -612,7 +621,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                         &mut *(&raw mut ss).cast::<libc::sockaddr_in>();
                     sin.sin_family = libc::AF_INET as libc::sa_family_t;
                     sin.sin_port = (port as u16).to_be();
-                    bun_core::strings::ares_inet_pton(
+                    ares_inet_pton(
                         libc::AF_INET,
                         addr_z.as_ptr().cast(),
                         (&raw mut sin.sin_addr).cast(),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isLinux, isMacOS, isPosix, isWindows } from "harness";
+import { isLinux, isMacOS, isPosix, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 
 // On POSIX systems, MAX_PATH_BYTES is 4096.
@@ -209,5 +209,28 @@ describe.if(isWindows)("path length validation against UTF-16 conversion buffers
     const segment = Buffer.alloc(600, "\u4e00").toString();
     const p = "C:\\" + Array(150).fill(segment).join("\\");
     expect(() => fs.copyFileSync(p, "copy-file-dest-does-not-matter.txt")).toThrow("ENOENT");
+  });
+});
+
+describe.if(isWindows)("Buffer paths containing malformed byte sequences", () => {
+  it("decodes each malformed byte as U+FFFD in the resulting file name", () => {
+    using dir = tempDir("fs-buffer-path-malformed", {});
+    const base = Buffer.from(String(dir) + "\\");
+    fs.mkdirSync(String(dir) + "\\sub");
+    fs.writeFileSync(Buffer.concat([base, Buffer.from("sub"), Buffer.from([0xc0, 0xaf]), Buffer.from("file")]), "1");
+    fs.writeFileSync(Buffer.concat([base, Buffer.from("a"), Buffer.from([0xc0, 0xae]), Buffer.from("b")]), "2");
+    fs.writeFileSync(Buffer.concat([base, Buffer.from("c"), Buffer.from([0xc0, 0x80]), Buffer.from("d")]), "3");
+    fs.writeFileSync(Buffer.concat([base, Buffer.from("e"), Buffer.from([0xc2]), Buffer.from("F")]), "4");
+    fs.writeFileSync(Buffer.concat([base, Buffer.from("g"), Buffer.from([0xe0, 0x80, 0x80]), Buffer.from("h")]), "5");
+    expect(fs.readdirSync(String(dir)).sort()).toEqual([
+      "a\uFFFD\uFFFDb",
+      "c\uFFFD\uFFFDd",
+      "e\uFFFDF",
+      "g\uFFFD\uFFFD\uFFFDh",
+      "sub",
+      "sub\uFFFD\uFFFDfile",
+    ]);
+    expect(fs.readdirSync(String(dir) + "\\sub")).toEqual([]);
+    expect(fs.readFileSync(String(dir) + "\\e\uFFFDF", "utf8")).toBe("4");
   });
 });

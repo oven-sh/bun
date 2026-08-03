@@ -20,11 +20,6 @@ NodeVMModuleRequest::NodeVMModuleRequest(WTF::String specifier, WTF::HashMap<WTF
 {
 }
 
-void NodeVMModuleRequest::addImportAttribute(WTF::String key, WTF::String value)
-{
-    m_importAttributes.set(WTF::move(key), WTF::move(value));
-}
-
 JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
 {
     auto& vm = globalObject->vm();

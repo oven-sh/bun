@@ -228,6 +228,7 @@ pub struct BundlerOptions {
     pub compile_autoload_tsconfig: bool,
     pub compile_autoload_package_json: bool,
     pub compile_executable_path: Option<Box<[u8]>>,
+    pub compile_assets: Vec<Box<[u8]>>,
     pub windows: bundle_enums::WindowsOptions,
     pub allow_unresolved: Option<Vec<Box<[u8]>>>,
 }
@@ -278,6 +279,7 @@ impl Default for BundlerOptions {
             compile_autoload_tsconfig: false,
             compile_autoload_package_json: false,
             compile_executable_path: None,
+            compile_assets: Vec::new(),
             windows: bundle_enums::WindowsOptions::default(),
             allow_unresolved: None,
         }
@@ -330,8 +332,6 @@ pub fn try_get<'a>() -> Option<&'a ContextData> {
 
 pub struct DebugOptions {
     pub dump_environment_variables: bool,
-    pub dump_limits: bool,
-    pub fallback_only: bool,
     pub silent: bool,
     pub hot_reload: HotReload,
     pub global_cache: GlobalCache,
@@ -356,8 +356,6 @@ impl Default for DebugOptions {
     fn default() -> Self {
         Self {
             dump_environment_variables: false,
-            dump_limits: false,
-            fallback_only: false,
             silent: false,
             hot_reload: HotReload::None,
             global_cache: GlobalCache::auto,
@@ -543,6 +541,9 @@ pub struct RuntimeOptions {
     /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
     /// compatibility.
     pub expose_gc: bool,
+    /// `--interactive` starts the Node.js-compatible REPL (node:repl), like
+    /// `node --interactive`. (`-i` is taken by `--install=fallback`.)
+    pub interactive: bool,
     pub preserve_symlinks_main: bool,
     pub console_depth: Option<u16>,
     pub cron_title: Box<[u8]>,
@@ -555,6 +556,10 @@ pub struct RuntimeOptions {
 pub struct Eval {
     pub script: Box<[u8]>,
     pub eval_and_print: bool,
+    /// Under `--interactive`, `script` holds the node:repl bootstrap; this
+    /// holds the user's actual `-e` bytes so `process._eval` reports them
+    /// (or `undefined` when empty). `None` = not `--interactive`.
+    pub interactive_script: Option<Box<[u8]>>,
 }
 
 pub struct CpuProf {
@@ -605,6 +610,7 @@ impl Default for RuntimeOptions {
             experimental_http3_fetch: false,
             dns_result_order: Box::from(&b"verbatim"[..]),
             expose_gc: false,
+            interactive: false,
             preserve_symlinks_main: false,
             console_depth: None,
             cron_title: Box::default(),

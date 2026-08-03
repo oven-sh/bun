@@ -63,7 +63,6 @@ using namespace JSC;
     macro(cancel) \
     macro(checkBufferRead) \
     macro(checks) \
-    macro(cloneArrayBuffer) \
     macro(close) \
     macro(cmd) \
     macro(code) \
@@ -160,6 +159,7 @@ using namespace JSC;
     macro(processBindingConstants) \
     macro(props) \
     macro(pull) \
+    macro(rawHeaders) \
     macro(read) \
     macro(readable) \
     macro(readableType) \
@@ -175,7 +175,6 @@ using namespace JSC;
     macro(sameSite) \
     macro(secure) \
     macro(self) \
-    macro(setHandlers) \
     macro(signal) \
     macro(size) \
     macro(specifier) \
@@ -183,9 +182,10 @@ using namespace JSC;
     macro(started) \
     macro(state) \
     macro(status) \
+    macro(statusCode) \
+    macro(statusMessage) \
     macro(statusText) \
     macro(stream) \
-    macro(structuredCloneForStream) \
     macro(syscall) \
     macro(text) \
     macro(textDecoder) \

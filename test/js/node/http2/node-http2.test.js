@@ -1900,18 +1900,9 @@ it(
   15_000 * ASAN_MULTIPLIER,
 );
 
-// Every stream in a session's stream map contributes sizeof(Stream) bytes to
-// that session's accounted memory (`get_session_memory_usage`). A session that
-// never evicts closed streams therefore grows that term without bound: once it
-// crosses maxSessionMemory the session refuses every new stream with
-// ERR_HTTP2_STREAM_ERROR and then dies with ENHANCE_YOUR_CALM.
-//
-// maxSessionMemory is compared in whole MiB, so a 1 MiB budget only trips once
-// retained streams exceed 2 MiB — about 13.8k streams at the current 152-byte
-// Stream. The sibling test above stops at 10k, which stays under that boundary
-// and cannot observe a leak; 20k clears it with margin and still trips for any
-// Stream at or above 105 bytes. Both peers get the minimal budget so a leak on
-// either the client or the server session fails this test.
+// Closed streams must be evicted from maxSessionMemory accounting; a leaking
+// session refuses new streams (ENHANCE_YOUR_CALM) once retained streams exceed
+// the budget. 20k at maxSessionMemory:1 clears the 2 MiB / ~13.8k threshold.
 const STREAM_EVICTION_REQUESTS = 20_000;
 
 it(

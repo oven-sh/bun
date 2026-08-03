@@ -252,11 +252,6 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         auto* exception = exceptionPtr.get();
 
         if (exception) [[unlikely]] {
-            // The NakedPtr<Exception>& call() overload has already cleared the
-            // exception. Running more listeners (or error listeners) after
-            // termination would re-enter JS with the TerminationException
-            // re-thrown by Bun__reportUnhandledError and trip
-            // executeCallImpl's assertNoException().
             if (vm.isTerminationException(exception)) [[unlikely]]
                 break;
             auto errorIdentifier = vm.propertyNames->error;

@@ -4899,14 +4899,8 @@ bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
     return vm->hasTerminationRequest();
 }
 
-// InternalMicrotask::BunPerformMicrotaskJob catches any exception from the
-// job callback with an unconditional clearException() and then calls
-// Bun__reportUnhandledError with the Exception*. When the caught exception
-// is the TerminationException that clear spends the one shot the
-// NeedTermination trap fired, so the microtask drain never observes
-// termination and a worker in a microtask-bound loop can spin forever.
-// Re-establishing the TerminationException here lets MicrotaskQueue's
-// runMicrotask see it on return and break out of the drain.
+// Re-establish a TerminationException that was spent by an unconditional
+// clearException() (BunPerformMicrotaskJob) so the microtask drain observes it.
 [[ZIG_EXPORT(nothrow)]]
 void JSC__VM__rethrowTerminationException(JSC::VM* vm)
 {

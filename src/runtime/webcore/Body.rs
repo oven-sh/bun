@@ -1689,12 +1689,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// into the GC-traced `js.gc.stream` slot to break the cycle (the JS
     /// wrapper owns the stream; native side must not hold it strongly).
     ///
-    /// Called from constructors after the native object has been heap-allocated,
-    /// so it must not reach a VMTraps safepoint (a TerminationException thrown
-    /// here would leave the generated `construct` holding a non-null ptr with
-    /// an exception pending, tripping its leak assertion). `Strong::value()`
-    /// is a pure slot read; `Strong::get()` would re-tag through `from_js`,
-    /// which is a safepoint.
+    /// Runs after the native object is heap-allocated, so it must not hit a
+    /// VMTraps safepoint: `Strong::value()` is a pure read, `Strong::get()`
+    /// would re-tag via `from_js` and is one.
     fn check_body_stream_ref(&self, global_object: &JSGlobalObject) {
         if let Some(js_value) = self.js_ref() {
             if let Value::Locked(locked) = self.get_body_value() {

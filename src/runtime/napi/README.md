@@ -5,10 +5,11 @@ These four files are copied from `nodejs/node` `src/` and are what
 bundles for `#include <node_api.h>` via `include_bytes!` in
 `src/runtime/ffi/ffi_body.rs`.
 
-Keep them byte-identical to upstream so a resync is a copy. They are
-excluded from clang-format in `scripts/run-clang-format.sh`.
+To resync, copy the upstream files over and re-apply the divergences below
+(all in `js_native_api_types.h`; the other three stay byte-identical). They
+are excluded from clang-format in `scripts/run-clang-format.sh`.
 
-Intentional divergences from upstream, all in `js_native_api_types.h`:
+Intentional divergences from upstream:
 
 - `struct NapiEnv*` instead of `struct napi_env__*` (three `typedef` lines)
   so the opaque tag matches the concrete C++ type in

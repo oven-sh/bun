@@ -30,13 +30,19 @@ test("dead C++ symbols in webcrypto/sqlite/NodeVM do not reappear", () => {
     ["src/jsc/bindings/webcrypto/CryptoKeyHMAC.h", /static Ref<CryptoKeyHMAC> create\(/],
     ["src/jsc/bindings/webcrypto/CryptoKeyHMAC.cpp", /CryptoKeyHMAC::CryptoKeyHMAC\(const Vector<uint8_t>&/],
     ["src/jsc/bindings/webcrypto/CryptoKeyAES.h", /static Ref<CryptoKeyAES> create\(/],
-    ["src/jsc/bindings/webcrypto/CryptoKeyAES.cpp", /CryptoKeyAES::CryptoKeyAES\(CryptoAlgorithmIdentifier algorithm, const Vector<uint8_t>&/],
+    [
+      "src/jsc/bindings/webcrypto/CryptoKeyAES.cpp",
+      /CryptoKeyAES::CryptoKeyAES\(CryptoAlgorithmIdentifier algorithm, const Vector<uint8_t>&/,
+    ],
     ["src/jsc/bindings/webcrypto/JSCryptoKey.h", /static JSCryptoKey\* fromJS\(/],
     ["src/jsc/bindings/webcrypto/JSSubtleCrypto.cpp", /JSSubtleCrypto::toWrapped\(/],
     ["src/jsc/bindings/webcrypto/OpenSSLCryptoUniquePtr.h", /\bOsslParamBldPtr\b|\bX509Ptr\b|\bBIOPtr\b/],
     ["src/jsc/bindings/ScriptExecutionContext.h", /\bwrapCryptoKey\b|\bunwrapCryptoKey\b/],
     ["src/jsc/bindings/sqlite/JSSQLStatement.cpp", /\bschema_versions\b/],
-    ["src/jsc/bindings/sqlite/lazy_sqlite3.h", /lazy_sqlite3_column_int\b|lazy_sqlite3_memory_used\b|lazy_sqlite3_prepare16_v3\b/],
+    [
+      "src/jsc/bindings/sqlite/lazy_sqlite3.h",
+      /lazy_sqlite3_column_int\b|lazy_sqlite3_memory_used\b|lazy_sqlite3_prepare16_v3\b/,
+    ],
     ["src/jsc/bindings/NodeVM.cpp", /NodeVMGlobalObject::sigintReceived\(/],
     ["src/jsc/bindings/webcore/DOMIsoSubspaces.h", /m_subspaceForJSSQLStatementConstructor\b/],
   ];

@@ -530,7 +530,6 @@ pub type ExprNodeList = Vec<Expr, bun_alloc::AstAlloc>;
 // A `PhantomData<&'arena ()>` can be added to `StoreSlice` later as a
 // one-struct change once `'arena` is threaded through `Expr`/`Stmt`/`Data`.
 pub type StmtNodeList = StoreSlice<Stmt>;
-pub type BindingNodeList = StoreSlice<Binding>;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
@@ -1091,10 +1090,7 @@ pub type PartList<'a> = bun_alloc::ArenaVec<'a, Part>;
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PartTag {
     None,
-    JsxImport,
     Runtime,
-    CjsImports,
-    ReactFastRefresh,
     ReactCompiler,
     DirnameFilename,
     BunTest,

@@ -2909,7 +2909,6 @@ pub mod flags {
     #[derive(EnumSetType, Debug)]
     pub enum JSXElement {
         IsKeyAfterSpread,
-        HasAnyDynamic,
     }
     pub type JSXElementBitset = EnumSet<JSXElement>;
 
@@ -3179,10 +3178,6 @@ impl StoreAstAllocHeap {
     pub fn new() -> Self {
         store_ast_alloc_heap::enter();
         Self(())
-    }
-    #[inline]
-    pub fn reset(&self) {
-        store_ast_alloc_heap::reset();
     }
 }
 impl Drop for StoreAstAllocHeap {

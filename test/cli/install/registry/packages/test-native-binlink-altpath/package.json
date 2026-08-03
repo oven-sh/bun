@@ -21,8 +21,8 @@
       "_hasInstallScript": true,
       "hasInstallScript": true,
       "dist": {
-        "integrity": "sha512-HgrPzciUCmRa44LwZSTw598lEAIRN9tV2LkuVCvce1jJUHSvLqADh++SAavuCUQPanOvdO3RB1KaMdVBsG/BOQ==",
-        "shasum": "8ee2f7e7da423a3e547feb95ed1eb1f22ad8911f",
+        "integrity": "sha512-hoQk8jPTiIXAsEF5mFu/eWDaC2Ukfmr3wgp+iZCwwUYVKO71mZo5f8tTsxGHuTeum4OJNI3kquGuyD5S/hsp5g==",
+        "shasum": "0cdd82118edc6b3b78f71fca56e87f56f705411a",
         "tarball": "http://localhost:4873/test-native-binlink-altpath/-/test-native-binlink-altpath-1.0.0.tgz"
       }
     },
@@ -30,7 +30,7 @@
       "name": "test-native-binlink-altpath",
       "version": "2.0.0",
       "bin": {
-        "altpath-cmd": "bin/altpath-cmd.exe"
+        "altpath-cmd": "bin/launcher.exe"
       },
       "scripts": {
         "postinstall": "node -e \"require('fs').writeFileSync(require('path').join(__dirname,'postinstall-ran'),'')\""
@@ -42,8 +42,8 @@
       "_hasInstallScript": true,
       "hasInstallScript": true,
       "dist": {
-        "integrity": "sha512-S2lk4P6VIvYFyZDcGz5c6ybYzf36QcSrEH5yMyBbg618ad6YX0q01JcSHkOuDV+qQDzjUeIyihHw0fX4shGlsA==",
-        "shasum": "5d08d1807d650aa0480447d35430542073de6f29",
+        "integrity": "sha512-Hob6RQGgiiUiHFOhf2fEcNMKTtAajqGKFezF9QO4FyQiDPoKMnsez+bq1OFRd14cljKRpzkGQLc8ThrS9NDWPA==",
+        "shasum": "96413d257a744148d4e7f9c6b842951f1e2deafa",
         "tarball": "http://localhost:4873/test-native-binlink-altpath/-/test-native-binlink-altpath-2.0.0.tgz"
       }
     },
@@ -63,8 +63,8 @@
       "_hasInstallScript": true,
       "hasInstallScript": true,
       "dist": {
-        "integrity": "sha512-zn7XvTuTAQrjGYmDQYNVbbaJuOj97OTJA3MuAuTB72l+xCkeKUS3cU4QCBNWANwgqb7SSfBSXtpJ9hzQZm5EsQ==",
-        "shasum": "d10e8af97d8e54782651bec2a41593bada99c774",
+        "integrity": "sha512-bnb+im55UONXVPIeHxltNdFANN4xWDkobPTm1aPMj66cHj0CKQzDL5EPwJBlAQm9HFnCb5EaNPqk87JYQBDysA==",
+        "shasum": "a7754b7851528cc3f175c180619bfc66a235a413",
         "tarball": "http://localhost:4873/test-native-binlink-altpath/-/test-native-binlink-altpath-3.0.0.tgz"
       }
     }

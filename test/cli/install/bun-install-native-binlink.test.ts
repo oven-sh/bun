@@ -355,9 +355,15 @@ linker = "${opts.linker}"
       ).toEqual({ hoisted: false, nested: false });
 
       const nestedBinDir = join(nested, ".bin");
-      expect(readBinTarget(nestedBinDir, "skip-test-cmd")).toContain(
-        join("test-postinstall-skip-native", "bin", "cmd.js"),
-      );
+      if (isWindows) {
+        expect(readBinTarget(nestedBinDir, "skip-test-cmd")).toBe(
+          join("test-postinstall-skip-native", "bin", "cmd.js"),
+        );
+      } else {
+        expect(readBinTarget(nestedBinDir, "skip-test-cmd")).toBe(
+          realpathSync(join(nested, "test-postinstall-skip-native", "bin", "cmd.js")),
+        );
+      }
       expect(await runBin(nestedBinDir, "skip-test-cmd")).toEqual({ out: "native v1.0.0", err: "", code: 0 });
     });
 
@@ -392,9 +398,15 @@ linker = "${opts.linker}"
       ).toEqual({ nested: false });
 
       const nestedBinDir = join(nested, ".bin");
-      expect(readBinTarget(nestedBinDir, "skip-test-cmd")).toContain(
-        join("test-postinstall-skip-native", "bin", "cmd.js"),
-      );
+      if (isWindows) {
+        expect(readBinTarget(nestedBinDir, "skip-test-cmd")).toBe(
+          join("..", "..", "test-postinstall-skip-native", "bin", "cmd.js"),
+        );
+      } else {
+        expect(readBinTarget(nestedBinDir, "skip-test-cmd")).toBe(
+          realpathSync(join(packageDir, "node_modules", "test-postinstall-skip-native", "bin", "cmd.js")),
+        );
+      }
       expect(await runBin(nestedBinDir, "skip-test-cmd")).toEqual({ out: "native v1.0.0", err: "", code: 0 });
     });
 
@@ -437,8 +449,8 @@ describe.concurrent("native binlink altpath", () => {
     },
     {
       version: "2.0.0",
-      targetFile: "altpath-cmd.exe",
-      description: "<pkg>/<basename(target)> (claude-code-win32 shape)",
+      targetFile: "launcher.exe",
+      description: "<pkg>/<basename(target)> (bin key differs from target stem)",
     },
     {
       version: "3.0.0",

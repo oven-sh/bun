@@ -19,8 +19,8 @@
       ],
       "_id": "test-native-binlink-altpath-target@1.0.0",
       "dist": {
-        "integrity": "sha512-OkZAxnM0XS8RUFAIPZ2uXEkYuoL94EXTE+daAuKh/SqkH5gfXsv1Q4wIZOPsioMBIvNi+WNcXc9pOGiBg3MIjg==",
-        "shasum": "23ec3e425c14d17f47ee83058a1be418548fff3a",
+        "integrity": "sha512-mUVsCOBsAyqz222wtO1y0uAqXkDDUw07zPdA7hN/qONbyMaQGPQGdGxZKr8AyT/SjymLOuKBQZO+KcNrLij8hg==",
+        "shasum": "f5baed014b5127e129cb86bb4a29b32d93e64f12",
         "tarball": "http://localhost:4873/test-native-binlink-altpath-target/-/test-native-binlink-altpath-target-1.0.0.tgz"
       }
     },
@@ -38,8 +38,8 @@
       ],
       "_id": "test-native-binlink-altpath-target@2.0.0",
       "dist": {
-        "integrity": "sha512-zuus2xhewvIiW0NVn78x9IMbp177hr2cGLermN2sIzINf/mXhRjGt/vm7ao5vXVsWm/FE//smi66x6ZnjNBSLA==",
-        "shasum": "4fb58dcc15acb8cff172a779b2eea0c0535e9b0b",
+        "integrity": "sha512-QtlpzDtUbg01KZNzV1NKAeTXcEAemkVzmECQ0AVaq0XtD1GDaFviIYR/pJnC/QbzO1o4i23T20pzeZIaP4U0sA==",
+        "shasum": "b470c7f6454a1aece2aba8d67cf0bab573680d0a",
         "tarball": "http://localhost:4873/test-native-binlink-altpath-target/-/test-native-binlink-altpath-target-2.0.0.tgz"
       }
     },
@@ -57,8 +57,8 @@
       ],
       "_id": "test-native-binlink-altpath-target@3.0.0",
       "dist": {
-        "integrity": "sha512-wTI0iIDc56dtksGJG/Dk+rkk1W+qMQkeg9b9NFn2SO/eqgy9eFUPuiuRUnPC1Fau6E+3jTUukH3/3BBKWbGchw==",
-        "shasum": "6796dac7f94e464868c2125eee31a3cd789e5988",
+        "integrity": "sha512-FGsc/0SeLfozuFe2LUrUYyCoKVpxtF1Qgt+gMeluw28DKOEaERV1d8s2o+DaD0a+/jlb3dsSRRMV5wca3mHUXQ==",
+        "shasum": "b1b381785a8690834073eef4b9d92ccc1b2a3347",
         "tarball": "http://localhost:4873/test-native-binlink-altpath-target/-/test-native-binlink-altpath-target-3.0.0.tgz"
       }
     }

@@ -8,9 +8,10 @@
  * Each version exercises a different probe in `bin::Linker::resolve_bin_target`:
  *   1.0.0  parent bin `bin/altpath-cmd.exe`, target ships `altpath-cmd` at root
  *          → probe 2, `<pkg>/<bin_name>` (claude-code-linux-* shape)
- *   2.0.0  parent bin `bin/altpath-cmd.exe`, target ships `altpath-cmd.exe` at root
- *          → probe 3, `<pkg>/<basename(target)>` (claude-code-win32-* shape)
- *   3.0.0  parent bin `bin/altpath-cmd`,     target ships `altpath-cmd.exe` at root
+ *   2.0.0  parent bin `bin/launcher.exe`, target ships `launcher.exe` at root
+ *          → probe 3, `<pkg>/<basename(target)>` (bin key ≠ target stem so
+ *          probe 4's `<bin_name>.exe` misses; isolates probe 3)
+ *   3.0.0  parent bin `bin/altpath-cmd`, target ships `altpath-cmd.exe` at root
  *          → probe 4, `<pkg>/<bin_name>.exe` (@esbuild/win32-* shape)
  */
 
@@ -56,7 +57,7 @@ process.exit(0);
 
 const shapes = [
   { version: "1.0.0", parentBinValue: "bin/altpath-cmd.exe", targetFile: "altpath-cmd" },
-  { version: "2.0.0", parentBinValue: "bin/altpath-cmd.exe", targetFile: "altpath-cmd.exe" },
+  { version: "2.0.0", parentBinValue: "bin/launcher.exe", targetFile: "launcher.exe" },
   { version: "3.0.0", parentBinValue: "bin/altpath-cmd", targetFile: "altpath-cmd.exe" },
 ] as const;
 

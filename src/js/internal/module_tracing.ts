@@ -3,7 +3,11 @@
 // calls install() on load; nothing here runs until it does, and the loaders
 // themselves carry no per-call check.
 
-const setHasModuleImportSubscribers = $newCppFunction("NodeDiagnosticsChannel.cpp", "jsSetHasModuleImportSubscribers", 1);
+const setHasModuleImportSubscribers = $newCppFunction(
+  "NodeDiagnosticsChannel.cpp",
+  "jsSetHasModuleImportSubscribers",
+  1,
+);
 
 let requireChannel;
 let importChannel;

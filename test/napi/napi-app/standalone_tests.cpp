@@ -3803,6 +3803,118 @@ test_napi_toobject_coercion_node26(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// Empty-key set, symbol description handling, result-on-exception ordering,
+// and module_file_name non-null: byte-for-byte vs Node via checkSameOutput.
+static napi_value
+test_napi_symbol_key_result_ordering(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+#ifndef _WIN32
+  BlockingStdoutScope blocking_stdout;
+#endif
+
+  napi_value v_null, v_undef, v_num, v_str_empty, v_one, v_obj;
+  NODE_API_CALL(env, napi_get_null(env, &v_null));
+  NODE_API_CALL(env, napi_get_undefined(env, &v_undef));
+  NODE_API_CALL(env, napi_create_double(env, 42.5, &v_num));
+  NODE_API_CALL(env, napi_create_string_utf8(env, "", 0, &v_str_empty));
+  NODE_API_CALL(env, napi_create_int32(env, 1, &v_one));
+  NODE_API_CALL(env, napi_create_object(env, &v_obj));
+
+  report_status(env, "set_named_property(\"\")",
+                napi_set_named_property(env, v_obj, "", v_one));
+  {
+    napi_value key, got;
+    NODE_API_CALL(env, napi_create_string_utf8(env, "", 0, &key));
+    NODE_API_CALL(env, napi_get_property(env, v_obj, key, &got));
+    int32_t n = 0;
+    napi_get_value_int32(env, got, &n);
+    printf("obj[\"\"]=%d\n", n);
+  }
+
+  {
+    napi_value sym;
+    report_status(env, "create_symbol(undefined)",
+                  napi_create_symbol(env, v_undef, &sym));
+    report_status(env, "create_symbol(null)",
+                  napi_create_symbol(env, v_null, &sym));
+    report_status(env, "create_symbol(number)",
+                  napi_create_symbol(env, v_num, &sym));
+    napi_status s = napi_create_symbol(env, v_str_empty, &sym);
+    report_status(env, "create_symbol(\"\")", s);
+    if (s == napi_ok) {
+      napi_value desc_key, desc;
+      NODE_API_CALL(env, napi_create_string_utf8(env, "description",
+                                                 NAPI_AUTO_LENGTH, &desc_key));
+      NODE_API_CALL(env, napi_get_property(env, sym, desc_key, &desc));
+      napi_valuetype t;
+      NODE_API_CALL(env, napi_typeof(env, desc, &t));
+      char buf[8] = {0};
+      size_t len = 0;
+      if (t == napi_string)
+        napi_get_value_string_utf8(env, desc, buf, sizeof(buf), &len);
+      printf("create_symbol(\"\") description: type=%d len=%zu\n", (int)t, len);
+    }
+  }
+
+  {
+    napi_value thrower;
+    NODE_API_CALL(
+        env, napi_create_function(
+                 env, "Throws", NAPI_AUTO_LENGTH,
+                 [](napi_env e, napi_callback_info) -> napi_value {
+                   napi_throw_error(e, NULL, "ctor");
+                   return NULL;
+                 },
+                 NULL, &thrower));
+    napi_value sentinel = reinterpret_cast<napi_value>(0xdeadbeef);
+    napi_value r = sentinel;
+    napi_status s = napi_new_instance(env, thrower, 0, NULL, &r);
+    bool pending;
+    napi_is_exception_pending(env, &pending);
+    if (pending) {
+      napi_value e;
+      napi_get_and_clear_last_exception(env, &e);
+    }
+    printf("new_instance(throws): status=%d result_written=%d\n", (int)s,
+           r != sentinel);
+
+    napi_value script, proxy;
+    NODE_API_CALL(
+        env, napi_create_string_utf8(
+                 env,
+                 "new Proxy({}, {has: () => { throw new Error('h'); }, "
+                 "get: () => { throw new Error('g'); }})",
+                 NAPI_AUTO_LENGTH, &script));
+    NODE_API_CALL(env, napi_run_script(env, script, &proxy));
+    r = sentinel;
+    s = napi_get_named_property(env, proxy, "k", &r);
+    napi_is_exception_pending(env, &pending);
+    if (pending) {
+      napi_value e;
+      napi_get_and_clear_last_exception(env, &e);
+    }
+    printf("get_named_property(throws): status=%d result_written=%d\n", (int)s,
+           r != sentinel);
+    bool br = true;
+    s = napi_has_named_property(env, proxy, "k", &br);
+    napi_is_exception_pending(env, &pending);
+    if (pending) {
+      napi_value e;
+      napi_get_and_clear_last_exception(env, &e);
+    }
+    printf("has_named_property(throws): status=%d result_written=%d\n", (int)s,
+           br != true);
+  }
+
+  {
+    const char *fn = reinterpret_cast<const char *>(0x1);
+    napi_status s = node_api_get_module_file_name(env, &fn);
+    printf("module_file_name: status=%d is_null=%d\n", (int)s, fn == NULL);
+  }
+
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_typedarray_info_byte_offset);
   REGISTER_FUNCTION(env, exports, test_dataview_info_byte_offset);
@@ -3885,6 +3997,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback_ran);
   REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback_result);
   REGISTER_FUNCTION(env, exports, test_napi_toobject_coercion_node26);
+  REGISTER_FUNCTION(env, exports, test_napi_symbol_key_result_ordering);
 }
 
 } // namespace napitests

@@ -595,8 +595,6 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             }
             addr_z[..addr_bytes.len()].copy_from_slice(addr_bytes);
 
-            // c-ares' inet_pton is pure C; bun_core keeps it private so declare
-            // the extern locally.
             unsafe extern "C" {
                 fn ares_inet_pton(
                     af: c_int,

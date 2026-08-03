@@ -1323,18 +1323,7 @@ impl SendQueue {
         if self.queue.is_empty() {
             return false; // nothing to send
         }
-        // Anything still queued has not reached the peer, so the loop has to
-        // stay alive; otherwise the process exits and the messages are dropped
-        // without their send() callbacks ever running.
-        //
-        // That includes the head item having sent nothing yet (`cursor == 0`
-        // with no write in flight). This is what a write refused for
-        // backpressure leaves behind and is the ordinary state while waiting
-        // for the socket to become writable again, not an error.
-        //
-        // A closed socket can never drain the queue. `_socket_closed` disables
-        // the keep-alive, and declining to re-arm it here stops a half-sent
-        // queue from pinning the loop open forever.
+        // Anything still queued (including head with cursor==0 under backpressure) must keep the loop alive; a closed socket does not.
         matches!(self.socket, SocketUnion::Open(_))
     }
 
@@ -2088,12 +2077,7 @@ fn handle_ipc_message(
             }
         }
     } else {
-        // Node's child_process materializes the received handle and passes it
-        // as the second arg to the internalMessage listener; cluster's
-        // onmessage/onInternalMessage then see (message, handle):
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L33-L49
-        // Pass the raw descriptor through the same slot so cluster/child.ts
-        // can wrap it, instead of writing it onto the message object.
         let mut handle_js = JSValue::UNDEFINED;
         if let DecodedIPCMessage::Internal(msg_data) = &message {
             let msg_data = *msg_data;

@@ -4033,13 +4033,10 @@ function listenInCluster(
     isIP(address) === 0
   ) {
     const lookupListeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
-    // Node's lookupAndListen also closes over listeningId/self/port/backlog/exclusive/flags
-    // in a dns.lookup arrow:
     // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2259-L2278
     require("node:dns").lookup(address, (err, ip, family) => {
       if (lookupListeningId !== server[kClusterListeningId]) return;
       if (err) {
-        // Node emits synchronously inside the (already async) dns.lookup callback:
         // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2268-L2269
         server.emit("error", err);
         return;
@@ -4099,8 +4096,6 @@ function listenInCluster(
     sharedOnly: tls ? true : undefined,
   };
   const listeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
-  // Node also defines listenOnPrimaryHandle as an inner function closing over
-  // listeningId/server/port/address/backlog/fd/flags:
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2080-L2102
   cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle, _reply) {
     if (listeningId !== server[kClusterListeningId]) {
@@ -4135,12 +4130,6 @@ function listenInCluster(
           sharedFd,
         );
         handle.adopted = true;
-        // Node v26.3.0: SharedHandle ignores readableAll/writableAll and the
-        // worker's sync uv_pipe_chmod path in Server.prototype.listen returns
-        // early because _handle is null when listenInCluster returns async, so
-        // SCHED_NONE workers do not apply the mode. Matched here.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/shared_handle.js#L13-L29
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2200-L2218
       } catch (err) {
         server[kClusterHandle] = null;
         handle[kClusterOwner] = null;

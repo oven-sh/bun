@@ -275,9 +275,7 @@ impl Listener {
                             if let Some((name, se)) = sys_err.get_error_code_tag_name() {
                                 if se != bun_sys::SystemErrno::EUNKNOWN && (se as u16) < 3000 {
                                     let err = jsc::SystemError {
-                                        // Raw UV errno (e.g. -4091), which Node
-                                        // reports on err.errno; the SystemErrno
-                                        // ordinal differs on Windows.
+                                        // Raw UV errno (SystemErrno ordinal differs on Windows).
                                         errno: *uv_errno,
                                         code: bun_core::String::static_(name).into(),
                                         message: bun_core::String::clone_utf8(
@@ -491,12 +489,7 @@ impl Listener {
                 bstr::BStr::new(hostname_bytes)
             ));
             log!("Failed to listen {}", errno);
-            // libuv reports UV_EINVAL for a pipe path it cannot express in a
-            // sockaddr_un, which is what Node surfaces for an over-long path.
-            // Node's createServerHandle(fd) calls guessHandleType first and
-            // returns UV_EINVAL for anything that is not TCP or PIPE, so a
-            // non-socket or bad fd surfaces as EINVAL there, not the kernel's
-            // ENOTSOCK/EBADF (or WSAENOTSOCK on Windows).
+            // Node's createServerHandle maps non-TCP/PIPE fds to UV_EINVAL.
             let mapped = bun_sys::SystemErrno::init(errno as i64);
             let errno = if mapped == Some(bun_sys::SystemErrno::ENAMETOOLONG)
                 || (matches!(connection, UnixOrHost::Fd(_))
@@ -1721,12 +1714,7 @@ pub struct WindowsNamedPipeListeningContext {
     _priv: (),
 }
 
-/// `Sys` keeps the structured uv error so the JS error carries its real
-/// code/errno; `Other` covers the non-syscall setup failures, whose payload
-/// names the failure in the caller's generic invalid-arguments message.
-/// The `c_int` is the raw libuv return code (e.g. UV_EADDRINUSE = -4091),
-/// kept so the JS `err.errno` is the platform-correct UV value rather than
-/// the SystemErrno ordinal.
+/// `c_int`: raw libuv return code so JS `err.errno` is the platform-correct UV value.
 #[cfg(windows)]
 enum ListenPipeError {
     Sys(bun_sys::Error, c_int),

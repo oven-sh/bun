@@ -294,6 +294,19 @@ fn un_defer_record(import_records: &mut import_record::List, record_idx: u32) ->
     true
 }
 
+/// The record's patched source_index, or (dev server, where indices are left
+/// unset on import records) a path-map lookup.
+#[inline]
+fn record_target(
+    rec: &bun_ast::ImportRecord,
+    map: Option<bun_ptr::BackRef<crate::PathToSourceIndexMap::PathToSourceIndexMap>>,
+) -> Option<u32> {
+    if rec.source_index.is_valid() {
+        return Some(rec.source_index.get());
+    }
+    map?.get_path(&rec.path)
+}
+
 /// BFS work queue item: un-defer an export from a barrel.
 // `'a` borrows arena-backed AST alias strings.
 struct BarrelWorkItem<'a> {
@@ -501,14 +514,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
     //   can destructure or access any export. Must mark as .all. We cannot
     //   safely assume which exports will be used.
     for (idx, ir) in file_import_records.as_slice().iter().enumerate() {
-        let target = if ir.source_index.is_valid() {
-            ir.source_index.get()
-        } else if let Some(map) = path_to_source_index_map {
-            match map.get_path(&ir.path) {
-                Some(t) => t,
-                None => continue,
-            }
-        } else {
+        let Some(target) = record_target(ir, path_to_source_index_map) else {
             continue;
         };
         if ir.flags.contains(import_record::Flags::IS_INTERNAL) {
@@ -580,14 +586,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // Add bare require/dynamic-import targets to BFS as star imports — both
     // always need the full namespace.
     for (idx, ir) in file_import_records.as_slice().iter().enumerate() {
-        let target = if ir.source_index.is_valid() {
-            ir.source_index.get()
-        } else if let Some(map) = path_to_source_index_map {
-            match map.get_path(&ir.path) {
-                Some(t) => t,
-                None => continue,
-            }
-        } else {
+        let Some(target) = record_target(ir, path_to_source_index_map) else {
             continue;
         };
         if ir.flags.contains(import_record::Flags::IS_INTERNAL) {
@@ -624,14 +623,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         if ir.flags.contains(import_record::Flags::IS_INTERNAL) {
             continue;
         }
-        let target = if ir.source_index.is_valid() {
-            ir.source_index.get()
-        } else if let Some(map) = path_to_source_index_map {
-            match map.get_path(&ir.path) {
-                Some(t) => t,
-                None => continue,
-            }
-        } else {
+        let Some(target) = record_target(ir, path_to_source_index_map) else {
             continue;
         };
         let (found, value) = RequestedExports::entry(&mut this.requested_exports, target);
@@ -782,16 +774,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
                     if rec.flags.contains(import_record::Flags::IS_INTERNAL) {
                         continue;
                     }
-                    // Dev server records keep source_index unset; fall back to
-                    // the path map like the seeding loops above.
-                    let target = if rec.source_index.is_valid() {
-                        rec.source_index.get()
-                    } else if let Some(map) = path_to_source_index_map {
-                        match map.get_path(&rec.path) {
-                            Some(t) => t,
-                            None => continue,
-                        }
-                    } else {
+                    let Some(target) = record_target(rec, path_to_source_index_map) else {
                         continue;
                     };
                     if imp.alias_is_star {
@@ -818,14 +801,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
                     if rec.flags.contains(import_record::Flags::IS_INTERNAL) {
                         continue;
                     }
-                    let target = if rec.source_index.is_valid() {
-                        rec.source_index.get()
-                    } else if let Some(map) = path_to_source_index_map {
-                        match map.get_path(&rec.path) {
-                            Some(t) => t,
-                            None => continue,
-                        }
-                    } else {
+                    let Some(target) = record_target(rec, path_to_source_index_map) else {
                         continue;
                     };
                     pushes.push(StarPush {

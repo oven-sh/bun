@@ -151,9 +151,7 @@ using namespace Zig;
 // Return an error code if an exception was thrown after NAPI_PREAMBLE
 #define NAPI_RETURN_IF_VM_EXCEPTION(_env) RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error((_env), napi_pending_exception))
 
-// Like NAPI_RETURN_IF_VM_EXCEPTION but returns a caller-chosen status.
-// Used where Node.js reports a specific code (e.g. napi_string_expected,
-// napi_generic_failure) while leaving the thrown exception pending.
+// Like NAPI_RETURN_IF_VM_EXCEPTION but returns a caller-chosen status while leaving the exception pending.
 #define NAPI_RETURN_STATUS_IF_EXCEPTION(_env, _status) \
     RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error((_env), (_status)))
 
@@ -1023,8 +1021,6 @@ static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, c
     auto* globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
 
-    // Node.js uses NAPI_PREAMBLE for napi_throw_*error: if an exception is
-    // already pending, return napi_pending_exception and leave it untouched.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (scope.exception() || env->hasPendingException()) {
         return napi_set_last_error(env, napi_pending_exception);
@@ -1175,8 +1171,6 @@ extern "C" JS_EXPORT napi_status node_api_post_finalizer(napi_env env,
     void* finalize_data,
     void* finalize_hint)
 {
-    // Node.js uses only CHECK_ENV here (basic-env function) and does not
-    // null-check finalize_cb; a NULL cb is enqueued and no-ops on run.
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     napi_internal_enqueue_finalizer(env, finalize_cb, finalize_data, finalize_hint);
     return napi_set_last_error(env, napi_ok);
@@ -3014,15 +3008,10 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
     NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, scope);
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, words);
-    // Node.js: RETURN_STATUS_IF_FALSE(env, word_count <= INT_MAX, napi_invalid_arg).
     NAPI_RETURN_EARLY_IF_FALSE(env, word_count <= INT_MAX, napi_invalid_arg);
 
-    // V8 checks its kMaxLength before reading the words array, so Node's
-    // test_bigint passes INT_MAX with a 10-element buffer and expects a throw.
-    // JSC::tryCreateFromWords trims trailing zeroes first (reads words[n-1]),
-    // so throw here to avoid reading past the caller's buffer.
-    // JSBigInt::maxLength is private; JSBigInt.h defines it as
-    // maxLengthBits (1 << 20) / digitBits (CHAR_BIT * sizeof(uint64_t)).
+    // JSC::tryCreateFromWords reads words[n-1] before its length check, so throw
+    // here first. Value mirrors JSBigInt::maxLength (maxLengthBits / digitBits).
     constexpr size_t jscBigIntMaxWords = (1 << 20) / (CHAR_BIT * sizeof(uint64_t));
     if (word_count > jscBigIntMaxWords) {
         JSC::throwOutOfMemoryError(globalObject, scope);

@@ -1162,8 +1162,6 @@ extern "C" fn napi_make_callback(
     bun_output::scoped_log!(napi, "napi_make_callback");
     let env = preamble!(env_);
     let (recv, func) = (recv_.get(), func_.get());
-    // Node.js: CHECK_ARG(env, recv); if (argc > 0) CHECK_ARG(env, argv);
-    // then CHECK_TO_FUNCTION (napi_invalid_arg on non-function).
     if recv.is_empty() {
         return env.invalid_arg();
     }
@@ -3158,8 +3156,6 @@ extern "C" fn napi_unref_threadsafe_function(
     func: napi_threadsafe_function,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_unref_threadsafe_function");
-    // Node.js ignores env entirely (basic-env function) and returns raw
-    // napi_ok without touching last_error.
     // SAFETY: caller passes a pointer from napi_create_threadsafe_function.
     let Some(func) = (unsafe { func.as_mut() }) else {
         return NapiStatus::invalid_arg as napi_status;
@@ -3181,8 +3177,6 @@ extern "C" fn napi_ref_threadsafe_function(
     func: napi_threadsafe_function,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_ref_threadsafe_function");
-    // Node.js ignores env entirely (basic-env function) and returns raw
-    // napi_ok without touching last_error.
     // SAFETY: caller passes a pointer from napi_create_threadsafe_function.
     let Some(func) = (unsafe { func.as_mut() }) else {
         return NapiStatus::invalid_arg as napi_status;

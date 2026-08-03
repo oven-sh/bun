@@ -392,6 +392,11 @@ pub struct PackageManager {
 
     pub peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
 
+    /// Non-peer dependencies whose name is a declared `npm:` alias key
+    /// elsewhere in the graph (`lockfile.alias_keys`). Deferred so they bind
+    /// after the alias targets resolve; see `process_alias_dependency_list`.
+    pub alias_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
+
     pub event_loop: AnyEventLoop,
 
     // During `installPackages` we learn exactly what dependencies from --trust
@@ -1954,6 +1959,10 @@ pub fn init(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
         );
+        wr!(
+            alias_dependencies,
+            LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
+        );
         wr!(trusted_deps_to_add_to_package_json, Vec::new());
         wr!(any_failed_to_install, false);
         wr!(updating_packages, StringArrayHashMap::default());
@@ -2384,6 +2393,10 @@ pub(crate) fn init_with_runtime_once(
         wr!(on_wake, WakeHandler::default());
         wr!(
             peer_dependencies,
+            LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
+        );
+        wr!(
+            alias_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
         );
         wr!(trusted_deps_to_add_to_package_json, Vec::new());

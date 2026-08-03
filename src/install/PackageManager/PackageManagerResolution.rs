@@ -272,6 +272,7 @@ impl PackageManager {
             dep.name = self.lockfile.packages.items_name()[package_id as usize];
             dep.name_hash = self.lockfile.packages.items_name_hash()[package_id as usize];
         }
+        self.lockfile.record_alias_target(dependency_id, package_id);
     }
 
     pub fn assign_root_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
@@ -294,6 +295,7 @@ impl PackageManager {
             dep.name = self.lockfile.packages.items_name()[package_id as usize];
             dep.name_hash = self.lockfile.packages.items_name_hash()[package_id as usize];
         }
+        self.lockfile.record_alias_target(dependency_id, package_id);
     }
 
     pub fn verify_resolutions(&mut self, log_level: LogLevel) {

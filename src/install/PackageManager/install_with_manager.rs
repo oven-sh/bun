@@ -923,6 +923,10 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
         // `this: &mut` in `run_and_wait` is dead past the `let mgr = ...` line.
         let this = unsafe { &mut *closure.manager };
         if CHECK_PEERS {
+            if let Err(err) = this.process_alias_dependency_list() {
+                closure.err = Some(err);
+                return true;
+            }
             if let Err(err) = this.process_peer_dependency_list() {
                 closure.err = Some(err);
                 return true;
@@ -941,7 +945,9 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
         }
 
         if CHECK_PEERS {
-            if this.peer_dependencies.readable_length() > 0 {
+            if this.alias_dependencies.readable_length() > 0
+                || this.peer_dependencies.readable_length() > 0
+            {
                 return false;
             }
         }
@@ -1614,7 +1620,10 @@ fn resolve_pending_tasks(
     // are spawned, so `pendingTaskCount() == 0`. We must drain the peer
     // queue iteratively here — entering the event loop (`waitForPeers`)
     // with zero pending I/O would block forever.
-    while manager.peer_dependencies.readable_length() > 0 {
+    while manager.alias_dependencies.readable_length() > 0
+        || manager.peer_dependencies.readable_length() > 0
+    {
+        manager.process_alias_dependency_list()?;
         manager.process_peer_dependency_list()?;
         manager.drain_dependency_list();
     }

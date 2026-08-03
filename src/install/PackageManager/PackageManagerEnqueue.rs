@@ -85,6 +85,28 @@ pub fn enqueue_dependency_with_main(
         dependency,
         resolution,
         install_peer,
+        false,
+        assign_resolution,
+        None,
+        false,
+    )
+}
+
+/// Alias phase entry: re-run resolution for a deferred alias-named edge,
+/// binding to the alias package first when its version satisfies.
+pub fn enqueue_alias_dependency(
+    this: &mut PackageManager,
+    id: DependencyID,
+    dependency: &Dependency,
+    resolution: PackageID,
+) -> crate::Result<()> {
+    enqueue_dependency_with_main_and_success_fn(
+        this,
+        id,
+        dependency,
+        resolution,
+        false,
+        true,
         assign_resolution,
         None,
         false,
@@ -467,6 +489,7 @@ pub fn enqueue_dependency_to_root(
             &dependency,
             invalid_package_id,
             false,
+            false,
             assign_root_resolution,
             Some(fail_root_resolution),
             true,
@@ -624,6 +647,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     dependency: &Dependency,
     resolution: PackageID,
     install_peer: bool,
+    bind_alias_first: bool,
     success_fn: SuccessFn,
     fail_fn: Option<FailFn>,
     // The two `SuccessFn` candidates
@@ -722,6 +746,44 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         dependency::version::Tag::DistTag
         | dependency::version::Tag::Folder
         | dependency::version::Tag::Npm => {
+            // A regular (non-peer, non-alias) npm edge whose name is a
+            // declared alias key defers to the alias phase, where it binds to
+            // the alias package if that package's resolved version satisfies
+            // this range (npm reuses the alias node in that case).
+            let is_alias_shadowable = version.tag == dependency::version::Tag::Npm
+                && !version.npm().is_alias
+                && !dependency.behavior.is_peer()
+                && !dependency.behavior.is_workspace()
+                && this.lockfile.alias_keys.contains_key(&dependency.name_hash);
+
+            if is_alias_shadowable && !install_peer && !bind_alias_first {
+                this.alias_dependencies.write_item(id)?;
+                return Ok(());
+            }
+
+            // Alias phase: npm satisfies this edge with the alias package that
+            // occupies the folder name when the alias target's resolved version
+            // satisfies the range — name-blind, version only — and reuses it
+            // instead of resolving the real registry package.
+            if is_alias_shadowable && bind_alias_first {
+                if let Some(&alias_pkg_id) = this.lockfile.alias_targets.get(&dependency.name_hash)
+                {
+                    let alias_resolution =
+                        this.lockfile.packages.items_resolution()[alias_pkg_id as usize];
+                    if alias_resolution.tag == crate::resolution::Tag::Npm {
+                        let buf = this.lockfile.buffers.string_bytes.as_slice();
+                        if version.npm().version.satisfies(
+                            alias_resolution.npm().version,
+                            buf,
+                            buf,
+                        ) {
+                            success_fn(this, id, alias_pkg_id);
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+
             'retry_from_manifests_ptr: loop {
                 let mut resolve_result_ = get_or_put_resolved_package(
                     this,

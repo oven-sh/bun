@@ -383,6 +383,7 @@ impl PackageManager {
                     &dependency,
                     resolution,
                     install_peer,
+                    false,
                     pm_resolution::assign_root_resolution,
                     Some(PackageManager::fail_root_resolution),
                     true,
@@ -396,6 +397,22 @@ impl PackageManager {
                 }
             }
             _ => {}
+        }
+        Ok(())
+    }
+
+    /// Drain the deferred alias-named dependencies. Each binds to the alias
+    /// package occupying its folder name when that package's resolved version
+    /// satisfies the range; otherwise it resolves normally under its real name.
+    pub fn process_alias_dependency_list(&mut self) -> Result<(), crate::Error> {
+        while let Some(alias_dependency_id) = self.alias_dependencies.read_item() {
+            let dependency = Clone::clone(
+                &self.lockfile.buffers.dependencies.as_slice()[alias_dependency_id as usize],
+            );
+            let resolution =
+                self.lockfile.buffers.resolutions.as_slice()[alias_dependency_id as usize];
+
+            enqueue::enqueue_alias_dependency(self, alias_dependency_id, &dependency, resolution)?;
         }
         Ok(())
     }

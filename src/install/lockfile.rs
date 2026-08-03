@@ -204,9 +204,39 @@ pub struct Lockfile {
     /// happened to land first. Runtime-only — never serialised; sized lazily
     /// in `mark_exact_pin`.
     pub exact_pinned: DynamicBitSet,
+
+    /// Name hashes that some parsed manifest declares as an `npm:` alias key
+    /// (`"boba": "npm:baz@^1"` records `hash("boba")`). A dependency edge
+    /// sharing one of these names resolves in the deferred alias phase so it
+    /// can bind to the alias package when that package's resolved version
+    /// satisfies the edge's range, matching npm's tree. Runtime-only — never
+    /// serialised; populated by `record_alias_keys` as packages are appended.
+    pub alias_keys: AliasKeySet,
+
+    /// Alias key hash -> the package the alias declaration resolved to
+    /// (`"boba": "npm:baz@^1"` maps `hash("boba")` to baz's package id once
+    /// that edge binds). The deferred alias phase reads the target's resolved
+    /// version from here. Runtime-only — never serialised; populated in
+    /// `assign_resolution`.
+    pub alias_targets: AliasTargetMap,
 }
 
 pub(crate) type PackageList = self::package::List<u64>;
+
+pub type AliasKeySet = BunHashMap<PackageNameHash, (), IdentityContext<u64>>;
+pub type AliasTargetMap = BunHashMap<PackageNameHash, PackageID, IdentityContext<u64>>;
+
+/// Free form of `Lockfile::record_alias_keys` over the two disjoint fields
+/// it touches, for call sites that already hold `&mut` into other lockfile
+/// fields (`package_index`, `packages`).
+pub fn record_alias_keys(alias_keys: &mut AliasKeySet, dep_list: &DependencyList, package: &Package) {
+    let deps: &[Dependency] = package.dependencies.get(dep_list.as_slice());
+    for dep in deps {
+        if dep.version.tag == crate::dependency::version::Tag::Npm && dep.version.npm().is_alias {
+            bun_core::handle_oom(alias_keys.put(dep.name_hash, ()));
+        }
+    }
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // DepSorter
@@ -2048,6 +2078,8 @@ impl Lockfile {
             // `get_package_id` applies from id 0.
             loaded_package_count: 0,
             exact_pinned: DynamicBitSet::default(),
+            alias_keys: AliasKeySet::default(),
+            alias_targets: AliasTargetMap::default(),
         }
     }
 
@@ -2068,6 +2100,27 @@ impl Lockfile {
             bun_core::handle_oom(self.exact_pinned.resize(i + 1, false));
         }
         self.exact_pinned.set(i);
+    }
+
+    /// Record every `npm:` alias key that `package` declares among its
+    /// dependencies. Called for each package as it is appended (fresh
+    /// resolution, lockfile load, migration) so `alias_keys` reflects the
+    /// whole graph regardless of which manifest declared the alias.
+    #[inline]
+    pub fn record_alias_keys(&mut self, package: &Package) {
+        record_alias_keys(&mut self.alias_keys, &self.buffers.dependencies, package);
+    }
+
+    /// When the dependency being bound is an alias declaration
+    /// (`"boba": "npm:baz@..."`), remember which package the alias key
+    /// (`hash("boba")`, i.e. `dep.name_hash`) resolved to, so the deferred
+    /// alias phase can read the target's resolved version.
+    pub fn record_alias_target(&mut self, dependency_id: DependencyID, package_id: PackageID) {
+        let dep = &self.buffers.dependencies.as_slice()[dependency_id as usize];
+        if dep.version.tag == crate::dependency::version::Tag::Npm && dep.version.npm().is_alias {
+            let key = dep.name_hash;
+            bun_core::handle_oom(self.alias_targets.put(key, package_id));
+        }
     }
 
     pub fn get_package_id(
@@ -2190,6 +2243,7 @@ impl Lockfile {
             pkg.meta.id = new_id;
             self.packages.append(*pkg)?;
             *entry.value_ptr = PackageIndexEntry::Id(new_id);
+            self.record_alias_keys(pkg);
             return Ok(new_id);
         }
 
@@ -2210,6 +2264,7 @@ impl Lockfile {
                 let new_id: PackageID = PackageID::try_from(self.packages.len()).expect("int cast");
                 pkg.meta.id = new_id;
                 self.packages.append(*pkg)?;
+                record_alias_keys(&mut self.alias_keys, &self.buffers.dependencies, pkg);
 
                 resolutions = self.packages.items_resolution();
 
@@ -2243,6 +2298,7 @@ impl Lockfile {
                 let new_id: PackageID = PackageID::try_from(self.packages.len()).expect("int cast");
                 pkg.meta.id = new_id;
                 self.packages.append(*pkg)?;
+                record_alias_keys(&mut self.alias_keys, &self.buffers.dependencies, pkg);
 
                 resolutions = self.packages.items_resolution();
 
@@ -2341,6 +2397,7 @@ impl Lockfile {
         package.meta.id = id;
         self.packages.append(package)?;
         self.get_or_put_id(id, name_hash)?;
+        self.record_alias_keys(&package);
 
         debug_assert!(self.get_package_id(name_hash, None, &resolution).is_some());
 

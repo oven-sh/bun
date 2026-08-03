@@ -4,7 +4,6 @@
 const { inspect, types: utilTypes } = require("node:util");
 const { relative } = require("node:path");
 const { Transform } = require("node:stream");
-const { hostname } = require("node:os");
 
 const kUnwrapErrors = new Set(["testCodeFailure", "hookFailed", "uncaughtException", "unhandledRejection"]);
 const kInspectOptions = { __proto__: null, colors: false, breakLength: Infinity };
@@ -591,7 +590,7 @@ async function* junit(source) {
           currentTest.attrs.tests = childCount;
           currentTest.attrs.failures = currentTest.children.filter(isFailure).length;
           currentTest.attrs.skipped = currentTest.children.filter(isSkipped).length;
-          currentTest.attrs.hostname = hostname();
+          currentTest.attrs.hostname = require("node:os").hostname();
         } else {
           currentTest.tag = "testcase";
           currentTest.attrs.classname = event.data.classname ?? "test";

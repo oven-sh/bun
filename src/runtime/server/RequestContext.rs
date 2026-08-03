@@ -2039,7 +2039,7 @@ where
             stream_log!("responded");
         }
 
-        let aborted = this.flags.aborted() || response_stream.sink.aborted;
+        let aborted = this.flags.aborted() || response_stream.sink.state.is_aborted();
         this.flags.set_aborted(aborted);
 
         if let Some(err_value) = assignment_result.to_error() {
@@ -2803,7 +2803,7 @@ where
         // already settled pending_flush, so this never waits on a dead
         // socket.
         if let Some(wrapper) = req.sink_mut() {
-            if !req.flags.aborted() && !wrapper.sink.aborted {
+            if !req.flags.aborted() && !wrapper.sink.state.is_aborted() {
                 // Only defer when there is still a live response to drain the
                 // flush through: on_writable (which resolves the flush via
                 // flush_promise) is armed on `resp`. With no response the flush
@@ -2842,7 +2842,7 @@ where
         let mut ended_response = false;
         if let Some(wrapper) = req.sink_mut() {
             let wrapper_ptr = req.sink.take().expect("infallible: sink_mut returned Some");
-            let aborted = req.flags.aborted() || wrapper.sink.aborted;
+            let aborted = req.flags.aborted() || wrapper.sink.state.is_aborted();
             req.flags.set_aborted(aborted);
             wrote_anything = wrapper.sink.wrote > 0;
             ended_response = wrapper.sink.ended_response;
@@ -2953,8 +2953,8 @@ where
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe deref.
                 bun_opaque::opaque_deref_mut(prom).to_js().unprotect();
             }
-            wrapper.sink.done = true;
-            let aborted = req.flags.aborted() || wrapper.sink.aborted;
+            wrapper.sink.mark_done();
+            let aborted = req.flags.aborted() || wrapper.sink.state.is_aborted();
             req.flags.set_aborted(aborted);
             wrapper.sink.finalize();
             let sink_global = wrapper

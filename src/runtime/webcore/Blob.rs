@@ -6079,6 +6079,14 @@ pub extern "C" fn Blob__implNeedsToReadFile(blob: &Blob) -> bool {
     blob.needs_to_read_file() || blob.is_s3()
 }
 
+/// Clears the File-specific fields so a dupe of a File surfaces as a plain
+/// Blob. The clipboard's getType() resolves "a new Blob" per spec.
+#[unsafe(no_mangle)]
+pub extern "C" fn Blob__implClearFile(blob: &mut Blob) {
+    blob.is_jsdom_file.set(false);
+    blob.name.set(BunString::dead());
+}
+
 /// Borrows the Blob's content type. The bytes live as long as the Blob.
 /// # Safety
 /// `out_ptr` and `out_len` must be valid for writes.

@@ -12,6 +12,7 @@ namespace WebCore {
 extern "C" void Blob__implGetSpan(BlobImpl*, const uint8_t** outPtr, size_t* outLength);
 extern "C" bool Blob__implNeedsToReadFile(BlobImpl*);
 extern "C" void Blob__implGetContentType(BlobImpl*, const uint8_t** outPtr, size_t* outLength);
+extern "C" void Blob__implClearFile(BlobImpl*);
 extern "C" void* Blob__fromBytesWithNormalizedType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const uint8_t* mime, size_t mimeLength, bool normalize);
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(JSC::JSGlobalObject*, void*);
 
@@ -66,7 +67,22 @@ JSC::JSValue clipboardBlobToJS(JSC::JSGlobalObject* globalObject, Blob& blob)
     auto* impl = blob.impl();
     if (!impl)
         return JSC::jsNull();
-    return JSC::JSValue::decode(Blob__create(globalObject, Blob__dupe(impl)));
+    // getType() resolves "a new Blob" per spec. A dupe shares the backing store
+    // and its File-specific name, so build from bytes when they are resident.
+    // A Bun-specific file-/network-backed Blob has none and falls back to a
+    // dupe with the File flag cleared so it reads as a Blob, not a File.
+    if (!Blob__implNeedsToReadFile(impl)) {
+        auto type = clipboardBlobContentType(blob);
+        Bun::UTF8View mime(type);
+        auto mimeBytes = mime.bytes();
+        auto bytes = clipboardBlobBytes(blob);
+        void* fresh = Blob__fromBytesWithNormalizedType(globalObject, bytes.data(), bytes.size(), mimeBytes.data(), mimeBytes.size(), false);
+        RELEASE_ASSERT(fresh);
+        return JSC::JSValue::decode(Blob__create(globalObject, fresh));
+    }
+    auto* dupe = static_cast<BlobImpl*>(Blob__dupe(impl));
+    Blob__implClearFile(dupe);
+    return JSC::JSValue::decode(Blob__create(globalObject, dupe));
 }
 
 bool clipboardBlobTypeMatches(const String& declared, const String& requested)

@@ -146,6 +146,12 @@ void Clipboard::read(Ref<DeferredPromise>&& promise)
 
 void Clipboard::write(const Vector<RefPtr<ClipboardItem>>& data, Ref<DeferredPromise>&& promise)
 {
+    // Supersede first (upstream constructs an ItemWriter unconditionally), so
+    // write([]) and a rejected multi-item write abort an in-flight write the
+    // same way writeText() and write([item]) do.
+    if (RefPtr previousItemWriter = std::exchange(m_activeItemWriter, nullptr))
+        previousItemWriter->invalidate();
+
     // Writing nothing succeeds without touching the platform clipboard.
     if (data.isEmpty()) {
         promise->resolve();
@@ -159,9 +165,6 @@ void Clipboard::write(const Vector<RefPtr<ClipboardItem>>& data, Ref<DeferredPro
         promise->reject(ExceptionCode::NotAllowedError, "Writing multiple ClipboardItems is not supported."_s);
         return;
     }
-
-    if (RefPtr previousItemWriter = std::exchange(m_activeItemWriter, nullptr))
-        previousItemWriter->invalidate();
 
     Ref itemWriter = ItemWriter::create(*this, WTF::move(promise));
     m_activeItemWriter = itemWriter.copyRef();

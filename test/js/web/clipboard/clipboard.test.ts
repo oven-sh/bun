@@ -199,8 +199,14 @@ describe("ClipboardItem", () => {
     // returned types are asserted exactly as Blob reports them.
     const plain = await item.getType("text/plain");
     expect(plain).toBeInstanceOf(Blob);
-    // Spec: getType() returns a Blob, not a File (and browsers agree).
+    // Spec: getType() returns a Blob, not a File (and browsers agree). A File
+    // input must not leak its File-ness or name through the dupe either.
     expect(plain).not.toBeInstanceOf(File);
+    const fromFile = await new ClipboardItem({
+      "text/plain": new File(["x"], "f.txt", { type: "text/plain" }),
+    }).getType("text/plain");
+    expect(fromFile).not.toBeInstanceOf(File);
+    expect((fromFile as File).name).toBeUndefined();
     expect(plain.type).toBe("text/plain;charset=utf-8");
     expect(await plain.text()).toBe("as a string");
     const html = await item.getType("text/html");
@@ -408,6 +414,15 @@ describe("read / write", () => {
     const { promise: rep } = Promise.withResolvers<string>();
     const first = navigator.clipboard.write([new ClipboardItem({ "text/plain": rep })]);
     navigator.clipboard.writeText("later").catch(() => {});
+    await expectDOMException(first, "AbortError");
+  });
+
+  // write([]) resolves without reaching the OS, but it is still a write() call
+  // and must abort an in-flight write() rather than letting it land later.
+  test("write([]) supersedes an in-flight write()", async () => {
+    const { promise: rep } = Promise.withResolvers<string>();
+    const first = navigator.clipboard.write([new ClipboardItem({ "text/plain": rep })]);
+    await navigator.clipboard.write([]);
     await expectDOMException(first, "AbortError");
   });
 

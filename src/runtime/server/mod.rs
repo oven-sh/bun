@@ -672,6 +672,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         let resp_ref = bun_opaque::opaque_deref_mut(resp);
 
+        // A worker terminate() raised inside a previous request's handler in
+        // the same poll sweep leaves the TerminationException pending; every
+        // on_request-family entry funnels here before its first JS call.
+        if server.vm().script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
+            server_body::respond_stopped_503(resp_ref);
+            return None;
+        }
+
         // We need to register the handler immediately since uSockets will not buffer.
         //
         // We first validate the self-reported request body length so that
@@ -1082,13 +1090,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
             return;
         };
-        // SAFETY: `this` is the live server backref for this request.
-        if unsafe { &*this }.vm().script_execution_status()
-            != bun_jsc::ScriptExecutionStatus::Running
-        {
-            server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
-            return;
-        }
         let should_deinit_context = core::cell::Cell::new(false);
         let Some(prepared) = Self::prepare_js_request_context(
             this,

@@ -3077,6 +3077,12 @@ where
     ) -> Option<PreparedRequestFor<'_, Ctx>> {
         jsc::mark_binding!();
 
+        // Same worker-terminate gate as `NewServer::prepare_js_request_context`.
+        if self.vm().script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
+            respond_stopped_503(resp);
+            return None;
+        }
+
         // We need to register the handler immediately since uSockets will not buffer.
         //
         // We first validate the self-reported request body length so that

@@ -3209,7 +3209,35 @@ where
                             // If we've received the complete body by the time this function is called
                             // we can avoid streaming it and just send it all at once.
                             if byte_stream.has_received_last_chunk.get() {
+                                let pending_error = byte_stream.take_pending_error();
                                 let mut byte_list = byte_stream.drain();
+                                if let Some(err) = pending_error {
+                                    let err_js = err.to_js(global_this);
+                                    err_js.ensure_still_alive();
+                                    this.response_body_readable_stream_ref.deinit();
+
+                                    if byte_list.is_empty() {
+                                        Self::handle_reject_stream(this, global_this, err_js);
+                                        return;
+                                    }
+
+                                    this.response_buf_owned = byte_list.move_to_list();
+                                    resp.run_corked_with_type(
+                                        Self::drain_response_buffer_and_metadata_corked,
+                                        this,
+                                    );
+                                    if let Some(resp) = this.resp {
+                                        let state = resp.state();
+                                        if state.is_http_write_called()
+                                            && state.is_response_pending()
+                                        {
+                                            this.force_close();
+                                            return;
+                                        }
+                                    }
+                                    Self::handle_reject_stream(this, global_this, err_js);
+                                    return;
+                                }
                                 this.blob = AnyBlob::from_array_list(
                                     byte_list.move_to_list_managed(),
                                 );

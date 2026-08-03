@@ -73,6 +73,13 @@ const sources: Record<string, () => ReadableStream> = {
         throw new Error("boom");
       },
     }),
+  "mid-stream-controller-error": () =>
+    new ReadableStream({
+      start(c) {
+        c.enqueue("chunk-a");
+        midStreamResolve = () => c.error(new Error("boom"));
+      },
+    }),
   // The client aborts the download mid-stream, which makes Bun cancel the body
   // stream; the source's cancel() then throws. That rejection belongs to a
   // promise Bun created internally and must not surface as unhandledRejection.

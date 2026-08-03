@@ -83,20 +83,24 @@ test.concurrent("pull-throw in development mode: the rejection is handled", asyn
 // keeps handle_reject_stream quiet here, which the existing
 // serve-direct-readable-stream.test.ts and serve-stream-reject-flush-leak
 // tests rely on. The development-mode variant below asserts the report.
-test.concurrent("mid-stream error: the chunked body is not terminated as complete", async () => {
-  const { stdout, exitCode } = await runFixture("mid-stream-reject");
-  expect({ result: JSON.parse(stdout), exitCode }).toEqual({
-    result: {
-      statusLine: "HTTP/1.1 200 OK",
-      cleanChunkedTerminator: false,
-      body: "7\r\nchunk-a\r\n",
-      errorCb: 0,
-      unhandled: 0,
-      secondStatusLine: "HTTP/1.1 200 OK",
-    },
-    exitCode: 0,
-  });
-});
+test.concurrent.each(["mid-stream-reject", "mid-stream-controller-error"])(
+  "%s: the chunked body is not terminated as complete",
+  async variant => {
+    // https://github.com/oven-sh/bun/issues/36477
+    const { stdout, exitCode } = await runFixture(variant);
+    expect({ result: JSON.parse(stdout), exitCode }).toEqual({
+      result: {
+        statusLine: "HTTP/1.1 200 OK",
+        cleanChunkedTerminator: false,
+        body: "7\r\nchunk-a\r\n",
+        errorCb: 0,
+        unhandled: 0,
+        secondStatusLine: "HTTP/1.1 200 OK",
+      },
+      exitCode: 0,
+    });
+  },
+);
 
 // Under `development: true` (the default for a plain script) the mid-stream
 // error is reported by handle_reject_stream, and the connection must still be

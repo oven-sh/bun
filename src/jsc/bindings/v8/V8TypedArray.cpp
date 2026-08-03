@@ -19,7 +19,7 @@ static Local<ResultType> newTypedArray(Local<ArrayBuffer> array_buffer, size_t b
 {
     auto* jsBuffer = array_buffer->localToObjectPointer<JSC::JSArrayBuffer>();
     RELEASE_ASSERT(jsBuffer, "v8::TypedArray::New: not an ArrayBuffer");
-    auto* globalObject = dynamicDowncast<Zig::GlobalObject>(jsBuffer->globalObject());
+    auto* globalObject = Isolate::GetCurrent()->globalObject();
     auto& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 

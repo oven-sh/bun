@@ -55,8 +55,7 @@ Local<ArrayBuffer> ArrayBufferView::Buffer()
 {
     auto* view = localToObjectPointer<JSC::JSArrayBufferView>();
     RELEASE_ASSERT(view, "v8::ArrayBufferView::Buffer: not an ArrayBufferView");
-    auto* globalObject = dynamicDowncast<Zig::GlobalObject>(view->globalObject());
-    RELEASE_ASSERT(globalObject, "v8::ArrayBufferView::Buffer: not a Bun global object");
+    auto* globalObject = Isolate::GetCurrent()->globalObject();
     auto& vm = globalObject->vm();
 
     JSC::JSArrayBuffer* jsBuffer = view->possiblySharedJSBuffer(globalObject);

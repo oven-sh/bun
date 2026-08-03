@@ -1650,7 +1650,12 @@ impl<'a> PackageInstall<'a> {
                                             entry.path,
                                         )?;
                                     }
-                                    sys::E::EXDEV => {
+                                    // EACCES/EPERM: filesystems without hardlink
+                                    // support (FUSE, e.g. Android SDCARD) reject
+                                    // linkat this way; fall back to copying like
+                                    // EXDEV. A genuine destination permission
+                                    // error fails the copy with the same errno.
+                                    sys::E::EXDEV | sys::E::EACCES | sys::E::EPERM => {
                                         return Err(crate::Error::NotSameFileSystem);
                                     }
                                     sys::E::ENXIO => {

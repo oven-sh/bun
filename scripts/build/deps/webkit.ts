@@ -8,7 +8,7 @@
  * needed. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "8172ab945d8e5ec03be0dcd7cec47bfe6e339a75";
+export const WEBKIT_VERSION = "85aacc73aec8a306a017c2df3db141a35b61c2c7";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

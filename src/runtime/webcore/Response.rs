@@ -118,13 +118,6 @@ pub(crate) struct BodyAbortListener {
     signal: AbortSignalRef,
     /// `Response` owns `Box<Self>`, so a ref-counted pointer here would cycle.
     response: bun_ptr::ParentRef<Response>,
-    /// GC-cleared handle to the `JSResponse` wrapper. `on_abort` dereferences the
-    /// body stream's native `NewSource` box (via `ReadableStream::done`), whose
-    /// lifetime is bounded by the wrapper's traced `m_stream` slot; once the
-    /// wrapper is unmarked this box may already be freed (its source cell is a
-    /// PreciseAllocation swept in `sweepInFinalize`) even though the native
-    /// `Response` outlives its wrapper's lazily-swept destructor.
-    wrapper: bun_jsc::Weak<()>,
     global: GlobalRef,
 }
 
@@ -136,24 +129,25 @@ impl BodyAbortListener {
         // box is dropped, so it is live here. Copy out up front: erroring a
         // still-streaming body can re-enter `Response::unref` via
         // `FetchTasklet::ignore_remaining_response_body` and destroy this box.
-        let (response, global, wrapper_live) = unsafe {
-            let this = &*ctx.cast::<Self>();
-            (this.response, this.global, this.wrapper.get().is_some())
-        };
+        let (response, global) =
+            unsafe { ((*ctx.cast::<Self>()).response, (*ctx.cast::<Self>()).global) };
         Response::ref_(response.as_mut_ptr());
         let _keepalive = scopeguard::guard((), move |()| Response::unref(response.as_mut_ptr()));
         if !matches!(
             response.get_body_value(),
             BodyValue::Used | BodyValue::Error(_) | BodyValue::Null | BodyValue::Empty
         ) {
-            // `get_body_readable_stream`'s `js_ref()` path reads the stream
-            // from a raw JSValue to the dead-but-unswept wrapper's `m_stream`
-            // slot, then the stream's `m_nativePtr` source cell (a
-            // PreciseAllocation whose destructor already freed the native
-            // box). With the wrapper collected there is no reader to observe
-            // the error anyway, so skip straight to poisoning the body value.
-            if wrapper_live {
-                if let Some(readable) = response.get_body_readable_stream(&global) {
+            // `get_body_readable_stream`'s `js_ref()` path reads `m_stream` off
+            // a raw `JsRef::Weak(JSValue)` to the wrapper; when the wrapper is
+            // unmarked but its MarkedBlock destructor has not yet run (lazy
+            // sweep), that chain reaches the stream's `m_nativePtr` source
+            // cell, a PreciseAllocation whose destructor has already freed the
+            // `NewSource` box. `Locked.readable` is a real `JSC::Weak` on the
+            // stream and is cleared at weak-reap time, so it returns `None`
+            // exactly when the stream (and with it the box) is collected, and
+            // the live stream when a reader still roots it without the wrapper.
+            if let BodyValue::Locked(locked) = response.get_body_value() {
+                if let Some(readable) = locked.readable.get(&global) {
                     readable.value.ensure_still_alive();
                     readable.error(&global, reason);
                 }
@@ -512,7 +506,6 @@ impl Response {
     /// SAFETY: `this` must be a live heap `Response` (stored as the listener's [`ParentRef`]).
     pub(crate) unsafe fn attach_abort_signal(
         this: *mut Response,
-        wrapper: JSValue,
         global: &JSGlobalObject,
         signal: &AbortSignal,
     ) {
@@ -523,7 +516,6 @@ impl Response {
             signal: signal_ref,
             // SAFETY: caller contract; `this` is live and owns the box.
             response: unsafe { bun_ptr::ParentRef::from_raw_mut(this) },
-            wrapper: bun_jsc::Weak::create_passive(wrapper, global),
             global: GlobalRef::new(global),
         });
         signal.add_listener(

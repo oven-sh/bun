@@ -1668,7 +1668,6 @@ extern "C" JS_EXPORT napi_status node_api_is_sharedarraybuffer(napi_env env,
     napi_value value, bool* result)
 {
     NAPI_LOG_CURRENT_FUNCTION;
-    NAPI_CHECK_ARG(env, env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, value);
     NAPI_CHECK_ARG(env, result);

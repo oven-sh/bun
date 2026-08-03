@@ -3174,16 +3174,12 @@ impl DeferredRequest {
     fn fail(&mut self) {
         match ::core::mem::replace(&mut self.handler, Handler::Aborted) {
             Handler::ServerHandler(mut saved) => {
-                let resp = saved.response;
-                let ctx = saved.ctx;
-                // Write while ctx is still ref'd so the final `deref`'s
-                // `deinit()` (microtask drain, `detach_response`) cannot
-                // outrun the raw response handle.
+                saved.response.write_status(b"500 Internal Server Error");
+                saved.response.write_header_int(b"Content-Length", 0);
+                // `end_without_body` derefs the prepare_and_save +1;
+                // `saved.deinit` derefs `defer_request`'s +1.
+                saved.ctx.end_without_body(true);
                 saved.deinit();
-                resp.write_status(b"500 Internal Server Error");
-                resp.write_header_int(b"Content-Length", 0);
-                resp.end_without_body(true);
-                ctx.deref();
             }
             Handler::BundledHtmlPage(r) => {
                 r.response.write_status(b"500 Internal Server Error");

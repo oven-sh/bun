@@ -24,12 +24,6 @@ public:
     T* operator*() const { return reinterpret_cast<T*>(m_location); }
     T* operator->() const { return reinterpret_cast<T*>(m_location); }
 
-    template<class U>
-    Local<U> reinterpret() const
-    {
-        return Local<U>(m_location);
-    }
-
     TaggedPointer& tagged() const
     {
         return *m_location;

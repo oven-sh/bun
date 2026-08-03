@@ -2066,47 +2066,7 @@ pub(crate) fn FreeEnvironmentStringsW(penv: *mut u16) {
     debug_assert!(rc != 0);
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum GetEnvironmentVariableError {
-    #[error("EnvironmentVariableNotFound")]
-    EnvironmentVariableNotFound,
-    #[error("Unexpected")]
-    Unexpected,
-}
-
-pub fn GetEnvironmentVariableW(
-    lpName: LPWSTR,
-    lpBuffer: *mut u16,
-    nSize: DWORD,
-) -> Result<DWORD, GetEnvironmentVariableError> {
-    // SAFETY: caller provides valid buffer
-    let rc = unsafe { kernel32_2::GetEnvironmentVariableW(lpName, lpBuffer, nSize) };
-
-    if rc == 0 {
-        match Win32Error::get() {
-            Win32Error::ENVVAR_NOT_FOUND => {
-                return Err(GetEnvironmentVariableError::EnvironmentVariableNotFound);
-            }
-            _ => return Err(GetEnvironmentVariableError::Unexpected),
-        }
-    }
-
-    Ok(rc)
-}
-
 pub mod env;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Additional surface unblocked for dependents.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// `bun.windows.translateNtStatusToErrno` — alias of
-/// [`translate_nt_status_to_errno`] kept for external callers; the previous
-/// duplicate body returned different values and has been removed.
-#[inline]
-pub fn translate_ntstatus_to_errno(status: NTSTATUS) -> E {
-    translate_nt_status_to_errno(status)
-}
 
 /// `bun.windows.getenvW` — read a UTF-16 env var into an owned `Vec<u16>`.
 ///

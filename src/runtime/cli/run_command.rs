@@ -1,4 +1,4 @@
-//! `RunCommand::exec` classifies the first positional as a file path vs. a
+//! `RunCommand::exec_with_cfg` classifies the first positional as a file path vs. a
 //! package.json script and either boots the JS VM directly (via `Run::boot` →
 //! `VirtualMachine::init` → `Run::start`) or spawns the script body through the
 //! bun-shell / system shell. PATH stitching, `node_modules/.bin` lookup,

@@ -812,9 +812,7 @@ pub mod command {
     // `bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG` so node-mode argv parsing
     // stays silent on unknown flags.
     // ──────────────────
-    // Matched case-insensitively: Windows resolves executables
-    // case-insensitively (`PATHEXT` commonly yields `bunx.EXE`, #36826) and
-    // macOS filesystems are case-insensitive by default.
+    // Case-insensitive: `PATHEXT` resolution can yield `bunx.EXE` (#36826).
     fn is_bun_x(argv0: &[u8]) -> bool {
         #[cfg(windows)]
         {

@@ -1288,6 +1288,15 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             };
             true
         }
+        task_tag::FileResponseStreamEof => {
+            // SAFETY: `on_read_chunk` took a ref for the queued task; adopt it.
+            drop(unsafe {
+                bun_ptr::ScopedRef::<crate::server::FileResponseStream>::adopt(
+                    task.ptr.cast::<crate::server::FileResponseStream>(),
+                )
+            });
+            true
+        }
         // `AsyncFSTask`s are `Box::leak`'d in `create()` and freed by
         // `destroy()` (called from `run_from_js_thread`'s scopeguard).
         // `destroy()` resets `JSPromiseStrong` (touches the StrongRootBlock list)

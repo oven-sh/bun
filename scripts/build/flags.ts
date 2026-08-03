@@ -788,6 +788,7 @@ export const defines: Flag[] = [
       "JSC_OBJC_API_ENABLED=0",
       "BUN_SINGLE_THREADED_PER_VM_ENTRY_SCOPE=1",
       "NAPI_EXPERIMENTAL=ON",
+      "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
       "NOMINMAX",
       "IS_BUILD",
       "BUILDING_JSCONLY__",

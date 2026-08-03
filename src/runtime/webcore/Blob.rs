@@ -6853,55 +6853,6 @@ impl Internal {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Inline (InlineBlob)
-// ──────────────────────────────────────────────────────────────────────────
-
-/// A blob which stores all the data in the same space as a real Blob
-/// This is an optimization for small Response and Request bodies
-#[repr(C, packed)]
-pub struct Inline {
-    pub(crate) bytes: [u8; Inline::AVAILABLE_BYTES],
-    pub(crate) len: u8,
-    pub(crate) was_string: bool,
-}
-
-impl Inline {
-    const REAL_BLOB_SIZE: usize = core::mem::size_of::<Blob>();
-    // Inherent assoc types are nightly-only;
-    // the int-size alias is hoisted to module-level `InlineIntSize` above.
-    pub(crate) const AVAILABLE_BYTES: usize =
-        Self::REAL_BLOB_SIZE - core::mem::size_of::<u8>() - 1 - 1;
-
-    pub fn concat(first: &[u8], second: &[u8]) -> Inline {
-        let total = first.len() + second.len();
-        debug_assert!(total <= Self::AVAILABLE_BYTES);
-
-        let mut inline_blob = Inline::default();
-        let bytes_slice = &mut inline_blob.bytes[..total];
-
-        if !first.is_empty() {
-            bytes_slice[..first.len()].copy_from_slice(first);
-        }
-        if !second.is_empty() {
-            bytes_slice[first.len()..][..second.len()].copy_from_slice(second);
-        }
-
-        inline_blob.len = total as u8;
-        inline_blob
-    }
-}
-
-impl Default for Inline {
-    fn default() -> Self {
-        Self {
-            bytes: [0; Self::AVAILABLE_BYTES],
-            len: 0,
-            was_string: false,
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // JSDOMFile__hasInstance / FileOpener / FileCloser
 // ──────────────────────────────────────────────────────────────────────────
 

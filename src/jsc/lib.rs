@@ -1440,9 +1440,7 @@ pub mod webcore {
 /// hoisted to this tier; full `bun.api.node` lives in `bun_runtime::node`.
 #[allow(non_snake_case)]
 pub mod Node {
-    /// `bun.api.node.ErrorCode` — the Node-compat `ERR_*` codes; the
-    /// `node::ErrorCode` alias resolves directly to [`crate::ErrorCode`]
-    /// (LAYERING: avoids a `bun_jsc → bun_runtime` cycle for `DeferredError`).
+    /// `bun.api.node.ErrorCode` — the Node-compat `ERR_*` codes.
     pub use crate::ErrorCode;
     pub use crate::node_path::*;
 }

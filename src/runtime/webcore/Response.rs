@@ -137,9 +137,16 @@ impl BodyAbortListener {
             response.get_body_value(),
             BodyValue::Used | BodyValue::Error(_) | BodyValue::Null | BodyValue::Empty
         ) {
-            if let Some(readable) = response.get_body_readable_stream(&global) {
-                readable.value.ensure_still_alive();
-                readable.error(&global, reason);
+            // Not `get_body_readable_stream`: its `js_ref()` path reads a raw
+            // JSValue to a wrapper that may be unmarked but not yet swept,
+            // reaching a `NewSource` box the source cell's (PreciseAllocation)
+            // destructor already freed. `Locked.readable` is a real `JSC::Weak`
+            // on the stream and reads `None` exactly when the box is gone.
+            if let BodyValue::Locked(locked) = response.get_body_value() {
+                if let Some(readable) = locked.readable.get(&global) {
+                    readable.value.ensure_still_alive();
+                    readable.error(&global, reason);
+                }
             }
             let err = BodyValueError::JSValue(bun_jsc::strong::Optional::create(reason, &global));
             // R-2: re-derive after `error()` ran JS.

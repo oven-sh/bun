@@ -45,10 +45,10 @@ pub use ref_count::{
 // Derive macros — same names as the traits (separate namespace). The derives
 // expand to `::bun_ptr::…` paths, so this crate is the canonical re-export
 // point: `#[derive(bun_ptr::CellRefCounted)]`.
-pub use bun_core_macros::{Anchored, CellRefCounted, RefCounted, ThreadSafeRefCounted};
+pub use bun_core_macros::{CellRefCounted, RefCounted, ThreadSafeRefCounted};
 
 pub mod parent_ref;
-pub use parent_ref::{Anchored, LiveMarker, ParentRef};
+pub use parent_ref::ParentRef;
 // Compat alias for callers that use the pointer-typedef name.
 pub type IntrusiveRc<T> = RefPtr<T>;
 
@@ -59,8 +59,7 @@ pub use weak_ptr::WeakPtr;
 // (lowest tier, every crate can reach them); re-exported here so callers can
 // spell `bun_ptr::container_of` / `bun_ptr::from_field_ptr!`.
 pub use bun_core::{
-    IntrusiveField, container_of, container_of_const, from_field_ptr, impl_field_parent,
-    intrusive_field,
+    IntrusiveField, container_of, from_field_ptr, impl_field_parent, intrusive_field,
 };
 
 // C-callback `void *user_data` → `&mut T` recovery — same tiering rationale
@@ -398,19 +397,6 @@ impl Interned {
         Interned(s)
     }
 
-    /// Adopt a leaked allocation. Consumes the `Box` so the leak is explicit at
-    /// the call site (replaces ad-hoc `intern` helpers in the bundler/linker).
-    #[inline]
-    pub fn leak(b: Box<[u8]>) -> Self {
-        Interned(Box::leak(b))
-    }
-
-    /// `leak` for `Vec<u8>` — shrinks to fit and leaks.
-    #[inline]
-    pub fn leak_vec(v: Vec<u8>) -> Self {
-        Self::leak(v.into_boxed_slice())
-    }
-
     /// Escape hatch for storage this module cannot see (mmap'd standalone
     /// graph, mimalloc arena leaked for the process, C-side constant table).
     ///
@@ -430,11 +416,6 @@ impl Interned {
     #[inline]
     pub const fn as_bytes(self) -> &'static [u8] {
         self.0
-    }
-
-    #[inline]
-    pub const fn len(self) -> usize {
-        self.0.len()
     }
 
     #[inline]

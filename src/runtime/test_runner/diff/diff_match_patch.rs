@@ -21,7 +21,6 @@
 // SOFTWARE.
 
 use core::any::TypeId;
-use core::fmt;
 
 use bun_alloc::AllocError;
 use bun_collections::StringHashMap;
@@ -29,41 +28,16 @@ use bun_collections::StringHashMap;
 #[derive(Clone, Copy)]
 pub struct Config {
     /// Number of milliseconds to map a diff before giving up (0 for infinity).
-    pub diff_timeout: u64,
-    /// Cost of an empty edit operation in terms of edit characters.
-    pub diff_edit_cost: u16,
+    pub(crate) diff_timeout: u64,
     /// Number of bytes in each string needed to trigger a line-based diff
-    pub diff_check_lines_over: u64,
-
-    /// At what point is no match declared (0.0 = perfection, 1.0 = very loose).
-    pub match_threshold: f32,
-    /// How far to search for a match (0 = exact location, 1000+ = broad match).
-    /// A match this many characters away from the expected location will add
-    /// 1.0 to the score (0.0 is a perfect match).
-    pub match_distance: u32,
-    /// The number of bits in an int.
-    pub match_max_bits: u16,
-
-    /// When deleting a large block of text (over ~64 characters), how close
-    /// do the contents have to be to match the expected contents. (0.0 =
-    /// perfection, 1.0 = very loose).  Note that Match_Threshold controls
-    /// how closely the end points of a delete need to match.
-    pub patch_delete_threshold: f32,
-    /// Chunk size for context length.
-    pub patch_margin: u16,
+    pub(crate) diff_check_lines_over: u64,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             diff_timeout: 1000,
-            diff_edit_cost: 4,
             diff_check_lines_over: 100,
-            match_threshold: 0.5,
-            match_distance: 1000,
-            match_max_bits: 32,
-            patch_delete_threshold: 0.5,
-            patch_margin: 4,
         }
     }
 }
@@ -88,17 +62,6 @@ pub(crate) struct Diff<Unit: DiffUnit> {
     pub text: Box<[Unit]>,
 }
 
-impl fmt::Display for Diff<u8> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let op = match self.operation {
-            Operation::Equal => "=",
-            Operation::Insert => "+",
-            Operation::Delete => "-",
-        };
-        write!(f, "({}, \"{}\")", op, bstr::BStr::new(&self.text))
-    }
-}
-
 #[derive(Clone, Copy)]
 pub(crate) struct DiffMatchPatch<Unit: DiffUnit> {
     pub config: Config,
@@ -109,7 +72,7 @@ pub(crate) type DiffList<Unit> = Vec<Diff<Unit>>;
 
 pub(crate) type DiffError = AllocError;
 
-pub(crate) type DmpUsize = DiffMatchPatch<usize>;
+type DmpUsize = DiffMatchPatch<usize>;
 
 impl<Unit: DiffUnit> Default for DiffMatchPatch<Unit> {
     fn default() -> Self {
@@ -715,7 +678,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
     }
 }
 
-pub(crate) struct HalfMatchResult<Unit: DiffUnit> {
+struct HalfMatchResult<Unit: DiffUnit> {
     pub prefix_before: Box<[Unit]>,
     pub suffix_before: Box<[Unit]>,
     pub prefix_after: Box<[Unit]>,
@@ -846,9 +809,7 @@ pub(crate) fn diff_chars_to_lines<Unit: DiffUnit>(
 /// Reorder and merge like edit sections.  Merge equalities.
 /// Any edit section can move as long as it doesn't cross an equality.
 /// @param diffs List of Diff objects.
-pub(crate) fn diff_cleanup_merge<Unit: DiffUnit>(
-    diffs: &mut DiffList<Unit>,
-) -> Result<(), DiffError> {
+fn diff_cleanup_merge<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Result<(), DiffError> {
     // Add a dummy entry at the end.
     diffs.push(Diff {
         operation: Operation::Equal,
@@ -1162,7 +1123,7 @@ pub(crate) fn diff_cleanup_semantic<Unit: DiffUnit>(
 /// Look for single edits surrounded on both sides by equalities
 /// which can be shifted sideways to align the edit to a word boundary.
 /// e.g: The c<ins>at c</ins>ame. -> The <ins>cat </ins>came.
-pub(crate) fn diff_cleanup_semantic_lossless<Unit: DiffUnit>(
+fn diff_cleanup_semantic_lossless<Unit: DiffUnit>(
     diffs: &mut DiffList<Unit>,
 ) -> Result<(), DiffError> {
     let mut pointer: usize = 1;
@@ -1434,19 +1395,6 @@ mod tests {
     }
 
     #[test]
-    fn test_diff_eql() {
-        let equal_a = d(Operation::Equal, b"a");
-        let insert_a = d(Operation::Insert, b"a");
-        let equal_b = d(Operation::Equal, b"b");
-        let delete_b = d(Operation::Delete, b"b");
-
-        assert!(equal_a.eql(&equal_a));
-        assert!(!insert_a.eql(&equal_a));
-        assert!(!equal_a.eql(&equal_b));
-        assert!(!equal_a.eql(&delete_b));
-    }
-
-    #[test]
     fn test_diff_common_prefix() {
         // Detect any common suffix.
         assert_eq!(0usize, diff_common_prefix::<u8>(b"abc", b"xyz")); // Null case
@@ -1478,28 +1426,15 @@ mod tests {
         ); // Unicode
     }
 
-    fn rebuildtexts(diffs: &DiffList<u8>) -> [Box<[u8]>; 2] {
-        let mut text: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
-        for my_diff in diffs.iter() {
-            if my_diff.operation != Operation::Insert {
-                text[0].extend_from_slice(&my_diff.text);
-            }
-            if my_diff.operation != Operation::Delete {
-                text[1].extend_from_slice(&my_diff.text);
-            }
-        }
-        [
-            text[0].clone().into_boxed_slice(),
-            text[1].clone().into_boxed_slice(),
-        ]
-    }
-
     #[test]
     fn test_diff_bisect() {
-        let this = Dmp::new(Config {
-            diff_timeout: 0,
-            ..Config::default()
-        });
+        let this = Dmp {
+            config: Config {
+                diff_timeout: 0,
+                ..Config::default()
+            },
+            _unit: core::marker::PhantomData,
+        };
 
         let a = b"cat";
         let b = b"map";
@@ -1523,7 +1458,7 @@ mod tests {
 
     #[test]
     fn test_diff_half_match_leak_regression() {
-        let dmp = Dmp::DEFAULT;
+        let dmp = Dmp::default();
         let text1 = b"The quick brown fox jumps over the lazy dog.";
         let text2 = b"That quick brown fox jumped over a lazy dog.";
         let _diffs = dmp.diff(text2, text1, true).unwrap();
@@ -1531,10 +1466,13 @@ mod tests {
 
     #[test]
     fn test_diff_basic() {
-        let this = Dmp::new(Config {
-            diff_timeout: 0,
-            ..Config::default()
-        });
+        let this = Dmp {
+            config: Config {
+                diff_timeout: 0,
+                ..Config::default()
+            },
+            _unit: core::marker::PhantomData,
+        };
 
         // Null case.
         let diffs = this.diff(b"", b"", false).unwrap();

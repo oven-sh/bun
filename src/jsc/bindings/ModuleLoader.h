@@ -68,19 +68,9 @@ public:
 
     JS_EXPORT_PRIVATE static PendingVirtualModuleResult* create(VM&, Structure*);
     static PendingVirtualModuleResult* create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer, bool wasModuleMock);
-    static PendingVirtualModuleResult* createWithInitialValues(VM&, Structure*);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     JSC::JSPromise* internalPromise();
-
-    static std::array<JSValue, numberOfInternalFields> initialValues()
-    {
-        return { {
-            jsUndefined(),
-            jsUndefined(),
-            jsUndefined(),
-        } };
-    }
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;

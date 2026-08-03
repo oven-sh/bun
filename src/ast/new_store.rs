@@ -7,9 +7,6 @@
 //! Similarly to an arena, you can call .reset() to reset state, reusing memory
 //! across operations.
 
-// Scope name distinct from the macro-generated `struct Store`.
-::bun_core::declare_scope!(STORE_LOG, hidden);
-
 /// Compile-time membership check for
 /// the type list of a `new_store!`-generated store.
 ///
@@ -87,8 +84,6 @@ macro_rules! new_store {
                 /// otherwise points into the `head` chain and stays valid until
                 /// `destroy()`.
                 current: *mut Block,
-                #[cfg(debug_assertions)]
-                debug_lock: ::core::cell::Cell<bool>,
             }
 
             // `buffer` needs `align(LARGEST_ALIGN)` but `#[repr(align(N))]`
@@ -210,8 +205,6 @@ macro_rules! new_store {
                     bun_core::heap::into_raw(Box::new(Store {
                         head: None,
                         current: ::core::ptr::null_mut(),
-                        #[cfg(debug_assertions)]
-                        debug_lock: ::core::cell::Cell::new(false),
                     }))
                 }
 
@@ -322,26 +315,6 @@ macro_rules! new_store {
                     // SAFETY: `allocate` returned aligned, in-bounds, exclusive storage for T.
                     unsafe { ptr.as_ptr().write(data) };
                     ptr
-                }
-
-                pub fn lock(store: &Store) {
-                    #[cfg(debug_assertions)]
-                    {
-                        debug_assert!(!store.debug_lock.get());
-                        store.debug_lock.set(true);
-                    }
-                    #[cfg(not(debug_assertions))]
-                    let _ = store;
-                }
-
-                pub fn unlock(store: &Store) {
-                    #[cfg(debug_assertions)]
-                    {
-                        debug_assert!(store.debug_lock.get());
-                        store.debug_lock.set(false);
-                    }
-                    #[cfg(not(debug_assertions))]
-                    let _ = store;
                 }
 
                 // Type-list membership is enforced by the

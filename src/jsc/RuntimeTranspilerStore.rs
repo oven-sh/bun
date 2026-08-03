@@ -63,7 +63,7 @@ bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 // the caller's `&mut TranspilerJob` (which is stored inside
 // `vm.transpiler_store`). Only the `source_mappings` leaf field is touched,
 // under its own internal lock.
-pub(crate) fn dump_source(vm: NonNull<VirtualMachine>, specifier: &[u8], printer: &BufferPrinter) {
+fn dump_source(vm: NonNull<VirtualMachine>, specifier: &[u8], printer: &BufferPrinter) {
     dump_source_string(vm, specifier, printer.ctx.get_written());
 }
 
@@ -78,7 +78,7 @@ pub(crate) fn dump_source_string(vm: NonNull<VirtualMachine>, specifier: &[u8], 
 // safe code (replaces the prior split `Mutex` + `RacyCell` pair).
 static BUN_DEBUG_HOLDER: Guarded<Option<Dir>> = Guarded::new(None);
 
-pub(crate) fn dump_source_string_failiable(
+fn dump_source_string_failiable(
     vm: NonNull<VirtualMachine>,
     specifier: &[u8],
     written: &[u8],
@@ -199,10 +199,10 @@ pub fn set_break_point_on_first_line() -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct RuntimeTranspilerStore {
-    pub generation_number: AtomicU32,
-    pub store: TranspilerJobStore,
+    pub(crate) generation_number: AtomicU32,
+    pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
-    pub queue: Queue,
+    pub(crate) queue: Queue,
 }
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
@@ -223,39 +223,10 @@ impl Taskable for RuntimeTranspilerStore {
 }
 
 impl RuntimeTranspilerStore {
-    pub fn init() -> RuntimeTranspilerStore {
+    pub(crate) fn init() -> RuntimeTranspilerStore {
         // The HiveArrayFallback uses the global mimalloc
         // (PORTING.md §Allocators).
         Self::default()
-    }
-
-    /// In-place constructor. Writes the bookkeeping fields directly at `out`
-    /// and leaves the inline `[MaybeUninit<TranspilerJob>; 64]` hive buffer
-    /// uninitialized — its bytes are never read until `used.set()` claims a
-    /// slot, so any bit pattern is valid.
-    ///
-    /// PERF: `out.write(Self::init())` materialises a stack temporary
-    /// of `size_of::<Self>()` (≈ 64 × `size_of::<TranspilerJob>()`) and
-    /// `memcpy`s it; rustc cannot elide the copy through the `MaybeUninit`
-    /// payload. This leaves `buffer` uninitialized and only
-    /// zeroes the bitset.
-    ///
-    /// On return, `*out` is fully initialized.
-    pub fn init_in_place(out: &mut core::mem::MaybeUninit<Self>) {
-        use core::ptr::addr_of_mut;
-        let out = out.as_mut_ptr();
-        // SAFETY: `out` is `&mut MaybeUninit<Self>::as_mut_ptr()` — valid for
-        // writes and properly aligned by type; each `addr_of_mut!` projects a
-        // valid in-bounds field place without forming an intermediate reference.
-        unsafe {
-            addr_of_mut!((*out).generation_number).write(AtomicU32::new(0));
-            // `store.hive.buffer: [MaybeUninit<TranspilerJob>; 64]` —
-            // intentionally left untouched (uninit is a valid value).
-            addr_of_mut!((*out).store.hive.used)
-                .write(bun_collections::hive_array::HiveBitSet::init_empty());
-            addr_of_mut!((*out).enabled).write(true);
-            addr_of_mut!((*out).queue).write(Queue::new());
-        }
     }
 
     // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
@@ -398,28 +369,28 @@ pub struct TranspilerJob {
     pub path: bun_paths::fs::Path<'static>,
     /// RAII: `Drop` derefs the WTF refcount — torn down by
     /// `HiveArray::put` → `drop_in_place` (not in `reset_for_pool`).
-    pub non_threadsafe_input_specifier: OwnedString,
-    pub non_threadsafe_referrer: OwnedString,
-    pub loader: Loader,
-    pub promise: StrongOptional,
+    pub(crate) non_threadsafe_input_specifier: OwnedString,
+    pub(crate) non_threadsafe_referrer: OwnedString,
+    pub(crate) loader: Loader,
+    pub(crate) promise: StrongOptional,
     // Note: struct is stored in a HiveArray and crosses to a worker thread;
     // raw pointers/BackRefs are used (BACKREF — VM owns the
     // store and outlives every job).
-    pub vm: *mut VirtualMachine,
+    pub(crate) vm: *mut VirtualMachine,
     pub global_this: BackRef<JSGlobalObject>,
-    pub fetcher: Fetcher,
-    pub poll_ref: KeepAlive,
-    pub generation_number: u32,
-    pub log: bun_ast::Log,
-    pub parse_error: Option<crate::CrateError>,
+    pub(crate) fetcher: Fetcher,
+    pub(crate) poll_ref: KeepAlive,
+    pub(crate) generation_number: u32,
+    pub(crate) log: bun_ast::Log,
+    pub(crate) parse_error: Option<crate::CrateError>,
     /// RAII-owned: holds +1 on `source_code`/`source_url`/`specifier`/
     /// `bytecode_origin_path` until `run_from_js_thread` `take()`s and
     /// `into_ffi()`s to C++. Dropped (via `HiveArray::put` → `drop_in_place`)
     /// on any path that skips `run_from_js_thread` derefs them.
-    pub resolved_source: OwnedResolvedSource,
-    pub work_task: WorkPoolTask,
+    pub(crate) resolved_source: OwnedResolvedSource,
+    pub(crate) work_task: WorkPoolTask,
     /// INTRUSIVE — `UnboundedQueue<TranspilerJob>` link.
-    pub next: unbounded_queue::Link<TranspilerJob>,
+    pub(crate) next: unbounded_queue::Link<TranspilerJob>,
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<TranspilerJob>`.
@@ -513,7 +484,7 @@ impl TranspilerJob {
         // replacement a second time).
     }
 
-    pub(crate) fn dispatch_to_main_thread(&mut self) {
+    fn dispatch_to_main_thread(&mut self) {
         let vm = self.vm;
         // SAFETY: vm outlives the job (BACKREF — VM owns the store).
         let transpiler_store: *mut RuntimeTranspilerStore =
@@ -527,7 +498,7 @@ impl TranspilerJob {
             .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
     }
 
-    pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
+    fn run_from_js_thread(&mut self) -> JsResult<()> {
         let vm = self.vm;
         let promise = self.promise.swap();
         // Copy the BackRef out (it is `Copy`) so the borrow of `*self` ends
@@ -583,7 +554,7 @@ impl TranspilerJob {
         )
     }
 
-    pub(crate) fn schedule(&mut self) {
+    fn schedule(&mut self) {
         // Note: the KeepAlive takes an
         // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by
         // `bun_runtime::init`).
@@ -591,7 +562,7 @@ impl TranspilerJob {
         WorkPool::schedule(&raw mut self.work_task);
     }
 
-    pub(crate) unsafe fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
+    unsafe fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `work_task` field initialised in
         // `transpile`; the WorkPool calls back with exactly that field, so
@@ -600,7 +571,7 @@ impl TranspilerJob {
         this.run();
     }
 
-    pub(crate) fn run(&mut self) {
+    fn run(&mut self) {
         // Stack-local per call, bulk-freed on return. An earlier version hoisted
         // this to a per-worker-thread leaked `Box<MimallocArena>` (and a second
         // one inside a leaked `ASTMemoryAllocator`) and only `reset()` it at
@@ -832,12 +803,12 @@ impl TranspilerJob {
             // outlives `parse_options`; `addr_of_mut!` avoids forming an
             // intermediate `&mut` so the close-guard's later borrow stays sound.
             file_fd_ptr: Some(unsafe { &mut *ptr::addr_of_mut!(input_file_fd) }),
-            file_hash: Some(hash),
             macro_remappings,
             macro_js_ctx: transpiler::default_macro_js_value(),
             jsx: transpiler.options.jsx.clone(),
             emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
             experimental_decorators: transpiler.options.experimental_decorators,
+            use_define_for_class_fields: transpiler.options.use_define_for_class_fields,
             virtual_source: None,
             replace_exports: Default::default(),
             dont_bundle_twice: true,
@@ -1161,9 +1132,7 @@ impl TranspilerJob {
             )
         };
         if let Err(err) = print_result {
-            if let Some(mi) = module_info {
-                mi.destroy();
-            }
+            drop(module_info);
             self.parse_error = Some(err.into());
             return;
         }

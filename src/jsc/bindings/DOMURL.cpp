@@ -26,24 +26,7 @@
 #include "config.h"
 #include "DOMURL.h"
 
-#include "ActiveDOMObject.h"
-// #include "Blob.h"
-// #include "BlobURL.h"
-// #include "MemoryCache.h"
-// #include "PublicURLManager.h"
-// #include "ResourceRequest.h"
-#include "ScriptExecutionContext.h"
-// #include "SecurityOrigin.h"
 #include "URLSearchParams.h"
-#include <wtf/MainThread.h>
-
-class URLRegistrable {
-public:
-};
-
-class Blob {
-public:
-};
 
 namespace WebCore {
 
@@ -118,31 +101,29 @@ ExceptionOr<void> DOMURL::setHref(const String& url)
         return Exception { InvalidURLError, makeString(redact(url), " cannot be parsed as a URL."_s) };
     }
     m_url = WTF::move(completeURL);
+    m_searchParamsDirty = false;
     if (m_searchParams)
         m_searchParams->updateFromAssociatedURL();
     return {};
 }
 
-String DOMURL::createObjectURL(ScriptExecutionContext& scriptExecutionContext, Blob& blob)
+// The update steps invoked on URLSearchParams::{append,set,delete,sort} set
+// m_searchParamsDirty instead of eagerly re-serializing m_url on every call so
+// that N appends through url.searchParams stay O(N) instead of O(N^2). All
+// reads of m_url (href/toJSON/fullURL) call this first to reconcile.
+void DOMURL::flushPendingSearchParamsUpdate() const
 {
-    UNUSED_PARAM(blob);
-    UNUSED_PARAM(scriptExecutionContext);
-    return String();
-    // return createPublicURL(scriptExecutionContext, blob);
-}
-
-String DOMURL::createPublicURL(ScriptExecutionContext& scriptExecutionContext, URLRegistrable& registrable)
-{
-    // URL publicURL = BlobURL::createPublicURL(scriptExecutionContext.securityOrigin());
-    // if (publicURL.isEmpty())
-    //     return String();
-
-    // scriptExecutionContext.publicURLManager().registerURL(publicURL, registrable);
-
-    // return publicURL.string();
-    UNUSED_PARAM(scriptExecutionContext);
-    UNUSED_PARAM(registrable);
-    return String();
+    if (!m_searchParamsDirty) [[likely]]
+        return;
+    m_searchParamsDirty = false;
+    auto* self = const_cast<DOMURL*>(this);
+    if (!self->m_searchParams)
+        return;
+    auto serialized = self->m_searchParams->toString();
+    if (serialized.isEmpty())
+        self->m_url.setQuery({});
+    else
+        self->m_url.setQuery(WTF::move(serialized));
 }
 
 URLSearchParams& DOMURL::searchParams()
@@ -150,19 +131,6 @@ URLSearchParams& DOMURL::searchParams()
     if (!m_searchParams)
         m_searchParams = URLSearchParams::create(search(), this);
     return *m_searchParams;
-}
-
-void DOMURL::revokeObjectURL(ScriptExecutionContext& scriptExecutionContext, const String& urlString)
-{
-    // URL url { urlString };
-    // ResourceRequest request(url);
-    // request.setDomainForCachePartition(scriptExecutionContext.domainForCachePartition());
-
-    // MemoryCache::removeRequestFromSessionCaches(scriptExecutionContext, request);
-
-    // scriptExecutionContext.publicURLManager().revoke(url);
-    UNUSED_PARAM(scriptExecutionContext);
-    UNUSED_PARAM(urlString);
 }
 
 } // namespace WebCore

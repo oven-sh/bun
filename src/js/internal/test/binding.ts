@@ -55,22 +55,22 @@ function internalBinding(name: string) {
           TRACE_EVENT_PHASE_NESTABLE_ASYNC_END: 101,
         },
       };
+    case "quic":
+      return require("internal/quic/binding");
     // libuv error codes, the UDP handle wrap, and the minimal TCP wrap the
     // vendored dgram tests consume.
-    case "uv": {
-      const isWindows = process.platform === "win32";
-      const errno = require("node:os").constants.errno;
-      return {
-        UV_UNKNOWN: -4094,
-        UV_EBADF: isWindows ? -4083 : -errno.EBADF,
-        UV_EINVAL: isWindows ? -4071 : -errno.EINVAL,
-        UV_ENOTSOCK: isWindows ? -4050 : -errno.ENOTSOCK,
-      };
-    }
+    case "uv":
+      // process.binding("uv") carries libuv's own codes on every platform
+      // (including Windows' synthetic ones), same as node's uv binding.
+      return process.binding("uv");
     case "udp_wrap":
       return { UDP: require("internal/dgram").UDP };
     case "tcp_wrap":
       return { TCP: TestTCPWrap, constants: { SOCKET: 0, SERVER: 1 } };
+    case "cares_wrap":
+      // Only the pure IP-normalizer the vendored tls/dns tests reach for; the
+      // resolver surface lives in node:dns.
+      return { canonicalizeIP: require("bun:internal-for-testing").canonicalizeIP };
     default:
       throw new Error(`internalBinding("${name}") is not implemented in Bun`);
   }

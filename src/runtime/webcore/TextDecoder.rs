@@ -1,7 +1,5 @@
 use crate::webcore::EncodingLabel;
-use crate::webcore::jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult,
-};
+use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::AllocError;
 use bun_core::{OwnedString, strings};
 use core::cell::Cell;
@@ -17,12 +15,12 @@ const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
 
 #[derive(Default, Clone, Copy)]
 pub struct Buffered {
-    pub buf: [u8; 3],
-    pub len: u8,
+    pub(crate) buf: [u8; 3],
+    pub(crate) len: u8,
 }
 
 impl Buffered {
-    pub(crate) fn slice(&self) -> &[u8] {
+    fn slice(&self) -> &[u8] {
         &self.buf[0..self.len as usize]
     }
 }
@@ -32,11 +30,11 @@ impl Buffered {
 #[bun_jsc::JsClass]
 pub struct TextDecoder {
     // used for utf8 decoding
-    pub buffered: Cell<Buffered>,
+    pub(crate) buffered: Cell<Buffered>,
 
     // used for utf16 decoding
-    pub lead_byte: Cell<Option<u8>>,
-    pub lead_surrogate: Cell<Option<u16>>,
+    pub(crate) lead_byte: Cell<Option<u8>>,
+    pub(crate) lead_surrogate: Cell<Option<u16>>,
 
     // https://encoding.spec.whatwg.org/#textdecoder-bom-seen-flag
     // True once the stream's BOM decision is made: its first scalar was either
@@ -55,9 +53,9 @@ pub struct TextDecoder {
 
     // Read-only after construction (set in `constructor` before the JS wrapper
     // exists) — left bare.
-    pub ignore_bom: bool,
-    pub fatal: bool,
-    pub encoding: EncodingLabel,
+    pub(crate) ignore_bom: bool,
+    pub(crate) fatal: bool,
+    pub(crate) encoding: EncodingLabel,
 }
 
 impl Default for TextDecoder {
@@ -90,22 +88,22 @@ impl Drop for TextDecoder {
 // pub const toJS / fromJS / fromJSDirect — provided by #[bun_jsc::JsClass] codegen.
 
 impl TextDecoder {
-    pub fn new(init: TextDecoder) -> Box<TextDecoder> {
+    pub(crate) fn new(init: TextDecoder) -> Box<TextDecoder> {
         Box::new(init)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_ignore_bom(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_ignore_bom(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::js_boolean(self.ignore_bom)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_fatal(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_fatal(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::js_boolean(self.fatal)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_encoding(&self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_encoding(&self, global_this: &JSGlobalObject) -> JSValue {
         ZigString::init(EncodingLabel::get_label(self.encoding)).to_js(global_this)
     }
 
@@ -145,7 +143,10 @@ impl TextDecoder {
     }
 
     #[inline(always)]
-    pub fn code_unit_from_bytes_utf16<const BIG_ENDIAN: bool>(first: u16, second: u16) -> u16 {
+    pub(crate) fn code_unit_from_bytes_utf16<const BIG_ENDIAN: bool>(
+        first: u16,
+        second: u16,
+    ) -> u16 {
         if BIG_ENDIAN {
             (first << 8) | second
         } else {
@@ -153,7 +154,7 @@ impl TextDecoder {
         }
     }
 
-    pub fn decode_utf16<const BIG_ENDIAN: bool, const FLUSH: bool>(
+    pub(crate) fn decode_utf16<const BIG_ENDIAN: bool, const FLUSH: bool>(
         &self,
         bytes: &[u8],
     ) -> Result<(Vec<u16>, bool), AllocError> {
@@ -212,9 +213,12 @@ impl TextDecoder {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn decode(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments_buf = callframe.arguments_old::<2>();
-        let arguments = arguments_buf.slice();
+    pub(crate) fn decode(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let arguments = callframe.arguments();
 
         // Evaluate options.stream before reading the input bytes. Reading `stream`
         // can invoke a user-defined getter that detaches/transfers the input's
@@ -222,7 +226,15 @@ impl TextDecoder {
         // `decodeSlice` reading through a stale pointer into memory that may have
         // been freed or reused. Node.js reads options first as well.
         let stream = 'stream: {
-            if arguments.len() > 1 && arguments[1].is_object() {
+            if arguments.len() > 1 && !arguments[1].is_undefined_or_null() {
+                // https://webidl.spec.whatwg.org/#es-dictionary step 1
+                if !arguments[1].is_object() {
+                    return Err(global_this.throw_invalid_argument_type_value(
+                        b"options",
+                        b"object",
+                        arguments[1],
+                    ));
+                }
                 if let Some(stream_value) =
                     arguments[1].fast_get(global_this, jsc::BuiltinName::stream)?
                 {
@@ -269,30 +281,6 @@ impl TextDecoder {
         } else {
             self.decode_slice::<false>(global_this, input_slice)
         }
-    }
-
-    /// DOMJIT fast path for `decode(typedArray)` called with no options object.
-    /// A no-options decode is flushing per WHATWG Encoding, matching the slow
-    /// path in `decode()` when `stream` is absent.
-    pub fn decode_without_type_checks(
-        &self,
-        global_this: &JSGlobalObject,
-        uint8array: &mut JSUint8Array,
-    ) -> JsResult<JSValue> {
-        // Same stream bookkeeping as `decode()`, with `stream` always false.
-        if !self.do_not_flush.replace(false) {
-            self.bom_seen.set(false);
-        }
-        let owned_input;
-        let input_slice: &[u8] =
-            match JSValue::from_cell::<JSUint8Array>(uint8array).as_array_buffer(global_this) {
-                Some(array_buffer) if array_buffer.shared || array_buffer.resizable => {
-                    owned_input = Box::<[u8]>::from(array_buffer.slice());
-                    &owned_input
-                }
-                _ => uint8array.slice(),
-            };
-        self.decode_slice::<true>(global_this, input_slice)
     }
 
     fn decode_slice<const FLUSH: bool>(
@@ -573,7 +561,7 @@ impl TextDecoder {
     // `#[JsClass]` emits `TextDecoderClass__construct` calling this; do not
     // wrap with `#[bun_jsc::host_fn]` (its Free-kind shim emits a bare
     // `constructor(...)` call that doesn't resolve inside an `impl` block).
-    pub fn constructor(
+    pub(crate) fn constructor(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<*mut TextDecoder> {
@@ -633,10 +621,14 @@ impl TextDecoder {
             }
         }
 
-        if !options_value.is_undefined() {
+        if !options_value.is_undefined_or_null() {
+            // https://webidl.spec.whatwg.org/#es-dictionary step 1
             if !options_value.is_object() {
-                return Err(global_this
-                    .throw_invalid_arguments(format_args!("TextDecoder(options) is invalid",)));
+                return Err(global_this.throw_invalid_argument_type_value(
+                    b"options",
+                    b"object",
+                    options_value,
+                ));
             }
 
             if let Some(fatal) = options_value.get(global_this, b"fatal")? {

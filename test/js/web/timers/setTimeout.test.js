@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDirWithFiles } from "harness";
 import path from "node:path";
 
 it("setTimeout", async () => {
@@ -517,16 +517,16 @@ __attribute__((constructor)) static void arm(void) {
   });
 });
 
-it("Returning a Promise in setTimeout doesnt keep the event loop alive forever", async () => {
-  expect([path.join(import.meta.dir, "setTimeout-unref-fixture-6.js")]).toRun();
+it.concurrent("Returning a Promise in setTimeout doesnt keep the event loop alive forever", async () => {
+  expect(await bunRun(path.join(import.meta.dir, "setTimeout-unref-fixture-6.js"))).toSpawn();
 });
 
-it("Returning a Promise in setTimeout (unref'd) doesnt keep the event loop alive forever", async () => {
-  expect([path.join(import.meta.dir, "setTimeout-unref-fixture-7.js")]).toRun();
+it.concurrent("Returning a Promise in setTimeout (unref'd) doesnt keep the event loop alive forever", async () => {
+  expect(await bunRun(path.join(import.meta.dir, "setTimeout-unref-fixture-7.js"))).toSpawn();
 });
 
-it("setTimeout canceling with unref, close, _idleTimeout, and _onTimeout", () => {
-  expect([path.join(import.meta.dir, "timers-fixture-unref.js"), "setTimeout"]).toRun();
+it.concurrent("setTimeout canceling with unref, close, _idleTimeout, and _onTimeout", async () => {
+  expect(await bunRun([path.join(import.meta.dir, "timers-fixture-unref.js"), "setTimeout"])).toSpawn();
 });
 
 for (const mode of ["clear", "refresh", "repeat"]) {
@@ -681,6 +681,48 @@ it("setTimeout(1) is not quantized to the ~15.6ms Windows system tick", async ()
   expect(min).toBeGreaterThanOrEqual(1);
   expect(exitCode).toBe(0);
 });
+
+// Reading a timer's numeric id (`+t`, `${t}`, obj[t]=x, any Symbol.toPrimitive
+// use) registers it in the id->timer map. Finalize removed that entry with the
+// ordered ArrayHashMap.remove(), which is three O(n) vec shifts plus a full
+// hash-index rebuild per timer, so a GC sweep of n id-accessed timers was
+// O(n^2). 20k such timers froze the loop for ~2-3 s on release, tens of
+// seconds at 30k+. Node: ~5 ms for 200k. With swap_remove() the sweep is O(n).
+it("GC of many id-accessed timers is not quadratic", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+          const N = 20000;
+          for (let i = 0; i < N; i++) {
+            const t = setTimeout(() => {}, 3_600_000);
+            Number(t);          // mint the id-map entry via Symbol.toPrimitive
+            clearTimeout(t);
+          }
+          const t0 = performance.now();
+          Bun.gc(true);
+          const ms = performance.now() - t0;
+          process.stdout.write(JSON.stringify({ ms: Math.round(ms) }));
+        `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(filteredStderr).toBe("");
+  const { ms } = JSON.parse(stdout);
+  // Before: ~2100-3400 ms release, far more on debug+ASAN (quadratic in N).
+  // After: <10 ms release, ~100-170 ms debug+ASAN (linear). 1500 ms splits
+  // the two with ~9x headroom over the fixed debug+ASAN number.
+  expect(ms).toBeLessThan(1500);
+  expect(exitCode).toBe(0);
+}, 30_000);
 
 it("timer heap clock is monotonic, not wall-clock", () => {
   // The clock that schedules setTimeout/setInterval deadlines must be monotonic

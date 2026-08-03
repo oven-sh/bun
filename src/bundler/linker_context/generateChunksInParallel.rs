@@ -36,8 +36,6 @@ use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange};
 /// Bytecode output file extension (also defined in `writeOutputFilesToDisk.rs`).
 const BYTECODE_EXTENSION: &str = ".jsc";
 
-bun_core::declare_scope!(PartRanges, hidden);
-
 // `Chunk.final_rel_path` / `metafile_chunk_json` are owned
 // `Box<[u8]>`; assignments
 // below move the boxed buffer directly — no lifetime promotion needed.
@@ -45,7 +43,7 @@ use crate::linker_context_mod::debug;
 
 // Const generics cannot vary the return type, so we always return
 // `Vec<OutputFile>` and the IS_DEV_SERVER path returns an empty Vec.
-pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
+pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     c: &mut LinkerContext,
     chunks: &mut [Chunk],
 ) -> crate::Result<Vec<options::OutputFile>> {
@@ -186,27 +184,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 match &chunk.content {
                     crate::chunk::Content::Javascript(js) => {
                         for (i, part_range) in js.parts_in_chunk_in_order.iter().enumerate() {
-                            #[cfg(feature = "debug_logs")]
-                            {
-                                bun_core::scoped_log!(
-                                    PartRanges,
-                                    "Part Range: {} {} ({}..{})",
-                                    bstr::BStr::new(
-                                        &c.parse_graph().input_files.items_source()
-                                            [part_range.source_index.get()]
-                                        .path
-                                        .pretty
-                                    ),
-                                    <&'static str>::from(
-                                        c.parse_graph().ast.items_target()
-                                            [part_range.source_index.get()]
-                                        .bake_graph()
-                                    ),
-                                    part_range.part_index_begin,
-                                    part_range.part_index_end,
-                                );
-                            }
-
                             combined_part_ranges.push(PendingPartRange {
                                 part_range: *part_range,
                                 i: u32::try_from(i).expect("int cast"),
@@ -367,7 +344,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // runtime bunfs references to out-of-root entrypoints resolve.
             chunk
                 .template
-                .print(&mut rel_path, !c.options.compile)
+                .print(&mut rel_path, !c.options.compile_mode.is_executable())
                 .expect("write to Vec<u8>");
             path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
 
@@ -474,7 +451,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // those placeholders with the resolved paths and serialize.
     if c.options.generate_bytecode_cache
         && c.options.output_format == options::Format::Esm
-        && c.options.compile
+        && c.options.compile_mode.is_executable()
     {
         // Build map from unique_key -> final resolved path
         // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
@@ -574,7 +551,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // disjoint from anything `c` mutates.
     let resolver = c.resolver.expect("resolver set in load()");
     let root_path: &[u8] = &resolver.opts.output_dir;
-    let is_standalone = c.options.compile_to_standalone_html;
+    let is_standalone = c.options.compile_mode.is_standalone_html();
     let more_than_one_output = !is_standalone
         && (c.parse_graph().additional_output_files.len() > 0
             || c.options.generate_bytecode_cache
@@ -757,7 +734,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
 
     // Don't write to disk if compile mode is enabled - we need buffer values for compilation
-    let is_compile = bundler.transpiler.options.compile;
+    let is_compile = bundler.transpiler.options.compile_mode.is_executable();
     if root_path.len() > 0 && !is_compile {
         write_output_files_to_disk(
             c,
@@ -1033,7 +1010,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         // from server builds, and normalize with cheapPrefixNormalizer for consistency
                         // with module_info path fixup.
                         // For non-compile builds, use the normal .jsc extension.
-                        let source_provider_url = if c.options.compile {
+                        let source_provider_url = if c.options.compile_mode.is_executable() {
                             let normalizer =
                                 cheap_prefix_normalizer(public_path, &chunk.final_rel_path);
                             BunString::create_format(format_args!(
@@ -1124,7 +1101,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let module_info_output_file: Option<options::OutputFile> = 'brk: {
                 if c.options.generate_bytecode_cache
                     && c.options.output_format == options::Format::Esm
-                    && c.options.compile
+                    && c.options.compile_mode.is_executable()
                 {
                     let loader: Loader = if chunk.entry_point.is_entry_point() {
                         c.parse_graph().input_files.items_loader()
@@ -1263,9 +1240,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         if output_kind == options::OutputKind::EntryPoint
                             && side == options::Side::Server
                         {
-                            extra.is_route = true;
-                            extra.fully_static = !static_route_visitor
-                                .has_transitive_use_client(chunk.entry_point.source_index());
+                            extra.route = if static_route_visitor
+                                .has_transitive_use_client(chunk.entry_point.source_index())
+                            {
+                                BakeRouteKind::Route
+                            } else {
+                                BakeRouteKind::FullyStaticRoute
+                            };
                         }
 
                         break 'brk extra;
@@ -1311,8 +1292,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     Ok(output_files.take())
 }
 
-pub use crate::ThreadPool;
-
 use crate::EntryPoint;
 use crate::options::SourceMapOption;
-use crate::output_file::BakeExtra;
+use crate::output_file::{BakeExtra, BakeRouteKind};

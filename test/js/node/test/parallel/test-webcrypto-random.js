@@ -11,11 +11,9 @@ const { crypto } = globalThis;
 
 [
   undefined, null, '', 1, {}, [],
-
-  // These types are allowed in Bun
-  // new Float32Array(1),
-  // new Float64Array(1),
-  // new DataView(new ArrayBuffer(1)),
+  new Float32Array(1),
+  new Float64Array(1),
+  new DataView(new ArrayBuffer(1)),
 ].forEach((i) => {
   assert.throws(
     () => crypto.getRandomValues(i),
@@ -38,10 +36,6 @@ const intTypedConstructors = [
   Uint8ClampedArray,
   BigInt64Array,
   BigUint64Array,
-
-  Float16Array,
-  Float32Array,
-  Float64Array,
 ];
 
 for (const ctor of intTypedConstructors) {
@@ -68,12 +62,22 @@ for (const ctor of intTypedConstructors) {
     // Ignore if error here.
   }
 
-  // Bun allows more than 65536 bytes
+  // Diverges from upstream: Bun does not enforce getRandomValues' 65536-byte quota
+  // (no QuotaExceededError global yet, which upstream also asserts `instanceof` here).
+  // Restore verbatim once it exists: https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues
 
   // if (kData !== undefined) {
   //   assert.throws(
   //     () => crypto.getRandomValues(kData),
-  //     { name: 'QuotaExceededError', code: 22 },
+  //     (err) => {
+  //       assert.strictEqual(err.name, 'QuotaExceededError');
+  //       assert.strictEqual(err.code, 22);
+  //       assert(err instanceof DOMException);
+  //       assert(err instanceof QuotaExceededError);
+  //       assert.strictEqual(err.quota, null);
+  //       assert.strictEqual(err.requested, null);
+  //       return true;
+  //     },
   //   );
   // }
 }

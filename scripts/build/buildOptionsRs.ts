@@ -47,7 +47,6 @@ export function generateBuildOptionsRs(cfg: Config): string {
     `pub const SHA: &str = ${rstr(cfg.revision)};`,
     `pub const REPORTED_NODEJS_VERSION: &str = ${rstr(cfg.nodejsVersion)};`,
     `pub const RELEASE_SAFE: bool = ${cfg.assertions};`,
-    `pub const BASELINE: bool = ${cfg.baseline};`,
     `pub const IS_CANARY: bool = ${cfg.canary};`,
     `pub const CANARY_REVISION: &str = ${rstr(cfg.canaryRevision)};`,
     `pub const ENABLE_FUZZILLI: bool = ${cfg.fuzzilli};`,
@@ -74,7 +73,12 @@ export function generateBuildOptionsRs(cfg: Config): string {
     "",
   ];
 
+  // Generated file self-opts-out of the workspace's denied unused lints. It is
+  // `include!`d, where inner attributes are rejected, so tag each item.
+  const allow = "#[allow(dead_code, unreachable_pub, unused)]";
+  const withAllow = lines.flatMap(l => (l.startsWith("pub const ") ? [allow, l] : [l]));
+
   mkdirSync(cfg.codegenDir, { recursive: true });
-  writeIfChanged(outPath, lines.join("\n"));
+  writeIfChanged(outPath, withAllow.join("\n"));
   return outPath;
 }

@@ -24,9 +24,11 @@ pub mod listener;
 #[path = "UpgradedDuplex.rs"]
 pub mod upgraded_duplex;
 
+#[cfg(windows)]
 #[path = "WindowsNamedPipe.rs"]
 pub mod windows_named_pipe;
 
+#[cfg(windows)]
 #[path = "WindowsNamedPipeContext.rs"]
 pub mod windows_named_pipe_context;
 
@@ -40,7 +42,7 @@ pub mod ssl_wrapper {
 
     /// Thin wrapper over `SSLWrapper::init_from_options` so callers in this
     /// tier can keep passing `&SSLConfig` directly.
-    pub fn init<T: Copy>(
+    pub(crate) fn init<T: Copy>(
         ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
         handlers: Handlers<T>,
@@ -117,8 +119,8 @@ pub mod socket {
 
 // ─── RawSocketEvents glue ────────────────────────────────────────────────────
 // `uws_handlers::RawSocketEvents<SSL>` is the raw-pointer dispatch trait the
-// vtable layer requires of `api::NewSocket<SSL>` (routed via `RawPtrHandler`,
-// not `PtrHandler`). The handlers take `ThisPtr<Self>` rather than `&mut self`:
+// vtable layer requires of `api::NewSocket<SSL>` (routed via `RawPtrHandler`). The
+// handlers take `ThisPtr<Self>` rather than `&mut self`:
 // a JS callback can close the socket and drop its last ref mid-dispatch, and a
 // `&mut` argument protector outliving the allocation is UB.
 impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {

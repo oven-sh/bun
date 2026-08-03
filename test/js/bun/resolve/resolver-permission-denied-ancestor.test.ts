@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 // An ancestor directory the process may traverse but not read (mode 0o111 —
@@ -10,7 +10,7 @@ import { join } from "path";
 // directory". Root bypasses permission checks, so skip there.
 describe.skipIf(isWindows || process.getuid?.() === 0)("resolver with unreadable ancestor", () => {
   test("bun run works under an execute-only ancestor", () => {
-    const dir = tempDirWithFiles("xonly-ancestor", {
+    using dir = tempDir("xonly-ancestor", {
       "outer/project/package.json": JSON.stringify({
         name: "p",
         scripts: { start: "bun index.js" },
@@ -36,7 +36,7 @@ describe.skipIf(isWindows || process.getuid?.() === 0)("resolver with unreadable
   });
 
   test("errors on the requested directory itself stay fatal", () => {
-    const dir = tempDirWithFiles("unreadable-cwd", {
+    using dir = tempDir("unreadable-cwd", {
       "project/package.json": JSON.stringify({ name: "p", scripts: { start: "echo should-not-run" } }),
     });
     const project = join(dir, "project");

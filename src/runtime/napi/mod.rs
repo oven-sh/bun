@@ -7,7 +7,8 @@
 
 #[path = "napi_body.rs"]
 pub(crate) mod napi_body;
-pub use napi_body::{
+pub use napi_body::NapiStatus;
+pub(crate) use napi_body::{
     NapiFinalizerTask, ThreadSafeFunction, fix_dead_code_elimination, napi_async_work,
 };
 
@@ -22,4 +23,3 @@ bun_opaque::opaque_ffi! {
 // TODO(blocked): bun_jsc::EventLoop (method surface)
 // TODO(blocked): bun_collections::LinearFifo
 // TODO(blocked): bun_threading::Condvar
-pub struct ThreadsafeFunction(());

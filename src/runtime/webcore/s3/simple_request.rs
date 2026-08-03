@@ -28,13 +28,13 @@ use crate::webcore::s3::list_objects;
 
 #[derive(Default)]
 pub struct S3StatSuccess<'a> {
-    pub size: usize,
+    pub(crate) size: usize,
     /// etag is not owned and need to be copied if used after this callback
-    pub etag: &'a [u8],
+    pub(crate) etag: &'a [u8],
     /// format: Mon, 06 Jan 2025 22:40:57 GMT, lastModified is not owned and need to be copied if used after this callback
-    pub last_modified: &'a [u8],
+    pub(crate) last_modified: &'a [u8],
     /// format: text/plain, contentType is not owned and need to be copied if used after this callback
-    pub content_type: &'a [u8],
+    pub(crate) content_type: &'a [u8],
 }
 
 pub enum S3StatResult<'a> {
@@ -44,15 +44,13 @@ pub enum S3StatResult<'a> {
     Failure(S3Error<'a>),
 }
 
-pub struct S3DownloadSuccess<'a> {
-    /// etag is not owned and need to be copied if used after this callback
-    pub etag: &'a [u8],
+pub struct S3DownloadSuccess {
     /// body is owned and dont need to be copied, but dont forget to free it
-    pub body: MutableString,
+    pub(crate) body: MutableString,
 }
 
 pub enum S3DownloadResult<'a> {
-    Success(S3DownloadSuccess<'a>),
+    Success(S3DownloadSuccess),
     NotFound(S3Error<'a>),
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
@@ -116,28 +114,25 @@ pub struct S3HttpSimpleTask {
     // drop on assignment, and `clear_data()`-only in `Drop`. Invariant: `http` is initialised by
     // `execute_simple_s3_request` before the task pointer escapes, so every later access (in
     // `http_callback` / `Drop`) may `assume_init`.
-    pub http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
+    pub(crate) http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
     /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
     /// the inert `Default` placeholder (overwritten before the task escapes).
-    pub vm: Option<bun_ptr::BackRef<VirtualMachine>>,
-    pub sign_result: SignResult,
-    pub headers: Headers,
-    pub callback_context: *mut c_void,
+    pub(crate) vm: Option<bun_ptr::BackRef<VirtualMachine>>,
+    pub(crate) sign_result: SignResult,
+    pub(crate) headers: Headers,
+    pub(crate) callback_context: *mut c_void,
     pub callback: Callback,
-    pub response_buffer: MutableString,
-    // `'static` here because `result.body` (when set) points at our own
-    // `response_buffer` — self-referential, so the borrow lives as long as the task.
-    pub result: HTTPClientResult<'static>,
-    pub concurrent_task: ConcurrentTask,
-    pub range: Option<Box<[u8]>>,
+    pub(crate) response_buffer: MutableString,
+    pub(crate) result: HTTPClientResult<'static>,
+    pub(crate) concurrent_task: ConcurrentTask,
     /// Owned dupe of the proxy URL. The env-derived proxy slice can be freed
     /// by a concurrent process.env.HTTP_PROXY write while the HTTP thread is
     /// in flight, so we must own our copy for the task's lifetime.
-    pub proxy_url: Box<[u8]>,
+    pub(crate) proxy_url: Box<[u8]>,
     /// Owned copy of the request body. The HTTP thread reads the body slice
     /// concurrently for the lifetime of the request, so the task owns its own
     /// copy instead of borrowing caller memory.
-    pub body: Box<[u8]>,
+    pub(crate) body: Box<[u8]>,
     pub poll_ref: KeepAlive,
 }
 
@@ -163,7 +158,6 @@ impl Default for S3HttpSimpleTask {
             response_buffer: MutableString::default(),
             result: HTTPClientResult::default(),
             concurrent_task: ConcurrentTask::default(),
-            range: None,
             proxy_url: Box::default(),
             body: Box::default(),
             poll_ref: KeepAlive::default(),
@@ -185,12 +179,7 @@ pub enum Callback {
 }
 
 impl Callback {
-    pub(crate) fn fail(
-        &self,
-        code: &[u8],
-        message: &[u8],
-        context: *mut c_void,
-    ) -> JsTerminatedResult<()> {
+    fn fail(&self, code: &[u8], message: &[u8], context: *mut c_void) -> JsTerminatedResult<()> {
         let err = S3Error { code, message };
         match self {
             Callback::Upload(callback) => callback(S3UploadResult::Failure(err), context)?,
@@ -206,7 +195,7 @@ impl Callback {
         Ok(())
     }
 
-    pub(crate) fn not_found(
+    fn not_found(
         &self,
         code: &[u8],
         message: &[u8],
@@ -236,7 +225,7 @@ enum ErrorType {
 
 impl S3HttpSimpleTask {
     // bun.TrivialNew(@This()) — heap-allocate; pointer crosses thread boundary via http callback
-    pub fn new(init: Self) -> *mut Self {
+    pub(crate) fn new(init: Self) -> *mut Self {
         bun_core::heap::into_raw(Box::new(init))
     }
 
@@ -247,8 +236,8 @@ impl S3HttpSimpleTask {
         if let Some(err) = self.result.fail {
             code = err.name().as_bytes();
             has_error_code = true;
-        } else if let Some(body) = &self.result.body {
-            let bytes = body.list.as_slice();
+        } else {
+            let bytes = self.response_buffer.list.as_slice();
             if !bytes.is_empty() {
                 message = bytes;
                 if let Some(start) = strings::index_of(bytes, b"<Code>") {
@@ -290,8 +279,8 @@ impl S3HttpSimpleTask {
 
         if let Some(err) = self.result.fail {
             code = err.name().as_bytes();
-        } else if let Some(body) = &self.result.body {
-            let bytes = body.list.as_slice();
+        } else {
+            let bytes = self.response_buffer.list.as_slice();
             let mut has_error = false;
             if !bytes.is_empty() {
                 message = bytes;
@@ -318,8 +307,6 @@ impl S3HttpSimpleTask {
             if (!has_error && status == 200) || status == 206 {
                 return Ok(false);
             }
-        } else if status == 200 || status == 206 {
-            return Ok(false);
         }
         self.callback.fail(code, message, self.callback_context)?;
         Ok(true)
@@ -334,7 +321,7 @@ impl S3HttpSimpleTask {
     // ConcurrentTask dispatch entrypoint (see `runtime::dispatch`): `this` is the raw task
     // pointer the queue hands back, non-null by the `ConcurrentTask::from` contract.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn on_response(this: *mut Self) -> JsTerminatedResult<()> {
+    pub(crate) fn on_response(this: *mut Self) -> JsTerminatedResult<()> {
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is
         // reclaimed here exactly once via the ConcurrentTask `.manual_deinit` contract;
         // `this` is dropped at scope exit.
@@ -374,18 +361,15 @@ impl S3HttpSimpleTask {
             },
             Callback::ListObjects(callback) => match response.status_code {
                 200 => {
-                    if let Some(body) = &this.result.body {
-                        // parse_s3_list_objects_result is infallible (alloc-only
-                        // failure modes abort).
-                        let success =
-                            list_objects::parse_s3_list_objects_result(body.list.as_slice());
-                        callback(
-                            S3ListObjectsResult::Success(Box::new(success)),
-                            this.callback_context,
-                        )?;
-                    } else {
-                        this.error_with_body(ErrorType::Failure)?;
-                    }
+                    // parse_s3_list_objects_result is infallible (alloc-only
+                    // failure modes abort).
+                    let success = list_objects::parse_s3_list_objects_result(
+                        this.response_buffer.list.as_slice(),
+                    );
+                    callback(
+                        S3ListObjectsResult::Success(Box::new(success)),
+                        this.callback_context,
+                    )?;
                 }
                 404 => this.error_with_body(ErrorType::NotFound)?,
                 _ => this.error_with_body(ErrorType::Failure)?,
@@ -397,13 +381,8 @@ impl S3HttpSimpleTask {
             Callback::Download(callback) => match response.status_code {
                 200 | 204 | 206 => {
                     let body = core::mem::take(&mut this.response_buffer);
-                    // re-borrow response after &mut access to response_buffer
-                    let response = &this.result.metadata.as_ref().unwrap().response;
                     callback(
-                        S3DownloadResult::Success(S3DownloadSuccess {
-                            etag: response.headers.get(b"etag").unwrap_or(b""),
-                            body,
-                        }),
+                        S3DownloadResult::Success(S3DownloadSuccess { body }),
                         this.callback_context,
                     )?;
                 }
@@ -445,10 +424,10 @@ impl S3HttpSimpleTask {
     // `HTTPClientResultCallback` entrypoint: invoked by the HTTP thread with the raw task and
     // request pointers it captured at schedule time, both non-null by construction.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn http_callback(
+    pub(crate) fn http_callback(
         this: *mut Self,
         async_http: *mut AsyncHTTP<'static>,
-        result: HTTPClientResult<'_>,
+        mut result: HTTPClientResult<'_>,
     ) {
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` and is exclusively owned by the
         // HTTP thread until enqueued back to the JS thread below.
@@ -458,8 +437,9 @@ impl S3HttpSimpleTask {
         // A close-delimited body (no Content-Length, no Transfer-Encoding) reports progress again
         // at EOF with `metadata: None`, so carry the earlier one across the assignment below.
         let previous_metadata = this.result.metadata.take();
-        // SAFETY: `result.body` (the only borrowed field) points at `this.response_buffer`, which
-        // lives for the task's lifetime — extending to `'static` here is sound for self-reference.
+        result.body_into(&mut this.response_buffer.list);
+        // SAFETY: `body` is the only lifetime-carrying field and `body_into`
+        // just consumed it; the stored `&'static []` is never read.
         this.result = unsafe { result.detach_lifetime() };
         if this.result.metadata.is_none() {
             this.result.metadata = previous_metadata;
@@ -475,10 +455,6 @@ impl S3HttpSimpleTask {
         // SAFETY: `async_http` is a valid live pointer for the duration of this callback;
         // `this.http` was previously initialised in `execute_simple_s3_request`.
         unsafe { core::ptr::write(this.http.as_mut_ptr(), core::ptr::read(async_http)) };
-        // `async_http.response_buffer == &this.response_buffer`, so copying it back would be
-        // a self-assignment: the `=` would drop the live Vec before re-installing a stale
-        // bitwise duplicate (UAF + double-free), so we simply omit it —
-        // `this.response_buffer` already holds the body.
         if is_done {
             // compute the raw self-pointer before borrowing `this.concurrent_task`
             // to avoid a stacked-borrows / aliasing diagnostic on `*this`.
@@ -528,7 +504,7 @@ impl Drop for S3HttpSimpleTask {
 // callers in `client.rs` / `multipart.rs` were translated with three different
 // names for the request-options struct (`Options`, `S3RequestOptions`, `S3SimpleRequestOptions`)
 // and two for the callback enum. Alias them here so the call sites compile without churn.
-pub type Options<'a> = S3SimpleRequestOptions<'a>;
+pub(crate) type Options<'a> = S3SimpleRequestOptions<'a>;
 pub(crate) type S3RequestOptions<'a> = S3SimpleRequestOptions<'a>;
 pub(crate) type S3Callback = Callback;
 
@@ -536,19 +512,19 @@ pub struct S3SimpleRequestOptions<'a> {
     // signing options
     pub path: &'a [u8],
     pub method: Method,
-    pub search_params: Option<&'a [u8]>,
-    pub content_type: Option<&'a [u8]>,
-    pub content_disposition: Option<&'a [u8]>,
-    pub content_encoding: Option<&'a [u8]>,
+    pub(crate) search_params: Option<&'a [u8]>,
+    pub(crate) content_type: Option<&'a [u8]>,
+    pub(crate) content_disposition: Option<&'a [u8]>,
+    pub(crate) content_encoding: Option<&'a [u8]>,
 
     // http request options
-    pub body: &'a [u8],
-    pub proxy_url: Option<&'a [u8]>,
+    pub(crate) body: &'a [u8],
+    pub(crate) proxy_url: Option<&'a [u8]>,
     /// Owned; ownership transfers to the spawned task (or is dropped on sign error).
-    pub range: Option<Box<[u8]>>,
-    pub acl: Option<ACL>,
-    pub storage_class: Option<StorageClass>,
-    pub request_payer: bool,
+    pub(crate) range: Option<Box<[u8]>>,
+    pub(crate) acl: Option<ACL>,
+    pub(crate) storage_class: Option<StorageClass>,
+    pub(crate) request_payer: bool,
 }
 
 impl<'a> Default for S3SimpleRequestOptions<'a> {
@@ -632,7 +608,6 @@ pub(crate) fn execute_simple_s3_request(
         sign_result: result,
         callback_context,
         callback,
-        range: options.range,
         headers,
         vm: Some(bun_ptr::BackRef::new(VirtualMachine::get())),
         response_buffer: MutableString::default(),
@@ -684,7 +659,6 @@ pub(crate) fn execute_simple_s3_request(
         url,
         task.headers.entries.clone().expect("OOM"),
         headers_buf,
-        &raw mut task.response_buffer,
         body,
         HTTPClientResultCallback::new::<S3HttpSimpleTask>(
             task_ptr,

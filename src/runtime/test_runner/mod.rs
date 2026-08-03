@@ -158,14 +158,8 @@ cfg_jsc! {
 }
 
 cfg_jsc! {
-    pub mod harness {
-        #[path = "fixtures.rs"] pub mod fixtures;
-        #[path = "recover.rs"]  pub mod recover;
-    }
-
     pub mod timers {
         #[path = "FakeTimers.rs"] pub mod fake_timers;
-        pub use fake_timers::FakeTimers;
     }
 }
 
@@ -174,7 +168,7 @@ pub mod expect {
     // Re-export the umbrella surface so every matcher can `use super::*`.
     pub use super::expect_core::*;
     pub use super::expect_core::mock;
-    pub use super::diff_format::DiffFormatter;
+    pub(crate) use super::diff_format::DiffFormatter;
 
     /// `Expect.js.*GetCached` / `*SetCached` accessors (generate-classes.ts
     /// `cache: true` slots from jest.classes.ts). Exposed as a
@@ -189,7 +183,7 @@ pub mod expect {
     /// which Rust does not allow for associated fns. Thin shim keeps those
     /// modules unmodified.
     #[inline]
-    pub fn get_signature(
+    pub(crate) fn get_signature(
         matcher_name: &'static str,
         args: &'static str,
         not: bool,
@@ -384,16 +378,11 @@ pub mod expect {
     /// the bun_jsc inherents.
     pub trait JSGlobalObjectTestExt {
         fn throw2(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
-        fn throw_invalid_arguments2(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
     }
     impl JSGlobalObjectTestExt for JSGlobalObject {
         #[inline]
         fn throw2(&self, _fmt: &str, args: core::fmt::Arguments<'_>) -> JsError {
             self.throw(args)
-        }
-        #[inline]
-        fn throw_invalid_arguments2(&self, _fmt: &str, args: core::fmt::Arguments<'_>) -> JsError {
-            self.throw_invalid_arguments(args)
         }
     }
 
@@ -402,7 +391,7 @@ pub mod expect {
     /// borrows `global_this`), so provide the constructor every matcher
     /// expected.
     #[inline]
-    pub fn make_formatter(global: &JSGlobalObject) -> Formatter<'_> {
+    pub(crate) fn make_formatter(global: &JSGlobalObject) -> Formatter<'_> {
         let mut f = Formatter::new(global);
         f.quote_strings = true;
         f
@@ -467,7 +456,7 @@ pub mod expect {
         /// `toBeLessThan` / `toBeLessThanOrEqual`. The four matchers
         /// differ only in `name`, the `>`/`>=`/`<`/`<=` operator, and which
         /// `BigIntCompare` arms count as a pass — all of which `rel` encodes.
-        pub(super) fn numeric_ordering_matcher(
+        fn numeric_ordering_matcher(
             &self,
             global: &JSGlobalObject,
             frame: &bun_jsc::CallFrame,
@@ -478,8 +467,7 @@ pub mod expect {
             let this = scopeguard::guard(self, |this| this.post_match(global));
 
             let this_value = frame.this();
-            let args_buf = frame.arguments_old::<1>();
-            let arguments: &[JSValue] = args_buf.slice();
+            let arguments: &[JSValue] = frame.arguments();
 
             if arguments.is_empty() {
                 return Err(global.throw_invalid_arguments(format_args!(
@@ -596,7 +584,6 @@ pub mod expect {
         "toHaveNthReturnedWith.rs"              => to_have_nth_returned_with,
         "toHaveProperty.rs"                     => to_have_property,
         "toHaveReturned.rs"                     => to_have_returned,
-        "toHaveReturnedTimes.rs"                => to_have_returned_times,
         "toHaveReturnedWith.rs"                 => to_have_returned_with,
         "toIncludeRepeated.rs"                  => to_include_repeated,
         "toMatch.rs"                            => to_match,
@@ -614,17 +601,11 @@ pub mod expect {
 
 // public surface for `crate::test_runner::*` consumers
 cfg_jsc! {
-    pub use bun_test::BunTest;
-    pub use diff_format::DiffFormatter;
     pub use done_callback::DoneCallback;
-    pub use execution::Execution;
     pub use expect::{
         Expect, ExpectAny, ExpectAnything, ExpectArrayContaining, ExpectCloseTo,
         ExpectCustomAsymmetricMatcher, ExpectMatcherContext, ExpectMatcherUtils,
         ExpectObjectContaining, ExpectStatic, ExpectStringContaining, ExpectStringMatching,
-        ExpectTypeOf, Flags as ExpectFlags,
+        ExpectTypeOf,
     };
-    pub use jest::Jest;
-    pub use pretty_format::JestPrettyFormat;
-    pub use snapshot::Snapshots;
 }

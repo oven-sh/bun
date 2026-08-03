@@ -15,9 +15,9 @@ use crate::dependency::{Behavior, DependencyExt as _, TagExt as _};
 use crate::repository::RepositoryExt as _;
 use crate::{
     self as install, Aligner, Bin, Dependency, ExternalStringList, ExternalStringMap, Features,
-    Npm, PackageID, PackageJSON, PackageManager, PackageNameHash, Repository,
-    TruncatedPackageNameHash, UpdateRequest, bin, default_trusted_dependencies, dependency,
-    initialize_store, invalid_package_id,
+    Npm, PackageID, PackageManager, PackageNameHash, Repository, TruncatedPackageNameHash,
+    UpdateRequest, bin, default_trusted_dependencies, dependency, initialize_store,
+    invalid_package_id,
 };
 // `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
 // (`super`) is the real `lockfile.rs`, distinct from the `crate::lockfile`
@@ -138,7 +138,7 @@ fn invalid_trusted_dependencies(
 #[derive(Clone, Copy)]
 pub struct Package<SemverIntType: VersionInt = u64> {
     pub name: String,
-    pub name_hash: PackageNameHash,
+    pub(crate) name_hash: PackageNameHash,
 
     /// How this package has been resolved
     /// When .tag is uninitialized, that means the package is not resolved yet.
@@ -160,9 +160,9 @@ pub struct Package<SemverIntType: VersionInt = u64> {
     ///
     /// By default, the underlying buffer is filled with "invalid_id" to indicate this package ID
     /// was not resolved
-    pub resolutions: PackageIDSlice,
+    pub(crate) resolutions: PackageIDSlice,
 
-    pub meta: Meta,
+    pub(crate) meta: Meta,
     pub bin: Bin,
 
     /// If any of these scripts run, they will run in order:
@@ -172,10 +172,10 @@ pub struct Package<SemverIntType: VersionInt = u64> {
     /// 4. preprepare
     /// 5. prepare
     /// 6. postprepare
-    pub scripts: Scripts,
+    pub(crate) scripts: Scripts,
 }
 
-pub type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
+pub(crate) type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
 
 // ─── ResolverContext ─────────────────────────────────────────────────────────
 //
@@ -264,7 +264,7 @@ impl ResolverContext for () {
 //
 // `count`/`resolve` keep their `StringBuilder<'_>` borrow — lifetimes are
 // permitted on object-safe trait methods, only type generics are not.
-pub(crate) trait ResolverContextDyn {
+trait ResolverContextDyn {
     fn is_void(&self) -> bool;
     fn is_git(&self) -> bool;
     fn check_bundled_dependencies(&self) -> bool;
@@ -368,7 +368,7 @@ pub(crate) enum PackageField {
 }
 
 impl PackageField {
-    pub(crate) const ALL: [PackageField; 8] = [
+    const ALL: [PackageField; 8] = [
         PackageField::Name,
         PackageField::NameHash,
         PackageField::Resolution,
@@ -448,7 +448,7 @@ impl<SemverIntType: VersionInt> Alphabetizer<SemverIntType> {
 
 impl<SemverIntType: VersionInt> Package<SemverIntType> {
     #[inline]
-    pub fn is_disabled(&self, cpu: Npm::Architecture, os: Npm::OperatingSystem) -> bool {
+    pub(crate) fn is_disabled(&self, cpu: Npm::Architecture, os: Npm::OperatingSystem) -> bool {
         self.meta.is_disabled(cpu, os)
     }
 }
@@ -461,7 +461,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 // `Package<SemverIntType>` ≠ `Package<u64>` mismatches at every Lockfile call
 // site.
 impl Package<u64> {
-    pub fn clone(&self, cloner: &mut Cloner) -> crate::Result<PackageID> {
+    pub(crate) fn clone(&self, cloner: &mut Cloner) -> crate::Result<PackageID> {
         // `cloner` already owns `&mut` to `pm`, `old`, `new`, and
         // `package_id_mapping`; route everything through its disjoint fields.
         // `old`/`new`/`mapping` are reborrowed for the whole body (disjoint
@@ -600,11 +600,18 @@ impl Package<u64> {
         let resolutions: &mut [PackageID] =
             &mut new.buffers.resolutions[prev_len as usize..end as usize];
         debug_assert_eq!(old_resolutions.len(), resolutions.len());
+        debug_assert_eq!(old_dependencies.len(), resolutions.len());
         for (i, (old_resolution, resolution)) in old_resolutions
             .iter()
             .zip(resolutions.iter_mut())
             .enumerate()
         {
+            // Optional-peer slots are re-derived by `hoist` (Cloner::flush), not carried over.
+            if old_dependencies[i].behavior.is_optional_peer() {
+                *resolution = invalid_package_id;
+                continue;
+            }
+
             if *old_resolution >= max_package_id {
                 *resolution = invalid_package_id;
                 continue;
@@ -616,7 +623,6 @@ impl Package<u64> {
             } else {
                 cloner.clone_queue.push(PendingResolution {
                     old_resolution: *old_resolution,
-                    parent: new_package.meta.id,
                     resolve_id: new_package.resolutions.off
                         + PackageID::try_from(i).expect("int cast"),
                 });
@@ -626,117 +632,7 @@ impl Package<u64> {
         Ok(new_package.meta.id)
     }
 
-    pub fn from_package_json(
-        lockfile: &mut Lockfile,
-        pm: &mut PackageManager,
-        package_json: &mut PackageJSON,
-        features: Features,
-    ) -> crate::Result<Self> {
-        #[allow(non_snake_case)]
-        let FEATURES = features;
-        let mut package = Self::default();
-
-        // var string_buf = package_json;
-
-        // split-borrow `string_bytes`/`string_pool` so the disjoint
-        // `lockfile.buffers.dependencies/resolutions` borrows below pass.
-        let mut string_builder = crate::string_builder!(lockfile);
-
-        let mut total_dependencies_count: u32 = 0;
-        // var bin_extern_strings_count: u32 = 0;
-
-        // --- Counting
-        {
-            string_builder.count(&package_json.name);
-            string_builder.count(&package_json.version);
-            let dependencies = package_json.dependencies.map.values();
-            for dep in dependencies {
-                if dep.behavior.is_enabled(FEATURES) {
-                    dep.count(package_json.dependencies.source_buf, &mut string_builder);
-                    total_dependencies_count += 1;
-                }
-            }
-        }
-
-        // string_builder.count(manifest.str(&package_version_ptr.tarball_url));
-
-        string_builder.allocate()?;
-        // defer string_builder.clamp(); — handled at end of scope below
-        // var extern_strings_list = &lockfile.buffers.extern_strings;
-        let dependencies_list = &mut lockfile.buffers.dependencies;
-        let resolutions_list = &mut lockfile.buffers.resolutions;
-        dependencies_list.reserve(total_dependencies_count as usize);
-        resolutions_list.reserve(total_dependencies_count as usize);
-        // try extern_strings_list.ensureUnusedCapacity(lockfile.allocator, bin_extern_strings_count);
-        // extern_strings_list.items.len += bin_extern_strings_count;
-
-        // -- Cloning
-        {
-            let package_name: ExternalString =
-                string_builder.append::<ExternalString>(&package_json.name);
-            package.name_hash = package_name.hash;
-            package.name = package_name.value;
-
-            package.resolution = Resolution::<u64>::init(TaggedValue::Root);
-
-            let total_len = dependencies_list.len() + total_dependencies_count as usize;
-            debug_assert!(dependencies_list.len() == resolutions_list.len());
-
-            let dep_start = dependencies_list.len();
-            bun_core::vec::extend_from_fn(
-                dependencies_list,
-                total_dependencies_count as usize,
-                |_| Dependency::default(),
-            );
-            debug_assert_eq!(dependencies_list.len(), total_len);
-            let mut dependencies: &mut [Dependency] = &mut dependencies_list[dep_start..total_len];
-
-            let package_dependencies = package_json.dependencies.map.values();
-            let source_buf = package_json.dependencies.source_buf;
-            for dep in package_dependencies {
-                if !dep.behavior.is_enabled(FEATURES) {
-                    continue;
-                }
-
-                dependencies[0] = dep.clone_in(pm, source_buf, &mut string_builder)?;
-                dependencies = &mut dependencies[1..];
-                if dependencies.is_empty() {
-                    break;
-                }
-            }
-
-            // We lose the bin info here
-            // package.bin = package_version.bin.clone(string_buf, manifest.extern_strings_bin_entries, extern_strings_list.items, extern_strings_slice, @TypeOf(&string_builder), &string_builder);
-            // and the integriy hash
-            // package.meta.integrity = package_version.integrity;
-
-            package.meta.arch = package_json.arch;
-            package.meta.os = package_json.os;
-
-            package.dependencies.off = dep_start as u32;
-            package.dependencies.len = total_dependencies_count - (dependencies.len() as u32);
-            package.resolutions.off = package.dependencies.off;
-            package.resolutions.len = package.dependencies.len;
-
-            let new_length = package.dependencies.len as usize + dep_start;
-
-            debug_assert_eq!(resolutions_list.len(), dep_start);
-            bun_core::vec::extend_from_fn(
-                resolutions_list,
-                package.dependencies.len as usize,
-                |_| invalid_package_id,
-            );
-            debug_assert_eq!(resolutions_list.len(), new_length);
-
-            // Shrink off the unused default-initialized tail (`new_length <= total_len`).
-            dependencies_list.truncate(new_length);
-
-            string_builder.clamp();
-            return Ok(package);
-        }
-    }
-
-    pub fn from_npm(
+    pub(crate) fn from_npm(
         pm: &mut PackageManager,
         lockfile: &mut Lockfile,
         log: &mut bun_ast::Log,
@@ -1004,23 +900,23 @@ pub struct AddedTrustedDependency {
     /// Whether this dependency should be added to lockfile trusted
     /// dependencies. It is false when the new trusted dependency is coming
     /// from the default list.
-    pub add_to_lockfile: bool,
-    pub name: Box<[u8]>,
+    pub(crate) add_to_lockfile: bool,
+    pub(crate) name: Box<[u8]>,
 }
 
 #[derive(Default)]
 pub struct DiffSummary {
-    pub add: u32,
-    pub remove: u32,
-    pub update: u32,
-    pub overrides_changed: bool,
-    pub catalogs_changed: bool,
+    pub(crate) add: u32,
+    pub(crate) remove: u32,
+    pub(crate) update: u32,
+    pub(crate) overrides_changed: bool,
+    pub(crate) catalogs_changed: bool,
 
-    pub added_trusted_dependencies:
+    pub(crate) added_trusted_dependencies:
         ArrayHashMap<TruncatedPackageNameHash, AddedTrustedDependency, ArrayIdentityContext>,
-    pub removed_trusted_dependencies: TrustedDependenciesSet,
+    pub(crate) removed_trusted_dependencies: TrustedDependenciesSet,
 
-    pub patched_dependencies_changed: bool,
+    pub(crate) patched_dependencies_changed: bool,
 }
 
 impl DiffSummary {
@@ -1650,19 +1546,6 @@ impl Diff {
 }
 
 impl Package<u64> {
-    pub fn hash(name: &[u8], version: SemverVersion) -> u64 {
-        let mut hasher = bun_wyhash::Wyhash::init(0);
-        hasher.update(name);
-        // SAFETY: Semver.Version is POD; reading its raw bytes is sound.
-        hasher.update(unsafe {
-            bun_core::ffi::slice(
-                (&raw const version).cast::<u8>(),
-                mem::size_of::<SemverVersion>(),
-            )
-        });
-        hasher.final_()
-    }
-
     pub fn parse<R: ResolverContext>(
         &mut self,
         lockfile: &mut Lockfile,
@@ -1699,7 +1582,7 @@ impl Package<u64> {
     /// `manager` must point to a live `PackageManager` for the duration of the
     /// call, and its `lockfile` / `log` fields must point to live allocations
     /// disjoint from `*manager` itself.
-    pub unsafe fn parse_from_real_manager<R: ResolverContext>(
+    pub(crate) unsafe fn parse_from_real_manager<R: ResolverContext>(
         &mut self,
         manager: *mut crate::package_manager_real::PackageManager,
         source: &bun_ast::Source,
@@ -2125,7 +2008,7 @@ impl Package<u64> {
         Ok(Some(this_dep))
     }
 
-    pub fn parse_with_json<R: ResolverContext>(
+    pub(crate) fn parse_with_json<R: ResolverContext>(
         &mut self,
         lockfile: &mut Lockfile,
         pm: &mut PackageManager,
@@ -3051,14 +2934,9 @@ pub mod serializer {
     use super::*;
 
     /// Number of columns in the on-disk package table.
-    pub(crate) const FIELD_COUNT: usize = PackageField::ALL.len();
+    const FIELD_COUNT: usize = PackageField::ALL.len();
 
-    pub struct Sizes {
-        pub bytes: [usize; FIELD_COUNT],
-        pub fields: [usize; FIELD_COUNT],
-    }
-
-    pub fn save<SemverIntType: VersionInt, S>(
+    pub(crate) fn save<SemverIntType: VersionInt, S>(
         list: &List<SemverIntType>,
         stream: &mut S,
     ) -> crate::Result<()>

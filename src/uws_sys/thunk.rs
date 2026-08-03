@@ -26,8 +26,6 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use crate::us_socket_t;
-
 /// Marker for `#[repr(C)]` zero-sized opaque FFI handles
 /// (`UnsafeCell<[u8; 0]>` + `PhantomPinned`).
 ///
@@ -149,14 +147,6 @@ pub(crate) unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
 pub unsafe fn ext_owner<'a, T>(ext: &Option<NonNull<T>>) -> Option<&'a mut T> {
     // SAFETY: per caller contract above.
     ext.map(|mut p| unsafe { p.as_mut() })
-}
-
-/// `Option<NonNull<T>>` at context creation; pointee (if any) is live and
-/// uniquely accessed.
-#[inline(always)]
-pub unsafe fn socket_ext_owner<'a, T>(s: *mut us_socket_t) -> Option<&'a mut T> {
-    // SAFETY: per caller contract above.
-    unsafe { ext_owner(&*(*s).ext::<Option<NonNull<T>>>()) }
 }
 
 // ───────────────────────── safe-surface trampoline ──────────────────────────

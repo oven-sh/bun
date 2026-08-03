@@ -51,17 +51,16 @@ false positive.
 
 ## Which builds run this
 
-`.buildkite/ci.mjs:592` — `needsBaselineVerification()`:
+See `needsBaselineVerification()` in `.buildkite/ci.mjs`:
 
-| Target                                          | Allowlist file              |
-| ----------------------------------------------- | --------------------------- |
-| `linux-x64-baseline`, `linux-x64-musl-baseline` | `allowlist-x64.txt`         |
-| `windows-x64-baseline`                          | `allowlist-x64-windows.txt` |
-| `linux-aarch64`, `linux-aarch64-musl`           | `allowlist-aarch64.txt`     |
+| Target                                                         | Allowlist file              |
+| -------------------------------------------------------------- | --------------------------- |
+| `linux-x64`, `linux-x64-musl`                                  | `allowlist-x64.txt`         |
+| `windows-x64`                                                  | `allowlist-x64-windows.txt` |
+| `linux-aarch64`, `linux-aarch64-musl`, `linux-aarch64-android` | `allowlist-aarch64.txt`     |
 
-x64 baseline = Nehalem (`-march=nehalem`, `cmake/CompilerFlags.cmake:33`).
-aarch64 baseline = `armv8-a+crc` (`cmake/CompilerFlags.cmake:27-29`). aarch64
-has no separate "baseline" build — the regular build _is_ the baseline.
+x64 baseline = Nehalem (`-march=nehalem`). aarch64 baseline = `armv8-a+crc`.
+Every x64 build is baseline (there is no separate `-baseline` variant).
 
 ## Reproduce a CI failure locally
 
@@ -70,8 +69,8 @@ building locally unless you build with the exact baseline toolchain. Download
 the artifact instead.
 
 1. Get `<triplet>-profile.zip` from the failing build's `build-bun` step
-   (Artifacts tab in Buildkite). Triplets look like `bun-linux-x64-baseline`,
-   `bun-linux-aarch64-musl`, `bun-windows-x64-baseline`.
+   (Artifacts tab in Buildkite). Triplets look like `bun-linux-x64`,
+   `bun-linux-aarch64-musl`, `bun-windows-x64`.
 
 2. Build and run the scanner (host arch is irrelevant — the scanner reads the
    binary's headers, it doesn't execute it):
@@ -81,7 +80,7 @@ the artifact instead.
 
    # Linux x64 baseline
    ./scripts/verify-baseline-static/target/release/verify-baseline-static \
-     --binary bun-linux-x64-baseline-profile/bun-profile \
+     --binary bun-linux-x64-profile/bun-profile \
      --allowlist scripts/verify-baseline-static/allowlist-x64.txt
 
    # Linux aarch64
@@ -91,7 +90,7 @@ the artifact instead.
 
    # Windows x64 baseline (PDB auto-discovered at <binary>.pdb)
    ./scripts/verify-baseline-static/target/release/verify-baseline-static \
-     --binary bun-windows-x64-baseline-profile/bun-profile.exe \
+     --binary bun-windows-x64-profile/bun-profile.exe \
      --allowlist scripts/verify-baseline-static/allowlist-x64-windows.txt
    ```
 
@@ -164,10 +163,10 @@ table, an HWCAP test. Known patterns:
 | Rust `memchr`                         | `is_x86_feature_detected!()`                                | (via lolhtml dep)                          |
 | compiler-rt outline-atomics (aarch64) | `__aarch64_have_lse_atomics` (= `AT_HWCAP & HWCAP_ATOMICS`) | compiler-rt builtin                        |
 
-**If no gate exists:** (B). Usually a subbuild that ignored
-`ENABLE_BASELINE` and picked up host `-march=native`. Fix the
-`cmake/targets/Build*.cmake` for that dep. Confirm with the emulator (the
-ground-truth check):
+**If no gate exists:** (B). Usually a subbuild that picked up host
+`-march=native` instead of the pinned `-march=nehalem` / `-mcpu=cortex-a53`.
+Fix that dep's compile flags in `scripts/build/deps/`. Confirm with the
+emulator (the ground-truth check):
 
 ```sh
 qemu-x86_64 -cpu Nehalem ./bun-profile <code path that hits it>   # x64 → SIGILL = bug
@@ -187,7 +186,11 @@ Signs of a false positive:
 - `objdump -d` around the reported address shows `ret` then byte soup — no
   stack frame setup, no control flow leading to it.
 
-If confirmed: allowlist the symbol. Note the reason in the group comment.
+If confirmed: allowlist the symbol as a **blanket pass** (bare name, no
+`[...]` bracket). The reported features are misdecoded data bytes whose
+values move with link layout, not gated code, so a ceiling has nothing to
+bound and just re-flakes on the next layout that decodes differently. Note
+the reason in the group comment.
 
 ## Adding an allowlist entry
 
@@ -202,10 +205,12 @@ existing `# Gate: ...` header; if no existing group matches, add one:
 symbol_name_exactly_as_the_tool_printed_it  [FEAT1, FEAT2]
 ```
 
-**Always use a feature ceiling** (`[...]`). A blanket pass (no brackets)
-defeats the "did the gate get updated when the dep grew AVX-512?" check
-(`src/main.rs:616-621`). List exactly the features the tool reported; that's
-what the gate currently checks.
+**Use a feature ceiling** (`[...]`) for gated code. A blanket pass (no
+brackets) defeats the "did the gate get updated when the dep grew AVX-512?"
+check (`src/main.rs:616-621`). List exactly the features the tool reported;
+that's what the gate currently checks. The exceptions are confirmed
+data-in-.text misdecodes (previous section) and `<no-symbol@...>` padding
+(below): there is no gate to drift past, so blanket-pass those.
 
 **x64 feature names** (iced-x86 Debug strings — must match exactly):
 `AVX`, `AVX2`, `FMA`, `FMA4`, `BMI1`, `BMI2`, `MOVBE`, `ADX`, `RDRAND`,
@@ -270,5 +275,6 @@ See `src/main.rs:94-135` and `src/aarch64.rs`:
   SETSSBSY etc.) IS flagged — dedicated opcode slots that #UD on pre-CET.
 - **PACIASP/AUTIASP/BTI** (aarch64) — HINT-space, architecturally NOP on
   pre-PAC CPUs. (`LDRAA`/`LDRAB` are _not_ HINT-space and _are_ reported.)
-- **3DNow!, SMM, Cyrix, VIA** (x64) — no toolchain targeting x86-64 emits
-  these. When their `0f xx` encodings show up, it's data.
+- **3DNow!, SMM, Cyrix, VIA, RTM/TSX** (x64) — no toolchain targeting x86-64
+  emits these without explicit intrinsics. When their encodings show up
+  (`0f 0f` 3DNow!, `C7/C6 F8` XBEGIN/XABORT), it's data.

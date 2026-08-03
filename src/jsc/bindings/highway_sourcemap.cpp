@@ -265,7 +265,7 @@ static constexpr ShufTable BuildShufTable()
 alignas(16) static constexpr ShufTable kShufTable = BuildShufTable();
 
 // Wrapping i32 add/sub. Signed overflow is UB in C++; the Rust scalar path
-// (`Ordinal::add_scalar`, release build) wraps, and the subsequent `< 0`
+// (`i32::wrapping_add` in Mapping.rs) wraps, and the subsequent `< 0`
 // range check catches the wrapped result. Doing the arithmetic in the
 // unsigned domain gives the same defined-wrap behaviour here. With the
 // accumulator in [0, i32::MAX] (range-checked on the previous segment) and

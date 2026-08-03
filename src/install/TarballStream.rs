@@ -84,7 +84,7 @@ pub struct TarballStream {
     http_err: Option<crate::Error>,
 
     /// Cached response status (metadata only arrives on the first callback).
-    pub status_code: u32,
+    pub(crate) status_code: u32,
 
     /// True while a drain task is either queued on the thread pool or
     /// running. `on_chunk` sets it before scheduling; `drain` clears it when
@@ -618,12 +618,22 @@ impl TarballStream {
         if unsafe { lib::archive_read_append_filter(archive, 1) } != 0 {
             return Err(crate::Error::Fail);
         }
+        // Register tar before read_set_options so the option has a format slot
+        // to apply to. archive_read_set_format would register it too, but
+        // libarchive's archive_set_format_option() overwrites `a->format` with
+        // each slot while dispatching and then writes NULL, so calling
+        // read_set_options after archive_read_set_format throws the selected
+        // format away and archive_read_open1() falls back to bidding. Bidding
+        // reads ahead 512 decompressed bytes and fails with "Unrecognized
+        // archive format" when the first HTTP chunk is too small for that.
+        // SAFETY: archive is a valid handle.
+        let _ = unsafe { (*archive).read_support_format_tar() };
+        // SAFETY: archive is a valid handle.
+        let _ = unsafe { (*archive).read_set_options(c"read_concatenated_archives") };
         // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
         if unsafe { lib::archive_read_set_format(archive, 0x30000) } != 0 {
             return Err(crate::Error::Fail);
         }
-        // SAFETY: archive is a valid handle.
-        let _ = unsafe { (*archive).read_set_options(c"read_concatenated_archives") };
 
         // SAFETY: archive is a valid handle; `this` outlives the archive
         // (freed only in `Drop` after `read_free`). See fn-level # Safety
@@ -789,6 +799,15 @@ impl TarballStream {
         let rest: &[OSPathChar] = tokenize_rest_after_first(&pathname[..]);
 
         let mut norm_buf = OSPathBuffer::uninit();
+        if rest.len() >= norm_buf.len() {
+            bun_core::warn!(
+                "Skipping entry with a path longer than the maximum path length: {}\n",
+                bun_core::fmt::fmt_os_path(rest, Default::default()),
+            );
+            self.phase = Phase::WantData;
+            self.out_fd = None;
+            return Ok(());
+        }
         let normalized =
             resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..]);
         let norm_len = normalized.len();

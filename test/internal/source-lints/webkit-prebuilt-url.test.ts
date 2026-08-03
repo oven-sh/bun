@@ -41,10 +41,20 @@ function mockToolchain(): Toolchain {
   };
 }
 
-/** Shorthand: a Linux glibc x64 release target, abi pinned so host detection never runs. */
+/** Shorthand: a Linux glibc x64 release target. linuxSysroot stubbed so the
+ * cross-arch block in resolveConfig never throws on a non-x64-glibc host. */
 function resolveLinuxRelease(partial: PartialConfig = {}): Config {
   return resolveConfig(
-    { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", lto: false, ...partial },
+    {
+      os: "linux",
+      arch: "x64",
+      abi: "gnu",
+      buildType: "Release",
+      lto: false,
+      baseline: false,
+      linuxSysroot: "/fake/linux-sysroot",
+      ...partial,
+    },
     mockToolchain(),
   );
 }
@@ -77,11 +87,20 @@ describe("WebKit prebuilt URL", () => {
 
   test("debug picks the -debug artifact from the same release tag", () => {
     const cfg = resolveConfig(
-      { os: "linux", arch: "x64", abi: "gnu", buildType: "Debug", asan: false },
+      { os: "linux", arch: "x64", abi: "gnu", buildType: "Debug", asan: false, baseline: false, linuxSysroot: "/fake" },
       mockToolchain(),
     );
     expect(prebuiltUrlOf(cfg)).toBe(
       `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-debug.tar.gz`,
+    );
+  });
+
+  test("baseline does not affect the suffix (every x64 WebKit is built at the nehalem floor)", () => {
+    expect(prebuiltUrlOf(resolveLinuxRelease({ lto: true, baseline: true }))).toBe(
+      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-lto.tar.gz`,
+    );
+    expect(prebuiltUrlOf(resolveLinuxRelease({ asan: true, baseline: true }))).toBe(
+      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-asan.tar.gz`,
     );
   });
 

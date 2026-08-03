@@ -489,6 +489,8 @@ std::optional<ncrypto::EVPKeyPointer> keyFromPublicString(JSGlobalObject* lexica
         .len = keySpan.size(),
     };
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+
     auto publicRes = ncrypto::EVPKeyPointer::TryParsePublicKey(publicConfig, ncryptoBuf);
     if (publicRes) {
         ncrypto::EVPKeyPointer keyPtr(WTF::move(publicRes.value));

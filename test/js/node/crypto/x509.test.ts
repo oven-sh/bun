@@ -29,6 +29,19 @@ xoF/4xgOUMNvA8O5H/sm5QwghflFqkpuvqdeYHLNzb0yWUvPvtTfYiA7+vo=
 // CN=agent1, no subjectAltName, so the subject is the only thing to match against.
 const cnOnlyCertPem = readFileSync(path.join(import.meta.dir, "..", "test", "fixtures", "keys", "agent1-cert.pem"));
 
+// Self-signed, CN=emptysan.test. The subjectAltName extension is present but holds an empty
+// GeneralNames SEQUENCE, so the extension prints as the empty string.
+const emptySanCertPem = `-----BEGIN CERTIFICATE-----
+MIIBLDCB0qADAgECAgEJMAoGCCqGSM49BAMCMBgxFjAUBgNVBAMMDWVtcHR5c2Fu
+LnRlc3QwHhcNMjQwMTAxMDAwMDAwWhcNMzQwMTAxMDAwMDAwWjAYMRYwFAYDVQQD
+DA1lbXB0eXNhbi50ZXN0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAERZd4TI3L
+9hB6mAqrzlK/lZtnTN1HQRh8noNVV9rHms6RFBhYp/mSU2JrMPIEGB8DP4YEnoin
+Og/IJjctZ/WG6qMNMAswCQYDVR0RBAIwADAKBggqhkjOPQQDAgNJADBGAiEAlvDe
+VqtVe0NtY8U5uwa7lqNLtkqjXClGQl4fgCV4KloCIQCwni1CVvWLJa0cZm3BQtwH
+lGNHf1nq+j8dNaMGmheHKQ==
+-----END CERTIFICATE-----
+`;
+
 describe("X509Certificate.checkHost()", () => {
   const cert = new X509Certificate(wildcardSanCertPem);
   const cnOnly = new X509Certificate(cnOnlyCertPem);
@@ -70,5 +83,24 @@ describe("X509Certificate.checkHost()", () => {
     expect(cnOnly.checkEmail("ry@TINYCLOUDS.ORG")).toBe("ry@TINYCLOUDS.ORG");
     expect(cnOnly.checkEmail("sally@example.com")).toBeUndefined();
     expect(cnOnly.checkIP("127.0.0.1")).toBeUndefined();
+  });
+});
+
+describe("X509Certificate.subjectAltName", () => {
+  test("is the printed extension when present", () => {
+    const cert = new X509Certificate(wildcardSanCertPem);
+    expect(cert.subjectAltName).toBe("DNS:*.wildcard.example.com, DNS:exact.example.com");
+  });
+
+  test("is undefined when the extension is absent", () => {
+    const cert = new X509Certificate(cnOnlyCertPem);
+    expect(cert.subjectAltName).toBeUndefined();
+    expect(cert.toLegacyObject().subjectaltname).toBeUndefined();
+  });
+
+  test("is the empty string when the extension holds an empty GeneralNames sequence", () => {
+    const cert = new X509Certificate(emptySanCertPem);
+    expect(cert.subjectAltName).toBe("");
+    expect(cert.toLegacyObject().subjectaltname).toBe("");
   });
 });

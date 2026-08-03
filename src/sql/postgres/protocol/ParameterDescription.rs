@@ -35,12 +35,6 @@ impl ParameterDescription {
 
         Ok(Self { parameters })
     }
-
-    pub fn decode<Container: super::new_reader::ReaderContext>(
-        context: Container,
-    ) -> Result<Self, AnyPostgresError> {
-        Self::decode_internal(NewReader { wrapped: context })
-    }
 }
 
 // Rust cannot form an unaligned `&[i32]`, so we reinterpret as `&[[u8; 4]]`

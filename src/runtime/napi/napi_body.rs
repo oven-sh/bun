@@ -2411,6 +2411,17 @@ pub(crate) struct ThreadSafeFunction {
 
     pub callback: TsfnCallback,
     pub(crate) dispatch_state: AtomicU8, // DispatchState
+    /// JS-thread only: depth of live `on_dispatch` frames. Nested dispatches
+    /// happen when a callback (or a microtask it drains) re-enters the event
+    /// loop, e.g. bun:test's expect(promise).rejects waiting synchronously.
+    pub(crate) dispatch_depth: u32,
+    /// JS-thread only: an `on_dispatch` observed `Closed` while an outer frame
+    /// still borrows this object or another task was still queued; whoever is
+    /// last out frees it.
+    pub(crate) pending_destroy: bool,
+    /// Event-loop tasks currently queued that target `on_dispatch`. Written by
+    /// addon threads (via `schedule_dispatch`), hence atomic.
+    pub(crate) inflight_dispatch_tasks: AtomicU32,
     pub(crate) blocking_condvar: Condvar,
     pub(crate) closing: AtomicU8, // ClosingState
     /// Written under `lock` by `env_teardown` on the JS thread. Every path
@@ -2508,12 +2519,25 @@ impl ThreadSafeFunction {
     pub(crate) fn on_dispatch(this: *mut ThreadSafeFunction) {
         // SAFETY: `this` is a live heap allocation owned by the event loop dispatch.
         let self_ = unsafe { &mut *this };
+        // More than one task can be in flight for this function (see
+        // `schedule_dispatch` and `dispatch_one`'s backup dispatch), so only
+        // the last one out may free it.
+        let inflight = self_.inflight_dispatch_tasks.fetch_sub(1, Ordering::SeqCst) - 1;
         if self_.env_dead.load(Ordering::SeqCst) {
             // `env_teardown` already released everything and owns the free
             // decision. The loop this task came from is being destroyed.
             return;
         }
         if self_.closing.load(Ordering::SeqCst) == ClosingState::Closed as u8 {
+            if self_.dispatch_depth > 0 || inflight > 0 {
+                // Either a nested event loop (a callback below blocked in
+                // `wait_for_promise` or similar) drained this task while an
+                // outer `on_dispatch` frame still borrows `*this`, or another
+                // task for this function is still queued. Defer the free to
+                // the outermost frame / last task.
+                self_.pending_destroy = true;
+                return;
+            }
             // Finalize the ThreadSafeFunction.
             // SAFETY: `this` is the live heap allocation we own; closed state guarantees no other thread will touch it.
             unsafe { ThreadSafeFunction::destroy(this) };
@@ -2521,13 +2545,16 @@ impl ThreadSafeFunction {
         }
 
         let mut is_first = true;
+        // One backup dispatch per `on_dispatch` (see `dispatch_one`).
+        let mut scheduled_backup = false;
+        self_.dispatch_depth += 1;
 
         // Run the tasks.
         loop {
             self_
                 .dispatch_state
                 .store(DispatchState::Running as u8, Ordering::SeqCst);
-            if self_.dispatch_one(is_first) {
+            if self_.dispatch_one(is_first, &mut scheduled_backup) {
                 is_first = false;
                 self_
                     .dispatch_state
@@ -2537,12 +2564,10 @@ impl ThreadSafeFunction {
                 // via CAS instead of an unconditional store: between
                 // dispatch_one() observing an empty queue (and dropping the
                 // lock) and this point, another thread may have enqueued an
-                // item and called schedule_dispatch(). That swap() saw
-                // Running, so it intentionally did *not* schedule a new
-                // concurrent task — it relies on this loop to pick the item
-                // up. If we blindly stored Idle we'd overwrite that Pending
-                // and the callback would be dropped (flaky lost-wakeup under
-                // load). On CAS failure, loop and re-drain.
+                // item and called schedule_dispatch(). If we blindly stored
+                // Idle we'd overwrite that Pending and the callback would be
+                // dropped (flaky lost-wakeup under load). On CAS failure, loop
+                // and re-drain.
                 if self_
                     .dispatch_state
                     .compare_exchange(
@@ -2557,6 +2582,18 @@ impl ThreadSafeFunction {
                 }
                 // state was bumped to Pending by enqueue()/release(); re-dispatch.
             }
+        }
+
+        self_.dispatch_depth -= 1;
+        if self_.dispatch_depth == 0
+            && self_.pending_destroy
+            && self_.inflight_dispatch_tasks.load(Ordering::SeqCst) == 0
+        {
+            // SAFETY: we are the outermost dispatch frame and no other task
+            // references this function; the nested frame that observed Closed
+            // returned without touching `*this` further.
+            unsafe { ThreadSafeFunction::destroy(this) };
+            return;
         }
 
         // Node sets a maximum number of runs per ThreadSafeFunction to 1,000.
@@ -2594,11 +2631,16 @@ impl ThreadSafeFunction {
                     self.callback = TsfnCallback::Js(StrongOptional::empty());
                     self.poll_ref.disable();
                     let self_ptr: *mut Self = self;
-                    let Some(loop_) = self.loop_mut() else {
-                        // env torn down: `env_teardown` owns the finalize + free.
-                        return;
-                    };
-                    loop_.enqueue_task(Task::init(self_ptr));
+                    {
+                        let Some(loop_) = self.loop_mut() else {
+                            // env torn down: `env_teardown` owns the finalize + free.
+                            return;
+                        };
+                        loop_.enqueue_task(Task::init(self_ptr));
+                    }
+                    // The finalize task targets `on_dispatch` too (same task
+                    // tag), so it counts toward the in-flight dispatch tasks.
+                    let _ = self.inflight_dispatch_tasks.fetch_add(1, Ordering::SeqCst);
                     self.has_queued_finalizer = true;
                 }
             }
@@ -2608,9 +2650,9 @@ impl ThreadSafeFunction {
         }
     }
 
-    pub(crate) fn dispatch_one(&mut self, is_first: bool) -> bool {
+    pub(crate) fn dispatch_one(&mut self, is_first: bool, scheduled_backup: &mut bool) -> bool {
         let mut queue_finalizer_after_call = false;
-        let task = 'brk: {
+        let (task, remaining) = 'brk: {
             // `MutexGuard` holds the lock by raw pointer, so it does not borrow
             // `*self` across the `&mut self` calls below.
             let _g = self.lock.lock_guard();
@@ -2628,9 +2670,8 @@ impl ThreadSafeFunction {
                 return false;
             };
 
-            if self.queue.count.fetch_sub(1, Ordering::SeqCst) == 1
-                && self.thread_count.load(Ordering::SeqCst) == 0
-            {
+            let prev_count = self.queue.count.fetch_sub(1, Ordering::SeqCst);
+            if prev_count == 1 && self.thread_count.load(Ordering::SeqCst) == 0 {
                 self.closing
                     .store(ClosingState::Closing as u8, Ordering::SeqCst);
                 if self.queue.max_queue_size > 0 {
@@ -2641,8 +2682,20 @@ impl ThreadSafeFunction {
                 self.blocking_condvar.signal();
             }
 
-            break 'brk t;
+            break 'brk (t, prev_count.saturating_sub(1));
         };
+
+        if remaining > 0 && !*scheduled_backup {
+            // `call` below can block indefinitely in a nested event loop (the
+            // callback, or a microtask it drains, can synchronously wait on a
+            // promise — e.g. bun:test's expect(promise).rejects). Items already
+            // queued behind this one would then be stranded, because pushes
+            // coalesce into the Pending state and rely on this drain loop.
+            // Schedule one backup dispatch so a nested loop can keep draining;
+            // if nothing blocks, it finds an empty queue and is a no-op.
+            *scheduled_backup = true;
+            self.schedule_dispatch();
+        }
 
         if self.call(task, is_first).is_err() {
             return false;
@@ -2775,22 +2828,24 @@ impl ThreadSafeFunction {
         let prev = self
             .dispatch_state
             .swap(DispatchState::Pending as u8, Ordering::SeqCst);
-        match prev {
-            x if x == DispatchState::Idle as u8 => {
-                let self_ptr: *mut Self = self;
-                let Some(event_loop) = self.event_loop.as_ref() else {
-                    // env torn down: the loop is gone, nothing to schedule onto.
-                    return;
-                };
-                event_loop.enqueue_task_concurrent(ConcurrentTask::create_from(self_ptr));
-            }
-            x if x == DispatchState::Running as u8 => {
-                // it will check if it has more work to do
-            }
-            _ => {
-                // we've already scheduled it to run
-            }
+        if prev == DispatchState::Pending as u8 {
+            // we've already scheduled it to run
+            return;
         }
+        // Idle: no dispatch is queued, enqueue one. Running: a dispatch loop is
+        // active on the JS thread and will usually pick the item up itself, but
+        // it can also be blocked in a nested event loop (a callback or one of
+        // its microtasks synchronously waiting on a promise that only settles
+        // via this threadsafe function). Relying on it then deadlocks the
+        // process, so enqueue in this case too; a redundant dispatch finds an
+        // empty queue and is a cheap no-op.
+        let self_ptr: *mut Self = self;
+        let Some(event_loop) = self.event_loop.as_ref() else {
+            // env torn down: the loop is gone, nothing to schedule onto.
+            return;
+        };
+        let _ = self.inflight_dispatch_tasks.fetch_add(1, Ordering::SeqCst);
+        event_loop.enqueue_task_concurrent(ConcurrentTask::create_from(self_ptr));
     }
 
     /// Consumes and frees a heap-allocated ThreadSafeFunction (allocated by `new`).
@@ -3077,6 +3132,9 @@ extern "C" fn napi_create_threadsafe_function(
         has_queued_finalizer: false,
         lock: Mutex::new(),
         dispatch_state: AtomicU8::new(DispatchState::Idle as u8),
+        dispatch_depth: 0,
+        pending_destroy: false,
+        inflight_dispatch_tasks: AtomicU32::new(0),
         blocking_condvar: Condvar::default(),
         closing: AtomicU8::new(ClosingState::NotClosing as u8),
         env_dead: AtomicBool::new(false),

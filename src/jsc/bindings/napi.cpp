@@ -831,7 +831,7 @@ extern "C" napi_status napi_wrap(napi_env env,
     auto& vm = JSC::getVM(globalObject);
     JSValue jsc_value = toJS(js_object);
     JSObject* jsc_object = jsc_value.getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, jsc_object, napi_object_expected);
+    NAPI_RETURN_EARLY_IF_FALSE(env, jsc_object, napi_invalid_arg);
 
     // NapiPrototype has an inline field to store a napi_ref, so we use that if we can
     auto* napi_instance = dynamicDowncast<NapiPrototype>(jsc_object);
@@ -875,7 +875,7 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
 
     JSValue jsc_value = toJS(js_object);
     JSObject* jsc_object = jsc_value.getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, jsc_object, napi_object_expected);
+    NAPI_RETURN_EARLY_IF_FALSE(env, jsc_object, napi_invalid_arg);
     // may be null
     auto* napi_instance = dynamicDowncast<NapiPrototype>(jsc_object);
 
@@ -912,7 +912,7 @@ extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
 
     JSValue jsc_value = toJS(js_object);
     JSObject* jsc_object = jsc_value.getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, jsc_object, napi_object_expected);
+    NAPI_RETURN_EARLY_IF_FALSE(env, jsc_object, napi_invalid_arg);
 
     Zig::GlobalObject* globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
@@ -1016,6 +1016,13 @@ static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, c
 {
     auto* globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
+
+    // Node.js uses NAPI_PREAMBLE for napi_throw_*error: if an exception is
+    // already pending, return napi_pending_exception and leave it untouched.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (scope.exception() || env->hasPendingException()) {
+        return napi_set_last_error(env, napi_pending_exception);
+    }
 
     if (!msg_utf8) {
         return napi_set_last_error(env, napi_invalid_arg);
@@ -1137,7 +1144,7 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
 
     JSC::JSValue objectValue = toJS(js_object);
     JSC::JSObject* object = objectValue.getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, object, napi_object_expected);
+    NAPI_RETURN_EARLY_IF_FALSE(env, object, napi_invalid_arg);
 
     if (result) {
         // If they're expecting a Ref, use the ref.
@@ -1162,10 +1169,11 @@ extern "C" JS_EXPORT napi_status node_api_post_finalizer(napi_env env,
     void* finalize_data,
     void* finalize_hint)
 {
-    NAPI_PREAMBLE_NO_PENDING_CHECK(env);
-    NAPI_CHECK_ARG(env, finalize_cb);
+    // Node.js uses only CHECK_ENV here (basic-env function) and does not
+    // null-check finalize_cb; a NULL cb is enqueued and no-ops on run.
+    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     napi_internal_enqueue_finalizer(env, finalize_cb, finalize_data, finalize_hint);
-    NAPI_RETURN_SUCCESS(env);
+    return napi_set_last_error(env, napi_ok);
 }
 
 extern "C" napi_status napi_reference_unref(napi_env env, napi_ref ref,
@@ -2179,7 +2187,7 @@ extern "C" napi_status napi_coerce_to_string(napi_env env, napi_value value,
 
     // .toString() can throw
     JSValue resultValue = JSValue(jsValue.toString(globalObject));
-    NAPI_RETURN_IF_EXCEPTION(env);
+    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_string_expected));
 
     JSC::EnsureStillAliveScope ensureStillAlive1(resultValue);
     *result = toNapi(resultValue, globalObject);
@@ -2214,7 +2222,7 @@ extern "C" napi_status napi_coerce_to_number(napi_env env, napi_value value, nap
     JSValue jsValue = toJS(value);
     // might throw
     double nativeNumber = jsValue.toNumber(globalObject);
-    NAPI_RETURN_IF_EXCEPTION(env);
+    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_number_expected));
 
     *result = toNapi(JSC::jsNumber(nativeNumber), globalObject);
     NAPI_RETURN_SUCCESS(env);
@@ -2231,7 +2239,7 @@ extern "C" napi_status napi_coerce_to_object(napi_env env, napi_value value, nap
     JSValue jsValue = toJS(value);
     // might throw
     JSObject* obj = jsValue.toObject(globalObject);
-    NAPI_RETURN_IF_EXCEPTION(env);
+    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_object_expected));
 
     *result = toNapi(obj, globalObject);
     NAPI_RETURN_SUCCESS(env);
@@ -2268,7 +2276,7 @@ extern "C" napi_status napi_create_buffer(napi_env env, size_t length,
 
     // In Node.js, napi_create_buffer is uninitialized memory.
     auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, length);
-    NAPI_RETURN_IF_EXCEPTION(env);
+    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_generic_failure));
 
     if (data != nullptr) {
         // Node.js' code looks like this:
@@ -2329,7 +2337,7 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
         // TODO: is there a way to create a detached uint8 array?
         auto arrayBuffer = JSC::ArrayBuffer::createUninitialized(0, 1);
         auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTF::move(arrayBuffer), 0, 0);
-        NAPI_RETURN_IF_EXCEPTION(env);
+        RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_generic_failure));
         buffer->existingBuffer()->detach(vm);
 
         vm.heap.addFinalizer(buffer, [env = WTF::Ref<NapiEnv>(*env), finalize_cb, data, finalize_hint](JSCell* cell) -> void {
@@ -2349,7 +2357,7 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(data), length }, WTF::move(destructor));
 
     auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTF::move(arrayBuffer), 0, length);
-    NAPI_RETURN_IF_EXCEPTION(env);
+    RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(env, napi_generic_failure));
 
     // Arm only after successful creation: if create threw, the destructor
     // runs disarmed and skips finalize_cb (caller retains ownership).
@@ -2932,7 +2940,7 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
     NAPI_RETURN_EARLY_IF_FALSE(env, scriptValue.isString(), napi_string_expected);
 
     WTF::String code = scriptValue.getString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, napi_set_last_error(env, napi_pending_exception));
+    RETURN_IF_EXCEPTION(throwScope, napi_set_last_error(env, napi_generic_failure));
 
     JSC::SourceCode sourceCode = makeSource(code, SourceOrigin(), SourceTaintedOrigin::Untainted);
 
@@ -2941,7 +2949,7 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
 
     if (returnedException) {
         env->scheduleException(returnedException.get());
-        return napi_set_last_error(env, napi_pending_exception);
+        return napi_set_last_error(env, napi_generic_failure);
     }
 
     ASSERT(!value.isEmpty());
@@ -3000,15 +3008,17 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
     NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, scope);
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, words);
-    // JSBigInt::createWithLength's size argument is unsigned int.
-    NAPI_RETURN_EARLY_IF_FALSE(env, word_count <= UINT_MAX, napi_invalid_arg);
+    // Node.js: RETURN_STATUS_IF_FALSE(env, word_count <= INT_MAX, napi_invalid_arg).
+    NAPI_RETURN_EARLY_IF_FALSE(env, word_count <= INT_MAX, napi_invalid_arg);
 
-    // we check INT_MAX here because it won't reject any bigints that should be able to be created
-    // (as the true limit is much lower), and one Node.js test expects an exception instead of
-    // napi_invalid_arg in case the length is INT_MAX
-    if (word_count >= INT_MAX) {
-        // we use this error as the error from creating a massive bigint literal is simply
-        // "RangeError: Out of memory"
+    // V8 checks its kMaxLength before reading the words array, so Node's
+    // test_bigint passes INT_MAX with a 10-element buffer and expects a throw.
+    // JSC::tryCreateFromWords trims trailing zeroes first (reads words[n-1]),
+    // so throw here to avoid reading past the caller's buffer.
+    // JSBigInt::maxLength is private; JSBigInt.h defines it as
+    // maxLengthBits (1 << 20) / digitBits (CHAR_BIT * sizeof(uint64_t)).
+    constexpr size_t jscBigIntMaxWords = (1 << 20) / (CHAR_BIT * sizeof(uint64_t));
+    if (word_count > jscBigIntMaxWords) {
         JSC::throwOutOfMemoryError(globalObject, scope);
         RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
     }

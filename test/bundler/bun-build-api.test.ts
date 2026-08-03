@@ -1567,9 +1567,7 @@ test("Bun.build in a Worker: terminate() while plugin async setup() is pending d
         for (let r = 0; r < ${rounds}; r++) {
           const ws = [];
           for (let i = 0; i < 3; i++) {
-            const w = new Worker(wfile, { workerData: { entry } });
-            w.on("error", () => {});
-            ws.push(w);
+            ws.push(new Worker(wfile, { workerData: { entry } }));
           }
           // Each worker posts "up" from inside its plugin setup() body, so by
           // the time we see it the worker is parked in wait_for_promise.

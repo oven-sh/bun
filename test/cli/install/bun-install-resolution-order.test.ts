@@ -8,7 +8,6 @@
 // asserting the lockfile is byte-identical across all of them.
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { mkdir, rm } from "fs/promises";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -27,9 +26,7 @@ type RegistrySpec = Record<string, PackageSpec>;
 
 /** Shorthand: `pkg({ "1.0.0": {...} })` or `pkg("1.0.0", "1.1.0")` for dep-less versions. */
 function pkg(versions: Record<string, VersionMeta> | string[], distTags?: Record<string, string>): PackageSpec {
-  const spec = Array.isArray(versions)
-    ? Object.fromEntries(versions.map(v => [v, {} as VersionMeta]))
-    : versions;
+  const spec = Array.isArray(versions) ? Object.fromEntries(versions.map(v => [v, {} as VersionMeta])) : versions;
   return { versions: spec, ...(distTags ? { distTags } : {}) };
 }
 
@@ -428,7 +425,10 @@ describe.concurrent("hoisting", () => {
       alpha: pkg({ "1.0.0": { dependencies: { shared: "^3.0.0" } } }),
       beta: pkg({ "1.0.0": { dependencies: { shared: "^4.0.0" } } }),
     };
-    const { versions } = await resolveUnderOrders(project({ dependencies: { beta: "1.0.0", alpha: "1.0.0" } }), registry);
+    const { versions } = await resolveUnderOrders(
+      project({ dependencies: { beta: "1.0.0", alpha: "1.0.0" } }),
+      registry,
+    );
     // `alpha` sorts before `beta`, so alpha's ^3 range claims node_modules/shared.
     expect(versions).toEqual({
       alpha: "alpha@1.0.0",
@@ -445,7 +445,10 @@ describe.concurrent("hoisting", () => {
       left: pkg({ "1.0.0": { dependencies: { shared: "^1.2.0" } } }),
       right: pkg({ "1.0.0": { dependencies: { shared: "1.x" } } }),
     };
-    const { versions } = await resolveUnderOrders(project({ dependencies: { left: "1.0.0", right: "1.0.0" } }), registry);
+    const { versions } = await resolveUnderOrders(
+      project({ dependencies: { left: "1.0.0", right: "1.0.0" } }),
+      registry,
+    );
     expect(versions).toEqual({ left: "left@1.0.0", right: "right@1.0.0", shared: "shared@1.9.0" });
   });
 
@@ -479,7 +482,10 @@ describe.concurrent("hoisting", () => {
       exact: pkg({ "1.0.0": { dependencies: { shared: "1.2.3" } } }),
       ranged: pkg({ "1.0.0": { dependencies: { shared: "^1.2.0" } } }),
     };
-    const { versions } = await resolveUnderOrders(project({ dependencies: { exact: "1.0.0", ranged: "1.0.0" } }), registry);
+    const { versions } = await resolveUnderOrders(
+      project({ dependencies: { exact: "1.0.0", ranged: "1.0.0" } }),
+      registry,
+    );
     // `exact` sorts before `ranged`: 1.2.3 claims the top level and satisfies ^1.2.0.
     expect(versions).toEqual({ exact: "exact@1.0.0", ranged: "ranged@1.0.0", shared: "shared@1.2.3" });
   });

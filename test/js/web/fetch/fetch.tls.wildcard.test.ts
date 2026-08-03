@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import crypto from "node:crypto";
+import tls from "node:tls";
 
 // This test verifies that wildcard certificate hostname matching follows RFC 6125 Section 6.4.3:
 // - Wildcards must match exactly one label (not multiple labels)
@@ -297,5 +299,293 @@ describe.concurrent("TLS wildcard hostname verification", () => {
 
     expect(result.success).toBe(true);
     expect(result.error).toBeUndefined();
+  });
+});
+
+// Bun exposes three certificate-name matchers that must agree with Node.js:
+//   - tls.checkServerIdentity()  -> JS port of Node lib/tls.js check()
+//   - fetch() / WebSocket / Bun.connect / SQL -> native Rust port of check()
+//   - X509Certificate#checkHost  -> native port of OpenSSL X509_check_host
+// The first two share semantics; checkHost follows OpenSSL where Node does.
+// Every expected value below was taken from Node.js v26.3.0.
+describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHost agree", () => {
+  // Minimal DER encoder sufficient to build a self-signed EC certificate with
+  // an arbitrary subjectAltName. Real CAs don't issue partial-wildcard SANs,
+  // so the test has to mint its own.
+  const tlv = (t: number, b: Buffer) => {
+    const l =
+      b.length < 0x80
+        ? Buffer.from([b.length])
+        : b.length < 0x100
+          ? Buffer.from([0x81, b.length])
+          : Buffer.from([0x82, b.length >> 8, b.length & 0xff]);
+    return Buffer.concat([Buffer.from([t]), l, b]);
+  };
+  const seq = (...b: Buffer[]) => tlv(0x30, Buffer.concat(b));
+  const set = (b: Buffer) => tlv(0x31, b);
+  const oid = (h: string) => tlv(0x06, Buffer.from(h, "hex"));
+  const ecdsaWithSha256 = seq(oid("2a8648ce3d040302"));
+  const dn = (cn: string) => seq(set(seq(oid("550403"), tlv(0x0c, Buffer.from(cn)))));
+
+  type San = ["dns" | "ip" | "email" | "uri", string];
+  function makeCert(cn: string, sans: San[]) {
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+    const subject = dn(cn);
+    let exts = Buffer.alloc(0);
+    if (sans.length) {
+      const enc: Record<San[0], (v: string) => Buffer> = {
+        dns: v => tlv(0x82, Buffer.from(v)),
+        ip: v => tlv(0x87, Buffer.from(v.split(".").map(Number))),
+        email: v => tlv(0x81, Buffer.from(v)),
+        uri: v => tlv(0x86, Buffer.from(v)),
+      };
+      exts = tlv(0xa3, seq(seq(oid("551d11"), tlv(0x04, seq(...sans.map(([t, v]) => enc[t](v)))))));
+    }
+    const tbs = seq(
+      tlv(0xa0, tlv(0x02, Buffer.from([2]))),
+      tlv(0x02, Buffer.from([9])),
+      ecdsaWithSha256,
+      subject,
+      seq(tlv(0x17, Buffer.from("240101000000Z")), tlv(0x17, Buffer.from("340101000000Z"))),
+      subject,
+      publicKey.export({ type: "spki", format: "der" }) as Buffer,
+      exts,
+    );
+    const der = seq(
+      tbs,
+      ecdsaWithSha256,
+      tlv(0x03, Buffer.concat([Buffer.from([0]), crypto.sign("sha256", tbs, privateKey)])),
+    );
+    const cert =
+      "-----BEGIN CERTIFICATE-----\n" +
+      der
+        .toString("base64")
+        .match(/.{1,64}/g)!
+        .join("\n") +
+      "\n-----END CERTIFICATE-----\n";
+    const key = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
+    return { cert, key, x509: new crypto.X509Certificate(cert) };
+  }
+
+  function csi(x509: crypto.X509Certificate, host: string) {
+    return tls.checkServerIdentity(host, x509.toLegacyObject()) === undefined;
+  }
+  function checkHost(x509: crypto.X509Certificate, host: string, opts?: object) {
+    return x509.checkHost(host, opts);
+  }
+  async function fetchOk(material: { cert: string; key: string }, host: string) {
+    await using s = Bun.serve({ port: 0, tls: material, fetch: () => new Response("ok") });
+    try {
+      const r = await fetch(`https://127.0.0.1:${s.port}/`, {
+        // @ts-expect-error Bun extension
+        tls: { ca: material.cert, serverName: host },
+        keepalive: false,
+      });
+      await r.text();
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, code: e.code };
+    }
+  }
+
+  // Wildcard-SAN certificate shared by the csi==fetch rows.
+  const wild = makeCert("cn-not-in-san.test", [
+    ["dns", "*.wild.test"],
+    ["dns", "f*.partial.test"],
+    ["dns", "*b.partial2.test"],
+    ["dns", "w*w.mid.test"],
+    ["dns", "exact.test"],
+  ]);
+
+  // tls.checkServerIdentity and fetch() share Node's lib/tls.js check()
+  // semantics: partial wildcards anywhere in the left-most label, trailing dot
+  // stripped, at least three labels, IDNA A-labels literal. The checkHost
+  // column is recorded alongside for documentation; where Node's own checkHost
+  // disagrees with checkServerIdentity (mid-label wildcard, trailing dot) the
+  // expected value follows Node's checkHost.
+  const csiRows: Array<[host: string, csi: boolean, checkHost: string | undefined]> = [
+    ["foo.wild.test", true, "*.wild.test"],
+    ["FOO.WILD.TEST", true, "*.wild.test"],
+    ["foo.wild.test.", true, undefined],
+    ["a.b.wild.test", false, undefined],
+    ["wild.test", false, undefined],
+    ["exact.test", true, "exact.test"],
+    ["foo.partial.test", true, "f*.partial.test"],
+    ["f.partial.test", true, "f*.partial.test"],
+    ["bar.partial.test", false, undefined],
+    ["foo.bar.partial.test", false, undefined],
+    ["foob.partial2.test", true, "*b.partial2.test"],
+    ["b.partial2.test", true, "*b.partial2.test"],
+    ["fooc.partial2.test", false, undefined],
+    ["wow.mid.test", true, undefined],
+    ["ww.mid.test", true, undefined],
+    ["abc.mid.test", false, undefined],
+    ["cn-not-in-san.test", false, undefined],
+  ];
+
+  describe.concurrent("checkServerIdentity == fetch", () => {
+    it.each(csiRows)("%j", async (host, match, checkHostResult) => {
+      expect({
+        csi: csi(wild.x509, host),
+        checkHost: checkHost(wild.x509, host),
+        fetch: await fetchOk(wild, host),
+      }).toEqual({
+        csi: match,
+        checkHost: checkHostResult,
+        fetch: match ? { ok: true } : { ok: false, code: "ERR_TLS_CERT_ALTNAME_INVALID" },
+      });
+    });
+  });
+
+  // Rejections Node's check() applies to the pattern that the native matcher
+  // must not relax. The checkHost column is Node/OpenSSL's verdict; where that
+  // falls through to equal_nocase (a..b.test) it matches even though Node's
+  // lib/tls.js check() hard-rejects the same pattern.
+  const rejectSans: Array<[san: string, host: string, checkHost: string | undefined]> = [
+    ["f**.partial.test", "foo.partial.test", undefined],
+    ["*.test", "foo.test", undefined],
+    ["xn--f*.partial.test", "xn--foo.partial.test", undefined],
+    ["a..b.test", "a..b.test", "a..b.test"],
+  ];
+  describe.concurrent("pattern rejections", () => {
+    it.each(rejectSans)("SAN %j must not match %j", async (san, host, checkHostResult) => {
+      const m = makeCert("x", [["dns", san]]);
+      expect({
+        csi: csi(m.x509, host),
+        checkHost: checkHost(m.x509, host),
+        fetch: await fetchOk(m, host),
+      }).toEqual({
+        csi: false,
+        checkHost: checkHostResult,
+        fetch: { ok: false, code: "ERR_TLS_CERT_ALTNAME_INVALID" },
+      });
+    });
+  });
+
+  // CN fallback: Node's checkServerIdentity and OpenSSL's default checkHost
+  // both fall back to the Subject CN when the certificate carries no dNSName
+  // SAN; non-DNS SANs (email / IP / URI) must not suppress that.
+  const cnRows: Array<[label: string, cn: string, sans: San[], host: string, csi: boolean, checkHost: boolean]> = [
+    ["no SAN", "nosan.a.test", [], "nosan.a.test", true, true],
+    ["email-only SAN", "emailcn.a.test", [["email", "a@x.test"]], "emailcn.a.test", true, true],
+    ["IP-only SAN", "ipcn.a.test", [["ip", "10.0.0.1"]], "ipcn.a.test", true, true],
+    ["URI-only SAN", "uricn.a.test", [["uri", "https://x.test/"]], "uricn.a.test", true, true],
+    ["DNS SAN present", "dnscn.a.test", [["dns", "other.a.test"]], "dnscn.a.test", false, false],
+  ];
+  describe.concurrent("CN fallback", () => {
+    it.each(cnRows)("%s -> %j", async (_label, cn, sans, host, csiMatch, checkHostMatch) => {
+      const m = makeCert(cn, sans);
+      expect({
+        csi: csi(m.x509, host),
+        checkHost: checkHost(m.x509, host) === cn,
+        fetch: await fetchOk(m, host),
+      }).toEqual({
+        csi: csiMatch,
+        checkHost: checkHostMatch,
+        fetch: csiMatch ? { ok: true } : { ok: false, code: "ERR_TLS_CERT_ALTNAME_INVALID" },
+      });
+    });
+  });
+
+  // X509Certificate#checkHost options. Every expected value was taken from
+  // Node.js v26.3.0 (OpenSSL X509_check_host semantics).
+  describe("checkHost options", () => {
+    const W = makeCert("cn.a.test", [
+      ["dns", "*.wild.test"],
+      ["dns", "exact.test"],
+    ]);
+    const P = makeCert("x", [["dns", "f*.partial.test"]]);
+    const Sfx = makeCert("x", [["dns", "*foo.wild.test"]]);
+    const Sub = makeCert("x", [["dns", "a.b.wild.test"]]);
+    const NoSan = makeCert("nosan.a.test", []);
+    const certs = { W, P, Sfx, Sub, NoSan };
+
+    it.each([
+      // [cert, host, opts, expected]
+      ["W", "foo.wild.test", { wildcards: false }, undefined],
+      ["W", "exact.test", { wildcards: false }, "exact.test"],
+      ["P", "foo.partial.test", { partialWildcards: false }, undefined],
+      ["P", "foo.partial.test", { partialWildcards: true }, "f*.partial.test"],
+      ["W", "a.b.wild.test", { multiLabelWildcards: true }, "*.wild.test"],
+      ["W", "a.b.wild.test", { multiLabelWildcards: false }, undefined],
+      ["P", "foo.bar.partial.test", { multiLabelWildcards: true }, undefined],
+      ["W", "cn.a.test", { subject: "always" }, "cn.a.test"],
+      ["W", "cn.a.test", { subject: "default" }, undefined],
+      ["W", "cn.a.test", { subject: "never" }, undefined],
+      ["NoSan", "nosan.a.test", { subject: "never" }, undefined],
+      ["Sub", ".wild.test", undefined, "a.b.wild.test"],
+      ["Sub", ".wild.test", { singleLabelSubdomains: true }, undefined],
+      ["Sub", ".b.wild.test", { singleLabelSubdomains: true }, "a.b.wild.test"],
+      ["W", "foo.wild.test", {}, "*.wild.test"],
+      // OpenSSL wildcard_match host-side checks: the span under `*` must be
+      // LDH, and a partial wildcard never matches an IDNA host label.
+      ["W", "foo-bar.wild.test", undefined, "*.wild.test"],
+      ["W", "foo_bar.wild.test", undefined, undefined],
+      ["P", "foo_bar.partial.test", undefined, undefined],
+      ["W", "a_b.c.wild.test", { multiLabelWildcards: true }, undefined],
+      ["W", "xn--foo.wild.test", undefined, "*.wild.test"],
+      ["Sfx", "xn--foo.wild.test", undefined, undefined],
+    ] as const)("%s checkHost(%j, %o) -> %j", (name, host, opts, expected) => {
+      expect(checkHost(certs[name].x509, host, opts)).toBe(expected);
+    });
+
+    // OpenSSL valid_star pattern-side scan: every pattern label must be LDH
+    // with no boundary hyphen, else the `*` is never expanded; a failed scan
+    // falls through to equal_nocase rather than hard-rejecting. LABEL_IDNA is
+    // only set when a label *starts* with xn-- (not Node's includes()).
+    it.each([
+      ["*_x.wild.test", "foo_x.wild.test", undefined],
+      ["*.a_b.test", "foo.a_b.test", undefined],
+      ["*-.wild.test", "foo-.wild.test", undefined],
+      ["-*.wild.test", "-foo.wild.test", undefined],
+      ["a-*.wild.test", "a-b.wild.test", undefined],
+      ["*.-wild.test", "foo.-wild.test", undefined],
+      ["*.wild-.test", "foo.wild-.test", undefined],
+      ["*-b.wild.test", "a-b.wild.test", "*-b.wild.test"],
+      ["a..b.test", "a..b.test", "a..b.test"],
+      ["exact.test.", "exact.test.", "exact.test."],
+      ["exact.test.", "exact.test", undefined],
+      ["exact test.a.b", "exact test.a.b", "exact test.a.b"],
+      ["axn--b*.c.d", "axn--bZ.c.d", "axn--b*.c.d"],
+      ["xn--a*.c.d", "xn--aZ.c.d", undefined],
+    ] as const)("SAN %j checkHost(%j) -> %j", (san, host, expected) => {
+      expect(checkHost(makeCert("x", [["dns", san]]).x509, host)).toBe(expected);
+    });
+
+    // {wildcards: false} is also an OpenSSL-semantics mode (equal_nocase).
+    it.each([
+      ["a..b.test", "a..b.test", "a..b.test"],
+      ["exact.test.", "exact.test.", "exact.test."],
+    ] as const)("SAN %j checkHost(%j, {wildcards:false}) -> %j", (san, host, expected) => {
+      expect(checkHost(makeCert("x", [["dns", san]]).x509, host, { wildcards: false })).toBe(expected);
+    });
+
+    // The dot-host suffix path rejects only on NUL, like OpenSSL equal_nocase.
+    it("SAN 'a b.wild.test' checkHost('.wild.test') -> matched", () => {
+      expect(checkHost(makeCert("x", [["dns", "a b.wild.test"]]).x509, ".wild.test")).toBe("a b.wild.test");
+    });
+
+    // CN fallback transcodes BMPString (UTF-16BE) via ASN1_STRING_to_UTF8 the
+    // way OpenSSL do_check_string does.
+    it("BMPString CN matches via CN fallback", () => {
+      const bmp = Buffer.from("bmp.a.test", "utf16le").swap16();
+      const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+      const subj = seq(set(seq(oid("550403"), tlv(0x1e, bmp))));
+      const tbs = seq(
+        tlv(0xa0, tlv(0x02, Buffer.from([2]))),
+        tlv(0x02, Buffer.from([9])),
+        ecdsaWithSha256,
+        subj,
+        seq(tlv(0x17, Buffer.from("240101000000Z")), tlv(0x17, Buffer.from("340101000000Z"))),
+        subj,
+        publicKey.export({ type: "spki", format: "der" }) as Buffer,
+      );
+      const der = seq(
+        tbs,
+        ecdsaWithSha256,
+        tlv(0x03, Buffer.concat([Buffer.from([0]), crypto.sign("sha256", tbs, privateKey)])),
+      );
+      expect(new crypto.X509Certificate(der).checkHost("bmp.a.test")).toBe("bmp.a.test");
+    });
   });
 });

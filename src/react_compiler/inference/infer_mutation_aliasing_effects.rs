@@ -54,7 +54,7 @@ use crate::hir::visitors;
 /// Infers mutation/aliasing effects for all instructions and terminals in `func`.
 ///
 /// Corresponds to TS `inferMutationAliasingEffects(fn, {isFunctionExpression})`.
-pub fn infer_mutation_aliasing_effects(
+pub(crate) fn infer_mutation_aliasing_effects(
     func: &mut HirFunction,
     env: &mut Environment,
     is_function_expression: bool,

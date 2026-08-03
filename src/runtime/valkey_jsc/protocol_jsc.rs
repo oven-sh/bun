@@ -11,7 +11,7 @@ use bun_valkey::valkey_protocol::{RESPValue, RedisError};
 /// All callers always provide a message, so the parameter
 /// is `impl AsRef<[u8]>` to accept `&str`, `&[u8]`, `&[u8; N]`, `&Box<[u8]>`
 /// uniformly without forcing `Some(..)` at every call site.
-pub fn valkey_error_to_js(
+pub(crate) fn valkey_error_to_js(
     global: &JSGlobalObject,
     message: impl AsRef<[u8]>,
     err: RedisError,
@@ -61,13 +61,13 @@ pub fn valkey_error_to_js(
     )
 }
 
-pub fn resp_value_to_js(this: &mut RESPValue, global: &JSGlobalObject) -> JsResult<JSValue> {
+pub(crate) fn resp_value_to_js(this: &mut RESPValue, global: &JSGlobalObject) -> JsResult<JSValue> {
     resp_value_to_js_with_options(this, global, ToJSOptions::default())
 }
 
 #[derive(Clone, Copy, Default)]
 pub struct ToJSOptions {
-    pub return_as_buffer: bool,
+    pub(crate) return_as_buffer: bool,
 }
 
 fn valkey_str_to_js_value(
@@ -88,7 +88,7 @@ fn valkey_str_to_js_value(
     }
 }
 
-pub fn resp_value_to_js_with_options(
+pub(crate) fn resp_value_to_js_with_options(
     this: &mut RESPValue,
     global: &JSGlobalObject,
     options: ToJSOptions,

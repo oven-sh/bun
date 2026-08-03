@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSPerformance.h"
 
-#include "ActiveDOMObject.h"
 #include "ErrorCode.h"
 #include "EventNames.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
@@ -230,23 +229,6 @@ void JSPerformancePrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSPerformance::info(), JSPerformancePrototypeTableValues, *this);
-    // bool hasDisabledRuntimeProperties = false;
-    // if (!(globalObject())->inherits<JSDOMWindowBase>()) {
-    //     hasDisabledRuntimeProperties = true;
-    //     auto propertyName = Identifier::fromString(vm, "navigation"_s);
-    //     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-    //     DeletePropertySlot slot;
-    //     JSObject::deleteProperty(this, globalObject(), propertyName, slot);
-    // }
-    // if (!(globalObject())->inherits<JSDOMWindowBase>()) {
-    //     hasDisabledRuntimeProperties = true;
-    //     auto propertyName = Identifier::fromString(vm, "timing"_s);
-    //     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-    //     DeletePropertySlot slot;
-    //     JSObject::deleteProperty(this, globalObject(), propertyName, slot);
-    // }
-    // if (hasDisabledRuntimeProperties && structure()->isDictionary())
-    //     flattenDictionaryObject(vm);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

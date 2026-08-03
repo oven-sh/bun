@@ -31,7 +31,7 @@ impl WaitGroup {
         }
     }
 
-    pub fn add(&self, n: usize) {
+    pub(crate) fn add(&self, n: usize) {
         // Not Acquire because we don't need to synchronize with other tasks (each runs independently).
         // Not Release because there are no side effects that other threads depend on when they see
         // the *start* of a task (only finishing a task has such requirements).

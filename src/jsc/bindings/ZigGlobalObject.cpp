@@ -2691,6 +2691,16 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
+    m_JSHTMLRewriterSinkClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::HTMLRewriterSink);
+            auto* structure = JSHTMLRewriterSink::createStructure(init.vm, init.global, prototype);
+            auto* constructor = JSHTMLRewriterSinkConstructor::create(init.vm, init.global, JSHTMLRewriterSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
     m_JSBufferClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = WebCore::createBufferPrototype(init.vm, init.global);
@@ -4057,10 +4067,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestThen;
     } else if (handler == Bun__TestScope__Describe2__bunTestCatch) {
         return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestCatch;
-    } else if (handler == Bun__BodyValueBufferer__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onResolveStream;
-    } else if (handler == Bun__BodyValueBufferer__onRejectStream) {
-        return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onRejectStream;
+    } else if (handler == Bun__HTMLRewriter__onHandlerResolve) {
+        return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onHandlerResolve;
+    } else if (handler == Bun__HTMLRewriter__onHandlerReject) {
+        return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onHandlerReject;
     } else if (handler == Bun__onResolveEntryPointResult) {
         return GlobalObject::PromiseFunctions::Bun__onResolveEntryPointResult;
     } else if (handler == Bun__onRejectEntryPointResult) {
@@ -4105,6 +4115,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__S3UploadStream__onResolveStream;
     } else if (handler == Bun__S3UploadStream__onRejectStream) {
         return GlobalObject::PromiseFunctions::Bun__S3UploadStream__onRejectStream;
+    } else if (handler == Bun__HTMLRewriter__onResolveInputStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onResolveInputStream;
+    } else if (handler == Bun__HTMLRewriter__onRejectInputStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onRejectInputStream;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

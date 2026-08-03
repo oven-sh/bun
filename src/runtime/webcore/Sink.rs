@@ -1,4 +1,5 @@
 use core::ffi::c_void;
+use core::ptr::NonNull;
 
 use crate::api::bun_subprocess::Subprocess;
 use crate::webcore::streams::{self, SourceHandle};
@@ -11,19 +12,6 @@ use bun_sys::{self as sys, Error as SysError};
 pub use crate::webcore::array_buffer_sink::ArrayBufferSink;
 
 crate::impl_js_sink_abi!(ArrayBufferSink, "ArrayBufferSink");
-
-impl JSSink<ArrayBufferSink> {
-    /// Unprotects the controller cell stashed in `source` as `JSController`
-    /// and tells C++ to drop its back-pointer. Called from
-    /// `Body::ValueBufferer` Drop / reject paths.
-    // Renamed from `detach` to avoid colliding with the generic
-    // `JSSink<T: JsSinkAbi>::detach(source, global)` associated fn — Rust
-    // forbids same-name items across impl blocks for the same type even with
-    // different signatures (E0592).
-    pub(crate) fn detach_self(&mut self, global: &JSGlobalObject) {
-        JSSink::<ArrayBufferSink>::detach(&mut self.sink.source, global);
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // JSSink
@@ -191,12 +179,16 @@ impl<T: JsSinkAbi> JSSink<T> {
     pub fn assign_to_stream(
         global: &crate::webcore::jsc::JSGlobalObject,
         stream: crate::webcore::jsc::JSValue,
-        ptr: &mut T,
+        mut ptr: NonNull<T>,
     ) -> crate::webcore::jsc::JSValue
     where
         T: JsSinkType,
     {
         use crate::webcore::jsc::JSValue;
+        // SAFETY: `ptr` is a live sink owned by the caller for this synchronous
+        // call; the pointer is only stashed in C++ `m_sinkPtr` and `source()` is
+        // read here synchronously.
+        let ptr = unsafe { ptr.as_mut() };
         // Pre-seed JSController(ZERO) so a sync drain's __controllerDetached can match-and-clear;
         // only install the real controller value if the placeholder survived.
         if let Some(src) = ptr.source() {

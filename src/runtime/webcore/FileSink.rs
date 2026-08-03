@@ -1606,7 +1606,11 @@ impl FileSink {
         // above): the JS builtins always call `controller.end()`/`.close()`
         // (`${controller}__end/close` → `controller->detach()` → m_sinkPtr=null)
         // before GC, so the controller's dtor never reaches `finalize`.
-        let promise_result = JSSink::assign_to_stream(global_this, stream.value, self);
+        let promise_result = JSSink::assign_to_stream(
+            global_this,
+            stream.value,
+            core::ptr::NonNull::from(&mut *self),
+        );
 
         if let Some(err) = promise_result.to_error() {
             self.readable_stream.set(readable_stream::Strong::default());

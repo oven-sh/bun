@@ -1,4 +1,5 @@
 use core::ffi::c_void;
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_boringssl as boringssl;
@@ -271,9 +272,9 @@ impl FetchTasklet {
     /// of the registration, and fires only on the JS thread — so the returned
     /// `&mut` is the sole live borrow.
     #[inline]
-    fn from_ctx<'a>(ctx: *mut c_void) -> &'a mut Self {
+    fn from_ctx<'a>(ctx: NonNull<c_void>) -> &'a mut Self {
         // SAFETY: see INVARIANT above.
-        unsafe { bun_ptr::callback_ctx::<FetchTasklet>(ctx) }
+        unsafe { bun_ptr::callback_ctx::<FetchTasklet>(ctx.as_ptr()) }
     }
 
     /// Recover `&mut Self` from a `*mut FetchTasklet` callback arg.
@@ -741,8 +742,11 @@ impl FetchTasklet {
             }
         }
 
-        let assignment_result =
-            JSSink::<FetchRequestBodySink>::assign_to_stream(&global_this, stream.value, sink);
+        let assignment_result = JSSink::<FetchRequestBodySink>::assign_to_stream(
+            &global_this,
+            stream.value,
+            core::ptr::NonNull::from(&mut *sink),
+        );
         assignment_result.ensure_still_alive();
 
         if let Some(err) = assignment_result.to_error() {
@@ -1653,7 +1657,7 @@ impl FetchTasklet {
     }
 
     fn on_readable_stream_available(
-        ctx: *mut c_void,
+        ctx: NonNull<c_void>,
         global_this: &JSGlobalObject,
         readable: ReadableStream,
     ) {
@@ -1664,7 +1668,7 @@ impl FetchTasklet {
         this.is_buffering_body.store(false, Ordering::Release);
     }
 
-    fn on_start_streaming_http_response_body_callback(ctx: *mut c_void) -> DrainResult {
+    fn on_start_streaming_http_response_body_callback(ctx: NonNull<c_void>) -> DrainResult {
         let this = Self::from_ctx(ctx);
         if this.signal_store.aborted.load(Ordering::Relaxed) {
             return DrainResult::Aborted;
@@ -1765,7 +1769,7 @@ impl FetchTasklet {
             .try_transition_receive_mode(BodyReceiveMode::BufferAll, BodyReceiveMode::Paused);
     }
 
-    fn on_start_buffering_callback(ctx: *mut c_void) {
+    fn on_start_buffering_callback(ctx: NonNull<c_void>) {
         let this = Self::from_ctx(ctx);
         this.poll_ref.ref_(bun_io::js_vm_ctx());
         this.is_buffering_body.store(true, Ordering::Release);
@@ -1820,7 +1824,7 @@ impl FetchTasklet {
         if self.is_waiting_body {
             let mut pending = body::PendingValue::new(&self.global_this);
             pending.size_hint = self.get_size_hint();
-            pending.task = Some(std::ptr::from_mut(self).cast::<c_void>());
+            pending.task = Some(NonNull::from(&mut *self).cast::<c_void>());
             pending.on_start_streaming =
                 Some(FetchTasklet::on_start_streaming_http_response_body_callback);
             pending.on_readable_stream_available = Some(FetchTasklet::on_readable_stream_available);

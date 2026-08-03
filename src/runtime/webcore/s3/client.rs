@@ -1079,8 +1079,11 @@ pub(crate) fn upload_stream(
     }
 
     // The controller cell is installed into `sink.source` by `assign_to_stream`.
-    let assignment_result: JSValue =
-        NetworkSinkJSSink::assign_to_stream(global_this, readable_stream.value, sink);
+    let assignment_result: JSValue = NetworkSinkJSSink::assign_to_stream(
+        global_this,
+        readable_stream.value,
+        NonNull::from(sink),
+    );
     assignment_result.ensure_still_alive();
 
     if let Some(err_value) = assignment_result.to_error() {

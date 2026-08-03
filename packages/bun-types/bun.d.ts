@@ -2609,7 +2609,10 @@ declare module "bun" {
      * release without notice. Use this for experimentation and tooling you
      * control, not for published packages that need forward compatibility.
      *
-     * Every node is a plain object with at least:
+     * The AST is written to a compact binary tape in `buffer`; `root` is a lazy
+     * proxy over it that decodes fields on access, so large files don't pay the
+     * full materialization cost up front. `JSON.stringify(root)` materializes
+     * the whole tree. Every node has at least:
      * - `kind`: a snake_case tag string (e.g. `"s_local"`, `"e_binary"`, `"b_identifier"`)
      * - `loc`: byte offset into the source, or `null`
      *
@@ -2619,39 +2622,35 @@ declare module "bun" {
      * @example
      * ```ts
      * const t = new Bun.Transpiler({ loader: "ts" });
-     * const ast = t.unstable_parse(`const x: number = 1 + 2;`);
-     * ast.stmts[0];
-     * // { kind: "s_local", loc: 0, declKind: "k_const", isExport: false,
-     * //   decls: [{ binding: { kind: "b_identifier", loc: 6, name: "x" },
-     * //             value: { kind: "e_binary", loc: 18, op: "bin_add",
-     * //                      left: { kind: "e_number", loc: 18, value: 1 },
-     * //                      right: { kind: "e_number", loc: 22, value: 2 } } }] }
+     * const { root, visit } = t.unstable_parse(`const x: number = 1 + 2;`);
+     * root.stmts[0].decls[0].value.op; // "bin_add"
+     * visit({ e_call(n) { console.log(n.target.name) } });
      * ```
-     */
-    unstable_parse(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): UnstableAST;
-    /**
-     * Parse to a compact binary tape and return a lazy reader over it. `root`
-     * exposes the same shape as the object-mode result but decodes fields from
-     * `buffer` on access, so large files don't pay the full materialization
-     * cost up front. `JSON.stringify(root)` materializes the whole tree.
-     *
-     * **Unstable.** Both the node shapes and the buffer encoding may change in
-     * any patch release.
-     * @experimental
      */
     unstable_parse(
       code: Bun.StringOrBuffer,
-      options: { loader?: JavaScriptLoader; format: "raw" },
-    ): {
-      buffer: ArrayBuffer;
-      root: UnstableAST;
-      visit: (visitors: Record<string, (node: UnstableASTNode) => boolean | void>) => void;
-    };
-    unstable_parse(code: Bun.StringOrBuffer, options: { loader?: JavaScriptLoader }): UnstableAST;
+      loader?: JavaScriptLoader | { loader?: JavaScriptLoader },
+    ): UnstableParseResult;
   }
 
   /**
-   * The return type of {@link Transpiler.unstable_parse}.
+   * The return value of {@link Transpiler.unstable_parse}.
+   *
+   * **Unstable.** Both the node shapes and the buffer encoding may change in
+   * any patch release.
+   * @experimental
+   */
+  interface UnstableParseResult {
+    /** The self-describing binary tape. `root` and `visit` read from this. */
+    buffer: ArrayBuffer;
+    /** Lazy proxy over the tape; `JSON.stringify(root)` materializes the full tree. */
+    root: UnstableAST;
+    /** Walk every node under `root.stmts`, dispatching on `kind`; a handler returning `false` skips its subtree. */
+    visit: (visitors: { enter?: (node: UnstableASTNode) => boolean | void } & Record<string, (node: UnstableASTNode) => boolean | void>) => void;
+  }
+
+  /**
+   * The root AST node from {@link Transpiler.unstable_parse}.
    *
    * **Unstable.** This type is intentionally loose: the node shapes are Bun's
    * internal AST and may change between patch releases.

@@ -186,15 +186,21 @@ const result = transpiler.scanImports(code);
   experimentation and tooling you control end to end.
 </Warning>
 
-Parse code and return the AST as a plain JavaScript object tree. Every node has
-a `kind` (a snake_case tag like `"s_local"`, `"e_binary"`, `"b_identifier"`)
-and a `loc` (byte offset into the input, or `null`).
+Parse code and return the AST as `{ buffer, root, visit }`. The AST is written
+to a compact binary tape in `buffer`; `root` is a lazy proxy that decodes
+fields on access, and `visit()` walks every node by `kind`. Every node has a
+`kind` (a snake_case tag like `"s_local"`, `"e_binary"`, `"b_identifier"`) and
+a `loc` (byte offset into the input, or `null`). `JSON.stringify(root)`
+materializes the full tree.
 
 ```ts example.ts icon="/icons/typescript.svg"
 const t = new Bun.Transpiler({ loader: "ts" });
-const ast = t.unstable_parse(`export const x: number = 1 + 2;`);
+const { root, visit } = t.unstable_parse(`export const x: number = 1 + 2;`);
 
-console.log(ast.stmts[0]);
+root.stmts[0].decls[0].value.op;
+// "bin_add"
+
+JSON.parse(JSON.stringify(root.stmts[0]));
 // {
 //   kind: "s_local",
 //   loc: 7,
@@ -211,11 +217,16 @@ console.log(ast.stmts[0]);
 //     },
 //   ],
 // }
+
+visit({
+  e_binary(n) { console.log(n.op) },
+  s_function() { return false }, // skip subtree
+});
 ```
 
-The top-level result carries `stmts`, `symbols`, `importRecords`, `hashbang`,
-`directive`, `exportsKind`, and `approximateNewlineCount`. Identifier nodes
-resolve their `Ref` to the symbol's original name string.
+`root` carries `stmts`, `symbols`, `importRecords`, `hashbang`, `directive`,
+`exportsKind`, and `approximateNewlineCount`. Identifier nodes resolve their
+`Ref` to the symbol's original name string.
 
 ---
 
@@ -289,7 +300,11 @@ class Bun.Transpiler {
   scanImports(code: string): Import[]
 
   /** Unstable: returns Bun's internal AST. Shape may change any release. */
-  unstable_parse(code: string, loader?: Loader): UnstableAST
+  unstable_parse(code: string, loader?: Loader): {
+    buffer: ArrayBuffer;
+    root: UnstableAST;
+    visit: (visitors: Record<string, (n: UnstableASTNode) => boolean | void>) => void;
+  }
 }
 
 type Import = {

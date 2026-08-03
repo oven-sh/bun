@@ -4,7 +4,7 @@ interface Transpiler {
 
 export function unstableParse(this: Transpiler, code: any, opts: any) {
   const result = this.$unstableParseNative(code, opts);
-  if (!result || !(result.buffer instanceof ArrayBuffer) || result.root !== undefined) {
+  if (!result || !(result.buffer instanceof ArrayBuffer)) {
     return result;
   }
 

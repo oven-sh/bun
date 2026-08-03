@@ -1404,21 +1404,10 @@ impl JSTranspiler {
 
         args.eat();
 
-        let mut raw_format = false;
         let loader: Option<Loader> = 'brk: {
             if let Some(arg) = args.next() {
                 args.eat();
                 if arg.is_object() {
-                    if let Some(fmt) = arg.get_optional_slice(global, b"format")? {
-                        if fmt.slice() == b"raw" {
-                            raw_format = true;
-                        } else {
-                            return Err(global.throw_invalid_arguments(format_args!(
-                                "unstable_parse: format must be \"raw\", got \"{}\"",
-                                bstr::BStr::new(fmt.slice())
-                            )));
-                        }
-                    }
                     if let Some(l) = arg.get_truthy(global, "loader")? {
                         break 'brk loader_from_js(global, l)?;
                     }
@@ -1476,44 +1465,25 @@ impl JSTranspiler {
             return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
         }
 
-        if raw_format {
-            use crate::api::js_transpiler_ast::SerializeError;
-            let mut tape = Vec::<u8>::new();
-            if let Err(e) = crate::api::js_transpiler_ast::ast_to_tape(&parse_result.ast, &mut tape)
-            {
-                return Err(match e {
-                    SerializeError::StackOverflow => global.throw_stack_overflow(),
-                    SerializeError::TapeTooLarge => {
-                        global.throw_value(global.create_range_error_instance(format_args!(
-                            "unstable_parse: raw AST tape exceeds 4 GiB"
-                        )))
-                    }
-                });
-            }
-            tape.shrink_to_fit();
-            let ab = jsc::ArrayBuffer::from_owned_bytes(
-                tape.into_boxed_slice(),
-                jsc::JSType::ArrayBuffer,
-            )
-            .to_js_unchecked(global)?;
-            let obj = JSValue::create_empty_object(global, 1);
-            obj.put(global, "buffer", ab);
-            return Ok(obj);
+        use crate::api::js_transpiler_ast::SerializeError;
+        let mut tape = Vec::<u8>::new();
+        if let Err(e) = crate::api::js_transpiler_ast::ast_to_tape(&parse_result.ast, &mut tape) {
+            return Err(match e {
+                SerializeError::StackOverflow => global.throw_stack_overflow(),
+                SerializeError::TapeTooLarge => {
+                    global.throw_value(global.create_range_error_instance(format_args!(
+                        "unstable_parse: AST tape exceeds 4 GiB"
+                    )))
+                }
+            });
         }
-
-        let mut json = Vec::<u8>::new();
-        if crate::api::js_transpiler_ast::ast_to_json(&parse_result.ast, &mut json).is_err() {
-            return Err(global.throw_stack_overflow());
-        }
-
-        // Buffer is pure ASCII, so `to_json_object` wraps it zero-copy.
-        let out = JscZigString::init(&json);
-        let result = out.to_json_object(global);
-        // `ZigString__toJSONObject` returns the error value, not a throw.
-        if result.is_empty() || result.is_any_error() {
-            return Err(global.throw_value(result));
-        }
-        Ok(result)
+        tape.shrink_to_fit();
+        let ab =
+            jsc::ArrayBuffer::from_owned_bytes(tape.into_boxed_slice(), jsc::JSType::ArrayBuffer)
+                .to_js_unchecked(global)?;
+        let obj = JSValue::create_empty_object(global, 1);
+        obj.put(global, "buffer", ab);
+        Ok(obj)
     }
 
     #[bun_jsc::host_fn(method)]

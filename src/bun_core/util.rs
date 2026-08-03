@@ -4371,8 +4371,8 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         extern "C" fn park_during_reload(sig: core::ffi::c_int) {
             if is_process_reload_in_progress_on_another_thread() {
                 // Block until the exec's de_thread SIGKILLs this thread.
-                // SAFETY: pause is async-signal-safe.
                 loop {
+                    // SAFETY: pause is async-signal-safe.
                     unsafe { libc::pause() };
                 }
             }

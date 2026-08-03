@@ -26,6 +26,7 @@ describe("SQL adapter environment variable precedence", () => {
     'TLS_MARIADB_DATABASE_URL',
     'SQLITE_URL', 'SQLITEURL',
     'PGHOST', 'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGPORT',
+    'PGSSLMODE', 'PG_SSLMODE',
     'MYSQL_HOST', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE', 'MYSQL_PORT'
   ];
 
@@ -290,6 +291,70 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.hostname).toBe("host");
     expect(options.options.port).toBe(3306);
     expect(options.options.sslMode).toBe(2); // SSLMode.require
+  });
+
+  describe("PGSSLMODE", () => {
+    test.each([
+      ["disable", 0],
+      ["prefer", 1],
+      ["require", 2],
+      ["verify-ca", 3],
+      ["verify-full", 4],
+    ])("PGSSLMODE=%s is honoured alongside PGHOST/PGPORT/...", (mode, expected) => {
+      process.env.PGHOST = "pg-host";
+      process.env.PGPORT = "5432";
+      process.env.PGUSER = "pg-user";
+      process.env.PGPASSWORD = "pg-pass";
+      process.env.PGDATABASE = "pg-db";
+      process.env.PGSSLMODE = mode;
+
+      const options = new SQL({ adapter: "postgres" });
+      expect(options.options).toMatchObject({
+        adapter: "postgres",
+        hostname: "pg-host",
+        port: 5432,
+        username: "pg-user",
+        database: "pg-db",
+        sslMode: expected,
+      });
+    });
+
+    test("PGSSLMODE applies when the adapter is defaulted (no explicit adapter, no URL)", () => {
+      process.env.PGHOST = "pg-host";
+      process.env.PGSSLMODE = "require";
+
+      const options = new SQL({ max: 1 });
+      expect(options.options.adapter).toBe("postgres");
+      expect(options.options.sslMode).toBe(2); // SSLMode.require
+    });
+
+    test("PG_SSLMODE spelling is accepted like PG_HOST et al.", () => {
+      process.env.PG_SSLMODE = "verify-full";
+
+      const options = new SQL({ adapter: "postgres" });
+      expect(options.options.sslMode).toBe(4); // SSLMode.verify_full
+    });
+
+    test("URL ?sslmode= overrides PGSSLMODE", () => {
+      process.env.PGSSLMODE = "require";
+      process.env.POSTGRES_URL = "postgres://user@host:5432/db?sslmode=disable";
+
+      const options = new SQL();
+      expect(options.options.sslMode).toBe(0); // SSLMode.disable (URL wins)
+    });
+
+    test("PGSSLMODE does not leak into the MySQL adapter", () => {
+      process.env.PGSSLMODE = "require";
+
+      const options = new SQL({ adapter: "mysql", hostname: "localhost" });
+      expect(options.options.adapter).toBe("mysql");
+      expect(options.options.sslMode).toBe(0); // SSLMode.disable
+    });
+
+    test("invalid PGSSLMODE value throws", () => {
+      process.env.PGSSLMODE = "bogus";
+      expect(() => new SQL({ adapter: "postgres" })).toThrow("sslmode");
+    });
   });
 
   describe("Adapter-Protocol Validation", () => {

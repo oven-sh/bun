@@ -1355,9 +1355,8 @@ impl VirtualMachine {
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
             // node parity: `process.setUncaughtExceptionCaptureCallback` takes over
-            // fatal-exception handling for the whole process, including inside the
-            // test runner. Without this the callback is silently dead under
-            // `bun test` and the exception is reported as a test failure instead.
+            // fatal-exception handling even under `bun test`; without this the
+            // callback is dead and the exception becomes a test failure.
             if Bun__hasUncaughtExceptionCaptureCallback(global_object)
                 && Bun__handleUncaughtException(
                     global_object,

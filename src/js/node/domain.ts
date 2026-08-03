@@ -57,9 +57,8 @@ domain.createDomain = domain.create = function () {
       }
     };
   };
-  // No try/catch, and no exit() on the throwing path: node lets the exception
-  // reach the fatal-exception handler with the domain still entered, which is
-  // how `process.domain` is still set when the error is finally routed.
+  // No try/catch: node lets the throw reach the fatal-exception handler with the
+  // domain still entered so `process.domain` is set when it's routed.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/domain.js#L371
   d.run = function (fn, ...args) {
     this.enter();

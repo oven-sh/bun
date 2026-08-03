@@ -1,10 +1,6 @@
-// Node's `process.setUncaughtExceptionCaptureCallback` is exclusive: a second
-// call while a callback is installed throws. node:domain and node:repl both
-// need to take over fatal-exception handling, and upstream relies on an
-// internal stacking variant so they can coexist. Bun only exposes the
-// exclusive setter, so this module owns the single slot and dispatches to an
-// ordered list. The first callback to return a truthy value handles the error;
-// otherwise the regular `uncaughtException` flow runs.
+// Stacking dispatcher over `process.setUncaughtExceptionCaptureCallback`'s
+// exclusive slot so node:domain and node:repl can coexist. First truthy return
+// wins. https://github.com/nodejs/node/blob/main/lib/internal/process/execution.js
 
 let captureCallbacks: any[] | null = null;
 
@@ -33,10 +29,8 @@ function addUncaughtExceptionCaptureCallback(cb) {
     try {
       process.setUncaughtExceptionCaptureCallback(dispatch);
     } catch {
-      // A user capture callback already occupies the exclusive slot. Node's
-      // stacking API coexists with it natively; without that engine support,
-      // defer to the user's callback and don't push (the dispatcher isn't
-      // wired, so a queued cb would never fire).
+      // A user capture callback already owns the exclusive slot; defer to it.
+      // Don't queue — the dispatcher isn't wired, so a queued cb would never fire.
       captureCallbacks = null;
       return;
     }

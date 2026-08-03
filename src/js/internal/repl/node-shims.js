@@ -1,7 +1,6 @@
-// Consolidated shims for Node.js internal modules consumed by the ported
-// node:repl / internal/readline stack. Each export matches the name and
-// calling convention of the Node internal it replaces; implementations
-// delegate to Bun equivalents.
+// Shims for Node internals consumed by the ported node:repl/readline stack.
+// Each export matches the upstream name/calling convention.
+// https://github.com/nodejs/node/tree/main/lib/internal
 const util = require("node:util");
 const Module = require("node:module");
 const path = require("node:path");
@@ -24,11 +23,9 @@ const {
 
 const { kEmptyObject } = require("internal/shared");
 
-// Node's real implementation reconstructs the regex in an internal realm so a
-// tampered `RegExp.prototype[Symbol.replace]` can't observe it. Bun has no
-// internal realm; the load-time-captured intrinsics close the `[Symbol.*]`
-// override hole (a tampered `RegExp.prototype.exec` is still observable per
-// spec — see `@@replace`/`@@split` `Get(rx,"exec")`).
+// Node rebuilds the regex in an internal realm; Bun has none, so load-time
+// primordials close the [Symbol.*] override hole (RegExp.prototype.exec is
+// still observable per spec's @@replace/@@split Get(rx,"exec")).
 function SideEffectFreeRegExpPrototypeSymbolReplace(regexp, str, replacement) {
   return RegExpPrototypeSymbolReplace(regexp, str, replacement);
 }
@@ -323,11 +320,9 @@ class CJSModuleShim {
 // ---- internalBinding('contextify') ----------------------------------------------
 
 function startSigintWatchdog() {
-  // breakOnSigint interruption of synchronous eval WORKS via Bun's own
-  // SigintWatcher (wired in NodeVMScript.cpp). Only Node's `had_pending_
-  // signals` race — SIGINT landing after the script exits but before raw mode
-  // is restored — is unimplemented, so stopSigintWatchdog() always reports no
-  // pending signal.
+  // breakOnSigint works via Bun's SigintWatcher (NodeVMScript.cpp). Only Node's
+  // `had_pending_signals` race (SIGINT between script exit and raw-mode restore)
+  // is unimplemented, so stopSigintWatchdog() always returns false.
   return true;
 }
 

@@ -79,6 +79,46 @@ describe("Intl.NumberFormat", () => {
     }
     expect(out).toMatchSnapshot();
   });
+
+  // ICU-23110: with style:"percent", formatRange/formatRangeToParts collapsing to
+  // ~single-value applied scale/100 twice (0.5 → "~5,000%" instead of "~50%").
+  // Assert the numeric parts match format() exactly; the approximatelySign /
+  // literal decorations are locale-shaped and covered by the string check.
+  describe("style:'percent' formatRange identity (ICU-23110)", () => {
+    const numeric = (parts: Intl.NumberFormatPart[]) =>
+      parts.filter(p => p.type !== "approximatelySign" && p.type !== "literal").map(p => `${p.type}:${p.value}`);
+
+    test.each(["en", "de", "ja", "ar"])("%s", loc => {
+      const nf = new Intl.NumberFormat(loc, { style: "percent" });
+      for (const [a, b] of [
+        [0.5, 0.5],
+        [0.5, 0.500001],
+        [0.145, 0.145],
+      ] as const) {
+        const single = nf.format(a);
+        // The collapsed range is format(a) with a locale-specific "approximately" affix.
+        expect({ a, b, range: nf.formatRange(a, b) }).toEqual({ a, b, range: expect.stringContaining(single) });
+        expect({ a, b, parts: numeric(nf.formatRangeToParts(a, b)) }).toEqual({
+          a,
+          b,
+          parts: numeric(nf.formatToParts(a)),
+        });
+      }
+      // Distinct endpoints must still render as a range.
+      expect(nf.formatRange(0.5, 0.6)).toContain(nf.format(0.6));
+    });
+
+    test("BigInt and string inputs", () => {
+      const nf = new Intl.NumberFormat("en", { style: "percent" });
+      expect(numeric(nf.formatRangeToParts(5n, 5n))).toEqual(numeric(nf.formatToParts(5n)));
+      expect(numeric(nf.formatRangeToParts("0.5", "0.5"))).toEqual(numeric(nf.formatToParts("0.5")));
+    });
+
+    test("compact notation", () => {
+      const nf = new Intl.NumberFormat("en", { style: "percent", notation: "compact" });
+      expect(nf.formatRange(15, 15)).toContain(nf.format(15));
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

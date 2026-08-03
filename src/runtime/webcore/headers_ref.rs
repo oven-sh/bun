@@ -10,20 +10,24 @@ use crate::webcore::blob::Any as AnyBlob;
 #[inline]
 pub(crate) fn any_blob_content_type(b: &AnyBlob) -> Option<&[u8]> {
     if b.has_content_type_from_user() {
-        Some(b.content_type())
-    } else {
-        None
+        let ct = b.content_type();
+        if !ct.is_empty() {
+            return Some(ct);
+        }
     }
+    None
 }
 
 /// `Some(ct)` only when the body has a *user-set* content-type.
 #[inline]
 pub(crate) fn blob_content_type(b: &Blob) -> Option<&[u8]> {
     if b.has_content_type_from_user() {
-        Some(b.content_type_slice())
-    } else {
-        None
+        let ct = b.content_type_slice();
+        if !ct.is_empty() {
+            return Some(ct);
+        }
     }
+    None
 }
 
 /// `Some(ct)` only when the body has a *user-set* content-type.

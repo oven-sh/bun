@@ -17,7 +17,10 @@ use bun_install::lockfile::package;
 use crate::integrity;
 use crate::lockfile_real::Printer;
 
-pub fn print(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
+pub(crate) fn print(
+    this: &mut Printer,
+    writer: &mut impl bun_io::Write,
+) -> Result<(), crate::Error> {
     // internal for debugging, print the lockfile as custom json
     // limited to debug because we don't want people to rely on this format.
     #[cfg(debug_assertions)]
@@ -27,7 +30,6 @@ pub fn print(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), 
         };
         let mut stream = WriteStream::new(WriteStreamOptions {
             indent: 2,
-            emit_null_optional_fields: true,
             emit_nonportable_numbers_as_strings: true,
         });
         crate::lockfile_real::json_stringify(this.lockfile, &mut stream)?;
@@ -252,9 +254,7 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
 
                         // assert its sorted. debug only because of a bug saving incorrect ordering
                         // of optional dependencies to lockfiles
-                        if cfg!(debug_assertions) {
-                            debug_assert!(dependency_behavior_change_count < 3);
-                        }
+                        debug_assert!(dependency_behavior_change_count < 3);
                     }
 
                     writer.write_all(b"    ")?;

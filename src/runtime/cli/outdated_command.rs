@@ -10,7 +10,7 @@ use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
-    self, LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
+    LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
 };
 use bun_install::{CommandLineArguments, DependencyID, PackageID, PackageManager, resolution};
 use bun_paths::{self as path, PathBuffer};
@@ -63,7 +63,7 @@ impl OutdatedCommand {
         Output::flush();
 
         let cli = CommandLineArguments::parse(Subcommand::Outdated)?;
-        let silent = cli.silent;
+        let silent = cli.log_level.is_silent();
 
         let (manager, original_cwd) =
             match PackageManager::init(&mut *ctx, cli, Subcommand::Outdated) {
@@ -892,9 +892,3 @@ impl OutdatedCommand {
         Ok(())
     }
 }
-
-type _AssertImports = (
-    package_manager::WorkspaceFilter,
-    package_manager::ManifestCacheOptions<'static>,
-    bun_install::package_manifest_map::CacheBehavior,
-);

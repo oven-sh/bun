@@ -106,7 +106,8 @@ public:
     }
 
     size_t memoryCost() {
-        return getBufferedAmount() + sizeof(WebSocket);
+        /* Allocation footprint for reportExtraMemoryAllocated, not unsent bytes. */
+        return Super::getAsyncSocketData()->buffer.totalLength() + sizeof(WebSocket);
     }
 
     /* Sending fragmented messages puts a bit of effort on the user; you must not interleave regular sends

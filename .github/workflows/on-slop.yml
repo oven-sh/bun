@@ -1,5 +1,8 @@
 name: Close AI Slop PRs
 
+permissions:
+  contents: read
+
 on:
   pull_request_target:
     types: [labeled]

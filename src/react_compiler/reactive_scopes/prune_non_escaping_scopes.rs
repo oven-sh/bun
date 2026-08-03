@@ -50,7 +50,7 @@ use crate::reactive_scopes::visitors::visit_reactive_function;
 
 /// Prunes reactive scopes whose outputs don't escape.
 /// TS: `pruneNonEscapingScopes`
-pub fn prune_non_escaping_scopes(
+pub(crate) fn prune_non_escaping_scopes(
     func: &mut ReactiveFunction,
     env: &mut Environment,
 ) -> Result<(), crate::diagnostics::CompilerError> {

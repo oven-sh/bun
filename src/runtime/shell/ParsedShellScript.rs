@@ -8,9 +8,10 @@ use bun_jsc::{
     JsRef, JsResult, MarkedArgumentBuffer, StringJsc as _,
 };
 
+use super::env_map::EnvMap;
 use super::interpreter::ShellArgs;
 use super::shell_body::{JsStrings, shell_cmd_from_js};
-use super::{EnvMap, EnvStr, Interpreter};
+use super::{EnvStr, Interpreter};
 
 // NOTE: `pub const js = jsc.Codegen.JSParsedShellScript;` and the
 // `toJS`/`fromJS`/`fromJSDirect` re-exports are provided by the
@@ -24,16 +25,16 @@ pub struct ParsedShellScript {
     // Uses a global-alloc Vec; revisit if profiling shows
     // the extra alloc matters. JSValues here are GC-rooted via `toJSWithValues` codegen
     // (own: array on the C++ wrapper), so storing them on the Rust heap is sound.
-    pub jsobjs: JsCell<Vec<JSValue>>,
-    pub export_env: JsCell<Option<EnvMap>>,
-    pub quiet: Cell<bool>,
-    pub cwd: Cell<Option<BunString>>,
+    pub(crate) jsobjs: JsCell<Vec<JSValue>>,
+    pub(crate) export_env: JsCell<Option<EnvMap>>,
+    pub(crate) quiet: Cell<bool>,
+    pub(crate) cwd: Cell<Option<BunString>>,
     /// Self-wrapper backref. `.classes.ts` has `finalize: true`, so the weak arm is
     /// sound: codegen calls `finalize()` which flips this to `.Finalized` before sweep.
     /// Read-only after construction; mutated only in `finalize(mut self: Box<Self>)`.
-    pub this_jsvalue: JsRef,
+    pub(crate) this_jsvalue: JsRef,
     /// Read-only after construction (set once before the JS wrapper exists).
-    pub estimated_size_for_gc: usize,
+    pub(crate) estimated_size_for_gc: usize,
 }
 
 impl Default for ParsedShellScript {
@@ -66,16 +67,16 @@ impl ParsedShellScript {
         size
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         self.compute_estimated_size_for_gc()
     }
 
-    pub fn estimated_size(&self) -> usize {
+    pub(crate) fn estimated_size(&self) -> usize {
         self.estimated_size_for_gc
     }
 
     // Returns a tuple; callers destructure it.
-    pub fn take(
+    pub(crate) fn take(
         &self,
         _global: &JSGlobalObject,
     ) -> (
@@ -111,11 +112,14 @@ impl ParsedShellScript {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_cwd(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
+    pub(crate) fn set_cwd(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` is non-null for a Bun-owned global.
         let vm = global.bun_vm();
-        let mut arguments = bun_jsc::ArgumentsSlice::init(vm, arguments.slice());
+        let mut arguments = bun_jsc::ArgumentsSlice::init(vm, callframe.arguments());
         let Some(str_js) = arguments.next_eat() else {
             return Err(global.throw(format_args!("$`...`.cwd(): expected a string argument")));
         };
@@ -128,14 +132,22 @@ impl ParsedShellScript {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_quiet(&self, _global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn set_quiet(
+        &self,
+        _global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arg = callframe.argument(0);
         self.quiet.set(arg.to_boolean());
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_env(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn set_env(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let Some(value1) = callframe.argument(0).get_object() else {
             return Err(global.throw_invalid_arguments(format_args!("env must be an object")));
         };
@@ -222,8 +234,7 @@ fn create_parsed_shell_script_impl(
     // so no scopeguard is needed.
     let mut shargs: Box<ShellArgs> = ShellArgs::init();
 
-    let arguments_ = callframe.arguments_old::<2>();
-    let arguments = arguments_.slice();
+    let arguments = callframe.arguments();
     if arguments.len() < 2 {
         return Err(global.throw_not_enough_arguments("Bun.$", 2, arguments.len()));
     }
@@ -277,13 +288,13 @@ fn create_parsed_shell_script_impl(
                 if let Some(lex) = out_lex_result.as_ref() {
                     debug_assert!(!lex.errors.is_empty());
                     let str = lex.combine_errors(arena);
-                    return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(str))));
+                    return Err(global.throw(format_args!("{}", bstr::BStr::new(str))));
                 }
 
                 if let Some(p) = out_parser.as_mut() {
                     debug_assert!(!p.errors.is_empty());
                     let errstr = p.combine_errors();
-                    return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(errstr))));
+                    return Err(global.throw(format_args!("{}", bstr::BStr::new(errstr))));
                 }
 
                 return Err(global.throw_error(err, "failed to lex/parse shell"));

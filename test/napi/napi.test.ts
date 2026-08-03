@@ -521,6 +521,16 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   });
 
   describe("napi_threadsafe_function", () => {
+    it("passes NULL js_callback to call_js when created without a func", async () => {
+      const output = await checkSameOutput("test_tsfn_null_js_callback_driver", []);
+      expect(output).toContain("js_callback == NULL: 1");
+    });
+
+    it("drains >1000 queued items across the kMaxIterationCount yield", async () => {
+      const output = await checkSameOutput("test_tsfn_many_items_driver", []);
+      expect(output).toContain("tsfn callbacks fired: 2000");
+    });
+
     it("keeps the event loop alive without async_work", async () => {
       const result = await checkSameOutput("test_promise_with_threadsafe_function", []);
       expect(result).toContain("tsfn_callback");

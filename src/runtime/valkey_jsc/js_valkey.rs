@@ -1834,10 +1834,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                         Some(bun_core::ZBox::from_bytes(name))
                     } else if let valkey::Address::Host { host, .. } = &client.address {
                         let mut host: &[u8] = &host[..];
-                        if host.len() >= 2
-                            && host[0] == b'['
-                            && host[host.len() - 1] == b']'
-                        {
+                        if host.len() >= 2 && host[0] == b'[' && host[host.len() - 1] == b']' {
                             host = &host[1..host.len() - 1];
                         }
                         if host.is_empty() || bun_core::ip_address::is_ip_address(host) {
@@ -1850,9 +1847,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                     };
                 if let Some(name_z) = sni {
                     // SAFETY: `name_z` is NUL-terminated; FFI reads until NUL.
-                    unsafe {
-                        boringssl::c::SSL_set_tlsext_host_name(ssl_ptr, name_z.as_ptr())
-                    };
+                    unsafe { boringssl::c::SSL_set_tlsext_host_name(ssl_ptr, name_z.as_ptr()) };
                 }
             }
         }

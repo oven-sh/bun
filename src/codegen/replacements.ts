@@ -75,7 +75,7 @@ export const globalsToPrefix = [
   "TransformStreamDefaultController",
   "Uint8Array",
   "String",
-  "Buffer",
+  "Symbol",
   "RegExp",
   "WritableStream",
   "WritableStreamDefaultController",

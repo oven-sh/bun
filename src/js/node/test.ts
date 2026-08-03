@@ -1,13 +1,6 @@
-// Hardcoded module "node:test"
-// Kept as close as possible to Node.js v26.3.0's lib/test.js +
-// lib/internal/test_runner/* (test.js, harness.js, runner.js, utils.js);
-// behavior notes below cite the mirrored source where the mapping is not 1:1.
-// API surface: https://nodejs.org/api/test.html
-//
-// Top-level tests and suites are scheduled through bun:test (Bun.jest), while
-// subtests created inside a running test are executed inline by this module so
-// that Node's TestContext semantics (subtests, hooks, plan, mock tracker,
-// getTestContext) are observable without a separate runner process.
+// Hardcoded module "node:test" — port of lib/internal/test_runner/* (v26.3.0).
+// https://github.com/nodejs/node/tree/main/lib/internal/test_runner
+// Top-level tests schedule through bun:test; subtests execute inline here.
 
 const { jest } = Bun;
 const { kEmptyObject, throwNotImplemented } = require("internal/shared");
@@ -44,15 +37,9 @@ const kTimeoutMax = 2 ** 31 - 1;
 const kBunTestDefaultTimeoutMs = 5_000;
 const kJoinSeparator = " > ";
 
-// -----------------------------------------------------------------------------
-// run()
-//
-// Port of Node.js lib/internal/test_runner/{runner,tests_stream}.js (v26.3.0).
-// Files run in child processes (node's isolation:'process'); the child is spawned
-// with kRunChildEnv set, which makes this module stream one JSON event per line
-// on stdout. Unmarked stdout/stderr lines become test:stdout/test:stderr, the
-// same split node makes around its V8-serializer framing.
-// -----------------------------------------------------------------------------
+// run() — port of lib/internal/test_runner/{runner,tests_stream}.js. Files run in
+// child processes with kRunChildEnv set; child streams JSON-per-line on stdout,
+// unmarked lines become test:stdout/test:stderr (node's V8-serializer split).
 
 // node's own tests branch on NODE_TEST_CONTEXT to tell the parent from the
 // spawned child, so use node's variable and value rather than a bun-specific one.
@@ -357,22 +344,14 @@ function run(options: Record<string, unknown> = kEmptyObject) {
     return reporter;
   }
 
-  // Options whose semantics we cannot honor yet must fail loudly rather than be
-  // silently ignored. Deliberate exceptions, validated for node's error
-  // contract but accepted: testTagFilters (not yet forwarded, pending the
-  // native reporter hook), timeout (node's own test-runner-filetest-location.js
-  // passes it), concurrency (files run serially — node's contract is an upper
-  // bound on parallelism, and the --test CLI driver always passes it like
-  // node's runner), and forceExit (the CLI driver forwards it for node's
-  // debuglog contract and handles the exit itself).
+  // Unimplemented options fail loudly. Validated-but-accepted: testTagFilters,
+  // timeout, concurrency (upper bound — serial is conformant), forceExit.
   if (opts.watch) throwNotImplemented("run({ watch: true })", 5090, "Use `bun:test --watch` in the interim.");
   if (opts.coverage) throwNotImplemented("run({ coverage: true })", 5090, "Use `bun:test --coverage` in the interim.");
   if (opts.shard) throwNotImplemented("run({ shard })", 5090);
   if (opts.rerunFailuresFilePath) throwNotImplemented("run({ rerunFailuresFilePath })", 5090);
-  // `only` is applied by pruning the merged queue, so it only reaches the
-  // tests under isolation 'none'. Name/skip patterns and tag filters are
-  // forwarded to process-isolation children through the environment
-  // (runOneFile) and applied at registration.
+  // `only` prunes the merged queue (isolation:'none' only); name/skip/tag filters
+  // reach process-isolation children via env in runOneFile.
   if (opts.isolation !== "none") {
     if (opts.only) throwNotImplemented("run({ only: true })", 5090);
   }
@@ -460,10 +439,8 @@ function makeRunCounts() {
     todo: 0,
     topLevel: 0,
     suites: 0,
-    // Not a node diagnostic counter; node flips a separate harness.success for
-    // a non-skip/non-todo failed suite (countCompletedTest), which the port
-    // tracks here so a suite-only failure (throwing describe with no children,
-    // expectFailure suite whose children passed) still fails the run.
+    // Not a node counter; mirrors harness.success flip for failed suites
+    // (countCompletedTest) so a suite-only failure still fails the run.
     failedSuites: 0,
   } as unknown as Record<string, number>;
 }
@@ -571,10 +548,8 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     // gates on isTestRunner); a library run() honors just opts.signal, so the
     // CLI eval driver owns SIGINT/SIGTERM and routes them through the signal.
     const signal = opts.signal as AbortSignal | undefined;
-    // Captured before the loop: node reports per-file testAborted verdicts for
-    // a signal that was already aborted at run() time, but a mid-run abort
-    // tears the stream down without them (its FAIL_FAST reporter contract —
-    // test-runner-error-reporter.js — counts exactly one failure).
+    // Captured pre-loop: a pre-aborted signal yields per-file testAborted; a
+    // mid-run abort tears down without them (node's FAIL_FAST contract).
     const preAborted = signal?.aborted === true;
     if (preAborted) onInterrupt();
     signal?.addEventListener("abort", onInterrupt, { once: true });
@@ -1026,10 +1001,8 @@ function republishChildEvent(
   reporter.emitMessage(type, data);
 }
 
-// Child side: with kRunChildEnv set, stream one JSON event per line so the
-// spawning parent can rebuild node's event stream. Exact-value so a foreign
-// runner's NODE_TEST_CONTEXT cannot reroute this process (matches the Rust
-// is_node_test_child() gate).
+// Child side: stream JSON-per-line under kRunChildEnv. Exact-value match so a
+// foreign NODE_TEST_CONTEXT can't reroute us (mirrors Rust is_node_test_child()).
 const runChildReporterEnabled = process.env[kRunChildEnv] === kRunChildEnvValue;
 
 // Registers this process as a run() child with the native runner, so genuine
@@ -1085,10 +1058,8 @@ function runEventsEnabled(): boolean {
   return runChildReporterEnabled || standaloneActive || inProcessRunActive;
 }
 
-// t.diagnostic(): routes through the reporter stream like every other per-test
-// signal when a transport exists (run-child pipe or the in-process sink). A
-// SuiteContext.diagnostic() inside a describe body runs during collection,
-// before runStandalone sets the sink; fall through to console.log there.
+// t.diagnostic(): through the reporter stream when a transport exists; a
+// SuiteContext.diagnostic() during collection (no sink yet) falls to console.log.
 function emitContextDiagnostic(node: TestNode, message: unknown) {
   const text = typeof message === "string" ? message : require("node:util").inspect(message);
   if (runChildReporterEnabled || standaloneSink !== null) {
@@ -1150,12 +1121,8 @@ function serializeRunCause(cause: unknown, depth: number) {
   return { __proto__: null, nonError: true, ...serializeExtraValue(cause) };
 }
 
-// deepStrictEqual carries objects in actual/expected: pass them by value when
-// JSON can carry them (node's v8 serializer preserves them), and degrade to
-// the inspected string otherwise instead of dropping the field. Always wrapped
-// in the _bunTag envelope so the parent never confuses a user's object with
-// the serializer's own non-finite tag (reviveSerializedValue checks only the
-// envelope shape, which user data cannot occupy once wrapped here).
+// actual/expected values: JSON-by-value when possible, inspected string otherwise.
+// Always _bunTag-wrapped so user data can't collide with the serializer's tags.
 function serializeExtraValue(value: unknown) {
   const t = typeof value;
   // JSON emits null for non-finite numbers; tag so the parent revives.
@@ -1250,11 +1217,8 @@ function makeCancelledByParentError() {
   return makeTestFailure("test did not finish before its parent and was cancelled", "cancelledByParent");
 }
 
-// Reports a declared-but-never-run child of a skipped suite (node's
-// cancelledByParent verdict). Recurses into a cancelled suite's own declared
-// children so every leaf emits cancelledByParent (node's postRun() recurses
-// #cancel() + postRun()), otherwise a suite-only subtree lands in counts.suites
-// alone and never reaches counts.cancelled, so the run can exit 0.
+// Reports cancelledByParent for never-run children of a skipped suite; recurses
+// like node's postRun() so leaf cancellations reach counts.cancelled.
 function reportCancelledNode(node: TestNode) {
   if (!runEventsEnabled()) return;
   reportQueueChain(node);
@@ -1552,13 +1516,8 @@ function reportNodeToRunParent(node: TestNode, startedAt: number) {
   noteRunChildDone(node.parent, !node.passed && !skipped && !todoEffective);
 }
 
-// -----------------------------------------------------------------------------
-// MockTracker
-//
-// Port of Node.js lib/internal/test_runner/mock/mock.js (v26.3.0):
-//   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/lib/internal/test_runner/mock/mock.js
-// API reference: https://nodejs.org/api/test.html#class-mocktracker
-// -----------------------------------------------------------------------------
+// MockTracker — port of lib/internal/test_runner/mock/mock.js.
+// https://github.com/nodejs/node/blob/main/lib/internal/test_runner/mock/mock.js
 let trackMockCall: (ctx: MockFunctionContext, thisArg: unknown, args: unknown[], target: unknown) => unknown;
 
 class MockFunctionContext {
@@ -1614,11 +1573,8 @@ class MockFunctionContext {
   }
 
   restore() {
-    // node semantics: a method mock reinstalls the original descriptor but the
-    // context keeps its implementation (calling the detached mock function
-    // still uses it); a bare fn mock reverts to calling the original. Queued
-    // once-implementations survive, and restore() stays re-runnable so a
-    // still-tracked context can be restored again by reset().
+    // node: method mock reinstalls original descriptor (context keeps impl); bare
+    // fn mock reverts to original. once() queue survives; restore() is re-runnable.
     if (this.#restore !== undefined) {
       this.#restore();
     } else {
@@ -2108,11 +2064,8 @@ const mock = MockTracker.createFileScoped();
 // Snapshots (internal/test/snapshot — node's lib/internal/test_runner/snapshot.js)
 // -----------------------------------------------------------------------------
 
-// node builds the manager lazily on the first `t.assert` access
-// (test.js lazyAssertObject) and flushes it from the root test's postRun
-// (test.js:1537). node:test in bun has no single postRun — the same
-// registrations also run under `bun test` — so the flush is an exit hook,
-// installed only when snapshots are being regenerated.
+// node builds lazily on first `t.assert` (lazyAssertObject) and flushes in root
+// postRun; here the flush is an exit hook since there is no single postRun.
 let snapshotManager;
 let snapshotAssert: Function;
 let fileSnapshotAssert: Function;
@@ -2539,10 +2492,8 @@ function getRootNode(): TestNode {
     // by a mock's restore) see an up-to-date root and don't reset again.
     rootNode = new TestNode(kRootName, undefined, kDefaultOptions, true, false);
     if (oldRoot !== undefined) {
-      // Node also scopes these per process: drop the previous file's
-      // module-level mocks and assert.register() additions with its root.
-      // The root's own mockTracker (reachable via a file-level before hook's
-      // `t.mock`) is distinct from the module-level `mock` export.
+      // Node scopes these per process: drop prior file's module-level mocks and
+      // assert.register() additions (root.mockTracker is distinct from `mock`).
       oldRoot.mockTracker?.reset();
       mock.reset();
       customAssertions = { __proto__: null } as unknown as Record<string, Function>;
@@ -2964,22 +2915,16 @@ function createHook(arg0: unknown, arg1: unknown): Hook {
   return { fn, timeout, signal, result: undefined };
 }
 
-// -----------------------------------------------------------------------------
-// diagnostics_channel tracing — node's testChannel = tracingChannel('node.test')
-// (lib/internal/test_runner/utils.js:264, published from Test.run/Suite.createBuild).
-// Channels are created lazily on first use so the common path never loads
-// node:diagnostics_channel.
-// -----------------------------------------------------------------------------
+// diagnostics_channel tracing — tracingChannel('node.test'), published from
+// Test.run/Suite.createBuild (lib/internal/test_runner/{utils,test}.js).
 
 type TestTracingChannel = {
   start: { hasSubscribers: boolean; runStores: (ctx: object, fn: () => unknown) => unknown };
   end: { hasSubscribers: boolean; publish: (data: object) => void };
   error: { hasSubscribers: boolean; publish: (data: object) => void };
 };
-// Created at module load and held for the process lifetime like node's
-// (utils.js:264): bun's channel registry only holds channels weakly, so a
-// lazily created channel could be collected between a user's subscribe and
-// the first publish, silently dropping the subscription.
+// Held for process lifetime like node's: bun's channel registry is weak, so a
+// lazy channel could be collected between subscribe and first publish.
 const testTracingChannel: TestTracingChannel = require("node:diagnostics_channel").tracingChannel("node.test");
 function getTestChannel(): TestTracingChannel {
   return testTracingChannel;
@@ -2998,10 +2943,8 @@ function bindToAsyncContext<T extends Function>(fn: T): T {
   return AsyncResource.bind(fn);
 }
 
-// Wraps a suite build callback like node's Suite.createBuild: the body runs
-// inside start.runStores (so bindStore stores are active while the describe
-// callback executes), a throwing/rejecting body publishes the error event, and
-// the end event is deferred until the suite finishes (publishSuiteEndEvent).
+// Wraps suite build like node's Suite.createBuild: body in start.runStores,
+// throw/reject publishes error, end deferred to publishSuiteEndEvent.
 function tracedSuiteBuildFn(node: TestNode, buildFn: () => unknown): () => unknown {
   if (!testChannelHasSubscribers()) return buildFn;
   const context = makeChannelContext(node, "suite");
@@ -3241,10 +3184,8 @@ async function runHook(hook: Hook, owner: TestNode, arg: unknown, kind: HookKind
       await raceWithTimeoutAndSignal(run, timeout, signal);
     }
   } catch (err) {
-    // node wraps every hook failure once, at the layer that ran it
-    // (Test#runHook): ERR_TEST_FAILURE `failed running <kind> hook`,
-    // failureType hookFailed, with the thrown value (nullish included) on
-    // cause. Every consumer above attributes this wrapper as-is.
+    // node wraps hook failure once (Test#runHook): ERR_TEST_FAILURE hookFailed
+    // with thrown value on cause; consumers attribute this wrapper as-is.
     throw wrapHookError(err ?? makeTestFailure("hook failed"), kind);
   }
 }
@@ -3719,13 +3660,8 @@ function bunTest() {
   return jest(Bun.main);
 }
 
-// -----------------------------------------------------------------------------
-// Standalone mode — `bun file.js` on a file that uses node:test. Node
-// bootstraps its runner lazily on the first registration (harness.js
-// lazyBootstrapRoot) and runs the queue on beforeExit; outside `bun test`
-// there is no native runner, so the shim does the same with its own
-// execution machinery and the node:test/reporters port.
-// -----------------------------------------------------------------------------
+// Standalone mode — `bun file.js` with node:test. Mirrors harness.js
+// lazyBootstrapRoot: bootstrap on first registration, drain on beforeExit.
 type StandaloneEntry = {
   node: TestNode;
   fn: TestFn;
@@ -3754,10 +3690,8 @@ function inStandaloneMode(): boolean {
   if (inProcessRunActive) return true;
   if (standaloneActive) return true;
   if (runChildReporterEnabled) return false;
-  // The native runner's file generation is 0 iff this process is not
-  // `bun test` (jsFileGeneration returns 0 without an active TestRunner).
-  // standaloneActive only latches on an actual registration, so probing here
-  // (e.g. from a preload before the runner's first file) is side-effect free.
+  // fileGeneration() is 0 iff not `bun test`. standaloneActive only latches on
+  // a real registration, so probing here is side-effect free.
   return fileGeneration() === 0;
 }
 
@@ -4003,13 +3937,9 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     }
     const numbering = { verdictNumber: 0 };
     standaloneSink = inProcessSinkImpl.bind(undefined, reporter, counts, numbering);
-    // node's in-process runner does not consult the run signal for scheduling
-    // (observed on v26.3.0: with isolation 'none', a pre-aborted signal and a
-    // mid-run abort both leave every file running to a normal verdict and the
-    // summary succeeds). Ctrl+C for --test --test-isolation=none is the CLI
-    // driver's job: it exits promptly on SIGINT like node's harness.
-    // node's root test is already running while files load, so before() hooks
-    // registered at a file's top level execute immediately, in file order.
+    // node's in-process runner ignores the run signal for scheduling (v26.3.0);
+    // SIGINT is the CLI driver's job. Root is already running while files load,
+    // so top-level before() hooks fire immediately in file order.
     callerRoot.started = true;
     process.env.NODE_TEST_WORKER_ID = "1";
     // Hooks already on the root when it starts run now, ahead of the ones the
@@ -4050,10 +3980,8 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
       currentImportFile = null;
     }
 
-    // Pruning walks standaloneChildren, which an async describe body may still
-    // be appending to; node awaits Suite.buildPromise before consulting them.
-    // Awaited unconditionally: a late it.only() would otherwise be invisible
-    // to the only-scan itself, and the helper is near-free with no builds.
+    // Await suite builds before pruning (node awaits Suite.buildPromise) so a
+    // late it.only() from an async describe body is visible to the only-scan.
     await awaitSuiteBuilds(standaloneQueue);
     // node evaluates only-ness when each test is constructed, so a queue whose
     // only-marked tests are later dropped by a name/tag filter still runs in
@@ -4113,11 +4041,8 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     inProcessRunActive = false;
     standaloneSink = savedSink;
     activeRunFile = null;
-    // Give the caller its own tests and mode flags back so a standalone file
-    // that also calls run() still gets its beforeExit pass (finding: the run
-    // must not latch standalone state for the rest of the process). Restores
-    // onto the SAME root the snapshot cleared (getRootNode() can return a
-    // fresh per-file root under bun test once fileGeneration advances).
+    // Restore caller's tests/flags so a standalone file that calls run() keeps
+    // its beforeExit pass. Restores onto the SAME root the snapshot cleared.
     callerRoot.started = false;
     callerRoot.hooks = savedRootHooks;
     callerRoot.reportedCount = savedRootReportedCount;
@@ -4238,17 +4163,12 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
     noteSuiteCollectionSettled(node);
     return;
   }
-  // Suites: the callback already ran at declaration (node runs describe
-  // bodies during load); execute the collected children in order.
-  // Node's Suite.start() records startTime before hooks/children run, so the
-  // reported duration covers before-hooks + every child.
+  // Suites: body already ran at declaration; execute collected children.
+  // startTime recorded before hooks/children (node's Suite.start()).
   node.startedAtMs = performance.now();
   const isTodoSuite = node.todoFlag || hasTodoAncestor(node);
-  // A failing build/before() means setup never completed; node cancels the
-  // declared children (cancelledByParent) instead of running them against
-  // broken setup. Matches executeStandaloneQueue's root-hook handling. A sync
-  // describe throw left node.error set with build undefined (addSuite's catch),
-  // so seed from that too.
+  // Failing build/before() cancels children (cancelledByParent) instead of
+  // running against broken setup. Seed from node.error for sync describe throw.
   let setupFailed = !isTodoSuite && node.error != null;
   const { build } = entry;
   if (build !== undefined) {
@@ -4406,10 +4326,8 @@ async function attachStandaloneReporters(stream: TestsStream, promises: Promise<
 }
 
 function bunTestOptions(options: TestOptions) {
-  // The node-style timeout is enforced by executeTestNode itself so that a
-  // tiny timeout (e.g. 1ms) with a synchronous body still passes like in Node.
-  // bun:test's own watchdog measures the whole wrapper, so it is only told
-  // about timeouts that extend past its 5s default.
+  // node-style timeout enforced by executeTestNode (sync body passes under 1ms);
+  // bun:test's watchdog only hears about timeouts past its 5s default.
   const { timeout } = options;
   if (typeof timeout === "number" && Number.isFinite(timeout)) {
     // Keep bun:test's watchdog at or above both the node-style timeout and
@@ -4440,11 +4358,8 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
     if (node.skipped) {
       markCurrentResult(false, done);
     } else if ((node.todoFlag || hasTodoAncestor(node)) && !declaredTodo && (runChildReporterEnabled || !todoBefore)) {
-      // Under plain bun:test a describe.todo scope already handles its
-      // children's todo verdict (FailBecauseTodoPassed under --todo), so only
-      // override when the todo state flipped at runtime; a run() child
-      // registers suites as plain describes, so bun:test has no todo scope to
-      // consult. Inherited todo still must not fail the child process.
+      // bun:test's describe.todo handles children's todo verdict, so only override
+      // on runtime flip; a run() child has no todo scope (plain describes).
       markCurrentResult(true, done);
     } else {
       done(failure);
@@ -4587,10 +4502,8 @@ function addTest(
   node.ownTags = ownTags;
   if (mode === "only") node.onlyFlag = true;
 
-  // Node merges .todo()/.skip() into the options and checks skip first, so
-  // test.todo(name, { skip: true }, fn) is a skip. Execution routing is by
-  // truthiness: node runs the body for falsy-but-defined skip/todo
-  // ({ skip: '' }) and only reports the directive.
+  // Node merges .todo()/.skip() into options, skip first; body runs for
+  // falsy-but-defined ({ skip: '' }) and only reports the directive.
   const effectiveMode = mode === "skip" || options.skip ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
 
   // A filtered-out test registers nothing and reports nothing (node's
@@ -4625,10 +4538,8 @@ function addTest(
   }
 
   if (effectiveMode === "todo" || effectiveMode === "skip") {
-    // Node runs a todo body, so `t.skip()` inside one still changes the
-    // directive it reports. bun:test only runs todo bodies under --todo, so a
-    // run() child registers them as ordinary tests and marks the result at the
-    // end (what createTopLevelTestRunner already does for a runtime t.todo()).
+    // Node runs todo bodies (so t.skip() inside still flips the directive);
+    // bun:test doesn't, so a run() child registers plain and marks at the end.
     if (runChildReporterEnabled && effectiveMode === "todo") {
       // The test.todo() spelling carries the directive in `mode`, not in the
       // options, so the node has to be marked for the runner to report it.
@@ -4671,10 +4582,8 @@ function addTest(
     test(name, runner);
   }
 
-  // Resolved eagerly rather than when the runner settles: bun:test never invokes
-  // the runner for a test `--test-name-pattern` filters out, so a deferred tied
-  // to it would hang an awaiting caller forever. Node resolves those too, and
-  // the timing is unobservable under bun:test's collect-then-execute model.
+  // Resolved eagerly: bun:test never invokes a filtered-out test's runner, so a
+  // deferred tied to it would hang. Node resolves those too.
   return Promise.resolve(undefined);
 }
 
@@ -4706,11 +4615,8 @@ function addSuite(
     }
     const ownTodo = mode === "todo" || (options.todo !== undefined && options.todo !== false);
     if (ownTodo) suite.todoFlag = true;
-    // The suite's children must run after the parent's previously scheduled
-    // subtests AND after the describe callback's own returned promise settles
-    // (Node's Suite.run awaits buildPromise before iterating subtests). The
-    // callback has not returned yet so its promise does not exist; seed the
-    // chain through a gate the callback's settlement opens.
+    // Children run after parent's prior subtests AND after describe's promise
+    // settles (node awaits buildPromise); seed the chain through a gate.
     const gate = Promise.withResolvers<void>();
     function awaitSuiteGate() {
       return gate.promise;
@@ -4749,10 +4655,8 @@ function addSuite(
   applyRunChildFilters(suiteNode);
   noteRunChildRegistered(parent);
 
-  // Node merges .todo()/.skip() into the options and checks skip first, so
-  // describe.todo(name, { skip: true }, fn) is a skip. Execution routing is by
-  // truthiness: node runs the body for falsy-but-defined skip/todo
-  // ({ skip: '' }) and only reports the directive.
+  // Node merges .todo()/.skip() into options, skip first; body runs for
+  // falsy-but-defined ({ skip: '' }) and only reports the directive.
   const effectiveMode = mode === "skip" || options.skip ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
 
   if (inStandaloneMode()) {
@@ -4793,11 +4697,8 @@ function addSuite(
     effectiveMode === "skip"
       ? kDefaultFunction
       : function wrappedSuiteBuilder() {
-          // A todo suite only reaches wrapped() in run-child mode (describe.todo
-          // would otherwise skip the body); its failures are advisory and must
-          // not reach bun:test's describe-error path, which exits the child
-          // nonzero. todoFlag is read here because describe.todo sets it after
-          // wrapped() is built.
+          // A todo suite reaches wrapped() only in run-child mode; its failures are
+          // advisory. todoFlag read here because describe.todo sets it post-build.
           const isTodoAdvisory = runChildReporterEnabled && (suiteNode.todoFlag || hasTodoAncestor(suiteNode));
           function buildWrappedSuiteFn() {
             return invokeSuiteFn(fn, suiteNode.getSuiteCtx());
@@ -4814,22 +4715,16 @@ function addSuite(
             afterAll(publishSuiteEndHook);
           }
           function settleSuiteAfterHooks() {
-            // Settle from a bun:test afterAll so it fires at the suite's
-            // execution turn. The suite's own after() hooks run here (not via
-            // separate bun:test afterAlls) so a post-await after() in an async
-            // describe body still runs before the verdict is emitted,
-            // matching the standalone twin's before -> children -> after ->
-            // settle order.
+            // Settle from a bun:test afterAll at the suite's execution turn;
+            // own after() hooks run here so a post-await after() precedes the verdict.
             if (!runEventsEnabled()) {
               noteSuiteCollectionSettled(suiteNode);
               return;
             }
             const { afterAll } = bunTest();
             afterAll(function settleSuite(done: (error?: unknown) => void) {
-              // Settle asynchronously like the other hook wrappers so
-              // bun:test's native hook driver is not re-entered from its own
-              // callback (on Windows a sync return from a nested describe's
-              // last afterAll does not advance to the outer's afterAll).
+              // Async settle so bun:test's hook driver isn't re-entered (Windows:
+              // sync return from nested afterAll doesn't advance to outer's).
               function settleAndDone() {
                 noteSuiteCollectionSettled(suiteNode);
                 Promise.resolve(undefined).then(done, done);
@@ -4857,11 +4752,8 @@ function addSuite(
               runSuiteAfterHooks().then(settleAndDone, settleAndDone);
             });
           }
-          // Records the body failure so maybeCompleteSuite emits the suite's
-          // own testCodeFailure verdict; hookSetupFailed makes declared
-          // children cancel at execution turn. The settle itself is registered
-          // by the caller (deferred via settleSuiteAfterHooks in run-child
-          // mode so a zero-child throw keeps declaration order).
+          // Record body failure so maybeCompleteSuite emits testCodeFailure and
+          // children cancel. The settle is registered by the caller.
           function recordSuiteBodyFailed(err: unknown) {
             suiteNode.childrenFailed++;
             suiteNode.error = err;
@@ -4901,10 +4793,8 @@ function addSuite(
   let register: Function = describe;
   if (effectiveMode === "skip") register = describe.skip;
   else if (effectiveMode === "todo") {
-    // node runs a todo suite's children and reports each as todo (the todo
-    // directive is inherited). bun:test's describe.todo never executes them,
-    // so a run() child registers a plain describe and relies on todoFlag —
-    // the children report with todo, and the suite completes through them.
+    // node runs todo-suite children (directive inherited); bun:test's describe.todo
+    // doesn't, so a run() child registers plain describe and relies on todoFlag.
     suiteNode.todoFlag = true;
     if (!runChildReporterEnabled) register = describe.todo;
   }
@@ -4980,10 +4870,8 @@ function hookArgFor(node: TestNode) {
 function before(arg0: unknown, arg1: unknown) {
   const hook = createHook(arg0, arg1);
   const owner = hookOwner();
-  // The standalone root check precedes isRunning(): the in-process runner
-  // marks the root started, and node runs a root before() SYNCHRONOUSLY at
-  // that point (that is how root hooks interleave with file loads), while
-  // scheduleImmediateBeforeHook would defer it past the rest of the import.
+  // Standalone-root check first: in-process runner marks root started, and node
+  // runs root before() synchronously there; scheduleImmediateBeforeHook would defer.
   if (inStandaloneMode() && owner.parent === undefined) {
     owner.hooks.before.push(hook);
     if (owner.started && !owner.finished) {
@@ -5008,10 +4896,8 @@ function before(arg0: unknown, arg1: unknown) {
   if (runChildReporterEnabled && (owner.skipped || hasSkippedAncestorSuite(owner))) return;
   const { beforeAll } = bunTest();
   function runBeforeAllHook(done: (error?: unknown) => void) {
-    // The suite's own earlier before() or an ancestor's already failed: node
-    // bails on the first before-hook error (Suite.run) and cancels the whole
-    // subtree without running nested hooks. Checked at execution time because
-    // hookSetupFailed is set by onHookFailed after collection.
+    // An earlier/ancestor before() failed: node bails (Suite.run) and cancels the
+    // subtree. Checked at execution time — hookSetupFailed is set post-collection.
     if (runChildReporterEnabled && (owner.hookSetupFailed || hasHookFailedAncestorSuite(owner))) {
       // Settle asynchronously like every other done path: bun:test's native
       // hook driver is not re-entered synchronously from its own callback.
@@ -5057,10 +4943,8 @@ function after(arg0: unknown, arg1: unknown) {
     return;
   }
   if (runChildReporterEnabled && (owner.skipped || hasSkippedAncestorSuite(owner))) return;
-  // In run-child mode a collection suite's after() hooks are run by its
-  // settleSuite afterAll (registered before an async body's continuation),
-  // not as separate bun:test afterAlls — so a post-await after() still runs
-  // before the suite's verdict is emitted.
+  // run-child mode: suite after() hooks run from settleSuite afterAll, not
+  // separate bun:test afterAlls — a post-await after() precedes the verdict.
   if (runChildReporterEnabled && owner.isSuite && owner.parent !== undefined) {
     owner.hooks.after.push(hook);
     return;

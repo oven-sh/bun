@@ -78,12 +78,9 @@ function fatal(err: unknown): never {
   process.exit(1);
 }
 
-// ---------------------------------------------------------------------------
-// File discovery — node's createTestFileList (runner.js:153-170).
-// ---------------------------------------------------------------------------
-// node's default (utils.js:71-77) — ts/mts/cts only join behind --strip-types
-// there, so matching its default keeps discovery byte-compatible. Split into
-// two globs: Bun.Glob mis-parses `test/**/*` nested inside a brace group.
+// File discovery — node's createTestFileList (lib/internal/test_runner/runner.js).
+// Default patterns from utils.js kDefaultPattern; split in two because Bun.Glob
+// mis-parses `test/**/*` nested inside a brace group.
 const kDefaultPatterns = ["**/{test,test-*,*[._-]test}.{js,mjs,cjs}", "**/test/**/*.{js,mjs,cjs}"];
 const kGlobMagic = /[*?[\]{}!]/;
 function hasNoGlobMagic(pattern) {
@@ -315,10 +312,8 @@ async function main() {
   // dropping the behavior the caller asked for (same policy as run()).
   if (hasFlag("--experimental-test-coverage")) runOptions.coverage = true;
 
-  // Randomization (node's parseCommandLine, utils.js:423-426): a seed implies
-  // randomize; watch mode rejects both spellings with the seed checked first
-  // (runner.js:765-779 — the run()-level throw, surfaced here because bun's
-  // --watch wraps the whole process).
+  // Randomization: seed implies randomize; watch mode rejects both (seed first).
+  // https://github.com/nodejs/node/blob/main/lib/internal/test_runner/runner.js
   const randomizeFlag = hasFlag("--test-randomize");
   const seedFlag = getFlag("--test-random-seed");
   let randomSeed: number | undefined;
@@ -364,11 +359,8 @@ async function main() {
 
   debug("run options: %o", runOptions);
 
-  // Resolve every reporter before run() spawns anything: node awaits
-  // setupTestReporters() during bootstrap, and resolving after runFiles has
-  // already spawned means a failed import process.exit(7)s with an orphaned
-  // child. Also closes the truncated-stream race (the first pipe starts the
-  // Readable flowing while a later custom reporter's import() is still pending).
+  // Resolve reporters before run() spawns (node awaits setupTestReporters() in
+  // bootstrap): avoids orphaned children on exit(7) and the flow-before-pipe race.
   let resolved: unknown[];
   try {
     resolved = await Promise.all(reporterNames.map(resolveReporter));
@@ -385,10 +377,8 @@ async function main() {
   const abortController = new AbortController();
   runOptions.signal = abortController.signal;
 
-  // node's harness installs process signal handlers only under --test
-  // (isTestRunner); the runner owns them here so a library run() never
-  // suppresses default Ctrl+C termination. Routed through the run's abort
-  // signal, which kills the current child and stops spawning.
+  // node installs SIGINT/SIGTERM handlers only under --test (harness.js
+  // isTestRunner); route through the run signal so library run() keeps Ctrl+C.
   function onRunnerSignal() {
     abortController.abort();
     if (runOptions.isolation === "none") {

@@ -61,12 +61,8 @@ public:
     JSC::JSString* className() const { return m_className.get(); }
     void setClassName(JSC::VM& vm, JSC::JSString* name) { m_className.set(vm, this, name); }
 
-    ObjectTemplate* instanceTemplate() const;
-    void setInstanceTemplate(JSC::VM& vm, ObjectTemplate* objectTemplate);
     // Lazily create the instance ObjectTemplate (internalFieldCount 0) if unset.
     ObjectTemplate* ensureInstanceTemplate(JSC::JSGlobalObject* globalObject);
-
-    ObjectTemplate* prototypeTemplate() const;
     // Lazily create the prototype ObjectTemplate if unset.
     ObjectTemplate* ensurePrototypeTemplate(JSC::JSGlobalObject* globalObject);
 

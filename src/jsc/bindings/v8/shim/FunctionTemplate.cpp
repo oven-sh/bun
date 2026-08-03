@@ -73,21 +73,6 @@ void FunctionTemplate::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(FunctionTemplate);
 
-ObjectTemplate* FunctionTemplate::instanceTemplate() const
-{
-    return m_instanceTemplate.get();
-}
-
-void FunctionTemplate::setInstanceTemplate(JSC::VM& vm, ObjectTemplate* objectTemplate)
-{
-    m_instanceTemplate.set(vm, this, objectTemplate);
-}
-
-ObjectTemplate* FunctionTemplate::prototypeTemplate() const
-{
-    return m_prototypeTemplate.get();
-}
-
 ObjectTemplate* FunctionTemplate::ensureInstanceTemplate(JSC::JSGlobalObject* globalObject)
 {
     if (auto* existing = m_instanceTemplate.get())

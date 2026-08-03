@@ -1209,7 +1209,7 @@ impl<'a> Repl<'a> {
         // hundred keystrokes. Print the prompt once when a fresh line begins
         // (the editor buffer is empty exactly then), like node.
         if !self.is_tty {
-            if self.line_editor.buffer.is_empty() && !self.editor_mode {
+            if self.line_editor.buffer.is_empty() && self.input_mode == InputMode::Normal {
                 Output::flush();
                 self.write(self.get_prompt());
                 Output::flush();

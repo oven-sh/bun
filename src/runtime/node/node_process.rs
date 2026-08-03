@@ -437,7 +437,7 @@ mod _impl {
         // Real syscall (not the resolver's cached top_level_dir): Node's
         // process.cwd() calls uv_cwd() so a deleted cwd must surface here.
         let mut buf = PathBuffer::uninit();
-        match Syscall::getcwd(&mut buf[..]) {
+        match bun_sys::getcwd(&mut buf[..]) {
             bun_sys::Result::Ok(len) => Ok(ZigString::init(&buf[..len])
                 .with_encoding()
                 .to_js(global_object)),

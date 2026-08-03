@@ -89,6 +89,7 @@ new!(pub BUN_GC_TIMER_DISABLE: boolean, "BUN_GC_TIMER_DISABLE", {});
 new!(pub BUN_GC_TIMER_INTERVAL: unsigned, "BUN_GC_TIMER_INTERVAL", {});
 new!(pub BUN_GC_IDLE_SHRINK_DISABLE: boolean, "BUN_GC_IDLE_SHRINK_DISABLE", {});
 new!(pub BUN_GC_TIMER_DEBUG: boolean, "BUN_GC_TIMER_DEBUG", {});
+new!(pub BUN_GC_STARTUP_FULLS: unsigned, "BUN_GC_STARTUP_FULLS", {});
 new!(pub BUN_GC_IDLE_SHRINK_TICKS: unsigned, "BUN_GC_IDLE_SHRINK_TICKS", {});
 // TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
 // so we'll keep it for now.

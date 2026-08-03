@@ -150,6 +150,7 @@ The file is plain JSON, slowest first, so it doubles as a "what's slow" report:
 - Paths are relative to the project root; values are wall-clock milliseconds for the whole file.
 - `--update-timings` merges into the table it read rather than replacing it, so the file is always complete: a sharded run refreshes the entries for the files it ran and carries the rest through unchanged. Entries for files that no longer exist are left alone; delete the file to start over.
 - Files with no entry yet are assumed to take the median time when cutting shards, and are started first under `--parallel`.
+- Every shard must read the _same_ timings file for the shards to add up to the whole suite — read the committed copy, not one that another shard has just updated.
 - With `--timings`, `--parallel` also uses the durations: worker chunks are cut by time and each worker starts its slowest file first.
 
 A typical CI setup commits the timings file (or stores it in the CI cache), refreshes it on the main branch, and reads it on every sharded PR run:

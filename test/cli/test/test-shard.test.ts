@@ -242,23 +242,16 @@ describe.concurrent("--timings", () => {
     for (const r of results) expect(r.exitCode).toBe(0);
   });
 
-  test("--update-timings under --shard keeps the table complete, so shards that read it later still cover every file", async () => {
+  test("--update-timings under --shard refreshes its own entries and carries the rest through unchanged", async () => {
     using dir = makeFixture("timings-shard-merge", 4);
-    await Bun.write(
-      `${dir}/t.json`,
-      JSON.stringify({
-        version: 1,
-        files: { "f00.test.ts": 100, "f01.test.ts": 1, "f02.test.ts": 1, "f03.test.ts": 1 },
-      }),
-    );
+    const before = { "f00.test.ts": 100000, "f01.test.ts": 1, "f02.test.ts": 1, "f03.test.ts": 1 };
+    await Bun.write(`${dir}/t.json`, JSON.stringify({ version: 1, files: before }));
     const s1 = await runShard(String(dir), "1/2", ["--timings=t.json", "--update-timings"]);
     expect(s1.ran).toEqual(["f00"]);
-    const after = await Bun.file(`${dir}/t.json`).json();
-    expect(Object.keys(after.files).sort()).toEqual(["f00.test.ts", "f01.test.ts", "f02.test.ts", "f03.test.ts"]);
-    const s2 = await runShard(String(dir), "2/2", ["--timings=t.json"]);
-    expect([...s1.ran, ...s2.ran].sort()).toEqual(["f00", "f01", "f02", "f03"]);
+    const after = (await Bun.file(`${dir}/t.json`).json()).files;
+    expect({ ...after, "f00.test.ts": "measured" }).toEqual({ ...before, "f00.test.ts": "measured" });
+    expect(after["f00.test.ts"]).toBeLessThan(before["f00.test.ts"]);
     expect(s1.exitCode).toBe(0);
-    expect(s2.exitCode).toBe(0);
   });
 
   test("--update-timings without --timings is an error", async () => {

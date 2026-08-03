@@ -4499,9 +4499,10 @@ function runChildFilters(): RunChildFilters {
   }
   const namePatterns = parsePatternListEnv(process.env[kRunChildNamePatternsEnv]);
   const skipPatterns = parsePatternListEnv(process.env[kRunChildSkipPatternsEnv]);
-  runChildFiltersMemo = tagFilters === null && namePatterns === null && skipPatterns === null
-    ? null
-    : { tagFilters, namePatterns, skipPatterns };
+  runChildFiltersMemo =
+    tagFilters === null && namePatterns === null && skipPatterns === null
+      ? null
+      : { tagFilters, namePatterns, skipPatterns };
   return runChildFiltersMemo;
 }
 

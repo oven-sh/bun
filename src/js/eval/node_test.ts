@@ -349,9 +349,7 @@ async function main() {
       fatal(error);
     }
     if (randomizeFlag) {
-      const error = new TypeError(
-        "The property 'options.randomize' is not supported with watch mode. Received true",
-      );
+      const error = new TypeError("The property 'options.randomize' is not supported with watch mode. Received true");
       (error as { code?: string }).code = "ERR_INVALID_ARG_VALUE";
       fatal(error);
     }

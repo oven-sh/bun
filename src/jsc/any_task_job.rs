@@ -19,25 +19,13 @@ use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, Wor
 use crate::event_loop::ConcurrentTask;
 use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
 
-/// Close-once fence between a VM and every [`AnyTaskJob`] it schedules, so the
-/// pool-thread work body and completion either run entirely before
-/// `worker.terminate()` tears the VM down, or not at all.
-///
-/// Each VM owns one `Arc` clone; each in-flight job holds another (so the gate
-/// itself outlives both). The pool thread runs `ctx.run()` and the
-/// `enqueue_task_concurrent` push under a read lock: several ctxs read inputs
-/// from (and `Scrypt` writes its output into) JSC-heap-backed `ArrayBuffer`s
-/// that `Heap::lastChanceToFinalize` frees regardless of `protect()`, and the
-/// enqueue itself dereferences the embedded `EventLoop`, so both must be
-/// ordered before JSC-heap teardown and the VM free.
-///
-/// [`crate::web_worker::WebWorker`]'s shutdown calls [`Self::close`] before
-/// draining the concurrent queue, before JSC teardown, and before deallocating
-/// the VM. Taking the write lock waits out every in-flight reader (so the KDF
-/// finishes and its push is visible to the drain), and once `closed` is set
-/// any later pool task skips its body entirely. Same fence-then-drain shape as
-/// `ScriptExecutionContext::markTerminating` for the C++ `postTaskTo` path.
-/// Matches Node's behaviour of draining in-flight libuv work on env teardown.
+/// Close-once fence between a VM and every [`AnyTaskJob`] it schedules.
+/// [`AnyTaskJob::run_task`] runs `ctx.run()` and the completion enqueue under
+/// a read lock (both touch the JSC heap / VM box; `Heap::lastChanceToFinalize`
+/// frees `ArrayBuffer` inputs regardless of `protect()`). Worker shutdown and
+/// `global_exit` call [`Self::close`] (write lock, waits out readers) before
+/// JSC teardown and the VM free. Same fence-then-drain shape as
+/// `ScriptExecutionContext::markTerminating`.
 pub struct AnyTaskGate {
     closed: RwLock<bool>,
 }
@@ -101,9 +89,8 @@ pub trait AnyTaskJobCtx: Sized {
 /// e.g. a `JSPromiseStrong` field after scheduling.
 pub struct AnyTaskJob<C> {
     vm: bun_ptr::BackRef<VirtualMachine>,
-    /// The pool-thread [`Self::run_task`] only dereferences `vm` (and the
-    /// JSC-heap buffers `ctx` borrows) under this gate's read lock, so a
-    /// worker VM freed by terminate() is never touched. See [`AnyTaskGate`].
+    /// [`Self::run_task`] only dereferences `vm`/JSC-heap buffers under this
+    /// gate's read lock. See [`AnyTaskGate`].
     gate: Arc<AnyTaskGate>,
     task: WorkPoolTask,
     any_task: AnyTask,
@@ -219,15 +206,12 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
             return;
         }
         // Gate closed (worker terminated before this task was picked up).
-        // SAFETY: `this` is the sole owner (`run_gated` did not touch it);
-        // `gate` was written in `create` and is never read again past this
-        // point (the box is leaked below).
+        // SAFETY: sole owner of `*this` (`run_gated` did not touch it); `gate`
+        // is never read again (the box is leaked below).
         unsafe { core::ptr::drop_in_place(core::ptr::addr_of_mut!((*this).gate)) };
-        // The remainder of the box (`poll`, `ctx`) is intentionally leaked:
-        // `ctx` holds `Strong` JSC handles into the dead VM's heap and
-        // `poll.unref` would touch the freed event loop. This matches the fate
-        // of tasks already queued on a terminated worker's never-drained
-        // concurrent queue.
+        // `poll`/`ctx` are intentionally leaked: both would touch the freed
+        // VM/JSC heap on Drop. Same fate as tasks stranded on a terminated
+        // worker's never-drained concurrent queue.
     }
 
     /// `AnyTask` callback — runs ON the JS thread. Reclaims the heap

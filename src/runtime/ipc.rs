@@ -782,7 +782,11 @@ impl SendHandle {
     }
 
     /// Call the callback and deinit
-    pub(crate) fn complete(mut self, global: &JSGlobalObject, close_fn: &JsCell<Option<Protected>>) {
+    pub(crate) fn complete(
+        mut self,
+        global: &JSGlobalObject,
+        close_fn: &JsCell<Option<Protected>>,
+    ) {
         self.schedule_handle_close(global, close_fn);
         let _ = self.callbacks.call_next_tick(global); // TODO: properly propagate exception upwards
         // self drops here → data/callbacks/handle Drop.
@@ -793,7 +797,11 @@ impl SendHandle {
     /// callbacks without settling them — node discards its _handleQueue on
     /// abrupt close without invoking those callbacks (verified against
     /// v26.3.0; see the "unsent queued handle callback never fires" test).
-    pub(crate) fn abort_parked(self, global: &JSGlobalObject, close_fn: &JsCell<Option<Protected>>) {
+    pub(crate) fn abort_parked(
+        self,
+        global: &JSGlobalObject,
+        close_fn: &JsCell<Option<Protected>>,
+    ) {
         self.schedule_handle_close(global, close_fn);
     }
 

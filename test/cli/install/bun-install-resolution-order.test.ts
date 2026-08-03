@@ -15,9 +15,7 @@ type Packages = Record<string, Record<string, PackageVersion>>;
 // The historically flaky shape: many exact pins of one package plus a ranged
 // peer on it. The top-level version depended on which manifests landed first.
 const packages: Packages = {
-  "a-dep": Object.fromEntries(
-    Array.from({ length: 10 }, (_, i) => [`1.0.${i + 1}`, {} satisfies PackageVersion]),
-  ),
+  "a-dep": Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`1.0.${i + 1}`, {} satisfies PackageVersion])),
   "peer-a-dep-caret": { "1.0.0": { peerDependencies: { "a-dep": "^1.0.2" } } },
   ...Object.fromEntries(
     Array.from({ length: 10 }, (_, i) => [
@@ -43,10 +41,7 @@ beforeAll(async () => {
     for (const [version, meta] of Object.entries(versions)) {
       const pkgDir = join(String(dir), `${name}-${version}`);
       await mkdir(pkgDir, { recursive: true });
-      await Bun.write(
-        join(pkgDir, "package.json"),
-        JSON.stringify({ name, version, ...meta }, null, 2),
-      );
+      await Bun.write(join(pkgDir, "package.json"), JSON.stringify({ name, version, ...meta }, null, 2));
       await using pack = spawn({
         cmd: [bunExe(), "pm", "pack", "--destination", pkgDir],
         cwd: pkgDir,
@@ -175,11 +170,7 @@ function shuffled(names: string[], seed: number): string[] {
 
 test("registry response arrival order does not change the resolved lockfile", async () => {
   const names = Object.keys(packages);
-  const orders = [
-    names,
-    [...names].reverse(),
-    ...Array.from({ length: 4 }, (_, seed) => shuffled(names, seed + 1)),
-  ];
+  const orders = [names, [...names].reverse(), ...Array.from({ length: 4 }, (_, seed) => shuffled(names, seed + 1))];
 
   const lockfiles: string[] = [];
   for (const order of orders) {

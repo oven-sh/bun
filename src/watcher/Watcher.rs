@@ -108,6 +108,13 @@ pub struct Watcher {
     // Storing the `top_level_dir` slice directly avoids a forward-decl
     // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
     // allocator field dropped — global mimalloc (see §Allocators)
+    /// Ownership discriminator read by [`shutdown`]: `true` means the
+    /// watcher thread will free the allocation in [`thread_main`]; `false`
+    /// means the caller must. `start()` sets it before spawning (so the
+    /// spawn-to-first-access window is covered) and the `Err` arm of
+    /// [`thread_body`] clears it under `self.mutex` to hand the allocation
+    /// back when `watch_loop()` fails while the owner is still alive.
+    pub(crate) watchloop_handle: bun_core::AtomicCell<bool>,
     pub(crate) cwd: &'static [u8],
     pub(crate) thread: Option<std::thread::JoinHandle<()>>,
     /// Main thread clears this in `shutdown`; watcher thread polls it in
@@ -193,6 +200,7 @@ impl Watcher {
             platform: Platform::new(top_level_dir)?,
             watch_events: vec![WatchEvent::default(); MAX_COUNT].into_boxed_slice(),
             changed_filepaths: [const { None }; MAX_COUNT],
+            watchloop_handle: bun_core::AtomicCell::new(false),
             thread: None,
             running: bun_core::AtomicCell::new(true),
             close_descriptors: bun_core::AtomicCell::new(false),
@@ -228,6 +236,7 @@ impl Watcher {
 
     pub fn start(&mut self) -> Result<(), crate::Error> {
         debug_assert!(self.thread.is_none());
+        self.watchloop_handle.store(true);
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.
         let this = std::ptr::from_mut::<Watcher>(self) as usize;
@@ -240,6 +249,7 @@ impl Watcher {
                     let _ = Watcher::thread_main(this as *mut Watcher);
                 })
                 .map_err(|e| {
+                    self.watchloop_handle.store(false);
                     // Windows: raw_os_error() is a Win32 GetLastError() code, so
                     // route it through the u32 (Win32Error) mapper rather than
                     // from_errno's i64 discriminant-cast path.
@@ -273,24 +283,20 @@ impl Watcher {
             // Shared access suffices (atomics + mutex + column reads); the borrow
             // ends before the free below.
             let me = unsafe { &*this };
-            // Once `start()` spawns the thread, `thread_main()` always reaches
-            // `heap::take(this)` and frees the allocation: it owns the struct.
-            // Freeing here in the window between spawn and the thread's first
-            // access (it may not have been scheduled yet) is a UAF.
-            if me.thread.is_some() {
-                // `running = false` must be inside the critical section: each
-                // platform's `watch_loop_cycle` reads `running` under this mutex
-                // and only enters `on_file_update(ctx)` while it holds true, so
-                // releasing the lock with `running` already cleared guarantees no
-                // callback can begin after this function returns (the caller is
-                // about to drop `ctx`). The fast-exit free is instead serialized
-                // by `thread_main()` taking this mutex before `heap::take`.
-                me.mutex.lock();
+            // `watchloop_handle` is the single ownership discriminator. It is
+            // read under `self.mutex` so the `Err`-arm handback in
+            // `thread_body()` (which flips it under the same lock) cannot race
+            // the free below, and `running = false` inside the critical section
+            // guarantees no `on_file_update(ctx)` / `on_error(ctx)` can begin
+            // after this function returns (the caller is about to drop `ctx`).
+            me.mutex.lock();
+            if me.watchloop_handle.load() {
                 me.close_descriptors.store(close_descriptors);
                 me.running.store(false);
                 me.mutex.unlock();
                 false
             } else {
+                me.mutex.unlock();
                 if close_descriptors && me.running.load() {
                     let fds = me.watchlist.items_fd();
                     for &fd in fds {
@@ -325,21 +331,23 @@ impl Watcher {
         // allocation. The `&mut self` reborrow is scoped to this call and ends
         // *before* we reclaim the Box below; deallocating while a `&mut self`
         // argument is still protected is UB under Stacked Borrows / Tree Borrows.
-        unsafe { (*this).thread_body() };
+        let owner_still_alive = unsafe { (*this).thread_body() };
 
         // Close trace file if open
         WatcherTrace::deinit();
 
         Output::flush();
 
-        // SAFETY: `this` is the heap allocation from init(); the watcher thread
-        // owns it now and no `&`/`&mut` borrow of it remains live (the scoped
-        // reborrow above has ended).
-        drop(unsafe { bun_core::heap::take(this) });
+        if !owner_still_alive {
+            // SAFETY: `this` is the heap allocation from init(); the watcher thread
+            // owns it now and no `&`/`&mut` borrow of it remains live (the scoped
+            // reborrow above has ended).
+            drop(unsafe { bun_core::heap::take(this) });
+        }
         Ok(())
     }
 
-    fn thread_body(&mut self) {
+    fn thread_body(&mut self) -> bool {
         self.thread_lock.lock();
         Output::Source::configure_named_thread(zstr!("File Watcher"));
 
@@ -350,10 +358,16 @@ impl Watcher {
                 self.platform.stop();
                 // Hold `self.mutex` so `shutdown()` can't return (and the
                 // caller drop `ctx`) between the `running` check and
-                // `on_error` returning.
+                // `on_error` returning, and so the `watchloop_handle` flip
+                // below is observed by `shutdown()` before it decides to free.
                 let _guard = self.mutex.lock_guard();
                 if self.running.load() {
+                    // Owner is still alive — hand the allocation back; its
+                    // later `shutdown()` takes the else branch and frees.
+                    // Last access to `self` is `_guard`'s unlock on return.
+                    self.watchloop_handle.store(false);
                     (self.on_error)(self.ctx, err);
+                    return true;
                 }
             }
             Ok(()) => {}
@@ -376,6 +390,7 @@ impl Watcher {
                 let _ = bun_sys::close(fd);
             }
         }
+        false
     }
 
     pub fn flush_evictions(&mut self) {

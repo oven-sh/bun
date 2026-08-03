@@ -1117,10 +1117,8 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
 
 void GlobalObject::setConsole(void* console)
 {
-    // JSGlobalObject::setConsoleClient only stores a WeakPtr — keep the
-    // owning pointer on this global so the ConsoleObject (and its buffered
-    // messages) is freed when the global is destroyed (ShadowRealm globals
-    // are created and destroyed many times per process).
+    // JSGlobalObject::setConsoleClient only stores a WeakPtr — own it here so
+    // per-ShadowRealm globals free their ConsoleObject + buffered messages.
     m_ownedConsoleClient = makeUnique<Bun::ConsoleObject>(console);
     this->setConsoleClient(m_ownedConsoleClient.get());
 }

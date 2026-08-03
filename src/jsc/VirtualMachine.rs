@@ -1618,12 +1618,9 @@ impl VirtualMachine {
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
     }
 
-    /// Release every JSC `Strong` handle owned by this VM's Rust-side state
-    /// (direct fields, `RareData`, and `RuntimeState`) while the JSC HandleSet
-    /// is still alive. Called immediately before `destructOnExit` (main VM) /
-    /// `WebWorker__teardownJSCVM` (worker) — dropping any of these afterwards
-    /// reads freed handle storage (ASAN UAF in `Bun__StrongRef__delete`).
-    /// Idempotent; every `deinit()` leaves its slot empty.
+    /// Release every Rust-side JSC `Strong` (fields, `RareData`, `RuntimeState`)
+    /// while the HandleSet is live — dropping after `destructOnExit`/teardownJSCVM
+    /// is an ASAN UAF in `Bun__StrongRef__delete`. Idempotent.
     pub fn release_strong_refs_before_teardown(&mut self) {
         self.overridden_main.deinit();
         self.entry_point_result.value.deinit();
@@ -1676,10 +1673,8 @@ pub struct RuntimeHooks {
     /// `heap::take`s it and clears its thread-local cache. Without this slot
     /// every worker leaked one box.
     pub deinit_runtime_state: unsafe fn(vm: *mut VirtualMachine, state: RuntimeState),
-    /// Release every JSC `Strong` handle owned by `RuntimeState` (the SQL
-    /// contexts' on_query callbacks). Must run before the JSC VM teardown
-    /// (`destructOnExit`); dropping them in `deinit_runtime_state` afterwards
-    /// reads freed HandleSet storage (ASAN UAF in `Bun__StrongRef__delete`).
+    /// Release `RuntimeState`'s JSC `Strong` handles (SQL on_query callbacks)
+    /// before `destructOnExit` — dropping later UAFs the freed HandleSet.
     pub release_runtime_state_js_handles: unsafe fn(vm: *mut VirtualMachine),
     /// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic
     /// `bun:main` module body for `entry_path`. Returns `false` on error
@@ -4337,11 +4332,9 @@ impl VirtualMachine {
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {
-        // The `global_exit`/worker paths already released these before tearing
-        // the JSC VM down, which makes this a no-op there (every `deinit()`
-        // leaves its slot empty). `bake::production`'s unwind guard reaches
-        // `destroy()` with the JSC VM still live and no prior release, so this
-        // is where its handles are reclaimed.
+        // No-op on `global_exit`/worker paths (already released, idempotent);
+        // `bake::production`'s unwind guard reaches here with the JSC VM still
+        // live and no prior release, so this is its reclaim point.
         self.release_strong_refs_before_teardown();
 
         self.regular_event_loop.deinit();

@@ -8,14 +8,9 @@ bun_opaque::opaque_ffi! {
     pub struct URL;
 }
 
-// Getters take `&URL` (non-null `*const URL` at the C ABI; BunString.cpp never
-// mutates the WTF::URL on read). `&mut String` for the in/out params is
-// ABI-identical to non-null `*mut String`. `URL__deinit` consumes the C++
-// allocation, so it keeps a raw pointer and stays `unsafe fn`.
-//
-// Every string return is a +1 (`Bun::toStringRef`). `OwnedString` is
-// `#[repr(transparent)]` over `String`, so declaring these as `-> OwnedString`
-// is ABI-identical and gives every caller scope-exit deref for free.
+// Getters take `&URL` (BunString.cpp never mutates on read); `URL__deinit`
+// consumes the C++ allocation so it stays `unsafe fn`. String returns are +1
+// (`Bun::toStringRef`) → `OwnedString` (repr(transparent)) for scope-exit deref.
 unsafe extern "C" {
     safe fn URL__fromJS(value: JSValue, global: &JSGlobalObject) -> *mut URL;
     safe fn URL__fromString(input: &mut String) -> *mut URL;
@@ -77,14 +72,8 @@ impl URL {
         URL__password(self)
     }
 
-    /// Returns the host WITHOUT the port.
-    ///
-    /// Note that this does NOT match JS behavior, which returns the host with the port. The
-    /// with-port form lives on the JSC-free shim as `bun_url::whatwg::URL::hostname`.
-    ///
-    /// ```text
-    /// URL("http://example.com:8080").host() => "example.com"
-    /// ```
+    /// Host WITHOUT the port — opposite of JS `url.host` (https://url.spec.whatwg.org/#dom-url-host).
+    /// The with-port form is `bun_url::whatwg::URL::hostname`.
     pub fn host(&self) -> OwnedString {
         URL__host(self)
     }

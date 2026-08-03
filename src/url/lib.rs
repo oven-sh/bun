@@ -53,16 +53,9 @@ pub mod whatwg {
         _opaque: [u8; 0],
     }
 
-    // Getters take `*const URL` — the C++ side (BunString.cpp) never mutates the
-    // WTF::URL on read. `URL__deinit` keeps `*mut` (it `delete`s). `BunString*` inputs stay
-    // `*mut` to match the C ABI; callers pass a mutable local copy (see below).
-    // SAFETY (safe fn): `URL` is an opaque ZST handle (never null when behind `&`);
-    // `String` is a `#[repr(C)]` Copy POD that C++ reads (`BunString::toWTFString() const`).
-    // Getters take `&URL` (C++ never mutates on read); `deinit` takes `&mut URL` (consumes).
-    // `URL__originLength` keeps a raw `(*const u8, usize)` slice pair → stays `unsafe fn`.
-    // Every string return is a +1 (`Bun::toStringRef`). `OwnedString` is
-    // `#[repr(transparent)]` over `String`, so declaring these as
-    // `-> OwnedString` is ABI-identical and gives every caller scope-exit deref.
+    // SAFETY (safe fn): `&URL` = non-null opaque handle (BunString.cpp never
+    // mutates on read); `String` is `#[repr(C)]` Copy. String returns are +1
+    // (`Bun::toStringRef`) → `OwnedString` (repr(transparent)) for scope-exit deref.
     unsafe extern "C" {
         // `URL__fromJS` / `URL__getHrefFromJS` intentionally omitted — tier-6 (bun_jsc).
         safe fn URL__fromString(str: &mut String) -> Option<core::ptr::NonNull<URL>>;
@@ -78,12 +71,8 @@ pub mod whatwg {
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> u32;
     }
 
-    // The C ABI wants a mutable address. We take `&String` (matching existing call sites
-    // in this crate) and — since `bun_core::String: Copy` — bit-copy into a mutable
-    // local and pass `&mut local`. This avoids casting
-    // a shared-ref-derived pointer to `*mut` (read-only provenance). The C++ side
-    // (`BunString::toWTFString() const`) does not mutate, but the local-copy form is
-    // sound regardless.
+    // C ABI wants `*mut String`; `String: Copy` so bit-copy into a mutable local
+    // instead of casting a shared-ref pointer to `*mut` (read-only provenance).
 
     /// Percent-encodes the URL, punycode-encodes the hostname, and returns the normalized
     /// href. If parsing fails, the returned String's tag is `Dead`.
@@ -135,14 +124,8 @@ pub mod whatwg {
         pub fn href(&self) -> OwnedString {
             URL__href(self)
         }
-        /// Returns the host WITH the port.
-        ///
-        /// Note that this does NOT match JS `hostname`, which excludes the port (that
-        /// port-less form is `bun_jsc::URL::host`).
-        ///
-        /// ```text
-        /// URL("http://example.com:8080").hostname() => "example.com:8080"
-        /// ```
+        /// Host WITH the port — opposite of JS `url.hostname` (https://url.spec.whatwg.org/#dom-url-hostname).
+        /// The port-less form is `bun_jsc::URL::host`.
         pub fn hostname(&self) -> OwnedString {
             URL__hostname(self)
         }

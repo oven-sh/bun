@@ -525,20 +525,19 @@ class InspectorCDPAdapter {
       columnNumber: number | undefined;
       condition: string | undefined;
       resolved: boolean;
+      // True from the moment the stale binding's remove/re-set are posted
+      // until the re-set's reply lands: events referencing the stale id in
+      // that window (a breakpointResolved or a pause at the untranslated
+      // coordinate) are suppressed.
+      resetPending?: boolean;
+      // Set when the client removes the breakpoint while resetPending; the
+      // re-set reply then retires the new binding instead of aliasing it.
+      clientRemoved?: boolean;
     }
   > = new SafeMap();
   // Current backend breakpointId -> the id the client knows (only entries that
   // were re-set diverge).
   #breakpointIdAliases = new Map<string, string>();
-  // Pre-parse breakpoints whose removal was issued during retranslation,
-  // mapped to the generated location they were re-set to. The script starts
-  // executing as soon as it parses, so a stale pass-through breakpoint can
-  // fire before the backend processes the removal. When it fires on the same
-  // line the re-set resolved to, it is the breakpoint the client asked for
-  // (JSC resolved the stale request forward to the same place) and is
-  // reported under the id the client knows; a pause anywhere else has no V8
-  // equivalent (V8 re-resolves internally) and is resumed silently.
-  #supersededBreakpoints = new Map<string, AnyObject>();
   // Profiler domain: tracking state plus the deferred Profiler.stop replies,
   // each answered in order when ScriptProfiler.trackingComplete delivers the
   // samples. A FIFO so pipelined start/stop pairs over the remote transport
@@ -572,13 +571,13 @@ class InspectorCDPAdapter {
   constructor(
     writeToBackend: (message: string) => void,
     writeToClient: (message: string) => void,
+    allocateBackendId: () => number,
     isWaitingForDebugger: () => boolean = () => false,
     disconnectNotify: DisconnectNotifyState = {
       handshakeStarted: false,
       retaining: 0,
       adapters: undefined,
     },
-    allocateBackendId: () => number,
   ) {
     this.#writeToBackend = writeToBackend;
     this.#writeToClient = writeToClient;
@@ -659,8 +658,15 @@ class InspectorCDPAdapter {
   }
 
   #onBreakpointReset(bp: AnyObject, clientBreakpointId: string, result: AnyObject, error: AnyObject) {
+    bp.resetPending = false;
     if (error || typeof result.breakpointId !== "string") return;
     const { breakpointId } = result;
+    if (bp.clientRemoved) {
+      // The client removed this breakpoint while the re-set was in flight;
+      // retire the new binding instead of aliasing it.
+      this.#sendToBackend("Debugger.removeBreakpoint", { breakpointId });
+      return;
+    }
     this.#breakpointIdAliases.$delete(bp.jscId);
     bp.jscId = breakpointId;
     if (breakpointId !== clientBreakpointId) this.#breakpointIdAliases.$set(breakpointId, clientBreakpointId);
@@ -952,6 +958,16 @@ class InspectorCDPAdapter {
     return translated;
   }
 
+  // The stale binding (original coordinates bound as generated) can fire
+  // between scriptParsed and the re-set's completion; events carrying its id
+  // in that window describe a coordinate the client never asked for.
+  #isStaleResetBreakpoint(breakpointId: string): boolean {
+    for (const bp of this.#preParseBreakpoints.values()) {
+      if (bp.resetPending && bp.jscId === breakpointId) return true;
+    }
+    return false;
+  }
+
   #toClientBreakpointId(breakpointId: string): string {
     return this.#breakpointIdAliases.$get(breakpointId) ?? breakpointId;
   }
@@ -998,8 +1014,8 @@ class InspectorCDPAdapter {
     // JSC resolves distinct pre-parse requests on an unmapped line forward to
     // one shared pause location; removing one of them after a re-added
     // breakpoint resolved to that same location cleared the re-added one too.
-    for (const { bp, generated } of resets) {
-      this.#supersededBreakpoints.$set(bp.jscId, generated);
+    for (const { bp } of resets) {
+      bp.resetPending = true;
       this.#sendToBackend("Debugger.removeBreakpoint", { breakpointId: bp.jscId });
     }
     for (const { clientBreakpointId, bp, generated } of resets) {
@@ -1294,6 +1310,14 @@ class InspectorCDPAdapter {
         if (tracked) {
           this.#preParseBreakpoints.delete(params.breakpointId);
           this.#breakpointIdAliases.$delete(tracked.jscId);
+          if (tracked.resetPending) {
+            // The old binding is already removed and the re-set is in
+            // flight; its reply removes the new binding (clientRemoved) —
+            // forwarding the stale id would error and orphan the new one.
+            tracked.clientRemoved = true;
+            this.#replyToClient(id, {});
+            return;
+          }
           this.#sendToBackend(method, { breakpointId: tracked.jscId }, id, method);
           return;
         }
@@ -1696,12 +1720,18 @@ class InspectorCDPAdapter {
       }
 
       case "Debugger.paused": {
-        if (params.reason === "Breakpoint") {
-          const superseded = this.#supersededBreakpoints.$get(params.data?.breakpointId);
-          if (superseded !== undefined && params.callFrames?.[0]?.location?.lineNumber !== superseded.lineNumber) {
-            this.#sendToBackend("Debugger.resume");
-            return;
-          }
+        // A pause whose every hit breakpoint is a stale pre-parse binding is
+        // at a coordinate the client never asked for. The pause loop drains
+        // the backend queue, so the posted remove/re-set complete during this
+        // very pause; resuming then lets execution reach the corrected
+        // binding, which reports the pause the client expects.
+        if (
+          params.reason === "Breakpoint" &&
+          typeof params.data?.breakpointId === "string" &&
+          this.#isStaleResetBreakpoint(params.data.breakpointId)
+        ) {
+          this.#sendToBackend("Debugger.resume");
+          return;
         }
         const callFrames = (params.callFrames ?? []).map((frame: AnyObject) => ({
           callFrameId: frame.callFrameId,
@@ -1754,6 +1784,10 @@ class InspectorCDPAdapter {
         return;
 
       case "Debugger.breakpointResolved":
+        // A resolution of the stale pre-parse binding reports the coordinate
+        // the re-set is about to correct; #onBreakpointReset forwards the
+        // corrected one instead.
+        if (this.#isStaleResetBreakpoint(params.breakpointId)) return;
         this.#emitToClient("Debugger.breakpointResolved", {
           breakpointId: this.#toClientBreakpointId(params.breakpointId),
           location: this.#toOriginalLocation(params.location),

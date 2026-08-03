@@ -139,11 +139,12 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
       },
       async url => {
         await using proc = spawnFetch(`
-          const baseline = process.memoryUsage().rss;
+          const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const baseline = rss();
           let peak = baseline;
           const t = setInterval(() => {
-            const rss = process.memoryUsage().rss;
-            if (rss > peak) peak = rss;
+            const cur = rss();
+            if (cur > peak) peak = cur;
           }, 50);
           const r = await fetch(${JSON.stringify(url)}, {
             protocol: "http2",

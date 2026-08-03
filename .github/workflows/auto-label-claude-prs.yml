@@ -1,5 +1,8 @@
 name: Auto-label Claude PRs
 
+permissions:
+  contents: read
+
 on:
   pull_request:
     types: [opened]

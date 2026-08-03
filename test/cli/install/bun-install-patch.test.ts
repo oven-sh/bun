@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDir } from "harness";
 import { join } from "path";
 
 const normalizeBunSnapshot = (str: string) => {
@@ -121,7 +121,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       const patchFilename = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
-        const filedir = tempDirWithFiles("patch1", {
+        await using filedir = tempDir("patch1", {
           "package.json": JSON.stringify({
             "name": "bun-patch-test",
             "module": "index.ts",
@@ -149,7 +149,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
   });
 
   test("should patch a non-hoisted dependency", async () => {
-    const filedir = tempDirWithFiles("patch1", {
+    await using filedir = tempDir("patch1", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -179,7 +179,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       const patchFilename = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
-        const filedir = tempDirWithFiles("patch1", {
+        await using filedir = tempDir("patch1", {
           "package.json": JSON.stringify({
             "name": "bun-patch-test",
             "module": "index.ts",
@@ -208,7 +208,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
   test("should patch a transitive dependency", async () => {
     const version = "0.1.2";
     const patchFilename = filepathEscape(`is-odd@${version}.patch`);
-    const filedir = tempDirWithFiles("patch1", {
+    await using filedir = tempDir("patch1", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -237,7 +237,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       const patchfileName = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
-        const filedir = tempDirWithFiles("patch1", {
+        await using filedir = tempDir("patch1", {
           "package.json": JSON.stringify({
             "name": "bun-patch-test",
             "module": "index.ts",
@@ -280,7 +280,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
   });
 
   it("should patch a transitive dependency after it was already installed", async () => {
-    const filedir = tempDirWithFiles("patch1", {
+    await using filedir = tempDir("patch1", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -326,7 +326,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       const patchFilename = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
-        const filedir = tempDirWithFiles("patch1", {
+        await using filedir = tempDir("patch1", {
           "package.json": JSON.stringify({
             "name": "bun-patch-test",
             "module": "index.ts",
@@ -360,7 +360,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       const patchFilename = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
-        const filedir = tempDirWithFiles("patch1", {
+        await using filedir = tempDir("patch1", {
           "package.json": JSON.stringify({
             "name": "bun-patch-test",
             "module": "index.ts",
@@ -408,7 +408,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
 
   it("should update a transitive dependency when the patchfile changes", async () => {
     $.throws(true);
-    const filedir = tempDirWithFiles("patch1", {
+    await using filedir = tempDir("patch1", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -462,7 +462,7 @@ index aa7c7012cda790676032d1b01d78c0b69ec06360..6048e7cb462b3f9f6ac4dc21aacf9a09
 `;
 
     $.throws(true);
-    const filedir = tempDirWithFiles("patch1", {
+    await using filedir = tempDir("patch1", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -501,7 +501,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
   };
 `;
 
-    const filedir = tempDirWithFiles("patch1", {
+    await using filedir = tempDir("patch1", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -574,7 +574,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     const patchEnv = bunEnv;
 
     test("should create patch for package and commit it", async () => {
-      const filedir = tempDirWithFiles("patch-isolated", {
+      await using filedir = tempDir("patch-isolated", {
         "package.json": JSON.stringify({
           "name": "bun-patch-isolated-test",
           "module": "index.ts",
@@ -635,7 +635,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     });
 
     test("should patch transitive dependency with isolated linker", async () => {
-      const filedir = tempDirWithFiles("patch-isolated-transitive", {
+      await using filedir = tempDir("patch-isolated-transitive", {
         "package.json": JSON.stringify({
           "name": "bun-patch-isolated-transitive-test",
           "module": "index.ts",
@@ -690,7 +690,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     });
 
     test("should handle scoped packages with isolated linker", async () => {
-      const filedir = tempDirWithFiles("patch-isolated-scoped", {
+      await using filedir = tempDir("patch-isolated-scoped", {
         "package.json": JSON.stringify({
           "name": "bun-patch-isolated-scoped-test",
           "module": "index.ts",
@@ -748,7 +748,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     });
 
     test("should work with workspaces and isolated linker", async () => {
-      const filedir = tempDirWithFiles("patch-isolated-workspace", {
+      await using filedir = tempDir("patch-isolated-workspace", {
         "package.json": JSON.stringify({
           "name": "workspace-root",
           "workspaces": ["packages/*"],
@@ -811,7 +811,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     });
 
     test("should preserve patch after reinstall with isolated linker", async () => {
-      const filedir = tempDirWithFiles("patch-isolated-reinstall", {
+      await using filedir = tempDir("patch-isolated-reinstall", {
         "package.json": JSON.stringify({
           "name": "bun-patch-isolated-reinstall-test",
           "module": "index.ts",
@@ -856,7 +856,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     });
 
     test("should handle multiple patches with isolated linker", async () => {
-      const filedir = tempDirWithFiles("patch-isolated-multiple", {
+      await using filedir = tempDir("patch-isolated-multiple", {
         "package.json": JSON.stringify({
           "name": "bun-patch-isolated-multiple-test",
           "module": "index.ts",
@@ -955,7 +955,7 @@ index 0000000000000000000000000000000000000000..2f9a147b6e5d17254f1bfce0d4e109a2
 `;
 
   test("install with an empty cache downloads the package unpatched", async () => {
-    const filedir = tempDirWithFiles("patch-remove", {
+    await using filedir = tempDir("patch-remove", {
       "package.json": JSON.stringify({
         name: "remove-patch-test",
         dependencies: {

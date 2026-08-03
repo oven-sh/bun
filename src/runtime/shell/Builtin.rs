@@ -17,16 +17,16 @@ use crate::shell::states::cmd::{Cmd, CmdState};
 use crate::shell::yield_::Yield;
 
 pub struct Builtin {
-    pub kind: Kind,
+    pub(crate) kind: Kind,
     /// argv[1..] as NUL-terminated strings (argv[0] is the builtin name).
     /// Points into the Cmd's `args` storage.
     pub args: Vec<*const c_char>,
-    pub stdin: BuiltinInput,
-    pub stdout: BuiltinIO,
-    pub stderr: BuiltinIO,
+    pub(crate) stdin: BuiltinInput,
+    pub(crate) stdout: BuiltinIO,
+    pub(crate) stderr: BuiltinIO,
     /// Scratch for `fmt_error_arena`. One outstanding error string at a time.
-    pub err_buf: Vec<u8>,
-    pub impl_: Impl,
+    pub(crate) err_buf: Vec<u8>,
+    pub(crate) impl_: Impl,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -205,7 +205,7 @@ impl Kind {
 
     /// Maps argv[0] to a builtin kind, or `None` to fall through to
     /// subprocess spawn.
-    pub fn from_argv0(s: &[u8]) -> Option<Kind> {
+    pub(crate) fn from_argv0(s: &[u8]) -> Option<Kind> {
         let result = Self::from_argv0_raw(s)?;
         if cfg!(windows) || Self::force_enable_on_posix() {
             return Some(result);
@@ -292,7 +292,7 @@ impl Drop for PinnedArrayBuf {
 /// Refcounted wrapper around a `webcore.Blob`. `Arc` provides the refcount;
 /// `Drop` runs `Blob::deinit`.
 pub struct BuiltinBlob {
-    pub blob: crate::webcore::Blob,
+    pub(crate) blob: crate::webcore::Blob,
 }
 // `BuiltinBlob` is auto-`Send + Sync`: its sole field is `webcore::Blob`,
 // which already asserts `Send + Sync`. No `unsafe impl` needed.
@@ -441,14 +441,14 @@ impl BuiltinInput {
     }
 
     #[inline]
-    pub fn needs_io(&self) -> bool {
+    pub(crate) fn needs_io(&self) -> bool {
         matches!(self, BuiltinInput::Fd(_))
     }
 }
 
 impl Builtin {
     #[inline]
-    pub fn args_slice(&self) -> &[*const c_char] {
+    pub(crate) fn args_slice(&self) -> &[*const c_char] {
         &self.args
     }
 
@@ -469,7 +469,7 @@ impl Builtin {
     /// argv storage is a separate heap allocation that is not freed or
     /// reallocated while the `Builtin` is live — not on `'a`.
     #[inline]
-    pub fn arg_bytes<'a>(&self, idx: usize) -> &'a [u8] {
+    pub(crate) fn arg_bytes<'a>(&self, idx: usize) -> &'a [u8] {
         let p: *const c_char = self.args[idx];
         // SAFETY: see doc comment — `p` is a valid NUL-terminated pointer
         // into the Cmd's argv storage, live for the Builtin's lifetime.
@@ -482,7 +482,7 @@ impl Builtin {
     /// that need to pass the argument to a `&ZStr`-taking syscall wrapper
     /// without re-copying.
     #[inline]
-    pub fn arg_zstr<'a>(&self, idx: usize) -> &'a bun_core::ZStr {
+    pub(crate) fn arg_zstr<'a>(&self, idx: usize) -> &'a bun_core::ZStr {
         let p: *const c_char = self.args[idx];
         // SAFETY: see `arg_bytes` — valid NUL-terminated argv pointer.
         bun_core::ZStr::from_cstr(unsafe { core::ffi::CStr::from_ptr(p) })
@@ -493,7 +493,7 @@ impl Builtin {
     /// `None` (meaning: caller should now call `Builtin::start`). A
     /// `Some(yield)` return means setup wrote a failing error (or threw) and
     /// the caller should propagate that yield instead.
-    pub fn init(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
+    pub(crate) fn init(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
         use crate::shell::states::cmd::Exec;
 
         // Borrow argv[1..] as `*const c_char` into the Cmd's `args` storage.
@@ -844,7 +844,7 @@ impl Builtin {
     }
 
     /// Finish the builtin with `exit_code` and signal the owning Cmd.
-    pub fn done(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
+    pub(crate) fn done(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
         // Output is written through immediately in `write_no_io`, so there
         // is nothing to flush here.
         Cmd::on_exec_done(interp, cmd, exit_code)
@@ -853,7 +853,7 @@ impl Builtin {
     /// Look up the Builtin inside a Cmd's `exec` slot.
     #[inline]
     #[track_caller]
-    pub fn of<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a Builtin {
+    pub(crate) fn of<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a Builtin {
         match &interp.as_cmd(cmd).exec {
             crate::shell::states::cmd::Exec::Builtin(b) => b,
             _ => panic!("Cmd {} is not running a builtin", cmd),
@@ -862,7 +862,7 @@ impl Builtin {
 
     #[inline]
     #[track_caller]
-    pub fn of_mut<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a mut Builtin {
+    pub(crate) fn of_mut<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a mut Builtin {
         match &mut interp.as_cmd_mut(cmd).exec {
             crate::shell::states::cmd::Exec::Builtin(b) => b,
             _ => panic!("Cmd {} is not running a builtin", cmd),
@@ -876,7 +876,7 @@ impl Builtin {
 
     /// Returns the bytes available on stdin when it is *not* an async fd
     /// (arraybuf / piped buf / blob).
-    pub fn read_stdin_no_io<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a [u8] {
+    pub(crate) fn read_stdin_no_io<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a [u8] {
         match &Self::of(interp, cmd).stdin {
             BuiltinInput::ArrayBuf { buf, .. } => buf.slice(),
             BuiltinInput::Blob(b) => b.blob.shared_view(),
@@ -889,7 +889,7 @@ impl Builtin {
     ///
     /// Returns `Err(ENOSPC)` when an ArrayBuffer target is already full.
     /// **WARNING**: caller must have checked `needs_io() == None` first.
-    pub fn write_no_io(
+    pub(crate) fn write_no_io(
         interp: &Interpreter,
         cmd: NodeId,
         io_kind: IoKind,
@@ -925,7 +925,7 @@ impl Builtin {
 
     /// Event loop handle (forwarded from the interpreter).
     #[inline]
-    pub fn event_loop(
+    pub(crate) fn event_loop(
         interp: &Interpreter,
         _cmd: NodeId,
     ) -> crate::shell::interpreter::EventLoopHandle {
@@ -934,7 +934,7 @@ impl Builtin {
 
     /// Cwd fd of the owning Cmd's shell env.
     #[inline]
-    pub fn cwd(interp: &Interpreter, cmd: NodeId) -> bun_sys::Fd {
+    pub(crate) fn cwd(interp: &Interpreter, cmd: NodeId) -> bun_sys::Fd {
         Self::shell(interp, cmd).cwd_fd
     }
 
@@ -942,7 +942,7 @@ impl Builtin {
     ///
     /// Stored on the `Builtin` so the returned `&[u8]` borrow stays valid
     /// across the immediate `write_no_io` / `enqueue` call.
-    pub fn fmt_error_arena<'a>(
+    pub(crate) fn fmt_error_arena<'a>(
         interp: &'a Interpreter,
         cmd: NodeId,
         kind: Option<Kind>,
@@ -961,7 +961,7 @@ impl Builtin {
 
     /// Error messages formatted to match bash. Dispatches on the variant;
     /// `Sys` recurses into the system-error formatter.
-    pub fn shell_err_to_string<'a>(
+    pub(crate) fn shell_err_to_string<'a>(
         interp: &'a Interpreter,
         cmd: NodeId,
         kind: Kind,
@@ -1016,7 +1016,7 @@ impl Builtin {
     /// `bun_sys::coreutils_error_map` so output matches GNU coreutils
     /// (e.g. `ENOENT` → "No such file or directory"); falls back to
     /// `"unknown error {errno}"` when unmapped.
-    pub fn task_error_to_string<'a>(
+    pub(crate) fn task_error_to_string<'a>(
         interp: &'a Interpreter,
         cmd: NodeId,
         kind: Kind,
@@ -1053,7 +1053,7 @@ impl Builtin {
     /// (`illegal option` / usage / `unsupported option`), runs `set_wait_err`
     /// so the per-builtin state machine can move to its `WaitingWriteErr`
     /// variant, then writes the message to stderr and finishes with exit 1.
-    pub fn fail_parse(
+    pub(crate) fn fail_parse(
         interp: &Interpreter,
         cmd: NodeId,
         kind: Kind,
@@ -1087,7 +1087,7 @@ impl Builtin {
     /// Write `buf` to stderr (async if needed) then finish with `exit_code`.
     /// Shared helper for builtins whose only failure path is "print error and
     /// exit", so each builtin doesn't repeat the needs_io branch.
-    pub fn write_failing_error(
+    pub(crate) fn write_failing_error(
         interp: &Interpreter,
         cmd: NodeId,
         buf: &[u8],

@@ -219,3 +219,6 @@ src/jsc/bindings/GeneratedBindings.zig
 # Kept locally for the ongoing work; not part of the source tree.
 /specs/
 scratch/
+
+# hawk analysis scaffolding (see tools/hawk/); generated per-run, never committed
+src/bun_bin/hawk_root.rs

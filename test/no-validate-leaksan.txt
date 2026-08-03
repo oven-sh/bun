@@ -226,7 +226,6 @@ test/cli/test/parallel.test.ts
 
 # bun.assert(!this.hasPendingActivity() or jsc.VirtualMachine.get().isShuttingDown());
 # @call(bun.callmod_inline, Subprocess.finalize, .{thisValue});
-test/js/node/test/parallel/test-set-http-max-http-headers.js
 test/js/node/test/parallel/test-child-process-windows-hide.js
 test/cli/inspect/BunFrontendDevServer.test.ts
 test/cli/inspect/HTTPServerAgent.test.ts
@@ -461,7 +460,7 @@ test/js/node/tls/node-tls-connect.test.ts
 test/bundler/native-plugin.test.ts
 
 # Slow
-test/js/bun/typescript/type-export.test.ts 
+test/js/bun/typescript/type-export.test.ts
 
 # Worker termination exception in PropertyCallback
 test/js/node/test/parallel/test-worker-message-port-transfer-terminate.js

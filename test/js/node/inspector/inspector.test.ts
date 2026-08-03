@@ -1378,6 +1378,102 @@ test("a by-URL breakpoint set before its script parses is re-resolved through th
   }
 }, 30_000);
 
+test("a pre-parse breakpoint never surfaces its stale binding to the client", async () => {
+  // Race regression: the pre-parse set goes out at original coordinates (no
+  // map yet); the correction posted at scriptParsed can lose to execution,
+  // and the stale binding fired one line early (resolved@stale, paused@stale,
+  // then the corrected resolved). The adapter must suppress the stale events
+  // and only surface the corrected coordinate.
+  const dir = tempDir("inspector-preparse-race", {
+    "main.js": `await import("./lazy.js");\n`,
+    "lazy.js": lazyShiftFixture,
+  });
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "--inspect-brk=0", "main.js"],
+    env: inspectorChildEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  try {
+    const decoder = new TextDecoder();
+    const stderrReader = proc.stderr.getReader();
+    let stderrText = "";
+    let wsUrl: string | undefined;
+    while (!wsUrl) {
+      const { value, done } = await stderrReader.read();
+      if (done) throw new Error(`stderr closed before the banner: ${stderrText}`);
+      stderrText += decoder.decode(value);
+      wsUrl = stderrText.match(/Debugger listening on (ws:\S+)/)?.[1];
+    }
+    const ws = new WebSocket(wsUrl);
+    await new Promise<void>((resolve, reject) => {
+      ws.onopen = () => resolve();
+      ws.onerror = err => reject(err);
+    });
+    let nextId = 1;
+    const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+    const resolvedEvents: any[] = [];
+    const pausesForBp: any[] = [];
+    let bpId = "";
+    let sawBpPause = Promise.withResolvers<void>();
+    ws.onmessage = event => {
+      const msg = JSON.parse(String(event.data));
+      if (msg.id != null && pending.has(msg.id)) {
+        const p = pending.get(msg.id)!;
+        pending.delete(msg.id);
+        msg.error ? p.reject(new Error(JSON.stringify(msg.error))) : p.resolve(msg.result);
+      } else if (msg.method === "Debugger.breakpointResolved" && msg.params.breakpointId === bpId) {
+        resolvedEvents.push(msg.params);
+      } else if (msg.method === "Debugger.paused") {
+        if ((msg.params.hitBreakpoints ?? []).includes(bpId)) {
+          pausesForBp.push(msg.params);
+          sawBpPause.resolve();
+        } else {
+          // break-on-start pause: release it (the pre-parse set already went out).
+          ws.send(JSON.stringify({ id: nextId++, method: "Debugger.resume", params: {} }));
+        }
+      }
+    };
+    const abandon = (why: string) => {
+      const err = new Error(`${why}; stderr: ${stderrText}`);
+      sawBpPause.reject(err);
+      for (const p of pending.values()) p.reject(err);
+      pending.clear();
+    };
+    ws.onerror = () => abandon("inspector websocket errored");
+    ws.onclose = () => abandon("inspector websocket closed");
+    proc.exited.then(code => abandon(`child exited (code ${code})`));
+    function send(method: string, params?: unknown): Promise<any> {
+      return new Promise((resolve, reject) => {
+        const id = nextId++;
+        pending.set(id, { resolve, reject });
+        ws.send(JSON.stringify({ id, method, params }));
+      });
+    }
+
+    await send("Runtime.enable", {});
+    await send("Debugger.enable", {});
+    const fileUrl = pathToFileURL(join(String(dir), "lazy.js")).href;
+    const set = await send("Debugger.setBreakpointByUrl", { lineNumber: 10, url: fileUrl });
+    bpId = set.breakpointId;
+    await send("Runtime.runIfWaitingForDebugger", {});
+    await sawBpPause.promise;
+
+    // Every surfaced event for this breakpoint reports the named line in
+    // original coordinates — the stale one-line-early binding never leaks.
+    expect(pausesForBp[0].callFrames[0].location.lineNumber).toBe(10);
+    for (const ev of resolvedEvents) {
+      expect(ev.location.lineNumber).toBe(10);
+    }
+    ws.close();
+  } finally {
+    proc.kill();
+    await proc.exited;
+    dir[Symbol.dispose]();
+  }
+}, 30_000);
+
 test("Session.post matches node's return and throw contract", async () => {
   // Verified on node v26.3.0: post() always returns undefined, and without a
   // callback a protocol error is silent (callback-only delivery).

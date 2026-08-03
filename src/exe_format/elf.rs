@@ -212,17 +212,18 @@ impl ElfFile {
         let ehdr = read_ehdr(&self.data);
         let bun_section = self.find_bun_section(ehdr)?;
         let bun_section_offset = bun_section.file_offset;
+        let bun_section_vaddr = bun_section.vaddr;
         let page_size = Self::page_size(ehdr);
 
         let header_size: u64 = size_of::<u64>() as u64;
         let new_content_size: u64 = header_size + payload.len() as u64;
         let aligned_new_size = align_up(new_content_size, page_size);
 
-        // Locate the writable PT_LOAD we'll extend. .bun lives in this
-        // segment already (BlobHeader is `aligned(16K)` + PROGBITS with WA
-        // flags). Growing an existing PT_LOAD is the layout a linker would
-        // naturally produce; WSL1's kernel loader rejects binaries that
-        // instead add a late PT_LOAD by repurposing PT_GNU_STACK (#29963).
+        // Extend the writable PT_LOAD that contains `.bun` (matched by vaddr,
+        // not "first writable": patchelf'd templates have an extra writable
+        // PT_LOAD holding the relocated PHDR + `.interp`, #31023). Growing an
+        // existing PT_LOAD rather than adding a late one is required by
+        // WSL1's kernel loader (#29963).
         let phdr_size = size_of::<Elf64_Phdr>();
         let mut rw_phdr_index: Option<usize> = None;
         let mut rw_phdr: Elf64_Phdr = Elf64_Phdr::ZEROED;
@@ -239,7 +240,10 @@ impl ElfFile {
                 max_vaddr_end = vaddr_end;
             }
 
-            if (phdr.p_flags & PF_W) != 0 && rw_phdr_index.is_none() {
+            if (phdr.p_flags & PF_W) != 0
+                && phdr.p_vaddr <= bun_section_vaddr
+                && bun_section_vaddr < vaddr_end
+            {
                 rw_phdr_index = Some(i);
                 rw_phdr = phdr;
             }
@@ -426,11 +430,6 @@ impl ElfFile {
         Ok(())
     }
 
-    pub fn write(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
-        writer.write_all(&self.data)?;
-        Ok(())
-    }
-
     // --- Internal helpers ---
 
     /// Returns the file offset and section index of the `.bun` section.
@@ -467,6 +466,7 @@ impl ElfFile {
                 if name == b".bun" {
                     return Ok(BunSectionInfo {
                         file_offset: shdr.sh_offset,
+                        vaddr: shdr.sh_addr,
                         section_index: u16::try_from(i).expect("int cast"),
                     });
                 }
@@ -499,6 +499,8 @@ impl ElfFile {
 struct BunSectionInfo {
     /// File offset of the .bun section's data (sh_offset).
     file_offset: u64,
+    /// Virtual address of the .bun section (sh_addr).
+    vaddr: u64,
     /// Index of the .bun section in the section header table.
     section_index: u16,
 }

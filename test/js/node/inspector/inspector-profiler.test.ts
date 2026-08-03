@@ -213,7 +213,7 @@ describe("node:inspector", () => {
     });
 
     test("Profiler.disable succeeds", async () => {
-      session.post("Profiler.enable");
+      await post(session, "Profiler.enable");
       const result = await post(session, "Profiler.disable");
       expect(result).toEqual({});
     });
@@ -223,19 +223,19 @@ describe("node:inspector", () => {
     });
 
     test("Profiler.start after enable succeeds", async () => {
-      session.post("Profiler.enable");
+      await post(session, "Profiler.enable");
       const result = await post(session, "Profiler.start");
       expect(result).toEqual({});
     });
 
     test("Profiler.stop without start throws", async () => {
-      session.post("Profiler.enable");
+      await post(session, "Profiler.enable");
       await expect(post(session, "Profiler.stop")).rejects.toThrow("not started");
     });
 
     test("Profiler.stop returns valid profile", async () => {
-      session.post("Profiler.enable");
-      session.post("Profiler.start");
+      await post(session, "Profiler.enable");
+      await post(session, "Profiler.start");
 
       // Do some work to generate profile data
       let sum = 0;
@@ -295,8 +295,8 @@ describe("node:inspector", () => {
     });
 
     test("samples and timeDeltas have same length", async () => {
-      session.post("Profiler.enable");
-      session.post("Profiler.start");
+      await post(session, "Profiler.enable");
+      await post(session, "Profiler.start");
 
       // Do some work
       let sum = 0;
@@ -311,8 +311,8 @@ describe("node:inspector", () => {
     });
 
     test("samples reference valid node IDs", async () => {
-      session.post("Profiler.enable");
-      session.post("Profiler.start");
+      await post(session, "Profiler.enable");
+      await post(session, "Profiler.start");
 
       // Do some work
       let sum = 0;
@@ -330,45 +330,45 @@ describe("node:inspector", () => {
     });
 
     test("Profiler.setSamplingInterval works", async () => {
-      session.post("Profiler.enable");
+      await post(session, "Profiler.enable");
       const result = await post(session, "Profiler.setSamplingInterval", { interval: 500 });
       expect(result).toEqual({});
     });
 
     test("Profiler.setSamplingInterval throws if profiler is running", async () => {
-      session.post("Profiler.enable");
-      session.post("Profiler.start");
+      await post(session, "Profiler.enable");
+      await post(session, "Profiler.start");
       await expect(post(session, "Profiler.setSamplingInterval", { interval: 500 })).rejects.toThrow(
         "Cannot change sampling interval while profiler is running",
       );
-      session.post("Profiler.stop");
+      await post(session, "Profiler.stop");
     });
 
     test("Profiler.setSamplingInterval requires positive interval", async () => {
-      session.post("Profiler.enable");
+      await post(session, "Profiler.enable");
       await expect(post(session, "Profiler.setSamplingInterval", { interval: 0 })).rejects.toThrow();
       await expect(post(session, "Profiler.setSamplingInterval", { interval: -1 })).rejects.toThrow();
     });
 
     test("double Profiler.start is a no-op", async () => {
-      session.post("Profiler.enable");
-      session.post("Profiler.start");
+      await post(session, "Profiler.enable");
+      await post(session, "Profiler.start");
       const result = await post(session, "Profiler.start");
       expect(result).toEqual({});
-      session.post("Profiler.stop");
+      await post(session, "Profiler.stop");
     });
 
     test("profiler can be restarted after stop", async () => {
       // First run
-      session.post("Profiler.enable");
-      session.post("Profiler.start");
+      await post(session, "Profiler.enable");
+      await post(session, "Profiler.start");
       let sum = 0;
       for (let i = 0; i < 1000; i++) sum += i;
       const result1 = await post(session, "Profiler.stop");
       expect(result1).toHaveProperty("profile");
 
       // Second run
-      session.post("Profiler.start");
+      await post(session, "Profiler.start");
       for (let i = 0; i < 1000; i++) sum += i;
       const result2 = await post(session, "Profiler.stop");
       expect(result2).toHaveProperty("profile");
@@ -379,14 +379,14 @@ describe("node:inspector", () => {
     });
 
     test("disconnect() stops running profiler", async () => {
-      session.post("Profiler.enable");
-      session.post("Profiler.start");
+      await post(session, "Profiler.enable");
+      await post(session, "Profiler.start");
       session.disconnect();
 
       // Create new session and verify profiler was stopped
       const session2 = new inspector.Session();
       session2.connect();
-      session2.post("Profiler.enable");
+      await post(session2, "Profiler.enable");
 
       // This should work without error (profiler is not running)
       const result = await post(session2, "Profiler.setSamplingInterval", { interval: 500 });
@@ -461,7 +461,7 @@ describe("node:inspector", () => {
     test("takePreciseCoverage before startPreciseCoverage throws", async () => {
       const session = new inspector.Session();
       session.connect();
-      session.post("Profiler.enable");
+      await post(session, "Profiler.enable");
       await expect(post(session, "Profiler.takePreciseCoverage")).rejects.toThrow(
         "Precise coverage has not been started.",
       );
@@ -471,10 +471,10 @@ describe("node:inspector", () => {
     test("Profiler.disable stops precise coverage, like V8", async () => {
       const session = new inspector.Session();
       session.connect();
-      session.post("Profiler.enable");
-      session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
-      session.post("Profiler.disable");
-      session.post("Profiler.enable");
+      await post(session, "Profiler.enable");
+      await post(session, "Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+      await post(session, "Profiler.disable");
+      await post(session, "Profiler.enable");
       await expect(post(session, "Profiler.takePreciseCoverage")).rejects.toThrow(
         "Precise coverage has not been started.",
       );

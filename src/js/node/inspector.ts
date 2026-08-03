@@ -1110,11 +1110,9 @@ class Session extends EventEmitter {
     const adapter = new InspectorCDPAdapter(
       dispatchInProcessBackendMessage,
       this.#deliverClientMessage.bind(this),
+      allocateInProcessBackendId,
       // No wait-for-debugger or exit-handshake state: an in-process Session
       // never retains the context, matching Node's non-preventShutdown path.
-      undefined,
-      undefined,
-      allocateInProcessBackendId,
     );
     inProcessAdapters.add(adapter);
     this.#adapter = adapter;

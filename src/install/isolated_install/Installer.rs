@@ -932,8 +932,7 @@ impl Task {
                                                         | sys::Errno::EACCES
                                                         | sys::Errno::EPERM
                                                 ) {
-                                                    // the hardlink walk advanced the dir cursor; rewind it for
-                                                    // the copy walk (Windows restarts the scan on its own)
+                                                    // rewind the dir cursor the hardlink walk consumed (Windows restarts the scan itself)
                                                     #[cfg(not(windows))]
                                                     if let sys::Result::Err(err) =
                                                         sys::set_file_offset(folder_dir, 0)

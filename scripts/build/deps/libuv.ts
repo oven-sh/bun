@@ -15,9 +15,10 @@ import type { Dependency } from "../source.ts";
 // fixes (oven-sh/libuv#8), high-res poll timeouts (oven-sh/libuv#9),
 // FileModeInformation error return (oven-sh/libuv#10), error translation /
 // propagation audit fixes (oven-sh/libuv#11), uv_spawn returns an error
-// instead of aborting on AssignProcessToJobObject failure (oven-sh/libuv#12).
+// instead of aborting on AssignProcessToJobObject failure (oven-sh/libuv#12),
+// and closes the process/thread handles on that error path (oven-sh/libuv#13).
 // To bump, update `bun`.
-const LIBUV_COMMIT = "58de9bb2fb3679bce98a7008bcd8be2484d6a1cf";
+const LIBUV_COMMIT = "3aab69bc2b7bc5a61d57ce91ca10b039f73d766d";
 
 // prettier-ignore
 const SHARED = [

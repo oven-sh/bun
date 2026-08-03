@@ -577,6 +577,11 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
     // property read must not propagate exceptions out of this function.
     auto& vm = JSC::getVM(workerGlobalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // A TerminationException can be pending here (CLEAR_IF_EXCEPTION at the
+    // call site cannot clear it); SerializedScriptValue::create enters JS and
+    // asserts on entry with one on the VM.
+    if (scope.exception())
+        return false;
 
     auto serialized = SerializedScriptValue::create(*workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
     CLEAR_IF_EXCEPTION(scope);
@@ -786,6 +791,16 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
 {
     JSValue error = JSC::JSValue::decode(errorValue);
     WTF::String messageStr = message->transferToWTFString();
+    auto& vm = JSC::getVM(globalObject);
+    // 'online' now fires before the entry point runs, so terminate() can land
+    // while the entry module is still evaluating; this is the error sink for
+    // that unwind. The termination exception is not clearable by JS, and the
+    // worker-side error-event dispatch and serialization below both enter JS
+    // (executeCallImpl asserts !exception() on entry). Post the parent-side
+    // message only and skip the worker-side JS work.
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return worker->dispatchErrorWithMessage(WTF::move(messageStr), {});
+
     ErrorEvent::Init init;
     init.message = messageStr.isolatedCopy();
     init.error = error;

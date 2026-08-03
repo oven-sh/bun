@@ -490,8 +490,12 @@ test(
           'parentPort.postMessage("up");';
         for (let r = 0; r < ${rounds}; r++) {
           const w = new Worker(src, { eval: true });
+          await new Promise((res, rej) => {
+            w.once("message", res);
+            w.once("error", rej);
+            w.once("exit", (c) => rej(new Error("worker exited " + c + " before ready")));
+          });
           w.on("error", () => {});
-          await new Promise((res) => w.once("message", res));
           await w.terminate();
         }
         console.log("ok");

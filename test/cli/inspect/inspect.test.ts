@@ -300,49 +300,51 @@ describe("websocket", () => {
   });
 });
 
-describe("http metadata endpoint", () => {
-  let metadataInspectee: Subprocess | undefined;
+async function spawnInspectee(): Promise<{ child: Subprocess; url: URL }> {
+  const child = spawn({
+    cwd: import.meta.dir,
+    cmd: [bunExe(), "--inspect=127.0.0.1:0", "inspectee.js"],
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
 
-  async function spawnInspectee(): Promise<URL> {
-    metadataInspectee = spawn({
-      cwd: import.meta.dir,
-      cmd: [bunExe(), "--inspect=127.0.0.1:0", "inspectee.js"],
-      env: bunEnv,
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-
-    let url: URL | undefined;
-    let stderr = "";
-    const decoder = new TextDecoder();
-    for await (const chunk of metadataInspectee.stderr as ReadableStream) {
-      stderr += decoder.decode(chunk);
-      for (const line of stderr.split("\n")) {
-        try {
-          url = new URL(line);
-        } catch {}
-        if (url?.protocol.includes("ws")) {
-          break;
-        }
-      }
-      if (stderr.includes("Listening:")) {
+  let url: URL | undefined;
+  let stderr = "";
+  const decoder = new TextDecoder();
+  for await (const chunk of child.stderr as ReadableStream) {
+    stderr += decoder.decode(chunk);
+    for (const line of stderr.split("\n")) {
+      try {
+        url = new URL(line);
+      } catch {}
+      if (url?.protocol.includes("ws")) {
         break;
       }
     }
-
-    if (!url) {
-      process.stderr.write(stderr);
-      throw new Error("Unable to find listening URL");
+    if (stderr.includes("Listening:")) {
+      break;
     }
-    return url;
   }
+
+  if (!url) {
+    process.stderr.write(stderr);
+    throw new Error("Unable to find listening URL");
+  }
+  return { child, url };
+}
+
+describe("http metadata endpoint", () => {
+  let metadataInspectee: Subprocess | undefined;
 
   afterEach(() => {
     metadataInspectee?.kill();
   });
 
   test("serves /json/version only for a Host of the bound hostname, localhost, or an IP literal", async () => {
-    const { port } = await spawnInspectee();
+    const { child, url } = await spawnInspectee();
+    metadataInspectee = child;
+    const { port } = url;
     const endpoint = `http://127.0.0.1:${port}/json/version`;
 
     const allowed = await fetch(endpoint);
@@ -365,7 +367,9 @@ describe("http metadata endpoint", () => {
   });
 
   test("serves /json/version only to allowed web origins", async () => {
-    const { port } = await spawnInspectee();
+    const { child, url } = await spawnInspectee();
+    metadataInspectee = child;
+    const { port } = url;
     const endpoint = `http://127.0.0.1:${port}/json/version`;
 
     const loopback = await fetch(endpoint, { headers: { "Origin": "http://127.0.0.1:8080" } });
@@ -391,35 +395,10 @@ describe("Runtime.evaluate returnByValue with BigInt/Symbol", () => {
   });
 
   async function evaluateByValue(expression: string) {
-    child = spawn({
-      cwd: import.meta.dir,
-      cmd: [bunExe(), "--inspect=127.0.0.1:0", "inspectee.js"],
-      env: bunEnv,
-      stdout: "ignore",
-      stderr: "pipe",
-    });
+    const spawned = await spawnInspectee();
+    child = spawned.child;
 
-    let url: URL | undefined;
-    let stderr = "";
-    const decoder = new TextDecoder();
-    for await (const chunk of child.stderr as ReadableStream) {
-      stderr += decoder.decode(chunk);
-      for (const line of stderr.split("\n")) {
-        const trimmed = stripAnsi(line).trim();
-        try {
-          url = new URL(trimmed);
-        } catch {}
-        if (url?.protocol.includes("ws")) break;
-      }
-      if (url?.protocol.includes("ws")) break;
-      if (stderr.includes("Listening:")) break;
-    }
-    if (!url) {
-      process.stderr.write(stderr);
-      throw new Error("Unable to find listening URL");
-    }
-
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(spawned.url);
     await new Promise<void>((resolve, reject) => {
       ws.addEventListener("open", () => resolve(), { once: true });
       ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })), { once: true });

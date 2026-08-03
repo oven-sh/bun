@@ -1790,11 +1790,9 @@ pub struct RuntimeHooks {
         transpiler: *mut Transpiler<'static>,
         graph: &'static dyn bun_resolver::StandaloneModuleGraph,
     ),
-    /// Parse a worker's own `execArgv` against the worker flag policy table
-    /// (`bun_runtime::cli::worker_exec_argv`, forward-dep) and return the
-    /// honoured per-worker subset. `None` derives the honoured defaults for an
-    /// inheriting worker from the process argv (preloads and the CPU profiler
-    /// are excluded there — the parent VM already carries both).
+    /// Parse a worker's `execArgv` (`bun_runtime::cli::worker_exec_argv`,
+    /// forward-dep); `None` derives an inheriting worker's defaults from the
+    /// process argv (preloads/cpu-prof excluded — the parent VM carries both).
     pub parse_worker_exec_argv:
         unsafe fn(exec_argv: Option<&[bun_core::WTFStringImpl]>) -> WorkerExecArgv,
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in

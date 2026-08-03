@@ -792,12 +792,9 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     JSValue error = JSC::JSValue::decode(errorValue);
     WTF::String messageStr = message->transferToWTFString();
     auto& vm = JSC::getVM(globalObject);
-    // 'online' now fires before the entry point runs, so terminate() can land
-    // while the entry module is still evaluating; this is the error sink for
-    // that unwind. The termination exception is not clearable by JS, and the
-    // worker-side error-event dispatch and serialization below both enter JS
-    // (executeCallImpl asserts !exception() on entry). Post the parent-side
-    // message only and skip the worker-side JS work.
+    // terminate() may land mid-entry now that 'online' fires first; the pending
+    // TerminationException is non-clearable and the dispatch/serialize below enter
+    // JS (executeCallImpl asserts !exception()), so post parent-side only.
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return worker->dispatchErrorWithMessage(WTF::move(messageStr), {});
 

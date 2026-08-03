@@ -744,9 +744,7 @@ function webSocketWriter(ws: ServerWebSocket<unknown>): Writer {
   };
 }
 
-// JS-side retry backlog cap, on top of uWS's own 16 MB backpressureLimit.
-// A frontend that fills both has stopped reading and is terminated so it
-// cannot grow the inspected process's heap without bound.
+// Retry backlog cap on top of uWS's 16 MB; a frontend that fills it is terminated.
 const maxPendingWriterChars = 32 * 1024 * 1024;
 
 function bufferedWriter(writer: Writer): Writer {

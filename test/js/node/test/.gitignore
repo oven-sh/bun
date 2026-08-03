@@ -38,3 +38,8 @@ fixtures/test-runner/coverage/*
 !fixtures/test-runner/shards/**
 !fixtures/test-runner/randomize
 !fixtures/test-runner/randomize/**
+!fixtures/test-runner/global-setup-teardown
+!fixtures/test-runner/global-setup-teardown/**
+!fixtures/test-runner/test-runner-global-hooks.mjs
+!fixtures/test-runner/snapshots
+!fixtures/test-runner/snapshots/**

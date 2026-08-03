@@ -1,9 +1,11 @@
 //! Host-function table builders — collapse the open-coded ladder
 //!
-//!     let obj = JSValue::create_empty_object(global, N);
-//!     obj.put(global, b"foo", JSFunction::create(global, "foo", __jsc_host_foo, 1, Default::default()));
-//!     obj.put(global, b"bar", JSFunction::create(global, "bar", __jsc_host_bar, 2, Default::default()));
-//!     obj
+//! ```ignore
+//! let obj = JSValue::create_empty_object(global, N);
+//! obj.put(global, b"foo", JSFunction::create(global, "foo", __jsc_host_foo, 1, Default::default()));
+//! obj.put(global, b"bar", JSFunction::create(global, "bar", __jsc_host_bar, 2, Default::default()));
+//! obj
+//! ```
 //!
 //! into a single declarative slice.
 //!

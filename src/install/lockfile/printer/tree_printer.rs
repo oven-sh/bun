@@ -336,7 +336,7 @@ where
 
 /// - Prints an empty newline with no diffs
 /// - Prints a leading and trailing blank newline with diffs
-pub fn print<W, const ENABLE_ANSI_COLORS: bool>(
+pub(crate) fn print<W, const ENABLE_ANSI_COLORS: bool>(
     this: &Printer,
     manager: &mut PackageManager,
     writer: &mut W,

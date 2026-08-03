@@ -240,6 +240,7 @@ export const exposedInternals = {
   "internal/fixed_queue": require("internal/fixed_queue").FixedQueue,
   "internal/freelist": require("internal/freelist"),
   "internal/validators": require("internal/validators"),
+  "internal/test_runner/snapshot": require("internal/test/snapshot"),
   "internal/fs/utils": {
     // Both are the REAL parsers the fs entry points use (FileSystemFlags::from_js
     // and args::Rm::from_js), not JS reimplementations -- vendored tests assert
@@ -466,6 +467,12 @@ export const stringsInternals = {
     bytes: Uint8Array,
   ) => string,
 };
+
+/** Seed the connect-path DNS cache for `hostname` via the real `process_results` interleave; returns family order. */
+export const dnsCacheSeed = $newRustFunction("runtime/dns_jsc/dns.rs", "internal.seedCacheForTesting", 2) as (
+  hostname: string,
+  addresses: string[],
+) => number[];
 
 export const fetchH2Internals = {
   liveCounts: $newRustFunction("http/H2Client.rs", "TestingAPIs.liveCounts", 0) as () => {

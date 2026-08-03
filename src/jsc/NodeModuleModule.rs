@@ -300,10 +300,9 @@ pub fn module_hooks_read_load_result(
     Ok((source, loader, module_type))
 }
 
-/// True when `specifier` is a scheme-prefixed virtual id that only
-/// `module.registerHooks()` hooks can produce (e.g. `test://x`,
-/// `virtual:entry`) — as opposed to a filesystem path, a Windows drive path,
-/// or a builtin id.
+/// True when `specifier` is a scheme-prefixed virtual id only hook chains can
+/// produce (e.g. `test://x`, `virtual:entry`) — not a filesystem/drive path or
+/// builtin id.
 pub fn module_hooks_virtual_specifier(specifier: &[u8]) -> bool {
     let Some(colon) = specifier.iter().position(|&b| b == b':') else {
         return false;

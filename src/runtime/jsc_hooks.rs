@@ -3761,10 +3761,8 @@ unsafe fn fetch_builtin_module(
 
     // ── HardcodedModule fast path ───────────────────────────────────────
     if let Some(&hardcoded) = HardcodedModule::MAP.get(spec) {
-        // `module.registerHooks()` load hooks observe builtin loads (with the
-        // `node:`-prefixed URL and a null default source). Node ignores
-        // hook-provided source for the `builtin` format; format overrides for
-        // builtins are not supported here.
+        // `module.registerHooks()` load hooks observe builtins (node:-URL, null source);
+        // Node ignores hook source/format overrides for the `builtin` format.
         // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
         if unsafe { &*jsc_vm }.module_hooks_load_count > 0
             && !unsafe { &*jsc_vm }.module_hooks_skip
@@ -5379,9 +5377,8 @@ unsafe fn resolve_hook(
         }
     }
 
-    // `module.registerHooks()` resolve hooks. Runs before the builtin alias
-    // fast path: Node's hooks observe builtin specifiers too. Kept in sync
-    // with `VirtualMachine::resolve_maybe_needs_trailing_slash`.
+    // `module.registerHooks()` resolve hooks — before builtin alias so hooks observe
+    // builtins. Mirrors `VirtualMachine::resolve_maybe_needs_trailing_slash`.
     // SAFETY: `vm` is the live per-thread VM.
     if unsafe { &*vm }.module_hooks_resolve_count > 0
         && !unsafe { &*vm }.module_hooks_skip
@@ -5389,10 +5386,9 @@ unsafe fn resolve_hook(
     {
         // SAFETY: `vm` is the live per-thread VM.
         if source_utf8.slice().is_empty() && unsafe { &*vm }.has_loaded {
-            // A referrer-less resolution after startup is an internal
-            // re-resolution of an already-resolved key, which Node's hooks
-            // never observe. Virtual hook-produced ids resolve to themselves;
-            // real paths fall through to the native resolver.
+            // Referrer-less post-startup resolution is an internal re-resolve Node's
+            // hooks never observe. Virtual hook ids resolve to themselves; real paths
+            // fall through to the native resolver.
             if bun_jsc::node_module_module::module_hooks_virtual_specifier(specifier_utf8.slice()) {
                 // SAFETY: per fn contract.
                 unsafe { *res = ErrorableString::ok(specifier.dupe_ref()) };

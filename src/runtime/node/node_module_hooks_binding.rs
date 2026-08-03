@@ -22,10 +22,9 @@ pub(crate) fn set_module_hooks_counts(
     Ok(JSValue::UNDEFINED)
 }
 
-/// `defaultResolveForHooks(specifier, referrer, isESM, isUserRequireResolve)`
-/// — the resolve hook chain's default step: Bun's normal resolution with the
-/// hook consultation suppressed, so the default step cannot re-enter the
-/// hooks.
+/// `defaultResolveForHooks(specifier, referrer, isESM, isUserRequireResolve)` —
+/// the hook chain's default step: Bun's resolution with `module_hooks_skip`
+/// set so it cannot re-enter the hooks.
 #[bun_jsc::host_fn]
 pub(crate) fn default_resolve_for_hooks(
     global: &JSGlobalObject,

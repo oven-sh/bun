@@ -1,13 +1,6 @@
-// Synchronous module customization hooks — `module.registerHooks()`.
-// Port of Node.js lib/internal/modules/customization_hooks.js, adapted to
-// drive Bun's native resolver/module loader:
-//   - the native resolve funnel calls `runResolveHooksBun` (via
-//     `Bun__runModuleResolveHooks`) and receives back a resolved specifier
-//     for Bun's pipeline, or `undefined` when the chain matched the default
-//     resolution (so the native fast paths stay in charge);
-//   - the native loader calls `runLoadHooksBun` (via
-//     `Bun__runModuleLoadHooks`) and receives `{ source, loader, moduleType }`
-//     to transpile, or `undefined` to load the module natively.
+// Synchronous `module.registerHooks()` — port of
+// https://github.com/nodejs/node/blob/main/lib/internal/modules/customization_hooks.js
+// Native entry points: runResolveHooksBun / runLoadHooksBun (undefined ⇒ use native path).
 const { validateFunction } = require("internal/validators");
 const { pathToFileURL, fileURLToPath } = require("node:url");
 const { isAbsolute } = require("node:path");
@@ -157,10 +150,8 @@ function validateResolve(specifier, context, result) {
 
 function validateSourceStrict(url, context, result) {
   const { source, format } = result;
-  // To align with module.register(), the load hooks are still invoked for
-  // the builtins even though the default load step only provides null as
-  // source, and any source content for builtins provided by the user hooks
-  // is ignored.
+  // Builtins: hooks run but source stays null and user-provided source is ignored.
+  // https://github.com/nodejs/node/blob/main/lib/internal/modules/customization_hooks.js
   if (
     !url.startsWith("node:") &&
     typeof result.source !== "string" &&

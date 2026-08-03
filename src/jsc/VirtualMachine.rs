@@ -4403,11 +4403,9 @@ impl VirtualMachine {
             && crate::node_module_module::module_hooks_should_intercept(specifier_utf8.slice())
         {
             if source_utf8.slice().is_empty() && jsc_vm.has_loaded {
-                // A referrer-less resolution after startup is an internal
-                // re-resolution of an already-resolved key (e.g. require()
-                // delegating an ES module to the ESM loader), which Node's
-                // hooks never observe. Virtual hook-produced ids resolve to
-                // themselves; real paths fall through to the native resolver.
+                // Referrer-less post-startup resolution is an internal re-resolve Node's
+                // hooks never observe. Virtual hook ids resolve to themselves; real paths
+                // fall through to the native resolver.
                 if crate::node_module_module::module_hooks_virtual_specifier(specifier_utf8.slice())
                 {
                     *res = ErrorableString::ok(specifier.dupe_ref());

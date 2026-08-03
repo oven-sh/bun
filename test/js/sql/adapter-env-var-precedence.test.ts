@@ -329,6 +329,23 @@ describe("SQL adapter environment variable precedence", () => {
       expect(options.options.sslMode).toBe(2); // SSLMode.require
     });
 
+    test("PGSSLMODE applies alongside DATABASE_URL (postgres URL without ?sslmode=)", () => {
+      process.env.DATABASE_URL = "postgres://user@host:5432/db";
+      process.env.PGSSLMODE = "require";
+
+      const options = new SQL();
+      expect(options.options.adapter).toBe("postgres");
+      expect(options.options.hostname).toBe("host");
+      expect(options.options.sslMode).toBe(2); // SSLMode.require
+    });
+
+    test("PGSSLMODE applies to an explicit URL string without ?sslmode=", () => {
+      process.env.PGSSLMODE = "verify-full";
+
+      const options = new SQL("postgres://user@host:5432/db");
+      expect(options.options.sslMode).toBe(4); // SSLMode.verify_full
+    });
+
     test("PG_SSLMODE spelling is accepted like PG_HOST et al.", () => {
       process.env.PG_SSLMODE = "verify-full";
 

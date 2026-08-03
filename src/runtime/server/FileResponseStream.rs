@@ -283,10 +283,14 @@ impl FileResponseStream {
                     // SAFETY: reader entry point; `pause()` does not call back
                     // into this object.
                     self.reader_mut().pause();
-                    // SAFETY: `vm.event_loop()` returns the live JS loop; the
-                    // ref taken for the in-flight read keeps `*self` alive until
-                    // the `task_tag::FileResponseStreamEof` arm calls
-                    // `on_reader_done`.
+                    // The queued task holds its own ref on `*self`, adopted in
+                    // the `task_tag::FileResponseStreamEof` dispatch arm. The
+                    // in-flight read ref is not sufficient: `read_with_fn`'s
+                    // error arm delivers buffered data here and then calls
+                    // `on_reader_error`, which consumes that ref before the
+                    // task runs.
+                    self.ref_();
+                    // SAFETY: `vm.event_loop()` returns the live JS loop.
                     unsafe {
                         (*self.vm.get().event_loop()).enqueue_task(Task::init(self.as_ptr()));
                     }

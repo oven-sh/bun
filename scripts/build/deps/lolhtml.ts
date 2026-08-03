@@ -21,7 +21,7 @@
 
 import type { Dependency } from "../source.ts";
 
-const LOLHTML_COMMIT = "77127cd2b8545998756e8d64e36ee2313c4bb312";
+const LOLHTML_COMMIT = "608cc4a66b7ab4fcbe1bbdeb25df8f265572b11c";
 
 export const lolhtml: Dependency = {
   name: "lolhtml",

@@ -156,7 +156,7 @@ pub struct zStream_struct {
     pub user_data: *mut c_void,
 
     /// best guess about the data type: binary or text for deflate, or the decoding state for inflate
-    pub data_type: DataType,
+    pub data_type: c_int,
 
     /// Adler-32 or CRC-32 value of the uncompressed data
     pub adler: c_ulong,
@@ -170,7 +170,7 @@ pub type z_streamp = *mut z_stream;
 pub type struct_z_stream_s = zStream_struct;
 pub type z_stream_s = zStream_struct;
 
-// SAFETY: `#[repr(C)]` POD — raw pointers, integers, `Option<extern fn>`
-// allocators, and `DataType` (a `#[repr(C)]` enum with `Binary = 0`). All-zero
+// SAFETY: `#[repr(C)]` POD — raw pointers, integers, and `Option<extern fn>`
+// allocators. All-zero
 // is the documented pre-`inflateInit`/`deflateInit` state (S021).
 unsafe impl bun_core::ffi::Zeroable for zStream_struct {}

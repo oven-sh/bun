@@ -194,6 +194,34 @@ Bun.serve({
 - **Memory efficient** - Only buffers small chunks during transfer, not entire file
 - **Best for**: Large files, dynamic content, user uploads, files that change frequently
 
+### Directory routes
+
+To serve an entire directory tree at a URL prefix, pass `{ dir }` as the route value. The route path must end in `/*`.
+
+```ts
+Bun.serve({
+  routes: {
+    "/static/*": { dir: "./public" },
+  },
+});
+```
+
+The part of the request URL after the prefix is percent-decoded once and opened relative to `dir`. Non-canonical paths (those containing `.`, `..`, empty segments, `%2F`, or a `%XX` sequence encoding a character that may appear literally in a path segment) are rejected with `404`, so the served path is always the path the router matched. On Linux the open uses `openat2(RESOLVE_IN_ROOT)`, so symlinks that would escape `dir` are clamped by the kernel.
+
+{% callout %}
+Routing is case-sensitive but filesystems on macOS and Windows are case-insensitive by default, so a case-varied URL (`/static/Admin/secret.txt`) will route to the directory wildcard rather than a sibling `/static/admin/*` handler and still open `admin/secret.txt`. As with nginx, Caddy, and other static file servers, do not place access-controlled content inside `dir` and rely on an overlapping route to gate it.
+{% /callout %}
+
+Directory routes share the response path with file routes:
+
+- **Content-Type** is set from the file extension.
+- **Last-Modified** and a weak `ETag` (`W/"<size>-<mtime>"`) are sent on every response, and `If-Modified-Since` / `If-None-Match` are honored with `304 Not Modified`.
+- **Range requests** are supported with `Accept-Ranges: bytes` and `Content-Range`.
+- A request that resolves to a directory without a trailing `/` is answered with a `301` redirect to the trailing-slash URL; with the trailing slash, `index.html` from that directory is served.
+- Missing files return `404`.
+
+Pass `statCache: false` to disable the per-path `Last-Modified` cache (saves roughly 20 KB per route).
+
 ---
 
 ## Streaming files

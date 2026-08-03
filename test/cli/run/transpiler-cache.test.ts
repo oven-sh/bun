@@ -59,22 +59,18 @@ beforeEach(() => {
 describe("transpiler cache", () => {
   test("works", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "a"));
-    const a = bunRun(join(temp_dir, "a.js"), env);
-    expect(a.stdout == "a");
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("a");
     expect(existsSync(cache_dir)).toBeTrue();
     expect(newCacheCount()).toBe(1);
-    const b = bunRun(join(temp_dir, "a.js"), env);
-    expect(b.stdout == "a");
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("a");
     expect(newCacheCount()).toBe(0);
   });
   test("works with empty files", async () => {
     writeFileSync(join(temp_dir, "a.js"), "//" + "a".repeat(50 * 1024 * 1.5));
-    const a = bunRun(join(temp_dir, "a.js"), env);
-    expect(a.stdout == "");
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("");
     expect(existsSync(cache_dir)).toBeTrue();
     expect(newCacheCount()).toBe(1);
-    const b = bunRun(join(temp_dir, "a.js"), env);
-    expect(b.stdout == "");
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("");
     expect(newCacheCount()).toBe(0);
   });
   test("ignores files under the minimum cache size", async () => {
@@ -82,24 +78,20 @@ describe("transpiler cache", () => {
     // below it skip the cache entirely so a stat+open+read can't be slower than
     // just re-transpiling.
     writeFileSync(join(temp_dir, "a.js"), dummyFile(4 * 1024 - 1, "1", "a"));
-    const a = bunRun(join(temp_dir, "a.js"), env);
-    expect(a.stdout == "a");
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("a");
     expect(!existsSync(cache_dir)).toBeTrue();
   });
   test("it is indeed content addressable", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
-    const a = bunRun(join(temp_dir, "a.js"), env);
-    expect(a.stdout == "b");
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");
     expect(newCacheCount()).toBe(1);
 
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "c"));
-    const b = bunRun(join(temp_dir, "a.js"), env);
-    expect(b.stdout == "c");
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("c");
     expect(newCacheCount()).toBe(1);
 
     writeFileSync(join(temp_dir, "b.js"), dummyFile(50 * 1024, "1", "b"));
-    const c = bunRun(join(temp_dir, "b.js"), env);
-    expect(b.stdout == "b");
+    expect(await bunRun(join(temp_dir, "b.js"), env)).toSpawn("b");
     expect(newCacheCount()).toBe(0);
   });
   test("doing 50 buns at once does not crash", async () => {
@@ -142,7 +134,7 @@ describe("transpiler cache", () => {
       expect(await proc.stdout.text()).toBe("b\n");
     }
   }, 99999999);
-  test("disables the cache instead of falling back to the shared temp directory", () => {
+  test("disables the cache instead of falling back to the shared temp directory", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "no-tmpdir-cache"));
 
     // Stand-in for the shared, world-writable system temp dir. Pre-create
@@ -154,73 +146,69 @@ describe("transpiler cache", () => {
     // No per-user cache location is available (no BUN_RUNTIME_TRANSPILER_CACHE_PATH,
     // no XDG_CACHE_HOME, no HOME) — the only remaining candidate is the shared
     // temp dir, so the cache must be disabled instead of using it.
-    const a = bunRun(join(temp_dir, "a.js"), {
-      ...env,
-      BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined,
-      XDG_CACHE_HOME: undefined,
-      HOME: undefined,
-      USERPROFILE: undefined,
-      BUN_TMPDIR: undefined,
-      TMPDIR: shared_tmp,
-      TMP: shared_tmp,
-      TEMP: shared_tmp,
-    });
-    expect(a.stdout).toBe("no-tmpdir-cache");
+    expect(
+      await bunRun(join(temp_dir, "a.js"), {
+        ...env,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined,
+        XDG_CACHE_HOME: undefined,
+        HOME: undefined,
+        USERPROFILE: undefined,
+        BUN_TMPDIR: undefined,
+        TMPDIR: shared_tmp,
+        TMP: shared_tmp,
+        TEMP: shared_tmp,
+      }),
+    ).toSpawn("no-tmpdir-cache");
 
     // No cache entry may be written into (or read back from) a directory that
     // another local user could own and pre-populate.
     expect(readdirSync(shared_cache)).toEqual([]);
 
     // A per-user cache location still works.
-    const b = bunRun(join(temp_dir, "a.js"), env);
-    expect(b.stdout).toBe("no-tmpdir-cache");
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("no-tmpdir-cache");
     expect(newCacheCount()).toBe(1);
   });
-  test("works if the cache is not user-readable", () => {
+  test("works if the cache is not user-readable", async () => {
     mkdirSync(cache_dir, { recursive: true });
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "b"));
-    const a = bunRun(join(temp_dir, "a.js"), env);
-    expect(a.stdout == "b");
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");
     expect(newCacheCount()).toBe(1);
 
     const cache_item = readdirSync(cache_dir)[0];
 
     chmodSync(join(cache_dir, cache_item), 0);
-    const b = bunRun(join(temp_dir, "a.js"), env);
-    expect(b.stdout == "b");
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");
     expect(newCacheCount()).toBe(0);
 
     chmodSync(join(cache_dir), "0");
     try {
-      const c = bunRun(join(temp_dir, "a.js"), env);
-      expect(c.stdout == "b");
+      expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");
     } finally {
       chmodSync(join(cache_dir), "777");
     }
   });
-  test("works if the cache is not user-writable", () => {
+  test("works if the cache is not user-writable", async () => {
     mkdirSync(cache_dir, { recursive: true });
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "b"));
 
     try {
       chmodSync(join(cache_dir), "0");
-      const a = bunRun(join(temp_dir, "a.js"), env);
-      expect(a.stdout == "b");
+      expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");
     } finally {
       chmodSync(join(cache_dir), "777");
     }
   });
-  test("does not inline process.env", () => {
+  test("does not inline process.env", async () => {
     writeFileSync(
       join(temp_dir, "a.js"),
       dummyFile((50 * 1024 * 1.5) | 0, "1", { code: "process.env.NODE_ENV, process.env.HELLO" }),
     );
-    const a = bunRun(join(temp_dir, "a.js"), { ...env, NODE_ENV: undefined, HELLO: "1" });
-    expect(a.stdout == "development 1");
+    expect(await bunRun(join(temp_dir, "a.js"), { ...env, NODE_ENV: undefined, HELLO: "1" })).toSpawn("undefined 1");
     expect(existsSync(cache_dir)).toBeTrue();
     expect(newCacheCount()).toBe(1);
-    const b = bunRun(join(temp_dir, "a.js"), { ...env, NODE_ENV: "production", HELLO: "5" });
-    expect(b.stdout == "production 5");
+    expect(await bunRun(join(temp_dir, "a.js"), { ...env, NODE_ENV: "production", HELLO: "5" })).toSpawn(
+      "production 5",
+    );
     expect(newCacheCount()).toBe(0);
   });
   test("--feature flag invalidates cache", () => {

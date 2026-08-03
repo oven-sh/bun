@@ -2,7 +2,6 @@ const { hideFromStack } = require("internal/shared");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ArrayIsArray = Array.isArray;
-const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 
 const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
 /**
@@ -90,12 +89,6 @@ function validateUndefined(value, name) {
   if (value !== undefined) throw $ERR_INVALID_ARG_TYPE(name, "undefined", value);
 }
 
-function validateInternalField(object, fieldKey, className) {
-  if (typeof object !== "object" || object === null || !ObjectPrototypeHasOwnProperty.$call(object, fieldKey)) {
-    throw $ERR_INVALID_ARG_TYPE("this", className, object);
-  }
-}
-
 /** Validate a string-or-URL path and return it resolved to an absolute path string. */
 function getValidatedPath(p: any) {
   if (p instanceof URL) return Bun.fileURLToPath(p as URL);
@@ -151,7 +144,7 @@ function warnOnNonPortableTemplate(template: any) {
   }
 }
 
-hideFromStack(validateLinkHeaderValue, validateInternalField);
+hideFromStack(validateLinkHeaderValue);
 hideFromStack(validateString, validateFunction, validateBoolean, validateUndefined);
 hideFromStack(getValidatedPath, getValidatedFsPath, throwIfNullBytesInFileName);
 hideFromStack(warnOnNonPortableTemplate);
@@ -198,8 +191,6 @@ export default {
   /** `(value, name, oneOf)` */
   validateOneOf: $newCppFunction("NodeValidator.cpp", "jsFunction_validateOneOf", 0),
   isUint8Array: value => value instanceof Uint8Array,
-  /** `(object, fieldKey, className)` */
-  validateInternalField,
   /** `(path)` — accepts a string or file URL, returns it resolved to an absolute path string */
   getValidatedPath,
   getValidatedFsPath,

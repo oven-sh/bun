@@ -657,8 +657,6 @@ impl JSValkeyClient {
             return Err(global.throw_invalid_argument_type("expire", "key", "string or buffer"));
         };
 
-        // validate_integer_range maps undefined/NaN to the default (0), which
-        // would send `EXPIRE key 0` and delete the key. Reject both explicitly.
         let seconds_value = frame.argument(1);
         if seconds_value.is_undefined() {
             return Err(global.throw_invalid_property_type_value(

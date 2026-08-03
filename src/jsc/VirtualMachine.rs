@@ -4863,8 +4863,8 @@ impl VirtualMachine {
         unsafe {
             crate::cpp::raw::Bun__evictProjectModulesForTestIsolation(
                 self.global,
-                &mut evicted_esm,
-                &mut evicted_cjs,
+                &raw mut evicted_esm,
+                &raw mut evicted_cjs,
             );
         }
         (evicted_esm, evicted_cjs)

@@ -1374,9 +1374,11 @@ impl WebWorker {
             // other thread can dereference it now — `&mut` is exclusive.
             let vm = unsafe { &mut *vm_ptr };
             // terminate() set the JSC termination flag to interrupt running JS;
-            // clear it so process.on('exit') handlers can run. teardownJSCVM
-            // re-sets it for the JSC VM teardown.
-            vm.jsc_vm().clear_has_termination_request();
+            // clear both the request flag and the pending TerminationException
+            // so process.on('exit') and socket on_close callbacks can run
+            // (executeCallImpl asserts !exception() on entry). teardownJSCVM
+            // re-sets the flag for the JSC VM teardown.
+            vm.global().clear_termination_exception();
             vm.is_shutting_down = true;
             vm.on_exit();
             if let Some(hooks) = runtime_hooks() {

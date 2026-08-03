@@ -1230,7 +1230,12 @@ impl Drop for ServePlugins {
     fn drop(&mut self) {
         match mem::replace(&mut self.state, ServePluginsState::Err) {
             ServePluginsState::Unqueued(_) => {}
-            ServePluginsState::Pending { .. } => debug_assert!(false), // should have one ref while pending!
+            ServePluginsState::Pending { plugin, .. } => {
+                // Reachable only if the setup host call threw before the promise
+                // `.then()` took its +1 ref; release the handle we created.
+                JSBundler::Plugin::destroy(Box::into_raw(plugin));
+                debug_assert!(false); // should have one ref while pending!
+            }
             ServePluginsState::Loaded(plugin) => {
                 JSBundler::Plugin::destroy(Box::into_raw(plugin));
             }

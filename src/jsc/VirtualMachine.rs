@@ -273,6 +273,9 @@ pub struct VirtualMachine {
     pub(crate) macro_event_loop: EventLoop,
     pub regular_event_loop: EventLoop,
     pub event_loop: *mut EventLoop, // BORROW_FIELD — points at sibling regular_event_loop/macro_event_loop
+    /// See [`crate::any_task_job::AnyTaskGate`]. `Option` only for
+    /// `alloc_zeroed` validity; always `Some` between `init()` and `destroy()`.
+    pub any_task_gate: Option<std::sync::Arc<crate::any_task_job::AnyTaskGate>>,
 
     pub(crate) ref_strings: crate::ref_string::Map,
     pub(crate) ref_strings_mutex: bun_threading::Mutex,
@@ -750,6 +753,14 @@ impl VirtualMachine {
     pub fn event_loop_shared(&self) -> &EventLoop {
         // SAFETY: see `event_loop_mut`.
         unsafe { &*self.event_loop }
+    }
+
+    #[inline]
+    pub fn any_task_gate(&self) -> &std::sync::Arc<crate::any_task_job::AnyTaskGate> {
+        debug_assert!(self.any_task_gate.is_some());
+        // SAFETY: `Some` between `init()` and `destroy()`; every caller is
+        // between the two.
+        unsafe { self.any_task_gate.as_ref().unwrap_unchecked() }
     }
 
     /// Alias for [`Self::event_loop_mut`]. Kept for callers migrated on the
@@ -1555,6 +1566,8 @@ impl VirtualMachine {
             // drain below) or observes the flag under m_lock and drops.
             // destructOnExit sets it again (idempotently).
             Bun__JSCTaskScheduler__markShuttingDown(self.global());
+            // Same fence for work-pool `AnyTaskJob`s; see `AnyTaskGate`.
+            self.any_task_gate().close();
 
             // Every worker has now posted its close task to our concurrent
             // queue (OUTSTANDING is decremented after dispatchExit). Drop
@@ -2136,6 +2149,7 @@ impl VirtualMachine {
             (*regular).virtual_machine = NonNull::new(vm);
             let _ = (*regular).tasks.ensure_unused_capacity(64);
             addr_of_mut!((*vm).event_loop).write(regular);
+            addr_of_mut!((*vm).any_task_gate).write(Some(crate::any_task_job::AnyTaskGate::new()));
 
             // `source_mappings.map` is a sibling-field backref onto
             // `saved_source_map_table`.
@@ -4474,6 +4488,8 @@ impl VirtualMachine {
         // time and `load_preloads` clears the boxes but keeps the Vec buffer,
         // so reclaim it here or every Worker leaks it.
         drop(core::mem::take(&mut self.preload));
+
+        drop(self.any_task_gate.take());
 
         // SAFETY: this VM is raw-`dealloc`'d (no field `Drop` runs), so
         // `transpiler` is never auto-dropped after `deinit` clears its fields.

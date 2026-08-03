@@ -277,10 +277,8 @@ impl Default for PendingValue {
 }
 
 impl PendingValue {
-    /// Called once `readable` is set and the producer hooks have fired: the
-    /// ByteStream's `NewSource.producer` owns delivery from here, and the
-    /// producer these point at (e.g. a `FetchTasklet`) may be freed before a
-    /// later consumer (`Bun.write`, `ValueBufferer`) looks at them.
+    /// Once `readable` is set the live handle is `NewSource.producer`; these
+    /// hooks go stale when the producer (e.g. `FetchTasklet`) is freed.
     fn detach_producer(&mut self) {
         self.on_start_buffering = None;
         self.on_start_streaming = None;

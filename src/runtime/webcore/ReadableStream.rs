@@ -21,14 +21,16 @@ pub struct ReadableStream {
 // ─── ReadableStream::Strong ──────────────────────────────────────────────────
 
 /// A `ReadableStream` handle for [`crate::webcore::body::PendingValue`] and the
-/// producers that feed it. `held` roots the stream as a GC root; `weak` stores
-/// the same JSValue after the owning wrapper's traced `m_stream` slot has taken
-/// ownership, so readers of `Locked.readable` keep working without the handle
-/// pinning the stream (and its captured async context) past the wrapper's
-/// lifetime.
+/// producers that feed it. `held` roots the stream as a GC root; after
+/// [`Self::downgrade`] the stream is owned by the wrapper's traced `m_stream`
+/// slot instead and `weak` observes it via a real `JSC::Weak`, so readers of
+/// `Locked.readable` keep working without the handle pinning the stream (and
+/// its captured async context) past the wrapper's lifetime, and see `None` the
+/// moment GC reaps the stream rather than a dangling `Source` pointer into a
+/// freed `Box<NewSource<_>>`.
 pub struct Strong {
     held: bun_jsc::strong::Optional, // jsc.Strong.Optional = .empty
-    weak: JSValue,
+    weak: bun_jsc::Weak<()>,
 }
 
 /// Re-export under the qualified name callers expect.
@@ -38,24 +40,18 @@ impl Default for Strong {
     fn default() -> Self {
         Self {
             held: bun_jsc::strong::Optional::empty(),
-            weak: JSValue::ZERO,
+            weak: bun_jsc::Weak::default(),
         }
     }
 }
 
 impl Strong {
     fn value(&self) -> Option<JSValue> {
-        self.held.get().or_else(|| {
-            if self.weak.is_empty() {
-                None
-            } else {
-                Some(self.weak)
-            }
-        })
+        self.held.get().or_else(|| self.weak.get())
     }
 
     pub(crate) fn has(&mut self) -> bool {
-        self.held.has() || !self.weak.is_empty()
+        self.held.has() || self.weak.get().is_some()
     }
 
     pub(crate) fn is_disturbed(&self, global: &JSGlobalObject) -> bool {
@@ -68,23 +64,25 @@ impl Strong {
     pub(crate) fn init(this: ReadableStream, global: &JSGlobalObject) -> Strong {
         Strong {
             held: bun_jsc::strong::Optional::create(this.value, global),
-            weak: JSValue::ZERO,
+            weak: bun_jsc::Weak::default(),
         }
     }
 
-    /// Release the GC root while keeping the JSValue readable for native
-    /// consumers. Caller must keep the stream alive elsewhere (the owning
-    /// `Request`/`Response` wrapper's `m_stream` `WriteBarrier` slot).
-    pub(crate) fn downgrade(&mut self) {
+    /// Release the GC root while keeping the stream readable for native
+    /// consumers. The owning `Request`/`Response` wrapper's `m_stream`
+    /// `WriteBarrier` keeps the stream alive from here; `weak` tracks it as a
+    /// real `JSC::Weak` so `get()` returns `None` once the wrapper (and with it
+    /// the stream's native `NewSource` box) is collected.
+    pub(crate) fn downgrade(&mut self, global: &JSGlobalObject) {
         if let Some(value) = self.held.get() {
-            self.weak = value;
+            self.weak = bun_jsc::Weak::create_passive(value, global);
             self.held.deinit();
         }
     }
 
     pub(crate) fn deinit(&mut self) {
         self.held.deinit();
-        self.weak = JSValue::ZERO;
+        self.weak = bun_jsc::Weak::default();
     }
 
     pub(crate) fn get(&self, global: &JSGlobalObject) -> Option<ReadableStream> {
@@ -105,7 +103,7 @@ impl Strong {
             if self.held.has() {
                 self.held.set(global, first.value);
             } else {
-                self.weak = first.value;
+                self.weak = bun_jsc::Weak::create_passive(first.value, global);
             }
             return Ok(Some(second));
         }

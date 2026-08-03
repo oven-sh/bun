@@ -1694,7 +1694,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if let Some(stream) = locked.readable.get(global_object) {
                     stream.value.ensure_still_alive();
                     Self::stream_set_cached(js_value, global_object, stream.value);
-                    locked.readable.downgrade();
+                    locked.readable.downgrade(global_object);
                 }
             }
         }

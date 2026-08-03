@@ -650,6 +650,51 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     expect(new TextDecoder().decode(result.value)).toBe("tick");
   });
 
+  it("the per-global Web Streams state is not a GC cell", async () => {
+    // JSStreamsRuntime is a plain struct held by value on Zig::GlobalObject; it should
+    // never appear as a JSCell in a heap snapshot. Do one direct read first so every
+    // streams path that would have materialized it has run.
+    const rs = new ReadableStream({
+      type: "direct",
+      pull(c) {
+        c.write("x");
+        return new Promise(() => {});
+      },
+    });
+    const reader = rs.getReader();
+    await reader.read();
+    const snap = Bun.generateHeapSnapshot();
+    expect(snap.nodeClassNames).toBeArray();
+    expect(snap.nodeClassNames).toContain("DirectStreamController");
+    expect(snap.nodeClassNames).not.toContain("StreamsRuntime");
+    reader.cancel();
+  });
+
+  it("many direct controllers armed in one tick each deliver their own byte", async () => {
+    // Functional coverage of the nextTick-scheduled auto-flush: 64 controllers armed in the
+    // same tick, a full GC, and every read must still resolve with the byte its own pull
+    // wrote (not a sibling's).
+    const N = 64;
+    const readers = [];
+    const reads = [];
+    for (let i = 0; i < N; i++) {
+      const rs = new ReadableStream({
+        type: "direct",
+        pull(c) {
+          c.write(new Uint8Array([i]));
+          return new Promise(() => {});
+        },
+      });
+      const reader = rs.getReader();
+      readers.push(reader);
+      reads.push(reader.read());
+    }
+    Bun.gc(true);
+    const results = await Promise.all(reads);
+    expect(results.map(r => r.value[0])).toEqual([...Array(N).keys()]);
+    for (const r of readers) r.cancel();
+  });
+
   it("an async generator Response body delivers each yield to a JS reader as it is produced", async () => {
     async function* gen() {
       for (let i = 0; i < 3; i++) {

@@ -44,7 +44,7 @@ fn append_u16_as_u8(dst: &mut Vec<u8>, src: &[u16]) {
 // ───── canonical WTF-8 single-rune decode ─────
 // Lives in `bun_core::string::immutable::unicode_draft` (this file), re-exported
 // through the inline `pub mod unicode` in immutable.rs and onward as
-// `bun_core::strings::{decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte, codepoint_size}`.
+// `bun_core::strings::{decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte}`.
 //
 // Visibility promoted pub(super) → pub so the inline shim mod can re-export
 // instead of carrying a second body, and so md/glob/parsers can call directly.
@@ -109,8 +109,6 @@ pub fn decode_wtf8_rune_t<T: CodePointZero>(p: [u8; 4], len: U3Fast, zero: T) ->
 
     decode_wtf8_rune_t_multibyte::<T>(p, len, zero)
 }
-
-pub use crate::strings_impl::codepoint_size;
 
 // ───────────────────────────── UTF16 → UTF8 ─────────────────────────────
 //
@@ -224,8 +222,8 @@ pub struct UTF16Replacement {
     /// and a genuine error.
     pub fail: bool,
 
-    pub can_buffer: bool,
-    pub is_lead: bool,
+    pub(crate) can_buffer: bool,
+    pub(crate) is_lead: bool,
 }
 
 impl Default for UTF16Replacement {
@@ -252,7 +250,7 @@ impl UTF16Replacement {
     }
 }
 
-pub(super) fn convert_utf8_bytes_into_utf16_with_length(
+fn convert_utf8_bytes_into_utf16_with_length(
     sequence: [u8; 4],
     len: U3Fast,
     remaining_len: usize,
@@ -556,10 +554,10 @@ pub enum BOM {
 
 impl BOM {
     pub const UTF8_BYTES: [u8; 3] = [0xef, 0xbb, 0xbf];
-    pub const UTF16_LE_BYTES: [u8; 2] = [0xff, 0xfe];
-    pub const UTF16_BE_BYTES: [u8; 2] = [0xfe, 0xff];
-    pub const UTF32_LE_BYTES: [u8; 4] = [0xff, 0xfe, 0x00, 0x00];
-    pub const UTF32_BE_BYTES: [u8; 4] = [0x00, 0x00, 0xfe, 0xff];
+    pub(crate) const UTF16_LE_BYTES: [u8; 2] = [0xff, 0xfe];
+    pub(crate) const UTF16_BE_BYTES: [u8; 2] = [0xfe, 0xff];
+    pub(crate) const UTF32_LE_BYTES: [u8; 4] = [0xff, 0xfe, 0x00, 0x00];
+    pub(crate) const UTF32_BE_BYTES: [u8; 4] = [0x00, 0x00, 0xfe, 0xff];
 
     pub fn detect(bytes: &[u8]) -> Option<BOM> {
         if bytes.len() < 3 {
@@ -586,7 +584,7 @@ impl BOM {
         }
     }
 
-    pub fn get_header(self) -> &'static [u8] {
+    pub(crate) fn get_header(self) -> &'static [u8] {
         match self {
             BOM::Utf8 => &Self::UTF8_BYTES,
             BOM::Utf16Le => &Self::UTF16_LE_BYTES,
@@ -596,7 +594,7 @@ impl BOM {
         }
     }
 
-    pub fn length(self) -> usize {
+    pub(crate) fn length(self) -> usize {
         self.get_header().len()
     }
 
@@ -671,7 +669,7 @@ impl BOM {
 }
 
 // https://github.com/WebKit/WebKit/blob/443e796d1538654c34f2690e39600c70c8052b63/Source/WebCore/PAL/pal/text/TextCodecUTF8.cpp#L69
-pub(super) fn non_ascii_sequence_length(first_byte: u8) -> U3Fast {
+fn non_ascii_sequence_length(first_byte: u8) -> U3Fast {
     match first_byte {
         0..=193 => 0,
         194..=223 => 2,
@@ -908,18 +906,6 @@ pub fn utf16_codepoint(input: &[u16]) -> UTF16Replacement {
     }
 }
 
-/// `b"..."` for u8, `$crate::w!("...")` for u16.
-/// New callers should use byte/wide literals directly.
-#[macro_export]
-macro_rules! literal {
-    (u8, $s:literal) => {
-        concat!($s, "\0").as_bytes()
-    };
-    (u16, $s:literal) => {
-        $crate::w!($s)
-    };
-}
-
 pub(super) use crate::strings_impl::push_codepoint_utf16;
 
 // `unreachable_pub`: these are re-exported externally via the parent's
@@ -977,7 +963,7 @@ static CP1252_TO_UTF16_CONVERSION_TABLE: [u16; 256] = [
     0x00F8, 0x00F9, 0x00FA, 0x00FB, 0x00FC, 0x00FD, 0x00FE, 0x00FF, // F8-FF
 ];
 
-pub(super) fn cp1252_to_codepoint_bytes_assume_not_ascii16(char: u32) -> u16 {
+fn cp1252_to_codepoint_bytes_assume_not_ascii16(char: u32) -> u16 {
     CP1252_TO_UTF16_CONVERSION_TABLE[(char as u8) as usize]
 }
 
@@ -1033,7 +1019,7 @@ pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
 /// buffer.fill("Ȣ");
 /// expect(buffer[0]).toBe(0xc8);
 /// ```
-pub(super) fn copy_utf16_into_utf8_with_buffer_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
+fn copy_utf16_into_utf8_with_buffer_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
     buf: &mut [u8],
     utf16: &[u16],
     out_len: usize,

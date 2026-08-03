@@ -65,13 +65,6 @@ void addEncodedASN1Length(Vector<uint8_t>& in, size_t length)
     }
 }
 
-size_t bytesNeededForEncodedLength(size_t length)
-{
-    if (length < MaxLengthInOneByte)
-        return 1;
-    return 1 + extraBytesNeededForEncodedLength(length);
-}
-
 } // namespace WebCore
 
 #endif // ENABLE(WEB_CRYPTO)

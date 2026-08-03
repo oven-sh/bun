@@ -2517,23 +2517,29 @@ impl ThreadSafeFunction {
     // a `*mut ThreadSafeFunction`; the signature is fixed by that registry.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_dispatch(this: *mut ThreadSafeFunction) {
-        // SAFETY: `this` is a live heap allocation owned by the event loop dispatch.
-        let self_ = unsafe { &mut *this };
-        // More than one task can be in flight for this function (see
-        // `schedule_dispatch` and `dispatch_one`'s backup dispatch), so only
-        // the last one out may free it.
-        let inflight = self_.inflight_dispatch_tasks.fetch_sub(1, Ordering::SeqCst) - 1;
-        if self_.env_dead.load(Ordering::SeqCst) {
+        // No `&mut *this` is held across the body: `dispatch_one` runs user
+        // JS, which can re-enter `on_dispatch` for this same function through
+        // a nested event loop (§Forbidden aliased-&mut). Every access below is
+        // a short-lived reborrow on the single JS thread. More than one task
+        // can be in flight (see `schedule_dispatch` and `dispatch_one`'s
+        // backup dispatch), so only the last one out may free `*this`.
+        //
+        // SAFETY for the per-field derefs below: `this` is a live heap
+        // allocation owned by the event loop dispatch, and destroy is
+        // deferred while `dispatch_depth > 0` or tasks remain in flight.
+        let inflight =
+            unsafe { (*this).inflight_dispatch_tasks.fetch_sub(1, Ordering::SeqCst) } - 1;
+        if unsafe { (*this).env_dead.load(Ordering::SeqCst) } {
             // `env_teardown` already released everything and owns the free
             // decision. The loop this task came from is being destroyed.
             return;
         }
-        if self_.closing.load(Ordering::SeqCst) == ClosingState::Closed as u8 {
-            if self_.dispatch_depth > 0 || inflight > 0 {
-                // An outer `on_dispatch` frame still borrows `*this`, or
-                // another task for it is still queued; whoever is last out
-                // frees it.
-                self_.pending_destroy = true;
+        if unsafe { (*this).closing.load(Ordering::SeqCst) } == ClosingState::Closed as u8 {
+            if unsafe { (*this).dispatch_depth } > 0 || inflight > 0 {
+                // An outer `on_dispatch` frame is still running, or another
+                // task for `*this` is still queued; whoever is last out frees
+                // it.
+                unsafe { (*this).pending_destroy = true };
                 return;
             }
             // Finalize the ThreadSafeFunction.
@@ -2545,18 +2551,24 @@ impl ThreadSafeFunction {
         let mut is_first = true;
         // One backup dispatch per `on_dispatch` (see `dispatch_one`).
         let mut scheduled_backup = false;
-        self_.dispatch_depth += 1;
+        unsafe { (*this).dispatch_depth += 1 };
 
         // Run the tasks.
         loop {
-            self_
-                .dispatch_state
-                .store(DispatchState::Running as u8, Ordering::SeqCst);
-            if self_.dispatch_one(is_first, &mut scheduled_backup) {
-                is_first = false;
-                self_
+            unsafe {
+                (*this)
                     .dispatch_state
-                    .store(DispatchState::Pending as u8, Ordering::SeqCst);
+                    .store(DispatchState::Running as u8, Ordering::SeqCst);
+            }
+            // SAFETY: `this` is live (see above); `dispatch_one` takes the raw
+            // pointer because it enters user JS.
+            if unsafe { Self::dispatch_one(this, is_first, &mut scheduled_backup) } {
+                is_first = false;
+                unsafe {
+                    (*this)
+                        .dispatch_state
+                        .store(DispatchState::Pending as u8, Ordering::SeqCst);
+                }
             } else {
                 // We're done running tasks, for now. Transition Running → Idle
                 // via CAS instead of an unconditional store: between
@@ -2566,15 +2578,15 @@ impl ThreadSafeFunction {
                 // Idle we'd overwrite that Pending and the callback would be
                 // dropped (flaky lost-wakeup under load). On CAS failure, loop
                 // and re-drain.
-                if self_
-                    .dispatch_state
-                    .compare_exchange(
+                if unsafe {
+                    (*this).dispatch_state.compare_exchange(
                         DispatchState::Running as u8,
                         DispatchState::Idle as u8,
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                     )
-                    .is_ok()
+                }
+                .is_ok()
                 {
                     break;
                 }
@@ -2582,10 +2594,10 @@ impl ThreadSafeFunction {
             }
         }
 
-        self_.dispatch_depth -= 1;
-        if self_.dispatch_depth == 0
-            && self_.pending_destroy
-            && self_.inflight_dispatch_tasks.load(Ordering::SeqCst) == 0
+        unsafe { (*this).dispatch_depth -= 1 };
+        if unsafe { (*this).dispatch_depth } == 0
+            && unsafe { (*this).pending_destroy }
+            && unsafe { (*this).inflight_dispatch_tasks.load(Ordering::SeqCst) } == 0
         {
             // SAFETY: we are the outermost dispatch frame and no other task
             // references this function; the nested frame that observed Closed
@@ -2647,36 +2659,47 @@ impl ThreadSafeFunction {
         }
     }
 
-    pub(crate) fn dispatch_one(&mut self, is_first: bool, scheduled_backup: &mut bool) -> bool {
+    /// Runs one queued call. Takes `this` raw because `call` enters user JS,
+    /// which can re-enter this function's dispatch through a nested event
+    /// loop; the `&mut` reborrows here are scoped to the lock block and never
+    /// live across a JS entry.
+    ///
+    /// # Safety
+    /// `this` is a live threadsafe function on the JS thread; destroy is
+    /// deferred while `dispatch_depth > 0`.
+    unsafe fn dispatch_one(this: *mut Self, is_first: bool, scheduled_backup: &mut bool) -> bool {
         let mut queue_finalizer_after_call = false;
         let task = 'brk: {
+            // SAFETY: scoped reborrow; nothing in this block enters JS.
+            let self_ = unsafe { &mut *this };
             // `MutexGuard` holds the lock by raw pointer, so it does not borrow
-            // `*self` across the `&mut self` calls below.
-            let _g = self.lock.lock_guard();
-            let was_blocked = self.queue.is_blocked();
-            let Some(t) = self.queue.data.read_item() else {
+            // `*self_` across the `&mut self` calls below.
+            let _g = self_.lock.lock_guard();
+            let was_blocked = self_.queue.is_blocked();
+            let Some(t) = self_.queue.data.read_item() else {
                 // When there are no tasks and the number of threads that have
                 // references reaches zero, we prepare to finalize the
                 // ThreadSafeFunction.
-                if self.thread_count.load(Ordering::SeqCst) == 0 {
-                    if self.queue.max_queue_size > 0 {
-                        self.blocking_condvar.signal();
+                if self_.thread_count.load(Ordering::SeqCst) == 0 {
+                    if self_.queue.max_queue_size > 0 {
+                        self_.blocking_condvar.signal();
                     }
-                    self.maybe_queue_finalizer();
+                    self_.maybe_queue_finalizer();
                 }
                 return false;
             };
 
-            let prev_count = self.queue.count.fetch_sub(1, Ordering::SeqCst);
-            if prev_count == 1 && self.thread_count.load(Ordering::SeqCst) == 0 {
-                self.closing
+            let prev_count = self_.queue.count.fetch_sub(1, Ordering::SeqCst);
+            if prev_count == 1 && self_.thread_count.load(Ordering::SeqCst) == 0 {
+                self_
+                    .closing
                     .store(ClosingState::Closing as u8, Ordering::SeqCst);
-                if self.queue.max_queue_size > 0 {
-                    self.blocking_condvar.signal();
+                if self_.queue.max_queue_size > 0 {
+                    self_.blocking_condvar.signal();
                 }
                 queue_finalizer_after_call = true;
-            } else if was_blocked && !self.queue.is_blocked() {
-                self.blocking_condvar.signal();
+            } else if was_blocked && !self_.queue.is_blocked() {
+                self_.blocking_condvar.signal();
             }
 
             if prev_count > 1 && !*scheduled_backup {
@@ -2685,18 +2708,22 @@ impl ThreadSafeFunction {
                 // behind this one. One backup dispatch lets a nested loop keep
                 // draining; if nothing blocks, it is a no-op.
                 *scheduled_backup = true;
-                self.schedule_dispatch();
+                self_.schedule_dispatch();
             }
 
             break 'brk t;
         };
 
-        if self.call(task, is_first).is_err() {
+        // No borrow of `*this` is live while user JS runs.
+        // SAFETY: per fn contract.
+        if unsafe { Self::call(this, task, is_first) }.is_err() {
             return false;
         }
 
         if queue_finalizer_after_call {
-            self.maybe_queue_finalizer();
+            // SAFETY: `this` is still live (destroy deferred, see fn
+            // contract); scoped reborrow after the JS entry returned.
+            unsafe { &mut *this }.maybe_queue_finalizer();
         }
 
         // An item was dequeued: keep on_dispatch looping so remaining queued
@@ -2707,25 +2734,67 @@ impl ThreadSafeFunction {
     /// This function can be called multiple times in one tick of the event loop.
     /// See: https://github.com/nodejs/node/pull/38506
     /// In that case, we need to drain microtasks.
-    fn call(&mut self, task: *mut c_void, is_first: bool) -> Result<(), bun_jsc::JsTerminated> {
-        let Some(env) = self.env.as_ref().map(NapiEnvRef::get) else {
+    ///
+    /// Takes `this` raw: the microtask drain and the callback run user JS,
+    /// which can re-enter this function's dispatch through a nested event
+    /// loop, so no borrow of `*this` may live across them.
+    ///
+    /// # Safety
+    /// `this` is a live threadsafe function on the JS thread; destroy is
+    /// deferred while `dispatch_depth > 0`.
+    unsafe fn call(
+        this: *mut Self,
+        task: *mut c_void,
+        is_first: bool,
+    ) -> Result<(), bun_jsc::JsTerminated> {
+        // SAFETY: scoped reborrow; `env` is a raw pointer copy.
+        let Some(env) = (unsafe { &(*this).env }).as_ref().map(NapiEnvRef::get) else {
             // env torn down; nothing to call into.
             return Ok(());
         };
         if !is_first {
-            let Some(loop_) = self.loop_mut() else {
-                return Ok(());
+            // Take the loop as a raw pointer so no borrow of `*this` lives
+            // across the microtask drain.
+            let loop_: *mut EventLoop = {
+                // SAFETY: scoped reborrow.
+                match unsafe { (*this).event_loop.as_mut() } {
+                    // SAFETY: BackRef invariant while `Some`; JS thread,
+                    // outside tick().
+                    Some(back_ref) => unsafe { back_ref.get_mut() },
+                    None => return Ok(()),
+                }
             };
-            loop_.drain_microtasks()?;
+            // SAFETY: the per-thread event loop outlives this call.
+            unsafe { (*loop_).drain_microtasks()? };
         }
         // SAFETY: env is valid while the TSF is live.
         let global_object = unsafe { &*env }.to_js();
 
-        let _dispatch = self.tracker.dispatch(global_object);
+        // `tracker` is `Copy`; the guard borrows only `global_object`.
+        let _dispatch = unsafe { (*this).tracker }.dispatch(global_object);
 
-        match &self.callback {
-            TsfnCallback::Js(strong) => {
-                let js: JSValue = strong.get().unwrap_or(JSValue::UNDEFINED);
+        // Copy the callback target out (all `Copy` values) so no borrow of
+        // `*this` is live while user code runs.
+        enum Target {
+            Js(JSValue),
+            C(napi_threadsafe_function_call_js, JSValue, *mut c_void),
+        }
+        // SAFETY: scoped reborrow.
+        let target = match unsafe { &(*this).callback } {
+            TsfnCallback::Js(strong) => Target::Js(strong.get().unwrap_or(JSValue::UNDEFINED)),
+            TsfnCallback::C {
+                js: cb_js,
+                napi_threadsafe_function_call_js,
+            } => Target::C(
+                *napi_threadsafe_function_call_js,
+                cb_js.get().unwrap_or(JSValue::UNDEFINED),
+                // SAFETY: plain field read, same reborrow scope.
+                unsafe { (*this).ctx },
+            ),
+        };
+
+        match target {
+            Target::Js(js) => {
                 if js.is_empty_or_undefined_or_null() {
                     return Ok(());
                 }
@@ -2734,21 +2803,11 @@ impl ThreadSafeFunction {
                     .call(global_object, JSValue::UNDEFINED, &[])
                     .map_err(|err| global_object.report_active_exception_as_unhandled(err));
             }
-            TsfnCallback::C {
-                js: cb_js,
-                napi_threadsafe_function_call_js,
-            } => {
-                let js: JSValue = cb_js.get().unwrap_or(JSValue::UNDEFINED);
-
-                // SAFETY: `env` is held alive by `self.env` (`NapiEnvRef`) for the TSF's lifetime.
+            Target::C(call_js, js, ctx) => {
+                // SAFETY: `env` is held alive by `(*this).env` (`NapiEnvRef`) for the TSF's lifetime.
                 let env_ref = unsafe { &*env };
                 let _hs = NapiHandleScope::open_scoped(env_ref);
-                napi_threadsafe_function_call_js(
-                    env,
-                    napi_value::create(env_ref, js),
-                    self.ctx,
-                    task,
-                );
+                call_js(env, napi_value::create(env_ref, js), ctx, task);
             }
         }
         Ok(())

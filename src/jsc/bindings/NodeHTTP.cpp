@@ -856,10 +856,8 @@ static constexpr uint32_t kAutoHeaderDate = 1 << 0;
 static constexpr uint32_t kAutoHeaderConnKeepAlive = 1 << 1;
 static constexpr uint32_t kAutoHeaderConnClose = 1 << 2;
 static constexpr uint32_t kAutoHeaderKeepAliveTimeout = 1 << 3;
-// Node's _storeHeader emits the chunked Transfer-Encoding *after* the Connection
-// (and Keep-Alive) line, so it cannot ride along in the flat header array, which
-// is written before these. Carry it as an auto-header bit instead and render it
-// last, in Node's order.
+// Node's _storeHeader emits chunked Transfer-Encoding after Connection/Keep-Alive, so it
+// cannot ride in the flat array (written first). Carry as an auto-header bit, rendered last.
 static constexpr uint32_t kAutoHeaderTransferEncodingChunked = 1 << 4;
 
 // "Date: <IMF-fixdate>\r\n", rebuilt at most once per second. Hand-rolled

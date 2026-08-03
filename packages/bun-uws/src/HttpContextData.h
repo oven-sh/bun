@@ -34,15 +34,9 @@ struct HttpFlags {
     bool requireHostHeader: 1 = true;
     bool isAuthorized: 1 = false;
     bool useStrictMethodValidation: 1 = false;
-    /* node:http parser leniency. Two of llhttp's lenient bits are implemented:
-     * useInsecureHTTPParser is LENIENT_HEADERS (control bytes accepted in field
-     * values) — set for both httpValidation "relaxed" and "insecure" —
-     * and useLenientTransferEncoding is LENIENT_TRANSFER_ENCODING (a chunked
-     * coding with another value after it, e.g. a duplicate Transfer-Encoding:
-     * chunked header, is accepted) — set only for "insecure" /
-     * --insecure-http-parser, never for "relaxed", which must relax header
-     * values alone. The TE+CL conflict, chunked-size/CRLF strictness, version
-     * and header-token checks are still enforced under both. */
+    /* node:http parser leniency. Two llhttp lenient bits: useInsecureHTTPParser = LENIENT_HEADERS
+     * ("relaxed"+"insecure"); useLenientTransferEncoding = LENIENT_TRANSFER_ENCODING ("insecure"
+     * only). TE+CL conflict, chunked-size/CRLF, version, header-token checks stay enforced. */
     bool useInsecureHTTPParser: 1 = false;
     bool useLenientTransferEncoding: 1 = false;
     /* node:http server.httpAllowHalfOpen: when true, a peer FIN with in-flight

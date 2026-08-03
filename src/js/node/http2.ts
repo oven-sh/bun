@@ -2249,11 +2249,9 @@ const kWriteFlushedWithoutCallback = 0x10;
 function deferWriteCallbackForSocket(nativeSocket) {
   return nativeSocket ? process.nextTick : setImmediate;
 }
-// Whether this chunk is the writable's last: end() already ran and nothing is queued
-// behind it (writableLength still includes the in-flight chunk, in the writable's own
-// units — string chunks count code units), and no trailers are pending (END_STREAM must
-// ride the trailer HEADERS instead). node packs END_STREAM onto that final DATA frame
-// rather than emitting an empty one after it.
+// Whether this chunk is the writable's last: end() ran, nothing queued behind it (writableLength
+// includes the in-flight chunk, string chunks in code units), no trailers pending (END_STREAM
+// rides trailer HEADERS). Node packs END_STREAM onto the final DATA frame, not a trailing empty one.
 function isFinalWrite(stream: Http2Stream, pendingLength: number) {
   // `ending` is set only after end()'s own synchronous write has already dispatched, so
   // end(chunk) — the common case — needs kEndingWithChunk to see the last chunk as final.
@@ -3472,10 +3470,9 @@ class ServerHttp2Stream extends Http2Stream {
       return;
     }
     if (pushResult === -1) {
-      // The block could not be encoded: the session is failing with a COMPRESSION_ERROR.
-      // node still delivers the reserved stream to the callback (the caller gets to
-      // attach handlers) and lets the session teardown error it. The PUSH_PROMISE never
-      // reached the wire, so teardown must not send an RST for the reserved id.
+      // Block not encodable: session failing with COMPRESSION_ERROR. Node still delivers the
+      // reserved stream to the callback and lets session teardown error it. PUSH_PROMISE never
+      // reached the wire, so teardown must not RST the reserved id.
       if (pushedStream) pushedStream[kNeverAnnounced] = true;
       process.nextTick(callback, null, pushedStream, headers);
       return;
@@ -4264,10 +4261,9 @@ class ServerHttp2Session extends Http2Session {
           !stream.writableFinished &&
           !stream.destroyed
         ) {
-          // The writable side is mid-finish (an in-flight _final or _write carrying
-          // END_STREAM settled the native stream synchronously, re-entering here before
-          // Writable.end() has set kEnding): destroying now would swallow 'finish'.
-          // Node's kMaybeDestroy waits for the writable side to finish first.
+          // Writable side is mid-finish (an in-flight _final/_write carrying END_STREAM settled
+          // native synchronously, re-entering before Writable.end() set kEnding): destroying now
+          // swallows 'finish'. Node's kMaybeDestroy waits for writable to finish first.
           stream.once("finish", destroySelfOnEnd);
         } else {
           stream.destroy();
@@ -5253,19 +5249,17 @@ class ClientHttp2Session extends Http2Session {
           !stream.writableFinished &&
           !stream.destroyed
         ) {
-          // The writable side is mid-finish (an in-flight _final or _write carrying
-          // END_STREAM settled the native stream synchronously, re-entering here before
-          // Writable.end() has set kEnding): destroying now would swallow 'finish'.
-          // Node's kMaybeDestroy waits for the writable side to finish first.
+          // Writable side is mid-finish (an in-flight _final/_write carrying END_STREAM settled
+          // native synchronously, re-entering before Writable.end() set kEnding): destroying now
+          // swallows 'finish'. Node's kMaybeDestroy waits for writable to finish first.
           stream.once("finish", destroySelfOnEnd);
         } else {
           stream.destroy();
         }
         if (self.#connections === 0 && self.#closed) {
-          // Deferred like close()'s own destroy: this runs inside a native dispatch
-          // batch, and frames the engine already received but has not dispatched yet
-          // must still reach JS. An outstanding settings() ACK or ping gets a bounded
-          // grace (see scheduleSettingsAckGraceNT); its arrival completes the destroy.
+          // Deferred like close()'s own destroy: runs inside a native dispatch batch and
+          // not-yet-dispatched frames must still reach JS. An outstanding settings() ACK or
+          // ping gets bounded grace (scheduleSettingsAckGraceNT); its arrival completes destroy.
           if (self.#pendingSettingsAckCount > 0 || (self.#pingCallbacks !== null && self.#pingCallbacks.length > 0)) {
             scheduleSettingsAckGraceNT(self);
           } else {

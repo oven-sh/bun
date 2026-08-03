@@ -1,11 +1,6 @@
-// The JS HTTP/1 server path: an llhttp-driven request/response cycle over an
-// arbitrary Duplex, plus a stand-in for the native NodeHTTPResponse handle that
-// renders the header block to the socket itself.
-//
-// Two consumers: node:http2's `allowHTTP1` ALPN fallback, and node:http's
-// `connectionListener`, which Node registers on every http.Server so that
-// `server.emit("connection", socket)` works for a socket the native listener
-// never accepted.
+// JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
+// Used by http2's `allowHTTP1` ALPN fallback and http's `server.emit("connection", socket)`.
+// See https://github.com/nodejs/node/blob/main/lib/_http_server.js connectionListener.
 const { STATUS_CODES } = require("internal/http");
 const { SafeSet } = require("internal/primordials");
 
@@ -73,10 +68,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     // auto-header bits (AUTO_HEADER_* in _http_server.ts / kAutoHeader* in
     // NodeHTTP.cpp) rather than the flat array.
     const autoBits = head?.autoHeaderBits ?? 0;
-    // Node emits the chunked Transfer-Encoding after the Connection line, so the
-    // bit is rendered further down — but the framing is decided here, and it has
-    // to suppress the Content-Length this block would otherwise invent. Writing
-    // both is a smuggling shape (RFC 9112 6.1), not a cosmetic slip.
+    // Framing decided here but Transfer-Encoding rendered after Connection (Node _storeHeader
+    // order); suppress the Content-Length it would otherwise invent (RFC 9112 §6.1 smuggling).
     const chunkedFromAutoBits = (autoBits & 16) !== 0;
     // Decide the framing here, but write it after Date/Connection/Keep-Alive:
     // Node's _storeHeader emits Content-Length and the chunked Transfer-Encoding
@@ -91,12 +84,9 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
         autoContentLength = contentLength;
       }
     }
-    // Mirror the native writeAutoHeaders exactly: each line is written iff its
-    // bit is set, so res.sendDate = false, removeHeader("date"), a removed
-    // Connection header (neither connection bit) and a suppressed Keep-Alive
-    // timeout all round-trip identically through this path. A head-less write
-    // (nothing called writeHead on this handle) keeps the old defaults — that
-    // only happens off node:http's ServerResponse, which always renders bits.
+    // Mirror native writeAutoHeaders: each line written iff its bit is set, so sendDate=false /
+    // removeHeader / suppressed Keep-Alive round-trip identically. A head-less write (no writeHead
+    // on this handle — only off node:http's ServerResponse) keeps the old defaults.
     if (head === null) {
       if (!hasDate) {
         out += `Date: ${new Date().toUTCString()}\r\n`;
@@ -240,10 +230,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   return handle;
 }
 
-// HTTP/1.1 fallback for Http2SecureServer with `allowHTTP1: true`: parses the
-// request from the (already decrypted) TLS socket and emits 'request' with
-// http.IncomingMessage / http.ServerResponse objects, like node does by routing
-// the socket to the HTTP/1 connection listener.
+// HTTP/1.1 fallback for Http2SecureServer `allowHTTP1: true`: parse the TLS socket and emit
+// 'request' with http.IncomingMessage/ServerResponse, like Node's httpConnectionListener routing.
 function connectionListenerHTTP1(server, socket, options) {
   const http = require("node:http");
   const { HTTPParser, prepareError, calculateLenientFlags, continueExpression } = require("node:_http_common");
@@ -267,11 +255,8 @@ function connectionListenerHTTP1(server, socket, options) {
   const kOnBody = HTTPParser.kOnBody | 0;
   const kOnMessageComplete = HTTPParser.kOnMessageComplete | 0;
 
-  // Mirror Node's connectionListenerInternal: the parser carries the server's
-  // header-size cap, its leniency resolution and its header-count limit. Passing
-  // none of these left every fallback connection on the built-in defaults, so
-  // maxHeaderSize / insecureHTTPParser / httpValidation / maxHeadersCount were
-  // silently ignored on this path.
+  // Mirror Node's connectionListenerInternal: carry maxHeaderSize / leniency / maxHeadersCount
+  // into the parser. https://github.com/nodejs/node/blob/main/lib/_http_server.js
   const lenientFlags = calculateLenientFlags(server.httpValidation, server.insecureHTTPParser);
   const parser = new HTTPParser();
   parser.initialize(HTTPParser.REQUEST, {}, server.maxHeaderSize || 0, lenientFlags);
@@ -308,11 +293,9 @@ function connectionListenerHTTP1(server, socket, options) {
     req.upgrade = upgrade;
     req._addHeaderLines(rawHeaders, rawHeaders.length);
 
-    // Node's parserOnIncoming: llhttp's upgrade verdict only sticks for CONNECT
-    // or when someone will actually handle the 'upgrade' event; otherwise the
-    // request falls through to normal dispatch with req.upgrade cleared.
-    // Returning 2 makes llhttp stop at the end of this message, so the bytes
-    // after it — the tunnel payload — are never parsed as HTTP.
+    // Node's parserOnIncoming: upgrade only sticks for CONNECT or when an 'upgrade' listener
+    // exists; otherwise fall through to normal dispatch. Returning 2 makes llhttp stop after
+    // this message so tunnel bytes are never parsed as HTTP.
     if (upgrade) {
       req.upgrade =
         req.method === "CONNECT" ||
@@ -410,11 +393,9 @@ function connectionListenerHTTP1(server, socket, options) {
       return;
     }
     if (pendingUpgrade) {
-      // Node's onParserExecuteCommon: this connection stops being HTTP here.
-      // Free the parser, hand the socket over with whatever followed the
-      // request head (the first tunnel bytes), and destroy when nobody is
-      // listening — reachable only for CONNECT, since a listener-less Upgrade
-      // already fell through to normal dispatch above.
+      // Node's onParserExecuteCommon: connection stops being HTTP here. Free parser, hand the
+      // socket over with the first tunnel bytes, destroy when nobody is listening (only CONNECT
+      // reaches here listener-less; Upgrade already fell through above).
       const upgradeReq = pendingUpgrade;
       pendingUpgrade = null;
       socket.removeListener("data", onHttp1SocketData);

@@ -588,13 +588,9 @@ struct HttpResponseData;
     private:
         std::string fallback;
     public:
-        /* node:http flood prevention. The dispatch of a pipelined request that
-         * finds outgoing backpressure pauses reads (HttpContext), but the recv
-         * buffer being parsed can still hold thousands of already-received
-         * pipelined requests, and Node stops consuming those too (its parser is
-         * paused alongside the socket). The signal makes the request loop stop
-         * at the next request boundary; the unconsumed remainder is parked here
-         * and replayed, in order, when reads resume. */
+        /* node:http flood prevention: when a pipelined dispatch finds outgoing backpressure,
+         * Node pauses the parser alongside the socket. The signal stops the request loop at the
+         * next boundary; the unconsumed remainder is parked here and replayed when reads resume. */
         bool nodeHttpReadsPausedSignal = false;
         bool nodeHttpSpillReplayScheduled = false;
         std::string nodeHttpPausedSpill;
@@ -607,13 +603,9 @@ struct HttpResponseData;
         bool nodeHttpSawConnectionClose = false;
 
         const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
-        /* maxHeaderSize bounds what llhttp counts — the URL plus each field name and
-         * value — but the raw block also carries framing llhttp never charges: the
-         * method and " HTTP/1.1\r\n", a ": " and "\r\n" per header, and the terminating
-         * "\r\n". Bounding raw bytes by maxHeaderSize itself would reject a request
-         * Node accepts, so the raw bounds get exactly that framing as slack. It stays
-         * finite: at most UWS_HTTP_MAX_HEADERS_COUNT headers contribute 4 bytes each,
-         * and a field value's raw span is already bounded by the in-loop check. */
+        /* maxHeaderSize bounds what llhttp counts (URL + field names/values), not framing
+         * (method, " HTTP/1.1\r\n", ": ", "\r\n"). Raw bounds get that framing as slack so
+         * we don't reject requests Node accepts. Finite: ≤UWS_HTTP_MAX_HEADERS_COUNT*4 + 64. */
         static constexpr size_t MAX_HEADER_FRAMING_SLACK = UWS_HTTP_MAX_HEADERS_COUNT * 4 + 64;
 
         /* Maximum chunk-extension bytes per chunk, matching Node/llhttp's
@@ -987,14 +979,9 @@ struct HttpResponseData;
             if(requestLineResult.isConnect) {
                 isConnectRequest = true;
             }
-            /* llhttp — and therefore Node — bounds the header block by the bytes it hands
-             * to its callbacks: on_url, then each field name and field value. It does not
-             * charge the method, " HTTP/1.1\r\n", the ": " separators or the "\r\n" line
-             * endings against that budget, so counting the raw offset into the buffer
-             * rejects requests Node accepts. Mirror llhttp's TrackHeader: accumulate
-             * name + value lengths and fail once the total reaches maxHeaderSize. The
-             * fallback buffer keeps its own bound (maxBufferedHeaderSize below), which is
-             * what caps how much raw data a fragmented request may buffer. */
+            /* Mirror llhttp's TrackHeader: accumulate URL + name + value lengths only (llhttp
+             * never charges method/separators/CRLF) and fail at maxHeaderSize. The fallback
+             * buffer keeps its own raw bound (maxBufferedHeaderSize). github.com/nodejs/llhttp */
             uint64_t headerNread = headers[0].value.length();
             if (maxHeaderSize && headerNread >= maxHeaderSize) {
                 return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
@@ -1064,11 +1051,9 @@ struct HttpResponseData;
                     }
                     break;
                 }
-                /* Bound the value before its terminator is found — a value that never
-                 * terminates must still overflow here, exactly where llhttp would, or an
-                 * oversized unterminated header just waits for more data instead of
-                 * failing. llhttp is handed the value with leading OWS already skipped,
-                 * so that OWS is not charged. */
+                /* Bound the value before its terminator is found — an unterminated oversized
+                 * value must overflow here (where llhttp would), not wait for more data.
+                 * llhttp sees the value with leading OWS skipped, so that OWS is not charged. */
                 const char *countedValueStart = preliminaryValue;
                 while (countedValueStart < postPaddedBuffer && isHTTPHeaderValueWhitespace((unsigned char) *countedValueStart)) {
                     countedValueStart++;
@@ -1084,11 +1069,9 @@ struct HttpResponseData;
                 if (postPaddedBuffer[1] == '\n') {
                     /* Store this header, it is valid */
                     headers->value = std::string_view(preliminaryValue, (size_t) (postPaddedBuffer - preliminaryValue));
-                    /* Charge the value the way llhttp hands it to on_header_value: leading
-                     * OWS skipped (countedValueStart already sits past it), trailing OWS
-                     * still counted. Measure before the trims below, or a value padded with
-                     * trailing spaces is undercharged and we accept a header block Node
-                     * answers with 431. */
+                    /* Charge like llhttp's on_header_value: leading OWS skipped, trailing OWS
+                     * counted. Measure before the trims below or trailing-space-padded values
+                     * are undercharged and we accept a header block Node answers with 431. */
                     const size_t chargedValueLength = (size_t) (postPaddedBuffer - countedValueStart);
                     postPaddedBuffer += 2;
                     /* Trim trailing whitespace (SP, HTAB) per RFC 9110 Section 5.5 */
@@ -1159,11 +1142,9 @@ struct HttpResponseData;
                 consumedTotal += length;
                 return HttpParserResult::success(consumedTotal, returnedUser);
             }
-            /* node:http flood prevention: a dispatch earlier in this buffer
-             * paused reads. Stop at this request boundary (the previous
-             * request's body is fully consumed here by construction) and park
-             * the rest. Reported as consumed so the caller does not spill it
-             * into the size-capped header fallback buffer. */
+            /* node:http flood prevention: a dispatch earlier in this buffer paused reads.
+             * Stop at this request boundary, park the rest, report it as consumed so the
+             * caller does not spill it into the size-capped header fallback buffer. */
             if constexpr (IsNodeHttp) {
                 if (nodeHttpReadsPausedSignal) [[unlikely]] {
                     nodeHttpPausedSpill.append(data, length);
@@ -1268,13 +1249,9 @@ struct HttpResponseData;
             bool deferredTransferEncodingError = IsNodeHttp && transferEncoding.has
                 && !transferEncoding.invalid && !transferEncoding.chunked && !contentLengthStringLen;
 
-            /* llhttp's LENIENT_TRANSFER_ENCODING (part of Node's kLenientAll — the
-             * insecureHTTPParser / httpValidation: "insecure" surface, never
-             * "relaxed") accepts a chunked coding with another value after it,
-             * e.g. a duplicate Transfer-Encoding: chunked header. It does not
-             * relax the Transfer-Encoding + Content-Length conflict, so only the
-             * coding-shape verdict is cleared; the conflicts folded in below
-             * still reject. */
+            /* llhttp LENIENT_TRANSFER_ENCODING (kLenientAll / "insecure", never "relaxed")
+             * accepts chunked with another value after it. It does not relax the TE+CL
+             * conflict, so only the coding-shape verdict is cleared; conflicts below still reject. */
             if (useLenientTransferEncoding) {
                 transferEncoding.invalid = false;
             }

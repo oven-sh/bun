@@ -57,12 +57,9 @@ pub struct NodeHTTPResponse {
     /// body finishes (still inside the parser), because a pipelined request's
     /// parse would otherwise overwrite it before this request's JS reads it.
     pub(crate) request_trailers: JsCell<Vec<u8>>,
-    /// The JS wrapper whose `ondata` slot was armed for THIS response's request
-    /// body. `get_this_value()` resolves through the socket's *current* response
-    /// object, which for a pipelined request is some other response — delivering
-    /// through it reads the wrong (empty) cache and the body is lost. The
-    /// wrapper is kept alive by req[kHandle] on the JS side; cleared when the
-    /// slot is cleared and when the wrapper finalizes.
+    /// The JS wrapper whose `ondata` slot was armed for THIS request body. `get_this_value()`
+    /// resolves through the socket's current response, which under pipelining is a different
+    /// one; delivering through it loses the body. Kept alive by req[kHandle]; cleared on finalize.
     pub(crate) armed_this_value: Cell<JSValue>,
     /// node:http: this request's header section captured at dispatch as
     /// [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /
@@ -200,17 +197,15 @@ unsafe extern "C" {
     safe fn Bun__getNodeHTTPResponseThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
     safe fn Bun__getNodeHTTPServerSocketThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
 
-    // Moves the connection's captured node:http request-trailer section out.
-    // `*out` points into a C++ thread-local that stays valid until the next
-    // call on this thread; the caller copies it immediately. Returns 0 when
-    // there is nothing captured or the socket is closed.
-    // node:http flood prevention (JSNodeHTTPServerSocket.cpp). The signal makes
-    // the uWS request loop stop consuming pipelined requests at the next request
-    // boundary while the socket is paused; the resumable hook replays anything
-    // it parked, in order, before actually resuming reads.
+    // node:http flood prevention (JSNodeHTTPServerSocket.cpp): the signal makes the uWS request
+    // loop stop consuming pipelined requests at the next boundary while paused; the resumable
+    // hook replays what it parked, in order, before resuming reads.
     safe fn Bun__NodeHTTP__setReadsPausedSignal(ssl: core::ffi::c_int, socket: *mut c_void);
     safe fn Bun__NodeHTTP__onReadsResumable(ssl: core::ffi::c_int, socket: *mut c_void);
 
+    // Moves the connection's captured node:http request-trailer section out. `*out` points into
+    // a C++ thread-local valid until the next call on this thread; caller copies immediately.
+    // Returns 0 when nothing captured or socket closed.
     safe fn Bun__NodeHTTP__takeRequestTrailerBytes(
         is_ssl: bool,
         socket: *mut c_void,
@@ -494,10 +489,9 @@ impl NodeHTTPResponse {
         raw.pause();
     }
 
-    /* Pipelined flood prevention pauses READS on the connection, which is
-     * legal — and necessary — after the in-flight response has ended, so this
-     * intentionally skips doPause's ENDED/REQUEST_HAS_COMPLETED guards (those
-     * exist for request-body flow control). */
+    /* Pipelined flood prevention pauses READS on the connection, legal after the in-flight
+     * response has ended — so this intentionally skips doPause's ENDED/REQUEST_HAS_COMPLETED
+     * guards (those exist for request-body flow control). */
     pub(crate) fn pause_socket_reads(
         &self,
         _global: &JSGlobalObject,
@@ -1718,13 +1712,9 @@ impl NodeHTTPResponse {
         // it, and a body arriving in that window used to be dropped outright.
         let on_data_armed = js::on_data_get_cached(this_value).is_some_and(|cb| cb.is_cell());
         if !on_data_armed && body_was_pending && event == AbortEvent::None {
-            // No reader armed yet. This is a pipelined request whose body sat in
-            // the same parse burst as its headers: the response does not own the
-            // socket, so the JS side has not run _read() to install ondata when
-            // the parser reaches the body. Dropping it loses the body outright —
-            // park it where the pause path parks, and the drain that runs when
-            // the reader arms picks it up. A dumped request never gets here: its
-            // teardown moved body_read_state to Done first.
+            // No reader armed yet: pipelined request whose body arrived in the same parse burst
+            // as its headers, before JS ran _read() to install ondata. Park it where pause parks;
+            // the reader-arm drain picks it up. (Dumped requests move to Done first, never here.)
             self.buffered_request_body_data_during_pause
                 .with_mut(|b| b.append_slice(chunk));
             self.update_flags(|f| {

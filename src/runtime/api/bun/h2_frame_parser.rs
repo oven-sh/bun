@@ -3017,10 +3017,9 @@ impl H2FrameParser {
 
     pub(crate) fn flush(&self) -> usize {
         bun_output::scoped_log!(H2FrameParser, "flush");
-        // The onWrite dispatch below re-enters JS, and a synchronous transport
-        // (duplexPair) can re-enter flush() from inside it: bail so the in-flight
-        // bytes are not sent a second time (through any arm — a connect callback
-        // running inside the dispatch may have attached a native socket).
+        // onWrite re-enters JS; a synchronous transport (duplexPair) can re-enter flush():
+        // bail so in-flight bytes are not sent twice (through any arm — a connect callback
+        // inside the dispatch may have attached a native socket).
         if self.js_socket_flushing.get() {
             return 0;
         }
@@ -3063,18 +3062,16 @@ impl H2FrameParser {
                         -1
                     };
                     if code == -1 {
-                        // JS did not take the bytes (e.g. the session's socket is not ready
-                        // yet). Keep them queued for the next flush — clearing here loses
-                        // the connection preface when the peer's first frames arrive before
-                        // the connect callback has run.
+                        // JS did not take the bytes (socket not ready). Keep them queued;
+                        // clearing here loses the connection preface when peer frames arrive
+                        // before the connect callback has run.
                         self.has_nonnative_backpressure.set(true);
                         return 0;
                     }
 
-                    // Consume exactly what was handed to JS: writes made re-entrantly during
-                    // the dispatch sit after it in the buffer and wait for the next flush.
-                    // `>=` also covers the buffer having been cleared (detach) during the
-                    // dispatch, where advancing would strand the offset past the end.
+                    // Consume exactly what was handed to JS; re-entrant writes during dispatch
+                    // sit after it and wait for the next flush. `>=` also covers the buffer
+                    // being cleared (detach) mid-dispatch, where advancing would strand the offset.
                     if offset + bytes_len >= self.write_buffer.get().slice().len() {
                         self.write_buffer_offset.set(0);
                         self.write_buffer.with_mut(|wb| {
@@ -3328,11 +3325,9 @@ impl H2FrameParser {
             return false;
         }
         if self.pending_header_compression_error.get() {
-            // Keep the pending latch set across the dispatch and flush: the
-            // re-entrant detach() -> uncork()/unregister_auto_flush() the JS
-            // teardown drives must early-return at the pending guard instead of
-            // mutating the task map run() is iterating (aliasing UB). The latch
-            // is cleared once we are back here with no re-entry on the stack.
+            // Keep the pending latch set across dispatch+flush: re-entrant detach() ->
+            // uncork()/unregister_auto_flush() must early-return at the guard instead of
+            // mutating the task map run() iterates (aliasing UB). Cleared once back here.
             self.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onError,
                 JSValue::js_number(ErrorCode::COMPRESSION_ERROR.0 as f64),
@@ -7825,10 +7820,9 @@ impl H2FrameParser {
                         Err(global_object.throw(format_args!("Failed to allocate header buffer")))
                     }
                     Err(_) => {
-                        // nghttp2 checks maxSendHeaderBlockLength before deflation and fires
-                        // on_frame_not_send_callback(NGHTTP2_ERR_FRAME_SIZE_ERROR), which node
-                        // surfaces as 'frameError' + ERR_HTTP2_STREAM_ERROR (vendored
-                        // test-http2-exceeds-server-trailer-size.js asserts exactly this).
+                        // nghttp2 checks maxSendHeaderBlockLength pre-deflation and fires
+                        // on_frame_not_send_callback(NGHTTP2_ERR_FRAME_SIZE_ERROR); Node surfaces
+                        // 'frameError' + ERR_HTTP2_STREAM_ERROR (test-http2-exceeds-server-trailer-size.js).
                         let identifier = stream.get_identifier();
                         identifier.ensure_still_alive();
                         this.dispatch_with_2_extra(

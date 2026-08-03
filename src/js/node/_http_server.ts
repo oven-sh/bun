@@ -302,12 +302,9 @@ function normalizeServerTls(tls) {
   return tls;
 }
 
-// Node registers connectionListener on every http.Server, so a socket the
-// listener never accepted still gets parsed when it arrives as
-// `server.emit("connection", socket)` — a plain Duplex, or a socket handed over
-// from another server. The native listener drives its own sockets end to end, so
-// this only has to pick up the foreign ones; node:http2 runs the same path for
-// its allowHTTP1 ALPN fallback.
+// Node registers connectionListener on every http.Server so `server.emit("connection", socket)`
+// works for foreign Duplex sockets. The native listener handles its own sockets end to end;
+// this picks up the rest. https://github.com/nodejs/node/blob/main/lib/_http_server.js
 function connectionListener(this: Server, socket) {
   if (socket instanceof NodeHTTPServerSocket) return;
   connectionListenerHTTP1(this, socket, {
@@ -961,11 +958,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             socket,
           };
           (socket[kPipelinedResponses] ??= []).push(http_res);
-          // A pipelined dispatch can arrive after the previous response already
-          // finished and detached — its bytes still flushing natively keep the
-          // connection marked pending — so nothing is in flight to advance the
-          // queue from and this response would sit queued forever. Kick the
-          // pipeline once this dispatch settles.
+          // A pipelined dispatch can arrive after the previous response finished and detached
+          // (bytes still flushing keep it pending), leaving nothing in flight to advance the
+          // queue. Kick the pipeline once this dispatch settles.
           if (socket._httpMessage == null && !socket[kPipelineKickScheduled]) {
             socket[kPipelineKickScheduled] = true;
             process.nextTick(advancePipelineIfIdleNT, server, socket);
@@ -1163,13 +1158,9 @@ function applyServerCustomOptions(server: Server) {
   );
 }
 
-// Same resolution the client applies: httpValidation wins, then an explicit
-// insecureHTTPParser, then the process-wide --insecure-http-parser. Native
-// implements two of llhttp's lenient bits, addressed here as bit 0 = lenient
-// header values (LENIENT_HEADERS) and bit 1 = lenient transfer-encoding
-// (LENIENT_TRANSFER_ENCODING). "relaxed" relaxes header values only; the full
-// kLenientAll surface (insecureHTTPParser / httpValidation: "insecure" /
-// --insecure-http-parser) gets both.
+// Resolution: httpValidation > explicit insecureHTTPParser > --insecure-http-parser. Native
+// implements two llhttp lenient bits: bit 0 = LENIENT_HEADERS ("relaxed" gets this only),
+// bit 1 = LENIENT_TRANSFER_ENCODING (kLenientAll / "insecure" gets both).
 function serverLenientFlags(server: Server) {
   const lenient = calculateLenientFlags(server.httpValidation, server.insecureHTTPParser);
   if (lenient === HTTPParser.kLenientNone) return 0;
@@ -1215,11 +1206,9 @@ function onServerConnection(this: Server, socketHandle) {
   const isTLS = !!this[tlsSymbol];
   const socket = new NodeHTTPServerSocket(this, socketHandle, isTLS);
 
-  // Node reaches this through net.Server's accept path, which refuses the
-  // connection once maxConnections is reached and reports 'drop' instead of
-  // 'connection'. The native listener bypasses that path, so gate it here. The
-  // constructor above already tracked the socket, hence `>` against a count that
-  // includes it rather than Node's `>=` against one that does not.
+  // Node's net.Server accept path refuses at maxConnections and emits 'drop'; the native
+  // listener bypasses that, so gate it here. `>` (not Node's `>=`) because the constructor
+  // above already tracked this socket in the count.
   const maxConnections = this.maxConnections;
   const tracked = this[kTrackedConnections];
   if (maxConnections != null && (tracked?.size ?? 0) > maxConnections) {
@@ -2363,12 +2352,9 @@ function renderNativeHeaders(res) {
         closeDelimited = true;
         res[kMustCloseConnection] = true;
       } else if (res._removedContLen || res[kFramingFrozenChunked]) {
-        // Node's _storeHeader only falls through to chunked when
-        // useChunkedEncodingByDefault is set (false for HTTP/1.0 requests),
-        // and the native writer never chunk-frames an HTTP/1.0 response, so
-        // everything else is close-delimited like the _removedTE case.
-        // An explicit writeHead() reaches the same fallthrough with the same
-        // null _contentLength, so it is gated identically.
+        // Node's _storeHeader falls through to chunked only when useChunkedEncodingByDefault
+        // (false for HTTP/1.0); the native writer never chunk-frames HTTP/1.0, so the rest is
+        // close-delimited. An explicit writeHead() reaches the same null-_contentLength fallthrough.
         const req = res.req;
         if (res.useChunkedEncodingByDefault && req.httpVersionMajor >= 1 && req.httpVersionMinor >= 1) {
           forceChunked = true;
@@ -2435,10 +2421,8 @@ function renderNativeHeaders(res) {
       // response (it is not a real header).
       flat.push("\u0000", "1");
     } else if (forceChunked) {
-      // Advertise chunked so the native side frames the body instead of
-      // auto-writing a Content-Length. Not pushed into the flat array: Node's
-      // _storeHeader emits this after the Connection line, and the flat array is
-      // written before the auto headers.
+      // Advertise chunked so native frames the body instead of auto-writing Content-Length.
+      // Not in the flat array: Node's _storeHeader emits this after Connection, flat array goes first.
       autoHeaders |= AUTO_HEADER_TRANSFER_ENCODING_CHUNKED;
     }
   } catch (e) {
@@ -2547,10 +2531,9 @@ function pausePipelineReads(socket) {
   const response = socket[kHandle]?.response;
   if (!response) return;
   socket._paused = true;
-  // Not response.pause(): that is request-body flow control and refuses to act
-  // once the in-flight response has ended — which it always has by the time the
-  // pipeline backs up. pauseReads() pauses the connection's reads regardless,
-  // and native stops consuming already-received pipelined requests with it.
+  // Not response.pause(): that is request-body flow control and no-ops once the in-flight
+  // response has ended (always true when the pipeline backs up). pauseReads() pauses the
+  // connection regardless and native stops consuming already-received pipelined requests.
   response.pauseReads();
 }
 
@@ -3608,10 +3591,9 @@ ServerResponse.prototype.writeHead = function (statusCode, statusMessage, header
   this[kSnapshotStatusCode] = this.statusCode;
   this[kSnapshotStatusMessage] = this.statusMessage;
 
-  // Node's writeHead() freezes the body framing too, not just the status line:
-  // _storeHeader runs here with _contentLength still null, and a later end(chunk)
-  // cannot add a Content-Length once _header exists. Headers render lazily here,
-  // so record the frozen choice for renderNativeHeaders to honor.
+  // Node's writeHead() freezes body framing: _storeHeader runs with _contentLength null and
+  // a later end(chunk) cannot add Content-Length once _header exists. Headers render lazily
+  // here, so record the frozen choice for renderNativeHeaders.
   if (!this[kImplicitHeaderFromEnd] && !this.hasHeader("content-length") && !this.hasHeader("transfer-encoding")) {
     this[kFramingFrozenChunked] = true;
   }

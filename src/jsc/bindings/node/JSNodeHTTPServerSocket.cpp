@@ -400,13 +400,9 @@ void JSNodeHTTPServerSocket::appendPipelinedResponse(JSC::VM& vm, WebCore::JSNod
     m_pipelinedResponses.last().set(vm, this, response);
 }
 
-/* node:http flood prevention, resume half. Reads paused mid-buffer parked the
- * unconsumed pipelined requests on the parser (HttpParser::nodeHttpPausedSpill).
- * They must be replayed before the socket reads fresh bytes or the stream
- * reorders, and replaying dispatches request handlers — so it must not run
- * synchronously inside whatever JS operation made the connection resumable.
- * Defer it as an event-loop task holding the JS socket wrapper alive; reads
- * only actually resume once the spill has drained without re-pausing. */
+/* node:http flood prevention, resume half. Parked pipelined requests (HttpParser::nodeHttpPausedSpill)
+ * must replay before fresh reads (ordering) and not synchronously inside the resuming JS operation.
+ * Deferred as an event-loop task rooting the JS socket; reads resume once the spill drains without re-pausing. */
 template<bool SSL>
 static void replayNodeHttpPausedSpill(us_socket_t* socket)
 {
@@ -445,13 +441,9 @@ static void onNodeHttpReadsResumable(us_socket_t* socket)
 {
     auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
     if (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
-        /* Flood prevention owns the pause. Outgoing backpressure holds
-         * everything — an incidental resume (writeHead re-arming the poll,
-         * req.resume()) must not reopen the flood or race fresh reads past the
-         * spill. Queued responses alone must NOT hold the spill replay: the
-         * body a queued response is waiting on may be sitting in the spill,
-         * and holding it would deadlock the pipeline. Raw reads still resume
-         * only once the queue and the spill have both drained. */
+        /* Flood prevention owns the pause: outgoing backpressure holds everything (incidental
+         * resumes must not race fresh reads past the spill). Queued responses alone must NOT hold
+         * spill replay (their body may be in the spill — deadlock). Raw reads resume once both drain. */
         if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() > 0) {
             return;
         }

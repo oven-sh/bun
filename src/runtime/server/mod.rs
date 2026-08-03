@@ -892,6 +892,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: `this` is the live server backref for this request.
         let Some(server_js) = unsafe { &*this }.js_value_for_dispatch() else {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
+            // A `Saved` payload owns the initial `RequestContext` ref (+1 from
+            // `prepare_and_save_js_request_context`); `AnyRequestContext` is
+            // `Copy`, so dropping `req` alone leaks the pool slot and the
+            // matching `pending_requests` decrement.
+            if let SavedRequestUnion::Saved(mut saved) = req {
+                saved.deinit();
+            }
             return;
         };
         let prepared: PreparedRequest<SSL, DEBUG> = match &req {

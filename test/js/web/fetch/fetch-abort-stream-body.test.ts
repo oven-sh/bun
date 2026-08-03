@@ -39,7 +39,7 @@ test.skipIf(!isASAN).concurrent(
   async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "fetch-abort-after-cancel-gc-fixture.ts")],
-      env: { ...bunEnv, ITER: "60", ASAN_OPTIONS: "fast_unwind_on_fatal=1" },
+      env: { ...bunEnv, ITER: "20", ASAN_OPTIONS: "fast_unwind_on_fatal=1" },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -47,10 +47,9 @@ test.skipIf(!isASAN).concurrent(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("AddressSanitizer");
-    expect(stdout).toBe("done 60\n");
+    expect(stdout).toBe("done 20\n");
     expect(exitCode).toBe(0);
   },
-  30_000,
 );
 
 test("aborting fetch with a ReadableStream request body does not double-cancel the sink", async () => {

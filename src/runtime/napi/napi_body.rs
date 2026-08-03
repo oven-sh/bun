@@ -2530,11 +2530,9 @@ impl ThreadSafeFunction {
         }
         if self_.closing.load(Ordering::SeqCst) == ClosingState::Closed as u8 {
             if self_.dispatch_depth > 0 || inflight > 0 {
-                // Either a nested event loop (a callback below blocked in
-                // `wait_for_promise` or similar) drained this task while an
-                // outer `on_dispatch` frame still borrows `*this`, or another
-                // task for this function is still queued. Defer the free to
-                // the outermost frame / last task.
+                // An outer `on_dispatch` frame still borrows `*this`, or
+                // another task for it is still queued; whoever is last out
+                // frees it.
                 self_.pending_destroy = true;
                 return;
             }
@@ -2631,16 +2629,15 @@ impl ThreadSafeFunction {
                     self.callback = TsfnCallback::Js(StrongOptional::empty());
                     self.poll_ref.disable();
                     let self_ptr: *mut Self = self;
-                    {
-                        let Some(loop_) = self.loop_mut() else {
-                            // env torn down: `env_teardown` owns the finalize + free.
-                            return;
-                        };
-                        loop_.enqueue_task(Task::init(self_ptr));
-                    }
-                    // The finalize task targets `on_dispatch` too (same task
-                    // tag), so it counts toward the in-flight dispatch tasks.
+                    // The finalize task targets `on_dispatch` too, so count it
+                    // before publishing it.
                     let _ = self.inflight_dispatch_tasks.fetch_add(1, Ordering::SeqCst);
+                    let Some(loop_) = self.loop_mut() else {
+                        // env torn down: `env_teardown` owns the finalize + free.
+                        let _ = self.inflight_dispatch_tasks.fetch_sub(1, Ordering::SeqCst);
+                        return;
+                    };
+                    loop_.enqueue_task(Task::init(self_ptr));
                     self.has_queued_finalizer = true;
                 }
             }
@@ -2683,16 +2680,10 @@ impl ThreadSafeFunction {
             }
 
             if prev_count > 1 && !*scheduled_backup {
-                // `call` below can block indefinitely in a nested event loop
-                // (the callback, or a microtask it drains, can synchronously
-                // wait on a promise — e.g. bun:test's
-                // expect(promise).rejects). Items already queued behind this
-                // one would then be stranded, because pushes coalesce into
-                // the Pending state and rely on this drain loop. Schedule one
-                // backup dispatch so a nested loop can keep draining; if
-                // nothing blocks, it finds an empty queue and is a no-op.
-                // `schedule_dispatch` requires the lock, so this stays inside
-                // the guard.
+                // `call` below can block in a nested event loop (bun:test's
+                // expect(promise).rejects), stranding the items still queued
+                // behind this one. One backup dispatch lets a nested loop keep
+                // draining; if nothing blocks, it is a no-op.
                 *scheduled_backup = true;
                 self.schedule_dispatch();
             }
@@ -2835,12 +2826,10 @@ impl ThreadSafeFunction {
             // we've already scheduled it to run
             return;
         }
-        // Idle: no dispatch is queued, enqueue one. Running: a dispatch loop is
-        // active on the JS thread and will usually pick the item up itself, but
-        // it can also be blocked in a nested event loop (a callback or one of
-        // its microtasks synchronously waiting on a promise that only settles
-        // via this threadsafe function). Relying on it then deadlocks the
-        // process, so enqueue in this case too; a redundant dispatch finds an
+        // Idle: no dispatch is queued. Running: the active dispatch loop
+        // usually picks the item up itself, but it can be blocked in a nested
+        // event loop waiting on a promise only this function can settle
+        // (#36828), so enqueue in this case too; a redundant dispatch finds an
         // empty queue and is a cheap no-op.
         let self_ptr: *mut Self = self;
         let Some(event_loop) = self.event_loop.as_ref() else {

@@ -543,12 +543,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
     }
 
     /// Swap this context's `SSL_CTX` for one trusting exactly `certs`
-    /// (`tls.setDefaultCACertificates()` bridged from the JS thread). Only
-    /// new connects see the change: live sockets hold their own references
-    /// on the old `SSL_CTX`, and the fresh context also starts with an empty
-    /// client session cache, so resumption cannot skip re-verification
-    /// against the new set. An empty `certs` installs an explicitly empty
-    /// trust store, like Node.
+    /// (`tls.setDefaultCACertificates()`); only new connects see it, empty ⇒
+    /// empty trust store. <https://github.com/nodejs/node/blob/main/lib/tls.js>
     pub(crate) fn replace_ssl_ctx_with_default_ca(&mut self, certs: &[std::ffi::CString]) {
         debug_assert!(SSL, "ssl only");
         let ptrs: Vec<*const core::ffi::c_char> = certs.iter().map(|c| c.as_ptr()).collect();
@@ -564,10 +560,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
             ..Default::default()
         };
         let Some(ctx) = opts.create_ssl_context(&mut err) else {
-            // The PEMs were already validated on the JS side
-            // (parseCACertificates), so this is resource exhaustion. Keep the
-            // previous context: connections still verify against the old
-            // default set instead of silently skipping verification.
+            // PEMs were pre-validated (parseCACertificates) so this is resource
+            // exhaustion; keep the previous ctx rather than drop verification.
             return;
         };
         if ptrs.is_empty() {

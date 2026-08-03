@@ -1650,11 +1650,9 @@ impl FetchTasklet {
         };
 
         if matches!(fail, http::Error::Cert(_)) {
-            // Node's fetch surfaces certificate failures with the TLS error
-            // attached as `cause` (undici wraps it in "TypeError: fetch
-            // failed"); Bun rejects with the certificate error itself, so
-            // ported `err.cause.code` checks found nothing. Attach a distinct
-            // instance carrying the same code/message as the cause.
+            // Node/undici attaches the TLS error as `.cause` on the rejected
+            // TypeError; mirror that so ported `err.cause.code` checks work.
+            // https://github.com/nodejs/node/blob/main/lib/internal/deps/undici/undici.js
             let global = &self.global_this;
             let cause = fetch_error.clone().to_error_instance(global);
             let err_js = fetch_error.to_type_error_instance(global);

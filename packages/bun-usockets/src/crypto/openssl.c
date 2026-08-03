@@ -2019,25 +2019,16 @@ static int ssl_is_uws_http_tls(struct us_socket_t *s) {
   return us_socket_kind(s) == BUN_SOCKET_KIND_UWS_HTTP_TLS;
 }
 
-/* The EOF dispatch below is scoped to the socket kinds whose user layer
- * consumes an end event and then honors allow_half_open like the plain-TCP
- * path in loop.c: uWS HTTP server sockets (their context's onEnd owns the
- * EOF: premature-EOF clientError, CONNECT/Upgrade half-open, pipeline drain
- * after FIN) and Bun.connect/Bun.listen sockets (node:tls rides on these
- * with allow_half_open always set natively; the historical force-close on
- * the peer's close_notify made an allowHalfOpen client's write-after-'end'
- * fail instead of flushing). The remaining TLS kinds (HTTP client,
- * WebSocket, DB drivers) synthesize their EOF handling from the close event
- * and keep the force-close. */
+/* EOF dispatch only for kinds whose user layer consumes 'end' + honors
+ * allow_half_open (uWS HTTP server, Bun.connect/listen ⇒ node:tls); all
+ * other TLS kinds derive EOF from close and keep the force-close. */
 static int ssl_wants_eof_dispatch(struct us_socket_t *s) {
   unsigned char kind = us_socket_kind(s);
   if (kind == BUN_SOCKET_KIND_UWS_HTTP_TLS) {
     return 1;
   }
-  /* Only an established session gets the TCP-like EOF/half-open semantics.
-   * An EOF mid-handshake keeps the historical force-close so the JS layer
-   * surfaces it as a failed handshake (ECONNRESET "socket hang up", like
-   * Node) instead of a clean 'end'. */
+  /* Mid-handshake EOF keeps the force-close so JS surfaces it as a failed
+   * handshake (ECONNRESET "socket hang up", like Node) not a clean 'end'. */
   return kind == BUN_SOCKET_KIND_BUN_SOCKET_TLS &&
          s->ssl_handshake_state == HANDSHAKE_COMPLETED;
 }

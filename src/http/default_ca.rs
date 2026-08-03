@@ -1,13 +1,6 @@
-//! Process-wide override of the default CA certificate set, installed by
-//! `tls.setDefaultCACertificates()`. Written on the JS thread (through
-//! [`set`]), consumed on the HTTP client thread, which rebuilds the default
-//! HTTPS `SSL_CTX` whenever [`generation`] moves (see `HttpThread::connect`).
-//!
-//! `node:tls`/`node:https` sockets do not read this store: their JS layer
-//! applies the same override when building each secure context
-//! (`_defaultCACertificatesOverride` in `src/js/node/tls.ts`). This bridge
-//! exists solely for `fetch()`/`Bun.fetch`, whose TLS contexts live on the
-//! HTTP client thread.
+//! `tls.setDefaultCACertificates()` override for `fetch()`'s HTTP-thread TLS
+//! contexts (node:tls applies it in JS instead — src/js/node/tls.ts).
+//! <https://github.com/nodejs/node/blob/main/lib/tls.js>
 
 use std::ffi::CString;
 use std::sync::Arc;

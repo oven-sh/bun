@@ -298,10 +298,8 @@ function normalizeServerTls(tls) {
   return tls;
 }
 
-// Fold https.Server TLS options (pfx, key/cert/ca, protocol range) into the
-// normalized tls object the native server config consumes; null when the
-// options carry no TLS material. Shared by the Server constructor and
-// setSecureContext().
+// Fold https.Server TLS options into the normalized tls object the native
+// config consumes (null when no TLS material); shared by ctor + setSecureContext.
 function processServerTlsOptions(options) {
   let isTls = false;
 
@@ -383,11 +381,9 @@ function processServerTlsOptions(options) {
   });
 }
 
-// Like Node's tls.Server#setSecureContext: rebuild the server credentials
-// from `options` and apply them to connections accepted from now on;
-// established connections keep the credentials they negotiated with.
-// Installed per-instance in the constructor for TLS servers only, so plain
-// http.Server keeps Node's surface (no setSecureContext).
+// tls.Server#setSecureContext: rebuild credentials for future connections
+// (installed per-instance on TLS servers only, so http.Server lacks it).
+// https://github.com/nodejs/node/blob/main/lib/_tls_wrap.js
 function serverSetSecureContext(this: Server, options) {
   validateObject(options, "options");
   const tls = processServerTlsOptions({ ...options }) ?? normalizeServerTls({});
@@ -1206,10 +1202,9 @@ function onServerConnection(this: Server, socketHandle) {
   }
   const isTLS = !!this[tlsSymbol];
   const socket = newNodeHTTPServerSocket(this, socketHandle, isTLS);
-  // Node's tls.Server emits the handshake's key-log lines before
-  // 'secureConnection'. The native layer parked them on the socket's SSL
-  // (armed by enableServerKeylog); post-handshake lines (KeyUpdate) are not
-  // surfaced.
+  // Node emits the handshake's key-log lines before 'secureConnection'; drain
+  // what enableServerKeylog parked (post-handshake KeyUpdate lines not surfaced).
+  // https://github.com/nodejs/node/blob/main/lib/_tls_wrap.js
   if (isTLS && this.listenerCount("keylog") > 0) {
     const lines = socketHandle.drainKeylog();
     if (lines !== null) {
@@ -2150,25 +2145,18 @@ function _writeHead(statusCode, reason, obj, response) {
 
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
 
-// Node's https server hands out tls.TLSSocket instances
-// (`socket instanceof tls.TLSSocket`). Encrypted server sockets are built
-// with a prototype chain carrying the same method table spliced above
-// TLSSocket.prototype; NodeHTTPServerSocket's constructor still runs
-// (TLSSocket's never does — the NodeHTTP handle replaces its wrap
-// machinery), so TLS-only surface like getPeerCertificate resolves through
-// TLSSocket.prototype while the I/O methods stay this class's.
+// Encrypted sockets must satisfy `instanceof tls.TLSSocket`: splice this
+// class's method table above TLSSocket.prototype and run only our ctor, so
+// TLS-only surface resolves through TLSSocket while I/O stays ours.
 let lazyTLSServerSocketTarget;
 function newNodeHTTPServerSocket(server, handle, encrypted) {
   if (encrypted) {
     if (lazyTLSServerSocketTarget === undefined) {
       const { TLSSocket } = require("node:tls");
       const descriptors = Object.getOwnPropertyDescriptors(NodeHTTPServerSocket.prototype);
-      // A name owned by TLSSocket.prototype would shadow the NetSocket-chain
-      // version this class relied on (its _final, for one, drives a TLS-wrap
-      // shutdown that never completes on a NodeHTTP handle and pins the event
-      // loop). Pin the previous resolution for every such name the old chain
-      // provided; genuinely TLS-only surface (getPeerCertificate, ...) still
-      // resolves through TLSSocket.prototype.
+      // TLSSocket.prototype names that exist on the old NetSocket chain (e.g.
+      // _final) must keep that resolution — the TLS-wrap versions never
+      // complete on a NodeHTTP handle and would pin the event loop.
       for (const name of Object.getOwnPropertyNames(TLSSocket.prototype)) {
         if (name === "constructor" || name in descriptors) continue;
         let proto = NodeHTTPServerSocket.prototype;

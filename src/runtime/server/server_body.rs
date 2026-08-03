@@ -3944,10 +3944,8 @@ fn server_set_on_connection(
 }
 
 /// `https.Server#setSecureContext()`: build a fresh `SSL_CTX` from `options`
-/// (same TLS-object shape the server was created with) and swap it in as the
-/// listener's default, so newly accepted sockets negotiate with the new
-/// credentials. Established and in-flight connections are untouched (their
-/// `SSL`s hold their own refs on the previous context), matching Node.
+/// and swap it in as the listener's default; live connections keep the old
+/// ctx. <https://github.com/nodejs/node/blob/main/lib/_tls_wrap.js>
 fn server_set_secure_context(
     global: &JSGlobalObject,
     server: JSValue,

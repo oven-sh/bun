@@ -74,13 +74,9 @@ pub(crate) fn bun_get_use_system_ca(
     Ok(JSValue::js_boolean(v))
 }
 
-/// `tls.setDefaultCACertificates()` bridge for `fetch()`: publishes the
-/// normalized PEM list to `bun_http::default_ca`, and the HTTP client thread
-/// rebuilds its default HTTPS `SSL_CTX` from it on the next connect.
-/// `node:tls`/`node:https` apply the same override in JS
-/// (`_defaultCACertificatesOverride` in src/js/node/tls.ts). The caller has
-/// already validated and re-serialized every entry through
-/// `parseCACertificates`, so each element is a PEM string.
+/// `tls.setDefaultCACertificates()` bridge for `fetch()`: publish the
+/// pre-validated PEM list to `bun_http::default_ca` so the HTTP client thread
+/// rebuilds its default `SSL_CTX` on next connect (node:tls applies it in JS).
 pub(crate) fn bun_set_default_ca_certificates(
     global: &JSGlobalObject,
     frame: &CallFrame,

@@ -37,7 +37,7 @@ impl CachedBytecode {
     // SAFETY CONTRACT: the returned `&'static [u8]` actually borrows from the
     // `CachedBytecode` handle and is invalidated when `deref()` is called. Callers own
     // the handle and must call `deref()` (or drop via `allocator()`) to free.
-    pub fn generate_for_esm(
+    pub(crate) fn generate_for_esm(
         source_provider_url: &mut BunString,
         input: &[u8],
     ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
@@ -67,7 +67,7 @@ impl CachedBytecode {
         None
     }
 
-    pub fn generate_for_cjs(
+    pub(crate) fn generate_for_cjs(
         source_provider_url: &mut BunString,
         input: &[u8],
     ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
@@ -96,11 +96,7 @@ impl CachedBytecode {
         None
     }
 
-    pub fn deref(&mut self) {
-        CachedBytecode__deref(self)
-    }
-
-    pub fn generate(
+    pub(crate) fn generate(
         format: Format,
         input: &[u8],
         source_provider_url: &mut BunString,
@@ -118,8 +114,7 @@ impl CachedBytecode {
 // `alloc`/`free` methods to dispatch through — so "free → deref" semantics
 // cannot ride the trait object. Call sites that would have freed through this
 // allocator must instead call `deref()` on the `NonNull<CachedBytecode>` handle
-// directly. `is_instance` is preserved for the vtable-identity check in
-// `bun_safety::alloc::has_ptr`.
+// directly.
 // ──────────────────────────────────────────────────────────────────────────
 
 impl bun_alloc::Allocator for CachedBytecode {}

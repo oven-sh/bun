@@ -59,7 +59,7 @@ impl JSMySQLQuery {
     /// m_ctx payload by construction, so the [`ScopedRef::new`] precondition
     /// (live, non-null) is always satisfied.
     #[inline]
-    pub fn ref_guard(&self) -> bun_ptr::ScopedRef<Self> {
+    pub(crate) fn ref_guard(&self) -> bun_ptr::ScopedRef<Self> {
         // SAFETY: `&self` ⇒ the allocation is live and non-null.
         unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) }
     }
@@ -92,7 +92,7 @@ impl JSMySQLQuery {
     }
 
     // Reached from JS via `put_host_functions!` in `mysql.rs`.
-    pub fn create_instance(
+    pub(crate) fn create_instance(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -234,7 +234,7 @@ impl JSMySQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn resolve(&self, queries_array: JSValue, result: &MySQLQueryResult) {
+    pub(crate) fn resolve(&self, queries_array: JSValue, result: &MySQLQueryResult) {
         // `ref_guard` brackets re-entry; drops *after* `_downgrade` so the
         // allocation outlives the closure body.
         let _guard = self.ref_guard();
@@ -306,7 +306,7 @@ impl JSMySQLQuery {
         );
     }
 
-    pub fn mark_as_failed(&self) {
+    pub(crate) fn mark_as_failed(&self) {
         // Attention: we cannot touch JS here
         // If you need to touch JS, you wanna to use reject or reject_with_js_value instead
         let _guard = self.ref_guard();
@@ -316,7 +316,7 @@ impl JSMySQLQuery {
         let _ = self.query.with_mut(|q| q.fail());
     }
 
-    pub fn reject(&self, queries_array: JSValue, err: AnyMySQLError::Error) {
+    pub(crate) fn reject(&self, queries_array: JSValue, err: AnyMySQLError::Error) {
         if self.vm().is_shutting_down() {
             self.mark_as_failed();
             return;
@@ -330,7 +330,7 @@ impl JSMySQLQuery {
         }
     }
 
-    pub fn reject_with_js_value(&self, queries_array: JSValue, err: JSValue) {
+    pub(crate) fn reject_with_js_value(&self, queries_array: JSValue, err: JSValue) {
         // `ref_guard` brackets re-entry; drops *after* `_downgrade` so the
         // allocation outlives the closure body.
         let _guard = self.ref_guard();
@@ -391,7 +391,7 @@ impl JSMySQLQuery {
         );
     }
 
-    pub fn run(&self, connection: &MySQLConnection) -> Result<(), AnyMySQLError::Error> {
+    pub(crate) fn run(&self, connection: &MySQLConnection) -> Result<(), AnyMySQLError::Error> {
         if self.vm().is_shutting_down() {
             debug!("run cannot run a query if the VM is shutting down");
             // cannot run a query if the VM is shutting down
@@ -447,48 +447,48 @@ impl JSMySQLQuery {
     }
 
     #[inline]
-    pub fn is_completed(&self) -> bool {
+    pub(crate) fn is_completed(&self) -> bool {
         self.query.get().is_completed()
     }
     #[inline]
-    pub fn is_running(&self) -> bool {
+    pub(crate) fn is_running(&self) -> bool {
         self.query.get().is_running()
     }
     #[inline]
-    pub fn is_pending(&self) -> bool {
+    pub(crate) fn is_pending(&self) -> bool {
         self.query.get().is_pending()
     }
     #[inline]
-    pub fn is_being_prepared(&self) -> bool {
+    pub(crate) fn is_being_prepared(&self) -> bool {
         self.query.get().is_being_prepared()
     }
     #[inline]
-    pub fn is_pipelined(&self) -> bool {
+    pub(crate) fn is_pipelined(&self) -> bool {
         self.query.get().is_pipelined()
     }
     #[inline]
-    pub fn is_simple(&self) -> bool {
+    pub(crate) fn is_simple(&self) -> bool {
         self.query.get().is_simple()
     }
     #[inline]
-    pub fn is_bigint_supported(&self) -> bool {
+    pub(crate) fn is_bigint_supported(&self) -> bool {
         self.query.get().is_bigint_supported()
     }
     #[inline]
-    pub fn get_result_mode(&self) -> SQLQueryResultMode {
+    pub(crate) fn get_result_mode(&self) -> SQLQueryResultMode {
         self.query.get().get_result_mode()
     }
     // TODO: isolate statement modification away from the connection
-    pub fn get_statement(&self) -> Option<&mut MySQLStatement> {
+    pub(crate) fn get_statement(&self) -> Option<&mut MySQLStatement> {
         self.query.get().get_statement()
     }
 
-    pub fn mark_as_prepared(&self) {
+    pub(crate) fn mark_as_prepared(&self) {
         self.query.with_mut(|q| q.mark_as_prepared());
     }
 
     #[inline]
-    pub fn set_pending_value(&self, result: JSValue) {
+    pub(crate) fn set_pending_value(&self, result: JSValue) {
         if self.vm().is_shutting_down() {
             return;
         }
@@ -497,7 +497,7 @@ impl JSMySQLQuery {
         }
     }
     #[inline]
-    pub fn get_pending_value(&self) -> Option<JSValue> {
+    pub(crate) fn get_pending_value(&self) -> Option<JSValue> {
         if self.vm().is_shutting_down() {
             return None;
         }
@@ -591,5 +591,3 @@ impl JSMySQLQuery {
 
 // JS reaches `create_instance` through `put_host_functions!` in `mysql.rs`;
 // nothing on the C++ side references it, so no extern export exists.
-
-pub use js::{from_js, from_js_direct, to_js};

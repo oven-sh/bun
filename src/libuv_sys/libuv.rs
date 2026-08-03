@@ -88,16 +88,16 @@ pub type uv_file = c_int;
 pub type uv_os_sock_t = SOCKET;
 pub type uv_os_fd_t = HANDLE;
 pub type uv_pid_t = c_int;
-pub type uv_thread_t = HANDLE;
+pub(crate) type uv_thread_t = HANDLE;
 pub type uv_sem_t = HANDLE;
 pub type uv_uid_t = u8;
 pub type uv_gid_t = u8;
 pub type uv_req_type = c_uint;
 pub type uv_fs_type = c_int;
 pub type uv_errno_t = c_int;
-pub type uv_loop_option = c_uint;
-pub type uv_membership = c_uint;
-pub type uv_tty_mode_t = c_uint;
+pub(crate) type uv_loop_option = c_uint;
+pub(crate) type uv_membership = c_uint;
+pub(crate) type uv_tty_mode_t = c_uint;
 /// `uv_tty_mode_t` (uv.h) — typed wrapper for `uv_tty_set_mode` callers.
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -109,9 +109,9 @@ pub enum TtyMode {
     /// terminal (Windows ENABLE_VIRTUAL_TERMINAL_INPUT). Aligns with POSIX raw.
     Vt = 3,
 }
-pub type uv_tty_vtermstate_t = c_uint;
+pub(crate) type uv_tty_vtermstate_t = c_uint;
 pub type uv_stdio_flags = c_uint;
-pub type uv_clock_id = c_uint;
+pub(crate) type uv_clock_id = c_uint;
 pub type uv_dirent_type_t = c_uint;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -241,7 +241,7 @@ pub struct Handle {
     pub handle_queue: uv__queue,
     pub u: handle_u,
     pub endgame_next: *mut Handle,
-    pub flags: c_uint,
+    pub(crate) flags: c_uint,
 }
 pub type uv_handle_t = Handle;
 pub type uv_handle_s = Handle;
@@ -319,11 +319,11 @@ pub type uv_idle_cb = Option<unsafe extern "C" fn(*mut uv_idle_t)>;
 pub type uv_poll_cb = Option<unsafe extern "C" fn(*mut uv_poll_t, c_int, c_int)>;
 pub type uv_signal_cb = Option<unsafe extern "C" fn(*mut uv_signal_t, c_int)>;
 pub type uv_exit_cb = Option<unsafe extern "C" fn(*mut Process, i64, c_int)>;
-pub type uv_walk_cb = Option<unsafe extern "C" fn(*mut uv_handle_t, *mut c_void)>;
+pub(crate) type uv_walk_cb = Option<unsafe extern "C" fn(*mut uv_handle_t, *mut c_void)>;
 pub type uv_fs_cb = Option<unsafe extern "C" fn(*mut fs_t)>;
 pub type uv_fs_event_cb =
     Option<unsafe extern "C" fn(*mut uv_fs_event_t, *const c_char, c_int, ReturnCode)>;
-pub type uv_fs_poll_cb =
+pub(crate) type uv_fs_poll_cb =
     Option<unsafe extern "C" fn(*mut uv_fs_poll_t, c_int, *const uv_stat_t, *const uv_stat_t)>;
 pub type uv_udp_send_cb = Option<unsafe extern "C" fn(*mut uv_udp_send_t, c_int)>;
 pub type uv_udp_recv_cb =
@@ -335,7 +335,7 @@ pub type uv_getnameinfo_cb =
 pub type uv_work_cb = Option<unsafe extern "C" fn(*mut uv_work_t)>;
 pub type uv_after_work_cb = Option<unsafe extern "C" fn(*mut uv_work_t, c_int)>;
 pub type uv_random_cb = Option<unsafe extern "C" fn(*mut uv_random_t, c_int, *mut c_void, usize)>;
-pub type uv_thread_cb = Option<unsafe extern "C" fn(*mut c_void)>;
+pub(crate) type uv_thread_cb = Option<unsafe extern "C" fn(*mut c_void)>;
 pub type uv_malloc_func = Option<unsafe extern "C" fn(usize) -> *mut c_void>;
 pub type uv_realloc_func = Option<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void>;
 pub type uv_calloc_func = Option<unsafe extern "C" fn(usize, usize) -> *mut c_void>;
@@ -916,9 +916,9 @@ pub type struct_uv_stream_s = uv_stream_t;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct uv_write_t {
-    pub data: *mut c_void,
+    pub(crate) data: *mut c_void,
     pub type_: uv_req_type,
-    pub reserved: [*mut c_void; 6],
+    pub(crate) reserved: [*mut c_void; 6],
     pub u: req_u,
     pub next_req: *mut uv_req_t,
     pub cb: uv_write_cb,
@@ -1149,7 +1149,7 @@ union pipe_u {
 #[repr(C)]
 pub struct Pipe {
     pub data: *mut c_void,
-    pub loop_: *mut Loop,
+    pub(crate) loop_: *mut Loop,
     pub type_: HandleType,
     pub close_cb: uv_close_cb,
     pub handle_queue: uv__queue,
@@ -1185,14 +1185,14 @@ impl Pipe {
         unsafe { uv_pipe_open(self, file) }
     }
     #[inline]
-    pub fn bind(&mut self, named_pipe: &[u8], flags: c_uint) -> ReturnCode {
+    pub(crate) fn bind(&mut self, named_pipe: &[u8], flags: c_uint) -> ReturnCode {
         // SAFETY: pipe was `init`ed; libuv copies the name.
         unsafe { uv_pipe_bind2(self, named_pipe.as_ptr(), named_pipe.len(), flags) }
     }
     /// Caller supplies a plain
     /// `uv_connection_cb` and recovers its context from `handle.data` itself.
     #[inline]
-    pub fn listen(
+    pub(crate) fn listen(
         &mut self,
         backlog: i32,
         context: *mut c_void,
@@ -1647,7 +1647,7 @@ pub struct uv_fs_event_t {
     pub cb: uv_fs_event_cb,
     pub filew: *mut WCHAR,
     pub short_filew: *mut WCHAR,
-    pub dirw: *mut WCHAR,
+    pub(crate) dirw: *mut WCHAR,
     pub buffer: *mut u8,
 }
 impl uv_fs_event_t {
@@ -1913,11 +1913,11 @@ pub struct fs_t {
     pub loop_: *mut Loop,
     pub cb: uv_fs_cb,
     pub result: ReturnCodeI64,
-    pub ptr: *mut c_void,
+    pub(crate) ptr: *mut c_void,
     pub path: *const c_char,
     pub statbuf: uv_stat_t,
     pub work_req: uv__work,
-    pub flags: c_int,
+    pub(crate) flags: c_int,
     pub sys_errno_: DWORD,
     file: fs_file,
     fs: fs_fs,
@@ -2326,7 +2326,7 @@ pub const fn e_discriminant_to_uv(discriminant: u16) -> Option<c_int> {
 
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct ReturnCode(pub c_int);
+pub struct ReturnCode(pub(crate) c_int);
 
 // ──────────────────────────────────────────────────────────────────────────
 // `bun_core::ffi::Zeroable` impls (S021). Every libuv handle/request struct
@@ -2372,7 +2372,7 @@ impl ReturnCode {
     /// (e.g. 4082 for `UV_EBUSY`). Use [`errno`] for the translated POSIX
     /// `bun.sys.E` value (e.g. 16 for `BUSY`).
     #[inline]
-    pub const fn raw_errno(self) -> Option<u16> {
+    pub(crate) const fn raw_errno(self) -> Option<u16> {
         if self.0 < 0 {
             Some(self.0.unsigned_abs() as u16)
         } else {
@@ -2421,7 +2421,7 @@ impl fmt::Display for ReturnCode {
 
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ReturnCodeI64(pub i64);
+pub struct ReturnCodeI64(pub(crate) i64);
 impl ReturnCodeI64 {
     #[inline]
     pub const fn init(i: i64) -> ReturnCodeI64 {
@@ -2474,10 +2474,10 @@ impl fmt::Display for ReturnCodeI64 {
 // these fns map to/from libuv's MSVC `_O_*` values that `uv_fs_open` expects.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod O {
-    pub const APPEND: i32 = 0x0008;
+    pub(crate) const APPEND: i32 = 0x0008;
     pub const CREAT: i32 = 0x0100;
-    pub const EXCL: i32 = 0x0400;
-    pub const FILEMAP: i32 = 0x2000_0000;
+    pub(crate) const EXCL: i32 = 0x0400;
+    pub(crate) const FILEMAP: i32 = 0x2000_0000;
     pub const RANDOM: i32 = 0x0010;
     pub const RDONLY: i32 = 0x0000;
     pub const RDWR: i32 = 0x0002;
@@ -2486,15 +2486,15 @@ pub mod O {
     pub const TEMPORARY: i32 = 0x0040;
     pub const TRUNC: i32 = 0x0200;
     pub const WRONLY: i32 = 0x0001;
-    pub const DIRECT: i32 = 0x0200_0000;
-    pub const DSYNC: i32 = 0x0400_0000;
-    pub const SYNC: i32 = 0x0800_0000;
+    pub(crate) const DIRECT: i32 = 0x0200_0000;
+    pub(crate) const DSYNC: i32 = 0x0400_0000;
+    pub(crate) const SYNC: i32 = 0x0800_0000;
     // No-ops on Windows.
     pub const DIRECTORY: i32 = 0;
     pub const EXLOCK: i32 = 0x1000_0000;
     pub const NOATIME: i32 = 0;
     pub const NOCTTY: i32 = 0;
-    pub const NOFOLLOW: i32 = 0;
+    pub(crate) const NOFOLLOW: i32 = 0;
     pub const NONBLOCK: i32 = 0;
     pub const SYMLINK: i32 = 0;
 
@@ -2729,7 +2729,7 @@ pub const UV_TTY_MODE_RAW: c_int = 1;
 pub const UV_TTY_MODE_IO: c_int = 2;
 pub const UV_TTY_SUPPORTED: c_int = 0;
 pub const UV_TTY_UNSUPPORTED: c_int = 1;
-pub const UV_PIPE_NO_TRUNCATE: c_uint = 1;
+pub(crate) const UV_PIPE_NO_TRUNCATE: c_uint = 1;
 pub const UV_FS_SYMLINK_DIR: c_int = 0x0001;
 pub const UV_FS_SYMLINK_JUNCTION: c_int = 0x0002;
 pub const UV_FS_COPYFILE_EXCL: c_int = 0x0001;
@@ -2821,11 +2821,11 @@ pub const UV_FS_O_NONBLOCK: i32 = 0;
 pub const UV_FS_O_SYMLINK: i32 = 0;
 pub const UV_FS_O_SYNC: i32 = O::SYNC;
 
-pub const UV_HANDLE_CLOSED: c_uint = 0x0000_0002;
+pub(crate) const UV_HANDLE_CLOSED: c_uint = 0x0000_0002;
 
 /// Non-ABI helper: `flags & UV_HANDLE_CLOSED != 0`.
 #[inline]
-pub fn uv_is_closed(handle: &uv_handle_t) -> bool {
+pub(crate) fn uv_is_closed(handle: &uv_handle_t) -> bool {
     handle.flags & UV_HANDLE_CLOSED != 0
 }
 

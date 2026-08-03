@@ -15,7 +15,6 @@ pub(crate) enum ProfilerError {
     #[error("FilenameTooLong")]
     FilenameTooLong,
 }
-bun_core::named_error_set!(ProfilerError);
 
 pub struct CPUProfilerConfig {
     // CLI-arg-backed and

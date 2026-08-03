@@ -71,16 +71,8 @@ pub struct StackTrace<'a> {
 /// Fixed 31-frame stack-trace buffer.
 #[derive(Clone, Copy)]
 pub struct StoredTrace {
-    pub data: [usize; 31],
-    pub index: usize,
-}
-impl StoredTrace {
-    pub const fn empty() -> Self {
-        Self {
-            data: [0; 31],
-            index: 0,
-        }
-    }
+    pub(crate) data: [usize; 31],
+    pub(crate) index: usize,
 }
 impl StoredTrace {
     pub const EMPTY: StoredTrace = StoredTrace {
@@ -154,8 +146,6 @@ impl Default for DumpStackTraceOptions {
         }
     }
 }
-/// Alias for `DumpStackTraceOptions`; also re-exported from `bun_crash_handler`.
-pub type WriteStackTraceLimits = DumpStackTraceOptions;
 
 /// T0 fallback prints raw return
 /// addresses — **no symbolication** (the `backtrace` crate is not a T0 dep,
@@ -391,35 +381,28 @@ pub static JSC_SCOPE: crate::output::ScopedLogger =
     crate::output::ScopedLogger::new("JSC", crate::output::Visibility::Hidden);
 
 // ─── debug_flags (MOVE_DOWN from bun_cli, for bun_resolver) ───────────────
-// Debug-build-only breakpoint matchers.
+// Debug-build-only breakpoint matchers, set from `--breakpoint-resolve`.
 pub mod debug_flags {
-    #[cfg(debug_assertions)]
-    pub(crate) static RESOLVE_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> =
-        crate::Once::new();
-    #[cfg(debug_assertions)]
-    pub(crate) static PRINT_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> = crate::Once::new();
+    static RESOLVE_BREAKPOINTS: crate::Once<Vec<&'static [u8]>> = crate::Once::new();
+
+    /// Called once during argument parsing. `list` entries are
+    /// process-lifetime argv slices.
+    #[inline]
+    pub fn set_resolve_breakpoints(list: Vec<&'static [u8]>) {
+        let _ = RESOLVE_BREAKPOINTS.get_or_init(|| list);
+    }
 
     #[inline]
     pub fn has_resolve_breakpoint(str_: &[u8]) -> bool {
-        #[cfg(debug_assertions)]
-        for bp in RESOLVE_BREAKPOINTS.get().copied().unwrap_or(&[]) {
-            if crate::strings_impl::includes(str_, bp) {
+        for bp in RESOLVE_BREAKPOINTS
+            .get()
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+        {
+            if crate::strings::includes(str_, bp) {
                 return true;
             }
         }
-        let _ = str_;
-        false
-    }
-    #[inline]
-    pub fn has_print_breakpoint(pretty: &[u8], text: &[u8]) -> bool {
-        #[cfg(debug_assertions)]
-        for bp in PRINT_BREAKPOINTS.get().copied().unwrap_or(&[]) {
-            if crate::strings_impl::includes(pretty, bp) || crate::strings_impl::includes(text, bp)
-            {
-                return true;
-            }
-        }
-        let _ = (pretty, text);
         false
     }
 }
@@ -498,7 +481,7 @@ pub const os_display: &str = if cfg!(target_os = "android") {
     env::OS.display_string()
 };
 
-// Bun v1.0.0 (Linux x64 baseline)
+// Bun v1.0.0 (Linux x64)
 // Bun v1.0.0-debug (Linux x64)
 // Bun v1.0.0-canary.0+44e09bb7f (Linux x64)
 pub const unhandled_error_bun_version_string: &str = concatcp!(
@@ -512,7 +495,7 @@ pub const unhandled_error_bun_version_string: &str = concatcp!(
     os_display,
     " ",
     arch_name,
-    if env::BASELINE { " baseline)" } else { ")" },
+    ")",
 );
 
 pub const arch_name: &str = if cfg!(target_arch = "x86_64") {
@@ -576,7 +559,7 @@ pub type ExitFn = extern "C" fn();
 static ON_EXIT_CALLBACKS: crate::Mutex<Vec<ExitFn>> = crate::Mutex::new(Vec::new());
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__atexit(function: ExitFn) {
+extern "C" fn Bun__atexit(function: ExitFn) {
     let mut cbs = ON_EXIT_CALLBACKS.lock();
     if !cbs.iter().any(|f| *f as usize == function as usize) {
         cbs.push(function);
@@ -601,7 +584,7 @@ pub fn add_pre_exit_callback(function: ExitFn) {
     }
 }
 
-pub(crate) fn run_exit_callbacks() {
+fn run_exit_callbacks() {
     // Drain under lock, run outside it (callbacks may call `Bun__atexit`).
     let cbs: Vec<ExitFn> = core::mem::take(&mut *ON_EXIT_CALLBACKS.lock());
     for callback in &cbs {
@@ -612,11 +595,11 @@ pub(crate) fn run_exit_callbacks() {
 static IS_EXITING: AtomicBool = AtomicBool::new(false);
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn bun_is_exiting() -> c_int {
+extern "C" fn bun_is_exiting() -> c_int {
     is_exiting() as c_int
 }
 
-pub(crate) fn is_exiting() -> bool {
+fn is_exiting() -> bool {
     IS_EXITING.load(Ordering::Relaxed)
 }
 
@@ -625,6 +608,7 @@ pub(crate) fn is_exiting() -> bool {
 // args and are `noreturn`/kernel-validated — no memory-safety preconditions,
 // so `safe fn` discharges the link-time proof and the call sites are plain
 // calls. `#[link_name]` avoids colliding with this module's own `pub fn exit`.
+#[allow(suspicious_runtime_symbol_definitions)] // signatures are ABI-identical; `safe fn` is intentional (above)
 unsafe extern "C" {
     #[link_name = "abort"]
     safe fn libc_abort() -> !;
@@ -697,7 +681,14 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
             let mut act: libc::sigaction = crate::ffi::zeroed();
             act.sa_sigaction = libc::SIG_DFL;
             libc::sigemptyset(&raw mut act.sa_mask);
-            for &s in &[libc::SIGSEGV, libc::SIGBUS, libc::SIGILL, libc::SIGFPE] {
+            for &s in &[
+                libc::SIGSEGV,
+                libc::SIGBUS,
+                libc::SIGILL,
+                libc::SIGFPE,
+                libc::SIGABRT,
+                libc::SIGTRAP,
+            ] {
                 let _ = libc::sigaction(s, &raw const act, core::ptr::null_mut());
             }
         }
@@ -712,8 +703,12 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
             // preconditions, so `safe fn` discharges the link-time proof.
             unsafe extern "system" {
                 safe fn RemoveVectoredExceptionHandler(Handle: *mut core::ffi::c_void) -> u32;
+                safe fn SetUnhandledExceptionFilter(
+                    f: Option<unsafe extern "system" fn(*mut core::ffi::c_void) -> i32>,
+                ) -> Option<unsafe extern "system" fn(*mut core::ffi::c_void) -> i32>;
             }
             let _ = RemoveVectoredExceptionHandler(handle);
+            let _ = SetUnhandledExceptionFilter(None);
         }
     }
 
@@ -757,11 +752,6 @@ pub fn mimalloc_cleanup(force: bool) {
 #[inline]
 pub fn configure_allocator(_: AllocatorConfiguration) {}
 
-#[cold]
-pub fn notimpl() -> ! {
-    Output::panic(core::format_args!("Not implemented yet!!!!!"));
-}
-
 // Make sure we always print any leftover
 #[cold]
 pub fn crash() -> ! {
@@ -779,8 +769,7 @@ pub struct SyncCStr(pub *const c_char);
 // SAFETY: points into a `'static` string literal; the pointer is never mutated.
 unsafe impl Sync for SyncCStr {}
 #[unsafe(no_mangle)]
-pub(crate) static Bun__userAgent: SyncCStr =
-    SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
+static Bun__userAgent: SyncCStr = SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
 
 /// Prevent the linker from dead-code-eliminating `#[no_mangle]` symbols that are
 /// only ever called from C/C++ (so rustc sees no Rust caller). Expands to one
@@ -794,7 +783,7 @@ macro_rules! keep_symbols {
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__onExit() {
+extern "C" fn Bun__onExit() {
     // FSEvents close-and-wait runs BEFORE the generic exit-callback list.
     // fs_events pushes into `PRE_EXIT_CALLBACKS` on first loop create.
     let pre: Vec<ExitFn> = core::mem::take(&mut *PRE_EXIT_CALLBACKS.lock());

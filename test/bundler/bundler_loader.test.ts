@@ -87,6 +87,170 @@ describe("bundler", async () => {
     },
   });
 
+  itBundled("bun/loader-json-proto-key-is-own-property", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.json';
+    const out = [
+      Object.getPrototypeOf(data) === Object.prototype,
+      Object.hasOwn(data, "__proto__"),
+      data.x,
+      JSON.stringify(data),
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/data.json": `{"__proto__": {"x": 1}, "a": 2}`,
+    },
+    run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
+  });
+
+  itBundled("bun/loader-toml-proto-key-is-own-property", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.toml';
+    const out = [
+      Object.getPrototypeOf(data) === Object.prototype,
+      Object.hasOwn(data, "__proto__"),
+      data.x,
+      JSON.stringify(data),
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/data.toml": `a = 2\n[__proto__]\nx = 1\n`,
+    },
+    run: { stdout: '[true,true,null,"{\\"a\\":2,\\"__proto__\\":{\\"x\\":1}}"]' },
+  });
+
+  itBundled("bun/loader-yaml-proto-key-is-own-property", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.yaml';
+    const out = [
+      Object.getPrototypeOf(data) === Object.prototype,
+      Object.hasOwn(data, "__proto__"),
+      data.x,
+      JSON.stringify(data),
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/data.yaml": `__proto__:\n  x: 1\na: 2\n`,
+    },
+    run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
+  });
+
+  itBundled("bun/loader-jsonc-proto-key-is-own-property", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.jsonc';
+    const out = [
+      Object.getPrototypeOf(data) === Object.prototype,
+      Object.hasOwn(data, "__proto__"),
+      data.x,
+      JSON.stringify(data),
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/data.jsonc": `// jsonc\n{"__proto__": {"x": 1}, "a": 2,}`,
+    },
+    run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
+  });
+
+  itBundled("bun/loader-json5-proto-key-is-own-property", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.json5';
+    const out = [
+      Object.getPrototypeOf(data) === Object.prototype,
+      Object.hasOwn(data, "__proto__"),
+      data.x,
+      JSON.stringify(data),
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/data.json5": `{__proto__: {x: 1}, a: 2}`,
+    },
+    run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
+  });
+
+  itBundled("bun/loader-json-nested-proto-key-is-own-property", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.json';
+    const nested = data.nested;
+    const out = [
+      Object.getPrototypeOf(nested) === Object.prototype,
+      Object.hasOwn(nested, "__proto__"),
+      nested.x,
+      JSON.stringify(data),
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/data.json": `{"nested": {"__proto__": {"x": 1}, "a": 2}}`,
+    },
+    run: { stdout: '[true,true,null,"{\\"nested\\":{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}}"]' },
+  });
+
+  itBundled("bun/loader-toml-inline-table-proto-key-is-own-property", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.toml';
+    const out = [
+      Object.getPrototypeOf(data) === Object.prototype,
+      Object.hasOwn(data, "__proto__"),
+      data.x,
+      JSON.stringify(data),
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/data.toml": `a = 2\n"__proto__" = { x = 1 }\n`,
+    },
+    run: { stdout: '[true,true,null,"{\\"a\\":2,\\"__proto__\\":{\\"x\\":1}}"]' },
+  });
+
+  itBundled("bun/loader-yaml-flow-proto-key-is-own-property", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import data from './data.yaml';
+    const out = [
+      Object.getPrototypeOf(data) === Object.prototype,
+      Object.hasOwn(data, "__proto__"),
+      data.x,
+      JSON.stringify(data),
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/data.yaml": `{__proto__: {x: 1}, a: 2}\n`,
+    },
+    run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
+  });
+
+  // The CSS-modules lazy export builds its object through `E::Object::put`.
+  itBundled("bun/loader-css-module-proto-class-is-own-property", {
+    target: "bun",
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* js */ `
+    import styles from './styles.module.css';
+    const out = [
+      Object.getPrototypeOf(styles) === Object.prototype,
+      Object.hasOwn(styles, "__proto__"),
+      typeof styles.a === "string",
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/styles.module.css": `.__proto__ { color: red; }\n.a { color: blue; }\n`,
+    },
+    run: { stdout: "[true,true,true]" },
+  });
+
   itBundled("bun/wasm-is-copied-to-outdir", {
     target: "bun",
     outdir: "/out",

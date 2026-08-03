@@ -1,4 +1,5 @@
 import { ChildProcess, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { AddressInfo, createServer, Socket } from "node:net";
 import * as path from "node:path";
@@ -2813,7 +2814,7 @@ function nextId(): number {
 }
 
 export function getRandomId() {
-  return Math.random().toString(36).slice(2);
+  return randomBytes(16).toString("hex");
 }
 
 export function normalizeWindowsPath(winPath: string): string {

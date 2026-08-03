@@ -1010,6 +1010,12 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   }
 
   validateDistributedTransactionName(name: string): { valid: boolean; error?: string } {
+    if (typeof name !== "string") {
+      return {
+        valid: false,
+        error: "Distributed transaction name must be a string.",
+      };
+    }
     if (name.indexOf("'") !== -1) {
       return {
         valid: false,
@@ -1033,7 +1039,9 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
     while (true) {
       const nonReservedConnections = Array.from(this.readyConnections).filter(
-        c => !(c.flags & PooledConnectionFlags.preReserved) && c.queryCount < maxDistribution,
+        c =>
+          !(c.flags & (PooledConnectionFlags.preReserved | PooledConnectionFlags.reserved)) &&
+          c.queryCount < maxDistribution,
       );
       if (nonReservedConnections.length === 0) {
         return;
@@ -1106,6 +1114,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         connection.flags |= PooledConnectionFlags.reserved;
         connection.queryCount++;
         this.totalQueries++;
+        this.readyConnections.delete(connection);
         // we have a connection waiting for a reserved connection lets prioritize it
         pendingReserved(connection.storedError, connection);
         return;
@@ -1494,22 +1503,6 @@ function parseSQLiteOptions(
   return sqliteOptions;
 }
 
-function isOptionsOfAdapter<A extends Bun.SQL.__internal.Adapter>(
-  options: Bun.SQL.Options,
-  adapter: A,
-): options is Extract<Bun.SQL.Options, { adapter?: A }> {
-  return options.adapter === adapter;
-}
-
-function assertIsOptionsOfAdapter<A extends Bun.SQL.__internal.Adapter>(
-  options: Bun.SQL.Options,
-  adapter: A,
-): asserts options is Extract<Bun.SQL.Options, { adapter?: A }> {
-  if (!isOptionsOfAdapter(options, adapter)) {
-    throw new Error(`Expected adapter to be ${adapter}, but got '${options.adapter}'`);
-  }
-}
-
 const DEFAULT_PROTOCOL: Bun.SQL.__internal.Adapter = "postgres";
 
 const env = Bun.env;
@@ -1788,7 +1781,7 @@ function parseOptions(
     username ||= options.user || options.username || decodeIfValid(url.username);
     password ||= options.pass || options.password || decodeIfValid(url.password);
 
-    path ||= options.path || url.pathname;
+    path ||= options.path || (url.hostname ? "" : url.pathname);
 
     const queryObject = url.searchParams.toJSON();
     for (const key in queryObject) {
@@ -2138,8 +2131,6 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
 
 export default {
   parseDefinitelySqliteUrl,
-  isOptionsOfAdapter,
-  assertIsOptionsOfAdapter,
   parseOptions,
   SQLHelper,
   buildDefinedColumnsAndQuery,

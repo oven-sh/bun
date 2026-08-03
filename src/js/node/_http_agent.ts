@@ -309,15 +309,19 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
   options.encoding = null;
 
   const oncreate = once((err, s) => {
+    // `cb` is onSocketCreated.bind(this, req); release it from this closure's
+    // scope so retaining this arrow past its call cannot retain req.
+    const done = cb;
+    cb = undefined;
     // Pass socket on error: proxy-tunnel failures with a statusCode skip destroy in cleanupAndPropagate
     // so req.onSocket can close it; dropping it here leaks a proxy socket held open after non-200 CONNECT.
-    if (err) return cb(err, s);
+    if (err) return done(err, s);
     this.sockets[name] ||= [];
     this.sockets[name].push(s);
     this.totalSocketCount++;
     $debug("sockets", name, this.sockets[name].length, this.totalSocketCount);
     installListeners(this, s, options);
-    cb(null, s);
+    done(null, s);
   });
   const keepAlive = this.keepAlive;
   if (keepAlive) {

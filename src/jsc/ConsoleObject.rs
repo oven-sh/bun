@@ -40,7 +40,7 @@ mod JSPrinter {
         input: &[u8],
         writer: &mut (impl bun_io::Write + ?Sized),
         encoding: Encoding,
-    ) -> Result<(), bun_core::Error> {
+    ) -> bun_js_printer::Result<()> {
         match encoding {
             Encoding::Latin1 => {
                 bun_js_printer::write_json_string::<_, { Encoding::Latin1 }>(input, writer)
@@ -94,13 +94,12 @@ pub struct ConsoleObject {
     error_writer_backing: Output::QuietWriterAdapter,
     writer_backing: Output::QuietWriterAdapter,
 
-    pub default_indent: u16,
+    pub(crate) default_indent: u16,
 
     counts: Counter,
 
     // The writer adapters above hold raw pointers into `{stderr,stdout}_buffer`;
-    // moving the struct would dangle them. `PhantomPinned` opts out of `Unpin`
-    // so `Pin<Box<Self>>` (returned by `init`) actually enforces that.
+    // moving the struct would dangle them, so opt out of `Unpin`.
     _pin: core::marker::PhantomPinned,
 }
 
@@ -112,56 +111,11 @@ impl core::fmt::Display for ConsoleObject {
 }
 
 impl ConsoleObject {
-    // `adapt_to_new_api(&mut self.stderr_buffer)` captures a raw
-    // pointer into the buffer field, so the struct is self-referential once
-    // initialized. The previous out-param shape (`&mut MaybeUninit<Self>`)
-    // still let the caller move the value afterwards (e.g.
-    // `Box::new(unsafe { mu.assume_init() })`), which is exactly what
-    // `VirtualMachine` needs to do — and that move would dangle both
-    // adapter pointers.
-    //
-    // Instead, allocate the storage here and return it pinned:
-    // `Pin<Box<Self>>` puts the 8 KiB of buffers at a stable heap address
-    // before the adapters are wired up, and the `Pin` makes the
-    // "must not move" invariant a type-system fact rather than a comment.
-    // `VirtualMachine.console` stores the raw pointer (`*mut c_void`), so
-    // callers leak via `heap::alloc(Pin::into_inner_unchecked(..))` — the
-    // VM owns it for the process lifetime.
-    pub fn init(
-        error_writer: Output::StreamType,
-        writer: Output::StreamType,
-    ) -> core::pin::Pin<Box<ConsoleObject>> {
-        let mut out = Box::new(ConsoleObject {
-            stderr_buffer: [0; 4096],
-            stdout_buffer: [0; 4096],
-            error_writer_backing: Output::QuietWriterAdapter::uninit(),
-            writer_backing: Output::QuietWriterAdapter::uninit(),
-            default_indent: 0,
-            counts: Counter::default(),
-            _pin: core::marker::PhantomPinned,
-        });
-        let p: *mut ConsoleObject = &raw mut *out;
-        // SAFETY: `out` is heap-allocated at its final address; the adapters
-        // store raw pointers into `out.{stderr,stdout}_buffer`, which remain
-        // valid for the box's lifetime. We split the borrow through a raw
-        // pointer because `adapt_to_new_api` would otherwise hold a unique
-        // borrow of one field while we assign another.
-        unsafe {
-            (*p).error_writer_backing = error_writer
-                .quiet_writer()
-                .adapt_to_new_api(&mut (*p).stderr_buffer);
-            (*p).writer_backing = writer
-                .quiet_writer()
-                .adapt_to_new_api(&mut (*p).stdout_buffer);
-        }
-        Box::into_pin(out)
-    }
-
-    /// Out-param variant kept for callers that already own pinned storage
-    /// (e.g. a static / arena slot). The address of `*out` MUST be stable for
-    /// the value's entire lifetime — moving it afterwards leaves the writer
-    /// adapters dangling. Prefer [`init`](Self::init) for new code.
-    pub fn init_in_place(
+    /// `adapt_to_new_api(&mut self.stderr_buffer)` captures a raw pointer into
+    /// the buffer field, so the struct is self-referential once initialized:
+    /// the address of `*out` MUST be stable for the value's entire lifetime —
+    /// moving it afterwards leaves the writer adapters dangling.
+    pub(crate) fn init_in_place(
         out: &mut core::mem::MaybeUninit<ConsoleObject>,
         error_writer: Output::StreamType,
         writer: Output::StreamType,
@@ -193,13 +147,13 @@ impl ConsoleObject {
 
     /// Returns the buffered stderr writer interface.
     #[inline]
-    pub fn error_writer(&mut self) -> &mut bun_core::io::Writer {
+    pub(crate) fn error_writer(&mut self) -> &mut bun_core::io::Writer {
         self.error_writer_backing.new_interface()
     }
 
     /// Returns the buffered stdout writer interface.
     #[inline]
-    pub fn writer(&mut self) -> &mut bun_core::io::Writer {
+    pub(crate) fn writer(&mut self) -> &mut bun_core::io::Writer {
         self.writer_backing.new_interface()
     }
 }
@@ -222,7 +176,7 @@ impl MessageLevel {
     /// and routes through here. Unknown values fold to `Log` — nothing
     /// branches on the unknown case, so the clamp is behavior-preserving.
     #[inline]
-    pub const fn from_raw(raw: u32) -> Self {
+    pub(crate) const fn from_raw(raw: u32) -> Self {
         match raw {
             0 => Self::Log,
             1 => Self::Warning,
@@ -258,7 +212,7 @@ impl MessageType {
     /// fold unknown discriminants to `Log` so the
     /// FFI boundary never constructs an invalid enum value.
     #[inline]
-    pub const fn from_raw(raw: u32) -> Self {
+    pub(crate) const fn from_raw(raw: u32) -> Self {
         match raw {
             0 => Self::Log,
             1 => Self::Dir,
@@ -643,8 +597,62 @@ impl Default for Column {
 }
 
 enum RowKey {
-    Str(BunString),
+    /// Property-name UTF-8 slice + visible width (plain-object tabular data).
+    /// `to_utf8` refs the WTF impl (or owns a transcoded copy) and Drop
+    /// releases it, so the slice is safe to keep past the property iterator.
+    Str {
+        text: bun_core::ZigStringSlice,
+        width: u32,
+    },
+    /// Row index (array / iterable tabular data). Rendered on demand.
     Num(u32),
+}
+
+impl RowKey {
+    fn str(name: &BunString) -> Self {
+        Self::Str {
+            width: u32::try_from(name.visible_width_exclude_ansi_colors(false)).expect("int cast"),
+            text: name.to_utf8(),
+        }
+    }
+
+    fn width(&self) -> u32 {
+        match self {
+            RowKey::Str { width, .. } => *width,
+            RowKey::Num(value) => bun_core::fmt::digit_count(*value) as u32,
+        }
+    }
+}
+
+/// One formatted cell: the byte range of its rendered text in the shared
+/// `cell_text` scratch buffer, plus that text's visible terminal width.
+#[derive(Clone, Copy)]
+struct CellRef {
+    /// Byte offset into `cell_text`.
+    offset: usize,
+    /// Byte length in `cell_text`.
+    len: usize,
+    /// Visible width of the text, excluding ANSI escape sequences.
+    width: u32,
+}
+
+impl CellRef {
+    fn text<'t>(&self, cell_text: &'t [u8]) -> &'t [u8] {
+        &cell_text[self.offset..self.offset + self.len]
+    }
+}
+
+/// One table row, collected during the width pass so the render pass never
+/// re-reads a property (which would re-invoke its getter) and never
+/// re-formats a value (which would re-run a custom inspect hook).
+struct CollectedRow {
+    key: RowKey,
+    /// Indexed by `column_index - 1`. `None` is an absent cell. May be
+    /// shorter than `columns.len() - 1` when later rows added columns this
+    /// row lacks.
+    cells: Vec<Option<CellRef>>,
+    /// Cell routed to the trailing "Values" column (primitives, Map values).
+    values_cell: Option<CellRef>,
 }
 
 const PADDING: u32 = 1;
@@ -677,69 +685,65 @@ impl<'a> TablePrinter<'a> {
             values_col_idx: usize::MAX,
         })
     }
-}
 
-/// A `Write` sink that counts visible terminal columns instead of bytes.
-struct VisibleCharacterCounter<'a> {
-    width: &'a mut usize,
-}
-
-impl bun_io::Write for VisibleCharacterCounter<'_> {
-    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
-        *self.width += strings::immutable::visible::width::exclude_ansi_colors::utf8(bytes);
-        Ok(())
-    }
-}
-
-impl<'a> TablePrinter<'a> {
-    /// Compute how much horizontal space a `JSValue` will take when printed.
-    fn get_width_for_value(&mut self, value: JSValue) -> JsResult<u32> {
-        let mut width: usize = 0;
-        // PERF: writes straight into the counter with no buffering between
-        // the generic writer adapter and the counter. Profile if hot.
-        let mut counter = VisibleCharacterCounter { width: &mut width };
+    /// Format `value` exactly once (bare for strings, quoted otherwise),
+    /// appending its rendered bytes to the shared `cell_text` scratch, and
+    /// return the recorded byte range plus its visible width.
+    fn format_cell<const ENABLE_ANSI_COLORS: bool>(
+        &self,
+        cell_text: &mut Vec<u8>,
+        value: JSValue,
+    ) -> JsResult<CellRef> {
+        let offset = cell_text.len();
         let mut value_formatter = self.value_formatter.shallow_clone();
-
         let tag = formatter::Tag::get(value, self.global_object)?;
         value_formatter.quote_strings = !(matches!(
             tag.tag,
             TagPayload::String | TagPayload::StringPossiblyFormatted
         ));
-        let _ = value_formatter.format::<false>(tag, &mut counter, value, self.global_object);
-        // VisibleCharacterCounter write cannot fail.
-        let _ = bun_io::Write::flush(&mut counter);
+        value_formatter.format::<ENABLE_ANSI_COLORS>(tag, cell_text, value, self.global_object)?;
 
-        Ok(width as u32)
+        let text = &cell_text[offset..];
+        Ok(CellRef {
+            offset,
+            len: text.len(),
+            width: strings::visible::width::exclude_ansi_colors::utf8(text) as u32,
+        })
     }
 
-    /// Update the sizes of the columns for the values of a given row, and
-    /// create any additional columns as needed.
-    fn update_columns_for_row(
+    /// Read and format the row's cell values exactly once, size the columns
+    /// (creating them on demand), and return the collected row for the
+    /// render pass.
+    fn collect_row<const ENABLE_ANSI_COLORS: bool>(
         &mut self,
+        cell_text: &mut Vec<u8>,
         columns: &mut Vec<Column>,
-        row_key: &RowKey,
+        row_key: RowKey,
         row_value: JSValue,
-    ) -> JsResult<()> {
-        // update size of "(index)" column
-        let row_key_len: u32 = match &row_key {
-            RowKey::Str(value) => {
-                u32::try_from(value.visible_width_exclude_ansi_colors(false)).expect("int cast")
-            }
-            RowKey::Num(value) => bun_core::fmt::digit_count(*value) as u32,
+    ) -> JsResult<CollectedRow> {
+        columns[0].width = columns[0].width.max(row_key.width());
+
+        let mut row = CollectedRow {
+            key: row_key,
+            cells: Vec::new(),
+            values_cell: None,
         };
-        columns[0].width = columns[0].width.max(row_key_len);
 
         // special handling for Map: column with idx=1 is "Keys"
         if self.jstype.is_map() {
-            let entry_key = row_value.get_index(self.global_object, 0)?;
-            let entry_value = row_value.get_index(self.global_object, 1)?;
-            columns[1].width = columns[1].width.max(self.get_width_for_value(entry_key)?);
-            self.values_col_width = Some(
-                self.values_col_width
-                    .unwrap_or(0)
-                    .max(self.get_width_for_value(entry_value)?),
-            );
-            return Ok(());
+            let key_cell = self.format_cell::<ENABLE_ANSI_COLORS>(
+                cell_text,
+                row_value.get_index(self.global_object, 0)?,
+            )?;
+            let value_cell = self.format_cell::<ENABLE_ANSI_COLORS>(
+                cell_text,
+                row_value.get_index(self.global_object, 1)?,
+            )?;
+            columns[1].width = columns[1].width.max(key_cell.width);
+            self.values_col_width = Some(self.values_col_width.unwrap_or(0).max(value_cell.width));
+            row.cells.push(Some(key_cell));
+            row.values_cell = Some(value_cell);
+            return Ok(row);
         }
 
         if let Some(obj) = row_value.get_object() {
@@ -751,7 +755,11 @@ impl<'a> TablePrinter<'a> {
             if !self.properties.is_undefined() {
                 for column in columns[1..].iter_mut() {
                     if let Some(value) = row_value.get_own(self.global_object, &column.name)? {
-                        column.width = column.width.max(self.get_width_for_value(value)?);
+                        let cell = self.format_cell::<ENABLE_ANSI_COLORS>(cell_text, value)?;
+                        column.width = column.width.max(cell.width);
+                        row.cells.push(Some(cell));
+                    } else {
+                        row.cells.push(None);
                     }
                 }
             } else {
@@ -768,14 +776,14 @@ impl<'a> TablePrinter<'a> {
                     let value = cols_iter.value;
 
                     // find or create the column for the property
-                    let column: &mut Column = 'brk: {
+                    let col_idx: usize = 'brk: {
                         let col_str = BunString::init(col_key);
 
                         // reshaped for borrowck — split find/append.
                         if let Some(idx) =
                             columns[1..].iter().position(|col| col.name.eql(&col_str))
                         {
-                            break 'brk &mut columns[1 + idx];
+                            break 'brk 1 + idx;
                         }
 
                         // Need to ref this string because JSPropertyIterator
@@ -787,22 +795,25 @@ impl<'a> TablePrinter<'a> {
                             name: col_str,
                             width: 1,
                         });
-                        let last = columns.len() - 1;
-                        break 'brk &mut columns[last];
+                        break 'brk columns.len() - 1;
                     };
 
-                    column.width = column.width.max(self.get_width_for_value(value)?);
+                    let cell = self.format_cell::<ENABLE_ANSI_COLORS>(cell_text, value)?;
+                    columns[col_idx].width = columns[col_idx].width.max(cell.width);
+                    let slot = col_idx - 1;
+                    if row.cells.len() <= slot {
+                        row.cells.resize(slot + 1, None);
+                    }
+                    row.cells[slot] = Some(cell);
                 }
             }
         } else if self.properties.is_undefined() {
             // not object -> the value will go to the special "Values" column
-            self.values_col_width = Some(
-                self.values_col_width
-                    .unwrap_or(1)
-                    .max(self.get_width_for_value(row_value)?),
-            );
+            let cell = self.format_cell::<ENABLE_ANSI_COLORS>(cell_text, row_value)?;
+            self.values_col_width = Some(self.values_col_width.unwrap_or(1).max(cell.width));
+            row.values_cell = Some(cell);
         }
-        Ok(())
+        Ok(row)
     }
 
     fn write_string_n_times(
@@ -819,28 +830,24 @@ impl<'a> TablePrinter<'a> {
         Ok(())
     }
 
-    fn print_row<const ENABLE_ANSI_COLORS: bool>(
-        &mut self,
+    fn print_row(
+        &self,
         writer: &mut dyn bun_io::Write,
-        columns: &mut [Column],
-        row_key: &RowKey,
-        row_value: JSValue,
-    ) -> JsResult<()> {
+        columns: &[Column],
+        row: &CollectedRow,
+        cell_text: &[u8],
+    ) {
         writer.write_all("│".as_bytes()).ok();
         {
-            let len: u32 = match &row_key {
-                RowKey::Str(value) => value.visible_width_exclude_ansi_colors(false) as u32,
-                RowKey::Num(value) => bun_core::fmt::digit_count(*value) as u32,
-            };
-            let needed = columns[0].width.saturating_sub(len);
+            let needed = columns[0].width.saturating_sub(row.key.width());
 
             // Right-align the number column
             writer
                 .splat_byte_all(b' ', (needed + PADDING) as usize)
                 .ok();
-            match &row_key {
-                RowKey::Str(value) => {
-                    write!(writer, "{value}").ok();
+            match &row.key {
+                RowKey::Str { text, .. } => {
+                    writer.write_all(text.slice()).ok();
                 }
                 RowKey::Num(value) => {
                     write!(writer, "{value}").ok();
@@ -854,74 +861,29 @@ impl<'a> TablePrinter<'a> {
 
             writer.write_all("│".as_bytes()).ok();
 
-            let mut value = JSValue::ZERO;
-            if col_idx == 1 && self.jstype.is_map() {
-                // is the "Keys" column, when iterating a Map?
-                value = row_value.get_index(self.global_object, 0)?;
-            } else if col_idx == self.values_col_idx {
-                // is the "Values" column?
-                if self.jstype.is_map() {
-                    value = row_value.get_index(self.global_object, 1)?;
-                } else if !row_value.is_object() {
-                    value = row_value;
-                }
-            } else if row_value.is_object() {
-                value = row_value
-                    .get_own(self.global_object, &col.name)?
-                    .unwrap_or(JSValue::ZERO);
-            }
-
-            if value.is_empty() {
-                writer
-                    .splat_byte_all(b' ', (col.width + PADDING * 2) as usize)
-                    .ok();
+            let cell = if col_idx == self.values_col_idx {
+                row.values_cell
             } else {
-                let len: u32 = self.get_width_for_value(value)?;
-                let needed = col.width.saturating_sub(len);
-                writer.splat_byte_all(b' ', PADDING as usize).ok();
-                let tag = formatter::Tag::get(value, self.global_object)?;
-                let mut value_formatter = self.value_formatter.shallow_clone();
+                row.cells.get(col_idx - 1).copied().flatten()
+            };
 
-                value_formatter.quote_strings = !(matches!(
-                    tag.tag,
-                    TagPayload::String | TagPayload::StringPossiblyFormatted
-                ));
-
-                // Release pooled visit map after formatting.
-                // `shallow_clone()` guarantees the source's `map_node` is
-                // `None`, so only the local clone needs draining.
-                // `Formatter::Drop` does the same release, so a plain scope
-                // is sufficient.
-                {
-                    let result = value_formatter.format::<ENABLE_ANSI_COLORS>(
-                        tag,
-                        writer,
-                        value,
-                        self.global_object,
-                    );
-                    if let Some(mut node) = value_formatter.map_node.take() {
-                        self.value_formatter.map_node = None;
-                        let data = formatter::visited::node_data_mut(&mut node);
-                        if data.capacity() > 512 {
-                            data.deinit();
-                        } else {
-                            data.clear();
-                        }
-                        // SAFETY: `node` was obtained from `Pool::get_node()` and is
-                        // exclusively owned by this formatter; `Map::INIT` is `Some`,
-                        // so `data` is initialized. Ownership returns to the pool.
-                        unsafe { formatter::visited::Pool::release(node.as_mut()) };
-                    }
-                    result?;
+            match cell {
+                None => {
+                    writer
+                        .splat_byte_all(b' ', (col.width + PADDING * 2) as usize)
+                        .ok();
                 }
-
-                writer
-                    .splat_byte_all(b' ', (needed + PADDING) as usize)
-                    .ok();
+                Some(cell) => {
+                    let needed = col.width.saturating_sub(cell.width);
+                    writer.splat_byte_all(b' ', PADDING as usize).ok();
+                    writer.write_all(cell.text(cell_text)).ok();
+                    writer
+                        .splat_byte_all(b' ', (needed + PADDING) as usize)
+                        .ok();
+                }
             }
         }
         writer.write_all("│\n".as_bytes()).ok();
-        Ok(())
     }
 
     pub fn print_table<const ENABLE_ANSI_COLORS: bool>(
@@ -964,24 +926,32 @@ impl<'a> TablePrinter<'a> {
             }
         }
 
-        // rows first pass - calculate the column widths
+        // Width pass: format each cell exactly once, appending its bytes to
+        // `cell_text` and sizing columns. The render pass replays those byte
+        // ranges, so no property is re-read and no value is re-formatted.
+        let mut cell_text: Vec<u8> = Vec::new();
+        let mut rows: Vec<CollectedRow> = Vec::new();
         {
             if self.is_iterable {
                 struct Ctx<'c, 'a> {
                     this: &'c mut TablePrinter<'a>,
+                    cell_text: &'c mut Vec<u8>,
                     columns: &'c mut Vec<Column>,
+                    rows: &'c mut Vec<CollectedRow>,
                     idx: u32,
-                    err: bool,
+                    err: Option<jsc::JsError>,
                 }
                 // Capture before constructing `ctx` (which mutably borrows `*self`).
                 let tabular_data = self.tabular_data;
                 let mut ctx = Ctx {
                     this: self,
+                    cell_text: &mut cell_text,
                     columns,
+                    rows: &mut rows,
                     idx: 0,
-                    err: false,
+                    err: None,
                 };
-                extern "C" fn callback(
+                extern "C" fn callback<const C: bool>(
                     _: *mut jsc::VM,
                     _: &JSGlobalObject,
                     ctx: *mut c_void,
@@ -989,22 +959,30 @@ impl<'a> TablePrinter<'a> {
                 ) {
                     // SAFETY: ctx points to the stack `Ctx` above.
                     let ctx = unsafe { bun_ptr::callback_ctx::<Ctx<'_, '_>>(ctx) };
-                    if ctx
-                        .this
-                        .update_columns_for_row(ctx.columns, &RowKey::Num(ctx.idx), value)
-                        .is_err()
-                    {
-                        ctx.err = true;
+                    // Once a cell failed, a JS exception may be pending (or
+                    // the VM terminating); don't re-enter user code for the
+                    // remaining elements.
+                    if ctx.err.is_some() {
+                        return;
+                    }
+                    match ctx.this.collect_row::<C>(
+                        ctx.cell_text,
+                        ctx.columns,
+                        RowKey::Num(ctx.idx),
+                        value,
+                    ) {
+                        Ok(row) => ctx.rows.push(row),
+                        Err(err) => ctx.err = Some(err),
                     }
                     ctx.idx += 1;
                 }
                 tabular_data.for_each_with_context(
                     global_object,
                     (&raw mut ctx).cast::<c_void>(),
-                    callback,
+                    callback::<ENABLE_ANSI_COLORS>,
                 )?;
-                if ctx.err {
-                    return Err(jsc::JsError::Thrown);
+                if let Some(err) = ctx.err {
+                    return Err(err);
                 }
             } else {
                 let tabular_obj = self.tabular_data.to_object(global_object)?;
@@ -1018,11 +996,14 @@ impl<'a> TablePrinter<'a> {
                 )?;
 
                 while let Some(row_key) = rows_iter.next()? {
-                    self.update_columns_for_row(
+                    let key = RowKey::str(&BunString::init(row_key));
+                    let row = self.collect_row::<ENABLE_ANSI_COLORS>(
+                        &mut cell_text,
                         columns,
-                        &RowKey::Str(BunString::init(row_key)),
+                        key,
                         rows_iter.value,
                     )?;
+                    rows.push(row);
                 }
             }
         }
@@ -1093,77 +1074,9 @@ impl<'a> TablePrinter<'a> {
             writer.write_all("┤\n".as_bytes()).ok();
         }
 
-        // rows second pass - print the actual table rows
-        {
-            if self.is_iterable {
-                struct Ctx<'c, 'a> {
-                    this: &'c mut TablePrinter<'a>,
-                    columns: &'c mut Vec<Column>,
-                    writer: &'c mut dyn bun_io::Write,
-                    idx: u32,
-                    err: bool,
-                }
-                // Capture before constructing `ctx` (which mutably borrows `*self`).
-                let tabular_data = self.tabular_data;
-                let mut ctx = Ctx {
-                    this: self,
-                    columns,
-                    writer,
-                    idx: 0,
-                    err: false,
-                };
-                extern "C" fn callback<const C: bool>(
-                    _: *mut jsc::VM,
-                    _: &JSGlobalObject,
-                    ctx: *mut c_void,
-                    value: JSValue,
-                ) {
-                    // SAFETY: ctx points to the stack `Ctx` above.
-                    let ctx = unsafe { bun_ptr::callback_ctx::<Ctx<'_, '_>>(ctx) };
-                    if ctx
-                        .this
-                        .print_row::<C>(ctx.writer, ctx.columns, &RowKey::Num(ctx.idx), value)
-                        .is_err()
-                    {
-                        ctx.err = true;
-                    }
-                    ctx.idx += 1;
-                }
-                tabular_data.for_each_with_context(
-                    global_object,
-                    (&raw mut ctx).cast::<c_void>(),
-                    callback::<ENABLE_ANSI_COLORS>,
-                )?;
-                if ctx.err {
-                    return Err(jsc::JsError::Thrown);
-                }
-            } else {
-                let Some(cell) = self.tabular_data.to_cell() else {
-                    return Err(global_object.throw_type_error(format_args!(
-                        "tabular_data must be an object or array"
-                    )));
-                };
-                // `JSCell` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
-                // centralised non-null deref proof (live JSC heap cell).
-                let row_obj = jsc::JSCell::opaque_ref(cell).to_object(global_object);
-                let mut rows_iter = jsc::JSPropertyIterator::init(
-                    global_object,
-                    row_obj,
-                    jsc::PropertyIteratorOptions {
-                        skip_empty_name: false,
-                        include_value: true,
-                    },
-                )?;
-
-                while let Some(row_key) = rows_iter.next()? {
-                    self.print_row::<ENABLE_ANSI_COLORS>(
-                        writer,
-                        columns,
-                        &RowKey::Str(BunString::init(row_key)),
-                        rows_iter.value,
-                    )?;
-                }
-            }
+        // render pass: replay each row's pre-formatted cell bytes
+        for row in rows.iter() {
+            self.print_row(writer, columns, row, &cell_text);
         }
 
         // print the table bottom border
@@ -1203,13 +1116,13 @@ impl<'a> TablePrinter<'a> {
 /// recover `&mut Self` from the `*mut io::Writer` they receive (same pattern as
 /// `Output::QuietWriterAdapter::new_interface`).
 #[repr(C)]
-pub(crate) struct DynWriteAdapter<'a> {
+struct DynWriteAdapter<'a> {
     head: bun_core::io::Writer,
     inner: &'a mut dyn bun_io::Write,
 }
 
 impl<'a> DynWriteAdapter<'a> {
-    pub(crate) fn new(inner: &'a mut dyn bun_io::Write) -> Self {
+    fn new(inner: &'a mut dyn bun_io::Write) -> Self {
         Self {
             head: bun_core::io::Writer {
                 write_all: Self::thunk_write_all,
@@ -1221,7 +1134,7 @@ impl<'a> DynWriteAdapter<'a> {
 
     /// Reborrow as the `io::Writer` head.
     #[inline]
-    pub(crate) fn interface(&mut self) -> &mut bun_core::io::Writer {
+    fn interface(&mut self) -> &mut bun_core::io::Writer {
         // SAFETY: `head` is the first `#[repr(C)]` field, so `&mut self.head`
         // and `&mut *self as *mut io::Writer` are the same address; the thunks
         // below cast back to `*mut Self`.
@@ -1331,9 +1244,9 @@ pub enum Colon {
 
 pub struct ErrorDisplayLevelFormatter {
     pub name: BunString,
-    pub level: ErrorDisplayLevel,
-    pub enable_colors: bool,
-    pub colon: Colon,
+    pub(crate) level: ErrorDisplayLevel,
+    pub(crate) enable_colors: bool,
+    pub(crate) colon: Colon,
 }
 
 impl core::fmt::Display for ErrorDisplayLevelFormatter {
@@ -1371,7 +1284,7 @@ impl core::fmt::Display for ErrorDisplayLevelFormatter {
 }
 
 impl ErrorDisplayLevel {
-    pub fn formatter(
+    pub(crate) fn formatter(
         self,
         error_name: BunString,
         enable_colors: bool,
@@ -1720,33 +1633,33 @@ pub mod formatter {
         /// the backing storage goes away. A `&'a`
         /// slice cannot express that without forcing `'a` to outlive locals;
         /// `RawSlice` carries the outlives-holder invariant instead.
-        pub remaining_values: bun_ptr::RawSlice<JSValue>,
+        pub(crate) remaining_values: bun_ptr::RawSlice<JSValue>,
         pub map: visited::Map,
         /// Pooled backing for `map`. `None` until the first cell that can have
         /// circular refs is formatted; `Drop` returns it to `visited::Pool`.
         /// Raw pointer (not `Box`) because `visited::Pool` owns the
         /// `heap::alloc`/`from_raw` lifecycle.
-        pub map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
-        pub hide_native: bool,
-        pub indent: u32,
+        pub(crate) map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
+        pub(crate) hide_native: bool,
+        pub(crate) indent: u32,
         pub depth: u16,
-        pub max_depth: u16,
+        pub(crate) max_depth: u16,
         pub quote_strings: bool,
         pub quote_keys: bool,
-        pub failed: bool,
-        pub estimated_line_length: usize,
-        pub always_newline_scope: bool,
+        pub(crate) failed: bool,
+        pub(crate) estimated_line_length: usize,
+        pub(crate) always_newline_scope: bool,
         pub single_line: bool,
         pub ordered_properties: bool,
-        pub custom_formatted_object: CustomFormattedObject,
-        pub disable_inspect_custom: bool,
-        pub stack_check: StackCheck,
-        pub can_throw_stack_overflow: bool,
-        pub error_display_level: ErrorDisplayLevel,
+        pub(crate) custom_formatted_object: CustomFormattedObject,
+        pub(crate) disable_inspect_custom: bool,
+        pub(crate) stack_check: StackCheck,
+        pub(crate) can_throw_stack_overflow: bool,
+        pub(crate) error_display_level: ErrorDisplayLevel,
         /// If `ArrayBuffer`-like objects contain ASCII text, the buffer is
         /// printed as a string. Set true in the error printer so that
         /// `ShellError` prints a more readable message.
-        pub format_buffer_as_text: bool,
+        pub(crate) format_buffer_as_text: bool,
     }
 
     impl<'a> Formatter<'a> {
@@ -1821,13 +1734,13 @@ pub mod formatter {
         /// dereference site and reset it to `EMPTY` before the backing storage
         /// is released (RawSlice invariant).
         #[inline]
-        pub fn remaining(&self) -> &[JSValue] {
+        pub(crate) fn remaining(&self) -> &[JSValue] {
             self.remaining_values.slice()
         }
 
         /// Drop the first queued `%`-format argument.
         #[inline]
-        pub fn advance_remaining(&mut self) {
+        pub(crate) fn advance_remaining(&mut self) {
             let s = self.remaining_values;
             self.remaining_values = bun_ptr::RawSlice::new(&s.slice()[1..]);
         }
@@ -1852,13 +1765,13 @@ pub mod formatter {
                 // SAFETY: `node` was obtained from `Pool::get_node()` and is
                 // exclusively owned by this formatter; `Map::INIT` is `Some`,
                 // so `data` is initialized. Ownership returns to the pool.
-                unsafe { visited::Pool::release(node.as_mut()) };
+                unsafe { visited::Pool::release(node.as_ptr()) };
             }
         }
     }
 
     impl Formatter<'_> {
-        pub fn good_time_for_a_new_line(&mut self) -> bool {
+        pub(crate) fn good_time_for_a_new_line(&mut self) -> bool {
             if self.estimated_line_length > 80 {
                 self.reset_line();
                 return true;
@@ -1866,7 +1779,7 @@ pub mod formatter {
             false
         }
 
-        pub fn reset_line(&mut self) {
+        pub(crate) fn reset_line(&mut self) {
             self.estimated_line_length = (self.indent as usize) * 2;
         }
 
@@ -1884,7 +1797,7 @@ pub mod formatter {
     /// provenance without the `&shared → *const → *mut` cast that would be UB
     /// under Stacked Borrows.
     pub struct ZigFormatter<'a, 'b> {
-        pub formatter: Cell<Option<&'a mut Formatter<'b>>>,
+        pub(crate) formatter: Cell<Option<&'a mut Formatter<'b>>>,
         pub value: JSValue,
     }
 
@@ -1970,7 +1883,7 @@ pub mod formatter {
         /// the cause-chain guard in `VirtualMachine::print_error_instance`)
         /// don't each open-code two `unsafe` operations.
         #[inline]
-        pub fn node_data_mut(node: &mut core::ptr::NonNull<PoolNode>) -> &mut Map {
+        pub(crate) fn node_data_mut(node: &mut core::ptr::NonNull<PoolNode>) -> &mut Map {
             // SAFETY: `Map::INIT` is `Some`, so `data` is initialized for
             // every node from `Pool::get_node()`; the caller owns `node`
             // exclusively until `Pool::release`, so forming `&mut` is sound.
@@ -2025,7 +1938,7 @@ pub mod formatter {
     }
 
     impl Tag {
-        pub fn is_primitive(self) -> bool {
+        pub(crate) fn is_primitive(self) -> bool {
             matches!(
                 self,
                 Tag::String
@@ -2040,7 +1953,7 @@ pub mod formatter {
             )
         }
 
-        pub fn can_have_circular_references(self) -> bool {
+        pub(crate) fn can_have_circular_references(self) -> bool {
             matches!(
                 self,
                 Tag::Function
@@ -2099,16 +2012,7 @@ pub mod formatter {
         pub fn get(value: JSValue, global_this: &JSGlobalObject) -> JsResult<TagResult> {
             Tag::get(value, global_this)
         }
-        /// Delegates to `Tag::get_advanced`.
-        #[inline]
-        pub fn get_advanced(
-            value: JSValue,
-            global_this: &JSGlobalObject,
-            opts: TagOptions,
-        ) -> JsResult<TagResult> {
-            Tag::get_advanced(value, global_this, opts)
-        }
-        pub fn is_primitive(self) -> bool {
+        pub(crate) fn is_primitive(self) -> bool {
             self.tag().is_primitive()
         }
         pub fn tag(self) -> Tag {
@@ -2224,7 +2128,7 @@ pub mod formatter {
             Self::get_advanced(value, global_this, TagOptions::empty())
         }
 
-        pub fn get_advanced(
+        pub(crate) fn get_advanced(
             value: JSValue,
             global_this: &JSGlobalObject,
             opts: TagOptions,
@@ -2344,13 +2248,7 @@ pub mod formatter {
 
             if js_type == jsc::JSType::GlobalProxy {
                 if !opts.contains(TagOptions::HIDE_GLOBAL) {
-                    // SAFETY: `value` is a cell with `js_type == GlobalProxy`,
-                    // so `as_object_ref()` is a valid `JSObjectRef` for the
-                    // C API call.
-                    let target = JSValue::c(unsafe {
-                        jsc::C::JSObjectGetProxyTarget(value.as_object_ref())
-                    });
-                    return Tag::get(target, global_this);
+                    return Tag::get(value.get_proxy_target(), global_this);
                 }
                 return Ok(TagResult {
                     tag: TagPayload::GlobalObject,
@@ -2782,17 +2680,15 @@ pub mod formatter {
     // PERF: dynamic dispatch rather than monomorphization — profile if hot.
     pub struct WrappedWriter<'w> {
         pub ctx: &'w mut dyn bun_io::Write,
-        pub failed: bool,
-        pub estimated_line_length: &'w mut usize,
+        pub(crate) failed: bool,
+        pub(crate) estimated_line_length: &'w mut usize,
     }
 
     impl<'w> WrappedWriter<'w> {
-        pub const IS_WRAPPED_WRITER: bool = true;
-
         /// Mirror of `Formatter::add_for_new_line` routed through the borrowed
         /// `estimated_line_length` so callers don't need a second `&mut self`
         /// on the parent `Formatter` while a `WrappedWriter` is live.
-        pub fn add_for_new_line(&mut self, len: usize) {
+        pub(crate) fn add_for_new_line(&mut self, len: usize) {
             *self.estimated_line_length = self.estimated_line_length.saturating_add(len);
         }
 
@@ -2800,13 +2696,13 @@ pub mod formatter {
         /// `estimated_line_length`. Takes the current `Formatter::indent` by
         /// value so the caller can pass `self.indent` (a disjoint field
         /// borrow) while this `WrappedWriter` is live.
-        pub fn reset_line(&mut self, indent: u32) {
+        pub(crate) fn reset_line(&mut self, indent: u32) {
             *self.estimated_line_length = (indent as usize) * 2;
         }
 
         /// Mirror of `Formatter::good_time_for_a_new_line` routed through the
         /// borrowed `estimated_line_length`.
-        pub fn good_time_for_a_new_line(&mut self, indent: u32) -> bool {
+        pub(crate) fn good_time_for_a_new_line(&mut self, indent: u32) -> bool {
             if *self.estimated_line_length > 80 {
                 self.reset_line(indent);
                 return true;
@@ -2816,7 +2712,7 @@ pub mod formatter {
 
         /// Mirror of `Formatter::print_comma` routed through the wrapped
         /// `ctx` writer + borrowed `estimated_line_length`.
-        pub fn print_comma<const ENABLE_ANSI_COLORS: bool>(&mut self) {
+        pub(crate) fn print_comma<const ENABLE_ANSI_COLORS: bool>(&mut self) {
             if self
                 .ctx
                 .write_all(pfmt!("<r><d>,<r>", ENABLE_ANSI_COLORS).as_bytes())
@@ -2829,7 +2725,7 @@ pub mod formatter {
 
         /// Mirror of `Formatter::write_indent` routed through the wrapped
         /// `ctx` writer. Takes the current `Formatter::indent` by value.
-        pub fn write_indent(&mut self, indent: u32) {
+        pub(crate) fn write_indent(&mut self, indent: u32) {
             let mut total_remain: u32 = indent;
             while total_remain > 0 {
                 let written: u8 = total_remain.min(32) as u8;
@@ -2845,13 +2741,13 @@ pub mod formatter {
             }
         }
 
-        pub fn print(&mut self, args: core::fmt::Arguments<'_>) {
+        pub(crate) fn print(&mut self, args: core::fmt::Arguments<'_>) {
             if self.ctx.write_fmt(args).is_err() {
                 self.failed = true;
             }
         }
 
-        pub fn space(&mut self) {
+        pub(crate) fn space(&mut self) {
             *self.estimated_line_length += 1;
             if self.ctx.write_all(b" ").is_err() {
                 self.failed = true;
@@ -2860,7 +2756,7 @@ pub mod formatter {
 
         // `fmt_len` (the length ignoring formatted values) is a runtime
         // argument computed by the `pretty!` macro.
-        pub fn pretty<const ENABLE_ANSI_COLOR: bool>(
+        pub(crate) fn pretty<const ENABLE_ANSI_COLOR: bool>(
             &mut self,
             fmt_len: usize,
             args: core::fmt::Arguments<'_>,
@@ -2871,50 +2767,20 @@ pub mod formatter {
             }
         }
 
-        pub fn write_latin1(&mut self, buf: &[u8]) {
-            let mut remain = buf;
-            while !remain.is_empty() {
-                if let Some(i) = strings::immutable::first_non_ascii(remain) {
-                    if i > 0 {
-                        if self.ctx.write_all(&remain[0..i as usize]).is_err() {
-                            self.failed = true;
-                            return;
-                        }
-                    }
-                    if self
-                        .ctx
-                        .write_all(
-                            &strings::immutable::latin1_to_codepoint_bytes_assume_not_ascii(
-                                remain[i as usize],
-                            ),
-                        )
-                        .is_err()
-                    {
-                        self.failed = true;
-                    }
-                    remain = &remain[i as usize + 1..];
-                } else {
-                    break;
-                }
-            }
-
-            let _ = self.ctx.write_all(remain);
-        }
-
         #[inline]
-        pub fn write_all(&mut self, buf: &[u8]) {
+        pub(crate) fn write_all(&mut self, buf: &[u8]) {
             if self.ctx.write_all(buf).is_err() {
                 self.failed = true;
             }
         }
 
         #[inline]
-        pub fn write_string(&mut self, str: &ZigString) {
+        pub(crate) fn write_string(&mut self, str: &ZigString) {
             self.print(format_args!("{str}"));
         }
 
         #[inline]
-        pub fn write_16_bit(&mut self, input: &[u16]) {
+        pub(crate) fn write_16_bit(&mut self, input: &[u16]) {
             // `format_utf16_type` requires `impl fmt::Write + Sized`; route through
             // the `Display` adapter so we go via `bun_io::Write::write_fmt` instead.
             self.print(format_args!(
@@ -2934,10 +2800,7 @@ pub mod formatter {
     /// conflict with the `&self` borrow `Formatter::write_indent` takes.
     /// `self.indent` is a disjoint field read, so passing it by value here
     /// keeps the borrow checker happy.
-    pub(super) fn write_indent_n(
-        indent: u32,
-        writer: &mut dyn bun_io::Write,
-    ) -> bun_io::Result<()> {
+    fn write_indent_n(indent: u32, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
         let mut total_remain: u32 = indent;
         while total_remain > 0 {
             let written: u8 = total_remain.min(32) as u8;
@@ -2948,11 +2811,11 @@ pub mod formatter {
     }
 
     impl Formatter<'_> {
-        pub fn write_indent(&self, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
+        pub(crate) fn write_indent(&self, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
             write_indent_n(self.indent, writer)
         }
 
-        pub fn print_comma<const ENABLE_ANSI_COLORS: bool>(
+        pub(crate) fn print_comma<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
             writer: &mut dyn bun_io::Write,
         ) -> bun_io::Result<()> {
@@ -2966,22 +2829,22 @@ pub mod formatter {
     // MapIterator / SetIterator / PropertyIterator (forEach callback contexts)
     // ───────────────────────────────────────────────────────────────────────
 
-    pub struct MapIteratorCtx<
+    pub(crate) struct MapIteratorCtx<
         'a,
         'b,
         const C: bool,
         const IS_ITERATOR: bool,
         const SINGLE_LINE: bool,
     > {
-        pub formatter: &'a mut Formatter<'b>,
-        pub writer: &'a mut dyn bun_io::Write,
-        pub count: usize,
+        pub(crate) formatter: &'a mut Formatter<'b>,
+        pub(crate) writer: &'a mut dyn bun_io::Write,
+        pub(crate) count: usize,
     }
 
     impl<'a, 'b, const C: bool, const IS_ITERATOR: bool, const SINGLE_LINE: bool>
         MapIteratorCtx<'a, 'b, C, IS_ITERATOR, SINGLE_LINE>
     {
-        pub extern "C" fn for_each(
+        pub(crate) extern "C" fn for_each(
             _: *mut jsc::VM,
             global_object: &JSGlobalObject,
             ctx: *mut c_void,
@@ -3071,14 +2934,14 @@ pub mod formatter {
         }
     }
 
-    pub struct SetIteratorCtx<'a, 'b, const C: bool, const SINGLE_LINE: bool> {
-        pub formatter: &'a mut Formatter<'b>,
-        pub writer: &'a mut dyn bun_io::Write,
-        pub is_first: bool,
+    pub(crate) struct SetIteratorCtx<'a, 'b, const C: bool, const SINGLE_LINE: bool> {
+        pub(crate) formatter: &'a mut Formatter<'b>,
+        pub(crate) writer: &'a mut dyn bun_io::Write,
+        pub(crate) is_first: bool,
     }
 
     impl<'a, 'b, const C: bool, const SINGLE_LINE: bool> SetIteratorCtx<'a, 'b, C, SINGLE_LINE> {
-        pub extern "C" fn for_each(
+        pub(crate) extern "C" fn for_each(
             _: *mut jsc::VM,
             global_object: &JSGlobalObject,
             ctx: *mut c_void,
@@ -3125,17 +2988,17 @@ pub mod formatter {
         }
     }
 
-    pub struct PropertyIteratorCtx<'a, 'b, const C: bool> {
-        pub formatter: &'a mut Formatter<'b>,
-        pub writer: &'a mut dyn bun_io::Write,
-        pub i: usize,
-        pub single_line: bool,
-        pub always_newline: bool,
-        pub parent: JSValue,
+    pub(crate) struct PropertyIteratorCtx<'a, 'b, const C: bool> {
+        pub(crate) formatter: &'a mut Formatter<'b>,
+        pub(crate) writer: &'a mut dyn bun_io::Write,
+        pub(crate) i: usize,
+        pub(crate) single_line: bool,
+        pub(crate) always_newline: bool,
+        pub(crate) parent: JSValue,
     }
 
     impl<'a, 'b, const C: bool> PropertyIteratorCtx<'a, 'b, C> {
-        pub fn handle_first_property(
+        pub(crate) fn handle_first_property(
             &mut self,
             global_this: &JSGlobalObject,
             value: JSValue,
@@ -3208,10 +3071,10 @@ pub mod formatter {
                     writer.write_all(b"\"");
 
                     const QUOTE_U16: &[u16] = &[b'"' as u16];
-                    while let Some(j) = strings::immutable::index_of_any16(utf16_slice, QUOTE_U16) {
-                        writer.write_16_bit(&utf16_slice[0..j as usize]);
+                    while let Some(j) = strings::index_of_any16(utf16_slice, QUOTE_U16) {
+                        writer.write_16_bit(&utf16_slice[0..j]);
                         writer.write_all(b"\"");
-                        utf16_slice = &utf16_slice[j as usize + 1..];
+                        utf16_slice = &utf16_slice[j + 1..];
                     }
 
                     writer.write_16_bit(utf16_slice);
@@ -3343,7 +3206,7 @@ pub mod formatter {
             Some(tag)
         }
 
-        pub extern "C" fn for_each(
+        pub(crate) extern "C" fn for_each(
             global_this: &JSGlobalObject,
             ctx_ptr: *mut c_void,
             key: *mut ZigString,
@@ -3472,7 +3335,7 @@ pub mod formatter {
         }
 
         #[inline(never)]
-        pub fn print_as<const ENABLE_ANSI_COLORS: bool>(
+        pub(crate) fn print_as<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
             format: Tag,
             writer_: &mut dyn bun_io::Write,
@@ -3827,8 +3690,7 @@ pub mod formatter {
                 writer.write_all(slice);
             } else if !str.is_empty() {
                 // slow path
-                let buf =
-                    strings::immutable::allocate_latin1_into_utf8(str.latin1()).unwrap_or_default();
+                let buf = strings::allocate_latin1_into_utf8(str.latin1()).unwrap_or_default();
                 if !buf.is_empty() {
                     writer.write_all(&buf);
                 }
@@ -3998,8 +3860,7 @@ pub mod formatter {
                     C,
                 )
             })?;
-            // Strings are printed directly, otherwise we recurse. It is
-            // possible to end up in an infinite loop.
+            // Strings are printed directly, otherwise we recurse.
             if result.is_string() {
                 if writer_
                     .write_fmt(format_args!("{}", result.fmt_string(self.global_this)))
@@ -4008,12 +3869,15 @@ pub mod formatter {
                     self.failed = true;
                 }
             } else {
-                self.format::<C>(
-                    Tag::get(result, self.global_this)?,
-                    writer_,
-                    result,
-                    self.global_this,
-                )?;
+                // A custom inspector that returns its own `this` would recurse
+                // forever; re-tag without the custom hook so it falls through to
+                // default formatting (mirrors util.inspect's `ret !== context`).
+                let tag = if result == self.custom_formatted_object.this {
+                    Tag::get_advanced(result, self.global_this, TagOptions::DISABLE_INSPECT_CUSTOM)?
+                } else {
+                    Tag::get(result, self.global_this)?
+                };
+                self.format::<C>(tag, writer_, result, self.global_this)?;
             }
             Ok(())
         }
@@ -4285,8 +4149,7 @@ pub mod formatter {
 
             // `JSPromise` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
             // centralised non-null deref proof (Tag::Promise ⇒ value is a cell).
-            let promise: &JSPromise =
-                JSPromise::opaque_ref(value.as_object_ref() as *const JSPromise);
+            let promise: &JSPromise = JSPromise::opaque_ref(value.encoded() as *const JSPromise);
             match promise.status() {
                 jsc::js_promise::Status::Pending => writer.write_all(b"<pending>"),
                 jsc::js_promise::Status::Fulfilled => writer.write_all(b"<resolved>"),
@@ -4538,7 +4401,20 @@ pub mod formatter {
                         if empty_start.is_none() {
                             empty_start = Some(i);
                         }
-                        i += 1;
+                        if js_type.is_array() {
+                            // Skip the whole run of holes at once: probing each
+                            // index is O(length), and a sparse array's length
+                            // can be 2^32 - 1 with no elements at all.
+                            match value.next_present_index(i + 1) {
+                                Some(next) if (next as u64) < len => i = next,
+                                _ => break,
+                            }
+                        } else {
+                            // Arguments objects store their elements outside
+                            // the butterfly; their length is small, so probe
+                            // each index like before.
+                            i += 1;
+                        }
                         continue;
                     }
                     if nonempty_count >= 100 {
@@ -5213,7 +5089,7 @@ pub mod formatter {
 
             // `ZigStringSlice` frees on `Drop`, so no explicit cleanup is
             // needed.
-            let tag_name_slice: strings::ZigStringSlice;
+            let tag_name_slice: bun_core::ZigStringSlice;
             let mut is_tag_kind_primitive = false;
 
             if let Some(type_value) = value.get(self.global_this, "type")? {
@@ -5693,7 +5569,7 @@ pub mod formatter {
 
             if self.format_buffer_as_text
                 && js_type == jsc::JSType::Uint8Array
-                && bun_core::immutable::is_valid_utf8(slice)
+                && bun_core::strings::is_valid_utf8(slice)
             {
                 if C {
                     writer.write_all(pfmt!("<r><green>", true).as_bytes());
@@ -5836,7 +5712,6 @@ pub mod formatter {
     /// Abstracts over `{d}` vs `{f}` and `n`-suffix for `write_typed_array`.
     pub trait TypedArrayElement: Copy {
         const IS_BIGINT: bool;
-        const IS_FLOAT: bool;
         type Display: core::fmt::Display;
         fn display(self) -> Self::Display;
     }
@@ -5844,7 +5719,6 @@ pub mod formatter {
         ($($t:ty),*) => { $(
             impl TypedArrayElement for $t {
                 const IS_BIGINT: bool = false;
-                const IS_FLOAT: bool = false;
                 type Display = $t;
                 fn display(self) -> Self::Display { self }
             }
@@ -5855,7 +5729,6 @@ pub mod formatter {
         ($($t:ty),*) => { $(
             impl TypedArrayElement for $t {
                 const IS_BIGINT: bool = true;
-                const IS_FLOAT: bool = false;
                 type Display = $t;
                 fn display(self) -> Self::Display { self }
             }
@@ -5866,7 +5739,6 @@ pub mod formatter {
         ($($t:ty),*) => { $(
             impl TypedArrayElement for $t {
                 const IS_BIGINT: bool = false;
-                const IS_FLOAT: bool = true;
                 type Display = bun_core::fmt::DoubleFormatter;
                 fn display(self) -> Self::Display { bun_core::fmt::double(f64::from(self)) }
             }
@@ -5879,7 +5751,6 @@ pub mod formatter {
     // primitive — but the body is identical.
     impl TypedArrayElement for bun_core::f16 {
         const IS_BIGINT: bool = false;
-        const IS_FLOAT: bool = true;
         type Display = bun_core::fmt::DoubleFormatter;
         fn display(self) -> Self::Display {
             bun_core::fmt::double(f64::from(self))
@@ -5893,7 +5764,7 @@ pub mod formatter {
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__count(
+pub(crate) extern "C" fn Bun__ConsoleObject__count(
     _console: *mut ConsoleObject,
     global_this: &JSGlobalObject,
     ptr: *const u8,
@@ -5934,7 +5805,7 @@ pub extern "C" fn Bun__ConsoleObject__count(
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__countReset(
+pub(crate) extern "C" fn Bun__ConsoleObject__countReset(
     _console: *mut ConsoleObject,
     global_this: &JSGlobalObject,
     ptr: *const u8,
@@ -5960,7 +5831,7 @@ thread_local! {
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__time(
+pub(crate) extern "C" fn Bun__ConsoleObject__time(
     _console: *mut ConsoleObject,
     _global: &JSGlobalObject,
     chars: *const u8,
@@ -5976,14 +5847,14 @@ pub extern "C" fn Bun__ConsoleObject__time(
     PENDING_TIME_LOGS.with_borrow_mut(|map| {
         let result = map.get_or_put(id).expect("unreachable");
         if !result.found_existing || result.value_ptr.is_none() {
-            *result.value_ptr = Some(bun_core::time::Timer::start().expect("unreachable"));
+            *result.value_ptr = Some(bun_core::time::Timer::start());
         }
     });
 }
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__timeEnd(
+pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
     _console: *mut ConsoleObject,
     _global: &JSGlobalObject,
     chars: *const u8,
@@ -6016,7 +5887,7 @@ pub extern "C" fn Bun__ConsoleObject__timeEnd(
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__timeLog(
+pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     _console: *mut ConsoleObject,
     global: &JSGlobalObject,
     chars: *const u8,
@@ -6113,7 +5984,7 @@ console_noop_hooks!(str: Bun__ConsoleObject__profile, Bun__ConsoleObject__profil
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
+pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
     _console: *mut ConsoleObject,
     global_this: &JSGlobalObject,
     _chars: *const u8,
@@ -6144,7 +6015,7 @@ console_noop_hooks!(
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
+pub(crate) extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
     ctype: *mut ConsoleObject,
     // Taking the
     // exhaustive Rust enums by value at the C ABI would be UB on an

@@ -327,6 +327,36 @@ describe("decodeURIComponentSIMD - Additional Tests", () => {
   }
 });
 
+describe("decodeURIComponentSIMD with UTF-8 byte input", () => {
+  const encoder = new TextEncoder();
+
+  it("decodes multi-byte characters in input bytes that contain no escape sequences", () => {
+    expect(decodeURIComponentSIMD(encoder.encode("café"))).toBe("café");
+  });
+
+  it("decodes multi-byte characters preceding an escape sequence", () => {
+    expect(decodeURIComponentSIMD(encoder.encode("café%41"))).toBe("caféA");
+  });
+
+  it("decodes multi-byte characters following an escape sequence", () => {
+    expect(decodeURIComponentSIMD(encoder.encode("%41café"))).toBe("Acafé");
+  });
+
+  it("decodes a multi-byte character spanning a 16-byte chunk boundary", () => {
+    const prefix = Buffer.alloc(15, "A").toString();
+    const suffix = Buffer.alloc(12, "x").toString();
+    const input = encoder.encode(prefix + "é%41" + suffix);
+    expect(input.length).toBe(32);
+    expect(decodeURIComponentSIMD(input)).toBe(prefix + "éA" + suffix);
+  });
+
+  it("replaces an invalid byte sequence in the input bytes with U+FFFD", () => {
+    expect(decodeURIComponentSIMD(new Uint8Array([0x61, 0xe9, 0x62, 0x25, 0x34, 0x31]))).toBe(
+      "a" + String.fromCodePoint(0xfffd) + "bA",
+    );
+  });
+});
+
 describe("decodeURIComponentSIMD edge cases", () => {
   it("should handle cursor advancement correctly with invalid hex", () => {
     // This test would fail because of the cursor advancement bug

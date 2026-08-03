@@ -1,5 +1,117 @@
+import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug } from "harness";
+
+// When a handler throws, handler_callback() parks the JSC Exception cell in the
+// VM's rejection-capture slot (a stack local in BufferOutputSink::init(),
+// conservatively scanned) so create_lolhtml_error() can hand it to the caller.
+// handler_callback() used to .protect() the stored cell, but nothing on the
+// consuming path dropped that protection, so every caught handler exception
+// leaked one protected Exception (and the Error it wraps) for the life of the
+// process.
+//
+// https://github.com/oven-sh/bun/issues/31804
+test("exceptions thrown from handlers do not leak protected Exception roots", async () => {
+  const code = /* js */ `
+    const { heapStats } = require("bun:jsc");
+
+    async function settle() {
+      for (let i = 0; i < 8; i++) {
+        Bun.gc(true);
+        await Bun.sleep(0);
+      }
+    }
+
+    function counts() {
+      const stats = heapStats();
+      return {
+        Exception: stats.objectTypeCounts.Exception ?? 0,
+        protectedException: stats.protectedObjectTypeCounts.Exception ?? 0,
+      };
+    }
+
+    await settle();
+    const before = counts();
+
+    let caught = 0;
+    for (let i = 0; i < 100; i++) {
+      const rewriter = new HTMLRewriter().on("div", {
+        element() {
+          throw new Error("handler failed");
+        },
+      });
+      try {
+        rewriter.transform("<div>hello</div>");
+      } catch (error) {
+        if (error?.message !== "handler failed") throw error;
+        caught++;
+      }
+    }
+
+    await settle();
+    const after = counts();
+
+    console.log(JSON.stringify({ caught, before, after }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+
+  const { caught, before, after } = JSON.parse(stdout.trim());
+  expect(caught).toBe(100);
+  // Unfixed: after.protectedException == before.protectedException + 100.
+  expect(after.protectedException).toBeLessThanOrEqual(before.protectedException);
+  expect(after.Exception).toBeLessThanOrEqual(before.Exception + 1);
+  expect(exitCode).toBe(0);
+});
+
+// Every `element.onEndTag(fn)` call JSValue::protect()s its callback. The old
+// lol-html C-API binding parked that protection in a per-call heap handler it
+// handed to lol-html as raw userdata and never freed on the success path, so
+// every registered end-tag callback (and whatever its closure captured) stayed
+// GC-rooted for the life of the process. The lol_html Rust-crate binding hands
+// lol-html an owning `FnOnce` box, which is dropped (releasing the protection)
+// whether or not the end tag is ever reached.
+//
+// `heapStats().protectedObjectTypeCounts` reports the exact count of
+// protect()'d objects by type, so unlike an RSS high-water mark this needs no
+// threshold and is stable on debug builds.
+test("onEndTag callbacks are released after the rewrite", () => {
+  const rewriteWithEndTagHandlers = (count: number) => {
+    let document = "";
+    for (let i = 0; i < count; i++) document += "<p></p>";
+    new HTMLRewriter()
+      .on("p", {
+        element(element) {
+          element.onEndTag(() => {});
+        },
+      })
+      .transform(document);
+  };
+
+  const protectedFunctions = () => {
+    Bun.gc(true);
+    return heapStats().protectedObjectTypeCounts.Function ?? 0;
+  };
+
+  rewriteWithEndTagHandlers(400);
+  const before = protectedFunctions();
+  rewriteWithEndTagHandlers(400);
+  rewriteWithEndTagHandlers(400);
+  const after = protectedFunctions();
+
+  // Unfixed, every one of the 800 callbacks registered after the baseline was
+  // still protected here.
+  expect(after - before).toBe(0);
+});
 
 // Each .on() / .onDocument() call heap-allocates an ElementHandler / DocumentHandler
 // struct via bun.default_allocator. When the HTMLRewriter is garbage-collected,
@@ -19,6 +131,7 @@ test.skipIf(isDebug)(
   "HTMLRewriter does not leak element/document handler allocations",
   async () => {
     const code = /* js */ `
+      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
       const noop = { element() {}, comments() {}, text() {} };
       const docNoop = { doctype() {}, comments() {}, text() {}, end() {} };
 
@@ -32,7 +145,7 @@ test.skipIf(isDebug)(
       function pass() {
         for (let i = 0; i < N; i++) once();
         Bun.gc(true);
-        return process.memoryUsage.rss();
+        return rss();
       }
 
       pass(); pass();

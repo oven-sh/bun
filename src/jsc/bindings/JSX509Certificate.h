@@ -65,7 +65,9 @@ public:
     JSValue publicKey();
 
     // Certificate validation methods
-    bool checkHost(JSGlobalObject*, std::span<const char>, uint32_t flags);
+    // `peerName`, when provided, receives the subject name that matched, which
+    // can differ from the queried host (wildcard SANs, case-insensitive matches).
+    bool checkHost(JSGlobalObject*, std::span<const char>, uint32_t flags, ncrypto::DataPointer* peerName = nullptr);
     bool checkEmail(JSGlobalObject*, std::span<const char>, uint32_t flags);
     bool checkIP(JSGlobalObject*, const char*);
     bool checkIssued(JSGlobalObject*, JSX509Certificate* issuer);

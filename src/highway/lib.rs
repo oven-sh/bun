@@ -2,9 +2,14 @@
 // Per crate map: `bun.highway.*` → `bun_highway::*` (same C++ backing).
 
 unsafe extern "C" {
-    fn highway_char_frequency(text: *const u8, text_len: usize, freqs: *mut i32, delta: i32);
-
     fn highway_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
+
+    fn highway_memmem(
+        haystack: *const u8,
+        haystack_len: usize,
+        needle: *const u8,
+        needle_len: usize,
+    ) -> *const u8;
 
     fn highway_index_of_interesting_character_in_string_literal(
         text: *const u8,
@@ -87,6 +92,16 @@ unsafe extern "C" {
     ) -> usize;
 
     fn highway_count_mapping_delims(bytes: *const u8, len: usize) -> usize;
+
+    fn highway_json_index_chunk(
+        input: *const u8,
+        len: usize,
+        base_offset: usize,
+        out_indices: *mut u32,
+        out_dirty: *mut u64,
+        inout_state: *mut u64,
+        out_flags: *mut u32,
+    ) -> usize;
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -97,20 +112,6 @@ unsafe extern "C" {
 // straight into the caller. Without this the profile shows the C shim as a
 // distinct hot leaf (e.g. `highway_index_of_newline_or_non_ascii` self-samples
 // in lint/create-vue benches).
-
-/// Count frequencies of [a-zA-Z0-9_$] characters in a string
-/// Updates the provided frequency array with counts (adds delta for each occurrence)
-#[inline(always)]
-pub fn scan_char_frequency(text: &[u8], freqs: &mut [i32; 64], delta: i32) {
-    if text.is_empty() || delta == 0 {
-        return;
-    }
-
-    // SAFETY: text.ptr/len are a valid readable range; freqs is a valid 64-elem writable array.
-    unsafe {
-        highway_char_frequency(text.as_ptr(), text.len(), freqs.as_mut_ptr(), delta);
-    }
-}
 
 #[inline(always)]
 pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
@@ -128,6 +129,31 @@ pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
     debug_assert!(haystack[result] == needle);
 
     Some(result)
+}
+
+#[inline(always)]
+pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    if haystack.len() < needle.len() {
+        return None;
+    }
+    // SAFETY: both (ptr,len) pairs are valid readable ranges.
+    let p = unsafe {
+        highway_memmem(
+            haystack.as_ptr(),
+            haystack.len(),
+            needle.as_ptr(),
+            needle.len(),
+        )
+    };
+    if p.is_null() {
+        None
+    } else {
+        // SAFETY: highway_memmem returns a pointer within `haystack` on success.
+        Some(unsafe { p.offset_from(haystack.as_ptr()) } as usize)
+    }
 }
 
 #[inline(always)]
@@ -587,6 +613,34 @@ pub fn count_mapping_delims(bytes: &[u8]) -> usize {
     }
     // SAFETY: `bytes.ptr/len` are a valid readable range.
     unsafe { highway_count_mapping_delims(bytes.as_ptr(), bytes.len()) }
+}
+
+/// JSON structural index (simdjson-style stage 1) for one chunk of a document.
+#[inline(always)]
+pub fn json_structural_index_chunk(
+    chunk: &[u8],
+    base_offset: usize,
+    out: &mut [core::mem::MaybeUninit<u32>],
+    dirty: &mut [u64],
+    state: &mut [u64; 3],
+) -> (usize, u32) {
+    assert!(out.len() >= chunk.len() + 66);
+    assert!(dirty.len() >= (chunk.len().div_ceil(64)).div_ceil(64));
+    assert!(base_offset.is_multiple_of(4096));
+    let mut flags: u32 = 0;
+    // SAFETY: the slices satisfy the kernel's size requirements (asserted above).
+    let n = unsafe {
+        highway_json_index_chunk(
+            chunk.as_ptr(),
+            chunk.len(),
+            base_offset,
+            out.as_mut_ptr().cast::<u32>(),
+            dirty.as_mut_ptr(),
+            state.as_mut_ptr(),
+            &raw mut flags,
+        )
+    };
+    (n, flags)
 }
 
 /// Raw output column pointers for [`parse_mappings`]. Each points to `cap`

@@ -22,22 +22,6 @@ impl Default for HTTPServerAgent {
 }
 
 impl HTTPServerAgent {
-    pub fn is_enabled(&self) -> bool {
-        self.agent.is_some()
-    }
-
-    /// Safe accessor for the set-once C++ agent handle. `agent` is populated
-    /// exactly once via [`Bun__HTTPServerAgent__setEnabled`] and lives for the
-    /// debugger's lifetime; `InspectorHTTPServerAgent` is an `opaque_ffi!` ZST
-    /// so the `&mut` covers zero bytes (see [`bun_opaque::opaque_deref_mut`]).
-    /// Consolidates the per-call-site raw deref into the single audited
-    /// `opaque_mut` proof so callers stay safe.
-    #[inline]
-    pub fn agent_mut(&mut self) -> Option<&mut InspectorHTTPServerAgent> {
-        self.agent
-            .map(|p| InspectorHTTPServerAgent::opaque_mut(p.as_ptr()))
-    }
-
     // #region Events
     //
     // `notify_server_started` / `notify_server_stopped` /
@@ -85,14 +69,6 @@ impl Default for Route {
             script_id: BunString::EMPTY,
             script_url: BunString::EMPTY,
         }
-    }
-}
-
-impl Route {
-    pub fn params(&self) -> &[BunString] {
-        // SAFETY: param_names points to param_names_len contiguous BunString
-        // values (or is `(null, 0)`, which `ffi::slice` tolerates).
-        unsafe { bun_core::ffi::slice(self.param_names, self.param_names_len) }
     }
 }
 
@@ -252,7 +228,7 @@ impl InspectorHTTPServerAgent {
 // #region C++ entry points
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServerAgent) {
+pub(crate) extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServerAgent) {
     // SAFETY: VM singleton is process-lifetime.
     let vm = VirtualMachine::get().as_mut();
     if let Some(debugger) = &mut vm.debugger {
@@ -264,7 +240,7 @@ pub extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServ
 
 // Typedefs from HTTPServer.json
 pub type ServerId = crate::debugger::DebuggerId;
-pub type RequestId = i32;
+pub(crate) type RequestId = i32;
 pub type RouteId = i32;
 pub type HotReloadId = i32;
-pub type HTTPMethod = bun_http::Method;
+pub(crate) type HTTPMethod = bun_http::Method;

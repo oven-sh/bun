@@ -13,7 +13,13 @@
 
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
-import { listeningServer, mysqlAuthSwitchRequest, mysqlHandshakeV10 } from "./wire-frames";
+import {
+  listeningServer,
+  mysqlAuthSwitchRequest,
+  mysqlHandshakeV10,
+  mysqlRawPacket,
+  mysqlReadPackets,
+} from "./wire-frames";
 
 test("MySQL: AuthSwitchRequest with a short mysql_native_password nonce is rejected, not OOB-read", async () => {
   let sawAuthSwitchResponse = false;
@@ -63,6 +69,37 @@ test("MySQL: AuthSwitchRequest with a short mysql_native_password nonce is rejec
       err: { code: "ERR_MYSQL_MISSING_AUTH_DATA" },
       sawAuthSwitchResponse: false,
     });
+  } finally {
+    await new Promise<void>(r => server.close(() => r()));
+  }
+});
+
+test("MySQL: an AuthSwitchRequest frame declaring a zero-length payload is rejected", async () => {
+  const greeting = mysqlHandshakeV10();
+
+  const { server, port } = await listeningServer(socket => {
+    let buffered = Buffer.alloc(0);
+    let replied = false;
+    socket.write(greeting);
+    socket.on("data", chunk => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), seq => {
+        if (!replied) {
+          replied = true;
+          socket.end(mysqlRawPacket(seq + 1, Buffer.from([0xfe]), 0));
+        }
+      });
+    });
+    socket.on("error", () => {});
+  });
+
+  try {
+    await using sql = new SQL({ url: `mysql://root:pw@127.0.0.1:${port}/db`, max: 1 });
+    const err = await sql`select 1`.then(
+      () => ({ code: "UNEXPECTED_SUCCESS" }),
+      e => ({ code: e?.code ?? String(e) }),
+    );
+
+    expect(err).toEqual({ code: "ERR_MYSQL_INVALID_AUTH_SWITCH_REQUEST" });
   } finally {
     await new Promise<void>(r => server.close(() => r()));
   }

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunRun, joinP, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, joinP, tempDirWithFiles } from "harness";
 
-test("cloneable and transferable equals", () => {
+test.concurrent("cloneable and transferable equals", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "index.ts": `
 import cluster from "cluster";
@@ -31,10 +31,10 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  bunRun(joinP(dir, "index.ts"), bunEnv, true);
+  expect(await bunRun(joinP(dir, "index.ts"), bunEnv)).toSpawn();
 });
 
-test("cloneable and non-transferable not-equals (BunFile)", () => {
+test.concurrent("cloneable and non-transferable not-equals (BunFile)", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "index.ts": `
 import cluster from "cluster";
@@ -76,10 +76,10 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  bunRun(joinP(dir, "index.ts"), bunEnv, true);
+  expect(await bunRun(joinP(dir, "index.ts"), bunEnv)).toSpawn();
 });
 
-test("cloneable and non-transferable not-equals (net.BlockList)", () => {
+test.concurrent("cloneable and non-transferable not-equals (net.BlockList)", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "index.ts": `
 import cluster from "cluster";
@@ -119,10 +119,10 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  bunRun(joinP(dir, "index.ts"), bunEnv, true);
+  expect(await bunRun(joinP(dir, "index.ts"), bunEnv)).toSpawn();
 });
 
-test("non-cluster parent ignores cluster-internal IPC messages from a forked child", () => {
+test.concurrent("non-cluster parent ignores cluster-internal IPC messages from a forked child", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "parent.ts": `
 const { fork } = require("node:child_process");
@@ -157,6 +157,32 @@ require("node:cluster");
 process.send("regular message");
 `,
   });
-  const { stdout } = bunRun(joinP(dir, "parent.ts"), bunEnv);
+  const { stdout, exitCode } = await bunRun(joinP(dir, "parent.ts"), bunEnv);
   expect(stdout).toContain("P received regular message");
+  expect(exitCode).toBe(0);
+});
+
+test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
+  // `kHandle` is a private symbol that only `cluster.fork()` sets, so a
+  // `cluster.Worker({ process })` built around a plain object (how Node's own
+  // tests mock workers) hands `undefined` to the native `sendHelper` binding.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const cluster = require("node:cluster");
+        const fake = { on() {}, disconnect() {}, kill() {}, send() { return false; } };
+        const worker = new cluster.Worker({ process: fake });
+        const returned = worker.disconnect();
+        console.log("returned self:", returned === worker);
+      `,
+    ],
+    env: bunEnv,
+    // Inherited so that on regression the child's abort output reaches the
+    // runner log instead of filling an unread pipe.
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "returned self: true", exitCode: 0 });
 });

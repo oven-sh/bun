@@ -1,6 +1,60 @@
-import { describe, expect, it } from "bun:test";
-import { isIPv6, isMacOS, isWindows } from "harness";
+import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe, isIPv6, isMacOS, isWindows } from "harness";
 import * as dgram from "node:dgram";
+
+// close() from inside a 'message' handler must stop delivery of the remaining
+// datagrams in the current recvmmsg batch. Node guarantees no 'message' fires
+// after 'close'; previously bun replayed the rest of the batch into a handle
+// whose 'close' event and close() callback had already fired.
+test("node:dgram close() inside 'message' handler stops remaining batch datagrams", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import dgram from "node:dgram";
+      const trace = [];
+      const rx = dgram.createSocket("udp4");
+      await new Promise(r => rx.bind(0, "127.0.0.1", r));
+      const port = rx.address().port;
+      rx.on("message", d => {
+        trace.push("message:" + d.toString());
+        if (d.toString() === "0") rx.close(() => trace.push("closeCallback"));
+      });
+      rx.on("close", () => trace.push("closeEvent"));
+      const tx = dgram.createSocket("udp4");
+      tx.on("error", () => {});
+      // Queue a burst on the kernel rx buffer before the loop dispatches
+      // 'message'. Each send is awaited so its syscall has completed before
+      // the next one starts; on loopback this deterministically yields a
+      // multi-packet recvmmsg batch.
+      for (let i = 0; i < 16; i++) {
+        await new Promise(r => tx.send(String(i), port, "127.0.0.1", r));
+      }
+      // Let any queued 'message' / 'close' events drain.
+      for (let i = 0; i < 8; i++) await new Promise(r => setImmediate(r));
+      tx.close();
+      console.log(JSON.stringify(trace));
+    `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const stderr = rawStderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  const trace = JSON.parse(stdout.trim());
+  // The socket closes on the first datagram. Node ordering: 'close' event
+  // first, then the close() callback (both via queueMicrotask in dgram.ts).
+  expect({ stderr, trace }).toEqual({
+    stderr: "",
+    trace: ["message:0", "closeEvent", "closeCallback"],
+  });
+  expect(exitCode).toBe(0);
+});
 
 describe.skipIf(!isIPv6())("node:dgram", () => {
   it("adds membership successfully (IPv6)", () => {

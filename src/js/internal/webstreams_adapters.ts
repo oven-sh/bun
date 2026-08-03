@@ -47,7 +47,6 @@ function tryTransferToNativeReadable(stream, options) {
 class ReadableFromWeb extends Readable {
   #reader;
   #closed;
-  #pendingChunks;
   #stream;
 
   constructor(options, stream) {
@@ -58,31 +57,9 @@ class ReadableFromWeb extends Readable {
       encoding,
       signal,
     });
-    this.#pendingChunks = [];
     this.#reader = undefined;
     this.#stream = stream;
     this.#closed = false;
-  }
-
-  #drainPending() {
-    var pendingChunks = this.#pendingChunks,
-      pendingChunksI = 0,
-      pendingChunksCount = pendingChunks.length;
-
-    for (; pendingChunksI < pendingChunksCount; pendingChunksI++) {
-      const chunk = pendingChunks[pendingChunksI];
-      pendingChunks[pendingChunksI] = undefined;
-      if (!this.push(chunk, undefined)) {
-        this.#pendingChunks = pendingChunks.slice(pendingChunksI + 1);
-        return true;
-      }
-    }
-
-    if (pendingChunksCount > 0) {
-      this.#pendingChunks = [];
-    }
-
-    return false;
   }
 
   #handleDone(reader) {
@@ -90,74 +67,68 @@ class ReadableFromWeb extends Readable {
     this.#reader = undefined;
     this.#closed = true;
     this.push(null);
-    return;
   }
 
-  async _read() {
+  #handleError(reader, error) {
+    if (reader) {
+      this.#reader = undefined;
+      try {
+        reader.releaseLock();
+      } catch {}
+    }
+    this.#closed = true;
+    this.destroy(error);
+  }
+
+  // One reader.read() per _read(). readMany() would drain a start()-enqueued
+  // source to "closed" before the consumer can abort, and cancel() on a closed
+  // stream is a spec no-op, so the source's cancel hook would never run.
+  _read() {
     $debug("ReadableFromWeb _read()", this.__id);
-    var stream = this.#stream,
-      reader = this.#reader;
+    if (this.#closed) return;
+    var reader = this.#reader;
+    var stream = this.#stream;
     if (stream) {
       reader = this.#reader = stream.getReader();
       this.#stream = undefined;
-    } else if (this.#drainPending()) {
-      return;
     }
-
-    var deferredError: Error | undefined;
-    try {
-      do {
-        var done = false,
-          value;
-        const firstResult = reader.readMany();
-
-        if ($isPromise(firstResult)) {
-          ({ done, value } = await firstResult);
-
-          if (this.#closed) {
-            this.#pendingChunks.push(...value);
-            return;
-          }
-        } else {
-          ({ done, value } = firstResult);
-        }
-
-        if (done) {
+    PromisePrototypeThen.$call(
+      reader.read(),
+      chunk => {
+        if (this.#closed) return;
+        if (chunk.done) {
           this.#handleDone(reader);
-          return;
+        } else {
+          this.push(chunk.value);
         }
-
-        if (!this.push(value[0])) {
-          this.#pendingChunks = value.slice(1);
-          return;
-        }
-
-        for (let i = 1, count = value.length; i < count; i++) {
-          if (!this.push(value[i])) {
-            this.#pendingChunks = value.slice(i + 1);
-            return;
-          }
-        }
-      } while (!this.#closed);
-    } catch (e) {
-      deferredError = e as Error;
-    }
-
-    if (deferredError) throw deferredError;
+      },
+      error => this.#handleError(reader, error),
+    );
   }
 
   _destroy(error, callback) {
     if (!this.#closed) {
+      this.#closed = true;
       var reader = this.#reader;
       if (reader) {
         this.#reader = undefined;
-        reader.cancel(error).finally(() => {
-          this.#closed = true;
-          callback(error);
-        });
+        PromisePrototypeThen.$call(
+          reader.cancel(error),
+          () => callback(error),
+          cancelError => callback(error ?? cancelError),
+        );
+        return;
       }
-
-      return;
+      var stream = this.#stream;
+      if (stream) {
+        this.#stream = undefined;
+        PromisePrototypeThen.$call(
+          stream.cancel(error),
+          () => callback(error),
+          cancelError => callback(error ?? cancelError),
+        );
+        return;
+      }
     }
     try {
       callback(error);
@@ -239,7 +210,16 @@ function newWritableStreamFromStreamWritable(streamWritable, options = kEmptyObj
   }
 
   const highWaterMark = streamWritable.writableHighWaterMark;
-  const strategy = streamWritable.writableObjectMode ? new CountQueuingStrategy({ highWaterMark }) : { highWaterMark };
+  const strategy = streamWritable.writableObjectMode
+    ? new CountQueuingStrategy({ highWaterMark })
+    : {
+        highWaterMark,
+        // Size chunks in bytes so desiredSize reflects the byte-based
+        // highWaterMark and pipeTo applies backpressure.
+        size(chunk) {
+          return chunk?.byteLength ?? chunk?.length ?? 1;
+        },
+      };
 
   let controller;
   let backpressurePromise;

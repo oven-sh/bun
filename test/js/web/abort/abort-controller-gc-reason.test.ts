@@ -99,6 +99,106 @@ describe("AbortController GC", () => {
     expect(exitCode).toBe(0);
   });
 
+  // JSAbortSignalOwner::isReachableFromOpaqueRoots runs on JSC's parallel marker threads and
+  // must not prune the dependent signal's source set there: doing so destroys WeakPtrImpls
+  // owned by the JS thread once every source controller has been collected.
+  test("AbortSignal.any() dependent signals survive parallel GC after their sources are collected", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const noop = () => {};
+          function makeBatch(n) {
+            const out = [];
+            for (let i = 0; i < n; i++) {
+              // The controllers (and their signals) are dropped, so every source of the
+              // dependent signal is collected, leaving only dead weak references behind.
+              const a = new AbortController();
+              const b = new AbortController();
+              const c = new AbortController();
+              const dep = AbortSignal.any([a.signal, b.signal, c.signal]);
+              dep.addEventListener("abort", noop);
+              out.push(dep);
+            }
+            return out;
+          }
+          const keep = [];
+          for (let round = 0; round < 24; round++) {
+            keep.push(makeBatch(100));
+            if (keep.length > 6) keep.shift();
+            Bun.gc(true);
+          }
+          console.log("PASS");
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        // `bun -e` defaults to a single GC marker; the weak-handle visit has to happen on
+        // the parallel marker threads to reach the cross-thread mutation.
+        BUN_JSC_numberOfGCMarkers: "8",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // stderr is only reported for diagnostics; debug/ASAN builds may emit benign warnings.
+    expect({ stdout: stdout.trim(), exitCode, stderr }).toEqual({
+      stdout: "PASS",
+      exitCode: 0,
+      stderr: expect.any(String),
+    });
+  });
+
+  // collectContinuously is very slow on Windows CI; the code under test is
+  // identical across platforms.
+  test.skipIf(isWindows)(
+    "AbortSignal.abort()'s default reason survives GC for fetch / throwIfAborted / any",
+    async () => {
+      // The default DOMException for AbortSignal.abort() was stored in
+      // m_reason (a JSC::Weak) before the JSAbortSignal wrapper existed, so a
+      // GC during toJSNewlyCreated()'s allocation could collect it and fetch
+      // would reject with `null`. collectContinuously makes that GC likely.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const bad = [];
+            for (let i = 0; i < 10000; i++) {
+              const sig = AbortSignal.abort();
+              const err = await fetch("http://127.0.0.1:1/", { signal: sig }).catch(e => e);
+              if (err?.name !== "AbortError") bad.push("fetch rejection " + Bun.inspect(err));
+              else if (err !== sig.reason) bad.push("fetch rejection !== signal.reason");
+            }
+            for (let i = 0; i < 10000; i++) {
+              const signal = AbortSignal.abort();
+              try { signal.throwIfAborted(); bad.push("throwIfAborted did not throw"); }
+              catch (e) {
+                if (e?.name !== "AbortError") bad.push("throwIfAborted " + Bun.inspect(e));
+                else if (e !== signal.reason) bad.push("throwIfAborted !== signal.reason");
+              }
+              const source = AbortSignal.abort();
+              const any = AbortSignal.any([source]);
+              if (any.reason?.name !== "AbortError") bad.push("any.reason " + Bun.inspect(any.reason));
+              else if (any.reason !== source.reason) bad.push("any.reason !== source.reason");
+            }
+            console.log(bad.length ? "bad=" + bad.length + " first=" + bad[0] : "bad=0");
+          `,
+        ],
+        env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "bad=0", stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+    60_000,
+  );
+
   test("signal.reason survives GC with many controllers", async () => {
     await using proc = Bun.spawn({
       cmd: [

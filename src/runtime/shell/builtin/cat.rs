@@ -11,8 +11,7 @@ use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub struct Cat {
-    pub opts: Opts,
-    pub state: CatState,
+    pub(crate) state: CatState,
 }
 
 #[derive(Default)]
@@ -42,14 +41,14 @@ pub enum CatState {
 }
 
 /// Internal: what to do after dropping the &mut state borrow.
-pub enum Step {
+pub(crate) enum Step {
     Suspend,
     Done(ExitCode),
     Next,
 }
 
 impl Cat {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let mut opts = Opts::default();
         let filepath_start = {
             let args = Builtin::of(interp, cmd).args_slice();
@@ -63,7 +62,6 @@ impl Cat {
                 }
             }
         };
-        Self::state_mut(interp, cmd).opts = opts;
 
         let argc = Builtin::of(interp, cmd).args_slice().len();
         let should_read_from_stdin = filepath_start.is_none() || filepath_start == Some(argc);
@@ -107,7 +105,7 @@ impl Cat {
         Builtin::done(interp, cmd, exit_code)
     }
 
-    pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         // Read scalars, drop the borrow, then act.
         enum Branch {
             Stdin,
@@ -232,7 +230,7 @@ impl Cat {
         }
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,
@@ -240,7 +238,6 @@ impl Cat {
     ) -> Yield {
         if let Some(e) = err {
             let errno = e.get_errno() as ExitCode;
-            e.deref();
             let rchild = ReaderChildPtr {
                 node: cmd,
                 tag: ReaderTag::Cat,
@@ -314,7 +311,7 @@ impl Cat {
         }
     }
 
-    pub fn on_io_reader_chunk(
+    pub(crate) fn on_io_reader_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         chunk: &[u8],
@@ -339,18 +336,12 @@ impl Cat {
         Yield::done()
     }
 
-    pub fn on_io_reader_done(
+    pub(crate) fn on_io_reader_done(
         interp: &Interpreter,
         cmd: NodeId,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        let errno: ExitCode = err
-            .map(|e| {
-                let n = e.get_errno() as ExitCode;
-                e.deref();
-                n
-            })
-            .unwrap_or(0);
+        let errno: ExitCode = err.map(|e| e.get_errno() as ExitCode).unwrap_or(0);
         let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
         let mut cancel = false;
         let step = match &mut Self::state_mut(interp, cmd).state {
@@ -416,22 +407,7 @@ impl Cat {
 }
 
 #[derive(Clone, Copy, Default)]
-pub struct Opts {
-    /// `-b` — number the non-blank output lines, starting at 1.
-    pub number_nonblank: bool,
-    /// `-e` — display non-printing characters and a `$` at end of each line.
-    pub show_ends: bool,
-    /// `-n` — number the output lines, starting at 1.
-    pub number_all: bool,
-    /// `-s` — squeeze multiple adjacent empty lines.
-    pub squeeze_blank: bool,
-    /// `-t` — display non-printing characters and tabs as `^I`.
-    pub show_tabs: bool,
-    /// `-u` — disable output buffering.
-    pub disable_output_buffering: bool,
-    /// `-v` — display non-printing characters so they are visible.
-    pub show_nonprinting: bool,
-}
+pub struct Opts {}
 
 impl FlagParser for Opts {
     fn parse_long(&mut self, _flag: &[u8]) -> Option<ParseFlagResult> {

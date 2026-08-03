@@ -202,11 +202,11 @@ pub(crate) struct WalkTask<'a> {
 
 pub(crate) enum WalkTaskErr {
     Syscall(syscall::Error),
-    Unknown(bun_core::Error),
+    Unknown(crate::Error),
 }
 
 impl WalkTaskErr {
-    pub(crate) fn to_js(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    fn to_js(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             WalkTaskErr::Syscall(err) => Ok(err.to_js(global_this)),
             WalkTaskErr::Unknown(err) => {
@@ -219,7 +219,7 @@ impl WalkTaskErr {
 pub(crate) type AsyncGlobWalkTask<'a> = ConcurrentPromiseTask<'a, WalkTask<'a>>;
 
 impl<'a> WalkTask<'a> {
-    pub(crate) fn create(
+    fn create(
         global_this: &'a JSGlobalObject,
         glob_walker: Box<GlobWalker>,
         has_pending_activity: &'a AtomicUsize,
@@ -243,7 +243,7 @@ impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
         let result = match self.walker.walk() {
             Ok(r) => r,
             Err(err) => {
-                self.err = Some(WalkTaskErr::Unknown(err));
+                self.err = Some(WalkTaskErr::Unknown(err.into()));
                 drop(guard);
                 return;
             }
@@ -323,7 +323,9 @@ impl Glob {
                 error_on_broken_symlinks,
                 only_files,
                 None,
-            )? {
+            )
+            .map_err(crate::Error::from)?
+            {
                 bun_sys::Result::Err(err) => {
                     return Err(global_this.throw_value(err.to_js(global_this)));
                 }
@@ -340,7 +342,9 @@ impl Glob {
             error_on_broken_symlinks,
             only_files,
             None,
-        )? {
+        )
+        .map_err(crate::Error::from)?
+        {
             bun_sys::Result::Err(err) => {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
@@ -353,10 +357,12 @@ impl Glob {
     // the struct already emits the `GlobClass__construct` shim that calls
     // `<Glob>::constructor(..)`. The free-fn `host_fn` expansion can't name an
     // associated fn without a receiver.
-    pub fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Glob>> {
-        let arguments_ = callframe.arguments_old::<1>();
+    pub(crate) fn constructor(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<Box<Glob>> {
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
-        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
         // `arguments` drops at scope exit.
         let Some(pat_arg) = arguments.next_eat() else {
             return Err(global_this.throw(format_args!(
@@ -385,7 +391,7 @@ impl Glob {
     /// atomic counter; never allocates, locks, or touches JS. The codegen shim
     /// (`Glob__hasPendingActivity`) handles the `callconv(.c)` ABI and passes
     /// `&*this`.
-    pub fn has_pending_activity(&self) -> bool {
+    pub(crate) fn has_pending_activity(&self) -> bool {
         self.has_pending_activity.load(Ordering::SeqCst) > 0
     }
 }
@@ -405,10 +411,13 @@ impl Glob {
     // `&mut self` receivers were vestigial. The codegen shim still emits
     // `this: &mut Glob`; `&mut T` auto-derefs to `&T`.
     #[bun_jsc::host_fn(method)]
-    pub fn __scan(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old::<1>();
+    pub(crate) fn __scan(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
-        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
         // `arguments` drops at scope exit.
 
         let mut arena = Arena::new();
@@ -442,14 +451,13 @@ impl Glob {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn __scan_sync(
+    pub(crate) fn __scan_sync(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
-        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
 
         let mut arena = Arena::new();
         let mut glob_walker =
@@ -466,7 +474,7 @@ impl Glob {
             };
         // Box<GlobWalker> drops at scope exit.
 
-        match glob_walker.walk()? {
+        match glob_walker.walk().map_err(crate::Error::from)? {
             bun_sys::Result::Err(err) => {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
@@ -482,9 +490,8 @@ impl Glob {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
-        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
         let Some(str_arg) = arguments.next_eat() else {
             return Err(global_this.throw(format_args!(
                 "Glob.matchString: expected 1 arguments, got 0"

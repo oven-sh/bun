@@ -66,10 +66,8 @@ const {
 };
 const SHARE_ENV = Symbol.for("nodejs.worker_threads.SHARE_ENV");
 
-// node implements BroadcastChannel itself (lib/internal/worker/io.js) with
-// argument handling the WHATWG constructor does not have: a missing name is
-// ERR_MISSING_ARGS, any non-symbol name is stringified, postMessage() demands
-// an argument, and a closed channel reports an InvalidStateError DOMException.
+// node's BroadcastChannel (lib/internal/worker/io.js) adds non-WHATWG argument handling:
+// ERR_MISSING_ARGS, non-symbol name stringified, postMessage() arg required, closed => DOMException.
 class BroadcastChannel extends WebBroadcastChannel {
   #closed = false;
 

@@ -1486,11 +1486,8 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     if (wrapped.listenerCount(eventType) > 0) {
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        // Dispatch through a JS trampoline (which forwards to process.emit and
-        // the same listener store) so listeners run with JS caller frames, as
-        // in node; Error.captureStackTrace(err, listener) inside a listener
-        // must leave a non-empty stack. Listener exceptions are reported by
-        // the emitter itself, same as the direct wrapped.emit() path.
+        // Dispatch through a JS trampoline so listeners run with JS caller frames (as in
+        // node); Error.captureStackTrace(err, listener) must leave a non-empty stack.
         JSC::JSFunction* emitter = JSC::JSFunction::create(vm, globalObject, processObjectInternalsEmitUnhandledRejectionFromNativeCodeGenerator(vm), globalObject);
         MarkedArgumentBuffer args;
         args.append(reason);
@@ -2805,10 +2802,8 @@ enum class BunProcessStdinFdType : int32_t {
 extern "C" BunProcessStdinFdType Bun__Process__getStdinFdType(void*, int fd);
 
 extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGlobalObject*, JSC::EncodedJSValue);
-// Resolves `name` by walking the prototype chain with getDirect(), which never
-// invokes an accessor, a Proxy trap or any other user code. An exotic chain
-// yields no direct slot and therefore compares unequal to the recorded
-// pristine value, which routes the caller through the ordinary JS path.
+// Resolves `name` via getDirect() along the prototype chain (never runs user code).
+// An exotic chain yields no slot and compares unequal to the recorded pristine value.
 static JSValue directPropertyValue(JSC::VM& vm, JSObject* object, const JSC::Identifier& name)
 {
     for (JSObject* current = object; current;) {
@@ -2887,17 +2882,13 @@ void Process::setStdioWriteStream(JSC::VM& vm, int fd, JSObject* stream, JSValue
     unsigned slot = static_cast<unsigned>(fd) - 1;
     m_stdioWriteStream[slot].set(vm, this, stream);
     m_pristineStdioWrite[slot].set(vm, this, pristineWrite);
-    // The console's per-write check resolves `write` with getDirect() so it
-    // never runs user code. That only agrees with the get() above while the
-    // property is a plain data property somewhere on the chain, which is how
-    // Bun's stream classes declare it.
+    // The console's getDirect() check only agrees with get() above while `write` is a
+    // plain data property on the chain, which is how Bun's stream classes declare it.
     ASSERT(directPropertyValue(vm, stream, WebCore::builtinNames(vm).writePublicName()) == pristineWrite);
 }
 
-// Console write path (src/jsc/ConsoleObject.rs). Returns null when the stream
-// has never been created or still carries Bun's own `write`, which is the
-// signal to keep using the native buffered writer. Deliberately declares no
-// throw scope: the caller is Rust, and nothing here can run user code.
+// Console write path (ConsoleObject.rs). Null when the stream was never created or
+// still has Bun's own `write`. No throw scope: nothing here can run user code.
 extern "C" JSC::EncodedJSValue Bun__Process__stdioStreamWithReplacedWrite(Zig::GlobalObject* globalObject, int32_t fd)
 {
     if (!globalObject->hasProcessObject())

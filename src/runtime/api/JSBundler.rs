@@ -1635,7 +1635,7 @@ pub mod js_bundler {
             global: &JSGlobalObject,
             target: jsc::BunPluginTarget,
         ) -> *mut Plugin;
-        safe fn JSBundlerPlugin__destroy(plugin: &Plugin);
+        fn JSBundlerPlugin__destroy(plugin: *mut Plugin);
         safe fn JSBundlerPlugin__runOnEndCallbacks(
             plugin: &mut Plugin,
             build_promise: JSValue,
@@ -1737,7 +1737,10 @@ pub mod js_bundler {
 
         fn destroy(this: *mut Plugin) {
             jsc::mark_binding();
-            JSBundlerPlugin__destroy(Plugin::opaque_ref(this));
+            debug_assert!(!this.is_null());
+            // SAFETY: `this` is the +1 handle returned by `JSBundlerPlugin__create`;
+            // the callee releases it and may free the allocation.
+            unsafe { JSBundlerPlugin__destroy(this) };
         }
 
         fn global_object(&self) -> &JSGlobalObject {

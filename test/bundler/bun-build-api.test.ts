@@ -1595,6 +1595,7 @@ test.skipIf(!isASAN)(
     // expect(exitCode).toBe(0).
     const ATTEMPTS = 8;
     const frames: string[] = [];
+    const outcomes: Array<{ exitCode: number | null; signalCode: string | null; stderrTail: string }> = [];
     let sawSanitizerReport = false;
     let sawCleanExit = false;
     for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
@@ -1606,9 +1607,14 @@ test.skipIf(!isASAN)(
       });
       const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
       await proc.exited;
+      outcomes.push({
+        exitCode: proc.exitCode,
+        signalCode: proc.signalCode,
+        stderrTail: stderr.split("\n").slice(-20).join("\n"),
+      });
 
       if (/AddressSanitizer|runtime error:|SUMMARY: /.test(stderr)) sawSanitizerReport = true;
-      if (stdout.includes("ok") && stderr === "") sawCleanExit = true;
+      if (stdout.includes("ok") && stderr.trim() === "") sawCleanExit = true;
 
       const pluginFrames = stderr.split("\n").filter(l => /JSBundlerPlugin\.cpp|BundlerPlugin::|FilterRegExp/.test(l));
       if (pluginFrames.length > 0) {
@@ -1620,7 +1626,7 @@ test.skipIf(!isASAN)(
 
     // Prove the race actually produced symbolicated sanitizer output (or ran clean
     // end-to-end) so the absence check below is meaningful.
-    expect(sawSanitizerReport || sawCleanExit).toBe(true);
+    expect({ meaningful: sawSanitizerReport || sawCleanExit, outcomes }).toMatchObject({ meaningful: true });
     expect(frames).toEqual([]);
   },
   180_000,

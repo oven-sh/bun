@@ -247,7 +247,8 @@ export function unstableParse(this: Transpiler, code: any, opts: any) {
   const visitNode = (off: number, visitors: any, enter: any): void => {
     const n = dv.getUint16(off, true);
     let p = off + 4;
-    let fn = enter;
+    // Kind-less helper nodes (g_decl, g_arg, catch, ...) are traversed but never dispatched.
+    let fn: any;
     if (dv.getUint8(p) === 0 && dv.getUint8(p + 1) === 5) {
       const kind = readString(dv.getUint32(p + 4, true), dv.getUint32(p + 8, true));
       fn = visitors[kind] ?? enter;

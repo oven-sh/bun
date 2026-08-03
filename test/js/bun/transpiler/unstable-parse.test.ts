@@ -428,19 +428,21 @@ describe("Bun.Transpiler.unstable_parse", () => {
     });
     expect(calls).toEqual(["f", "f"]);
     expect(idents).toEqual(["a", "f", "f"]);
-    expect(nodeCount).toBe(20);
+    expect(nodeCount).toBe(15);
   });
 
-  test("visit() does not mis-dispatch on helper nodes", () => {
+  test("visit() does not dispatch on helper nodes", () => {
     const { visit } = ts.unstable_parse(`try { a() } catch (e) { b() }`);
     const kinds: string[] = [];
     const lookups: PropertyKey[] = [];
-    // Trap lookups: a bad `visitNode` would do `visitors["loc"]` then fall back to `enter`.
+    // Trap lookups: a bad `visitNode` would do `visitors["loc"]` for a helper node.
     visit(
       new Proxy(
         {
           enter(n: any) {
-            if (typeof n.kind === "string") kinds.push(n.kind);
+            // `enter` is only called for kind-bearing nodes; n.kind is always a string.
+            expect(typeof n.kind).toBe("string");
+            kinds.push(n.kind);
           },
         },
         {

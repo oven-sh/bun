@@ -126,9 +126,9 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
 // by hooking execve and, before calling the real one, spawning a few threads
 // that abort(). bun's reload_process sets RELOAD_IN_PROGRESS before it reaches
 // execve, so the hook runs inside the reload window; a correct build parks
-// each aborting thread via pthread_exit and the exec then completes. Two
-// aborts are needed because the crash handler's existing SA_RESETHAND SIGABRT
-// hook absorbs a single one.
+// each aborting thread until the exec completes. More than one abort is
+// needed because the crash handler's existing SA_RESETHAND SIGABRT hook
+// absorbs a single one.
 it.skipIf(!isLinux || !cc)(
   "survives abort() from another thread during --watch reload",
   async () => {
@@ -195,13 +195,12 @@ setInterval(() => {}, 1000);
     const target = 3;
     let gen = 1;
     let sawTarget = false;
-    let stderrText = "";
-    (async () => {
-      for await (const chunk of proc.stderr) stderrText += new TextDecoder().decode(chunk);
-    })();
+    const stderrDone = proc.stderr.text().catch(() => "");
+    let stdoutText = "";
+    const decoder = new TextDecoder();
     for await (const chunk of proc.stdout) {
-      const text = new TextDecoder().decode(chunk);
-      if (text.includes(`gen ${gen} up`)) {
+      stdoutText += decoder.decode(chunk, { stream: true });
+      if (stdoutText.includes(`gen ${gen} up`)) {
         if (gen >= target) {
           sawTarget = true;
           proc.kill("SIGKILL");
@@ -211,7 +210,7 @@ setInterval(() => {}, 1000);
         await Bun.write(join(String(dir), "watchee.mjs"), WATCHEE.replace("GEN", String(gen)));
       }
     }
-    await proc.exited;
+    const [, stderrText] = await Promise.all([proc.exited, stderrDone]);
 
     expect({ sawTarget, restartsCompleted: gen - 1, signalCode: proc.signalCode, stderr: stderrText.trim() }).toEqual({
       sawTarget: true,

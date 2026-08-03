@@ -363,14 +363,15 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
   // indicate what would have been applied. There is no body to decode, so the
   // header is informational and the fetch must resolve like Node/undici.
   it.concurrent.each([
-    ["HEAD", "200 OK"],
-    ["GET", "304 Not Modified"],
-    ["GET", "204 No Content"],
-  ])("%s -> %s with Transfer-Encoding: gzip resolves", async (method, status) => {
+    ["HEAD", "200 OK", "gzip"],
+    ["GET", "304 Not Modified", "gzip"],
+    ["GET", "204 No Content", "gzip"],
+    ["HEAD", "200 OK", "compress"],
+  ])("%s -> %s with Transfer-Encoding: %s resolves", async (method, status, te) => {
     const server = createNetServer(socket => {
       socket.on("error", () => {});
       socket.once("data", () => {
-        socket.end(`HTTP/1.1 ${status}\r\nTransfer-Encoding: gzip\r\nConnection: close\r\n\r\n`);
+        socket.end(`HTTP/1.1 ${status}\r\nTransfer-Encoding: ${te}\r\nConnection: close\r\n\r\n`);
       });
     });
     await once(server.listen(0, "127.0.0.1"), "listening");

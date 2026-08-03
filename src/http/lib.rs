@@ -4838,8 +4838,7 @@ impl<'a> HTTPClient<'a> {
                                 self.state.transfer_encoding = Encoding::Chunked;
                             }
                             Some(Encoding::Identity) => {}
-                            Some(_) => unsupported_transfer_coding = true,
-                            None => return Err(crate::Error::UnsupportedTransferEncoding),
+                            Some(_) | None => unsupported_transfer_coding = true,
                         }
                     }
                 }

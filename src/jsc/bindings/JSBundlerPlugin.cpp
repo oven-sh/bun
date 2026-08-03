@@ -590,9 +590,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::BundlerPlugin* plugin, BunS
     }
 }
 
-// Returns the heap-allocated BundlerPlugin with a +1 ref for the caller. The owning
-// JSBundlerPlugin GC cell (which holds the other ref) is gcProtect'd here and released
-// in JSBundlerPlugin__destroy.
+// Returns +1 BundlerPlugin* and gcProtect's its owning cell; both released in __destroy.
 extern "C" Bun::BundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* globalObject, BunPluginTarget target)
 {
     auto* cell = JSBundlerPlugin::create(

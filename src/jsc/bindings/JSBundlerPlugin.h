@@ -21,10 +21,8 @@ using namespace JSC;
 
 class JSBundlerPlugin;
 
-// Heap-allocated and ref-counted separately from the JSBundlerPlugin GC cell so the
-// bundle thread can read filter lists after a Worker's VM (and its JSC heap) is torn
-// down. The owning JSBundlerPlugin cell holds one ref; the Rust-side Plugin handle
-// holds another.
+// Ref-counted separately from the JSBundlerPlugin GC cell so the bundle thread can
+// read filter lists after a Worker's VM is torn down. Cell holds one ref, Rust another.
 class BundlerPlugin final : public ThreadSafeRefCounted<BundlerPlugin> {
 public:
     /// In native plugins, the regular expression could be called concurrently on multiple threads.

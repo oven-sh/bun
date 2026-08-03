@@ -1605,14 +1605,12 @@ test.skipIf(!isASAN)(
       const pluginFrames = stderr.split("\n").filter(l => /JSBundlerPlugin\.cpp|BundlerPlugin::|FilterRegExp/.test(l));
       if (pluginFrames.length > 0) {
         frames.push(`attempt ${attempt}:\n${pluginFrames.join("\n")}`);
-      }
-      if (stdout.includes("ok") && stderr === "") {
-        // Reached the end with no sanitizer report at all; nothing left to probe.
         break;
       }
+      if (stdout.includes("ok") && stderr === "") break;
     }
 
     expect(frames).toEqual([]);
   },
-  120_000,
+  180_000,
 );

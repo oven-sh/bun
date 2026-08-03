@@ -1,9 +1,11 @@
 import { spawn } from "bun";
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import crypto from "node:crypto";
 import net from "node:net";
 import stripAnsi from "strip-ansi";
+
+setDefaultTimeout(isASAN || isDebug ? 120_000 : 60_000);
 
 // A frontend that sends Console.enable and then stops reading must not make
 // the inspected process buffer every console line forever: the per-connection
@@ -139,4 +141,4 @@ test("a stalled inspector frontend is disconnected instead of buffering console 
     sock.destroy();
     child.kill("SIGKILL");
   }
-}, 60_000);
+});

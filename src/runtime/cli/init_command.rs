@@ -19,7 +19,7 @@ use bun_bundler::options;
 // RadioChoice trait — the choice enums used by `process_radio_button`
 // implement this trait by hand.
 // ──────────────────────────────────────────────────────────────────────────
-pub(crate) trait RadioChoice: Copy + Sized {
+trait RadioChoice: Copy + Sized {
     const COUNT: usize;
     const DEFAULT: Self;
     fn fmt(self) -> &'static str;
@@ -245,7 +245,7 @@ impl InitCommand {
     }
 
     /// `Choices` must implement `RadioChoice`.
-    pub(crate) fn radio<C: RadioChoice>(label: &[u8]) -> Result<C, Error> {
+    fn radio<C: RadioChoice>(label: &[u8]) -> Result<C, Error> {
         // Set raw mode to read single characters without echo
         #[cfg(windows)]
         let _restore =
@@ -360,6 +360,13 @@ impl InitCommand {
                     // invalid positional; ignore
                 }
             }
+        }
+
+        // The template picker reads single keystrokes from raw-mode stdin; on a
+        // pipe (CI, `spawn(...,{stdio:'pipe'})`, `foo | bun init`) that blocks
+        // forever. npm init falls back to defaults when stdin is not a TTY.
+        if !auto_yes && !Output::is_stdin_tty() {
+            auto_yes = true;
         }
 
         if let Some(ifdir) = initialize_in_folder {
@@ -944,14 +951,14 @@ impl InitCommand {
 // Assets
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct Assets;
+pub(crate) struct Assets;
 
 impl Assets {
     // "known" assets
-    pub const GITIGNORE: &'static [u8] = include_bytes!("init/gitignore.default");
-    pub const TSCONFIG_JSON: &'static [u8] = include_bytes!("init/tsconfig.default.json");
-    pub const README_MD: &'static [u8] = include_bytes!("init/README.default.md");
-    pub const README2_MD: &'static [u8] = include_bytes!("init/README2.default.md");
+    pub(crate) const GITIGNORE: &'static [u8] = include_bytes!("init/gitignore.default");
+    pub(crate) const TSCONFIG_JSON: &'static [u8] = include_bytes!("init/tsconfig.default.json");
+    pub(crate) const README_MD: &'static [u8] = include_bytes!("init/README.default.md");
+    pub(crate) const README2_MD: &'static [u8] = include_bytes!("init/README2.default.md");
 
     /// Create a new asset file, overriding anything that already exists. Known
     /// assets will have their contents pre-populated; otherwise the file will be empty.
@@ -966,7 +973,7 @@ impl Assets {
         Self::create_full_inner(asset, asset_name, "", is_template, args)
     }
 
-    pub fn create_with_contents(
+    pub(crate) fn create_with_contents(
         asset_name: &[u8],
         contents: &'static [u8],
         args: &[(&[u8], &[u8])],
@@ -1106,18 +1113,16 @@ impl Assets {
 
 pub struct PackageJSONFields {
     pub name: Vec<u8>,
-    pub type_: &'static [u8],
     /// ARENA: allocated from `bun_ast::Expr` Store via `initialize_store()`; no deinit.
     pub object: Option<StoreRef<bun_ast::E::Object>>,
-    pub entry_point: Vec<u8>,
-    pub private: bool,
+    pub(crate) entry_point: Vec<u8>,
+    pub(crate) private: bool,
 }
 
 impl Default for PackageJSONFields {
     fn default() -> Self {
         Self {
             name: b"project".to_vec(),
-            type_: b"module",
             object: None,
             entry_point: Vec::new(),
             private: true,
@@ -1201,13 +1206,13 @@ pub(crate) struct DependencyNeeded {
     pub version: &'static [u8],
 }
 
-pub(crate) struct DependencyGroup {
+struct DependencyGroup {
     pub dependencies: &'static [DependencyNeeded],
     pub dev_dependencies: &'static [DependencyNeeded],
 }
 
 impl DependencyGroup {
-    pub(crate) const BLANK: DependencyGroup = DependencyGroup {
+    const BLANK: DependencyGroup = DependencyGroup {
         dependencies: &[],
         dev_dependencies: &[DependencyNeeded {
             name: b"@types/bun",
@@ -1216,7 +1221,7 @@ impl DependencyGroup {
     };
 
     // `const` cannot concat slices; the lists are hand-expanded below.
-    pub(crate) const REACT: DependencyGroup = DependencyGroup {
+    const REACT: DependencyGroup = DependencyGroup {
         dependencies: &[
             DependencyNeeded {
                 name: b"react",
@@ -1244,7 +1249,7 @@ impl DependencyGroup {
         ],
     };
 
-    pub(crate) const TAILWIND: DependencyGroup = DependencyGroup {
+    const TAILWIND: DependencyGroup = DependencyGroup {
         dependencies: &[
             DependencyNeeded {
                 name: b"tailwindcss",
@@ -1281,7 +1286,7 @@ impl DependencyGroup {
         ],
     };
 
-    pub(crate) const SHADCN: DependencyGroup = DependencyGroup {
+    const SHADCN: DependencyGroup = DependencyGroup {
         dependencies: &[
             DependencyNeeded {
                 name: b"class-variance-authority",
@@ -1367,36 +1372,24 @@ pub enum Template {
 
 pub struct TemplateFile {
     pub path: &'static [u8],
-    pub contents: &'static [u8],
-    pub can_skip_if_exists: bool,
+    pub(crate) contents: &'static [u8],
 }
 
 impl TemplateFile {
     const fn new(path: &'static [u8], contents: &'static [u8]) -> Self {
-        Self {
-            path,
-            contents,
-            can_skip_if_exists: false,
-        }
-    }
-    const fn new_skip(path: &'static [u8], contents: &'static [u8]) -> Self {
-        Self {
-            path,
-            contents,
-            can_skip_if_exists: true,
-        }
+        Self { path, contents }
     }
 }
 
 impl Template {
-    pub(crate) fn is_react(self) -> bool {
+    fn is_react(self) -> bool {
         matches!(
             self,
             Template::ReactBlank | Template::ReactTailwind | Template::ReactTailwindShadcn
         )
     }
 
-    pub(crate) fn write_to_package_json(
+    fn write_to_package_json(
         self,
         fields: &mut PackageJSONFields,
         bump: &bun_alloc::Arena,
@@ -1430,7 +1423,7 @@ impl Template {
         Ok(())
     }
 
-    pub(crate) fn dependencies(self) -> &'static DependencyGroup {
+    fn dependencies(self) -> &'static DependencyGroup {
         match self {
             Template::Blank => &DependencyGroup::BLANK,
             Template::ReactBlank => &DependencyGroup::REACT,
@@ -1440,7 +1433,7 @@ impl Template {
         }
     }
 
-    pub(crate) fn name(self) -> &'static [u8] {
+    fn name(self) -> &'static [u8] {
         match self {
             Template::Blank => b"bun-blank-template",
             Template::TypescriptLibrary => b"bun-typescript-library-template",
@@ -1450,7 +1443,7 @@ impl Template {
         }
     }
 
-    pub(crate) fn scripts(self) -> &'static [&'static [u8]] {
+    fn scripts(self) -> &'static [&'static [u8]] {
         match self {
             Template::Blank | Template::TypescriptLibrary => &[],
             Template::ReactTailwind | Template::ReactTailwindShadcn => &[
@@ -1501,7 +1494,7 @@ impl Template {
         bun_which::which(&mut *pathbuffer, path, top_level_dir, b"claude").is_some()
     }
 
-    pub(crate) fn create_agent_rule() {
+    fn create_agent_rule() {
         let mut create_claude_md = Self::is_claude_code_installed()
             // Never overwrite CLAUDE.md
             && !exists(b"CLAUDE.md");
@@ -1651,7 +1644,7 @@ impl Template {
         None
     }
 
-    pub(crate) fn files(self) -> &'static [TemplateFile] {
+    fn files(self) -> &'static [TemplateFile] {
         match self {
             Template::ReactBlank => REACT_BLANK_FILES,
             Template::ReactTailwind => REACT_TAILWIND_FILES,
@@ -1660,7 +1653,7 @@ impl Template {
         }
     }
 
-    pub(crate) fn write_files_and_run_bun_dev(self) -> Result<(), Error> {
+    fn write_files_and_run_bun_dev(self) -> Result<(), Error> {
         Self::create_agent_rule();
 
         for file in self.files() {
@@ -1755,7 +1748,7 @@ static REACT_BLANK_FILES: &[TemplateFile] = &[
         include_bytes!("./init/react-app/bun-env.d.ts"),
     ),
     TemplateFile::new(b"README.md", Assets::README2_MD),
-    TemplateFile::new_skip(b".gitignore", Assets::GITIGNORE),
+    TemplateFile::new(b".gitignore", Assets::GITIGNORE),
     TemplateFile::new(
         b"src/index.ts",
         include_bytes!("./init/react-app/src/index.ts"),
@@ -1808,7 +1801,7 @@ static REACT_TAILWIND_FILES: &[TemplateFile] = &[
         include_bytes!("./init/react-tailwind/bun-env.d.ts"),
     ),
     TemplateFile::new(b"README.md", Assets::README2_MD),
-    TemplateFile::new_skip(b".gitignore", Assets::GITIGNORE),
+    TemplateFile::new(b".gitignore", Assets::GITIGNORE),
     TemplateFile::new(
         b"src/index.ts",
         include_bytes!("./init/react-tailwind/src/index.ts"),
@@ -1873,7 +1866,7 @@ static REACT_SHADCN_FILES: &[TemplateFile] = &[
         include_bytes!("./init/react-shadcn/bun-env.d.ts"),
     ),
     TemplateFile::new(b"README.md", Assets::README2_MD),
-    TemplateFile::new_skip(b".gitignore", Assets::GITIGNORE),
+    TemplateFile::new(b".gitignore", Assets::GITIGNORE),
     TemplateFile::new(
         b"src/index.ts",
         include_bytes!("./init/react-shadcn/src/index.ts"),
@@ -1942,7 +1935,7 @@ static REACT_SHADCN_FILES: &[TemplateFile] = &[
 // ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
-pub(crate) fn exists(path: &[u8]) -> bool {
+fn exists(path: &[u8]) -> bool {
     bun_sys::exists(path)
 }
 

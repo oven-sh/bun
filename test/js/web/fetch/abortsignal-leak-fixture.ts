@@ -1,5 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { expect } from "bun:test";
+import { rss } from "harness";
 
 let abortEventCount = 0;
 let onAbortHandler = () => {};
@@ -185,25 +186,25 @@ export async function testReqSignalAbortEventNeverResolves() {
 }
 
 export async function runAll() {
-  let initialRSS = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+  let initialRSS = (rss() / 1024 / 1024) | 0;
   console.time("testReqSignalGetter");
   await testReqSignalGetter();
   console.timeEnd("testReqSignalGetter");
-  let rssAfterReqSignalGetter = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+  let rssAfterReqSignalGetter = (rss() / 1024 / 1024) | 0;
   console.log(`RSS after testReqSignalGetter: ${rssAfterReqSignalGetter}`);
   console.log(`RSS delta after testReqSignalGetter: ${rssAfterReqSignalGetter - initialRSS}`);
 
   console.time("testReqSignalAbortEvent");
   await testReqSignalAbortEvent();
   console.timeEnd("testReqSignalAbortEvent");
-  let rssAfterReqSignalAbortEvent = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+  let rssAfterReqSignalAbortEvent = (rss() / 1024 / 1024) | 0;
   console.log(`RSS after testReqSignalAbortEvent: ${rssAfterReqSignalAbortEvent}`);
   console.log(`RSS delta after testReqSignalAbortEvent: ${rssAfterReqSignalAbortEvent - rssAfterReqSignalGetter}`);
 
   console.time("testReqSignalAbortEventNeverResolves");
   await testReqSignalAbortEventNeverResolves();
   console.timeEnd("testReqSignalAbortEventNeverResolves");
-  let rssAfterReqSignalAbortEventNeverResolves = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+  let rssAfterReqSignalAbortEventNeverResolves = (rss() / 1024 / 1024) | 0;
   console.log(`RSS after testReqSignalAbortEventNeverResolves: ${rssAfterReqSignalAbortEventNeverResolves}`);
   console.log(
     `RSS delta after testReqSignalAbortEventNeverResolves: ${rssAfterReqSignalAbortEventNeverResolves - rssAfterReqSignalAbortEvent}`,

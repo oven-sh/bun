@@ -1303,6 +1303,10 @@ function allCachedValues(obj: ClassDefinition) {
     }
   }
 
+  for (const name in obj.callbacks ?? {}) {
+    values.push([name, `m_callback_${name}`]);
+  }
+
   return values;
 }
 
@@ -1372,12 +1376,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
       }
       `;
   }
-  var suffix = "";
-
-  if (obj.getInternalProperties) {
-    suffix += `JSC::JSValue getInternalProperties(JSC::VM &vm, JSC::JSGlobalObject *globalObject, ${name}*);`;
-  }
-
   const final = obj.final ?? true;
 
   return `
@@ -1503,7 +1501,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         ${callbacks ? renderCallbacksHeader(typeName, obj.callbacks) : ""}
         ${obj.valuesArray ? "WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>> jsvalueArray;" : ""}
     };
-    ${suffix}
   `.trim();
 }
 
@@ -1532,14 +1529,14 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
     construct,
     estimatedSize,
     hasPendingActivity = false,
-    getInternalProperties = false,
     callbacks = {},
     own,
   } = obj;
   const name = className(typeName);
 
-  // analyzeHeap reports every cached value as a named property edge; appendHidden
-  // marks for GC without emitting a duplicate anonymous internal edge.
+  // analyzeHeap reports these as named property edges (see allCachedValues); appendHidden
+  // marks for GC without emitting a duplicate anonymous internal edge. klass caches are
+  // marked but never reported, which is moot: no setter is generated, so they stay empty.
   let DEFINE_VISIT_CHILDREN_LIST = [...Object.entries(fields), ...Object.entries(proto)]
     .filter(([name, { cache = false }]) => cache === true)
     .map(([name]) => `visitor.appendHidden(thisObject->m_${name});`)
@@ -1628,17 +1625,6 @@ ${renderCallbacksCppImpl(typeName, callbacks)}
         return ${symbolName(typeName, "hasPendingActivity")}(ctx);
     }
 `;
-  }
-
-  if (getInternalProperties) {
-    externs += `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${symbolName(typeName, "getInternalProperties")}(void* ptr, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue thisValue);`;
-    output += `
-    JSC::JSValue getInternalProperties(JSC::VM &, JSC::JSGlobalObject *globalObject, ${name}* castedThis)
-    {
-      return JSValue::decode(${symbolName(typeName, "getInternalProperties")}(castedThis->impl(), globalObject, JSValue::encode(castedThis)));
-    }
-
-    `;
   }
 
   if (obj.hasOwnProperties()) {
@@ -2228,7 +2214,6 @@ function generateRust(
     values = [],
     hasPendingActivity = false,
     structuredClone = false,
-    getInternalProperties = false,
     rustPath,
     sharedThis = true,
   } = {} as ClassDefinition,
@@ -2264,6 +2249,7 @@ function generateRust(
     // be `extern "sysv64"` on win-x64. `jsc_host_abi!` does the cfg-split.
     thunks.push(
       `bun_jsc::jsc_host_abi! {\n` +
+        `    #[allow(dead_code, unreachable_pub, unused)]\n` +
         `    #[unsafe(no_mangle)]\n` +
         `    pub unsafe fn ${sym}${sig} {\n` +
         `    ${body}\n` +
@@ -2276,8 +2262,8 @@ function generateRust(
   // host-fn now receives `&${T}` (no `noalias` on the LLVM arg, so re-entrant
   // JS that re-derives `&Self` from the wrapper's `m_ctx` cannot miscompile).
   // `sharedThis: false` remains an explicit opt-out for types that have not
-  // yet migrated their fields to `Cell`/`JsCell`. `_shared` helpers live in
-  // `src/jsc/host_fn.rs` alongside the legacy `&mut` originals.
+  // yet migrated their fields to `Cell`/`JsCell`; only the `_getter`/`_setter`
+  // (no `this`) `&mut` helpers survive in `src/jsc/host_fn.rs` for it.
   const recv = sharedThis ? `&${T}` : `&mut ${T}`;
   const helper = (base: string) => (sharedThis ? `host_fn::${base}_shared` : `host_fn::${base}`);
 
@@ -2291,7 +2277,7 @@ function generateRust(
   if (!memoryCost && !estimatedSize) {
     symbols.push(symbolName(typeName, "ZigStructSize"));
     thunks.push(
-      `#[unsafe(no_mangle)]\npub static ${symbolName(typeName, "ZigStructSize")}: usize = core::mem::size_of::<${T}>();`,
+      `#[allow(dead_code, unreachable_pub, unused)]\n#[unsafe(no_mangle)]\npub static ${symbolName(typeName, "ZigStructSize")}: usize = core::mem::size_of::<${T}>();`,
     );
   }
 
@@ -2334,14 +2320,6 @@ function generateRust(
     );
   }
 
-  if (getInternalProperties) {
-    thunk(
-      symbolName(typeName, "getInternalProperties"),
-      `(this: ${recv}, global: &JSGlobalObject, this_value: JSValue) -> JSValue`,
-      `    ${helper("host_fn_internal_props")}(this, global, this_value, |t, g, v| ${T}::get_internal_properties(t, g, v))`,
-    );
-  }
-
   // ── proto getters / setters / fns ────────────────────────────────────────
   // Closure form (`|t, g, c| T::method(t, g, c)`) rather than bare `T::method`
   // so `&mut T → &T` autoref/coercion applies — many user impls take `&self`.
@@ -2354,13 +2332,17 @@ function generateRust(
       const g = accessor ? accessor.getter : getter;
       const s = accessor ? accessor.setter : setter;
 
+      if (thisValue && !sharedThis && (names.getter || names.setter)) {
+        throw new Error(`${typeName}.${name}: \`this: true\` accessors require \`sharedThis: true\``);
+      }
+
       if (names.getter) {
         const id = rustSnakeIdent(g);
         thunk(
           names.getter,
           `(this: ${recv}, ${thisValue ? "this_value: JSValue, " : ""}global: &JSGlobalObject) -> JSValue`,
           thisValue
-            ? `    ${helper("host_fn_getter_this")}(this, this_value, global, |t, v, g| ${T}::${id}(t, v, g))`
+            ? `    host_fn::host_fn_getter_this_shared(this, this_value, global, |t, v, g| ${T}::${id}(t, v, g))`
             : `    ${helper("host_fn_getter")}(this, global, |t, g| ${T}::${id}(t, g))`,
         );
       }
@@ -2371,7 +2353,7 @@ function generateRust(
           names.setter,
           `(this: ${recv}, ${thisValue ? "this_value: JSValue, " : ""}global: &JSGlobalObject, value: JSValue) -> bool`,
           thisValue
-            ? `    ${helper("host_fn_setter_this")}(this, this_value, global, value, |t, tv, g, v| ${T}::${id}(t, tv, g, v))`
+            ? `    host_fn::host_fn_setter_this_shared(this, this_value, global, value, |t, tv, g, v| ${T}::${id}(t, tv, g, v))`
             : `    ${helper("host_fn_setter")}(this, global, value, |t, g, v| ${T}::${id}(t, g, v))`,
         );
       }
@@ -2507,7 +2489,8 @@ function generateRust(
   // Calling convention: every C++ definition uses `extern JSC_CALLCONV` =
   // `extern "C" SYSV_ABI` on Windows, so import them via `jsc_abi_extern!`
   // (sysv64 on win-x64, "C" elsewhere).
-  const jsModule = `pub mod js_${typeName} {
+  const jsModule = `#[allow(dead_code, unreachable_pub, unused)]
+pub mod js_${typeName} {
     use super::*;
     bun_jsc::jsc_abi_extern! {
         safe fn ${symbolName(typeName, "fromJS")}(value: JSValue) -> *mut ${typeName};
@@ -2560,6 +2543,7 @@ ${gcAccessors}
 /// Native backing type for \`JS${typeName}.m_ctx\`. Re-export of the real
 /// struct so the thunks below call its inherent methods directly. A missing
 /// method is a compile error — fix it in \`${rustPath}\`, not here.
+#[allow(dead_code, unreachable_pub, unused)]
 pub use ${rustPath} as ${typeName};
 
 ${thunks.join("\n\n")}
@@ -2583,16 +2567,21 @@ const RUST_GENERATED_CLASSES_HEADER = `// Auto-generated by src/codegen/generate
 // Windows), so the file uses \`bun_jsc::jsc_host_abi!\` / \`jsc_abi_extern!\`
 // for the cfg-split.
 
+#[allow(dead_code, unreachable_pub, unused)]
 use core::ffi::c_void;
+#[allow(dead_code, unreachable_pub, unused)]
 use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, JsFinalize as _};
 
 /// \`SYSV_ABI void (*)(CloneSerializer*, const uint8_t*, uint32_t)\`
+#[allow(dead_code, unreachable_pub, unused)]
 #[cfg(all(windows, target_arch = "x86_64"))]
 pub type WriteBytesFn = unsafe extern "sysv64" fn(*mut c_void, *const u8, u32);
+#[allow(dead_code, unreachable_pub, unused)]
 #[cfg(not(all(windows, target_arch = "x86_64")))]
 pub type WriteBytesFn = unsafe extern "C" fn(*mut c_void, *const u8, u32);
 
 /// \`JSC::PropertyName\` — opaque pointer-sized handle (UniquedStringImpl*).
+#[allow(dead_code, unreachable_pub, unused)]
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct PropertyName(pub *const c_void);

@@ -1,6 +1,6 @@
 use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
 
-use crate::Loop;
+use crate::{LIBUS_SOCKET_DESCRIPTOR, Loop};
 // `sockaddr_storage` is not in `libc` on Windows; route through the leaf
 // ws2_32 shim there. Both definitions are 128-byte 8-aligned POD.
 #[cfg(windows)]
@@ -19,7 +19,7 @@ impl Socket {
         data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
-        recv_error_cb: extern "C" fn(*mut Socket, c_int),
+        recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
         host: *const c_char,
         port: c_ushort,
         options: c_int,
@@ -38,6 +38,44 @@ impl Socket {
                 host,
                 port,
                 options,
+                match err {
+                    Some(e) => std::ptr::from_mut::<c_int>(e),
+                    None => core::ptr::null_mut(),
+                },
+                user_data,
+            )
+        }
+    }
+
+    /// Adopts an already created (and usually bound) UDP socket descriptor
+    /// instead of creating a new one. See `us_create_udp_socket_from_fd`.
+    pub fn create_from_fd(
+        loop_: *mut Loop,
+        data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
+        drain_cb: extern "C" fn(*mut Socket),
+        close_cb: extern "C" fn(*mut Socket),
+        recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
+        fd: c_int,
+        err: Option<&mut c_int>,
+        user_data: *mut c_void,
+    ) -> *mut Socket {
+        // LIBUS_SOCKET_DESCRIPTOR is `int` on POSIX and `SOCKET` (usize) on
+        // Windows; the JS-facing contract is a non-negative int.
+        #[cfg(not(windows))]
+        let fd_native: LIBUS_SOCKET_DESCRIPTOR = fd;
+        #[cfg(windows)]
+        let fd_native = fd as LIBUS_SOCKET_DESCRIPTOR;
+        // SAFETY: thin wrapper over us_create_udp_socket_from_fd; all pointer
+        // args are forwarded as-is from the caller, who upholds uSockets'
+        // contract.
+        unsafe {
+            us_create_udp_socket_from_fd(
+                loop_,
+                data_cb,
+                drain_cb,
+                close_cb,
+                recv_error_cb,
+                fd_native,
                 match err {
                     Some(e) => std::ptr::from_mut::<c_int>(e),
                     None => core::ptr::null_mut(),
@@ -98,6 +136,28 @@ impl Socket {
         us_udp_socket_disconnect(self)
     }
 
+    /// SO_RCVBUF / SO_SNDBUF. `size == 0` reads the current value, non-zero sets
+    /// it (without re-reading, like libuv). Returns 0 and writes the resulting
+    /// value to `out`, or the failing setsockopt/getsockopt result.
+    pub fn buffer_size(&mut self, is_recv: bool, size: i32, out: &mut c_int) -> c_int {
+        us_udp_socket_buffer_size(self, is_recv as c_int, size, out)
+    }
+
+    /// Underlying socket descriptor.
+    pub fn fd(&mut self) -> c_int {
+        let raw: LIBUS_SOCKET_DESCRIPTOR = us_udp_socket_fd(self);
+        #[cfg(not(windows))]
+        {
+            raw
+        }
+        #[cfg(windows)]
+        {
+            // A Windows SOCKET fits in 32 bits in practice; node's JS-facing
+            // fd contract is a small integer.
+            raw as c_int
+        }
+    }
+
     pub fn set_broadcast(&mut self, enabled: bool) -> c_int {
         us_udp_socket_set_broadcast(self, enabled as c_int)
     }
@@ -144,7 +204,7 @@ unsafe extern "C" {
         data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
-        recv_error_cb: extern "C" fn(*mut Socket, c_int),
+        recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
         host: *const c_char,
         port: c_ushort,
         options: c_int,
@@ -166,6 +226,23 @@ unsafe extern "C" {
     fn us_udp_socket_remote_ip(socket: *mut Socket, buf: *mut u8, length: *mut i32);
     safe fn us_udp_socket_close(socket: &mut Socket);
     safe fn us_udp_socket_set_broadcast(socket: &mut Socket, enabled: c_int) -> c_int;
+    safe fn us_udp_socket_buffer_size(
+        socket: &mut Socket,
+        is_recv: c_int,
+        size: c_int,
+        out: &mut c_int,
+    ) -> c_int;
+    safe fn us_udp_socket_fd(socket: &mut Socket) -> LIBUS_SOCKET_DESCRIPTOR;
+    fn us_create_udp_socket_from_fd(
+        loop_: *mut Loop,
+        data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
+        drain_cb: extern "C" fn(*mut Socket),
+        close_cb: extern "C" fn(*mut Socket),
+        recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
+        fd: LIBUS_SOCKET_DESCRIPTOR,
+        err: *mut c_int,
+        user_data: *mut c_void,
+    ) -> *mut Socket;
     safe fn us_udp_socket_set_ttl_unicast(socket: &mut Socket, ttl: c_int) -> c_int;
     safe fn us_udp_socket_set_ttl_multicast(socket: &mut Socket, ttl: c_int) -> c_int;
     safe fn us_udp_socket_set_multicast_loopback(socket: &mut Socket, enabled: c_int) -> c_int;
@@ -190,6 +267,34 @@ unsafe extern "C" {
         iface: Option<&sockaddr_storage>,
         drop: c_int,
     ) -> c_int;
+}
+
+/// Raw-descriptor helpers exposed for `internal/dgram`'s UDP wrap so it does
+/// not hand-roll socket()/bind()/setsockopt() and diverge from bsd.c's
+/// platform gates (SO_REUSEPORT vs SO_REUSEADDR, CLOEXEC, EINTR retry).
+/// POSIX-only; the JS layer reports ENOTSUP on Windows.
+#[cfg(not(windows))]
+pub mod raw {
+    use super::LIBUS_SOCKET_DESCRIPTOR;
+    use core::ffi::{c_int, c_void};
+
+    unsafe extern "C" {
+        pub safe fn bsd_create_socket(
+            domain: c_int,
+            type_: c_int,
+            protocol: c_int,
+            err: &mut c_int,
+        ) -> LIBUS_SOCKET_DESCRIPTOR;
+        pub safe fn bsd_close_socket(fd: LIBUS_SOCKET_DESCRIPTOR);
+        pub safe fn bsd_set_reuseaddr(fd: LIBUS_SOCKET_DESCRIPTOR) -> c_int;
+        /// SAFETY: `addr` must point to `addrlen` bytes of a `sockaddr_in`/`in6`.
+        pub unsafe fn bsd_bind_udp_fd(
+            fd: LIBUS_SOCKET_DESCRIPTOR,
+            addr: *const c_void,
+            addrlen: c_int,
+            flags: c_int,
+        ) -> c_int;
+    }
 }
 
 bun_opaque::opaque_ffi! {

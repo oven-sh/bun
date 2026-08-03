@@ -3,6 +3,7 @@ import { openSync } from "fs";
 import { bunEnv, bunExe, tls } from "harness";
 import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
+import { deflate } from "node:zlib";
 import { join } from "path";
 
 // Terminal object types that were never entered into the structured clone object
@@ -449,6 +450,40 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
             structuredCloneFn(buffer, { transfer: [buffer] });
           }).toThrow(DOMException);
         });
+        // Bun's native borrows call ArrayBuffer::pin(), which makes the buffer
+        // non-detachable without setting the C-API lock flag. Transferring a
+        // pinned buffer must copy via transferTo()'s copyTo() fallback, not
+        // throw (see bindings.cpp JSC__JSValue__pinArrayBuffer). Locks this in
+        // so a future WebKit sync that re-adds upstream's !isDetachable() gate
+        // in SerializedScriptValue::create fails CI.
+        test("A Bun-pinned ArrayBuffer copies on transfer instead of detaching", async () => {
+          const ab = new ArrayBuffer(64);
+          new Uint8Array(ab).fill(42);
+          const { promise, resolve, reject } = Promise.withResolvers<void>();
+          // Starting the async deflate pins ab for the duration of the call.
+          deflate(new Uint8Array(ab), e => (e ? reject(e) : resolve()));
+          try {
+            const clone = structuredCloneFn(ab, { transfer: [ab] });
+            expect({
+              cloneLength: clone.byteLength,
+              origLength: ab.byteLength,
+              sameObject: clone === ab,
+              cloneFirst: new Uint8Array(clone)[0],
+            }).toEqual({ cloneLength: 64, origLength: 64, sameObject: false, cloneFirst: 42 });
+          } finally {
+            await promise;
+          }
+          expect(ab.byteLength).toBe(64);
+        });
+        // WebAssembly.Memory buffers carry a non-undefined [[ArrayBufferDetachKey]]
+        // and must be rejected from a transfer list (per HTML's
+        // StructuredSerializeWithTransfer), unlike a Bun-pinned buffer above.
+        test("A WebAssembly.Memory buffer is rejected from the transfer list", () => {
+          const mem = new WebAssembly.Memory({ initial: 1 });
+          const buf = mem.buffer;
+          expect(() => structuredCloneFn(buf, { transfer: [buf] })).toThrow(TypeError);
+          expect(buf.byteLength).toBe(65536);
+        });
         // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
         // Serializing (not transferring) a detached ArrayBuffer must throw a
         // "DataCloneError" DOMException, not a TypeError.
@@ -603,8 +638,10 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
     ],
   ] as const) {
     test(`${label} under 2GiB clones without crashing`, async () => {
+      // The smallest size (plus margin) whose 1.5x serialization-buffer growth
+      // exceeds the 2GiB cap (2**31 / 1.5 = ~1.43e9); peak child memory is ~3x.
       const script = `
-        const size = 1600000000;
+        const size = 1_500_000_000;
         let v;
         try {
           v = ${expr};
@@ -622,6 +659,9 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      // The host's OOM killer reclaiming the child on a small CI runner is not a
+      // structuredClone failure; any other signal (SIGSEGV/SIGABRT/...) still is.
+      if (proc.signalCode === "SIGKILL" && stdout === "") return;
       expect(["OK", "SKIP"]).toContain(stdout.trim());
       expect(proc.signalCode).toBe(null);
       expect(exitCode).toBe(0);

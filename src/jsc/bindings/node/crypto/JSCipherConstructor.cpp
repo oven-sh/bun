@@ -44,50 +44,43 @@ void initAuthenticated(JSGlobalObject* globalObject, ThrowScope& scope, CipherCt
         return;
     }
 
-    if (ctx.isGcmMode()) {
-        if (authTagLen.has_value()) {
-            if (!Cipher::IsValidGCMTagLength(*authTagLen)) {
-                WTF::StringBuilder builder;
-                builder.append("Invalid authentication tag length: "_s);
-                builder.append(*authTagLen);
-                ERR::CRYPTO_INVALID_AUTH_TAG(scope, globalObject, builder.toString());
-                return;
-            }
-        }
-    } else {
-        if (!authTagLen.has_value()) {
-            if (ctx.isChaCha20Poly1305()) {
-                authTagLen = 16;
-            } else {
-                WTF::StringBuilder builder;
-                builder.append("authTagLength required for: "_s);
-                builder.append(cipherString);
-                ERR::CRYPTO_INVALID_AUTH_TAG(scope, globalObject, builder.toString());
-                return;
-            }
-        }
-
-        if (ctx.isCcmMode() && kind == CipherKind::Decipher && ncrypto::isFipsEnabled()) {
+    if (ctx.isCcmMode()) {
+        if (kind == CipherKind::Decipher && ncrypto::isFipsEnabled()) {
             ERR::CRYPTO_UNSUPPORTED_OPERATION(scope, globalObject, "CCM encryption not supported in FIPS mode"_s);
             return;
         }
 
-        if (!ctx.setAeadTagLength(*authTagLen)) {
+        // NIST SP 800-38C A.1: max plaintext length is 2^(8*(15-ivLen)) - 1 bytes.
+        // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_cipher.cc#L440-L442
+        if (ivLen == 12)
+            maxMessageSize = 16777215;
+        else if (ivLen == 13)
+            maxMessageSize = 65535;
+        else
+            maxMessageSize = INT_MAX;
+    }
+
+    if (!authTagLen.has_value()) {
+        // Both GCM and ChaCha20-Poly1305 have a default tag length of 16 bytes.
+        // Other modes (CCM, OCB) require an explicit tag length.
+        if (ctx.isGcmMode() || ctx.isChaCha20Poly1305()) {
+            authTagLen = 16;
+        } else {
             WTF::StringBuilder builder;
-            builder.append("Invalid authentication tag length: "_s);
-            builder.append(*authTagLen);
+            builder.append("authTagLength required for "_s);
+            builder.append(cipherString);
             ERR::CRYPTO_INVALID_AUTH_TAG(scope, globalObject, builder.toString());
             return;
         }
-
-        if (ctx.isCcmMode()) {
-            if (ivLen == 12)
-                maxMessageSize = 16777215;
-            else if (ivLen == 13)
-                maxMessageSize = 65535;
-            else
-                maxMessageSize = INT_MAX;
-        }
+    } else if ((ctx.isGcmMode() && !Cipher::IsValidGCMTagLength(*authTagLen))
+        || (!ctx.isGcmMode() && !ctx.setAeadTagLength(*authTagLen))) {
+        // GCM authentication tag lengths are restricted according to NIST 800-38d,
+        // page 9. For other modes, we rely on OpenSSL to validate the length.
+        WTF::StringBuilder builder;
+        builder.append("Invalid authentication tag length: "_s);
+        builder.append(*authTagLen);
+        ERR::CRYPTO_INVALID_AUTH_TAG(scope, globalObject, builder.toString());
+        return;
     }
 }
 

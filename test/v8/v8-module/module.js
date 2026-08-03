@@ -27,6 +27,15 @@ module.exports = debugMode => {
       console.log(f());
     },
 
+    test_v8_function_template_constructor() {
+      const Ctor = nativeModule.create_constructor_function();
+      console.log("== plain call ==");
+      console.log("returned", Ctor(123));
+      console.log("== construct call ==");
+      const inst = new Ctor(123);
+      console.log("typeof instance =", typeof inst);
+    },
+
     print_native_function() {
       nativeModule.print_values_from_js(nativeModule.create_function_with_data());
     },

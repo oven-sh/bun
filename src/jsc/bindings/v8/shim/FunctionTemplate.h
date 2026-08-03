@@ -45,7 +45,10 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
+    FunctionCallback callback() const { return m_callback; }
+
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionCall(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionConstruct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 
     friend v8::Local<v8::Value> api_internal::GetFunctionTemplateData(v8::Isolate* isolate, v8::Local<v8::Data> target);
 

@@ -385,6 +385,31 @@ void return_data_callback(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(info.Data());
 }
 
+void constructor_callback(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  LOG_EXPR(info.IsConstructCall());
+  LOG_EXPR(info.NewTarget()->IsFunction());
+  LOG_EXPR(info.NewTarget()->IsUndefined());
+  LOG_EXPR(info.This()->IsObject());
+  LOG_EXPR(info.Length());
+  if (info.Length() > 0) {
+    LOG_EXPR(describe(isolate, info[0]));
+  }
+  info.GetReturnValue().Set(Boolean::New(isolate, info.IsConstructCall()));
+}
+
+void create_constructor_function(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<FunctionTemplate> tmp =
+      FunctionTemplate::New(isolate, constructor_callback);
+  Local<Function> f = tmp->GetFunction(context).ToLocalChecked();
+  Local<String> name =
+      String::NewFromUtf8(isolate, "TemplateCtor").ToLocalChecked();
+  f->SetName(name);
+  info.GetReturnValue().Set(f);
+}
+
 void create_function_with_data(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   Local<Context> context = isolate->GetCurrentContext();
@@ -1294,6 +1319,8 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_object_template", test_v8_object_template);
   NODE_SET_METHOD(exports, "create_function_with_data",
                   create_function_with_data);
+  NODE_SET_METHOD(exports, "create_constructor_function",
+                  create_constructor_function);
   NODE_SET_METHOD(exports, "print_values_from_js", print_values_from_js);
   NODE_SET_METHOD(exports, "return_this", return_this);
   NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);

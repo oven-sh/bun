@@ -240,9 +240,14 @@ test.skipIf(!isLinux || !cc)(
   async () => {
     expect(supervisorBin).toBeDefined();
 
+    // LeakSanitizer's StopTheWorld PTRACE_ATTACHes its own threads; that
+    // fails (EPERM) when the process is already ptraced and LSan aborts
+    // ("LeakSanitizer does not work under ptrace"). Disable it for the
+    // traced child only.
+    const asanOpts = [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":");
     await using proc = Bun.spawn({
       cmd: [supervisorBin!, served, "2", "--", bunExe(), join(String(dir), "fixture.mjs"), served],
-      env: bunEnv,
+      env: { ...bunEnv, ASAN_OPTIONS: asanOpts, LSAN_OPTIONS: "detect_leaks=0" },
       stdout: "pipe",
       stderr: "pipe",
     });

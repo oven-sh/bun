@@ -3,7 +3,9 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "e6e37cda216c0292ae68c30c84a9dc8601d0fba5";
+// Preview of oven-sh/WebKit#385: guard InspectorDebuggerAgent::disable() so a redundant
+// Debugger.disable does not trip ASSERT(!!m_client != !!client) in JSC::Debugger::setClient.
+export const WEBKIT_VERSION = "autobuild-preview-pr-385-10e1ab9b";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

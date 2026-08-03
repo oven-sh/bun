@@ -2660,7 +2660,7 @@ impl DevServer {
         // SAFETY: `self` is live; `framework_bundle` points into
         // `self.route_bundles[route_bundle_index].data`. Raw-ptr receiver — see
         // Note on `compute_arguments_for_framework_request`.
-        let args = unsafe {
+        let args = match unsafe {
             Self::compute_arguments_for_framework_request(
                 self,
                 route_bundle_index,
@@ -2668,7 +2668,16 @@ impl DevServer {
                 params_js_value,
                 true,
             )
-        }?;
+        } {
+            Ok(a) => a,
+            Err(e) => {
+                // `Saved.ctx` is `Copy`; explicit deinit so the pool slot releases.
+                if let SavedRequestUnion::Saved(mut saved) = req {
+                    saved.deinit();
+                }
+                return Err(e);
+            }
+        };
 
         self.server
             .as_ref()

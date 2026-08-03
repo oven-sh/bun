@@ -561,8 +561,7 @@ impl Queue {
                         &mut patchfile_hash,
                     ) {
                         install::PreinstallState::Done => {
-                            pending_imports[tag_i].tag =
-                                bun_resolver::PendingResolutionTag::Done;
+                            pending_imports[tag_i].tag = bun_resolver::PendingResolutionTag::Done;
                             done_count += 1;
                         }
                         install::PreinstallState::Extracting => {

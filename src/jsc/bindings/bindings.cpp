@@ -3244,14 +3244,9 @@ CPP_DECL bool JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
     if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v))) {
         if (!buf->isShared())
             buf->pin();
-        // The native ref is what keeps ArrayBufferContents alive if the owning
-        // VM is torn down while a pool thread is still reading the storage
-        // (worker.terminate() racing an async node:fs write): pin() only
-        // blocks transfer(), and JSValue::protect() is a GC root that
-        // Heap::lastChanceToFinalize ignores, whereas the deferred-flag drop
-        // in GCIncomingRefCountedSet::lastChanceToFinalize deletes only at
-        // refcount 0. Balanced by unpinArrayBuffer; both run on the JS thread
-        // (DeferrableRefCounted is not atomic).
+        // pin() only blocks transfer(); the native ref is what keeps the
+        // contents alive past Heap::lastChanceToFinalize. Balanced by
+        // unpinArrayBuffer; JS thread only (DeferrableRefCounted is not atomic).
         buf->ref();
         return true;
     }

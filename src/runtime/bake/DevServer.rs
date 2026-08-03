@@ -152,11 +152,9 @@ pub(super) use crate::bake::dev_server::serialized_failure::SerializedFailure;
 pub(super) use crate::bake::dev_server::source_map_store::SourceMapStore;
 
 bun_output::declare_scope!(DevServer, visible);
-bun_output::declare_scope!(IncrementalGraph, visible);
 bun_output::declare_scope!(SourceMapStore, visible);
 
 bun_output::define_scoped_log!(debug_log, crate::bake::dev_server_body::DevServer);
-bun_output::define_scoped_log!(ig_log, crate::bake::dev_server_body::IncrementalGraph);
 bun_output::define_scoped_log!(map_log, crate::bake::dev_server_body::SourceMapStore);
 pub(crate) use map_log;
 

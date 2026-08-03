@@ -12,12 +12,9 @@ workspace = true
 [dependencies]
 thiserror.workspace = true
 bun_errno.workspace = true
-strum.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
 const_format.workspace = true
-enum-map.workspace = true
-enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
 bun_analytics.workspace = true

@@ -1531,21 +1531,6 @@ pub enum OneShotFlag {
 #[cfg(not(windows))]
 const INVALID_FD: Fd = Fd::INVALID;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Waker / Closer — canonical impls live in this crate's `mod waker` /
-// `mod closer` (lib.rs). Before the bun_io→bun_io merge each crate had its
-// own copy (this file was bun_io's, lib.rs was bun_io's, kept apart so
-// `Loop::load` had no aio→io edge). With the merge there is one definition;
-// re-export here so `posix_event_loop::Waker` / `::Closer` (and therefore
-// the `bun_io::*` shim) keep resolving for downstream callers.
-// ──────────────────────────────────────────────────────────────────────────
-
-pub use crate::closer::Closer;
-#[cfg(target_os = "macos")]
-pub use crate::waker::KEventWaker;
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-pub use crate::waker::Waker;
-
 #[cfg(all(test, not(windows)))]
 mod tests {
     use super::*;

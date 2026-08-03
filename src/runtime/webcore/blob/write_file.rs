@@ -482,19 +482,6 @@ impl WriteFile {
         // We have never supported offset in Bun.write().
         // and properly adding support means we need to also support it
         // with splice, sendfile, and the other cases.
-        //
-        // if (this.file_blob.offset > 0) {
-        //     // if we start at an offset in the file
-        //     // example code:
-        //     //
-        //     //    Bun.write(Bun.file("/tmp/lol.txt").slice(10), "hello world");
-        //     //
-        //     // it should write "hello world" to /tmp/lol.txt starting at offset 10
-        //     switch (bun.sys.setFileOffset(fd, this.file_blob.offset)) {
-        //         // we ignore errors because it should continue to work even if its a pipe
-        //         .err, .result => {},
-        //     }
-        // }
 
         if self.could_block && bun_core::is_writable(fd) == bun_core::Pollable::NotReady {
             self.wait_for_writable();

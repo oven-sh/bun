@@ -81,7 +81,9 @@ public:
 
     struct NativePluginCallback {
         JSBundlerPluginNativeOnBeforeParseCallback callback;
-        Bun::NapiExternal* external;
+        // NapiExternal::value() captured at append time so the parse thread never
+        // reads the GC cell; onBeforeParseExternals keeps the cell alive for GC.
+        void* externalValue;
         /// This refers to the string exported in the native plugin under
         /// the symbol BUN_PLUGIN_NAME
         ///
@@ -103,7 +105,7 @@ public:
         Vector<PerNamespaceCallbackList> namespaceCallbacks = {};
 
         int call(BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, OnBeforeParseArguments* onBeforeParseArgs, OnBeforeParseResult* onBeforeParseResult);
-        void append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback, const char* name, NapiExternal* external);
+        void append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback, const char* name, void* externalValue);
 
         Vector<FilterRegExp>* group(const String& namespaceStr, unsigned& index)
         {
@@ -142,8 +144,8 @@ public:
     BunPluginTarget target { BunPluginTargetBrowser };
 
     WriteBarrierList<JSC::JSPromise> deferredPromises = {};
-    // The raw `NapiExternal*` stored in `NativePluginCallback` is dereferenced
-    // off the JS thread; this list keeps those cells alive for GC.
+    // Keeps each registered NapiExternal alive for GC so its finalizer does not
+    // release the user context while the build is still using it.
     WriteBarrierList<NapiExternal> onBeforeParseExternals = {};
 
     JSBundlerPluginAddErrorCallback addError;

@@ -248,7 +248,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter, (JSC::JSGlobalObject
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback, const char* name, NapiExternal* external)
+void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback, const char* name, void* externalValue)
 {
     unsigned index = 0;
 
@@ -270,14 +270,14 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
     if (index == std::numeric_limits<unsigned>::max()) {
         this->fileCallbacks.append(NativePluginCallback {
             callback,
-            external,
+            externalValue,
             name,
         });
     } else {
         if (this->namespaceCallbacks.size() <= index) {
             this->namespaceCallbacks.grow(index + 1);
         }
-        this->namespaceCallbacks[index].append(NativePluginCallback { callback, external, name });
+        this->namespaceCallbacks[index].append(NativePluginCallback { callback, externalValue, name });
     }
 }
 
@@ -311,13 +311,8 @@ int BundlerPlugin::NativePluginList::call(BundlerPlugin* plugin, int* shouldCont
         }
 
         if (filters[i].match(path)) {
-            Bun::NapiExternal* external = callbacks[i].external;
             ASSERT(onBeforeParseArgs != nullptr);
-            if (external) {
-                onBeforeParseArgs->external = external->value();
-            } else {
-                onBeforeParseArgs->external = nullptr;
-            }
+            onBeforeParseArgs->external = callbacks[i].externalValue;
 
             JSBundlerPluginNativeOnBeforeParseCallback callback = callbacks[i].callback;
             const char* name = callbacks[i].name ? callbacks[i].name : "<unknown>";
@@ -396,17 +391,18 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
     JSBundlerPluginNativeOnBeforeParseCallback callback = reinterpret_cast<JSBundlerPluginNativeOnBeforeParseCallback>(on_before_parse_symbol_ptr);
 
     JSC::JSValue external = callFrame->argument(4);
-    NapiExternal* externalPtr = nullptr;
+    void* externalValue = nullptr;
     if (!external.isUndefinedOrNull()) {
-        externalPtr = dynamicDowncast<Bun::NapiExternal>(external);
+        NapiExternal* externalPtr = dynamicDowncast<Bun::NapiExternal>(external);
         if (!externalPtr) [[unlikely]] {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected external (3rd argument) to be a NAPI external"_s);
             return {};
         }
         thisObject->plugin->onBeforeParseExternals.append(vm, thisObject, externalPtr);
+        externalValue = externalPtr->value();
     }
 
-    thisObject->plugin->onBeforeParse.append(vm, newRegexp, namespaceStr, callback, native_plugin_name ? *native_plugin_name : nullptr, externalPtr);
+    thisObject->plugin->onBeforeParse.append(vm, newRegexp, namespaceStr, callback, native_plugin_name ? *native_plugin_name : nullptr, externalValue);
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

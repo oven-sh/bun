@@ -417,9 +417,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         StringView view = str;
 
         const bool needsEllipsis = jsString->length() > 28;
-        // node checks for the presence of a single quote.
-        // - if it does not exist, use single quotes.
-        // - if it exists, json stringify (use double quotes).
+        // Node uses single quotes unless the string contains one, else JSON-stringifies.
         // https://github.com/nodejs/node/blob/c3ed292d17c34578fd7806cb42da82bbe0cca103/lib/internal/errors.js#L1030
         const bool needsEscape = str->contains('\'');
         if (needsEllipsis) {
@@ -629,12 +627,9 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     addParameter(result, arg_name);
     result.append(" must be "_s);
 
-    // Bun-only call sites sometimes pass a pre-flattened "X, Y, or Z" list;
-    // those keep the legacy "of type" rendering. A single entry follows
-    // Node's bucket rules (lib/internal/errors.js formatList): primitive
-    // type names render "of type x" (lowercased), class names "an instance
-    // of X", and anything else bare, with "an " when it contains an
-    // uppercase letter ("an Array of unique strings", "must be undefined").
+    // Pre-flattened "X, Y, or Z" (Bun-only callers) keeps legacy "of type"; a single entry
+    // follows Node's ERR_INVALID_ARG_TYPE bucket rules (primitive/class/other).
+    // https://github.com/nodejs/node/blob/main/lib/internal/errors.js
     auto expected = expected_type.toString();
     bool isFlattenedList = expected.contains(", "_s) || expected.contains(" or "_s);
     if (isFlattenedList) {
@@ -658,9 +653,7 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     return result.toString();
 }
 
-// Port of Node's ERR_INVALID_ARG_TYPE list rendering: expected entries are
-// grouped into primitive type names ("of type ..."), class names ("an
-// instance of ..."), and everything else.
+// Port of Node's ERR_INVALID_ARG_TYPE list rendering (primitive/class/other buckets).
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1404
 static WTF::String formatInvalidArgType(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, const WTF::Vector<WTF::String>& expected_types, JSValue actual_value)
 {
@@ -750,10 +743,8 @@ extern "C" BunString Bun__ErrorCode__formatParameterName(BunString argName)
     return Bun::toStringRef(result.toString());
 }
 
-// Renders Node's ERR_INVALID_ARG_TYPE message for a list of expected types so
-// the Rust error paths use the same renderer as the C++ ones: "argument" vs
-// "property" for dotted names, "of type" for primitive type names, and "an
-// instance of" for class names.
+// Shared ERR_INVALID_ARG_TYPE renderer for Rust call sites; delegates to
+// formatInvalidArgType so messages match the C++ paths.
 extern "C" BunString Bun__ErrorCode__formatInvalidArgType(JSC::JSGlobalObject* globalObject, BunString argName, const BunString* expectedTypes, size_t expectedTypesLength, EncodedJSValue value)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));

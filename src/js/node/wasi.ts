@@ -1,10 +1,6 @@
 // Hardcoded module "node:wasi"
-// HUGE thanks to:
-// - @williamstein and https://github.com/sagemathinc/cowasm/tree/main/core/wasi-js
-// - @syrusakbary for wasmer-js https://github.com/wasmerio/wasmer-js
-// - Gus Caplan for node-wasi https://github.com/devsnek/node-wasi
-//
-// Eventually we will implement this in native code, but this is just a quick hack to get WASI working.
+// JS userland implementation (native TBD); derived from cowasm/wasi-js, wasmer-js, devsnek/node-wasi.
+// Node reference: https://github.com/nodejs/node/blob/main/lib/wasi.js
 
 const nodeFsConstants = $processBindingConstants.fs;
 
@@ -718,10 +714,8 @@ var require_wasi = __commonJS({
           }
           return stats;
         };
-        // Resolve a guest-supplied path against the directory backing `stats` and
-        // verify the result cannot escape that directory, either lexically
-        // ("..", absolute paths) or through a symlink that already exists on the
-        // host filesystem.
+        // Resolve a guest path against the directory backing `stats` and reject any
+        // escape, lexical (`..`/absolute) or via an existing host symlink.
         const RESOLVE_PATH = (stats, guestPath) => {
           if (!stats.path) {
             throw new types_1.WASIError(constants_1.WASI_EINVAL);
@@ -754,12 +748,9 @@ var require_wasi = __commonJS({
             try {
               real = fs.realpathSync(probe);
             } catch {
-              // Walk up on any resolution failure (ENOENT/ENOTDIR for
-              // not-yet-created components, but also ELOOP etc.) so `real` is
-              // always a *resolved* ancestor plus an unresolved suffix —
-              // comparing an unresolved path against the resolved preopen
-              // base would spuriously fail whenever the preopen itself
-              // traverses a symlink (e.g. macOS /tmp -> /private/tmp).
+              // Walk up on any resolution failure so `real` is a resolved ancestor + unresolved
+              // suffix; comparing an unresolved path to the resolved preopen base mis-fires when
+              // the preopen itself traverses a symlink (macOS /tmp -> /private/tmp).
               const parent = path.dirname(probe);
               if (parent !== probe) {
                 suffix = path.sep + path.basename(probe) + suffix;
@@ -1379,11 +1370,9 @@ var require_wasi = __commonJS({
                   full = fs.realpathSync(fullUnresolved);
                 } catch (e) {
                   if (e?.code === "ENOENT") {
-                    // The final component may legitimately not exist yet (e.g.
-                    // O_CREAT), but the rest of the path must not be redirected
-                    // by symlinks: resolve the parent directory and re-attach
-                    // the final component. A dangling symlink as the final
-                    // component would still redirect the create, so reject it.
+                    // Final component may not exist yet (O_CREAT): resolve the parent and
+                    // re-attach it. A dangling symlink as the final component would still
+                    // redirect the create, so reject it.
                     const parentDir = path.dirname(fullUnresolved);
                     const lastComponent = path.basename(fullUnresolved);
                     let realParent = parentDir;
@@ -1404,15 +1393,9 @@ var require_wasi = __commonJS({
                     throw e;
                   }
                 }
-                // RESOLVE_PATH is a lexical check on the guest-supplied path;
-                // realpathSync above follows symlinks on disk, so a symlink
-                // inside the directory can still point the resolved path
-                // outside of it. Re-check containment before the path is
-                // opened or recorded as a new directory base in FD_MAP. The
-                // resolved path must stay under the directory's lexical
-                // location or its own resolved location (the latter matters
-                // when the preopened directory is itself reached via a
-                // symlink).
+                // RESOLVE_PATH is lexical; realpathSync follows symlinks, so re-check
+                // containment against both the lexical base and its realpath (the latter
+                // matters when the preopen itself is reached via a symlink).
                 {
                   const contained = base => {
                     if (full === base) return true;

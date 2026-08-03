@@ -841,6 +841,11 @@ pub fn starts_with_case_insensitive_ascii(self_: &[u8], prefix: &[u8]) -> bool {
         && eql_case_insensitive_ascii(&self_[0..prefix.len()], prefix, false)
 }
 
+pub fn ends_with_case_insensitive_ascii(self_: &[u8], suffix: &[u8]) -> bool {
+    self_.len() >= suffix.len()
+        && eql_case_insensitive_ascii(&self_[self_.len() - suffix.len()..], suffix, false)
+}
+
 pub use crate::strings_impl::{
     has_prefix_t, has_prefix_t as starts_with_generic, has_suffix_t,
     has_suffix_t as ends_with_generic,

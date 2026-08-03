@@ -11,7 +11,7 @@ import {
   isMusl,
   isWindows,
   nodeExeMatchingAbi,
-  tempDirWithFiles,
+  tempDir,
 } from "harness";
 import { join } from "path";
 
@@ -73,7 +73,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   describe.each(["esm", "cjs"])("bundle .node files to %s via", format => {
     describe.each(["node", "bun"])("target %s", target => {
       it("Bun.build", async () => {
-        const dir = tempDirWithFiles("node-file-cli", {
+        await using dir = tempDir("node-file-cli", {
           "package.json": JSON.stringify({
             name: "napi-app",
             version: "1.0.0",
@@ -116,7 +116,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         it(
           "should work with --compile",
           async () => {
-            const dir = tempDirWithFiles("napi-app-compile-" + format, {
+            await using dir = tempDir("napi-app-compile-" + format, {
               "package.json": JSON.stringify({
                 name: "napi-app",
                 version: "1.0.0",
@@ -140,7 +140,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
               stderr: "inherit",
             });
             expect(build.success).toBeTrue();
-            const tmpdir = tempDirWithFiles("should-be-empty-except", {});
+            await using tmpdir = tempDir("should-be-empty-except", {});
             const result = spawnSync({
               cmd: [exe, "self"],
               env: { ...bunEnv, BUN_TMPDIR: tmpdir },
@@ -166,7 +166,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       }
 
       it("`bun build`", async () => {
-        const dir = tempDirWithFiles("node-file-build", {
+        await using dir = tempDir("node-file-build", {
           "package.json": JSON.stringify({
             name: "napi-app",
             version: "1.0.0",
@@ -432,6 +432,50 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("side_effect frozen=false");
       expect(result).toContain("side_effect arr[7]=undefined");
       expect(result).toContain("side_effect script_ran=false");
+    });
+  });
+
+  describe("status code alignment with Node.js", () => {
+    it("returns the same napi_status as Node.js for invalid inputs", async () => {
+      const result = await checkSameOutput("test_napi_status_codes_node26", []);
+
+      // napi_wrap/unwrap/remove_wrap/add_finalizer on primitive -> napi_invalid_arg (1)
+      for (const fn of ["napi_wrap", "napi_unwrap", "napi_remove_wrap", "napi_add_finalizer"]) {
+        expect(result).toContain(`${fn}(number): status=1 pending=0`);
+      }
+
+      // napi_coerce_to_*: type-specific status, exception stays pending
+      expect(result).toContain("napi_coerce_to_number(Symbol): status=6 pending=1");
+      expect(result).toContain("napi_coerce_to_string(Symbol): status=3 pending=1");
+      expect(result).toContain("napi_coerce_to_object(null): status=2 pending=1");
+
+      // napi_run_script: napi_generic_failure (9), exception stays pending
+      expect(result).toContain("napi_run_script(throw): status=9 pending=1");
+      expect(result).toContain("napi_run_script(syntax): status=9 pending=1");
+
+      // napi_create_bigint_words > INT_MAX: napi_invalid_arg, no throw
+      expect(result).toContain("napi_create_bigint_words(INT_MAX+1): status=1 pending=0");
+
+      // napi_create_buffer / napi_create_buffer_copy: napi_generic_failure (9) on alloc failure
+      expect(result).toContain("napi_create_buffer(SIZE_MAX): status=9 pending=1");
+      expect(result).toContain("napi_create_buffer_copy(SIZE_MAX): status=9 pending=1");
+
+      // second napi_throw_error: napi_pending_exception, first message kept
+      expect(result).toContain("napi_throw_error(2nd): status=10");
+      expect(result).toContain("napi_throw_error(2nd): kept=first");
+
+      // node_api_post_finalizer(NULL): napi_ok
+      expect(result).toContain("node_api_post_finalizer(NULL): status=0 pending=0");
+
+      // napi_make_callback validation -> napi_invalid_arg
+      for (const which of ["recv=NULL", "argc>0,argv=NULL", "func=number"]) {
+        expect(result).toContain(`napi_make_callback(${which}): status=1 pending=0`);
+      }
+
+      // napi_ref/unref_threadsafe_function: env ignored, last_error untouched
+      expect(result).toContain("napi_ref_threadsafe_function(env=NULL): status=0");
+      expect(result).toContain("napi_unref_threadsafe_function(env=NULL): status=0");
+      expect(result).toContain("napi_ref_threadsafe_function: last_error_preserved=1");
     });
   });
 
@@ -950,6 +994,28 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("returns information from the most recent call", async () => {
       await checkSameOutput("test_extended_error_messages", []);
     });
+
+    it("returns a non-null message for napi_cannot_run_js", async () => {
+      // A v10 addon calling napi_throw inside a teardown finalizer gets
+      // napi_cannot_run_js. napi_get_last_error_info must then report a
+      // non-null message (previously the error_messages table stopped at
+      // napi_would_deadlock, so error_message was left as nullptr).
+      const code = `globalThis.keep = require(${JSON.stringify(
+        join(__dirname, "napi-app/build/Debug/test_last_error_cannot_run_js.node"),
+      )});`;
+      const run = async (exe: string) => {
+        await using proc = spawn({ cmd: [exe, "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout: stdout.trim(), stderr, exitCode };
+      };
+      const [bun, node] = await Promise.all([run(bunExe()), run(await nodeExeMatchingAbi())]);
+      expect(bun).toEqual(node);
+      expect(bun).toEqual({
+        stdout: "napi_throw status=23 error_code=23 error_message=Cannot run JavaScript",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 
   describe.each(["buffer", "typedarray"])("napi_is_%s", kind => {
@@ -1231,19 +1297,20 @@ describe.skipIf(!canBuildNodeAddons())("napi_create_string_latin1", () => {
   it("does not leak the WTFStringImpl", async () => {
     const fixture = /* js */ `
       const nativeTests = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))});
+      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
       const size = 256 * 1024;
       for (let i = 0; i < 20; i++) {
         const s = nativeTests.create_latin1_string(size);
         if (s.length !== size) throw new Error("wrong length: " + s.length);
       }
       Bun.gc(true);
-      const before = process.memoryUsage.rss();
+      const before = rss();
       for (let i = 0; i < 300; i++) {
         const s = nativeTests.create_latin1_string(size);
         if (s.length !== size) throw new Error("wrong length: " + s.length);
       }
       Bun.gc(true);
-      const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+      const growthMB = (rss() - before) / 1024 / 1024;
       console.error("RSS growth: " + growthMB.toFixed(1) + " MB");
       process.exit(growthMB > Number(process.env.THRESHOLD_MB) ? 1 : 0);
     `;
@@ -1442,6 +1509,15 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       expect(output).toContain("napi_get_array_length(NULL) -> 1");
       expect(output).toContain("napi_get_dataview_info(NULL) -> 1");
     });
+
+    it("returns napi_invalid_arg for NULL env / NULL out-param instead of crashing", async () => {
+      const output = await checkSameOutput("test_napi_null_env_and_result", []);
+      expect(output).toContain("napi_typeof(NULL env) -> 1");
+      expect(output).toContain("napi_is_exception_pending(NULL env) -> 1");
+      expect(output).toContain("napi_call_function(NULL env) -> 1");
+      expect(output).toContain("napi_is_error(NULL result) -> 1");
+      expect(output).toContain("napi_async_init(NULL result) -> 1");
+    });
   });
 
   describe("napi_typeof", () => {
@@ -1466,6 +1542,19 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       // as js_callback and passes it to napi_make_callback, it should succeed.
       const output = await checkSameOutput("test_make_callback_with_async_context", []);
       expect(output).toContain("PASS: napi_make_callback succeeded");
+    });
+
+    it("derives napi_make_callback status from pending exception, not return value", async () => {
+      // Returning an Error is napi_ok; throwing (any value) is napi_pending_exception
+      // and leaves the exception observable to napi_is_exception_pending.
+      const output = await checkSameOutput(
+        "test_napi_make_callback_status",
+        "[() => 42, () => new Error('returned'), () => { throw new Error('thrown'); }, () => { throw 'string'; }]",
+      );
+      expect(output).toContain("cb 1: status=0 pending=0 wrote_result=1 result_is_error=0");
+      expect(output).toContain("cb 2: status=0 pending=0 wrote_result=1 result_is_error=1");
+      expect(output).toContain("cb 3: status=10 pending=1 wrote_result=0 result_is_error=0");
+      expect(output).toContain("cb 4: status=10 pending=1 wrote_result=0 result_is_error=0");
     });
 
     it("should accept AsyncContextFrame in napi_create_threadsafe_function with null call_js_cb", async () => {

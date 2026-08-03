@@ -68,13 +68,49 @@ const kFSWatchStart = Symbol("kFSWatchStart");
 // delegates to the real native watcher. Replacing it with a foreign object makes
 // close()/[kFSWatchStart]() fail the same internal assertion as Node.
 let closeNativeWatcher: (watcher: FSWatcher) => void;
+let closeNativeWatcherWithoutEvent: (watcher: FSWatcher) => void;
+let dispatchNativeEvent: (watcher: FSWatcher, eventType: string, filename: unknown) => void;
 let refNativeWatcher: (watcher: FSWatcher) => void;
 let unrefNativeWatcher: (watcher: FSWatcher) => void;
+
+let uvErrorMap;
+
+// Mirrors node's UVException for the watch syscall:
+// "ENOENT: no such file or directory, watch '/path'".
+function makeWatchUVException(status, filename) {
+  uvErrorMap ??= process.binding("uv").getErrorMap();
+  const entry = uvErrorMap.$get(status);
+  const code = entry ? entry[0] : "UNKNOWN";
+  const description = entry ? entry[1] : "unknown error";
+  const err: any = new Error(`${code}: ${description}, watch '${filename}'`);
+  err.errno = status;
+  err.code = code;
+  err.syscall = "watch";
+  err.path = filename;
+  err.filename = filename;
+  return err;
+}
 
 class FSEvent {
   #owner;
   constructor(owner) {
     this.#owner = owner;
+  }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/watchers.js#L67
+  // Node's binding invokes this callback; bun's native watcher reports through
+  // FSWatcher#onEvent instead, so this exists for parity with code that drives
+  // the handle directly.
+  onchange(status, eventType, filename) {
+    const owner = this.#owner;
+    if (status < 0) {
+      // Node drops the handle here without emitting "close" -- it closes the
+      // raw FSEvent rather than going through FSWatcher.close().
+      closeNativeWatcherWithoutEvent(owner);
+      owner._handle = null;
+      owner.emit("error", makeWatchUVException(status, filename));
+      return;
+    }
+    dispatchNativeEvent(owner, eventType, filename);
   }
   close() {
     closeNativeWatcher(this.#owner);
@@ -89,11 +125,7 @@ class FSEvent {
 
 function assertFSEventHandle(handle) {
   if (!(handle instanceof FSEvent)) {
-    throw $ERR_INTERNAL_ASSERTION(
-      "handle must be a FSEvent\n" +
-        "This is caused by either a bug in Node.js or incorrect usage of Node.js internals.\n" +
-        "Please open an issue with this stack trace at https://github.com/nodejs/node/issues\n",
-    );
+    throw $ERR_INTERNAL_ASSERTION("handle must be a FSEvent" + require("internal/shared").kInternalAssertionSuffix);
   }
 }
 
@@ -101,6 +133,7 @@ class FSWatcher extends EventEmitter {
   #watcher;
   #listener;
   #ignoreMatcher;
+  #silentClose = false;
   _handle;
   constructor(path, options, listener) {
     super();
@@ -129,6 +162,14 @@ class FSWatcher extends EventEmitter {
     } catch (e: any) {
       e.path = path;
       e.filename = path;
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/watchers.js#L317
+      // Only ENOENT is suppressed, and the watcher is left unstarted rather than
+      // reporting the failure. The option defaults to true, so an absent value
+      // still throws; any other falsy value suppresses.
+      if (options?.throwIfNoEntry !== undefined && !options.throwIfNoEntry && e.code === "ENOENT") {
+        this._handle = new FSEvent(this);
+        return;
+      }
       throw e;
     }
     this._handle = new FSEvent(this);
@@ -136,6 +177,7 @@ class FSWatcher extends EventEmitter {
 
   #onEvent(eventType, filenameOrError) {
     if (eventType === "close") {
+      if (this.#silentClose) return;
       // close on next microtask tick to avoid long-running function calls when
       // we're trying to detach the watcher
       queueMicrotask(() => {
@@ -159,6 +201,8 @@ class FSWatcher extends EventEmitter {
   }
 
   close() {
+    // A handle dropped by the onchange error path makes close() a no-op, as in node.
+    if (this._handle === null) return;
     assertFSEventHandle(this._handle);
     this._handle.close();
   }
@@ -180,6 +224,7 @@ class FSWatcher extends EventEmitter {
   start() {}
 
   [kFSWatchStart]() {
+    if (this._handle === null) return;
     assertFSEventHandle(this._handle);
   }
 
@@ -187,7 +232,20 @@ class FSWatcher extends EventEmitter {
     // Named function expressions inside the class's static block so they
     // can read the private #watcher field; assigned to module-level lets so
     // callers outside the class can invoke them.
+    // Node treats the eventType here as opaque and always emits "change"; it must
+    // not reach #onEvent, where "close"/"error" are control signals rather than
+    // event names.
+    dispatchNativeEvent = function dispatchNativeEvent(watcher, eventType, filename) {
+      if (filename != null && watcher.#ignoreMatcher?.(filename)) return;
+      watcher.emit("change", eventType, filename);
+      watcher.#listener(eventType, filename);
+    };
     closeNativeWatcher = function closeNativeWatcher(watcher) {
+      watcher.#watcher?.close();
+      watcher.#watcher = null;
+    };
+    closeNativeWatcherWithoutEvent = function closeNativeWatcherWithoutEvent(watcher) {
+      watcher.#silentClose = true;
       watcher.#watcher?.close();
       watcher.#watcher = null;
     };

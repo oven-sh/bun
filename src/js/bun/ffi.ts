@@ -58,12 +58,11 @@ const FFIType = {
   napi_env: 18,
   napi_value: 19,
   buffer: 20,
+  buffer_length: 21,
+  buffer_bytelength: 21,
 };
 
 const suffix = process.platform === "win32" ? "dll" : process.platform === "darwin" ? "dylib" : "so";
-
-declare const __GlobalBunFFIPtrFunctionForWrapper: typeof ptr;
-declare const __GlobalBunCString: typeof CString;
 
 var ffi = globalThis.Bun.FFI;
 const ptr = (arg1, arg2) => (typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2));
@@ -71,30 +70,21 @@ const toBuffer = ffi.toBuffer;
 const toArrayBuffer = ffi.toArrayBuffer;
 const nativeViewSource = ffi.viewSource;
 
-const BunCString = ffi.CString;
 const nativeLinkSymbols = ffi.linkSymbols;
 const nativeDLOpen = ffi.dlopen;
 const nativeCallback = ffi.callback;
 const closeCallback = ffi.closeCallback;
+const nativeCFunction = ffi.cfunction;
 delete ffi.callback;
 delete ffi.closeCallback;
+delete ffi.cfunction;
 
 class JSCallback {
   constructor(cb, options) {
-    const result = nativeCallback(options, cb);
-    if (Error.isError(result)) throw result;
-    const { ctx, ptr } = result;
-    this.#ctx = ctx;
-    this.ptr = ptr;
-    this.#threadsafe = !!options?.threadsafe;
-  }
-
-  ptr;
-  #ctx;
-  #threadsafe;
-
-  get threadsafe() {
-    return this.#threadsafe;
+    const cell = nativeCallback(options, cb);
+    if (Error.isError(cell)) throw cell;
+    Object.setPrototypeOf(cell, (new.target ?? JSCallback).prototype);
+    return cell;
   }
 
   [Symbol.toPrimitive]() {
@@ -103,13 +93,10 @@ class JSCallback {
   }
 
   close() {
-    const ctx = this.#ctx;
-    this.ptr = null;
-    this.#ctx = null;
-
-    if (ctx) {
-      closeCallback(ctx);
+    if (!(this instanceof JSCallback)) {
+      throw new TypeError("JSCallback.prototype.close called on an incompatible receiver");
     }
+    closeCallback(this);
   }
 
   [Symbol.dispose]() {
@@ -117,250 +104,15 @@ class JSCallback {
   }
 }
 
-class CString extends String {
-  constructor(ptr, byteOffset?, byteLength?) {
-    super(
-      ptr
-        ? typeof byteLength === "number" && Number.isSafeInteger(byteLength)
-          ? BunCString(ptr, byteOffset || 0, byteLength)
-          : BunCString(ptr, byteOffset || 0)
-        : "",
-    );
-    this.ptr = typeof ptr === "number" ? ptr : 0;
-    if (typeof byteOffset !== "undefined") {
-      this.byteOffset = byteOffset;
-    }
-    if (typeof byteLength !== "undefined") {
-      this.byteLength = byteLength;
-    }
-  }
+const CString = ffi.CString;
 
-  ptr;
-  byteOffset;
-  byteLength;
-  #cachedArrayBuffer;
-
-  get arrayBuffer() {
-    if (this.#cachedArrayBuffer) {
-      return this.#cachedArrayBuffer;
-    }
-
-    if (!this.ptr) {
-      return (this.#cachedArrayBuffer = new ArrayBuffer(0));
-    }
-
-    return (this.#cachedArrayBuffer = toArrayBuffer(this.ptr, this.byteOffset, this.byteLength));
-  }
-}
-Object.defineProperty(globalThis, "__GlobalBunCString", {
-  value: CString,
-  enumerable: false,
-  configurable: false,
-});
-
-const ffiWrappers = new Array(21);
-
-var char = "val|0";
-ffiWrappers.fill(char);
-ffiWrappers[FFIType.uint8_t] = "val<0?0:val>=255?255:val|0";
-ffiWrappers[FFIType.int16_t] = "val<=-32768?-32768:val>=32768?32768:val|0";
-ffiWrappers[FFIType.uint16_t] = "val<=0?0:val>=65536?65536:val|0";
-ffiWrappers[FFIType.int32_t] = "val|0";
-// https://github.com/oven-sh/bun/issues/7007
-// This cast with `|0` looks incorrect as it converts 0xffffffff into -1, but this misinterpretation
-// of the integer is taken advantage of by a second misinterpretation of the bytes in the C binding
-// The bitwise operator | forces a conversion to int32_t, but it will wrap to negative numbers
-// when going above >0x7fffffff.
-//
-// What this |0 operatation also *seems to do* (citation needed) is convert the internal representation
-// of JSC::JSValue to ALWAYS use Int32Tag, which is important as `JSValue::asInt32()` can only handle
-// this encoding to properly deserialize this as an int32.
-//
-// tldr jsc internals: JSValue represents int32 as a tag value, then the int32 bytes.
-//                     and all other integers are as tagged 64-bit floats.
-//
-// The trick to fixing the bug: after using |0 to misinterpret and force the integer into Int32Tag,
-// when passing the value to the C ffi code, misinterpret it again, resulting in the correct uint32_t.
-//
-// To do this in native code, there is a spot in zig where uint32_t just prints int32_t.
-ffiWrappers[FFIType.uint32_t] = "val<0?0:val>0xFFFFFFFF?-1:val|0";
-ffiWrappers[FFIType.i64_fast] = `{
-  if (typeof val === "bigint") {
-    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(-Number.MAX_SAFE_INTEGER)) {
-      return Number(val).valueOf() || 0;
-    }
-
-    return val;
-  }
-
-  return !val ? 0 : +val || 0;
-}`;
-ffiWrappers[FFIType.i64_fast] = `{
-  if (typeof val === "bigint") {
-    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(-Number.MAX_SAFE_INTEGER)) {
-      return Number(val).valueOf() || 0;
-    }
-
-    return val;
-  }
-
-  return !val ? 0 : +val || 0;
-}`;
-
-ffiWrappers[FFIType.u64_fast] = `{
-  if (typeof val === "bigint") {
-    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= 0) {
-      return Number(val).valueOf() || 0;
-    }
-
-    return val;
-  }
-
-  return !val ? 0 : +val || 0;
-}`;
-
-ffiWrappers[FFIType.int64_t] = `{
-  if (typeof val === "bigint") {
-    return val;
-  }
-
-  if (typeof val === "number") {
-    return BigInt(val || 0);
-  }
-
-  return BigInt(+val || 0);
-}`;
-
-ffiWrappers[FFIType.uint64_t] = `{
-  if (typeof val === "bigint") {
-    return val;
-  }
-
-  if (typeof val === "number") {
-    return val <= 0 ? BigInt(0) : BigInt(val || 0);
-  }
-
-  return BigInt(+val || 0);
-}`;
-
-ffiWrappers[FFIType.u64_fast] = `{
-  if (typeof val === "bigint") {
-    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(0)) return Number(val);
-    return val;
-  }
-
-  return typeof val === "number" ? (val <= 0 ? 0 : +val || 0) : +val || 0;
-}`;
-
-ffiWrappers[FFIType.uint16_t] = `{
-  const ret = (typeof val === "bigint" ? Number(val) : val) | 0;
-  return ret <= 0 ? 0 : ret > 0xffff ? 0xffff : ret;
-}`;
-
-// Plain numbers pass through untouched: NaN, -0.0, and every other double are
-// already in the representation the compiled stub reads. Everything else
-// (BigInt included) is converted with Number().
-ffiWrappers[FFIType.double] = `{
-  if (typeof val === "number") {
-    return val;
-  }
-
-  return Number(val);
-}`;
-
-ffiWrappers[FFIType.float] = ffiWrappers[10] = `{
-  return Math.fround(val);
-}`;
-ffiWrappers[FFIType.bool] = `{
-  return !!val;
-}`;
-
-// This prevents an extra property getter in potentially hot code
-Object.defineProperty(globalThis, "__GlobalBunFFIPtrFunctionForWrapper", {
-  value: ptr,
-  enumerable: false,
-  configurable: true,
-});
-Object.defineProperty(globalThis, "__GlobalBunFFIPtrArrayBufferViewFn", {
-  value: function isTypedArrayView(val) {
-    return $isTypedArrayView(val);
-  },
-  enumerable: false,
-  configurable: true,
-});
-
-ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = `{
-  if (typeof val === "number") return val;
-  if (!val) {
-    return null;
-  }
-
-  if (__GlobalBunFFIPtrArrayBufferViewFn(val)) {
-    return val;
-  }
-
-  if (val instanceof ArrayBuffer) {
-    return __GlobalBunFFIPtrFunctionForWrapper(val);
-  }
-
-  if (typeof val === "string") {
-    throw new TypeError("To convert a string to a pointer, encode it as a buffer");
-  }
-
-  throw new TypeError(\`Unable to convert \${ val } to a pointer\`);
-}`;
-
-ffiWrappers[FFIType.buffer] = `{
-  if (!__GlobalBunFFIPtrArrayBufferViewFn(val)) {
-    throw new TypeError("Expected a TypedArray");
-  }
-
-  return val;
-}`;
-
-ffiWrappers[FFIType.function] = `{
-  if (typeof val === "number") {
-    return val;
-  }
-
-  if (typeof val === "bigint") {
-    return Number(val);
-  }
-
-  var ptr = val && val.ptr;
-
-  if (!ptr) {
-    throw new TypeError("Expected function to be a JSCallback or a number");
-  }
-
-  return ptr;
-}`;
-
-function FFIBuilder(params, returnType, functionToCall, name) {
-  const hasReturnType = typeof FFIType[returnType] === "number" && FFIType[returnType as string] !== FFIType.void;
+function FFIBuilder(params, functionToCall, name) {
   var paramNames = new Array(params.length);
-  var args = new Array(params.length);
-  for (let i = 0; i < params.length; i++) {
-    paramNames[i] = `p${i}`;
-    const wrapper = ffiWrappers[FFIType[params[i]]];
-    if (wrapper) {
-      // doing this inline benchmarked about 4x faster than referencing
-      args[i] = `(val=>${wrapper})(p${i})`;
-    } else {
-      throw new TypeError(`Unsupported type ${params[i]}. Must be one of: ${Object.keys(FFIType).sort().join(", ")}`);
-    }
-  }
+  for (let i = 0; i < params.length; i++) paramNames[i] = `p${i}`;
 
-  var code = `functionToCall(${args.join(", ")})`;
-  if (hasReturnType) {
-    if (FFIType[returnType as string] === FFIType.cstring) {
-      code = `return new __GlobalBunCString(${code})`;
-    } else {
-      code = `return ${code}`;
-    }
-  }
+  var code = `return (v=>v?new __CString(v):null)(functionToCall(${paramNames.join(", ")}))`;
 
-  var func = new Function("functionToCall", ...paramNames, code);
+  var func = new Function("functionToCall", "__CString", ...paramNames, code);
   Object.defineProperty(func, "name", {
     value: name,
   });
@@ -371,40 +123,40 @@ function FFIBuilder(params, returnType, functionToCall, name) {
   var wrap;
   switch (paramNames.length) {
     case 0:
-      wrap = () => func(functionToCall);
+      wrap = () => func(functionToCall, CString);
       break;
     case 1:
-      wrap = arg1 => func(functionToCall, arg1);
+      wrap = arg1 => func(functionToCall, CString, arg1);
       break;
     case 2:
-      wrap = (arg1, arg2) => func(functionToCall, arg1, arg2);
+      wrap = (arg1, arg2) => func(functionToCall, CString, arg1, arg2);
       break;
     case 3:
-      wrap = (arg1, arg2, arg3) => func(functionToCall, arg1, arg2, arg3);
+      wrap = (arg1, arg2, arg3) => func(functionToCall, CString, arg1, arg2, arg3);
       break;
     case 4:
-      wrap = (arg1, arg2, arg3, arg4) => func(functionToCall, arg1, arg2, arg3, arg4);
+      wrap = (arg1, arg2, arg3, arg4) => func(functionToCall, CString, arg1, arg2, arg3, arg4);
       break;
     case 5:
-      wrap = (arg1, arg2, arg3, arg4, arg5) => func(functionToCall, arg1, arg2, arg3, arg4, arg5);
+      wrap = (arg1, arg2, arg3, arg4, arg5) => func(functionToCall, CString, arg1, arg2, arg3, arg4, arg5);
       break;
     case 6:
-      wrap = (arg1, arg2, arg3, arg4, arg5, arg6) => func(functionToCall, arg1, arg2, arg3, arg4, arg5, arg6);
+      wrap = (arg1, arg2, arg3, arg4, arg5, arg6) => func(functionToCall, CString, arg1, arg2, arg3, arg4, arg5, arg6);
       break;
     case 7:
       wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7) =>
-        func(functionToCall, arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+        func(functionToCall, CString, arg1, arg2, arg3, arg4, arg5, arg6, arg7);
       break;
     case 8:
       wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) =>
-        func(functionToCall, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+        func(functionToCall, CString, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
       break;
     case 9:
       wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) =>
-        func(functionToCall, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
+        func(functionToCall, CString, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
       break;
     default: {
-      wrap = (...args) => func(functionToCall, ...args);
+      wrap = (...args) => func(functionToCall, CString, ...args);
       break;
     }
   }
@@ -448,26 +200,6 @@ function dlopen(path, options) {
   const result = nativeDLOpen(path, options);
   if (Error.isError(result)) throw result;
 
-  for (let key in result.symbols) {
-    var symbol = result.symbols[key];
-    if (options[key]?.args?.length || FFIType[options[key]?.returns as string] === FFIType.cstring) {
-      result.symbols[key] = FFIBuilder(
-        options[key].args ?? [],
-        options[key].returns ?? FFIType.void,
-        symbol,
-        // in stacktraces:
-        // instead of
-        //    "/usr/lib/sqlite3.so"
-        // we want
-        //    "sqlite3_get_version() - sqlit3.so"
-        path.includes("/") ? `${key} (${path.split("/").pop()})` : `${key} (${path})`,
-      );
-    } else {
-      // consistentcy
-      result.symbols[key].native = result.symbols[key];
-    }
-  }
-
   // Bind it because it's a breaking change to not do so
   // Previously, it didn't need to be bound
   result.close = result.close.bind(result);
@@ -498,10 +230,10 @@ function cc(options) {
 
   for (let key in result.symbols) {
     var symbol = result.symbols[key];
-    if (options[key]?.args?.length || FFIType[options[key]?.returns as string] === FFIType.cstring) {
+    const desc = options.symbols?.[key];
+    if (FFIType[desc?.returns as string] === FFIType.cstring) {
       result.symbols[key] = FFIBuilder(
-        options[key].args ?? [],
-        options[key].returns ?? FFIType.void,
+        desc.args ?? [],
         symbol,
         // in stacktraces:
         // instead of
@@ -532,43 +264,18 @@ function viewSource(symbols, isCallback?) {
 function linkSymbols(options) {
   const result = nativeLinkSymbols(options);
   if (Error.isError(result)) throw result;
-
-  for (let key in result.symbols) {
-    var symbol = result.symbols[key];
-    if (options[key]?.args?.length || FFIType[options[key]?.returns as string] === FFIType.cstring) {
-      result.symbols[key] = FFIBuilder(options[key].args ?? [], options[key].returns ?? FFIType.void, symbol, key);
-    } else {
-      // consistentcy
-      result.symbols[key].native = result.symbols[key];
-    }
-  }
-
   return result;
 }
 
 var cFunctionI = 0;
-var cFunctionRegistry;
-function onCloseCFunction(close) {
-  close();
-}
+function closeJSCFFICFunction() {}
 function CFunction(options) {
   const identifier = `CFunction${cFunctionI++}`;
-  var result = linkSymbols({
-    [identifier]: options,
-  });
-  var hasClosed = false;
-  var close = result.close.bind(result);
-  result.symbols[identifier].close = () => {
-    if (hasClosed || !close) return;
-    hasClosed = true;
-    close();
-    close = undefined;
-  };
 
-  cFunctionRegistry ||= new FinalizationRegistry(onCloseCFunction);
-  cFunctionRegistry.register(result.symbols[identifier], result.symbols[identifier].close);
-
-  return result.symbols[identifier];
+  const fn = nativeCFunction(options, identifier);
+  if (Error.isError(fn)) throw fn;
+  fn.close = closeJSCFFICFunction;
+  return fn;
 }
 
 const read = ffi.read;

@@ -66,12 +66,12 @@ pub struct Entry {
     /// BACKREF: the cache outlives every `Entry` it allocates (Drop clears
     /// ex_data first so the `CRYPTO_EX_free` callback never sees a dangling
     /// owner).
-    pub owner: bun_ptr::BackRef<SSLContextCache>,
+    pub(crate) owner: bun_ptr::BackRef<SSLContextCache>,
 }
 
 impl SSLContextCache {
     /// Returns +1 ref; caller must `SSL_CTX_free`. The map itself holds no ref.
-    pub fn get_or_create(
+    pub(crate) fn get_or_create(
         &mut self,
         config: &SSLConfig,
         err: &mut create_bun_socket_error_t,
@@ -82,7 +82,7 @@ impl SSLContextCache {
 
     /// Variant for callers that already projected to `BunSocketContextOptions`
     /// (e.g. via `as_usockets_for_client_verification()`).
-    pub fn get_or_create_opts(
+    pub(crate) fn get_or_create_opts(
         &mut self,
         opts: &uws::SocketContext::BunSocketContextOptions,
         err: &mut create_bun_socket_error_t,
@@ -93,7 +93,7 @@ impl SSLContextCache {
     /// Core entry — `d` already computed by caller. `SecureContext.intern()`
     /// threads its WeakGCMap key through here so the SHA-256 runs once total
     /// instead of three times on a miss.
-    pub fn get_or_create_digest(
+    pub(crate) fn get_or_create_digest(
         &mut self,
         opts: &uws::SocketContext::BunSocketContextOptions,
         d: Digest,
@@ -218,7 +218,7 @@ impl SSLContextCache {
 // reference — not_unsafe_ptr_arg_deref is a false positive here.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
-pub extern "C" fn bun_ssl_ctx_cache_on_free(
+pub(crate) extern "C" fn bun_ssl_ctx_cache_on_free(
     parent: *mut c_void,
     ptr: *mut c_void,
     ad: *mut boringssl::CRYPTO_EX_DATA,

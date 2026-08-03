@@ -53,26 +53,10 @@ fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<Signal
     bun_sys_jsc::signal_code_jsc::from_js(val, global)
 }
 
-/// Convert a `bun_sys::SystemError` (T1 stub shape) into the C-ABI
-/// `bun_jsc::SystemError` and materialize a JS Error instance.
-fn sys_system_error_to_js(err: &bun_sys::SystemError, global: &JSGlobalObject) -> JSValue {
-    let jsc_err = SystemError {
-        errno: err.errno,
-        code: err.code,
-        message: err.message,
-        path: err.path,
-        syscall: err.syscall,
-        hostname: err.hostname,
-        fd: err.fd,
-        dest: err.dest,
-    };
-    jsc_err.to_error_instance(global)
-}
-
 /// `Terminal.CreateResult` — local mirror that flattens `IntrusiveRc<Terminal>`
 /// to a `BackRef<Terminal>` used by `Subprocess.terminal`, so the scopeguard /
 /// field-assignment paths share one pointer type with `existing_terminal`.
-pub(crate) struct TerminalCreateResult {
+struct TerminalCreateResult {
     /// BACKREF — the `IntrusiveRc<Terminal>` pointer leaked via `into_raw()`
     /// when this struct was populated; the +1 ref is held until
     /// `Subprocess::finalize` (or the spawn-error scopeguard's
@@ -85,7 +69,7 @@ impl TerminalCreateResult {
     /// Shared borrow of the held `Terminal` (BackRef invariant: +1-ref'd
     /// IntrusiveRc, live while this struct is held).
     #[inline]
-    pub(crate) fn term(&self) -> &Terminal {
+    fn term(&self) -> &Terminal {
         self.terminal.get()
     }
 }
@@ -326,7 +310,7 @@ fn get_argv(
 }
 
 /// Bun.spawn() calls this.
-pub fn spawn(
+pub(crate) fn spawn(
     global_this: &JSGlobalObject,
     args: JSValue,
     secondary_args_value: Option<JSValue>,
@@ -335,7 +319,7 @@ pub fn spawn(
 }
 
 /// Bun.spawnSync() calls this.
-pub fn spawn_sync(
+pub(crate) fn spawn_sync(
     global_this: &JSGlobalObject,
     args: JSValue,
     secondary_args_value: Option<JSValue>,
@@ -343,7 +327,7 @@ pub fn spawn_sync(
     spawn_maybe_sync::<true>(global_this, args, secondary_args_value)
 }
 
-pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
+fn spawn_maybe_sync<const IS_SYNC: bool>(
     global_this: &JSGlobalObject,
     args_: JSValue,
     secondary_args_value: Option<JSValue>,
@@ -555,7 +539,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     // `from_js` returns a live FFI handle owned by JS.
                     // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref`
                     // is the centralised non-null deref proof.
-                    **abort_signal = Some(WebCore::AbortSignal::opaque_ref(signal).ref_());
+                    let sig = WebCore::AbortSignal::opaque_ref(signal);
+                    if let Some(abort_error) = sig.node_abort_error_if_aborted(global_this) {
+                        return Err(global_this.throw_value(abort_error));
+                    }
+                    **abort_signal = Some(sig.ref_());
                 } else {
                     return Err(global_this.throw_invalid_argument_type_value(
                         b"signal",
@@ -747,11 +735,23 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(timeout_value) = args.get(global_this, "timeout")? {
                 'brk: {
                     if timeout_value != JSValue::NULL {
-                        if timeout_value.is_number()
-                            && timeout_value.as_number().is_infinite()
-                            && timeout_value.as_number() > 0.0
-                        {
-                            break 'brk;
+                        if timeout_value.is_number() {
+                            let n = timeout_value.as_number();
+                            // +Infinity is accepted as "no timeout"; NaN is always a
+                            // caller-side bug (validate_integer_range would map it to 0).
+                            if n.is_nan() {
+                                return Err(global_this.throw_range_error(
+                                    n,
+                                    bun_fmt::OutOfRangeOptions {
+                                        field_name: b"timeout",
+                                        msg: b"a non-negative integer",
+                                        ..Default::default()
+                                    },
+                                ));
+                            }
+                            if n.is_infinite() && n > 0.0 {
+                                break 'brk;
+                            }
                         }
 
                         let timeout_int = global_this.validate_integer_range::<u64>(
@@ -775,6 +775,14 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
             if let Some(val) = args.get(global_this, "killSignal")? {
                 kill_signal = signal_code_from_js(val, global_this)?;
+                if kill_signal.0 == 0 {
+                    return Err(global_this
+                        .err(
+                            jsc::ErrorCode::ERR_UNKNOWN_SIGNAL,
+                            format_args!("Unknown signal: 0"),
+                        )
+                        .throw());
+                }
             }
 
             if let Some(val) = args.get(global_this, "maxBuffer")? {
@@ -1211,7 +1219,8 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             } else {
                 -UV_E::NFILE
             };
-            return Err(global_this.throw_value(sys_system_error_to_js(&systemerror, global_this)));
+            return Err(global_this
+                .throw_value(SystemError::from(systemerror).to_error_instance(global_this)));
         }
         Err(err) => {
             // See EMFILE arm above.
@@ -1241,8 +1250,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                             if errno == sys::Errno::ENOENT {
                                 systemerror.errno = -UV_E::NOENT;
                             }
-                            return Err(global_this
-                                .throw_value(sys_system_error_to_js(&systemerror, global_this)));
+                            return Err(global_this.throw_value(
+                                SystemError::from(systemerror).to_error_instance(global_this),
+                            ));
                         }
                     }
                     _ => {}
@@ -1269,7 +1279,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     // stores it as `*mut Process`; the matching `deref()` in
     // `Subprocess::finalize` (or the error path below) frees the Box when the
     // refcount reaches zero.
-    let process: *mut Process = spawned.to_process(loop_handle, IS_SYNC);
+    let process: *mut Process = spawned.to_process(loop_handle);
 
     #[cfg(unix)]
     let posix_ipc_fd = if !IS_SYNC && maybe_ipc_mode.is_some() {
@@ -1386,10 +1396,14 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             #[cfg(unix)]
             {
                 if let Some(fd) = spawned_stdout {
-                    fd.close();
+                    if !stdio[1].borrows_caller_fd() {
+                        fd.close();
+                    }
                 }
                 if let Some(fd) = spawned_stderr {
-                    fd.close();
+                    if !stdio[2].borrows_caller_fd() {
+                        fd.close();
+                    }
                 }
             }
             #[cfg(not(unix))]
@@ -1514,18 +1528,16 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     #[cfg(unix)]
     if !IS_SYNC {
         if let Some(mode) = maybe_ipc_mode {
-            // SAFETY: re-borrow `jsc_vm` through the raw pointer for the nested
-            // `vm` arg while `rare_data()` holds the outer &mut.
-            let raw_socket = unsafe { &mut *jsc_vm_ptr }
-                .rare_data()
-                .spawn_ipc_group(unsafe { &mut *jsc_vm_ptr })
-                .from_fd(
-                    bun_uws::SocketKind::SpawnIpc,
-                    None,
-                    core::mem::size_of::<*mut IPC::SendQueue>() as core::ffi::c_int,
-                    posix_ipc_fd.native(),
-                    true,
-                );
+            // SAFETY: `jsc_vm_ptr` is the live per-thread VM; JS thread.
+            let vm = unsafe { &mut *jsc_vm_ptr };
+            let loop_ = vm.uws_loop();
+            let raw_socket = vm.rare_data().spawn_ipc_group(loop_).from_fd(
+                bun_uws::SocketKind::SpawnIpc,
+                None,
+                core::mem::size_of::<*mut IPC::SendQueue>() as core::ffi::c_int,
+                posix_ipc_fd.native(),
+                true,
+            );
             if !raw_socket.is_null() {
                 let socket = raw_socket;
                 subprocess.ipc_data.set(Some(IPC::SendQueue::init(
@@ -1603,22 +1615,14 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if matches!(subprocess.stdin.get(), Writable::Pipe(_)) && promise_for_stream == JSValue::ZERO {
-        // Note: the SignalHandler impl is on
-        // `Subprocess` and the stored back-pointer is the `*mut Subprocess`
-        // (whole-allocation provenance), so `Writable::on_close` can raw-project
-        // `stdin` instead of doing out-of-provenance pointer arithmetic. The
-        // vtable only dereferences this pointer later on the JS thread, after
-        // the local `subprocess` borrow has ended.
-        // SAFETY: `subprocess_ptr` is the stable boxed `Subprocess` (from
-        // `heap::alloc` above) and `stdin` was just confirmed to be the
-        // `Pipe` variant; the signal's stored back-pointer remains valid for
-        // the lifetime of the FileSink, which is owned by `subprocess.stdin`.
+        // Store the whole-allocation `*mut Subprocess` so Writable::on_close can raw-project stdin.
+        // SAFETY: `subprocess_ptr` is the stable boxed Subprocess; stdin was just confirmed `Pipe`.
         unsafe {
             if let Writable::Pipe(pipe) = (*subprocess_ptr).stdin.get() {
                 (*pipe.as_ptr())
-                    .signal
-                    .set(WebCore::streams::Signal::init_with_type::<SubprocessT<'_>>(
-                        subprocess_ptr,
+                    .source
+                    .set(WebCore::streams::SourceHandle::Subprocess(
+                        bun_ptr::BackRef::from_raw(subprocess_ptr.cast::<SubprocessT<'static>>()),
                     ));
             }
         }
@@ -1725,25 +1729,14 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    if let Writable::Buffer(buffer) = subprocess.stdin.get() {
-        if let Err(err) = Writable::buffer_writer_mut(buffer).start() {
-            let _ = subprocess.try_kill(subprocess.kill_signal);
-            let _ = global_this.throw_value(err.to_js(global_this));
-            return Err(JsError::Thrown);
-        }
-    }
-
+    // Start the readers before the Writable::Buffer stdin writer so that if
+    // the writer's start() throws below, both PipeReaders have taken their
+    // start() ref and on_process_exit's later drain is refcount-balanced.
     if let Readable::Pipe(pipe) = subprocess.stdout.get() {
         // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
         // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
-        if let Err(err) =
-            Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy)
-        {
-            let _ = subprocess.try_kill(subprocess.kill_signal);
-            let _ = global_this.throw_value(err.to_js(global_this));
-            return Err(JsError::Thrown);
-        }
+        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy);
         if (IS_SYNC || !lazy) && matches!(subprocess.stdout.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stdout.get() {
                 Readable::pipe_reader_mut(pipe).read_all();
@@ -1753,18 +1746,20 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if let Readable::Pipe(pipe) = subprocess.stderr.get() {
         // Note: see stdout arm above — avoid aliased &mut.
-        if let Err(err) =
-            Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy)
-        {
-            let _ = subprocess.try_kill(subprocess.kill_signal);
-            let _ = global_this.throw_value(err.to_js(global_this));
-            return Err(JsError::Thrown);
-        }
+        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy);
 
         if (IS_SYNC || !lazy) && matches!(subprocess.stderr.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stderr.get() {
                 Readable::pipe_reader_mut(pipe).read_all();
             }
+        }
+    }
+
+    if let Writable::Buffer(buffer) = subprocess.stdin.get() {
+        if let Err(err) = Writable::buffer_writer_mut(buffer).start() {
+            let _ = subprocess.try_kill(subprocess.kill_signal);
+            let _ = global_this.throw_value(err.to_js(global_this));
+            return Err(JsError::Thrown);
         }
     }
 
@@ -1774,11 +1769,10 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     // JS. Downgrade 'socket-fd' slots from OwnedFd to UnownedFd so
     // finalize_streams (on later GC) skips them and the caller is the sole
     // owner via .stdio[i]. Placed here (not earlier) because the
-    // Writable::init error arm, the has_exception catch-all, the IPC
-    // open-socket failure, and the stdout/stderr Readable::Pipe .start()
-    // error paths all throw after populating stdio_pipes; on those paths
-    // the caller never receives the Subprocess, so the OwnedFd slot must
-    // remain for the GC'd wrapper's finalize_streams to close.
+    // Writable::init error arm, the has_exception catch-all, and the IPC
+    // open-socket failure all throw after populating stdio_pipes; on those
+    // paths the caller never receives the Subprocess, so the OwnedFd slot
+    // must remain for the GC'd wrapper's finalize_streams to close.
     #[cfg(not(windows))]
     if !socket_fd_indices.is_empty() {
         subprocess.stdio_pipes.with_mut(|pipes| {
@@ -2086,14 +2080,12 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
         message: BunString::create_format(format_args!(
             "Executable not found in $PATH: \"{}\"",
             bstr::BStr::new(command)
-        )),
-        code: BunString::static_("ENOENT"),
+        ))
+        .into(),
+        code: BunString::static_("ENOENT").into(),
         errno: -UV_E::NOENT,
-        path: BunString::clone_utf8(command),
-        syscall: BunString::EMPTY,
-        hostname: BunString::EMPTY,
-        fd: -1,
-        dest: BunString::EMPTY,
+        path: BunString::clone_utf8(command).into(),
+        ..Default::default()
     };
     global_this.throw_value(err.to_error_instance(global_this))
 }
@@ -2101,7 +2093,7 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
 /// `storage` receives ownership of every `K=V\0` line whose pointer is pushed
 /// into `envp` (and, for `PATH=`, sliced into `*path`); the caller's
 /// `Vec<ZBox>` is dropped after `spawn_process` returns.
-pub(crate) fn append_envp_from_js(
+fn append_envp_from_js(
     global_this: &JSGlobalObject,
     object: &JSObject,
     envp: &mut Vec<CStrPtr>,

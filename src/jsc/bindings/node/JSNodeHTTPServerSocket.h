@@ -53,6 +53,8 @@ public:
     unsigned is_ssl : 1 = 0;
     unsigned ended : 1 = 0;
     unsigned upgraded : 1 = 0;
+    unsigned peer_cert_verified : 1 = 0;
+    const char* peerCertVerifyErrorCode = nullptr;
     JSC::Strong<JSNodeHTTPServerSocket> strongThis = {};
 
     static JSNodeHTTPServerSocket* create(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response);
@@ -76,9 +78,10 @@ public:
     const char* sniServername() const;
 
     /* X.509 verification error code for the peer certificate (e.g.
-     * "DEPTH_ZERO_SELF_SIGNED_CERT"); null when verification succeeded, no TLS,
-     * or the connection is already gone. */
-    const char* peerCertificateVerificationError() const;
+     * "DEPTH_ZERO_SELF_SIGNED_CERT"), latched from the TLS handshake; null when
+     * verification succeeded or the socket is not TLS. */
+    const char* peerCertificateVerificationError();
+    bool isPeerCertificateVerified();
 
     /* node:http server compat: whether the request currently being received on
      * this connection has exceeded server.headersTimeout / server.requestTimeout
@@ -157,6 +160,7 @@ public:
     }
 
     void detach();
+    void syncPeerCertificateVerification();
     void onClose();
     void onDrain();
     void onData(const char* data, int length, bool last);

@@ -133,7 +133,7 @@ pub fn get() -> PoolGuard<PathBuffer> {
     PathBufferPoolT::<PathBuffer>::get()
 }
 #[inline]
-pub fn put(buf: Box<PathBuffer>) {
+pub(crate) fn put(buf: Box<PathBuffer>) {
     PathBufferPoolT::<PathBuffer>::put(buf)
 }
 
@@ -142,7 +142,7 @@ impl<T: PoolStorage> PoolGuard<T> {
     /// owners that will `put` explicitly later). `Drop` is a no-op once `buf`
     /// is `None`, so no leak.
     #[inline]
-    pub fn into_box(mut self) -> Box<T> {
+    pub(crate) fn into_box(mut self) -> Box<T> {
         self.buf.take().unwrap()
     }
 }

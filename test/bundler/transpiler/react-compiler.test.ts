@@ -557,6 +557,125 @@ describe("bundler", () => {
     },
   });
 
+  // Regression: codegen.rs PropertyDelete/ComputedDelete/UnaryExpression emitted
+  // `E::Unary` with `UnaryFlags::empty()`. The parser sets
+  // `WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS` for `delete <dot|index>`;
+  // the printer re-wraps any `delete <dot|index>` lacking that flag as
+  // `delete (0, obj.prop)`, which evaluates the property to a value and returns
+  // `true` without deleting anything.
+  itBundled("react-compiler/PropertyDeletePreservesReferenceSemantics", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useMemo } from "react";
+        export function useThing(a, b) {
+          return useMemo(() => {
+            const x = { a, b, c: 3 };
+            delete x.b;
+            const key = "c";
+            delete x[key];
+            return x;
+          }, [a, b]);
+        }
+        console.log(JSON.stringify(useThing(1, 2)));
+      `,
+      "/node_modules/react/index.js": `exports.useMemo = (f) => f();`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: '{"a":1}' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // The hook must be compiled (sanity: codegen, not a bailout, is on trial).
+      // With react bundled the `_c` import is renamed, so assert on the
+      // compiler-runtime body being linked in instead.
+      expect(out).toContain("react.memo_cache_sentinel");
+      // `delete (0, x.b)` / `delete (0, x[...])` evaluates to a value, not a
+      // Reference — must not appear for either the dot or index form.
+      expect(out).not.toMatch(/delete\s*\(\s*0\s*,/);
+    },
+  });
+
+  // Sibling of the above: `WAS_ORIGINALLY_TYPEOF_IDENTIFIER` was also dropped,
+  // so the printer wrapped `typeof undeclared` as `typeof (0, undeclared)`,
+  // which throws ReferenceError instead of returning "undefined" — breaking
+  // the common `typeof window !== "undefined"` SSR check.
+  itBundled("react-compiler/TypeofUnboundIdentifierPreservesFlag", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useMemo } from "react";
+        export function useIsBrowser() {
+          return useMemo(() => typeof window !== "undefined", []);
+        }
+        // The folded-conditional form must keep throwing semantics: the visitor
+        // wraps it as a real (0, x) comma expression, and codegen must not set
+        // the flag just because the operand inlines to an identifier.
+        export function useTypeofFolded() {
+          return useMemo(() => {
+            try {
+              return typeof (true ? NotDeclaredAnywhere : Other);
+            } catch {
+              return "threw";
+            }
+          }, []);
+        }
+        console.log(useIsBrowser(), useTypeofFolded());
+      `,
+      "/node_modules/react/index.js": `exports.useMemo = (f) => f();`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "false threw" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // Both hooks must be compiled (RC drops the `useMemo` wrapper); these
+      // particular bodies need 0 memo slots so compiler-runtime is tree-shaken.
+      expect(out).not.toContain("useMemo(");
+      // `typeof window` must survive as-is; `typeof (true ? ...)` must stay wrapped.
+      expect(out).toMatch(/\btypeof window\b(?!\s*\))/);
+      expect(out).toMatch(/\btypeof\s*\(\s*0\s*,\s*NotDeclaredAnywhere\s*\)/);
+    },
+  });
+
+  // `delete (true ? o.a : o.b)` is a no-op per spec (operand is a value, not a
+  // Reference). The visitor folds the conditional to a bare EDot with the
+  // delete-flag unset; lowering must not turn that into a real PropertyDelete.
+  // Upstream's Babel plugin sees the unfolded ConditionalExpression and bails
+  // with "Only object properties can be deleted", so bailing out here matches.
+  itBundled("react-compiler/DeleteFoldedConditionalKeepsNoOpSemantics", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Comp({ a, b }) {
+          const o = { a, b };
+          const r = delete (true ? o.a : o.b);
+          return <div>{r}{JSON.stringify(o)}</div>;
+        }
+        const el = Comp({ a: 1, b: 2 });
+        console.log(el.props.children.join(""));
+      `,
+      "/node_modules/react/index.js": `module.exports = {};`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (t, p) => ({ t, props: p });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, props: p });`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: 'true{"a":1,"b":2}' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // The component bails out of compilation (Babel parity), so the delete
+      // stays in its post-visit `delete (0, o.a)` form.
+      expect(out).toMatch(/delete\s*\(\s*0\s*,\s*o\.a\s*\)/);
+    },
+  });
+
   itBundled("react-compiler/NonComponentUntouched", {
     files: {
       "/entry.jsx": /* jsx */ `

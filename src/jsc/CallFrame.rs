@@ -35,7 +35,7 @@ impl CallFrame {
     pub fn arguments_as_array<const COUNT: usize>(&self) -> [JSValue; COUNT] {
         let slice = self.arguments();
         let mut value: [JSValue; COUNT] = [JSValue::UNDEFINED; COUNT];
-        let n = (self.arguments_count() as usize).min(COUNT);
+        let n = slice.len().min(COUNT);
         value[0..n].copy_from_slice(&slice[0..n]);
         value
     }
@@ -129,24 +129,6 @@ impl CallFrame {
     }
 
     /// Do not use this function. Migration path:
-    /// arguments(n).ptr[k] -> arguments_as_array::<n>()[k]
-    /// arguments(n).slice() -> arguments()
-    /// arguments(n).mut() -> `let mut args = arguments_as_array::<n>(); &mut args`
-    pub fn arguments_old<const MAX: usize>(&self) -> Arguments<MAX> {
-        let slice = self.arguments();
-        debug_assert!(MAX <= 15);
-        let count = slice.len().min(MAX);
-        if count == 0 {
-            Arguments {
-                ptr: [JSValue::ZERO; MAX],
-                len: 0,
-            }
-        } else {
-            Arguments::<MAX>::init(count.min(MAX), slice)
-        }
-    }
-
-    /// Do not use this function. Migration path:
     /// arguments_as_array::<n>()
     pub fn arguments_undef<const MAX: usize>(&self) -> Arguments<MAX> {
         let slice = self.arguments();
@@ -171,7 +153,7 @@ impl CallFrame {
     }
 
     #[cfg(debug_assertions)]
-    pub fn describe_frame(&self) -> &ZStr {
+    pub(crate) fn describe_frame(&self) -> &ZStr {
         // SAFETY: FFI returns a NUL-terminated C string with lifetime tied to the frame.
         unsafe {
             let p = Bun__CallFrame__describeFrame(self);
@@ -221,14 +203,7 @@ pub struct Arguments<const MAX: usize> {
 
 impl<const MAX: usize> Arguments<MAX> {
     #[inline]
-    pub fn init(i: usize, src: &[JSValue]) -> Self {
-        let mut args: [JSValue; MAX] = [JSValue::ZERO; MAX];
-        args[0..i].copy_from_slice(&src[0..i]);
-        Self { ptr: args, len: i }
-    }
-
-    #[inline]
-    pub fn init_undef(i: usize, src: &[JSValue]) -> Self {
+    pub(crate) fn init_undef(i: usize, src: &[JSValue]) -> Self {
         let mut args: [JSValue; MAX] = [JSValue::UNDEFINED; MAX];
         args[0..i].copy_from_slice(&src[0..i]);
         Self { ptr: args, len: i }
@@ -265,29 +240,19 @@ pub struct ArgumentsSlice<'a> {
     /// Cursor into `remaining_buf`; advances on `eat()`.
     remaining_start: usize,
     pub vm: &'a VirtualMachine,
-    /// `bun_alloc::Arena` is a `MimallocArena`
-    /// whose `new()` calls `mi_heap_new()` eagerly, so we keep it `None` until a
-    /// caller actually needs scratch storage (currently none do).
-    pub arena: Option<bun_alloc::Arena>,
     pub all: &'a [JSValue],
-    pub protected: IntegerBitSet<32>,
+    pub(crate) protected: IntegerBitSet<32>,
     pub will_be_async: bool,
 }
 
 impl<'a> ArgumentsSlice<'a> {
     /// View of arguments not yet consumed by `eat()`.
     #[inline]
-    pub fn remaining(&self) -> &[JSValue] {
+    pub(crate) fn remaining(&self) -> &[JSValue] {
         &self.remaining_buf[self.remaining_start..]
     }
 
-    /// Lazily create the scratch arena.
-    #[inline]
-    pub fn arena(&mut self) -> &bun_alloc::Arena {
-        self.arena.get_or_insert_with(bun_alloc::Arena::new)
-    }
-
-    pub fn unprotect(&mut self) {
+    pub(crate) fn unprotect(&mut self) {
         let mut iter = self.protected.iterator::<true, true>();
         while let Some(i) = iter.next() {
             self.all[i].unprotect();
@@ -320,7 +285,6 @@ impl<'a> ArgumentsSlice<'a> {
             remaining_start: 0,
             vm,
             all: slice,
-            arena: None,
             protected: IntegerBitSet::<32>::init_empty(),
             will_be_async: false,
         }
@@ -353,7 +317,6 @@ impl<'a> ArgumentsSlice<'a> {
 impl<'a> Drop for ArgumentsSlice<'a> {
     fn drop(&mut self) {
         self.unprotect();
-        // arena dropped automatically
     }
 }
 

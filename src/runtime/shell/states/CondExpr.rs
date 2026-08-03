@@ -9,10 +9,10 @@ use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
 
 pub struct CondExpr {
-    pub base: Base,
+    pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::CondExpr>,
-    pub io: IO,
-    pub state: CondExprState,
+    pub(crate) io: IO,
+    pub(crate) state: CondExprState,
     pub args: Vec<Vec<u8>>,
 }
 
@@ -67,8 +67,7 @@ impl CondExpr {
                         return Self::command_impl_start(interp, this, n.op);
                     }
                     let atom: *const ast::Atom = n.args.get_const(idx as usize);
-                    let io = interp.as_condexpr(this).io.clone();
-                    let child = Expansion::init(interp, shell, atom, this, io);
+                    let child = Expansion::init(interp, shell, atom, this);
                     return Expansion::start(interp, child);
                 }
                 CondExprState::WaitingStat => return Yield::suspended(),
@@ -238,9 +237,7 @@ impl CondExpr {
             let err = Expansion::take_err(interp, child);
             interp.deinit_node(child);
             if let Some(err) = err {
-                let y = Self::write_failing_error(interp, this, format_args!("{}\n", err));
-                err.deinit();
-                return y;
+                return Self::write_failing_error(interp, this, format_args!("{}\n", err));
             }
             // Defensive fallback — finish via `writeFailingError` with exit 1.
             debug_assert!(false, "Expansion child failed without an error");

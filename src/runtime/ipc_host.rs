@@ -185,7 +185,7 @@ pub(crate) fn do_send(
 }
 
 #[bun_jsc::host_fn]
-pub fn emit_handle_ipc_message(
+pub(crate) fn emit_handle_ipc_message(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -239,7 +239,7 @@ pub fn emit_handle_ipc_message(
 // link-time `#[no_mangle]` symbol, so the defining crate does not matter to
 // the C++ caller.
 #[bun_jsc::host_fn(export = "Bun__Process__send")]
-pub(crate) fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
     // mutable); `get_ipc_instance` writes `self.ipc` on first call.
     let vm = global.bun_vm().as_mut();

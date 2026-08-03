@@ -661,10 +661,18 @@ impl JSValkeyClient {
         // would send `EXPIRE key 0` and delete the key. Reject both explicitly.
         let seconds_value = frame.argument(1);
         if seconds_value.is_undefined() {
-            return Err(global.throw_invalid_property_type_value(b"seconds", b"number", seconds_value));
+            return Err(global.throw_invalid_property_type_value(
+                b"seconds",
+                b"number",
+                seconds_value,
+            ));
         }
         if seconds_value.is_number() && seconds_value.as_number().is_nan() {
-            return Err(global.throw_invalid_property_type_value(b"seconds", b"integer", seconds_value));
+            return Err(global.throw_invalid_property_type_value(
+                b"seconds",
+                b"integer",
+                seconds_value,
+            ));
         }
 
         let seconds = global.validate_integer_range::<i32>(

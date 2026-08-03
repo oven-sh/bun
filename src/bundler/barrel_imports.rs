@@ -782,18 +782,27 @@ pub(crate) fn schedule_barrel_deferred_imports(
                     if rec.flags.contains(import_record::Flags::IS_INTERNAL) {
                         continue;
                     }
-                    if !rec.source_index.is_valid() {
+                    // Dev server records keep source_index unset; fall back to
+                    // the path map like the seeding loops above.
+                    let target = if rec.source_index.is_valid() {
+                        rec.source_index.get()
+                    } else if let Some(map) = path_to_source_index_map {
+                        match map.get_path(&rec.path) {
+                            Some(t) => t,
+                            None => continue,
+                        }
+                    } else {
                         continue;
-                    }
+                    };
                     if imp.alias_is_star {
                         pushes.push(StarPush {
-                            target: rec.source_index.get(),
+                            target,
                             alias: None,
                             is_star: true,
                         });
                     } else if imp.alias.is_some() {
                         pushes.push(StarPush {
-                            target: rec.source_index.get(),
+                            target,
                             alias: imp.alias,
                             is_star: false,
                         });
@@ -809,13 +818,21 @@ pub(crate) fn schedule_barrel_deferred_imports(
                     if rec.flags.contains(import_record::Flags::IS_INTERNAL) {
                         continue;
                     }
-                    if rec.source_index.is_valid() {
-                        pushes.push(StarPush {
-                            target: rec.source_index.get(),
-                            alias: None,
-                            is_star: true,
-                        });
-                    }
+                    let target = if rec.source_index.is_valid() {
+                        rec.source_index.get()
+                    } else if let Some(map) = path_to_source_index_map {
+                        match map.get_path(&rec.path) {
+                            Some(t) => t,
+                            None => continue,
+                        }
+                    } else {
+                        continue;
+                    };
+                    pushes.push(StarPush {
+                        target,
+                        alias: None,
+                        is_star: true,
+                    });
                 }
             }
             for p in pushes {

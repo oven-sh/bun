@@ -519,6 +519,10 @@ impl EventLoop {
                 to_destroy = Some(task);
             }
 
+            debug_assert!(
+                task_ref.task.tag != bun_event_loop::task_tag::INVALID,
+                "zeroed ConcurrentTask at {task:p} drained from concurrent queue",
+            );
             // LinearFifo's fields are private — `write_item` is the
             // public path (single-slot copy, same complexity).
             let _ = self.tasks.write_item(task_ref.task);
@@ -1194,6 +1198,26 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         JSValue::js_number(num_polls as f64),
     );
     Ok(result)
+}
+
+/// Testing API: enqueues a `ConcurrentTask` with `.task` left zeroed so the
+/// next drain hits `task_tag::INVALID` and the dispatch panic fires.
+#[bun_jsc::host_fn]
+pub fn enqueue_zeroed_concurrent_task_for_testing(
+    global_object: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    // The next drain panics deliberately; keep the core file and crash-report
+    // upload out of CI's result set.
+    bun_crash_handler::suppress_reporting();
+    let event_loop = global_object.bun_vm().event_loop_shared();
+    let raw = ConcurrentTaskItem::new(ConcurrentTaskItem {
+        auto_delete: true,
+        ..Default::default()
+    });
+    // SAFETY: `ConcurrentTaskItem::new` heap-allocates via `heap::into_raw`.
+    event_loop.enqueue_task_concurrent(unsafe { core::ptr::NonNull::new_unchecked(raw) });
+    Ok(JSValue::UNDEFINED)
 }
 
 #[cfg(windows)]

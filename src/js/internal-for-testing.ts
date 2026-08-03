@@ -424,6 +424,12 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
 export const getEventLoopStats: () => { activeTasks: number; concurrentRef: number; numPolls: number } =
   $newRustFunction("event_loop.rs", "getActiveTasks", 0);
 
+export const enqueueZeroedConcurrentTaskForTesting: () => void = $newRustFunction(
+  "event_loop.rs",
+  "enqueueZeroedConcurrentTaskForTesting",
+  0,
+);
+
 export const hostedGitInfo = {
   parseUrl: $newRustFunction("hosted_git_info.rs", "TestingAPIs.jsParseUrl", 1),
   fromUrl: $newRustFunction("hosted_git_info.rs", "TestingAPIs.jsFromUrl", 1),

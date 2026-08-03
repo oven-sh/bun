@@ -44,12 +44,18 @@ pub struct TaskTag(pub u8);
 #[allow(non_upper_case_globals)]
 pub mod task_tag {
     use super::TaskTag;
+
+    /// Reserved: never produced by any `Taskable` impl. An all-zeros `Task`
+    /// (`ConcurrentTask::default()`) carries this tag; dispatch panics on it
+    /// rather than matching whichever real type is value 0.
+    pub const INVALID: TaskTag = TaskTag(0);
+
     macro_rules! tags {
         ($($name:ident),* $(,)?) => {
-            tags!(@ 0u8, $($name,)*);
-            /// Number of task tags. `bun_runtime::dispatch::run_task` asserts
-            /// exhaustiveness against this.
-            pub const COUNT: u8 = tags!(@count 0u8, $($name,)*);
+            tags!(@ 1u8, $($name,)*);
+            /// Number of task tag values (includes [`INVALID`] at 0).
+            /// `bun_runtime::dispatch::run_task` asserts exhaustiveness against this.
+            pub const COUNT: u8 = tags!(@count 1u8, $($name,)*);
         };
         (@ $n:expr, $head:ident, $($rest:ident,)*) => {
             pub const $head: TaskTag = TaskTag($n);
@@ -233,7 +239,8 @@ impl Default for ConcurrentTask {
     fn default() -> Self {
         Self {
             // SAFETY: all-zero is a valid bit pattern for `Task` (plain tag
-            // byte + raw pointer); caller must set a real task before use.
+            // byte + raw pointer). Tag 0 is `task_tag::INVALID`; caller must
+            // overwrite `.task` before enqueueing.
             task: unsafe { bun_core::ffi::zeroed_unchecked() },
             next: Link::new(),
             auto_delete: false,

@@ -2026,20 +2026,20 @@ function parseOptions(
     }
   }
 
+  // Explicit tls/ssl options request an encrypted connection: if the server
+  // declines TLS, the connection is aborted instead of continuing in plaintext.
+  // Certificate verification is only enabled when explicitly requested
+  // (ca, rejectUnauthorized, or a verify-* sslmode).
+  if (tls && sslMode < SSLMode.require) {
+    sslMode = SSLMode.require;
+  }
+
   if (sslMode !== SSLMode.disable && !tls?.serverName) {
     if (hostname) {
       tls = { ...tls, serverName: hostname };
     } else if (tls) {
       tls = true;
     }
-  }
-
-  // Explicit tls/ssl options request an encrypted connection: if the server
-  // declines TLS, the connection is aborted instead of continuing in plaintext.
-  // Certificate verification is only enabled when explicitly requested
-  // (ca, rejectUnauthorized, or a verify-* sslmode).
-  if (tls && sslMode === SSLMode.disable) {
-    sslMode = SSLMode.require;
   }
 
   port = Number(port);

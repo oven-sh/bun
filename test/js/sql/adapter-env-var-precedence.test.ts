@@ -356,6 +356,27 @@ describe("SQL adapter environment variable precedence", () => {
       process.env.PGSSLMODE = "bogus";
       expect(() => new SQL({ adapter: "postgres" })).toThrow("sslmode");
     });
+
+    test("PGSSLMODE=prefer does not downgrade an explicit tls: true below require", () => {
+      process.env.PGSSLMODE = "prefer";
+
+      const options = new SQL({ adapter: "postgres", hostname: "h", tls: true });
+      expect(options.options.sslMode).toBe(2); // SSLMode.require
+    });
+
+    test("PGSSLMODE=allow does not downgrade an explicit ssl: {} below require", () => {
+      process.env.PGSSLMODE = "allow";
+
+      const options = new SQL({ adapter: "postgres", hostname: "h", ssl: {} });
+      expect(options.options.sslMode).toBe(2); // SSLMode.require
+    });
+
+    test("PGSSLMODE=verify-full still upgrades past an explicit tls: true", () => {
+      process.env.PGSSLMODE = "verify-full";
+
+      const options = new SQL({ adapter: "postgres", hostname: "h", tls: true });
+      expect(options.options.sslMode).toBe(4); // SSLMode.verify_full
+    });
   });
 
   describe("Adapter-Protocol Validation", () => {

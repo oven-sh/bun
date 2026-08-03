@@ -870,10 +870,9 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
     if unsafe { &*vm }.debugger.is_none() {
         return;
     }
-    // Node's permission model gates the inspector (inspector_agent.cc
-    // Agent::Start): without --allow-inspector, --inspect/--inspect-wait are
-    // silently skipped, and --inspect-brk raises ERR_ACCESS_DENIED for
-    // PauseOnNextJavascriptStatement as an uncaught exception (exit 1).
+    // Without --allow-inspector: --inspect/--inspect-wait are skipped, --inspect-brk
+    // raises ERR_ACCESS_DENIED (PauseOnNextJavascriptStatement) and exits 1.
+    // https://github.com/nodejs/node/blob/main/src/inspector_agent.cc (Agent::Start)
     if crate::permission::is_enabled()
         && !crate::permission::is_granted(crate::permission::Scope::Inspector, None)
     {
@@ -4425,10 +4424,8 @@ unsafe fn transpile_file(
         .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name));
 
     // ── Concurrent-transpiler dispatch (`transpile_async:` block) ───────────
-    // We only run the transpiler concurrently when we can.
-    // Today that's: import statements (`import 'foo'`) and import expressions
-    // (`import('foo')`).
-    // Node compile cache: lazily initialize from env on the first fetch.
+    // We only run the transpiler concurrently when we can — today that's import statements and
+    // import expressions. Node compile cache: lazily initialize from env on the first fetch.
     bun_jsc::node_compile_cache::init_from_env_once();
 
     'transpile_async: {

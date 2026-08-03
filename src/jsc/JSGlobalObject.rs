@@ -540,10 +540,8 @@ impl JSGlobalObject {
         .throw()
     }
 
-    /// Renders Node's `ERR_INVALID_ARG_TYPE` message through the same C++
-    /// formatter the C++ error paths use, so the two agree on `argument` vs
-    /// `property` for dotted names and on `of type` vs `an instance of` for
-    /// the expected types. Returns a +1-ref'd string wrapped in [`OwnedString`].
+    /// Renders Node's `ERR_INVALID_ARG_TYPE` message via the same C++ formatter the
+    /// C++ error paths use. Returns a +1-ref'd string wrapped in [`OwnedString`].
     pub fn format_invalid_argument_type(
         global: &Self,
         argname: &[u8],
@@ -579,13 +577,9 @@ impl JSGlobalObject {
         )))
     }
 
-    /// "The {argname} argument must be of type {typename}. Received {value}"
-    ///
-    /// `typename` is used verbatim; when the accepted types are a list of type
-    /// or class names, use [`Self::throw_invalid_argument_type_list`] instead so
-    /// Node's "of type" / "an instance of" grouping applies.
-    ///
-    /// Accepts `&str`, `&[u8]`, or `b"..."` for `argname`/`typename`.
+    /// "The {argname} argument must be of type {typename}. Received {value}".
+    /// `typename` is used verbatim; for a list of type/class names use
+    /// [`Self::throw_invalid_argument_type_list`] so Node's grouping applies.
     pub fn throw_invalid_argument_type_value(
         &self,
         argname: impl AsRef<[u8]>,
@@ -1722,10 +1716,8 @@ unsafe extern "C" {
     safe fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) -> *mut JSGlobalObject;
 }
 
-/// Renders an `ERR_INVALID_ARG_TYPE` parameter name the way Node's `addParameter`
-/// does: a name already ending in `" argument"` is used verbatim, otherwise it is
-/// quoted and labelled `property` when it contains a dot and `argument` when it
-/// does not.
+/// Renders an `ERR_INVALID_ARG_TYPE` parameter name per Node's `addParameter`:
+/// verbatim if ending in `" argument"`, else quoted `property`/`argument` by dot.
 /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1407-L1414
 pub struct ArgumentName<'a>(pub &'a [u8]);
 

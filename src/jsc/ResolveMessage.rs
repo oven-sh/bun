@@ -56,14 +56,9 @@ fn import_kind_label(kind: ImportKind) -> &'static [u8] {
     }
 }
 
-/// Host-agnostic bare-specifier check for Node ESM error shaping. Node
-/// classifies specifiers platform-independently (URL-based), so this must not
-/// vary by host: relative (`./`, `../`, `.`, `..`), separator-led (`/`, `\`),
-/// and ASCII-letter drive forms (`C:/`, `C:\`) are path-like; everything else
-/// is a package. Unlike host-native `bun_paths::is_absolute`, the drive byte
-/// must be alphabetic — its Windows arm accepts any byte before `:`, which
-/// made `:://x` classify as a module on Windows but a package on POSIX
-/// (Node says "Cannot find package '::'" on both).
+/// Host-agnostic bare-specifier check for Node ESM error shaping. Must not vary by host:
+/// relative, separator-led, and ASCII-letter drive forms are path-like; everything else is a
+/// package. Unlike `bun_paths::is_absolute`, the drive byte must be alphabetic.
 fn is_bare_esm_specifier(s: &[u8]) -> bool {
     let is_sep = |b: u8| b == b'/' || b == b'\\';
     match s {
@@ -74,10 +69,9 @@ fn is_bare_esm_specifier(s: &[u8]) -> bool {
         [d, b':', b, ..] if d.is_ascii_alphabetic() && is_sep(*b) => return false,
         _ => {}
     }
-    // A leading URL scheme (`[A-Za-z][A-Za-z0-9+.-]*:`) is URL-like, not a
-    // package: Node reports those as scheme/URL errors, never "Cannot find
-    // package 'file:'". `':://x'` stays a package — ':' cannot start a scheme
-    // (Node says "Cannot find package '::'").
+    // Leading URL scheme (`[A-Za-z][A-Za-z0-9+.-]*:`, RFC 3986 §3.1) is not a
+    // bare package — Node reports scheme errors, not "Cannot find package 'file:'".
+    // https://github.com/nodejs/node/blob/main/lib/internal/modules/esm/resolve.js
     if s[0].is_ascii_alphabetic() {
         for (i, &b) in s.iter().enumerate() {
             match b {
@@ -541,10 +535,9 @@ impl ResolveMessage {
         }
     }
 
-    /// The `<name>` used by `toString()` / `.stack`, or `None` when the error
-    /// keeps Bun's ResolveMessage rendering. Node renders the code in brackets
-    /// for its `E()`-constructed errors (`Error [ERR_MODULE_NOT_FOUND]: ...`),
-    /// while CJS MODULE_NOT_FOUND is a plain `Error: ...`.
+    /// `toString()`/`.stack` name, or `None` to keep Bun's ResolveMessage render.
+    /// Node's `E()` errors bracket the code (`Error [ERR_MODULE_NOT_FOUND]`); CJS
+    /// is plain `Error`. https://github.com/nodejs/node/blob/main/lib/internal/errors.js
     pub(crate) fn node_display_name(&self) -> Option<&'static [u8]> {
         if let Some((.., display)) = self.node_tag() {
             return Some(display);

@@ -206,10 +206,8 @@ fn generate_default_filename(
     Ok(&buf[..len])
 }
 
-/// Node's DiagnosticFilename format (src/util.cc MakeFilename): local time,
-/// main-thread tid 0, and one 3-digit sequence shared by every diagnostic
-/// filename in the process (CPU and Heap draw from the same counter):
-/// `<prefix>.<yyyymmdd>.<hhmmss>.<pid>.<tid>.<seq><extension>`.
+/// Node's DiagnosticFilename: `<prefix>.<yyyymmdd>.<hhmmss>.<pid>.<tid>.<seq><extension>`.
+/// https://github.com/nodejs/node/blob/main/src/util.cc (MakeFilename)
 pub(crate) fn write_diagnostic_filename(
     cursor: &mut dyn std::io::Write,
     prefix: &str,

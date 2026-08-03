@@ -45,10 +45,8 @@ macro_rules! __decl_uv_e {
     ( $( $ident:ident = $value:expr => $display:literal ),+ $(,)? ) => {
         $( pub const $ident: i32 = $value; )+
 
-        /// The full (negated code, name) table for this target —
-        /// target-independent libuv-synthetic codes (values from
-        /// vendor/libuv/include/uv/errno.h) first, then the per-OS rows.
-        /// Consumed by `name()` and node:util's `getSystemErrorMap()`.
+        /// Full (negated code, name) table: libuv-synthetic codes (vendor/libuv/include/uv/errno.h)
+        /// first, then per-OS rows. Consumed by `name()` and node:util `getSystemErrorMap()`.
         pub static ENTRIES: &[(i32, &'static str)] = &[
             (-4095, "EOF"),
             (-4094, "UNKNOWN"),
@@ -69,10 +67,8 @@ macro_rules! __decl_uv_e {
             $( (-($ident), $display) ),+
         ];
 
-        /// Negated libuv error code (`-UV_E*`) → user-visible name.
-        /// `None` for unmapped values (caller falls back to
-        /// `"Unknown system error N"`). First match wins, mirroring the
-        /// duplicate-value tolerance of the old `if`-chain (EAGAIN aliases).
+        /// Negated libuv error code (`-UV_E*`) → user-visible name. `None` for unmapped values.
+        /// First match wins, mirroring the old `if`-chain's duplicate tolerance (EAGAIN aliases).
         pub fn name(neg_uv_err: i32) -> Option<&'static str> {
             for &(code, name) in ENTRIES {
                 if code == neg_uv_err {

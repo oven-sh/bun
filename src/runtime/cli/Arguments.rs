@@ -1279,10 +1279,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             };
         }
 
-        // Node's --diagnostic-dir is the fallback output directory for every
-        // diagnostic artifact; the profiler-specific --cpu-prof-dir /
-        // --heap-prof-dir override it.
-        // https://github.com/nodejs/node/blob/v26.3.0/src/node_options.cc#L542-L546
+        // --diagnostic-dir is the fallback output dir; --cpu-prof-dir/--heap-prof-dir override it.
+        // https://github.com/nodejs/node/blob/main/src/node_options.cc (diagnostic_dir)
         let diagnostic_dir = args.option(b"--diagnostic-dir");
 
         let cpu_prof_flag = args.flag(b"--cpu-prof");

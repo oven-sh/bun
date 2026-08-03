@@ -219,10 +219,8 @@ function serialize(arg1) {
   return framed;
 }
 
-// Node's DiagnosticFilename:
-// `Heap.<yyyymmdd>.<hhmmss>.<pid>.<threadId>.<seq>.heapsnapshot` in local time,
-// with a zero-padded three-digit sequence number that starts at 001.
-// https://github.com/nodejs/node/blob/v26.3.0/src/util.cc#L318-L347
+// Node's DiagnosticFilename: `Heap.<yyyymmdd>.<hhmmss>.<pid>.<threadId>.<seq>.heapsnapshot`
+// in local time. https://github.com/nodejs/node/blob/main/src/util.cc (DiagnosticFilename)
 let heapSnapshotSeq = 0;
 function getDefaultHeapSnapshotPath() {
   const date = new Date();

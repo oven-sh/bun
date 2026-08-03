@@ -133,10 +133,9 @@ impl Default for InitOptions {
     }
 }
 
-/// `performance.nodeTiming` startup milestones. Node reports these relative to
-/// the process start; Bun's clock origin is `VirtualMachine::origin_timer`, so
-/// each one is stamped at the closest equivalent point of Bun's startup.
-/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/nodetiming.js
+/// `performance.nodeTiming` milestones, stamped at Bun's closest equivalent
+/// startup point relative to `VirtualMachine::origin_timer`.
+/// https://github.com/nodejs/node/blob/main/lib/internal/perf/nodetiming.js
 #[derive(Clone, Copy)]
 #[repr(u32)]
 pub enum NodeTimingMilestone {

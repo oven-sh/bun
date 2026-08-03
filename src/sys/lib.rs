@@ -7167,12 +7167,9 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
         w::FILE_OPEN_REPARSE_POINT
     };
 
-    // libuv reports `EISDIR` from the open itself when an `O_CREAT` (but not
-    // `O_EXCL`) open lands on a directory: `CreateFileW` fails with
-    // `ERROR_FILE_EXISTS` for those dispositions and `fs__open` remaps it.
+    // libuv's fs__open returns EISDIR at open time for O_CREAT-without-O_EXCL on a directory;
+    // without FILE_NON_DIRECTORY_FILE, NtCreateFile would defer the failure to write().
     // https://github.com/libuv/libuv/blob/v1.52.0/src/win/fs.c#L619-L629
-    // `NtCreateFile` would instead hand back a directory handle and defer the
-    // failure to the first write, which surfaces as `EISDIR` on `write`.
     if creat && !excl {
         opts |= w::FILE_NON_DIRECTORY_FILE;
     }

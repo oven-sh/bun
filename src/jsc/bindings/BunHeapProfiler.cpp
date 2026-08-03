@@ -948,10 +948,9 @@ static WTF::String generateHeapSnapshotV8(JSC::VM& vm)
     return builder.json();
 }
 
-// JSC has no allocation-site sampling heap profiler, so live bytes cannot be
-// attributed to the call frames that allocated them. Report the real live-heap
-// size on the (root) frame — the frame V8 uses for unattributable allocations
-// — with no samples, in V8's SamplingHeapProfile JSON shape.
+// JSC has no allocation-site sampling heap profiler; emit V8's SamplingHeapProfile
+// shape with the live-heap size on the (root) frame and no samples.
+// https://chromedevtools.github.io/devtools-protocol/tot/HeapProfiler/#type-SamplingHeapProfile
 static WTF::String generateSamplingHeapProfileV8(JSC::VM& vm)
 {
     WTF::StringBuilder output;

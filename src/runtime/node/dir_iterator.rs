@@ -15,17 +15,6 @@ use bun_sys::{self as sys, Fd, Tag};
 // `bun_sys::EntryKind` (and as `crate::node::types::DirentKind`).
 use bun_sys::EntryKind;
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IteratorError {
-    #[error("AccessDenied")]
-    AccessDenied,
-    #[error("SystemResources")]
-    SystemResources,
-    /// posix.UnexpectedError
-    #[error("Unexpected")]
-    Unexpected,
-}
-
 pub struct IteratorResult {
     /// `RawSlice` invariant: borrows the iterator's `getdents` buffer
     /// (streaming-iterator contract — invalidated on next `next()` call).

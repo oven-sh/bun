@@ -35,7 +35,6 @@ pub(crate) fn freemem() -> u64 {
 
 mod _impl {
     use super::*;
-    use crate::node::ErrorCode;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use bun_core::ZStr;
     use bun_core::ZigString;
@@ -266,8 +265,7 @@ mod _impl {
             Err(_) => {
                 let err = SystemError {
                     message: BunString::static_("Failed to get CPU information").into(),
-                    code: BunString::static_(<&'static str>::from(ErrorCode::ERR_SYSTEM_ERROR))
-                        .into(),
+                    code: BunString::static_("ERR_SYSTEM_ERROR").into(),
                     ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance(global)))

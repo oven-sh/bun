@@ -59,16 +59,13 @@ pub struct ErrorCode(pub ErrorCodeInt);
 include!(concat!(env!("BUN_CODEGEN_DIR"), "/ErrorCode.generated.rs"));
 
 // NOTE: `ERR_SYSTEM_ERROR` / `ERR_CHILD_CLOSED_BEFORE_REPLY` intentionally
-// do NOT live here. They belong to the unrelated enum
-// `bun_runtime::node::nodejs_error_code::ErrorCode`, not to the
-// ErrorCode.ts-derived table this type mirrors. Adding them here with
-// out-of-range discriminants (≥ Self::COUNT) is a memory-safety bug: the
-// C++ side does `errors[static_cast<size_t>(code)]` against a fixed
-// `errors[COUNT]` array with no bounds check (ErrorCode.cpp /
-// ErrorCode+Data.h), so any such value reaching `ErrorCode::fmt()` →
-// `Bun__createErrorWithCode` reads past the array and past
-// `ErrorCodeCache::internalField`. Callers needing those tags must use
-// `bun_runtime::node::nodejs_error_code::ErrorCode` directly.
+// do NOT live here. Adding them with out-of-range discriminants
+// (≥ Self::COUNT) is a memory-safety bug: the C++ side does
+// `errors[static_cast<size_t>(code)]` against a fixed `errors[COUNT]` array
+// with no bounds check (ErrorCode.cpp / ErrorCode+Data.h), so any such value
+// reaching `ErrorCode::fmt()` → `Bun__createErrorWithCode` reads past the
+// array and past `ErrorCodeCache::internalField`. Callers needing those tags
+// must pass the string literal on `SystemError.code` directly.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Legacy anyerror-wrapper sentinels.

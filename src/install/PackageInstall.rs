@@ -1631,11 +1631,7 @@ impl<'a> PackageInstall<'a> {
                             );
                         }
                         EntryKind::File => {
-                            // Map raw errno to the error names the caller's
-                            // `NotSameFileSystem` / `ENXIO` checks (and the
-                            // copyfile fallback in `install()`) expect.
-                            // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not
-                            // support hardlinks.
+                            // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
                             fn map_linkat_err(err: sys::Error) -> crate::Error {
                                 match err.get_errno() {
                                     sys::E::EXDEV | sys::E::EACCES | sys::E::EPERM => {

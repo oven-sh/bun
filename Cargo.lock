@@ -1454,13 +1454,11 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_core",
- "bun_opaque",
  "const_format",
  "enum-map",
  "enumset",
  "libc",
  "scopeguard",
- "strum",
  "thiserror",
 ]
 

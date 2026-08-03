@@ -2114,10 +2114,9 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(CustomGetterSetter::create(init.vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter));
         });
 
-    m_JSDOMFileConstructor.initLater(
-        [](const Initializer<JSObject>& init) {
-            JSObject* fileConstructor = Bun::createJSDOMFileConstructor(init.vm, init.owner);
-            init.set(fileConstructor);
+    m_JSDOMFileClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupJSDOMFileClassStructure(init);
         });
 
     m_cryptoObject.initLater(
@@ -2846,26 +2845,6 @@ void GlobalObject::finishCreation(VM& vm)
     addBuiltinGlobals(vm);
 
     ASSERT(classInfo());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(JSDOMFileConstructor_getter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    Zig::GlobalObject* bunGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    return JSValue::encode(
-        bunGlobalObject->JSDOMFileConstructor());
-}
-
-JSC_DEFINE_CUSTOM_SETTER(JSDOMFileConstructor_setter,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value, JSC::PropertyName property))
-{
-    if (JSValue::decode(thisValue) != globalObject) {
-        return false;
-    }
-
-    auto& vm = JSC::getVM(globalObject);
-    globalObject->putDirect(vm, property, JSValue::decode(value), 0);
-    return true;
 }
 
 // `console.Console` or `import { Console } from 'console';`

@@ -111,13 +111,13 @@ impl<'a> Line for &'a [u16] {
 ///
 /// The `eql` dispatch is the `Line` trait. To supply a custom equality
 /// function, implement `Line` for your type.
-pub struct Differ<L, const CHECK_COMMA_DISPARITY: bool = false>(PhantomData<L>);
+pub(crate) struct Differ<L, const CHECK_COMMA_DISPARITY: bool = false>(PhantomData<L>);
 
 impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY> {
     // `V = [-MAX, MAX]`.
 
     #[inline]
-    pub(crate) fn eql(a: L, b: L) -> bool {
+    fn eql(a: L, b: L) -> bool {
         L::line_eq::<CHECK_COMMA_DISPARITY>(a, b)
     }
 
@@ -395,7 +395,7 @@ impl fmt::Display for DiffKind {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Diff<T> {
-    pub kind: DiffKind,
+    pub(crate) kind: DiffKind,
     pub value: T,
 }
 
@@ -407,7 +407,7 @@ impl<T: fmt::Display> fmt::Display for Diff<T> {
     }
 }
 
-pub type DiffList<T> = Vec<Diff<T>>;
+pub(crate) type DiffList<T> = Vec<Diff<T>>;
 
 // =============================================================================
 
@@ -518,7 +518,7 @@ mod tests {
     }
 }
 
-pub fn split<T>(s: &[T]) -> Vec<&[T]>
+pub(crate) fn split<T>(s: &[T]) -> Vec<&[T]>
 where
     T: PartialEq + Copy + From<u8>,
 {

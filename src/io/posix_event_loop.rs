@@ -27,8 +27,6 @@ fn loop_sub_active(loop_: &mut Loop, value: u32) {
     loop_.active = loop_.active.saturating_sub(value);
 }
 
-bun_core::declare_scope!(KeepAlive, visible);
-
 #[cfg(not(windows))]
 use bun_sys::syslog;
 
@@ -108,7 +106,7 @@ pub enum FileType {
 }
 
 impl FileType {
-    pub fn is_blocking(self) -> bool {
+    pub(crate) fn is_blocking(self) -> bool {
         self == FileType::Pipe
     }
 }
@@ -208,7 +206,6 @@ pub enum PollTag {
     BufferedReader,
     DnsResolver,
     GetAddrInfoRequest,
-    Request,
     Process,
     ShellBufferedWriter,
     TerminalPoll,
@@ -231,7 +228,6 @@ pub mod poll_tag {
     pub const BUFFERED_READER: PollTag = PollTag::BufferedReader;
     pub const DNS_RESOLVER: PollTag = PollTag::DnsResolver;
     pub const GET_ADDR_INFO_REQUEST: PollTag = PollTag::GetAddrInfoRequest;
-    pub const REQUEST: PollTag = PollTag::Request;
     pub const PROCESS: PollTag = PollTag::Process;
     pub const SHELL_BUFFERED_WRITER: PollTag = PollTag::ShellBufferedWriter;
     pub const TERMINAL_POLL: PollTag = PollTag::TerminalPoll;
@@ -243,12 +239,13 @@ pub mod poll_tag {
 
 #[derive(Copy, Clone)]
 pub struct Owner {
-    pub tag: PollTag,
+    pub(crate) tag: PollTag,
     pub ptr: *mut (),
 }
 
 impl Owner {
-    pub const NULL: Owner = Owner {
+    #[cfg(not(windows))]
+    pub(crate) const NULL: Owner = Owner {
         tag: PollTag::Null,
         ptr: core::ptr::null_mut(),
     };
@@ -261,7 +258,8 @@ impl Owner {
         self.ptr.is_null()
     }
     #[inline]
-    pub fn clear(&mut self) {
+    #[cfg(not(windows))]
+    pub(crate) fn clear(&mut self) {
         *self = Self::NULL;
     }
     #[inline]
@@ -297,10 +295,10 @@ pub struct FilePoll {
     /// That means we might run into situations where the event is stale.
     /// on macOS kevent64 has an extra pointer field so we use it for that
     /// linux doesn't have a field like that
-    pub generation_number: KQueueGenerationNumber,
-    pub next_to_free: *mut FilePoll,
+    pub(crate) generation_number: KQueueGenerationNumber,
+    pub(crate) next_to_free: *mut FilePoll,
 
-    pub allocator_type: AllocatorType,
+    pub(crate) allocator_type: AllocatorType,
 }
 
 #[cfg(not(windows))]
@@ -333,7 +331,7 @@ impl FilePoll {
         self.flags = flags;
     }
 
-    pub fn file_type(&self) -> FileType {
+    pub(crate) fn file_type(&self) -> FileType {
         let flags = self.flags;
         if flags.contains(Flags::Socket) {
             return FileType::Socket;
@@ -350,7 +348,7 @@ impl FilePoll {
     // `EventLoopCtx::platform_event_loop()` when they re-enter the loop
     // (`register_with_fd`/`unregister`/`deinit`).
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    pub fn on_kqueue_event(&mut self, kqueue_event: &KQueueEvent) {
+    pub(crate) fn on_kqueue_event(&mut self, kqueue_event: &KQueueEvent) {
         self.update_flags(Flags::from_kqueue_event(kqueue_event));
         syslog!("onKQueueEvent: {}", self);
 
@@ -369,7 +367,7 @@ impl FilePoll {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn on_epoll_event(&mut self, epoll_event: &bun_sys::linux::epoll_event) {
+    pub(crate) fn on_epoll_event(&mut self, epoll_event: &bun_sys::linux::epoll_event) {
         self.update_flags(Flags::from_epoll_event(epoll_event));
         self.on_update(0);
     }
@@ -393,7 +391,7 @@ impl FilePoll {
         self.deinit_possibly_defer(ctx, false);
     }
 
-    pub fn deinit_force_unregister(&mut self) {
+    pub(crate) fn deinit_force_unregister(&mut self) {
         let ctx = get_vm_ctx(self.allocator_type);
         self.deinit_possibly_defer(ctx, true);
     }
@@ -433,7 +431,7 @@ impl FilePoll {
             || self.flags.contains(Flags::PollMemoryPressure)
     }
 
-    pub fn on_update(&mut self, size_or_offset: i64) {
+    pub(crate) fn on_update(&mut self, size_or_offset: i64) {
         if self.flags.contains(Flags::OneShot) && !self.flags.contains(Flags::NeedsRearm) {
             self.flags.insert(Flags::NeedsRearm);
         }
@@ -449,12 +447,12 @@ impl FilePoll {
     }
 
     #[inline]
-    pub fn is_active(&self) -> bool {
+    pub(crate) fn is_active(&self) -> bool {
         self.flags.contains(Flags::HasIncrementedPollCount)
     }
 
     #[inline]
-    pub fn is_watching(&self) -> bool {
+    pub(crate) fn is_watching(&self) -> bool {
         !self.flags.contains(Flags::NeedsRearm)
             && (self.flags.contains(Flags::PollReadable)
                 || self.flags.contains(Flags::PollWritable)
@@ -469,20 +467,6 @@ impl FilePoll {
 
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
-    }
-
-    #[inline]
-    pub fn can_enable_keeping_process_alive(&self) -> bool {
-        self.flags.contains(Flags::KeepsEventLoopAlive)
-            && self.flags.contains(Flags::HasIncrementedPollCount)
-    }
-
-    pub fn set_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx, value: bool) {
-        if value {
-            self.enable_keeping_process_alive(event_loop_ctx);
-        } else {
-            self.disable_keeping_process_alive(event_loop_ctx);
-        }
     }
 
     pub fn enable_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx) {
@@ -568,21 +552,6 @@ impl FilePoll {
             fd
         );
         poll
-    }
-
-    /// Prevent a poll from keeping the process alive.
-    pub fn unref(&mut self, event_loop_ctx: EventLoopCtx) {
-        syslog!("unref");
-        self.disable_keeping_process_alive(event_loop_ctx);
-    }
-
-    /// Allow a poll to keep the process alive.
-    pub fn ref_(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.flags.contains(Flags::Closed) {
-            return;
-        }
-        syslog!("ref");
-        self.enable_keeping_process_alive(event_loop_ctx);
     }
 
     pub fn register(&mut self, loop_: &mut Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {
@@ -905,7 +874,7 @@ impl FilePoll {
         self.unregister_with_fd(loop_, self.fd, force_unregister)
     }
 
-    pub fn unregister_with_fd(
+    pub(crate) fn unregister_with_fd(
         &mut self,
         loop_: &mut Loop,
         fd: Fd,
@@ -1260,7 +1229,7 @@ pub type FlagsSet = enumset::EnumSet<Flags>;
 
 impl Flags {
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    pub fn from_kqueue_event(kqueue_event: &KQueueEvent) -> FlagsSet {
+    pub(crate) fn from_kqueue_event(kqueue_event: &KQueueEvent) -> FlagsSet {
         #[cfg(target_os = "macos")]
         use bun_sys::darwin::EVFILT;
         #[cfg(target_os = "freebsd")]
@@ -1292,7 +1261,7 @@ impl Flags {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn from_epoll_event(epoll: &bun_sys::linux::epoll_event) -> FlagsSet {
+    pub(crate) fn from_epoll_event(epoll: &bun_sys::linux::epoll_event) -> FlagsSet {
         use bun_sys::linux::EPOLL;
         let mut flags = FlagsSet::empty();
         if epoll.events & EPOLL::IN != 0 {
@@ -1364,11 +1333,11 @@ impl Store {
 
     /// Claim a hive slot and move `value` into it. Infallible (heap fallback).
     #[inline]
-    pub fn get_init(&mut self, value: FilePoll) -> ptr::NonNull<FilePoll> {
+    pub(crate) fn get_init(&mut self, value: FilePoll) -> ptr::NonNull<FilePoll> {
         self.hive.get_init(value)
     }
 
-    pub fn process_deferred_frees(&mut self) {
+    pub(crate) fn process_deferred_frees(&mut self) {
         let mut next = self.pending_free_head;
         while !next.is_null() {
             let current = next;
@@ -1514,7 +1483,7 @@ impl Pollable {
 /// # Safety
 /// uWS C callback: `loop_` is the live per-thread `us_loop_t`; `tagged_pointer`
 /// was registered via `Pollable::init` in `register_with_fd`.
-pub(crate) unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
+unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
     loop_: *mut Loop,
     tagged_pointer: *mut c_void,
 ) {
@@ -1577,7 +1546,7 @@ pub use crate::waker::KEventWaker;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 pub use crate::waker::Waker;
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 mod tests {
     use super::*;
 
@@ -1587,7 +1556,6 @@ mod tests {
     /// every real errno — panicking at the `.unwrap()` call sites whenever an
     /// `EV_DELETE` failed (e.g. EBADF/ENOENT from a pipe fd closed while its
     /// `FilePoll` was still registered).
-    #[cfg(not(windows))]
     #[test]
     fn kevent_change_error_decodes_errno_value_not_return_code() {
         let err = kevent_change_error(sys::E::EBADF as i64).unwrap_err();

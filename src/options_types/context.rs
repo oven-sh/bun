@@ -228,6 +228,7 @@ pub struct BundlerOptions {
     pub compile_autoload_tsconfig: bool,
     pub compile_autoload_package_json: bool,
     pub compile_executable_path: Option<Box<[u8]>>,
+    pub compile_assets: Vec<Box<[u8]>>,
     pub windows: bundle_enums::WindowsOptions,
     pub allow_unresolved: Option<Vec<Box<[u8]>>>,
 }
@@ -278,6 +279,7 @@ impl Default for BundlerOptions {
             compile_autoload_tsconfig: false,
             compile_autoload_package_json: false,
             compile_executable_path: None,
+            compile_assets: Vec::new(),
             windows: bundle_enums::WindowsOptions::default(),
             allow_unresolved: None,
         }
@@ -330,8 +332,6 @@ pub fn try_get<'a>() -> Option<&'a ContextData> {
 
 pub struct DebugOptions {
     pub dump_environment_variables: bool,
-    pub dump_limits: bool,
-    pub fallback_only: bool,
     pub silent: bool,
     pub hot_reload: HotReload,
     /// `--watch-kill-signal`: signal whose JS handlers run before a `--watch`
@@ -362,8 +362,6 @@ impl Default for DebugOptions {
     fn default() -> Self {
         Self {
             dump_environment_variables: false,
-            dump_limits: false,
-            fallback_only: false,
             silent: false,
             hot_reload: HotReload::None,
             watch_kill_signal: bun_core::SignalCode::DEFAULT,
@@ -555,6 +553,9 @@ pub struct RuntimeOptions {
     /// `Function` constructor throw `EvalError`, matching the V8 flag node
     /// exposes under the same name.
     pub disallow_code_generation_from_strings: bool,
+    /// `--interactive` starts the Node.js-compatible REPL (node:repl), like
+    /// `node --interactive`. (`-i` is taken by `--install=fallback`.)
+    pub interactive: bool,
     pub preserve_symlinks_main: bool,
     pub console_depth: Option<u16>,
     pub cron_title: Box<[u8]>,
@@ -578,6 +579,10 @@ pub struct Eval {
     /// `--input-type`: module type for string input (stdin / `--eval`),
     /// "module" or "commonjs". Empty when not passed.
     pub input_type: Box<[u8]>,
+    /// Under `--interactive`, `script` holds the node:repl bootstrap; this
+    /// holds the user's actual `-e` bytes so `process._eval` reports them
+    /// (or `undefined` when empty). `None` = not `--interactive`.
+    pub interactive_script: Option<Box<[u8]>>,
 }
 
 impl Eval {
@@ -639,6 +644,7 @@ impl Default for RuntimeOptions {
             dns_result_order: Box::from(&b"verbatim"[..]),
             expose_gc: false,
             disallow_code_generation_from_strings: false,
+            interactive: false,
             preserve_symlinks_main: false,
             console_depth: None,
             cron_title: Box::default(),

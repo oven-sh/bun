@@ -276,6 +276,8 @@ declare const $FinalizationRegistryPrototype: FinalizationRegistry<any>;
 declare const $FinalizationRegistryPrototypeRegister: PrimordialMethod<FinalizationRegistry<any>, "register">;
 declare const $FinalizationRegistryPrototypeUnregister: PrimordialMethod<FinalizationRegistry<any>, "unregister">;
 declare const $FinalizationRegistryPrototypeConstructor: PrimordialMethod<FinalizationRegistry<any>, "constructor">;
+declare const $Float16ArrayPrototype: Float16Array;
+declare const $Float16ArrayPrototypeConstructor: PrimordialMethod<Float16Array, "constructor">;
 declare const $Float32ArrayPrototype: Float32Array;
 declare const $Float32ArrayPrototypeConstructor: PrimordialMethod<Float32Array, "constructor">;
 declare const $Float64ArrayPrototype: Float64Array;
@@ -314,6 +316,7 @@ declare const $IteratorPrototypeFilter: PrimordialMethod<IteratorObject<any>, "f
 declare const $IteratorPrototypeTake: PrimordialMethod<IteratorObject<any>, "take">;
 declare const $IteratorPrototypeDrop: PrimordialMethod<IteratorObject<any>, "drop">;
 declare const $IteratorPrototypeFlatMap: PrimordialMethod<IteratorObject<any>, "flatMap">;
+declare const $IteratorPrototypeIncludes: PrimordialMethod<IteratorObject<any>, "includes">;
 declare const $IteratorPrototypeSymbolIterator: PrimordialMethod<IteratorObject<any>, typeof Symbol.iterator>;
 declare const $IteratorPrototypeGetSymbolToStringTag: PrimordialGetter<IteratorObject<any>, typeof Symbol.toStringTag>;
 declare const $IteratorPrototypeSetSymbolToStringTag: PrimordialSetter<IteratorObject<any>, typeof Symbol.toStringTag>;

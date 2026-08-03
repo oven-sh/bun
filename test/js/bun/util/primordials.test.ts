@@ -198,7 +198,7 @@ const referenceBuilderSource = /* js */ `
   ["Proxy", "globalThis"].forEach(name => { primordials[name] = globalThis[name]; });
   [decodeURI, decodeURIComponent, encodeURI, encodeURIComponent, escape, eval, unescape].forEach(fn => { primordials[fn.name] = fn; });
   ["Atomics", "JSON", "Math", "Proxy", "Reflect"].forEach(name => { copyPropsRenamed(globalThis[name], primordials, name); });
-  ["AggregateError","Array","ArrayBuffer","BigInt","BigInt64Array","BigUint64Array","Boolean","DataView","Date","Error","EvalError","FinalizationRegistry","Float32Array","Float64Array","Function","Int16Array","Int32Array","Int8Array","Iterator","Map","Number","Object","RangeError","ReferenceError","RegExp","Set","String","Symbol","SyntaxError","TypeError","URIError","Uint16Array","Uint32Array","Uint8Array","Uint8ClampedArray","WeakMap","WeakRef","WeakSet"].forEach(name => {
+  __CONSTRUCTORS__.forEach(name => {
     const original = globalThis[name];
     primordials[name] = original;
     copyPropsRenamed(original, primordials, name);
@@ -331,9 +331,16 @@ describe.concurrent("primordials manifest", () => {
     // Differential oracle: run Node's construction algorithm by value in a fresh
     // realm and compare all members: presence, typeof, function .length (catches
     // receiver-binding/uncurrying mistakes everywhere at once), literal equality.
+    // The reference's constructor list is the probe's own, so they can't drift.
+    const probeSource = await Bun.file(
+      new URL("../../../../src/codegen/generate-primordials-probe.js", import.meta.url),
+    ).text();
+    const constructorList = probeSource.match(/prototype's\.\nfor \(const name of (\[[\s\S]*?\n\])\)/)?.[1];
+    expect(constructorList).toBeString();
+    const builder = referenceBuilderSource.replace("__CONSTRUCTORS__", constructorList!);
     const { stdout, stderr, exitCode } = await runChild(/* js */ `
       const vm = require("node:vm");
-      const referenceBuilder = ${JSON.stringify(referenceBuilderSource)};
+      const referenceBuilder = ${JSON.stringify(builder)};
       const reference = vm.runInNewContext(referenceBuilder);
       // Bun customizes its own globals' Error statics (captureStackTrace,
       // stackTraceLimit) at bootstrap and a bare realm doesn't: re-anchor those

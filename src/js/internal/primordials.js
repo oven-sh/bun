@@ -341,6 +341,13 @@ const primordials = {
   FinalizationRegistryPrototypeUnregister: uncurryThis($FinalizationRegistryPrototypeUnregister),
   FinalizationRegistryPrototypeConstructor: uncurryThis($FinalizationRegistryPrototypeConstructor),
   FinalizationRegistryPrototypeSymbolToStringTag: "FinalizationRegistry",
+  Float16Array: $Float16Array,
+  Float16ArrayLength: 3,
+  Float16ArrayName: "Float16Array",
+  Float16ArrayPrototype: $Float16ArrayPrototype,
+  Float16ArrayBYTES_PER_ELEMENT: 2,
+  Float16ArrayPrototypeBYTES_PER_ELEMENT: 2,
+  Float16ArrayPrototypeConstructor: uncurryThis($Float16ArrayPrototypeConstructor),
   Float32Array: $Float32Array,
   Float32ArrayLength: 3,
   Float32ArrayName: "Float32Array",
@@ -411,6 +418,7 @@ const primordials = {
   IteratorPrototypeTake: uncurryThis($IteratorPrototypeTake),
   IteratorPrototypeDrop: uncurryThis($IteratorPrototypeDrop),
   IteratorPrototypeFlatMap: uncurryThis($IteratorPrototypeFlatMap),
+  IteratorPrototypeIncludes: uncurryThis($IteratorPrototypeIncludes),
   IteratorPrototypeSymbolIterator: uncurryThis($IteratorPrototypeSymbolIterator),
   IteratorPrototypeGetSymbolToStringTag: uncurryThis($IteratorPrototypeGetSymbolToStringTag),
   IteratorPrototypeSetSymbolToStringTag: uncurryThis($IteratorPrototypeSetSymbolToStringTag),
@@ -1265,12 +1273,13 @@ const makeSafeFromPristine = (unsafe, safe, prototypeDescriptors, staticDescript
 // (as in Node); zero-arg iterator-returning methods are rewrapped so the copies
 // hand out safe iterators over a captured pristine `next`.
 const makeSafe = (unsafe, safe) => {
-  if (SymbolIterator in unsafe.prototype) {
+  const unsafePrototype = unsafe.prototype;
+  if (SymbolIterator in unsafePrototype) {
     const dummy = new unsafe();
     let next; // We can reuse the same `next` method.
-    ArrayPrototypeForEach(ReflectOwnKeys(unsafe.prototype), key => {
+    ArrayPrototypeForEach(ReflectOwnKeys(unsafePrototype), key => {
       if (ReflectGetOwnPropertyDescriptor(safe.prototype, key)) return;
-      const descriptor = ReflectGetOwnPropertyDescriptor(unsafe.prototype, key);
+      const descriptor = ReflectGetOwnPropertyDescriptor(unsafePrototype, key);
       if (
         typeof descriptor.value === "function" &&
         descriptor.value.length === 0 &&
@@ -1286,7 +1295,7 @@ const makeSafe = (unsafe, safe) => {
       ReflectDefineProperty(safe.prototype, key, { __proto__: null, ...descriptor });
     });
   } else {
-    copyOwnProperties(unsafe.prototype, safe.prototype);
+    copyOwnProperties(unsafePrototype, safe.prototype);
   }
   copyOwnProperties(unsafe, safe);
   return detachAndFreeze(safe);
@@ -1520,13 +1529,14 @@ primordials.SafeStringPrototypeSearch = (str, regexp) => {
 
 // Chunked push.apply so arbitrarily large arrays don't exhaust the stack.
 primordials.SafeArrayPrototypePushApply = (array, items) => {
+  const { length } = items;
   let end = 0x10000;
-  if (end < items.length) {
+  if (end < length) {
     let start = 0;
     do {
       ArrayPrototypePushApply(array, ArrayPrototypeSlice(items, start, (start = end)));
       end += 0x10000;
-    } while (end < items.length);
+    } while (end < length);
     items = ArrayPrototypeSlice(items, start);
   }
   return ArrayPrototypePushApply(array, items);

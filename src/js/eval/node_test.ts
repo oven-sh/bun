@@ -78,9 +78,9 @@ function fatal(err: unknown): never {
   process.exit(1);
 }
 
-// File discovery — see https://github.com/nodejs/node/blob/main/lib/internal/test_runner/runner.js
-// node's default (utils.js:71-77) omits ts/mts/cts without --strip-types. Split into
-// two globs: Bun.Glob mis-parses `test/**/*` nested inside a brace group.
+// File discovery — node's createTestFileList / kDefaultPattern:
+// https://github.com/nodejs/node/blob/main/lib/internal/test_runner/runner.js
+// Split into two globs: Bun.Glob mis-parses `test/**/*` nested in a brace group.
 const kDefaultPatterns = ["**/{test,test-*,*[._-]test}.{js,mjs,cjs}", "**/test/**/*.{js,mjs,cjs}"];
 const kGlobMagic = /[*?[\]{}!]/;
 function hasNoGlobMagic(pattern) {
@@ -323,9 +323,9 @@ async function main() {
 
   debug("run options: %o", runOptions);
 
-  // Resolve every reporter before run() spawns anything, like node's bootstrap
-  // awaits setupTestReporters() — a post-spawn failed import would exit(7) with
-  // an orphaned child and a truncated stream.
+  // Resolve every reporter before run() spawns anything (node awaits
+  // setupTestReporters() at bootstrap): a later failed import would orphan a
+  // child, and an earlier pipe would start the Readable flowing too soon.
   let resolved: unknown[];
   try {
     resolved = await Promise.all(reporterNames.map(resolveReporter));
@@ -342,9 +342,9 @@ async function main() {
   const abortController = new AbortController();
   runOptions.signal = abortController.signal;
 
-  // node's harness installs SIGINT/SIGTERM only under --test (isTestRunner);
-  // owned here so a library run() never suppresses default Ctrl+C. Routed
-  // through the run's abort signal to kill the current child and stop spawning.
+  // node's harness installs process signal handlers only under --test
+  // (isTestRunner), so the CLI driver — not library run() — owns them here.
+  // https://github.com/nodejs/node/blob/main/lib/internal/test_runner/harness.js
   function onRunnerSignal() {
     abortController.abort();
     if (runOptions.isolation === "none") {

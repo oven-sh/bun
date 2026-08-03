@@ -1443,7 +1443,7 @@ fn migrate_npm_lockfile<'a>(
                 //
                 // If this is hit, it means getOrPutID was not called on this package id. Look for where 'resolution[i]' is set
                 debug_assert!(
-                    this.get_package_id(this.packages.items_name_hash()[i], None, r)
+                    this.get_package_id(this.packages.items_name_hash()[i], r)
                         .is_some()
                 );
             }

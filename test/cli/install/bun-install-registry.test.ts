@@ -7,7 +7,6 @@ import {
   assertManifestsPopulated,
   bunExe,
   bunEnv as env,
-  isFlaky,
   isMacOS,
   isWindows,
   mergeWindowEnvs,
@@ -3663,7 +3662,7 @@ describe("hoisting", async () => {
       },
     ];
     for (const { dependencies, expected, situation } of peerTests) {
-      test.todoIf(isFlaky && isMacOS && situation === "peer ^1.0.2")(
+      test(
         `it should hoist ${expected} when ${situation}`,
         async () => {
           await writeFile(
@@ -4253,7 +4252,7 @@ describe("hoisting", async () => {
     });
   });
 
-  test.todoIf(isFlaky && isWindows)("text lockfile is hoisted", async () => {
+  test("text lockfile is hoisted", async () => {
     // Each dependency depends on 'hoist-lockfile-shared'.
     // 1 - "*"
     // 2 - "^1.0.1"

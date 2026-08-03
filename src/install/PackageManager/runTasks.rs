@@ -18,9 +18,7 @@ use bun_install::{
     Repository,
 };
 // Import the *module* under the `Task` name so `Task::Id` resolves as a path.
-use super::{
-    Command, PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList,
-};
+use super::{Command, PackageInstaller, PackageManager, ProgressStrings, Subcommand};
 use super::{directories, enqueue};
 use crate::dependency::Behavior;
 use crate::isolated_install::installer as store_installer;
@@ -59,7 +57,6 @@ pub trait RunTasksCallbacks {
     const HAS_ON_EXTRACT: bool = false;
     const HAS_ON_PACKAGE_MANIFEST_ERROR: bool = false;
     const HAS_ON_PACKAGE_DOWNLOAD_ERROR: bool = false;
-    const HAS_ON_RESOLVE: bool = false;
 
     /// `Ctx == *PackageInstaller`
     const IS_PACKAGE_INSTALLER: bool = false;
@@ -114,10 +111,6 @@ pub trait RunTasksCallbacks {
         unreachable!()
     }
 
-    fn on_resolve(_ctx: &mut Self::Ctx) {
-        unreachable!()
-    }
-
     /// Reinterpret `&mut Self::Ctx` as `&mut PackageInstaller` — only valid
     /// when `IS_PACKAGE_INSTALLER` is true. Default body is unreachable; the `PackageInstaller`
     /// impl overrides it with an identity cast.
@@ -137,7 +130,6 @@ pub trait RunTasksCallbacks {
 pub fn run_tasks<C: RunTasksCallbacks>(
     manager: &mut PackageManager,
     extract_ctx: &mut C::Ctx,
-    install_peer: bool,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
     // `Cell<bool>` so the `scopeguard::defer!` below can read it via `&self`
@@ -169,7 +161,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         // (scope exit or `?` unwind); `manager_ptr` retains provenance because
         // the body only ever accessed that allocation through reborrows of it.
         let manager = unsafe { &mut *manager_ptr };
-        manager.drain_dependency_list();
+        manager.flush_pending_tasks();
 
         if log_level.show_progress() {
             manager.start_progress_bar_if_none();
@@ -420,6 +412,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         .map(crate::Error::from)
                         .unwrap_or(crate::Error::HTTPError);
 
+                    manager.mark_manifest_fetch_failed(name);
+
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
                         C::on_package_manifest_error(extract_ctx, name, err, &task.url_buf);
                     } else {
@@ -461,6 +455,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let response = &metadata.response;
 
                 if response.status_code > 399 {
+                    manager.mark_manifest_fetch_failed(name);
+
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
                         let err: PackageManifestError = match response.status_code {
                             400 => PackageManifestError::PackageManifestHTTP400,
@@ -550,6 +546,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             .manifests
                             .hash_map
                             .insert(name_hash, ManifestEntry::Manifest(manifest));
+                        manager.finished_manifest_fetches.insert(name_hash, ());
 
                         if manager.options.enable.contains(Enable::MANIFEST_CACHE) {
                             // reshaped for borrowck — compute the
@@ -573,24 +570,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 cache_fd,
                             );
                         }
-
-                        if C::MANIFESTS_ONLY {
-                            continue;
-                        }
-
-                        let dependency_list_entry = manager
-                            .task_queue
-                            .get_mut(&task.task_id)
-                            .expect("infallible: task queued");
-
-                        let dependency_list = core::mem::take(dependency_list_entry);
-
-                        process_dependency_list_for_ctx::<C>(
-                            manager,
-                            dependency_list,
-                            extract_ctx,
-                            install_peer,
-                        )?;
 
                         continue;
                     }
@@ -967,6 +946,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let name = req.name.slice();
                     let err = task.err.unwrap_or(crate::Error::Failed);
 
+                    manager.mark_manifest_fetch_failed(name);
+
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
                         C::on_package_manifest_error(extract_ctx, name, err, &req.network.url_buf);
                     } else {
@@ -997,23 +978,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 .then(|| manifest.name().to_vec());
 
                 manager.manifests.insert(name_hash, manifest)?;
+                manager.finished_manifest_fetches.insert(name_hash, ());
 
                 if C::MANIFESTS_ONLY {
                     continue;
                 }
-
-                let dependency_list_entry = manager
-                    .task_queue
-                    .get_mut(&task.id)
-                    .expect("infallible: task queued");
-                let dependency_list = core::mem::take(dependency_list_entry);
-
-                process_dependency_list_for_ctx::<C>(
-                    manager,
-                    dependency_list,
-                    extract_ctx,
-                    install_peer,
-                )?;
 
                 if let Some(name) = progress_name {
                     manager.set_node_name::<true>(
@@ -1159,77 +1128,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     task.data_extract(),
                     log_level,
                 ) {
-                    'handle_pkg: {
-                        // In the middle of an install, you could end up needing to downlaod the github tarball for a dependency
-                        // We need to make sure we resolve the dependencies first before calling the onExtract callback
-                        // TODO: move this into a separate function
-                        let any_root = Cell::new(false);
-                        let dependency_list: TaskCallbackList = {
-                            let Some(entry) = manager.task_queue.get_mut(&task.id) else {
-                                break 'handle_pkg;
-                            };
-                            core::mem::take(entry)
-                        };
-
-                        scopeguard::defer! {
-                            if C::HAS_ON_RESOLVE && any_root.get() {
-                                // SAFETY: `extract_ctx_ptr` is the function-scope provenance
-                                // root for `extract_ctx`; the body shadow is dead at guard time.
-                                C::on_resolve(unsafe { &mut *extract_ctx_ptr });
-                            }
-                        };
-
-                        for dep in dependency_list.into_iter() {
-                            match dep {
-                                bun_install::TaskCallbackContext::Dependency(id)
-                                | bun_install::TaskCallbackContext::RootDependency(id) => {
-                                    let version = &mut manager.lockfile.buffers.dependencies
-                                        [id as usize]
-                                        .version;
-                                    match version.tag {
-                                        bun_install::DependencyVersionTag::Git => {
-                                            version.git_mut().package_name = pkg.name;
-                                        }
-                                        bun_install::DependencyVersionTag::Github => {
-                                            version.github_mut().package_name = pkg.name;
-                                        }
-                                        bun_install::DependencyVersionTag::Tarball => {
-                                            version.tarball_mut().package_name = pkg.name;
-                                        }
-
-                                        // `else` is reachable if this package is from `overrides`. Version in `lockfile.buffer.dependencies`
-                                        // will still have the original.
-                                        _ => {}
-                                    }
-                                    manager.process_dependency_list_item(
-                                        &dep,
-                                        Some(&any_root),
-                                        install_peer,
-                                    )?;
-                                }
-                                _ => {
-                                    // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
-                                    manager.task_queue.get_mut(&task.id).unwrap().push(dep);
-                                }
-                            }
-                        }
-                    }
-                } else if let Some(dependency_list_entry) =
-                    manager.task_queue.get_mut(&Task::Id::for_manifest(
-                        manager
-                            .lockfile
-                            .str(&manager.lockfile.packages.items_name()[package_id as usize]),
-                    ))
-                {
-                    // Peer dependencies do not initiate any downloads of their own, thus need to be resolved here instead
-                    let dependency_list = core::mem::take(dependency_list_entry);
-
-                    manager.process_dependency_list(
-                        dependency_list,
-                        (),
-                        None::<fn(())>,
-                        install_peer,
-                    )?;
+                    // The resolution cursor picks the package up by the task
+                    // that produced it.
+                    manager.resolved_task_packages.insert(task.id, pkg.meta.id);
                 }
 
                 manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
@@ -1251,10 +1152,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let name = clone.name.slice();
                 let url = clone.url.slice();
 
-                manager.git_repositories.insert(task.id, repo_fd);
-
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(crate::Error::Failed);
+                    manager.mark_network_task_failed(task.id);
 
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
                         C::on_package_manifest_error(extract_ctx, name, err, url);
@@ -1331,7 +1231,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     continue;
                 }
 
-                if C::HAS_ON_EXTRACT && C::IS_PACKAGE_INSTALLER {
+                manager.git_repositories.insert(task.id, repo_fd);
+
+                // Both installers chain clone -> checkout here; during
+                // resolution the cursor retries the git edge and chains it
+                // itself.
+                if C::HAS_ON_EXTRACT {
                     // Installing!
                     // this dependency might be something other than a git dependency! only need the name and
                     // behavior, use the resolution from the task.
@@ -1387,20 +1292,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         None,
                     );
                     manager.task_batch.push(ThreadPoolBatch::from(queued));
-                } else {
-                    // Resolving!
-                    let dependency_list_entry = manager
-                        .task_queue
-                        .get_mut(&task.id)
-                        .expect("infallible: task queued");
-                    let dependency_list = core::mem::take(dependency_list_entry);
-
-                    process_dependency_list_for_ctx::<C>(
-                        manager,
-                        dependency_list,
-                        extract_ctx,
-                        install_peer,
-                    )?;
                 }
 
                 if log_level.show_progress() {
@@ -1423,6 +1314,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(crate::Error::Failed);
+                    manager.mark_network_task_failed(task.id);
 
                     if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR && C::IS_STORE_INSTALLER {
                         // SAFETY: `resolution.tag == Git` — git-checkout tasks are
@@ -1483,56 +1375,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     task.data_git_checkout(),
                     log_level,
                 ) {
-                    'handle_pkg: {
-                        let any_root = Cell::new(false);
-                        let dependency_list: TaskCallbackList = {
-                            let Some(entry) = manager.task_queue.get_mut(&task.id) else {
-                                break 'handle_pkg;
-                            };
-                            core::mem::take(entry)
-                        };
-
-                        scopeguard::defer! {
-                            if C::HAS_ON_RESOLVE && any_root.get() {
-                                // SAFETY: `extract_ctx_ptr` is the function-scope provenance
-                                // root for `extract_ctx`; the body shadow is dead at guard time.
-                                C::on_resolve(unsafe { &mut *extract_ctx_ptr });
-                            }
-                        };
-
-                        for dep in dependency_list.into_iter() {
-                            match dep {
-                                bun_install::TaskCallbackContext::Dependency(id)
-                                | bun_install::TaskCallbackContext::RootDependency(id) => {
-                                    // SAFETY: this branch is only reached for
-                                    // git dependencies — `version.tag == Git`.
-                                    let repo = unsafe {
-                                        &mut *manager.lockfile.buffers.dependencies[id as usize]
-                                            .version
-                                            .value
-                                            .git
-                                    };
-                                    // SAFETY: `pkg.resolution.value` is an untagged union
-                                    // discriminated by `pkg.resolution.tag`;
-                                    // `Tag::Git` was checked when the resolution was set.
-                                    repo.resolved = pkg.resolution.git().resolved;
-                                    repo.package_name = pkg.name;
-                                    manager.process_dependency_list_item(
-                                        &dep,
-                                        Some(&any_root),
-                                        install_peer,
-                                    )?;
-                                }
-                                _ => {
-                                    // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
-                                    manager.task_queue.get_mut(&task.id).unwrap().push(dep);
-                                }
-                            }
-                        }
-
-                        // Invariant: this branch only reachable when !HAS_ON_EXTRACT.
-                        debug_assert!(!C::HAS_ON_EXTRACT, "ctx should be void");
-                    }
+                    // The resolution cursor picks the package up by the task
+                    // that produced it.
+                    manager.resolved_task_packages.insert(task.id, pkg.meta.id);
                 }
 
                 if log_level.show_progress() {
@@ -1612,36 +1457,6 @@ pub fn flush_patch_task_queue(this: &mut PackageManager) {
     }
 }
 
-fn do_flush_dependency_queue(this: &mut PackageManager) {
-    while let Some(dependencies_list) = this.lockfile.scratch.dependency_list_queue.read_item() {
-        let mut i: u32 = dependencies_list.off;
-        let end = dependencies_list.off + dependencies_list.len;
-        while i < end {
-            let dependency = this.lockfile.buffers.dependencies[i as usize].clone();
-            let resolution = this.lockfile.buffers.resolutions[i as usize];
-            let _ = enqueue::enqueue_dependency_with_main(this, i, &dependency, resolution, false);
-            i += 1;
-        }
-    }
-
-    flush_network_queue(this);
-}
-
-pub fn flush_dependency_queue(this: &mut PackageManager) {
-    let mut last_count = this.total_tasks;
-    loop {
-        flush_network_queue(this);
-        do_flush_dependency_queue(this);
-        flush_network_queue(this);
-        flush_patch_task_queue(this);
-
-        if this.total_tasks == last_count {
-            break;
-        }
-        last_count = this.total_tasks;
-    }
-}
-
 pub fn schedule_tasks(manager: &mut PackageManager) -> usize {
     let count = manager.task_batch.len
         + manager.network_resolve_batch.len
@@ -1664,20 +1479,6 @@ pub fn schedule_tasks(manager: &mut PackageManager) -> usize {
         .push(core::mem::take(&mut manager.network_tarball_batch));
     http::HTTPThread::schedule(core::mem::take(&mut manager.network_resolve_batch));
     count
-}
-
-pub fn drain_dependency_list(this: &mut PackageManager) {
-    // Step 2. If there were cached dependencies, go through all of those but don't download the devDependencies for them.
-    flush_dependency_queue(this);
-
-    // SAFETY: `VERBOSE_INSTALL` is only mutated during single-threaded options
-    // parsing; reads here are race-free in practice.
-    if PackageManager::verbose_install() {
-        Output::flush();
-    }
-
-    // It's only network requests here because we don't store tarballs.
-    let _ = schedule_tasks(this);
 }
 
 pub fn get_network_task(this: &mut PackageManager) -> *mut NetworkTask {
@@ -1903,10 +1704,6 @@ pub fn generate_network_task_for_tarball<'a>(
 // ──────────────────────────────────────────────────────────────────────────
 impl PackageManager {
     #[inline]
-    pub fn drain_dependency_list(&mut self) {
-        drain_dependency_list(self)
-    }
-    #[inline]
     pub(crate) fn flush_network_queue(&mut self) {
         flush_network_queue(self)
     }
@@ -1946,30 +1743,4 @@ impl PackageManager {
     pub(crate) fn alloc_github_url(&self, repository: &Repository) -> Vec<u8> {
         alloc_github_url(self, repository)
     }
-}
-
-/// Adapter wrapping the existing `PackageManager::process_dependency_list` so
-/// it can be driven by a `RunTasksCallbacks` impl, dispatching `on_resolve`
-/// if any root dep changed.
-fn process_dependency_list_for_ctx<C: RunTasksCallbacks>(
-    manager: &mut PackageManager,
-    dependency_list: TaskCallbackList,
-    extract_ctx: &mut C::Ctx,
-    install_peer: bool,
-) -> crate::Result<()> {
-    let ctx_ptr: *mut C::Ctx = extract_ctx;
-    manager.process_dependency_list(
-        dependency_list,
-        (),
-        if C::HAS_ON_RESOLVE {
-            Some(move |()| {
-                // SAFETY: `ctx_ptr` derived from a unique `&mut` that outlives
-                // this closure; `process_dependency_list` does not alias it.
-                C::on_resolve(unsafe { &mut *ctx_ptr });
-            })
-        } else {
-            None
-        },
-        install_peer,
-    )
 }

@@ -8,7 +8,7 @@ use crate::Error as BunError;
 use bun_alloc::AllocError;
 use bun_collections::{
     ArrayHashMap, ArrayIdentityContext, ArrayIdentityContextU64, DynamicBitSet,
-    HashMap as BunHashMap, IdentityContext, LinearFifo, linear_fifo::DynamicBuffer,
+    HashMap as BunHashMap, IdentityContext,
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
@@ -182,61 +182,9 @@ pub struct Lockfile {
     pub catalogs: CatalogMap,
 
     pub(crate) saved_config_version: Option<ConfigVersion>,
-
-    /// `packages.len()` at the moment lockfile load (including npm/pnpm/yarn
-    /// migration) finished. Packages with `id < this` were carried in from a
-    /// lockfile and represent a user-pinned resolution; packages with
-    /// `id >= this` were appended by manifest fetches in the current
-    /// resolve session. `get_package_id` uses this to keep its
-    /// order-independence guard from overriding lockfile pins. Set by
-    /// `mark_loaded_packages`; defaults to `invalid_package_id` (no lockfile
-    /// loaded → guard applies to nothing, equivalent to "all entries are
-    /// session-appended").
-    ///
-    /// Runtime-only — never serialised.
-    pub(crate) loaded_package_count: PackageID,
-
-    /// `bit[id] == true` ⇔ package `id` was appended for a dependency whose
-    /// version range was an exact `=X.Y.Z` (i.e. the user — root or workspace
-    /// — pinned this exact version somewhere in the tree). `get_package_id`'s
-    /// order-independence guard never blocks deduping to one of these: an
-    /// exact pin is a deliberate choice, not an artifact of which manifest
-    /// happened to land first. Runtime-only — never serialised; sized lazily
-    /// in `mark_exact_pin`.
-    pub(crate) exact_pinned: DynamicBitSet,
-
-    /// Name hashes that some parsed manifest declares as an `npm:` alias key
-    /// (`"boba": "npm:baz@^1"` records `hash("boba")`). A dependency edge
-    /// sharing one of these names resolves in the deferred alias phase so it
-    /// can bind to the alias package when that package's resolved version
-    /// satisfies the edge's range, matching npm's tree. Runtime-only — never
-    /// serialised; populated by `record_alias_keys` as packages are appended.
-    pub(crate) alias_keys: AliasKeySet,
-
-    /// Alias key hash -> the package the alias declaration resolved to
-    /// (`"boba": "npm:baz@^1"` maps `hash("boba")` to baz's package id once
-    /// that edge binds). The deferred alias phase reads the target's resolved
-    /// version from here. Runtime-only — never serialised; populated in
-    /// `assign_resolution`.
-    pub(crate) alias_targets: AliasTargetMap,
 }
 
 pub(crate) type PackageList = self::package::List<u64>;
-
-pub(crate) type AliasKeySet = BunHashMap<PackageNameHash, (), IdentityContext<u64>>;
-pub(crate) type AliasTargetMap = BunHashMap<PackageNameHash, PackageID, IdentityContext<u64>>;
-
-/// Free form of `Lockfile::record_alias_keys` over the two disjoint fields
-/// it touches, for call sites that already hold `&mut` into other lockfile
-/// fields (`package_index`, `packages`).
-pub(crate) fn record_alias_keys(alias_keys: &mut AliasKeySet, dep_list: &DependencyList, package: &Package) {
-    let deps: &[Dependency] = package.dependencies.get(dep_list.as_slice());
-    for dep in deps {
-        if dep.version.tag == crate::dependency::version::Tag::Npm && dep.version.npm().is_alias {
-            bun_core::handle_oom(alias_keys.put(dep.name_hash, ()));
-        }
-    }
-}
 
 // ────────────────────────────────────────────────────────────────────────────
 // DepSorter
@@ -878,19 +826,6 @@ impl Lockfile {
         self.packages.items_dependencies()[0].contains(id)
     }
 
-    /// Is this a direct dependency of the workspace the install is taking place in?
-    pub(crate) fn is_root_dependency(
-        &self,
-        manager: &mut PackageManager,
-        id: DependencyID,
-    ) -> bool {
-        // `RootPackageId::get` caches into `manager`.
-        let root_id = manager
-            .root_package_id
-            .get(self, manager.workspace_name_hash);
-        self.packages.items_dependencies()[root_id as usize].contains(id)
-    }
-
     /// Is this a direct dependency of any workspace (including workspace root)?
     /// TODO make this faster by caching the workspace package ids
     pub(crate) fn is_workspace_dependency(&self, id: DependencyID) -> bool {
@@ -1015,12 +950,6 @@ impl Lockfile {
         new.buffers.preallocate(&old.buffers)?;
         new.patched_dependencies
             .ensure_total_capacity(old.patched_dependencies.count())?;
-
-        // Reset the FIFO read cursor without discarding capacity.
-        // `LinearFifo::head` is private; the queue is always drained to empty
-        // before reuse here, so a `discard(count)` resets `head` to 0.
-        let queued = old.scratch.dependency_list_queue.readable_length();
-        old.scratch.dependency_list_queue.discard(queued);
 
         {
             // The signatures take `&Lockfile` for `old` and read `new`
@@ -2054,142 +1983,23 @@ impl Lockfile {
             meta_hash: ZERO_HASH,
             patched_dependencies: PatchedDependenciesMap::default(),
             saved_config_version: None,
-            // Fresh lockfile (no load): every package appended later is
-            // session-appended, so the order-independence guard in
-            // `get_package_id` applies from id 0.
-            loaded_package_count: 0,
-            exact_pinned: DynamicBitSet::default(),
-            alias_keys: AliasKeySet::default(),
-            alias_targets: AliasTargetMap::default(),
-        }
-    }
-
-    /// Snapshot `packages.len()` as the "loaded from lockfile" watermark.
-    /// Call exactly once after `load_from_cwd` (including npm/pnpm/yarn
-    /// migration) before any manifest-driven `append_package`.
-    #[inline]
-    pub(crate) fn mark_loaded_packages(&mut self) {
-        self.loaded_package_count = self.packages.len() as PackageID;
-    }
-
-    /// Record that package `id` was appended via an exact-version dependency
-    /// (`=X.Y.Z`). See the `exact_pinned` field doc.
-    #[inline]
-    pub(crate) fn mark_exact_pin(&mut self, id: PackageID) {
-        let i = id as usize;
-        if self.exact_pinned.bit_length() <= i {
-            bun_core::handle_oom(self.exact_pinned.resize(i + 1, false));
-        }
-        self.exact_pinned.set(i);
-    }
-
-    /// Record every `npm:` alias key that `package` declares among its
-    /// dependencies. Called for each package as it is appended (fresh
-    /// resolution, lockfile load, migration) so `alias_keys` reflects the
-    /// whole graph regardless of which manifest declared the alias.
-    #[inline]
-    pub(crate) fn record_alias_keys(&mut self, package: &Package) {
-        record_alias_keys(&mut self.alias_keys, &self.buffers.dependencies, package);
-    }
-
-    /// When the dependency being bound is an alias declaration
-    /// (`"boba": "npm:baz@..."`), remember which package the alias key
-    /// (`hash("boba")`, i.e. `dep.name_hash`) resolved to, so the deferred
-    /// alias phase can read the target's resolved version.
-    pub(crate) fn record_alias_target(&mut self, dependency_id: DependencyID, package_id: PackageID) {
-        let dep = &self.buffers.dependencies.as_slice()[dependency_id as usize];
-        if dep.version.tag == crate::dependency::version::Tag::Npm && dep.version.npm().is_alias {
-            let key = dep.name_hash;
-            bun_core::handle_oom(self.alias_targets.put(key, package_id));
         }
     }
 
     pub(crate) fn get_package_id(
         &self,
         name_hash: u64,
-        // If non-null, attempt to use an existing package
-        // that satisfies this version range.
-        version: Option<&DependencyVersion>,
         resolution: &Resolution,
     ) -> Option<PackageID> {
         let entry = self.package_index.get(&name_hash)?;
         let resolutions: &[Resolution] = self.packages.items_resolution();
-        // Borrow the `npm` arm's `Semver::Group` (not `Copy` — owns a linked
-        // list head). `version` is held by-value for the whole fn body so the
-        // borrow is sound.
-        let npm_version = match version {
-            Some(v) if v.tag == dependency::Tag::Npm => Some(&v.npm().version),
-            _ => None,
-        };
-        // Order-independence guard for the `satisfies` fallback below: when the
-        // caller already knows the manifest's best-match version (the npm
-        // `resolution` it passes), only dedupe to an existing entry whose
-        // version is at least that. Without this, the result depends on which
-        // sibling's manifest happened to land first — `*` deduping to a
-        // previously-appended `1.0.2` instead of resolving to `2.0.2` is the
-        // long-standing "text lockfile is hoisted" flake. Lockfile-pinned deps
-        // are kept out of this codepath by `Diff::generate`'s
-        // satisfies-preserves-mapping rule (which keeps the resolution slot
-        // populated so the early return in `get_or_put_resolved_package` fires
-        // before we get here).
-        let resolved_npm_floor = if resolution.tag == ResolutionTag::Npm {
-            Some(resolution.npm().version)
-        } else {
-            None
-        };
         let buf = self.buffers.string_bytes.as_slice();
-
-        let loaded_watermark = self.loaded_package_count;
-        let exact_pinned = &self.exact_pinned;
-        let try_satisfies_dedupe = |id: PackageID| -> bool {
-            let existing = &resolutions[id as usize];
-            if existing.tag != ResolutionTag::Npm {
-                return false;
-            }
-            let Some(npm_v) = npm_version else {
-                return false;
-            };
-            let existing_ver = existing.npm().version;
-            if !npm_v.satisfies(existing_ver, buf, buf) {
-                return false;
-            }
-            // Order-independence guard. We refuse to dedupe a wide range to a
-            // *lower* existing entry only when ALL of the following hold:
-            //   - the entry was appended in this resolve session
-            //     (lockfile-loaded entries are the user's existing pin),
-            //   - the entry was NOT appended for an exact-`=X.Y.Z` dependency
-            //     (an exact pin anywhere in the tree is a deliberate choice,
-            //     not a network-order artefact — `dragon test 2` /
-            //     "dependency from root satisfies range from dependency"),
-            //   - the manifest's best-match is a *different major* (within a
-            //     major, deduping to an older patch is the long-standing
-            //     behaviour and the worst case is still ^-compatible).
-            // What this leaves is exactly the cross-parent network-order
-            // flake: a wide range (`*`, `>=X`) collapsing onto a sibling's
-            // *range-resolved* lower major depending on whose manifest landed
-            // first ("text lockfile is hoisted").
-            if id >= loaded_watermark && !exact_pinned.is_set_allow_out_of_bound(id as usize, false)
-            {
-                if let Some(floor) = resolved_npm_floor {
-                    if existing_ver.order(floor, buf, buf) == Ordering::Less
-                        && existing_ver.major != floor.major
-                    {
-                        return false;
-                    }
-                }
-            }
-            true
-        };
 
         match entry {
             PackageIndexEntry::Id(id) => {
                 debug_assert!((*id as usize) < resolutions.len());
 
                 if resolutions[*id as usize].eql(resolution, buf, buf) {
-                    return Some(*id);
-                }
-
-                if try_satisfies_dedupe(*id) {
                     return Some(*id);
                 }
             }
@@ -2200,15 +2010,52 @@ impl Lockfile {
                     if resolutions[id as usize].eql(resolution, buf, buf) {
                         return Some(id);
                     }
-
-                    if try_satisfies_dedupe(id) {
-                        return Some(id);
-                    }
                 }
             }
         }
 
         None
+    }
+
+    /// The highest-versioned registry package already in the lockfile whose
+    /// name matches and whose version satisfies `group`. A range edge that
+    /// no slot up-tree satisfies prefers this over a fresh version from the
+    /// manifest: the lockfile's existing choices are stable across installs
+    /// and the outcome depends only on the recorded graph, not on network
+    /// arrival.
+    pub fn get_present_satisfying_id(
+        &self,
+        name_hash: PackageNameHash,
+        group: &Semver::query::Group,
+    ) -> Option<PackageID> {
+        let entry = self.package_index.get(&name_hash)?;
+        let resolutions: &[Resolution] = self.packages.items_resolution();
+        let buf = self.buffers.string_bytes.as_slice();
+
+        let mut best: Option<(PackageID, Semver::Version)> = None;
+        let mut consider = |id: PackageID| {
+            let resolution = &resolutions[id as usize];
+            if resolution.tag != resolution::Tag::Npm {
+                return;
+            }
+            let version = resolution.npm().version;
+            if !group.satisfies(version, buf, buf) {
+                return;
+            }
+            match &best {
+                Some((_, current)) if version.order(*current, buf, buf).is_le() => {}
+                _ => best = Some((id, version)),
+            }
+        };
+        match entry {
+            PackageIndexEntry::Id(id) => consider(*id),
+            PackageIndexEntry::Ids(ids) => {
+                for &id in ids.iter() {
+                    consider(id);
+                }
+            }
+        }
+        best.map(|(id, _)| id)
     }
 
     /// Appends `pkg` to `this.packages`, and adds to `this.package_index`.
@@ -2227,7 +2074,6 @@ impl Lockfile {
             pkg.meta.id = new_id;
             self.packages.append(*pkg)?;
             *entry.value_ptr = PackageIndexEntry::Id(new_id);
-            self.record_alias_keys(pkg);
             return Ok(new_id);
         }
 
@@ -2248,7 +2094,6 @@ impl Lockfile {
                 let new_id: PackageID = PackageID::try_from(self.packages.len()).expect("int cast");
                 pkg.meta.id = new_id;
                 self.packages.append(*pkg)?;
-                record_alias_keys(&mut self.alias_keys, &self.buffers.dependencies, pkg);
 
                 resolutions = self.packages.items_resolution();
 
@@ -2282,7 +2127,6 @@ impl Lockfile {
                 let new_id: PackageID = PackageID::try_from(self.packages.len()).expect("int cast");
                 pkg.meta.id = new_id;
                 self.packages.append(*pkg)?;
-                record_alias_keys(&mut self.alias_keys, &self.buffers.dependencies, pkg);
 
                 resolutions = self.packages.items_resolution();
 
@@ -2381,9 +2225,8 @@ impl Lockfile {
         package.meta.id = id;
         self.packages.append(package)?;
         self.get_or_put_id(id, name_hash)?;
-        self.record_alias_keys(&package);
 
-        debug_assert!(self.get_package_id(name_hash, None, &resolution).is_some());
+        debug_assert!(self.get_package_id(name_hash, &resolution).is_some());
 
         Ok(package)
     }
@@ -2450,17 +2293,14 @@ impl Lockfile {
 
 pub struct Scratch {
     pub(crate) duplicate_checker_map: DuplicateCheckerMap,
-    pub(crate) dependency_list_queue: DependencyQueue,
 }
 
 pub(crate) type DuplicateCheckerMap =
     BunHashMap<PackageNameHash, bun_ast::Loc, IdentityContext<PackageNameHash>>;
-pub(crate) type DependencyQueue = LinearFifo<DependencySlice, DynamicBuffer<DependencySlice>>;
 
 impl Scratch {
     fn init() -> Scratch {
         Scratch {
-            dependency_list_queue: DependencyQueue::init(),
             duplicate_checker_map: DuplicateCheckerMap::default(),
         }
     }

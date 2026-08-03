@@ -3277,6 +3277,74 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  it("should satisfy a same-named workspace dependency with the root npm alias when its version matches", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "0.0.3": { as: "0.0.3" },
+          "0.0.5": { as: "0.0.5" },
+        }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          workspaces: ["moo"],
+          dependencies: {
+            "boba": "npm:baz@0.0.5",
+          },
+        }),
+      );
+      await mkdir(join(ctx.package_dir, "moo"));
+      await writeFile(
+        join(ctx.package_dir, "moo", "package.json"),
+        JSON.stringify({
+          name: "moo",
+          version: "0.0.4",
+          dependencies: {
+            boba: ">=0.0.3",
+          },
+        }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const err = await stderr.text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      const out = await stdout.text();
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        "+ boba@0.0.5",
+        "",
+        "2 packages installed",
+      ]);
+      expect(await exited).toBe(0);
+      // the aliased baz@0.0.5 satisfies moo's ">=0.0.3", so the real `boba` package is never fetched
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.5.tgz`]);
+      expect(ctx.requested).toBe(2);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "boba", "moo"]);
+      expect(await file(join(ctx.package_dir, "node_modules", "boba", "package.json")).json()).toEqual({
+        name: "baz",
+        version: "0.0.5",
+        bin: {
+          "baz-exec": "index.js",
+        },
+      });
+      expect(await readlink(join(ctx.package_dir, "node_modules", "moo"))).toBeWorkspaceLink(join("..", "moo"));
+      await access(join(ctx.package_dir, "bun.lockb"));
+    });
+  });
+
   it("should not apply overrides to package name of aliased package", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];

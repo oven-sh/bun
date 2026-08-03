@@ -1,5 +1,3 @@
-use core::cell::Cell;
-
 use bun_core::{Global, Output};
 use bun_paths::dirname;
 use bun_paths::platform;
@@ -11,15 +9,13 @@ use crate::bun_json as json;
 use crate::bun_json::Expr;
 use crate::lockfile_real::StringBuilder;
 use crate::lockfile_real::package::{Package, PackageColumns, ResolverContext, Scripts};
+use crate::package_manager_real::PackageManager;
 use crate::package_manager_real::options::LogLevel;
-use crate::package_manager_real::{
-    PackageManager, TaskCallbackList, enqueue, resolution as pm_resolution,
-};
 use crate::repository_real::{Repository, RepositoryExt as _};
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 use crate::{
     DependencyID, ExtractData, Features, INVALID_PACKAGE_ID, PackageID, Resolution,
-    TaskCallbackContext, initialize_store,
+    initialize_store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -223,15 +219,6 @@ impl PackageManager {
                 package = self.lockfile.append_package(&package).expect("unreachable");
                 *package_id = package.meta.id;
 
-                if package.dependencies.len > 0 {
-                    bun_core::handle_oom(
-                        self.lockfile
-                            .scratch
-                            .dependency_list_queue
-                            .write_item(package.dependencies),
-                    );
-                }
-
                 Some(package)
             }
             ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
@@ -281,15 +268,6 @@ impl PackageManager {
 
                 package = self.lockfile.append_package(&package).expect("unreachable");
                 *package_id = package.meta.id;
-
-                if package.dependencies.len > 0 {
-                    bun_core::handle_oom(
-                        self.lockfile
-                            .scratch
-                            .dependency_list_queue
-                            .write_item(package.dependencies),
-                    );
-                }
 
                 Some(package)
             }
@@ -344,123 +322,5 @@ impl PackageManager {
                 None
             }
         }
-    }
-
-    pub(crate) fn process_dependency_list_item(
-        &mut self,
-        item: &TaskCallbackContext,
-        any_root: Option<&Cell<bool>>,
-        install_peer: bool,
-    ) -> Result<(), crate::Error> {
-        match *item {
-            TaskCallbackContext::Dependency(dependency_id) => {
-                // Clone the dependency row out of the buffer before
-                // re-borrowing `self` for enqueue.
-                let dependency = Clone::clone(
-                    &self.lockfile.buffers.dependencies.as_slice()[dependency_id as usize],
-                );
-                let resolution =
-                    self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize];
-
-                enqueue::enqueue_dependency_with_main(
-                    self,
-                    dependency_id,
-                    &dependency,
-                    resolution,
-                    install_peer,
-                )?;
-            }
-            TaskCallbackContext::RootDependency(dependency_id) => {
-                let dependency = Clone::clone(
-                    &self.lockfile.buffers.dependencies.as_slice()[dependency_id as usize],
-                );
-                let resolution =
-                    self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize];
-
-                enqueue::enqueue_dependency_with_main_and_success_fn(
-                    self,
-                    dependency_id,
-                    &dependency,
-                    resolution,
-                    install_peer,
-                    false,
-                    pm_resolution::assign_root_resolution,
-                    Some(PackageManager::fail_root_resolution),
-                    true,
-                )?;
-                if let Some(ptr) = any_root {
-                    let new_resolution_id =
-                        self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize];
-                    if new_resolution_id != resolution {
-                        ptr.set(true);
-                    }
-                }
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    /// Drain the deferred alias-named dependencies. Each binds to the alias
-    /// package occupying its folder name when that package's resolved version
-    /// satisfies the range; otherwise it resolves normally under its real name.
-    pub(crate) fn process_alias_dependency_list(&mut self) -> Result<(), crate::Error> {
-        while let Some(alias_dependency_id) = self.alias_dependencies.read_item() {
-            let dependency = Clone::clone(
-                &self.lockfile.buffers.dependencies.as_slice()[alias_dependency_id as usize],
-            );
-            let resolution =
-                self.lockfile.buffers.resolutions.as_slice()[alias_dependency_id as usize];
-
-            enqueue::enqueue_alias_dependency(self, alias_dependency_id, &dependency, resolution)?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn process_peer_dependency_list(&mut self) -> Result<(), crate::Error> {
-        while let Some(peer_dependency_id) = self.peer_dependencies.read_item() {
-            // Clone the dependency row out of the buffer before re-borrowing
-            // `self` for enqueue.
-            let dependency = Clone::clone(
-                &self.lockfile.buffers.dependencies.as_slice()[peer_dependency_id as usize],
-            );
-            let resolution =
-                self.lockfile.buffers.resolutions.as_slice()[peer_dependency_id as usize];
-
-            enqueue::enqueue_dependency_with_main(
-                self,
-                peer_dependency_id,
-                &dependency,
-                resolution,
-                true,
-            )?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn process_dependency_list<C>(
-        &mut self,
-        dep_list: TaskCallbackList,
-        ctx: C,
-        on_resolve: Option<impl FnOnce(C)>,
-        install_peer: bool,
-    ) -> Result<(), crate::Error> {
-        if !dep_list.is_empty() {
-            let dependency_list = dep_list;
-            let any_root = Cell::new(false);
-            for item in dependency_list.iter() {
-                self.process_dependency_list_item(item, Some(&any_root), install_peer)?;
-            }
-
-            if let Some(on_resolve) = on_resolve {
-                if any_root.get() {
-                    on_resolve(ctx);
-                }
-            }
-
-            // `dependency_list.deinit(this.allocator)` — owned `Vec`; drops here.
-            drop(dependency_list);
-        }
-        Ok(())
     }
 }

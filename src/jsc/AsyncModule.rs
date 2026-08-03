@@ -101,10 +101,6 @@ impl Queue {
     pub(crate) fn vm(&mut self) -> &mut VirtualMachine {
         VirtualMachine::get().as_mut()
     }
-
-    pub(crate) fn on_resolve(_: &mut Queue) {
-        bun_core::scoped_log!(AsyncModule, "onResolve");
-    }
 }
 
 // Taskable: `Queue` is enqueued via `ConcurrentTask::create_from(this)` in
@@ -270,11 +266,6 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
     const PROGRESS_BAR: bool = PROGRESS;
     const HAS_ON_PACKAGE_MANIFEST_ERROR: bool = true;
     const HAS_ON_PACKAGE_DOWNLOAD_ERROR: bool = true;
-    const HAS_ON_RESOLVE: bool = true;
-
-    fn on_resolve(ctx: &mut Queue) {
-        Queue::on_resolve(ctx)
-    }
 
     fn on_package_manifest_error(
         ctx: &mut Queue,
@@ -307,7 +298,6 @@ impl Queue {
 
         // allocator arg dropped (Vec uses global mimalloc).
         self.map.push(module);
-        self.vm().package_manager().drain_dependency_list();
     }
 
     /// # Safety
@@ -396,13 +386,12 @@ impl Queue {
 
         if bun_core::output::enable_ansi_colors_stderr() {
             pm.start_progress_bar_if_none();
-            run_tasks::run_tasks::<QueueRunTasksCallbacks<true>>(pm, self, true, LogLevel::Default)
+            run_tasks::run_tasks::<QueueRunTasksCallbacks<true>>(pm, self, LogLevel::Default)
                 .expect("unreachable");
         } else {
             run_tasks::run_tasks::<QueueRunTasksCallbacks<false>>(
                 pm,
                 self,
-                true,
                 LogLevel::DefaultNoProgress,
             )
             .expect("unreachable");
@@ -572,15 +561,9 @@ impl Queue {
                         &mut patchfile_hash,
                     ) {
                         install::PreinstallState::Done => {
-                            // we are only truly done if all the dependencies are done.
-                            let current_tasks = pm.total_tasks;
-                            // so if enqueuing all the dependencies produces no new tasks, we are done.
-                            pm.enqueue_dependency_list(package.dependencies);
-                            if current_tasks == pm.total_tasks {
-                                pending_imports[tag_i].tag =
-                                    bun_resolver::PendingResolutionTag::Done;
-                                done_count += 1;
-                            }
+                            pending_imports[tag_i].tag =
+                                bun_resolver::PendingResolutionTag::Done;
+                            done_count += 1;
                         }
                         install::PreinstallState::Extracting => {
                             // we are extracting the package

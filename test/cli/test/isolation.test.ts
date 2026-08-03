@@ -1150,7 +1150,10 @@ describe.concurrent("BUN_FEATURE_FLAG_EXPERIMENTAL_TEST_ISOLATE_REUSE_GLOBAL", (
         test("cleaned", async () => {
           expect(s.port).toBeGreaterThan(0);
           await expect(fetch("http://127.0.0.1:" + s.port)).rejects.toThrow(/Unable to connect|ECONNREFUSED|ConnectionRefused/);
-          expect(() => process.kill(s.pid, 0)).toThrow(/ESRCH|No such process|kill/);
+          // auto_killer only sends SIGTERM; allow the child to exit and be reaped.
+          const isAlive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+          for (let i = 0; i < 50 && isAlive(s.pid); i++) await Bun.sleep(20);
+          expect(isAlive(s.pid)).toBe(false);
           const before = s.ticks;
           await Bun.sleep(30);
           expect(s.ticks).toBe(before);
@@ -1281,6 +1284,32 @@ describe.concurrent("BUN_FEATURE_FLAG_EXPERIMENTAL_TEST_ISOLATE_REUSE_GLOBAL", (
     expect(normalizeBunSnapshot(stderr, dir)).toContain("4 pass");
     expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
     expect(reuseSummary(stderr)).toMatchObject({ reused: 2, fresh: 1, fingerprint: 1 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("--preload setDefaultTimeout() survives across reused files", async () => {
+    using dir = tempDir("isolate-reuse-timeout", {
+      "preload.ts": `import { setDefaultTimeout } from "bun:test"; setDefaultTimeout(30_000);`,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        test("a", async () => { await Bun.sleep(200); expect(1).toBe(1); });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        test("b", async () => { await Bun.sleep(200); expect(1).toBe(1); });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "--timeout=50", "--preload", "./preload.ts", "./a.test.ts", "./b.test.ts"],
+      env: reuseEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(reuseSummary(stderr)).toMatchObject({ reused: 1, fresh: 0 });
     expect(exitCode).toBe(0);
   });
 

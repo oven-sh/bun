@@ -554,21 +554,31 @@ impl<'a> WorkerLoop<'a> {
             self.next_is_first_on_global = false;
             crate::jsc_hooks::close_isolation_handles(vm);
             if reuse_enabled {
-                if let TestIsolationOutcome::Fresh(_) = vm.prepare_global_for_next_test_file() {
-                    self.next_is_first_on_global = true;
-                    self.reporter
-                        .jest
-                        .bun_test_root
-                        .reset_hook_scope_for_test_isolation();
+                match vm.prepare_global_for_next_test_file() {
+                    TestIsolationOutcome::Reused { .. } => {
+                        self.reporter.jest.default_timeout_override = vm
+                            .test_isolation_state
+                            .reuse
+                            .baseline_default_timeout_override
+                            .unwrap_or(u32::MAX);
+                    }
+                    TestIsolationOutcome::Fresh(_) => {
+                        self.next_is_first_on_global = true;
+                        self.reporter.jest.default_timeout_override = u32::MAX;
+                        self.reporter
+                            .jest
+                            .bun_test_root
+                            .reset_hook_scope_for_test_isolation();
+                    }
                 }
             } else {
                 vm.swap_global_for_test_isolation();
+                self.reporter.jest.default_timeout_override = u32::MAX;
                 self.reporter
                     .jest
                     .bun_test_root
                     .reset_hook_scope_for_test_isolation();
             }
-            self.reporter.jest.default_timeout_override = u32::MAX;
 
             if let Some(junit) = &mut self.reporter.reporters.junit {
                 while !junit.suite_stack.is_empty() {

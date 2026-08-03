@@ -355,6 +355,9 @@ pub struct TestIsolationReuseState {
     pub enabled: bool,
     /// Intrinsic digest taken after preloads; `None` until the first file completes.
     pub baseline_fingerprint: Option<u64>,
+    /// `setDefaultTimeout()` value set during preload, restored on reuse.
+    /// `None` when no preload called it (restore to `u32::MAX`).
+    pub baseline_default_timeout_override: Option<u32>,
     /// Module keys loaded while `vm.is_in_preload` was true; exempt from eviction.
     pub preload_module_keys: Vec<bun_core::String>,
     pub reused_count: u32,
@@ -4942,6 +4945,7 @@ impl VirtualMachine {
                 TestIsolationFreshReason::PendingFetch => reuse.fresh_pending_fetch_count += 1,
             }
             reuse.baseline_fingerprint = None;
+            reuse.baseline_default_timeout_override = None;
             while let Some(key) = reuse.preload_module_keys.pop() {
                 key.deref();
             }

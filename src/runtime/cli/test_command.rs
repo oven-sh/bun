@@ -3141,7 +3141,6 @@ impl TestCommand {
                         ) {
                             handle_top_level_test_error_before_javascript_start(&err);
                         }
-                        reporter.jest.default_timeout_override = u32::MAX;
                         Global::mimalloc_cleanup(false);
                         if isolate {
                             crate::jsc_hooks::close_isolation_handles(vm);
@@ -3157,6 +3156,11 @@ impl TestCommand {
                                             evicted_esm,
                                             evicted_cjs
                                         );
+                                        reporter.jest.default_timeout_override = vm
+                                            .test_isolation_state
+                                            .reuse
+                                            .baseline_default_timeout_override
+                                            .unwrap_or(u32::MAX);
                                     }
                                     TestIsolationOutcome::Fresh(reason) => {
                                         bun_output::scoped_log!(
@@ -3165,6 +3169,7 @@ impl TestCommand {
                                             reason.as_str()
                                         );
                                         next_is_first_on_global = true;
+                                        reporter.jest.default_timeout_override = u32::MAX;
                                         reporter
                                             .jest
                                             .bun_test_root
@@ -3172,12 +3177,15 @@ impl TestCommand {
                                     }
                                 }
                             } else {
+                                reporter.jest.default_timeout_override = u32::MAX;
                                 vm.swap_global_for_test_isolation();
                                 reporter
                                     .jest
                                     .bun_test_root
                                     .reset_hook_scope_for_test_isolation();
                             }
+                        } else {
+                            reporter.jest.default_timeout_override = u32::MAX;
                         }
                     }
                 }

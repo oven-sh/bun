@@ -1,5 +1,4 @@
-//! `Bun.Transpiler.prototype.unstable_parse` — `bun_ast::Ast` → self-describing binary tape.
-//! The JS reader in `src/js/builtins/Transpiler.ts` wraps the buffer in lazy proxies.
+//! `Bun.Transpiler.prototype.unstable_parse` — `bun_ast::Ast` → binary tape read lazily by `src/js/builtins/Transpiler.ts`.
 
 use bun_ast::{
     self as ast, ArrayBinding, Binding, Case, Catch, ClauseItem, E, EnumValue, Expr, ExprData,

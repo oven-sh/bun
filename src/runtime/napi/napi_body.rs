@@ -2782,7 +2782,11 @@ impl ThreadSafeFunction {
         // `*this` is live while user code runs.
         enum Target {
             Js(JSValue),
-            C(napi_threadsafe_function_call_js, Option<JSValue>, *mut c_void),
+            C(
+                napi_threadsafe_function_call_js,
+                Option<JSValue>,
+                *mut c_void,
+            ),
         }
         // SAFETY: scoped reborrow.
         let target = match unsafe { &(*this).callback } {

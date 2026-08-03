@@ -329,6 +329,7 @@ async function spawnInspectee(): Promise<{ child: Subprocess; url: URL }> {
 
   if (!url) {
     process.stderr.write(stderr);
+    child.kill();
     throw new Error("Unable to find listening URL");
   }
   return { child, url };

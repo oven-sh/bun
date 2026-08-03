@@ -1,17 +1,9 @@
-// Translates between the V8 Chrome DevTools Protocol (CDP) spoken by clients
-// of node:inspector (Chrome DevTools, vscode-js-debug, vitest --inspect, ...)
-// and the JSC/WebKit inspector protocol spoken by Bun's inspector backend.
-//
-// One adapter instance serves one frontend connection. `handleClientMessage`
-// receives raw CDP JSON from the client, `handleBackendMessage` receives raw
-// JSC-protocol JSON from the backend connection. Command ids from the client
-// are preserved by giving backend commands their own id space and correlating
-// the responses.
+// Translates V8 CDP (https://chromedevtools.github.io/devtools-protocol/) to/from the JSC inspector
+// protocol (https://github.com/WebKit/WebKit/tree/main/Source/JavaScriptCore/inspector/protocol).
+// One adapter per frontend connection; backend commands use a separate id space.
 const { pathToFileURL, fileURLToPath } = require("node:url");
-// The in-process node:inspector Session instantiates this adapter on the user's
-// main thread, so the fields iterated via for..of (#scriptIdsByUrl,
-// #preParseBreakpoints, DisconnectNotifyState.adapters) use SafeMap/SafeSet so
-// a tampered Map/Set prototype iterator cannot drop or hijack those loops.
+// SafeMap/SafeSet: the in-process Session runs on the user's thread, so for..of over these fields
+// must not go through a tamperable Map/Set prototype iterator.
 const { SafeMap, SafeSet } = require("internal/primordials");
 const { Buffer } = require("node:buffer");
 const { basename, isAbsolute } = require("node:path");
@@ -75,19 +67,8 @@ function breakpointUrlRegex(url: string): string {
 }
 
 // ── Source maps ────────────────────────────────────────────────────────────
-// Bun transpiles every script it runs, so the code JSC parsed is not the code
-// the user wrote: `--inspect-brk` prepends a `debugger;`, comments and blank
-// lines are dropped, and constants are folded. V8 has no transpile step, so a
-// CDP client is entitled to positions in the original file. Bun's transpiler
-// appends an inline sourceMappingURL carrying both the mappings and the
-// original text, so the adapter can present the original script and translate
-// every position it reports or accepts.
-//
-// Only this adapter does so. Clients of Bun's own JSC endpoint keep seeing
-// generated positions plus the sourceMappingURL, and apply the map themselves.
-// Translating here and still advertising that map would make such a client
-// apply it twice, so the map is not forwarded: to a CDP client the script *is*
-// the original.
+// Bun transpiles every script, so CDP clients see the original source and positions (translated via
+// the inline sourceMappingURL Bun appended). The map is consumed here and not forwarded.
 
 interface OriginalPosition {
   lineNumber: number;
@@ -223,11 +204,8 @@ function compareOriginalOrder(a: AnyObject, b: AnyObject): number {
   );
 }
 
-// The last mapping at or before `columnNumber` on `lineNumber`. Falls forward
-// to the next mapped position when there is none: the generated line may be
-// code Bun injected, and `--inspect-brk`'s prepended `debugger;` is exactly
-// that. Node breaks on the first statement of the user's script, which is what
-// falling forward from the injected line resolves to.
+// Last mapping at or before the generated position; falls forward if none (e.g. --inspect-brk's
+// injected `debugger;`), so that line resolves to the user's first statement like Node.
 function generatedToOriginal(
   map: ScriptSourceMap,
   lineNumber: number,
@@ -286,11 +264,8 @@ function originalToGenerated(
 
 const SOURCE_MAPPING_URL_COMMENT = "//# sourceMappingURL=";
 
-// The original file's own sourceMappingURL, if it has one. Bun's is stripped:
-// it describes the generated text, which a CDP client never sees. Only a
-// marker that starts its line is accepted (matching JSC's and V8's comment
-// scanners), so a literal inside a string or template is not mistaken for a
-// directive.
+// The original file's own sourceMappingURL (Bun's is stripped). Only a line-starting marker is
+// accepted, matching JSC's and V8's scanners, so a string literal is not mistaken for a directive.
 function ownSourceMappingURL(source: string): string {
   const at = source.lastIndexOf(SOURCE_MAPPING_URL_COMMENT);
   if (at < 0) return "";
@@ -327,10 +302,8 @@ const ASYNC_BOUNDARY_DESCRIPTIONS: Record<string, string> = {
   finally: "Promise.finally",
 } as any;
 
-// No "log" entry: JSC reports console.warn/error/info/debug as
-// { type: "log", level: "warning"/"error"/... }, so a type-level match on "log"
-// would mask the level. #translateConsoleMessage falls through to
-// CONSOLE_LEVEL_MAP for those and for console.log itself.
+// No "log" entry: JSC reports console.warn/error/info/debug as { type: "log", level: ... }, so a
+// type match on "log" would mask the level. #translateConsoleMessage falls through to level map.
 const CONSOLE_TYPE_MAP: Record<string, string> = {
   __proto__: null,
   dir: "dir",
@@ -378,11 +351,9 @@ class InspectorCDPAdapter {
   // Every spelling of a script's URL, so a console message or a breakpoint
   // request that names one can be matched back to its sourcemap.
   #scriptIdsByUrl: Map<string, string> = new SafeMap();
-  // By-URL breakpoints set before their script parsed, keyed by the
-  // breakpointId the client was given. When the script arrives with a source
-  // map they are re-set through it (V8 re-resolves by-URL breakpoints at
-  // scriptParsed the same way); the client keeps the original id, so events
-  // and removeBreakpoint are mapped through jscId.
+  // By-URL breakpoints set before their script parsed, keyed by the id given to the client. Re-set
+  // through the map at scriptParsed (as V8 does); events and removeBreakpoint map through jscId.
+  // https://source.chromium.org/chromium/chromium/src/+/main:v8/src/inspector/v8-debugger-agent-impl.cc
   #preParseBreakpoints: Map<
     string,
     {
@@ -393,10 +364,8 @@ class InspectorCDPAdapter {
       columnNumber: number | undefined;
       condition: string | undefined;
       resolved: boolean;
-      // True from the moment the stale binding's remove/re-set are posted
-      // until the re-set's reply lands: events referencing the stale id in
-      // that window (a breakpointResolved or a pause at the untranslated
-      // coordinate) are suppressed.
+      // True while the stale binding's remove/re-set are in flight; events referencing the stale
+      // id in that window (breakpointResolved / pause at the untranslated coordinate) are dropped.
       resetPending?: boolean;
       // Set when the client removes the breakpoint while resetPending; the
       // re-set reply then retires the new binding instead of aliasing it.
@@ -406,10 +375,8 @@ class InspectorCDPAdapter {
   // Current backend breakpointId -> the id the client knows (only entries that
   // were re-set diverge).
   #breakpointIdAliases = new Map<string, string>();
-  // Profiler domain: tracking state plus the deferred Profiler.stop replies,
-  // each answered in order when ScriptProfiler.trackingComplete delivers the
-  // samples. A FIFO so pipelined start/stop pairs over the remote transport
-  // cannot overwrite one another's pending reply id.
+  // Profiler: tracking state plus a FIFO of deferred Profiler.stop reply ids, each answered in
+  // order when ScriptProfiler.trackingComplete delivers the samples.
   #profilerTracking = false;
   #profilerStartTime = 0;
   #profilerStopClientIds: (number | string)[] = [];
@@ -419,10 +386,8 @@ class InspectorCDPAdapter {
   // This session's slice of retaining_context_, fixed when the handshake began.
   #retainingContext = false;
   #sentContextDestroyed = false;
-  // Shared with this context's other sessions. Node's notifyWaitingForDisconnect
-  // ORs the flag across every channel: one opt-in suppresses
-  // executionContextDestroyed for all of them at handshake time, and the
-  // sessions that did not opt in get it once the last retaining session leaves.
+  // Shared across this context's sessions. Node ORs the flag across channels: one opt-in defers
+  // executionContextDestroyed for all. https://github.com/nodejs/node/blob/main/src/inspector_agent.cc
   #disconnectNotify: DisconnectNotifyState;
   #isWaitingForDebugger: () => boolean;
 
@@ -568,11 +533,8 @@ class InspectorCDPAdapter {
       );
       return;
     }
-    // Primitive / thrown: nothing to await. Primitives already carry value
-    // regardless of returnByValue; a thrown non-primitive comes back as an
-    // objectId (the first step forced returnByValue:false), which
-    // DevTools/vscode-js-debug inspect via exceptionDetails, so we do not
-    // re-serialize it to honour the client's returnByValue.
+    // Primitive/thrown: nothing to await. A thrown non-primitive already has an objectId (step one
+    // forced returnByValue:false), which clients inspect via exceptionDetails — do not re-serialize.
     this.#replyToClient(id, this.#translateResult(method, result));
   }
 
@@ -686,10 +648,8 @@ class InspectorCDPAdapter {
     return this.#breakpointIdAliases.$get(breakpointId) ?? breakpointId;
   }
 
-  // Re-sets by-URL breakpoints that predate their script through the script's
-  // map, now that there is one. JSC keys a URL breakpoint on one generated
-  // coordinate, so the first matching script with a map wins; later scripts
-  // for the same URL keep that binding.
+  // Re-sets by-URL breakpoints that predate their script through its map. JSC keys a URL breakpoint
+  // on one generated coordinate, so the first matching script with a map wins.
   #retranslatePreParseBreakpoints(url: string, cdpUrl: string, scriptId: string): void {
     if (this.#preParseBreakpoints.size === 0) return;
     const script = this.#scripts.$get(scriptId);
@@ -855,10 +815,8 @@ class InspectorCDPAdapter {
           },
         });
         this.#sendToBackend("Runtime.enable");
-        // Console output arrives as Console.messageAdded and is re-emitted as
-        // Runtime.consoleAPICalled. Answer the client from this one for the
-        // same reason as Debugger.enable below: a client that runs code once
-        // Runtime.enable resolves expects console events to be flowing.
+        // Console.messageAdded is re-emitted as Runtime.consoleAPICalled. Answer from this command
+        // so console events flow before the client sees Runtime.enable resolve.
         this.#sendToBackend("Console.enable", undefined, id, method);
         return;
 
@@ -888,10 +846,8 @@ class InspectorCDPAdapter {
           generatePreview: params.generatePreview,
           emulateUserGesture: params.userGesture,
         };
-        // JSC has no `awaitPromise` on Runtime.evaluate; emulate it by
-        // chaining Runtime.awaitPromise when the result is a promise. The
-        // initial evaluate must not use returnByValue (it would serialize the
-        // Promise itself instead of returning the objectId to await on).
+        // JSC has no awaitPromise on Runtime.evaluate; chain Runtime.awaitPromise on the result.
+        // Step one forces returnByValue:false so the Promise yields an objectId, not a serialization.
         if (params.awaitPromise === true) {
           const firstStep = { ...jscParams, returnByValue: false };
           this.#sendToBackend(
@@ -936,10 +892,8 @@ class InspectorCDPAdapter {
           this.#replyErrorToClient(id, -32602, "Either objectId or executionContextId must be specified");
           return;
         }
-        // CDP allows executionContextId-only (calls with this === globalThis);
-        // JSC requires an objectId, so fetch the global's first. JSC has a
-        // single execution context and rejects contextId, so omit it. Pass the
-        // client's objectGroup so its releaseObjectGroup reclaims this handle.
+        // CDP allows executionContextId-only (this === globalThis); JSC requires an objectId, so
+        // fetch the global's first. Pass objectGroup so releaseObjectGroup reclaims this handle.
         this.#sendToBackend(
           "Runtime.evaluate",
           { expression: "globalThis", objectGroup: params.objectGroup },
@@ -974,13 +928,9 @@ class InspectorCDPAdapter {
       // ── Debugger ─────────────────────────────────────────────────────────
       case "Debugger.enable":
         this.#sendToBackend("Debugger.enable");
-        // V8's Debugger.enable activates breakpoints and pauses on `debugger;`
-        // by default; JSC requires explicit opt-in for both. A client may run
-        // code as soon as it sees the Debugger.enable response and expects
-        // pausing to already be armed, so answer it from the last of the three
-        // commands instead of the first: the backend replies in order, so that
-        // response is proof all three landed. #translateResult still builds
-        // V8's { debuggerId } shape from the clientMethod passed here.
+        // V8's Debugger.enable implicitly arms breakpoints and `debugger;`; JSC requires explicit
+        // opt-in. Answer from the last command so pausing is armed before the client runs code.
+        // https://chromedevtools.github.io/devtools-protocol/tot/Debugger/#method-enable
         this.#sendToBackend("Debugger.setBreakpointsActive", { active: true });
         this.#sendToBackend("Debugger.setPauseOnDebuggerStatements", { enabled: true }, id, method);
         return;
@@ -1225,10 +1175,8 @@ class InspectorCDPAdapter {
         return;
 
       case "NodeRuntime.notifyWhenWaitingForDisconnect":
-        // Node's RuntimeAgent keeps this per session and, at exit, sends this
-        // session waitingForDisconnect instead of executionContextDestroyed.
-        // Setting it after the handshake has begun is inert, as in Node:
-        // retaining_context_ was already taken.
+        // Per-session: at exit this session gets waitingForDisconnect instead of contextDestroyed.
+        // Inert after handshake (retaining_context_ already taken). See Node's runtime_agent.cc.
         this.#notifyWhenWaitingForDisconnect = !!params.enabled;
         this.#replyToClient(id, {});
         return;
@@ -1358,11 +1306,9 @@ class InspectorCDPAdapter {
       }
 
       case "Debugger.paused": {
-        // A pause whose every hit breakpoint is a stale pre-parse binding is
-        // at a coordinate the client never asked for. The pause loop drains
-        // the backend queue, so the posted remove/re-set complete during this
-        // very pause; resuming then lets execution reach the corrected
-        // binding, which reports the pause the client expects.
+        // A pause whose only hit breakpoint is a stale pre-parse binding is at a coordinate the
+        // client never asked for. The pause loop drains the backend queue, so the posted re-set
+        // completes during this pause; resume and let execution reach the corrected binding.
         if (
           params.reason === "Breakpoint" &&
           typeof params.data?.breakpointId === "string" &&
@@ -1441,11 +1387,9 @@ class InspectorCDPAdapter {
       }
 
       case "Bun.waitingForDisconnect":
-        // The inspected thread reached exit and is blocking for this frontend.
-        // Node: sessions that opted in get waitingForDisconnect; if *any*
-        // session opted in, the rest get nothing yet — the context is still
-        // live enough to answer Runtime.evaluate, so they only see it destroyed
-        // once the last retaining session disconnects.
+        // Inspected thread reached exit. Mirrors Node's notifyWaitingForDisconnect: opted-in sessions
+        // get waitingForDisconnect; others see contextDestroyed only once the last retaining session
+        // leaves. https://github.com/nodejs/node/blob/main/src/inspector_agent.cc
         this.#startHandshakeOnce();
         if (this.#retainingContext) {
           this.#emitToClient("NodeRuntime.waitingForDisconnect", {});

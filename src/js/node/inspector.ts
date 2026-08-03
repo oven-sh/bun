@@ -1,8 +1,6 @@
 // Hardcoded module "node:inspector" and "node:inspector/promises"
-// Implemented: the in-process Session (Profiler CPU profiles and precise
-// coverage, Runtime console notifications, forwarded Debugger.* configuration),
-// and open()/url()/close()/waitForDebugger() backed by a Chrome DevTools
-// Protocol WebSocket server with breakpoint pausing.
+// In-process CDP Session + open()/url()/close()/waitForDebugger() over a CDP WebSocket server.
+// Spec: https://chromedevtools.github.io/devtools-protocol/  Node: https://github.com/nodejs/node/blob/main/lib/inspector.js
 const { hideFromStack } = require("internal/shared");
 const { validateString, validateFunction } = require("internal/validators");
 const { SafeSet, SafeMap } = require("internal/primordials");
@@ -12,21 +10,16 @@ const { pathToFileURL } = require("node:url");
 const { isAbsolute } = require("node:path");
 const DateNow = Date.now;
 
-// #handleMethod return marker for inspector-protocol errors: the callback
-// receives the plain `{ code, message }` object (Node delivers protocol
-// errors as plain objects, not Error instances).
+// #handleMethod marker: protocol error delivered as plain `{code,message}` (Node's onMessage contract).
 const kProtocolError = Symbol("kProtocolError");
-// #handleMethod return marker: the method is not handled locally and must be
-// dispatched through the in-process CDP backend by post().
+// #handleMethod marker: not handled locally, dispatch through the in-process CDP backend.
 const kInProcess = Symbol("kInProcess");
 
-// Node surfaces a backend protocol error to the callback as an Error whose
-// message is "Inspector error <code>: <message>" and code ERR_INSPECTOR_COMMAND.
+// Node wraps backend protocol errors as ERR_INSPECTOR_COMMAND: https://github.com/nodejs/node/blob/main/lib/inspector.js
 function makeProtocolError(error: { code?: number; message?: string }) {
   return $ERR_INSPECTOR_COMMAND(`${error.code ?? -32000}: ${error.message ?? "Unknown error"}`);
 }
 
-// Native profiler functions exposed via $newCppFunction
 const startCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startCPUProfiler", 0);
 const stopCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopCPUProfiler", 0);
 const setCPUSamplingInterval = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_setCPUSamplingInterval", 1);
@@ -35,9 +28,7 @@ const startPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunct
 const stopPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopPreciseCoverage", 0);
 const collectPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_collectPreciseCoverage", 0);
 
-// Native bindings for inspector.open(): they start Bun's debugger thread with a
-// WebSocket server that speaks the V8 Chrome DevTools Protocol (see
-// internal/debugger.ts and internal/inspector/cdp.ts).
+// inspector.open() bindings: start the debugger-thread CDP WebSocket server (internal/debugger.ts, internal/inspector/cdp.ts).
 const openNodeInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_openNodeInspector", 2);
 const waitForNodeInspectorConnection = $newCppFunction(
   "BunDebugger.cpp",
@@ -45,9 +36,7 @@ const waitForNodeInspectorConnection = $newCppFunction(
   0,
 );
 const postNodeInspectorControl = $newCppFunction("BunDebugger.cpp", "jsFunction_postNodeInspectorControl", 1);
-// In-process CDP: dispatch translated JSC-protocol messages against this
-// realm's inspector controller synchronously on the calling thread, and get
-// back every message the backend produced (see BunDebugger.cpp).
+// In-process CDP: dispatch JSC-protocol messages synchronously against this realm's inspector controller (BunDebugger.cpp).
 const dispatchInProcessInspectorMessage = $newCppFunction(
   "BunDebugger.cpp",
   "jsFunction_dispatchInProcessInspectorMessage",
@@ -61,8 +50,7 @@ const drainInProcessInspectorMessages = $newCppFunction(
 const disconnectInProcessInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_disconnectInProcessInspector", 0);
 const closeNodeInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_closeNodeInspector", 0);
 
-// Captured at module load so the console-hook stack capture keeps working
-// (and stays safe) after user code replaces or freezes globalThis.Error.
+// Captured at load so console-hook stack capture survives user tampering with globalThis.Error.
 const ErrorObject = globalThis.Error;
 const errorCaptureStackTrace = ErrorObject.captureStackTrace;
 
@@ -121,8 +109,7 @@ function open(port?: number, host?: string, wait?: boolean) {
   try {
     resolvedUrl = openNodeInspector(requestedUrl, !!wait);
   } catch (e) {
-    // Node prints one diagnostic line and returns instead of throwing when the
-    // socket cannot be bound, so a caller can retry with a different port.
+    // Node prints a diagnostic and returns (no throw) on bind failure: https://github.com/nodejs/node/blob/main/src/inspector_agent.cc
     const raw = (e as Error)?.message ?? String(e);
     const prefix = "Failed to start inspector: ";
     const detail = raw.startsWith(prefix) ? raw.slice(prefix.length) : raw;
@@ -130,20 +117,15 @@ function open(port?: number, host?: string, wait?: boolean) {
     return disposable;
   }
   if (resolvedUrl === null) {
-    // A prior inspector.open() success is caught by the top guard above, so
-    // null here means the debugger thread was started outside node:inspector
-    // (CLI --inspect / BUN_INSPECT). That server speaks the JSC protocol and
-    // never registered a controlCallback, so inspector.close() cannot shut it
-    // down; the default ERR_INSPECTOR_ALREADY_ACTIVATED message would send the
-    // user to a no-op close().
+    // null = debugger thread already started via CLI --inspect / BUN_INSPECT (JSC protocol, no
+    // controlCallback); inspector.close() cannot shut that down, so flag it explicitly.
     throw $ERR_INSPECTOR_ALREADY_ACTIVATED(
       "An inspector was already started via --inspect and cannot be reopened from node:inspector",
     );
   }
 
   activeInspectorUrl = resolvedUrl;
-  // Node writes the resolved port back so process.debugPort reflects it after
-  // open(0) picks an ephemeral port.
+  // Node writes the resolved port back so process.debugPort reflects open(0)'s ephemeral port.
   try {
     process.debugPort = Number(new URL(resolvedUrl).port);
   } catch {}
@@ -162,8 +144,7 @@ function close() {
   if (activeInspectorUrl === undefined) {
     return;
   }
-  // Sends the "close" control message and blocks until the debugger thread has
-  // stopped the server, so the port is already refused when close() returns.
+  // Blocks until the debugger thread has stopped the server, so the port is refused on return.
   closeNodeInspector();
   activeInspectorUrl = undefined;
 }
@@ -181,17 +162,13 @@ function waitForDebugger() {
 }
 
 // --- In-process CDP backend --------------------------------------------------
-// Methods the hand-written Session switch does not cover are translated by the
-// same CDP<->JSC adapter the WebSocket server uses (internal/inspector/cdp),
-// and dispatched synchronously against this realm's inspector controller on
-// the calling thread. All in-process sessions share the one native channel;
-// each session owns an adapter and matches replies by command id.
+// Unhandled methods go through the CDP<->JSC adapter (internal/inspector/cdp) against this realm's
+// inspector controller. Sessions share one native channel; each owns an adapter keyed by command id.
 let InspectorCDPAdapter: any;
 const inProcessAdapters: Set<any> = new SafeSet();
 let drainScheduled = false;
-// JSC broadcasts every backend reply to every attached frontend, so backend
-// command ids must be unique across all in-process adapters and above the
-// range remote WebSocket clients count from (they start at 1).
+// JSC broadcasts replies to every frontend, so backend ids must be unique across adapters
+// and above the range remote WebSocket clients count from (they start at 1).
 const kFirstInProcessBackendId = 100_000_000;
 const kLastInProcessBackendId = 2_000_000_000;
 let nextInProcessBackendId = kFirstInProcessBackendId;
@@ -201,19 +178,15 @@ function allocateInProcessBackendId() {
   return id;
 }
 
-// Fans a backend message out to every session adapter; each ignores ids it
-// did not issue. Delivery to user code is deferred by the adapter's
-// writeToClient, so nothing here re-enters user JS.
+// Fan out to every adapter; each ignores ids it did not issue. Adapter writeToClient defers user-JS delivery.
 function deliverBackendMessages(messages: string[]) {
   for (const message of messages) {
     for (const adapter of inProcessAdapters) adapter.handleBackendMessage(message);
   }
 }
 
-// Delivers whatever the native channel buffered outside a synchronous
-// dispatch (Debugger.scriptParsed raised while user code compiles, deferred
-// Runtime.awaitPromise replies, ...). Registered natively as the channel's
-// wake callback and also scheduled after each dispatch.
+// Delivers messages buffered outside a synchronous dispatch (scriptParsed during compile,
+// deferred awaitPromise replies). Registered as the native wake callback and scheduled post-dispatch.
 function drainInProcessBackend() {
   drainScheduled = false;
   if (inProcessAdapters.size === 0) return;
@@ -227,12 +200,8 @@ function scheduleBackendDrain() {
   queueMicrotask(drainInProcessBackend);
 }
 
-// Sessions with Runtime enabled receive Runtime.consoleAPICalled for console
-// calls. This monkey-patches globalThis.console (not JSC's ConsoleClient as
-// cdp.ts does), so pre-captured refs bypass it and no stackTrace is emitted.
-// SafeSet iteration is tamper-proof (own frozen Symbol.iterator), so a hostile
-// Set.prototype[Symbol.iterator] cannot make console.log itself throw from
-// inside the hook's for-of loop head.
+// Runtime.consoleAPICalled via monkey-patched globalThis.console: https://chromedevtools.github.io/devtools-protocol/tot/Runtime/#event-consoleAPICalled
+// SafeSet iteration is tamper-proof, so a hostile Set.prototype[Symbol.iterator] cannot make console.log throw.
 const runtimeEnabledSessions: Set<Session> = new SafeSet();
 const hookedConsoleMethods: Array<[string, Function, Function]> = [];
 
@@ -290,10 +259,8 @@ function toRemoteObject(arg: unknown): object {
   }
 }
 
-// Node delivers consoleAPICalled through V8's message pump, so a listener
-// that logs cannot re-enter the console hook. We emit synchronously, so a
-// guard is needed: console calls made from inside a listener run the
-// original method but are not re-emitted.
+// V8 pumps consoleAPICalled asynchronously so listeners can't re-enter; we emit synchronously,
+// so guard: console calls from inside a listener run the original method but are not re-emitted.
 let emittingConsoleAPI = false;
 
 function emitConsoleAPICalled(type: string, args: unknown[], stackTrace?: object) {
@@ -302,13 +269,10 @@ function emitConsoleAPICalled(type: string, args: unknown[], stackTrace?: object
   try {
     const timestamp = DateNow();
     for (const session of runtimeEnabledSessions) {
-      // Neither a throwing listener nor a throwing argument serialization
-      // (toRemoteObject reads user-controlled toString) may make the console
-      // call itself throw, suppress the underlying output, or starve later
-      // sessions; Node surfaces listener exceptions as process warnings.
+      // A throwing listener or toRemoteObject (user toString) must not break console.log or
+      // starve later sessions; Node surfaces listener exceptions as process warnings.
       try {
-        // A fresh message per session: a listener that mutates its payload
-        // must not contaminate what the next session receives.
+        // Fresh message per session so listener mutations don't leak across sessions.
         const params: any = {
           type,
           args: args.map(toRemoteObject),
@@ -317,15 +281,12 @@ function emitConsoleAPICalled(type: string, args: unknown[], stackTrace?: object
         };
         if (stackTrace !== undefined) params.stackTrace = stackTrace;
         const message = { method: "Runtime.consoleAPICalled", params };
-        // Node's Session#onMessage emits the method-specific event first,
-        // then the generic "inspectorNotification".
+        // Node emits method-specific then "inspectorNotification": https://github.com/nodejs/node/blob/main/lib/inspector.js
         session.emit("Runtime.consoleAPICalled", message);
         session.emit("inspectorNotification", message);
       } catch (e) {
         let warning: Error;
-        // Both `instanceof` (prototype walk) and String(e) can themselves
-        // throw on hostile values like a thrown revoked Proxy, which would
-        // defeat this guard.
+        // `instanceof`/String(e) can themselves throw on hostile values (revoked Proxy).
         try {
           warning = e instanceof Error ? e : new Error(String(e));
         } catch {
@@ -339,17 +300,13 @@ function emitConsoleAPICalled(type: string, args: unknown[], stackTrace?: object
   }
 }
 
-// V8 attaches the JS call stack to Runtime.consoleAPICalled; clients (and
-// Node's tests) navigate from the top frame to the console call site. The
-// CallSite objects Bun's captureStackTrace produces already carry
-// source-mapped (original) positions, unlike raw JSC frames.
+// V8 attaches a stackTrace to consoleAPICalled: https://chromedevtools.github.io/devtools-protocol/tot/Runtime/#type-StackTrace
+// Bun's captureStackTrace CallSites already carry source-mapped positions, unlike raw JSC frames.
 function returnCallSites(_error, sites) {
   return sites;
 }
 
 function dispatchInProcessBackendMessage(backendMessage: string) {
-  // The command executes here, on this thread; hand every message it
-  // produced (response + events) back through the adapters.
   deliverBackendMessages(dispatchInProcessInspectorMessage(backendMessage, drainInProcessBackend));
   scheduleBackendDrain();
 }
@@ -416,8 +373,7 @@ function captureConsoleStackTrace(hook: Function) {
   }
 }
 
-// The stack capture writes Error's statics; if user code froze them or
-// swapped Error, degrade to no stackTrace — a console call must never throw.
+// Writes Error's statics; if user code froze/swapped Error, degrade to no stackTrace — console.log must never throw.
 function tryCaptureConsoleStackTrace(hook: Function) {
   try {
     return captureConsoleStackTrace(hook);
@@ -428,7 +384,6 @@ function tryCaptureConsoleStackTrace(hook: Function) {
 
 function makeConsoleHook(type: string, original: Function): Function {
   const hook = function (this: unknown, ...args: unknown[]) {
-    // Skip the stack capture entirely when the emit is guarded out.
     if (!emittingConsoleAPI && runtimeEnabledSessions.size > 0) {
       emitConsoleAPICalled(type, args, tryCaptureConsoleStackTrace(hook));
     }
@@ -453,8 +408,7 @@ function removeConsoleHooks() {
   const consoleObject = globalThis.console;
   for (let i = 0; i < hookedConsoleMethods.length; i++) {
     const entry = hookedConsoleMethods[i];
-    // Only restore slots that still hold our hook — user code may have
-    // reassigned the method since the Runtime domain was enabled.
+    // Only restore slots that still hold our hook (user code may have reassigned).
     if (consoleObject[entry[0]] === entry[2]) {
       consoleObject[entry[0]] = entry[1];
     }
@@ -463,12 +417,9 @@ function removeConsoleHooks() {
 }
 
 // --- Network domain -------------------------------------------------------
-// Mirrors src/inspector/network_agent.cc from Node: the public inspector.Network
-// entry points validate and buffer here, and only the commands below hand data
-// back to a frontend.
+// Mirrors https://github.com/nodejs/node/blob/main/src/inspector/network_agent.cc
 
-// Node caps a single resource at 5MB and the whole buffer at 100MB, silently
-// dropping a blob that would exceed either.
+// Node caps one resource at 5MB and the whole buffer at 100MB, silently dropping overflow.
 const kDefaultMaxResourceBufferSize = 5 * 1024 * 1024;
 const kDefaultMaxTotalBufferSize = 100 * 1024 * 1024;
 
@@ -484,8 +435,7 @@ class NetworkRequestEntry {
   maxResourceBufferSize: number;
 
   constructor(hasPostData: boolean, requestIsUTF8: boolean, maxResourceBufferSize: number) {
-    // A request with no body is born finished; only hasPostData obliges the
-    // caller to send dataSent({ finished: true }).
+    // No body => born finished; only hasPostData obliges a dataSent({finished:true}).
     this.isRequestFinished = !hasPostData;
     this.requestIsUTF8 = requestIsUTF8;
     // Captured per entry: a later enable() must not retroactively shrink it.
@@ -493,8 +443,7 @@ class NetworkRequestEntry {
   }
 }
 
-// Node keeps the buffer on the per-session NetworkAgent, so one session's
-// enable()/disable() cannot disturb another's buffered requests.
+// Per-session buffer (Node's NetworkAgent): one session's enable/disable cannot disturb another's.
 class NetworkState {
   // Insertion-ordered: the oldest entry is evicted first once the total cap is hit.
   requests: Map<string, NetworkRequestEntry> = new SafeMap();
@@ -507,8 +456,7 @@ const networkEnabledSessions: Map<Session, NetworkState> = new SafeMap();
 
 function pushNetworkBlob(state: NetworkState, entry: NetworkRequestEntry, blobs: Uint8Array[], blob: Uint8Array) {
   if (entry.bufferSize + blob.byteLength > entry.maxResourceBufferSize) return;
-  // Copy: Node's Binary::fromUint8Array eagerly copies, so a caller that
-  // recycles its chunk buffer must not corrupt what we buffered.
+  // Copy: Node's Binary::fromUint8Array eagerly copies, so a recycled caller buffer must not corrupt ours.
   blobs.push(new Uint8Array(blob));
   entry.bufferSize += blob.byteLength;
   state.totalBufferSize += blob.byteLength;
@@ -543,8 +491,7 @@ function concatBlobs(blobs: Uint8Array[]) {
   return out;
 }
 
-// Node reports a missing property and a wrong-typed one identically; `label`
-// carries the dotted path it uses for nested fields ("request.url").
+// Node reports missing and wrong-typed identically; `label` is the dotted path ("request.url").
 function requireEventString(params: any, key: string, label: string = key) {
   const value = params[key];
   if (typeof value !== "string") throw new TypeError(`Missing ${label} in event`);
@@ -597,9 +544,7 @@ function requestFromObject(params: any) {
   const url = requireEventString(request, "url", "request.url");
   const method = requireEventString(request, "method", "request.method");
   const headers = headersFromObject(request, "headers", "request.headers");
-  // Node's ObjectGetBool yields false for any non-boolean, so `hasPostData: 1`
-  // must not arm the dataSent({ finished: true }) handshake.
-  // Extra properties are dropped: Node emits exactly this shape.
+  // Node's ObjectGetBool yields false for non-booleans; extra properties are dropped.
   return { url, method, hasPostData: request.hasPostData === true, headers };
 }
 
@@ -620,8 +565,7 @@ function responseFromObject(params: any, key: string, withUrl: boolean) {
   };
 }
 
-// Each session's delivery is isolated: a throwing listener becomes a
-// process warning (Node's contract) and never starves other sessions.
+// Isolated per-session delivery: listener throws become process warnings, never starve other sessions.
 function emitToSession(session: Session, method: string, params: object) {
   const message = { method, params };
   try {
@@ -632,9 +576,7 @@ function emitToSession(session: Session, method: string, params: object) {
   }
 }
 
-// process.emitWarning throws ERR_INVALID_ARG_TYPE for values that are neither
-// strings nor Errors, so a listener throwing `{}` must not defeat the
-// isolation guards above/below. Mirrors emitConsoleAPICalled's handling.
+// process.emitWarning rejects non-string/non-Error, so a listener throwing `{}` must not defeat isolation.
 function toWarning(e: unknown): Error {
   try {
     return e instanceof Error ? e : new ErrorObject(String(e));
@@ -643,10 +585,7 @@ function toWarning(e: unknown): Error {
   }
 }
 
-// Each enabled session owns its buffer, so the event is applied once per session.
-// The per-event context rides as an explicit argument so the per-session
-// callbacks can be hoisted module-level functions instead of per-event
-// closures (no-inline-closures rule).
+// Applied once per enabled session; ctx is explicit so callbacks are hoisted (no per-event closures).
 function forEachNetworkSession<C>(fn: (session: Session, state: NetworkState, ctx: C) => void, ctx: C) {
   for (const { 0: session, 1: state } of networkEnabledSessions) fn(session, state, ctx);
 }
@@ -835,14 +774,12 @@ function sessionWebSocketHandshakeResponseReceived(session, _state, ctx) {
   });
 }
 
-// Node routes every entry point through broadcastToFrontend, which defaults a
-// missing params to {} and then validateObject()s it.
+// Node's broadcastToFrontend defaults params to {} then validateObject()s: https://github.com/nodejs/node/blob/main/lib/inspector.js
 function guardEventParams(domain: Record<string, Function>) {
   for (const name of Object.keys(domain)) {
     const original = domain[name];
     domain[name] = function (params = {}) {
       if (typeof params !== "object" || params === null || $isArray(params)) {
-        // Node's validateObject renders this type name lowercase.
         throw $ERR_INVALID_ARG_TYPE("params", "object", params);
       }
       return original.$call(this, params);
@@ -852,8 +789,7 @@ function guardEventParams(domain: Record<string, Function>) {
 guardEventParams(Network);
 
 // --- DOMStorage domain ------------------------------------------------------
-// Mirrors src/inspector/dom_storage_agent.cc: validate then emit. Only the
-// event surface exists; there is no storage backend to inspect.
+// Mirrors https://github.com/nodejs/node/blob/main/src/inspector/dom_storage_agent.cc (event surface only).
 const domStorageEnabledSessions: Set<Session> = new SafeSet();
 
 function emitDOMStorageEvent(method: string, params: object) {
@@ -901,9 +837,7 @@ const DOMStorage = {
     emitDOMStorageEvent("DOMStorage.domStorageItemsCleared", { storageId });
   },
 
-  // Pseudo-event (not part of CDP): seeds the agent's storage map. There
-  // is no backing storage here, but the payload is still validated the way
-  // Node does, including hostile Proxy storage maps.
+  // Pseudo-event (not CDP): seeds the agent's storage map. No backing store; validated like Node incl. hostile Proxies.
   registerStorage(params: any) {
     if (domStorageEnabledSessions.size === 0) return;
     if (typeof params.isLocalStorage !== "boolean") throw new TypeError("Missing isLocalStorage in event");
@@ -925,12 +859,8 @@ const DOMStorage = {
 };
 guardEventParams(DOMStorage);
 
-// Reshapes the raw control-flow-profiler data from jsFunction_collectPreciseCoverage
-// ([{ url, scriptId, sourceLength, blocks: [[start, end, count]], functions: [[start, end, executed]] }])
-// into the V8 ScriptCoverage list returned by Profiler.takePreciseCoverage:
-// each function gets an entry whose first range spans the whole function with its
-// call count, followed by the basic-block ranges inside it; blocks outside any
-// function go on a synthetic whole-script entry.
+// Reshapes JSC control-flow-profiler data into V8 ScriptCoverage[]:
+// https://chromedevtools.github.io/devtools-protocol/tot/Profiler/#type-ScriptCoverage
 function buildScriptCoverageList(
   rawScripts: Array<{
     url: string;
@@ -947,15 +877,12 @@ function buildScriptCoverageList(
   for (const script of rawScripts) {
     const { scriptId, sourceLength } = script;
     let { url } = script;
-    // V8 coverage reports file-backed scripts with file:// URLs even when the
-    // script name is a plain filesystem path (e.g. a vm script filename or a
-    // require()d module), so convert absolute paths the same way.
+    // V8 reports file-backed scripts with file:// URLs even for plain paths: https://source.chromium.org/chromium/chromium/src/+/main:v8/src/inspector/
     if (url && isAbsolute(url)) {
       url = pathToFileURL(url).href;
     }
 
-    // Outer functions before nested ones, so a stack-based sweep below sees
-    // enclosing ranges first.
+    // Outer functions before nested ones so the stack sweep sees enclosing ranges first.
     const functions = script.functions
       .filter(([start, end]) => start >= 0 && end >= start)
       .sort((a, b) => a[0] - b[0] || b[1] - a[1]);
@@ -971,14 +898,11 @@ function buildScriptCoverageList(
         stack.push(nextFunction);
         nextFunction++;
       }
-      // Functions that ended before this block started can no longer contain
-      // this block or any later one (blocks are sorted by start).
+      // Functions that ended before this block's start cannot contain it or any later block.
       while (stack.length > 0 && functions[stack[stack.length - 1]][1] < block[0]) {
         stack.pop();
       }
-      // The stack is a nesting chain (siblings get popped above), so ends
-      // decrease towards the top; the first entry from the top that still
-      // covers the block's end is the innermost containing function.
+      // Stack is a nesting chain (ends decrease toward top); first from top covering block's end is innermost owner.
       let owner = -1;
       for (let i = stack.length - 1; i >= 0; i--) {
         if (functions[stack[i]][1] >= block[1]) {
@@ -993,9 +917,8 @@ function buildScriptCoverageList(
       }
     }
 
-    // Derived from the (delta-subtracted) block counts only: the function
-    // `executed` flag is cumulative and would make a second takePreciseCoverage
-    // report 1 even when nothing ran since the first.
+    // From delta-subtracted block counts only: the function `executed` flag is cumulative
+    // and would make a second takePreciseCoverage report 1 with no new execution.
     const scriptExecuted = blocks.some(([, , count]) => count > 0) ? 1 : 0;
     const entries: object[] = [];
 
@@ -1027,10 +950,8 @@ function buildScriptCoverageList(
       }
 
       const ownBlocks = blocksPerFunction[i];
-      // Approximate the call count from the entry block (the one with the
-      // smallest start offset). Diverges from V8 for generators/async
-      // functions, which JSC compiles as two nested CodeBlocks whose body
-      // entry counts state-0 resumes rather than user-visible calls.
+      // Call count ≈ entry-block count. Diverges from V8 for generators/async: JSC compiles them
+      // as two nested CodeBlocks whose body entry counts state-0 resumes, not user-visible calls.
       let count = 1;
       if (ownBlocks.length > 0) {
         let entryBlock = ownBlocks[0];
@@ -1065,9 +986,8 @@ function collectCoverageScripts(): any[] | Error {
   }
 }
 
-// Mirrors Node v26.3.0 lib/inspector.js Session (connect/post/EventEmitter
-// contract), with dispatch translated onto JSC's protocol via the in-process
-// CDP adapter instead of V8's connection.
+// Mirrors Node's Session (https://github.com/nodejs/node/blob/main/lib/inspector.js),
+// with dispatch translated onto JSC's protocol via the in-process CDP adapter.
 class Session extends EventEmitter {
   #connected = false;
   #profilerEnabled = false;
@@ -1075,18 +995,14 @@ class Session extends EventEmitter {
   #preciseCoverageCallCount = false;
   #preciseCoverageDetailed = false;
   #forwardedDebugger = false;
-  // Baseline for delta semantics: takePreciseCoverage must reset counters, but
-  // JSC has no counter-reset API, so subtract the previous take instead.
+  // takePreciseCoverage resets counters per CDP; JSC has no reset API, so subtract the previous take.
   #coverageBaseline: Map<string, number> = new Map();
   #adapter: any = undefined;
-  // Resolvers for in-flight in-process commands, keyed by client command id.
   #pendingResults: Map<number, (err: any, result?: any) => void> = new SafeMap();
   #nextCommandId = 1;
   #dispatchingClientCommand = false;
 
-  // Lazily route this session's untranslated commands through the CDP<->JSC
-  // adapter and the in-process native channel; replies land in
-  // #pendingResults keyed by command id, events go to session listeners.
+  // Lazily route untranslated commands through the CDP<->JSC adapter; replies land in #pendingResults.
   #inProcessAdapter() {
     if (this.#adapter !== undefined) return this.#adapter;
     InspectorCDPAdapter ??= require("internal/inspector/cdp").InspectorCDPAdapter;
@@ -1094,17 +1010,15 @@ class Session extends EventEmitter {
       dispatchInProcessBackendMessage,
       this.#deliverClientMessage.bind(this),
       allocateInProcessBackendId,
-      // No wait-for-debugger or exit-handshake state: an in-process Session
-      // never retains the context, matching Node's non-preventShutdown path.
+      // No wait-for-debugger/exit handshake: in-process Session never retains the context (Node's non-preventShutdown).
     );
     inProcessAdapters.add(adapter);
     this.#adapter = adapter;
     return adapter;
   }
 
-  // Runs Node's Session#onMessage contract for one adapter message: a reply
-  // completes its post() callback, an event is emitted (method-specific first).
-  // A throw from user code becomes a process warning, never a swallowed error.
+  // Node's Session#onMessage contract: reply -> post() callback; event -> emit (method first).
+  // User-code throws become process warnings: https://github.com/nodejs/node/blob/main/lib/inspector.js
   #onClientMessage(parsed: any) {
     const { id, error, method } = parsed;
     try {
@@ -1126,13 +1040,9 @@ class Session extends EventEmitter {
     }
   }
 
-  // Command replies (messages with an id) produced during a post() dispatch
-  // are delivered after the dispatch unwinds, so a throwing callback can
-  // neither be misread by the adapter as a command failure nor run before
-  // post() returns. Events (messages with a method) always deliver
-  // immediately — a Debugger.paused from a pause nested inside a dispatch
-  // must reach listeners before execution continues, and #onClientMessage
-  // already contains listener throws.
+  // Replies produced during post() are deferred until dispatch unwinds so a throwing callback isn't
+  // misread as command failure. Events deliver immediately — Debugger.paused nested in a dispatch
+  // must reach listeners before execution continues (#onClientMessage contains listener throws).
   #deliverClientMessage(clientMessage: string) {
     let parsed;
     try {
@@ -1147,8 +1057,7 @@ class Session extends EventEmitter {
     }
   }
 
-  // Streams a V8-format heap snapshot to this session as
-  // HeapProfiler.addHeapSnapshotChunk events, matching V8's chunked delivery.
+  // HeapProfiler.addHeapSnapshotChunk chunked delivery: https://chromedevtools.github.io/devtools-protocol/tot/HeapProfiler/#event-addHeapSnapshotChunk
   #emitHeapSnapshot() {
     const snapshot = Bun.generateHeapSnapshot("v8");
     const chunkSize = 100 * 1024;
@@ -1157,8 +1066,6 @@ class Session extends EventEmitter {
     }
   }
 
-  // Dispatches `method` through the in-process CDP backend. `done` is called
-  // exactly once with (protocolError, result).
   #postInProcess(method: string, params: object | undefined, done: (err: any, result?: any) => void) {
     const adapter = this.#inProcessAdapter();
     const id = this.#nextCommandId++;
@@ -1169,8 +1076,7 @@ class Session extends EventEmitter {
     try {
       adapter.handleClientMessage(message);
     } finally {
-      // Restore rather than clear: a post() re-entered from a listener must not
-      // flip the outer dispatch back to synchronous delivery.
+      // Restore, not clear: a re-entered post() must not flip the outer dispatch to sync delivery.
       this.#dispatchingClientCommand = wasDispatching;
     }
   }
@@ -1206,9 +1112,7 @@ class Session extends EventEmitter {
     if (this.#adapter !== undefined) {
       inProcessAdapters.delete(this.#adapter);
       this.#adapter = undefined;
-      // Node's contract: every callback still waiting on a reply is failed
-      // with "Inspector error -32000: Execution context was destroyed."
-      // (ERR_INSPECTOR_COMMAND), like any in-flight command at teardown.
+      // Node fails pending callbacks with -32000 "Execution context was destroyed.": https://github.com/nodejs/node/blob/main/lib/inspector.js
       const pending = this.#pendingResults;
       this.#pendingResults = new SafeMap();
       for (const done of pending.values()) {
@@ -1216,9 +1120,8 @@ class Session extends EventEmitter {
       }
       if (inProcessAdapters.size === 0) disconnectInProcessInspector();
     }
-    // Forwarded Debugger.* state (breakpoints etc.) lives on a shared backend
-    // on the debugger thread; release it so a disconnected session cannot keep
-    // pausing the process, matching Node's disconnect() contract.
+    // Forwarded Debugger.* state lives on the debugger-thread backend; release it so a
+    // disconnected session cannot keep pausing the process (Node's disconnect() contract).
     if (this.#forwardedDebugger && activeInspectorUrl !== undefined) {
       postNodeInspectorControl(JSON.stringify({ type: "session-disconnect" }));
     }
@@ -1231,7 +1134,6 @@ class Session extends EventEmitter {
     callback?: (err: Error | null, result?: any) => void,
   ) {
     validateString(method, "method");
-    // Handle overloaded signature: post(method, callback)
     if (callback === undefined && typeof params === "function") {
       callback = params;
       params = undefined;
@@ -1252,16 +1154,12 @@ class Session extends EventEmitter {
 
     let result = this.#handleMethod(method, params as object | undefined);
 
-    // Methods without local handling execute on the real inspector backend.
-    // The in-process backend is bound to the main realm; worker sessions
-    // keep Node's method-not-found protocol error instead.
+    // In-process backend is main-realm only; workers get Node's -32601 instead.
     if (result === kInProcess) {
       if (!Bun.isMainThread) {
         result = $ERR_INSPECTOR_COMMAND(`-32601: '${method}' wasn't found`);
       } else {
-        // Node's post() is asynchronous: with a callback the reply arrives
-        // through it; without one nothing is returned and a protocol error
-        // is neither thrown nor otherwise observable.
+        // Node's post() is async: callback gets the reply; without one, protocol errors are unobservable.
         this.#postInProcess(method, params as object | undefined, settleInProcessPost.bind(undefined, callback));
         return;
       }
@@ -1270,9 +1168,7 @@ class Session extends EventEmitter {
     if (callback) {
       queueMicrotask(settleLocalPost.bind(undefined, callback, result));
     }
-    // Node's post() always returns undefined, and without a callback a
-    // protocol error is neither thrown nor otherwise observable (verified on
-    // v26.3.0 — errors are callback-only).
+    // Node's post() always returns undefined; protocol errors without a callback are unobservable.
   }
 
   #handleMethod(method: string, params?: object): any {
@@ -1290,11 +1186,8 @@ class Session extends EventEmitter {
       case "Network.enable": {
         // Node rebuilds this session's buffer on every enable, discarding prior state.
         const state = new NetworkState();
-        // Node's dispatcher delivers these as Maybe<int>, so clamp to finite
-        // non-negative int32 and fall through to the defaults otherwise: NaN
-        // would disable eviction and a negative would evict the entry just
-        // written. Gate on the ToInt32-converted value so a finite input
-        // above 2^31 cannot wrap negative past the sign check.
+        // Node's dispatcher delivers Maybe<int>: clamp to finite non-negative int32; gate on the
+        // ToInt32 value so >2^31 cannot wrap negative past the sign check.
         const maxTotal = (params as any)?.maxTotalBufferSize;
         const maxResource = (params as any)?.maxResourceBufferSize;
         if (typeof maxTotal === "number" && Number.isFinite(maxTotal)) {
@@ -1366,8 +1259,7 @@ class Session extends EventEmitter {
         if (isCPUProfilerRunning()) {
           stopCPUProfiler();
         }
-        // V8's Profiler agent stops precise coverage on disable; without this
-        // the control-flow profiler keeps instrumenting newly-compiled code.
+        // V8's Profiler agent stops precise coverage on disable: https://chromedevtools.github.io/devtools-protocol/tot/Profiler/#method-disable
         if (this.#preciseCoverageEnabled) {
           stopPreciseCoverage();
           this.#preciseCoverageEnabled = false;
@@ -1426,10 +1318,8 @@ class Session extends EventEmitter {
           return $ERR_INSPECTOR_COMMAND("-32000: Precise coverage has not been started.");
         const scripts = collectCoverageScripts();
         if (scripts instanceof Error) return scripts;
-        // CDP contract: takePreciseCoverage resets execution counters, so a
-        // second take reports the delta. JSC has no counter reset, so subtract
-        // the previous take's raw block counts (function-level call counts are
-        // derived from the entry block, so they follow automatically).
+        // takePreciseCoverage resets counters per https://chromedevtools.github.io/devtools-protocol/tot/Profiler/#method-takePreciseCoverage
+        // JSC has no reset, so subtract the previous take's raw block counts.
         const baseline = this.#coverageBaseline;
         for (const script of scripts) {
           for (const block of script.blocks) {
@@ -1446,19 +1336,15 @@ class Session extends EventEmitter {
       }
 
       case "Profiler.getBestEffortCoverage": {
-        // JSC has no always-on invocation counters, so unlike V8 this returns
-        // [] unless startPreciseCoverage has run in this VM.
+        // JSC has no always-on invocation counters, so unlike V8 this returns [] unless startPreciseCoverage ran.
         const scripts = collectCoverageScripts();
         if (scripts instanceof Error) return scripts;
         return { result: buildScriptCoverageList(scripts, false, false) };
       }
 
-      // HeapProfiler snapshotting: V8 streams the snapshot as
-      // addHeapSnapshotChunk events and then answers the command. There is no
-      // allocation-tracking timeline to keep, so start/stopTrackingHeapObjects
-      // reduce to "no-op" and "emit a snapshot" respectively.
-      // collectGarbage falls through to kInProcess so it maps onto Heap.gc
-      // via the adapter, matching the remote path (and Node).
+      // HeapProfiler: https://chromedevtools.github.io/devtools-protocol/tot/HeapProfiler/
+      // No allocation-tracking timeline, so start/stopTrackingHeapObjects are no-op / emit-snapshot.
+      // collectGarbage falls through to kInProcess -> Heap.gc via the adapter.
       case "HeapProfiler.enable":
       case "HeapProfiler.disable":
       case "HeapProfiler.startTrackingHeapObjects":
@@ -1470,11 +1356,8 @@ class Session extends EventEmitter {
         return {};
       }
 
-      // When an inspector server is active (inspector.open() / vitest
-      // --inspect-brk), Debugger configuration must reach that server's
-      // backend so breakpoints pause where the remote debugger controls
-      // resumption. The forwarding is fire-and-forget. Without a server these
-      // fall through to the in-process backend below.
+      // With an active server (inspector.open() / --inspect-brk), forward Debugger config to its backend
+      // so breakpoints pause where the remote debugger controls resumption. Fire-and-forget; else kInProcess.
       case "Debugger.enable":
       case "Debugger.disable":
       case "Debugger.setBreakpointByUrl":
@@ -1494,13 +1377,8 @@ class Session extends EventEmitter {
       }
 
       case "NodeWorker.enable": {
-        // Minimal NodeWorker domain stub for test-worker-name only: a session
-        // connected from inside a worker reports itself. Main-thread child
-        // enumeration is NOT implemented — deliver an error through the
-        // callback so callers know (node succeeds with {} and emits
-        // attachedToWorker per worker; silently faking that would leave
-        // listeners waiting forever). Without a callback this is silent,
-        // like every other protocol error.
+        // Minimal stub for test-worker-name: worker session reports itself. Main-thread child enumeration
+        // is NOT implemented — error via callback so callers aren't left waiting on attachedToWorker.
         const wt = require("node:worker_threads");
         if (wt.isMainThread) {
           return $ERR_INSPECTOR_COMMAND("-32000: NodeWorker.enable is not supported on the main thread yet");
@@ -1547,10 +1425,8 @@ class Session extends EventEmitter {
           };
         }
         const { collected, metadata } = require("internal/trace_events").inspectorStop();
-        // Node streams the collected events back over the session in chunks
-        // (trace events, then metadata) before signalling completion. Emit
-        // synchronously: listeners observe everything before the post()
-        // callback (queued as a microtask above) runs.
+        // Node streams dataCollected (events, then metadata) then tracingComplete: https://github.com/nodejs/node/tree/main/src/inspector
+        // Emit synchronously so listeners see all of it before the post() callback microtask runs.
         this.emit("NodeTracing.dataCollected", {
           method: "NodeTracing.dataCollected",
           params: { value: collected },
@@ -1563,9 +1439,7 @@ class Session extends EventEmitter {
         return {};
       }
 
-      // Everything else (Runtime.evaluate/getProperties/callFunctionOn,
-      // Debugger.getScriptSource/getPossibleBreakpoints, HeapProfiler, ...)
-      // is translated and executed by the in-process CDP backend.
+      // Everything else is translated and executed by the in-process CDP backend.
       default:
         return kInProcess;
     }

@@ -105,14 +105,9 @@ type CreateBackendFn = (
 
 // CDP translation is only needed for node:inspector servers, so load it lazily.
 let lazyInspectorCDPAdapter: any;
-// JSC's FrontendRouter broadcasts every backend response to every attached
-// frontend, so backend command ids must be disjoint across ALL remote/CDP
-// adapters on this controller or one adapter resolves another's pending
-// request. In-process inspector.Session adapters count from 100_000_000
-// (inspector.ts kFirstInProcessBackendId); every remote adapter shares this
-// counter instead of starting its own at 1. JSC-protocol frontends on the
-// same router (debug.bun.sh, the VSCode extension) send their own command
-// ids from 1, so remote adapters start at 50M to stay disjoint from both.
+// JSC's FrontendRouter broadcasts responses to every frontend, so backend command ids must be
+// disjoint across all adapters: JSC frontends count from 1, remote CDP from 50M, in-process
+// Session from 100M (inspector.ts). https://github.com/WebKit/WebKit/tree/main/Source/JavaScriptCore/inspector/protocol
 let nextRemoteBackendId = 50_000_000;
 function allocateRemoteBackendId() {
   const id = nextRemoteBackendId++;
@@ -152,11 +147,8 @@ export default function (
   }
 
   if (isNodeInspector) {
-    // node:inspector's inspector.open(): connections speak the V8 Chrome
-    // DevTools Protocol, the listening URL is reported back to the inspected
-    // thread (which prints Node's "Debugger listening on ..." line), and a
-    // control callback lets the inspected thread close the server or forward
-    // commands from the in-process inspector.Session.
+    // inspector.open(): CDP connections, URL reported back, control callback for close/forward.
+    // https://github.com/nodejs/node/blob/main/lib/inspector.js
     let debug: Debugger | undefined;
     let sessionBackend: Backend | undefined;
     let sessionAdapter: any;
@@ -225,10 +217,8 @@ export default function (
           return;
         }
         case "command": {
-          // A CDP command forwarded from the inspected thread's in-process
-          // inspector.Session (e.g. Debugger.setBreakpointByUrl from vitest
-          // --inspect-brk). Responses stay on this thread; the in-process
-          // Session treats these as fire-and-forget.
+          // CDP command forwarded from in-process inspector.Session (fire-and-forget; responses
+          // stay here). https://github.com/nodejs/node/blob/main/lib/inspector.js
           if (!debug) return;
           if (!sessionAdapter) {
             let adapter: any;
@@ -502,11 +492,8 @@ class Debugger {
     this.#server = undefined;
     this.#loopbackServer?.stop(true);
     this.#loopbackServer = undefined;
-    // server.stop(true) has fired each connection's close callback, which
-    // downgrades the ServerWebSocket wrapper's Strong handle to Weak; the Rust
-    // box behind it is only freed when GC sweeps the now-collectable wrapper.
-    // This thread's VM never runs destruct-on-exit, so sweep now: close() is
-    // synchronous and rare enough that a full collection is acceptable.
+    // stop(true) downgrades ServerWebSocket Strong→Weak but the Rust box frees only on GC sweep.
+    // This thread's VM never runs destruct-on-exit, so force a sweep now.
     Bun.gc(true);
   }
 
@@ -555,10 +542,8 @@ class Debugger {
               if (loopback === "127.0.0.1" && (e as any)?.code === "EADDRINUSE") v4Held = true;
             }
           }
-          // Advertise 127.0.0.1 as Node's default bind does, but only when
-          // provably bound: a loopback listener on ::1 implies the primary
-          // holds 127.0.0.1 (else that ::1 bind would have failed too), and
-          // EADDRINUSE from the 127.0.0.1 attempt proves it directly.
+          // Advertise 127.0.0.1 (Node's default) only when provably bound: ::1 listener
+          // succeeding or EADDRINUSE on 127.0.0.1 both prove the primary holds it.
           if (this.#loopbackServer || v4Held) this.#cdpHost = `127.0.0.1:${server.port}`;
         }
       }
@@ -652,11 +637,8 @@ class Debugger {
     };
   }
 
-  // Node-shaped /json/list payload describing the single debuggable target.
-  // `host` is the request's Host header: a client reaching the server through a
-  // tunnel or port-forward needs URLs for the address it actually connected to,
-  // not the bind address, matching Node's discovery endpoints. Disallowed Host
-  // values are rejected in #fetch before this is called.
+  // Node-shaped /json/list payload. `host` is the request's Host header so tunneled clients get
+  // reachable URLs (rejected hosts filtered in #fetch). https://github.com/nodejs/node/tree/main/src/inspector
   #nodeInspectorTargets(host: string | null): unknown[] {
     const { hostname, port } = this.#url!;
     // For --inspect*, discovery must point CDP clients at the CDP pathname, not
@@ -720,11 +702,8 @@ class Debugger {
 
     const isCDP = this.#cdpPathname !== undefined && pathname === this.#cdpPathname;
 
-    // Node's InspectorIo::StopAcceptingNewConnections(): the inspected thread
-    // is in its exit handshake and waiting on a fixed set of sessions, so a new
-    // CDP client must be turned away rather than joining a set nobody will wait
-    // for. Refusing here is also what keeps a client that reconnects on close
-    // from holding the process open forever.
+    // Refuse new CDP clients during exit handshake so reconnectors can't hold the process open
+    // (InspectorIo::StopAcceptingNewConnections): https://github.com/nodejs/node/blob/main/src/inspector_agent.cc
     if ((this.#nodeInspector || isCDP) && !this.#isAcceptingConnections()) {
       return new Response(null, {
         status: 503, // Service Unavailable
@@ -759,16 +738,11 @@ class Debugger {
     const client = bufferedWriter(writer);
 
     if (this.#nodeInspector || data.isCDP) {
-      // Node prints this on every remote session attach; tools gate on it.
-      // Written via fs.writeSync so the debugger thread's global never reifies
-      // Bun.stderr: that global is never destroyed, so the lazy Blob behind
-      // Bun.stderr would otherwise leak at exit (LSAN).
+      // Node prints this on every remote attach; tools gate on it. fs.writeSync avoids reifying
+      // Bun.stderr (its lazy Blob would leak at exit under LSAN).
       require("node:fs").writeSync(2, "Debugger attached.\n");
-      // node:inspector clients speak CDP; the adapter sits between the
-      // WebSocket and the JSC-protocol backend connection. Unlike Bun's own
-      // --inspect connections, an attached client must not keep the process
-      // alive — Node exits with a debugger attached — so never ref the event
-      // loop for these connections (the `true` argument means "do not ref").
+      // CDP adapter between WebSocket and JSC backend. Never ref the event loop (`true` = no ref):
+      // Node exits with a debugger attached. https://github.com/nodejs/node/blob/main/src/inspector_agent.cc
       let adapter: any;
       function deliverToRemoteAdapter(...messages: string[]) {
         for (const message of messages) {
@@ -840,11 +814,8 @@ class Debugger {
     const { data } = connection;
     const { backend, adapter } = data;
     console.error(error);
-    // Retire the session and close the socket together, for CDP frontends only:
-    // dropping the backend while leaving the socket up would let the exit
-    // handshake finish with that frontend still connected and none the wiser.
-    // JSC-protocol clients take no part in the handshake, so leave their
-    // long-standing behaviour (backend closed, socket left alone) untouched.
+    // CDP frontends: close socket with backend so exit handshake can't finish with a dangling
+    // connection. JSC clients take no part in the handshake, so leave their socket alone.
     adapter?.handleClientDisconnect();
     backend?.close();
     if (this.#nodeInspector || data.isCDP) {
@@ -863,14 +834,8 @@ async function connectToUnixServer(
   send: (message: string) => void,
   close: () => void,
 ) {
-  // Windows uses TCP.
-  // POSIX uses Unix sockets.
-  //
-  // We use TCP on Windows because VSCode/Node doesn't seem to support Unix sockets very well.
-  //
-  // Unix sockets are preferred because there's less of a risk of conflicting
-  // with other tools or a port already being used + sometimes machines don't
-  // allow binding to TCP ports.
+  // Windows: TCP (VSCode/Node Unix-socket support is poor). POSIX: Unix sockets (no port
+  // conflicts, no TCP-bind restrictions).
   let connectionOptions;
   if (unix.startsWith("unix:")) {
     unix = unescapeUnixSocketUrl(unix);
@@ -1053,12 +1018,8 @@ function parseUrl(input: string): URL {
   return url;
 }
 
-// Browsers always send an `Origin` header on WebSocket handshakes, so rejecting
-// unexpected web origins prevents a malicious website from connecting to the
-// inspector and evaluating code. This matters most when the user passes an
-// explicit pathname to --inspect, which replaces the random UUID pathname that
-// otherwise acts as a bearer token. Non-browser clients (IDEs, CLI tools) do
-// not send an `Origin` header and are unaffected.
+// Reject unexpected web origins so a malicious page can't attach and eval. Non-browser clients
+// send no Origin and are unaffected. https://github.com/nodejs/node/tree/main/src/inspector
 function isOriginAllowed(origin: string | null): boolean {
   if (!origin) {
     return true;

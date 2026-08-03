@@ -919,11 +919,8 @@ pub(crate) trait PathOrFdExt {
     where
         Self: Sized;
 
-    /// `from_js` + the `ERR_INVALID_ARG_TYPE` Node throws for a value that is
-    /// neither a valid path nor a file descriptor. Node reports these with the
-    /// plain path message (`fs.readFile(() => {})` in v26.3.0 throws
-    /// `The "path" argument must be of type string or an instance of Buffer or
-    /// URL. Received function `), so the fd spelling is deliberately absent.
+    /// `from_js` + Node's `ERR_INVALID_ARG_TYPE`. Node reports the plain path message
+    /// (no fd spelling) for a value that is neither path nor fd.
     #[inline]
     fn from_js_required(
         ctx: &JSGlobalObject,

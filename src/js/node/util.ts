@@ -478,14 +478,8 @@ function styleText(format, text, options) {
   return `${openCodes}${processedText}${closeCodes}`;
 }
 
-// Port of node's `internal/util/diff` (v26.3.0), the implementation behind
-// `util.diff()`.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/diff.js
-//
-// The native comparator reports `{ kind, value }` with kind Insert=0, Delete=1,
-// Equal=2; node's public shape is `[operation, value]` with INSERT=1,
-// DELETE=-1, NOP=0.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/assert/myers_diff.js#L18-L22
+// Port of https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/diff.js.
+// Native `{ kind }` is Insert=0/Delete=1/Equal=2; node's `[op]` is INSERT=1/DELETE=-1/NOP=0.
 const kOperationForDiffKind = [1, -1, 0];
 let myersDiff;
 

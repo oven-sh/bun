@@ -2547,18 +2547,11 @@ impl RunCommand {
             bstr::BStr::new(target_name),
             bstr::BStr::new(fs_top_level_dir),
         );
-        // Temporarily honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN
-        // for this one resolve.
+        let preserve_symlinks_main = ctx.runtime_options.preserve_symlinks_main_enabled();
         let resolution: ::core::result::Result<bun_resolver::Result, bun_resolver::Error> = {
-            let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks;
-            this_transpiler.resolver.opts.preserve_symlinks =
-                ctx.runtime_options.preserve_symlinks_main
-                    || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
-                        .get()
-                        .unwrap_or(false);
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
-            let resolved = match this_transpiler.resolver.resolve(
+            match this_transpiler.resolver.resolve(
                 top_level_dir,
                 target_name,
                 bun_ast::ImportKind::EntryPointRun,
@@ -2573,9 +2566,7 @@ impl RunCommand {
                         bun_ast::ImportKind::EntryPointRun,
                     )
                 }
-            };
-            this_transpiler.resolver.opts.preserve_symlinks = saved_preserve;
-            resolved
+            }
         };
         // (path, loader) — captured if the resolve hit a real file whose
         // loader Bun cannot execute (e.g. `.css`); used by the `log_errors`
@@ -2594,9 +2585,29 @@ impl RunCommand {
                     .unwrap_or(Loader::Tsx);
                 if loader.can_be_run_by_bun() || loader == Loader::Html || loader == Loader::Md {
                     bun_core::scoped_log!(RUN_LOG, "Resolved to: `{}`", bstr::BStr::new(path.text));
-                    // borrowck — `boot_and_handle_error` takes
-                    // `&mut ctx`; copy `path.text` out of the resolver borrow.
-                    let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
+                    // Node applies --preserve-symlinks-main / NODE_PRESERVE_SYMLINKS_MAIN
+                    // (not --preserve-symlinks) to the entry point. Adjust the
+                    // resolved spelling here instead of flipping
+                    // `opts.preserve_symlinks` for one resolve: that option
+                    // shapes the process-lifetime DirInfo cache, which is
+                    // keyed by path only.
+                    // (Also copies `path.text` out of the resolver borrow for
+                    // the `&mut ctx` call below.)
+                    let text: Box<[u8]> =
+                        if preserve_symlinks_main && path.is_symlink && !path.pretty.is_empty() {
+                            // The resolver realpathed the entry; `set_realpath`
+                            // kept the link spelling in `pretty`.
+                            path.pretty.to_vec().into_boxed_slice()
+                        } else if !preserve_symlinks_main
+                            && this_transpiler.resolver.opts.preserve_symlinks
+                        {
+                            // The preserve-mode resolver kept the link path,
+                            // but the entry must be realpathed.
+                            bun_sys::realpath_by_open(path.text)
+                                .unwrap_or_else(|| path.text.to_vec().into_boxed_slice())
+                        } else {
+                            path.text.to_vec().into_boxed_slice()
+                        };
                     return Ok(Self::boot_and_handle_error(ctx, &text, Some(loader)));
                 } else {
                     bun_core::scoped_log!(
@@ -2858,8 +2869,29 @@ impl RunCommand {
         });
 
         // Re-derive the canonical absolute path from the open fd (resolves
-        // symlinks).
-        let absolute_script_path: Box<[u8]> = {
+        // symlinks). With --preserve-symlinks-main / NODE_PRESERVE_SYMLINKS_MAIN,
+        // keep the link path as the entry's identity instead (matching Node).
+        let preserve_symlinks_main = ctx.runtime_options.preserve_symlinks_main_enabled();
+        let absolute_script_path: Box<[u8]> = if preserve_symlinks_main {
+            let mut cwd_buf = PathBuffer::uninit();
+            let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {
+                let _ = bun_sys::close(fd);
+                return false;
+            };
+            let cwd_len = cwd.as_bytes().len();
+            cwd_buf[cwd_len] = paths::SEP;
+            let mut abs_buf = PathBuffer::uninit();
+            let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+                &cwd_buf[..cwd_len + 1],
+                &mut abs_buf.0,
+                &[&script_name_buf[..open_len]],
+            );
+            if joined.is_empty() {
+                let _ = bun_sys::close(fd);
+                return false;
+            }
+            joined.to_vec().into_boxed_slice()
+        } else {
             let resolved = match bun_sys::get_fd_path(fd, &mut script_name_buf) {
                 Ok(p) => p,
                 Err(_) => {

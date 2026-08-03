@@ -1665,7 +1665,11 @@ impl<'a> Resolver<'a> {
                     module_type_from_ext(name.ext).unwrap_or(options::ModuleType::Unknown);
             }
 
-            if let Some(entries) = dir.get_entries_ref(self.generation) {
+            // With --preserve-symlinks, the link path stays the module's
+            // identity (matching Node), so skip resolving it to the target.
+            if !self.opts.preserve_symlinks
+                && let Some(entries) = dir.get_entries_ref(self.generation)
+            {
                 if let Some(query) = entries.get(name.filename) {
                     // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
                     let symlink_path =

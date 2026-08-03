@@ -2602,8 +2602,14 @@ mod tests {
 
     #[test]
     fn ends_with_case_insensitive_ascii_handles_empty_and_oversized_suffixes() {
-        assert!(super::ends_with_case_insensitive_ascii(b"bunx.EXE", b"bunx.exe"));
-        assert!(super::ends_with_case_insensitive_ascii(b"C:\\bin\\BUNX.EXE", b"bunx.exe"));
+        assert!(super::ends_with_case_insensitive_ascii(
+            b"bunx.EXE",
+            b"bunx.exe"
+        ));
+        assert!(super::ends_with_case_insensitive_ascii(
+            b"C:\\bin\\BUNX.EXE",
+            b"bunx.exe"
+        ));
         assert!(!super::ends_with_case_insensitive_ascii(b"bun", b"bunx"));
         assert!(super::ends_with_case_insensitive_ascii(b"bunx", b""));
         assert!(super::ends_with_case_insensitive_ascii(b"", b""));

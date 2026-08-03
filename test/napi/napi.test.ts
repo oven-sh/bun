@@ -1636,7 +1636,9 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       expect(output).toContain("check_object_type_tag(number): status=0 pending=0");
       expect(output).toContain("node_api_set_prototype(number): status=0 pending=0");
       expect(output).toContain("node_api_set_prototype(null): status=2 pending=1");
-      expect(output).toContain("result_written=0");
+      expect(output).toContain("new_instance(throws): status=10 result_written=0");
+      expect(output).toContain("get_named_property(throws): status=10 result_written=0");
+      expect(output).toContain("has_named_property(throws): status=10 result_written=0");
       expect(output).toContain("module_file_name: status=0 is_null=0");
     });
 

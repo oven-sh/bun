@@ -3930,6 +3930,23 @@ test_create_weak_ref_for_gc(const Napi::CallbackInfo &info) {
   return ext;
 }
 
+// Predicate for gcUntil: true once the weak ref's value is undefined.
+static napi_value
+test_weak_ref_is_collected(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  void *p;
+  NODE_API_CALL(env, napi_get_value_external(env, info[1], &p));
+  napi_ref ref = reinterpret_cast<napi_ref>(p);
+  napi_value v = NULL;
+  NODE_API_CALL(env, napi_get_reference_value(env, ref, &v));
+  napi_valuetype t = napi_undefined;
+  if (v) napi_typeof(env, v, &t);
+  napi_value r;
+  NODE_API_CALL(env,
+                napi_get_boolean(env, v == NULL || t == napi_undefined, &r));
+  return r;
+}
+
 static napi_value
 test_reference_ref_after_collect(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
@@ -3978,6 +3995,17 @@ test_tsfn_null_js_callback(const Napi::CallbackInfo &info) {
   NODE_API_CALL(env,
                 napi_release_threadsafe_function(tsfn, napi_tsfn_release));
   return ok(env);
+}
+
+// Predicate for the driver's bounded poll; no printf so checkSameOutput stays
+// clean.
+static napi_value
+test_tsfn_null_js_callback_ran(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value r;
+  NODE_API_CALL(env,
+                napi_get_boolean(env, tsfn_nullcb_was_null.load() != -1, &r));
+  return r;
 }
 
 static napi_value
@@ -4067,8 +4095,10 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_status_codes_node26);
   REGISTER_FUNCTION(env, exports, test_napi_node26_semantic_parity);
   REGISTER_FUNCTION(env, exports, test_create_weak_ref_for_gc);
+  REGISTER_FUNCTION(env, exports, test_weak_ref_is_collected);
   REGISTER_FUNCTION(env, exports, test_reference_ref_after_collect);
   REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback);
+  REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback_ran);
   REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback_result);
 }
 

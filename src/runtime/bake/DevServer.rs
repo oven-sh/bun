@@ -1515,8 +1515,9 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     ud: *mut c_void,
 ) {
     // SAFETY: `ud`/`req`/`res` were registered by `set_routes` and outlive the
-    // route; uWS guarantees they are non-null in handler callbacks.
-    let dev = unsafe { bun_ptr::callback_ctx::<DevServer>(ud) };
+    // route; uWS guarantees they are non-null in handler callbacks. `dev` is
+    // re-derived per statement so no `&mut DevServer` spans the guard reads.
+    let dev = ud.cast::<DevServer>();
     let req = req.cast::<Request>();
     let resp = if SSL {
         AnyResponse::SSL(res.cast::<bun_uws_sys::response::TLSResponse>())
@@ -1525,7 +1526,7 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     };
     // SAFETY: uWS passes a non-null `Request*` valid for the callback; shared,
     // call-scoped reborrow.
-    if !is_allowed_dev_host(dev, unsafe { &*req }) {
+    if !is_allowed_dev_host(unsafe { &*dev }, unsafe { &*req }) {
         return host_forbidden(resp);
     }
     // SAFETY: as above.
@@ -1537,15 +1538,21 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     // SAFETY: as above — the exclusive borrow is consumed by the single handler
     // call; nothing else stores or re-derives this `Request` pointer.
     match ID {
-        DevHandlerId::JsRequest => on_js_request(dev, unsafe { &mut *req }, resp),
-        DevHandlerId::AssetRequest => on_asset_request(dev, unsafe { &mut *req }, resp),
-        DevHandlerId::SrcRequest => on_src_request(dev, unsafe { &mut *req }, resp),
-        DevHandlerId::ReportError => on_report_error_request(dev, unsafe { &mut *req }, resp),
-        DevHandlerId::UnrefSourceMap => {
-            on_unref_source_map_request(dev, unsafe { &mut *req }, resp)
+        DevHandlerId::JsRequest => on_js_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp),
+        DevHandlerId::AssetRequest => {
+            on_asset_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp)
         }
-        DevHandlerId::NotFound => on_not_found(dev, unsafe { &mut *req }, resp),
-        DevHandlerId::Request => on_request(dev, unsafe { &mut *req }, resp),
+        DevHandlerId::SrcRequest => {
+            on_src_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp)
+        }
+        DevHandlerId::ReportError => {
+            on_report_error_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp)
+        }
+        DevHandlerId::UnrefSourceMap => {
+            on_unref_source_map_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp)
+        }
+        DevHandlerId::NotFound => on_not_found(unsafe { &mut *dev }, unsafe { &mut *req }, resp),
+        DevHandlerId::Request => on_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp),
     }
 }
 

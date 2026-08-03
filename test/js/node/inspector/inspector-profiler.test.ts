@@ -180,10 +180,12 @@ describe("node:inspector", () => {
       expect(() => session.post("Profiler.enable")).toThrow("not connected");
     });
 
-    test("post() with callback throws synchronously if not connected", () => {
+    test("post() with callback throws synchronously if not connected", async () => {
       // Node throws ERR_INSPECTOR_NOT_CONNECTED synchronously and never calls the callback.
       let called = false;
       expect(() => session.post("Profiler.enable", () => (called = true))).toThrow("not connected");
+      expect(called).toBe(false);
+      await new Promise(resolve => setImmediate(resolve));
       expect(called).toBe(false);
     });
   });

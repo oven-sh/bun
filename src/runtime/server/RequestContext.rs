@@ -3583,6 +3583,15 @@ where
     ) {
         jsc::mark_binding!();
         if let Some(server) = self.server {
+            // The "error" may be the worker's TerminationException raised
+            // inside on_request's fetch-handler call; entering the user
+            // error() handler with it pending trips assertNoException().
+            // SAFETY: BACKREF
+            if (*server).vm().script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
+                return;
+            }
+        }
+        if let Some(server) = self.server {
             // SAFETY: BACKREF
             let server = &*server;
             let on_error = server.config().on_error;

@@ -1082,6 +1082,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
             return;
         };
+        // SAFETY: `this` is the live server backref for this request.
+        if unsafe { &*this }.vm().script_execution_status()
+            != bun_jsc::ScriptExecutionStatus::Running
+        {
+            server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
+            return;
+        }
         let should_deinit_context = core::cell::Cell::new(false);
         let Some(prepared) = Self::prepare_js_request_context(
             this,

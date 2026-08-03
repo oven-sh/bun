@@ -957,8 +957,8 @@ impl TimerObjectInternals {
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
 
-        let scheduled_time =
-            Timespec::EPOCH.add_ms(idle_start_ms as i64 + i64::from(self.interval.get()));
+        let scheduled_time = Timespec::EPOCH
+            .add_ms((idle_start_ms as i64).saturating_add(i64::from(self.interval.get())));
         // SAFETY: `state` is the boxed per-thread `RuntimeState`; fresh
         // `&mut` to `.timer` for this call only. The timer is ACTIVE so
         // `update()` removes then re-inserts with no refcount change.

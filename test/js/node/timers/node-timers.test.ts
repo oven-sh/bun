@@ -282,6 +282,15 @@ describe("_idleStart", () => {
     t1._idleStart = 0;
     expect(t1._idleStart).toBe(0);
   });
+
+  it("does not overflow for extreme finite values", () => {
+    const t1 = setTimeout(() => {}, 10) as any;
+    t1._idleStart = Number.MAX_VALUE;
+    expect(t1._idleStart).toBe(Number.MAX_VALUE);
+    t1._idleStart = -Number.MAX_VALUE;
+    expect(t1._idleStart).toBe(-Number.MAX_VALUE);
+    clearTimeout(t1);
+  });
 });
 
 describe.each(["with", "without"])("setImmediate %s timers running", mode => {

@@ -2791,12 +2791,7 @@ void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global,
     moduleLoader->removeEntry(identifier);
 }
 
-// A module key is "kept" across test files under the experimental
-// --isolate global-reuse path when it resolves into a node_modules tree or
-// is a built-in specifier. Everything else (project source, the test file
-// itself, Bun's synthetic entry key) is evicted so the next file re-evaluates
-// it, while dependency JSModuleRecords — and the optimized CodeBlocks hanging
-// off their FunctionExecutables — stay live.
+// Kept across files = resolves into node_modules or is a built-in specifier.
 static ALWAYS_INLINE bool isKeptAcrossTestIsolation(const WTF::String& key)
 {
     if (key.isEmpty())
@@ -2808,8 +2803,6 @@ static ALWAYS_INLINE bool isKeptAcrossTestIsolation(const WTF::String& key)
     if (key.contains("/node_modules/"_s))
         return true;
 #endif
-    // Built-in / virtual specifiers never live on disk; dropping them just
-    // forces a redundant re-link of native modules.
     if (key.startsWith("node:"_s) || key.startsWith("bun:"_s) || key.startsWith("internal:"_s))
         return true;
     return false;

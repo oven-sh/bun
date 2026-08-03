@@ -4694,10 +4694,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    /// Per-file cleanup shared by the fresh-global and reuse-global isolation
-    /// paths: restore cwd, drain microtasks, close leaked sockets, kill leaked
-    /// subprocesses, cancel timers, bump the generation, and reset entry-point
-    /// state. Runs no user JS after the microtask drains.
+    /// Per-file `--isolate` cleanup shared by the fresh-global and reuse-global paths.
     ///
     /// Callers must run `bun_runtime::jsc_hooks::close_isolation_handles(vm)`
     /// first so leaked watchers/servers are stopped (dropping their JS-side
@@ -4845,15 +4842,9 @@ impl VirtualMachine {
         }
     }
 
-    /// Experimental `--isolate` path: keep the current global object and evict
-    /// only project-source module records (anything not under `node_modules/`
-    /// and not a `node:`/`bun:` built-in) from the ESM registry and
-    /// `require.cache`, so dependency `JSModuleRecord`s — and the DFG/FTL
-    /// `CodeBlock`s hung off their `FunctionExecutable`s — survive across
-    /// files. Gated by `BUN_FEATURE_FLAG_EXPERIMENTAL_TEST_ISOLATE_REUSE_GLOBAL`;
-    /// does not yet check that the global is pristine.
-    ///
-    /// See [`Self::cleanup_between_isolated_test_files`] for caller preconditions.
+    /// Experimental `--isolate` path: keep the current global and evict only
+    /// project-source module records so dependency DFG/FTL code survives across
+    /// files. Same caller preconditions as [`Self::swap_global_for_test_isolation`].
     pub fn reuse_global_for_test_isolation(&mut self) -> (u32, u32) {
         self.cleanup_between_isolated_test_files();
 

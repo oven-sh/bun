@@ -1616,6 +1616,56 @@ impl Run {
             }
 
             vm.on_before_exit();
+
+            // A beforeExit handler can resolve the entry's await; the reaction
+            // is a microtask is_event_loop_alive() doesn't count. Drain it and
+            // re-run the loop if the resumed body schedules more work.
+            while vm.unhandled_error_counter == 0 && vm.entry_module_promise_is_pending() {
+                vm.tick();
+                if !vm.is_event_loop_alive() {
+                    break;
+                }
+                while vm.is_event_loop_alive() {
+                    vm.tick();
+                    vm.auto_tick_active();
+                }
+                vm.on_before_exit();
+            }
+
+            // Entry module's evaluation promise still pending after the loop
+            // and beforeExit re-drained, with no unhandled rejection: unsettled
+            // top-level await. Node warns and exits 13.
+            if vm.unhandled_error_counter == 0 {
+                match vm
+                    .pending_internal_promise
+                    .map(bun_jsc::JSPromise::status_ptr)
+                {
+                    Some(PromiseStatus::Pending) => {
+                        vm.report_unsettled_top_level_await();
+                        if vm.exit_handler.exit_code == 0 {
+                            vm.exit_handler.exit_code = 13;
+                        }
+                    }
+                    Some(PromiseStatus::Rejected)
+                        if vm.pending_internal_promise_reported_at != vm.hot_reload_counter =>
+                    {
+                        // The re-drain transitioned the entry to Rejected (a
+                        // beforeExit handler rejected the await, or the resumed
+                        // body threw). JSInternalPromise is filtered out of
+                        // promiseRejectionTracker, so report it here.
+                        let p = vm.pending_internal_promise.unwrap();
+                        // SAFETY: `p` is a live JSC heap cell; `vm.jsc_vm` set in `init`.
+                        let result = unsafe { &mut *p }.result(unsafe { &mut *vm.jsc_vm });
+                        let global = vm.global;
+                        // SAFETY: `global` valid for VM lifetime.
+                        let _ = vm.uncaught_exception(unsafe { &*global }, result, true);
+                        // SAFETY: `p` is a live JSC heap cell.
+                        unsafe { &mut *p }.set_handled();
+                        vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
+                    }
+                    _ => {}
+                }
+            }
         }
 
         if log_has_msgs(vm) {

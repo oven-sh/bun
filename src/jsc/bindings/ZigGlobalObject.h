@@ -351,6 +351,7 @@ public:
     uint8_t drainMicrotasks();
 
     void handleRejectedPromises();
+    bool hasPendingRejectedPromises() const { return !m_aboutToBeNotifiedRejectedPromises.isEmpty(); }
     ALWAYS_INLINE void initGeneratedLazyClasses();
 
     template<typename Visitor>

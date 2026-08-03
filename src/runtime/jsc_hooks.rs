@@ -35,8 +35,8 @@ use bun_jsc::virtual_machine::{
     InitOptions, ResolveMode, RuntimeHooks, RuntimeState as OpaqueRuntimeState, VirtualMachine,
 };
 use bun_jsc::{
-    AnyPromise, ErrorCode, ErrorableResolvedSource, ErrorableString, JSGlobalObject,
-    JSInternalPromise, JSModuleLoader, JSValue, JsResult, ResolvedSource,
+    ErrorCode, ErrorableResolvedSource, ErrorableString, JSGlobalObject, JSInternalPromise,
+    JSModuleLoader, JSValue, JsResult, ResolvedSource,
 };
 
 use bun_ast::ImportKind;
@@ -793,7 +793,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
 
         // ── wait ────────────────────────────────────────────────────────
         // HMR `pending_internal_promise` swap loop; non-watcher path uses
-        // `wait_for_promise` directly.
+        // `wait_for_module_promise`.
         {
             // SAFETY: per fn contract.
             if unsafe { &*vm }.is_watcher_enabled() {
@@ -830,13 +830,21 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                 unsafe { (*(*vm).event_loop()).perform_gc() };
                 // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a
                 // live protected JSC heap cell.
-                unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
+                unsafe { (*vm).wait_for_module_promise(promise) };
             }
         }
 
         // SAFETY: `promise` is a live (still-protected) JSC heap cell.
-        if unsafe { &*promise }.status() == PromiseStatus::Rejected {
-            return Ok(promise);
+        match unsafe { &*promise }.status() {
+            PromiseStatus::Rejected => return Ok(promise),
+            PromiseStatus::Pending => {
+                // wait_for_module_promise returned with nothing left to settle
+                // the preload's TLA. Return the pending promise so the caller's
+                // `!p.is_null()` early-return keeps it in
+                // `pending_internal_promise` for the run_command warn/exit-13.
+                return Ok(promise);
+            }
+            PromiseStatus::Fulfilled => {}
         }
         // `_protected` drops here → unprotect.
     }

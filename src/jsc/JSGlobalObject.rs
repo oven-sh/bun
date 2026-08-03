@@ -1167,6 +1167,14 @@ impl JSGlobalObject {
         });
     }
 
+    pub fn has_pending_rejected_promises(&self) -> bool {
+        unsafe extern "C" {
+            fn Bun__hasPendingRejectedPromises(global: *const JSGlobalObject) -> bool;
+        }
+        // SAFETY: `self` is a live JSC global object.
+        unsafe { Bun__hasPendingRejectedPromises(self) }
+    }
+
     pub fn readable_stream_to_array_buffer(&self, value: JSValue) -> JSValue {
         ZigGlobalObject__readableStreamToArrayBuffer(self, value)
     }

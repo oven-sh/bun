@@ -3273,7 +3273,28 @@ impl TestCommand {
             }
 
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-            match jsc::JSInternalPromise::opaque_mut(promise).status() {
+            let load_failed = match jsc::JSInternalPromise::opaque_mut(promise).status() {
+                jsc::js_promise::Status::Pending => {
+                    // wait_for_module_promise returned with nothing left to
+                    // settle the entry's TLA: a stalled top-level await. Treat
+                    // as a load failure so we don't run a truncated test set.
+                    if vm.pending_internal_promise_is_protected {
+                        // load_preloads returned the stalled preload promise;
+                        // this test file was never loaded. Walk the module
+                        // map to name the preload.
+                        vm.report_unsettled_top_level_await();
+                    } else {
+                        // Name this file directly: the module map is shared
+                        // across files without --isolate, so the walk would
+                        // re-name every previously-stalled file.
+                        bun_core::pretty_errorln!(
+                            "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await at <b>{}<r>",
+                            bstr::BStr::new(file_path),
+                        );
+                        bun_core::Output::flush();
+                    }
+                    true
+                }
                 jsc::js_promise::Status::Rejected => {
                     // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
                     // `unhandled_rejection(&mut self, ...)` can reborrow.
@@ -3281,40 +3302,43 @@ impl TestCommand {
                     let p = jsc::JSInternalPromise::opaque_mut(promise);
                     let (result, promise_js) = (p.result(global.vm()), p.to_js());
                     vm.unhandled_rejection(global, result, promise_js);
-                    reporter.summary().fail += 1;
-
-                    if reporter.jest.bail == reporter.summary().fail {
-                        reporter.print_summary();
-                        pretty_error!(
-                            "\nBailed out after {} failure{}<r>\n",
-                            reporter.jest.bail,
-                            if reporter.jest.bail == 1 { "" } else { "s" }
-                        );
-                        reporter.write_junit_report_if_needed();
-
-                        vm.exit_handler.exit_code = 1;
-                        vm.is_shutting_down = true;
-                        // `global_exit()` diverges, so the `exit_file()` defer
-                        // above never fires. Release the active file's
-                        // `Strong`s and the preload-hook scope here so
-                        // `destructOnExit()`'s `collectNow()` can reclaim them,
-                        // then clear `RUNNER` so finalizers can't observe a
-                        // partially-torn-down `TestRunner`.
-                        // SAFETY: single-threaded; raw-ptr reborrow mirrors the
-                        // defer's escape.
-                        unsafe {
-                            (*bun_test_root_ptr).deinit_for_exit();
-                            jest::Jest::RUNNER.write(None);
-                        }
-                        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
-                        // SAFETY: global_exit diverges; `vm_ptr` is a fresh
-                        // raw-ptr reborrow of the exclusive `vm` borrow.
-                        unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
-                    }
-
-                    return Ok(());
+                    true
                 }
-                _ => {}
+                jsc::js_promise::Status::Fulfilled => false,
+            };
+            if load_failed {
+                reporter.summary().fail += 1;
+
+                if reporter.jest.bail == reporter.summary().fail {
+                    reporter.print_summary();
+                    pretty_error!(
+                        "\nBailed out after {} failure{}<r>\n",
+                        reporter.jest.bail,
+                        if reporter.jest.bail == 1 { "" } else { "s" }
+                    );
+                    reporter.write_junit_report_if_needed();
+
+                    vm.exit_handler.exit_code = 1;
+                    vm.is_shutting_down = true;
+                    // `global_exit()` diverges, so the `exit_file()` defer
+                    // above never fires. Release the active file's
+                    // `Strong`s and the preload-hook scope here so
+                    // `destructOnExit()`'s `collectNow()` can reclaim them,
+                    // then clear `RUNNER` so finalizers can't observe a
+                    // partially-torn-down `TestRunner`.
+                    // SAFETY: single-threaded; raw-ptr reborrow mirrors the
+                    // defer's escape.
+                    unsafe {
+                        (*bun_test_root_ptr).deinit_for_exit();
+                        jest::Jest::RUNNER.write(None);
+                    }
+                    let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
+                    // SAFETY: global_exit diverges; `vm_ptr` is a fresh
+                    // raw-ptr reborrow of the exclusive `vm` borrow.
+                    unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
+                }
+
+                return Ok(());
             }
 
             vm.event_loop_ref().tick();

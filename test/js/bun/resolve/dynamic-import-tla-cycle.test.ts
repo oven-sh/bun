@@ -2,12 +2,13 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // A top-level-awaited dynamic import whose target statically imports the
-// awaiting module back. The spec's innerModuleEvaluation 11.c.v would have the
-// chunk wait on the entry's async-evaluation order, but the entry can only
-// finish once the chunk's evaluate() promise settles — a self-deadlock. Bun
-// matches the pre-rewrite loader and lets the chunk evaluate immediately
-// against the entry's already-initialised bindings.
-test("dynamic import inside TLA whose target imports the awaiter back does not deadlock", async () => {
+// awaiting module back. Per ECMA-262 InnerModuleEvaluation step 12.b.v, the
+// chunk waits on the entry (an EvaluatingAsync dependency); the entry is
+// itself waiting on the chunk via the dynamic import, so the graph deadlocks.
+// Node detects the unsettled top-level await and exits 13. Previously Bun
+// skipped the wait and let the chunk observe the entry's half-initialised
+// bindings (TDZ for post-await `const`, `undefined` for post-await `var`).
+test("dynamic import inside TLA whose target imports the awaiter back is an unsettled TLA (exit 13)", async () => {
   using dir = tempDir("dyn-tla-cycle", {
     "index.mjs": `
       import fs from "node:fs";
@@ -32,17 +33,17 @@ test("dynamic import inside TLA whose target imports the awaiter back does not d
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("chunk loaded: 43");
-  expect(exitCode).toBe(0);
+  // The chunk never evaluates: it is waiting on index.mjs, which is waiting on it.
+  expect(stdout).toBe("");
+  expect(stderr).toContain("Detected unsettled top-level await");
+  expect(stderr).toContain("index.mjs");
+  expect(exitCode).toBe(13);
 });
 
-// Same self-deadlock pattern, but the awaiting module is not the Evaluate()
-// entry — it's a static dependency of the entry. The cycle root re-entered by
-// the chunk has no TopLevelCapability of its own, so the discriminator must
-// be "has its body started" (pendingAsyncDependencies == 0), not "is it the
-// Evaluate() entry".
-test("dynamic import inside TLA of a non-entry module whose target imports it back does not deadlock", async () => {
+// Same pattern with the awaiting module reached via a static import. The
+// chunk statically imports `mid.mjs` while it is EvaluatingAsync, so it waits;
+// `mid.mjs` is awaiting the chunk's evaluate() promise. Deadlock, exit 13.
+test("dynamic import inside TLA of a non-entry module whose target imports it back is an unsettled TLA (exit 13)", async () => {
   using dir = tempDir("dyn-tla-cycle-nonentry", {
     "entry.mjs": `
       import { result } from "./mid.mjs";
@@ -69,17 +70,82 @@ test("dynamic import inside TLA of a non-entry module whose target imports it ba
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("result: 43");
-  expect(exitCode).toBe(0);
+  expect(stdout).toBe("");
+  expect(stderr).toContain("Detected unsettled top-level await");
+  expect(stderr).toContain("mid.mjs");
+  expect(exitCode).toBe(13);
 });
 
-// The deadlock-avoidance above must NOT fire for sibling static imports in the
-// same Evaluate() pass. Here `entry` first imports `a` (in an SCC {a,c} with
-// an async dep), popping the SCC to EvaluatingAsync, then imports `b` which
-// reads a binding from `c`. `b` must wait for the SCC; previously the
-// EvaluatingAsync check made it skip the wait and run with `c`'s bindings
-// still in TDZ. Node and pre-rewrite Bun both wait.
+// The observable failure mode of the old deadlock-skip: `b` runs while `a` is
+// suspended mid-TLA and reads `a`'s post-await bindings in TDZ / as undefined.
+// Per spec `b` must wait on `a` (deadlock); it must never observe partial state.
+test("dynamic-import cycle does not let the importee observe the awaiter's half-initialised bindings", async () => {
+  using dir = tempDir("dyn-tla-cycle-partial", {
+    "entry.mjs": `import "./a.mjs"; console.log("entry:done");`,
+    "a.mjs": `
+      export const PRE = "pre";
+      const b = await import("./b.mjs");
+      console.log("a got:", b.report);
+      export const POST = "post";
+      export var V = "v";
+    `,
+    "b.mjs": `
+      import { PRE, POST, V } from "./a.mjs";
+      const r = f => { try { return String(f()) } catch (e) { return "threw:" + e.constructor.name } };
+      export const report = \`PRE=\${r(()=>PRE)} POST=\${r(()=>POST)} V=\${r(()=>V)}\`;
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // b never runs (it is waiting on a), so a's `await` never resolves and entry
+  // never completes. No partial-state observation leaks to stdout.
+  expect(stdout).not.toContain("threw:ReferenceError");
+  expect(stdout).not.toContain("V=undefined");
+  expect(stdout).toBe("");
+  expect(stderr).toContain("Detected unsettled top-level await");
+  expect(stderr).toContain("a.mjs");
+  expect(exitCode).toBe(13);
+});
+
+// Mutual `await import()` at top level: both suspend on each other. Per spec
+// this deadlocks; both Node and Bun exit 13. Distinct from the one-sided case
+// above (only one side is a dynamic import).
+test("mutual top-level await import() cycle is an unsettled TLA (exit 13)", async () => {
+  using dir = tempDir("dyn-tla-mutual", {
+    "a.mjs": `console.log("a:start"); await import("./b.mjs"); console.log("a:done");`,
+    "b.mjs": `console.log("b:start"); await import("./a.mjs"); console.log("b:done");`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "a.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("a:start\nb:start\n");
+  expect(stderr).toContain("Detected unsettled top-level await");
+  expect(exitCode).toBe(13);
+});
+
+// Sibling static imports in the same Evaluate() pass must wait on an
+// EvaluatingAsync SCC (step 12.b.v). Here `entry` first imports `a` (in an SCC
+// {a,c} with an async dep), popping the SCC to EvaluatingAsync, then imports
+// `b` which reads a binding from `c`. `b` must wait for the SCC. Regression
+// guard for a prior loader version that skipped the wait and ran `b` with
+// `c`'s bindings in TDZ; Node waits here.
 test("static sibling import waits for an async-pending SCC from the same Evaluate()", async () => {
   using dir = tempDir("static-sibling-async-scc", {
     "entry.mjs": `
@@ -123,13 +189,10 @@ test("static sibling import waits for an async-pending SCC from the same Evaluat
   expect(exitCode).toBe(0);
 });
 
-// #30259: same narrowing as above, but the TLA dep has NO async deps of its own
-// (pendingAsyncDependencies == 0) and is re-imported by a sibling subtree in the
-// same Evaluate(). Previously the discriminator was only "body has been entered"
-// which is also true here — `await.ts` is suspended at its first await — so the
-// sibling skipped the wait and ran with `foo` still in TDZ. The discriminator
-// must additionally check the dep entered EvaluatingAsync in a *prior*
-// Evaluate(); within the same DFS the spec wait is required.
+// #30259: a TLA dep (pendingAsyncDependencies == 0) suspended earlier in the
+// same Evaluate() is re-imported by a sibling. The sibling must wait on it per
+// step 12.b.v. Regression guard for a prior loader version that skipped the
+// wait and ran `child` with `foo` still in TDZ.
 test("static sibling import waits for a TLA dep that suspended earlier in the same Evaluate()", async () => {
   using dir = tempDir("static-sibling-tla", {
     "root.ts": `
@@ -163,8 +226,7 @@ test("static sibling import waits for a TLA dep that suspended earlier in the sa
 });
 
 // Same as above but the TLA dep is reached indirectly through different parents
-// (so neither parent is on the DFS stack when the second one visits it). Guards
-// against discriminating by "is an asyncParentModule on the stack".
+// (so neither parent is on the DFS stack when the second one visits it).
 test("static sibling import waits for an indirectly-shared TLA dep in the same Evaluate()", async () => {
   using dir = tempDir("static-sibling-tla-indirect", {
     "root.ts": `

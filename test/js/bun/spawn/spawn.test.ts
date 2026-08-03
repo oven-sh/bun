@@ -11,6 +11,7 @@ import {
   isPosix,
   isWindows,
   shellExe,
+  tempDir,
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
@@ -806,6 +807,9 @@ describe("unref() + .exited with nothing else ref'd (Windows)", () => {
   // Windows: with only an unref'd uv_process_t left, uv_run() used to skip its
   // body and never dequeue the IOCP exit packet, so these children busy-spun
   // forever. us_loop_pump now forces one non-blocking iteration (POSIX parity).
+  // Driven via bun:test so the keep-going predicate comes from the runner's
+  // own drive loop (which does not ref the uv loop) rather than a ref'd handle;
+  // a top-level await on an unref'd handle alone is an unsettled TLA.
   for (const [name, body] of [
     ["unref() then await .exited", `const p = Bun.spawn(opts); p.unref(); await p.exited;`],
     [".exited then unref() then await", `const p = Bun.spawn(opts); const done = p.exited; p.unref(); await done;`],
@@ -816,25 +820,27 @@ describe("unref() + .exited with nothing else ref'd (Windows)", () => {
     ],
   ] as const) {
     it(name, async () => {
+      using dir = tempDir("spawn-unref-exited", {
+        "t.test.ts": `
+          import { it } from "bun:test";
+          const opts = { cmd: [${JSON.stringify(bunExe())}, "-e", ""], stdio: ["ignore", "ignore", "ignore"] };
+          it("awaits", async () => {
+            ${body}
+            console.log("resolved");
+          });
+        `,
+      });
       await using child = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `const opts = { cmd: [${JSON.stringify(bunExe())}, "-e", ""], stdio: ["ignore", "ignore", "ignore"] };
-           ${body}
-           console.log("resolved");`,
-        ],
+        cmd: [bunExe(), "test", "t.test.ts"],
         env: bunEnv,
+        cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-      expect({ stdout, stderr, exitCode, signalCode: child.signalCode }).toEqual({
-        stdout: "resolved\n",
-        stderr: "",
-        exitCode: 0,
-        signalCode: null,
-      });
+      expect(stderr).toContain("1 pass");
+      expect(stdout).toContain("resolved\n");
+      expect({ exitCode, signalCode: child.signalCode }).toEqual({ exitCode: 0, signalCode: null });
     });
   }
 });

@@ -5596,8 +5596,19 @@ try {
   });
   console.log(`Listening on http://localhost:${server.port}...`);
 
-  const result = await fetch(`${server.url}/stream`).then(res => res.text());
-  process.exit(result == "nitroisawesome" ? 0 : 2);
+  // The /stream route handler lazy-imports ./chunks/stream.mjs, which
+  // statically imports this module back. Per ECMA-262 that chunk waits on us
+  // while we're EvaluatingAsync, so a top-level `await fetch` here deadlocks
+  // (Node does too). Defer the self-test so this module finishes evaluating
+  // first and the chunk's back-edge sees an Evaluated dependency.
+  setImmediate(() =>
+    fetch(`${server.url}/stream`)
+      .then(res => res.text())
+      .then(
+        result => process.exit(result == "nitroisawesome" ? 0 : 2),
+        () => process.exit(1),
+      ),
+  );
 } catch {
   process.exit(1);
 }

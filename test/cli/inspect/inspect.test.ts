@@ -377,6 +377,93 @@ describe("http metadata endpoint", () => {
   });
 });
 
+// Runtime.evaluate with returnByValue:true on a value holding a BigInt or
+// Symbol used to hit ASSERT_NOT_REACHED in Inspector::jsToInspectorValue
+// (aborting an assertions build) and return the misleading "Object has too
+// long reference chain" error on release. It should now report the value as
+// unserializable with V8's wording and leave the debuggee running.
+describe("Runtime.evaluate returnByValue with BigInt/Symbol", () => {
+  let child: Subprocess | undefined;
+
+  afterEach(() => {
+    child?.kill();
+    child = undefined;
+  });
+
+  async function evaluateByValue(expression: string) {
+    child = spawn({
+      cwd: import.meta.dir,
+      cmd: [bunExe(), "--inspect=127.0.0.1:0", "inspectee.js"],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+
+    let url: URL | undefined;
+    let stderr = "";
+    const decoder = new TextDecoder();
+    for await (const chunk of child.stderr as ReadableStream) {
+      stderr += decoder.decode(chunk);
+      for (const line of stderr.split("\n")) {
+        const trimmed = stripAnsi(line).trim();
+        try {
+          url = new URL(trimmed);
+        } catch {}
+        if (url?.protocol.includes("ws")) break;
+      }
+      if (url?.protocol.includes("ws")) break;
+      if (stderr.includes("Listening:")) break;
+    }
+    if (!url) {
+      process.stderr.write(stderr);
+      throw new Error("Unable to find listening URL");
+    }
+
+    const ws = new WebSocket(url);
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve());
+      ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+    });
+    const reply = new Promise<any>((resolve, reject) => {
+      ws.addEventListener("message", ({ data }) => resolve(JSON.parse(data.toString())));
+      ws.addEventListener("close", () => reject(new Error("WebSocket closed before reply")));
+    });
+    ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression, returnByValue: true } }));
+    const result = await reply;
+    ws.close();
+    return result;
+  }
+
+  for (const expression of ["[1n]", "({a: 1n})", 'Symbol("s")', "({b: Symbol()})"]) {
+    test(expression, async () => {
+      const reply = await evaluateByValue(expression);
+      expect(reply).toEqual({
+        id: 1,
+        error: {
+          code: -32000,
+          message: "Object couldn't be returned by value",
+          data: expect.anything(),
+        },
+      });
+      // The debuggee must survive the request (an assertions build used to
+      // SIGABRT here before the reply arrived).
+      expect(child!.exitCode).toBeNull();
+      expect(child!.signalCode).toBeNull();
+    });
+  }
+
+  test("bare 1n", async () => {
+    // A bare top-level BigInt is represented via description without a JSON
+    // value and has always worked; keep it covered so the unserializable path
+    // above does not regress it.
+    const reply = await evaluateByValue("1n");
+    expect(reply).toEqual({
+      id: 1,
+      result: { result: { type: "bigint", description: "1n" }, wasThrown: false },
+    });
+  });
+});
+
 describe("unix domain socket without websocket", () => {
   let tempdir: string;
   let randomSocketPath: () => string;

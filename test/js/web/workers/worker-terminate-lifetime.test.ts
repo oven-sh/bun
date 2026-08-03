@@ -455,3 +455,100 @@ test.skipIf(!isDebug)(
   },
   120_000,
 );
+
+// Regression: FetchTasklet holds a lifetime-erased &'static VirtualMachine and
+// the shared HTTP client thread read it (is_shutting_down /
+// enqueue_task_concurrent) after WebWorker::shutdown had dealloc'd the worker's
+// VM storage, taking the whole process down (SIGSEGV on release, ASAN
+// heap-use-after-free on debug). All four shutdown doors funnel through the
+// same WebWorker::shutdown, so the fence is door-agnostic; the test matrix
+// proves it. ASAN-gated: the read is one byte from freed memory, which
+// release builds can survive.
+describe.skipIf(!isASAN)(
+  "worker shutdown with fetch() in flight does not read the freed worker VM from the HTTP thread",
+  () => {
+    // workerExit is inlined into the worker body; parentAction replaces
+    // terminate() when the worker ends itself.
+    const doors: { door: string; workerExit: string; parentAction: string }[] = [
+      { door: "terminate()", workerExit: "", parentAction: "await w.terminate();" },
+      { door: "process.exit()", workerExit: "setTimeout(() => process.exit(0), d.T);", parentAction: "" },
+      { door: "uncaught throw", workerExit: "setTimeout(() => { throw new Error('boom'); }, d.T);", parentAction: "" },
+      {
+        door: "unhandled rejection",
+        workerExit: "setTimeout(() => Promise.reject(new Error('boom')), d.T);",
+        parentAction: "",
+      },
+    ];
+    for (const { door, workerExit, parentAction } of doors) {
+      test.concurrent(
+        door,
+        async () => {
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `
+              const { Worker } = require("node:worker_threads");
+              const server = Bun.serve({
+                hostname: "127.0.0.1",
+                port: 0,
+                fetch(req) {
+                  if (new URL(req.url).pathname === "/health") return new Response("ok");
+                  // Long trickle so HTTP-thread callbacks for this request keep
+                  // arriving past the worker's VM dealloc.
+                  const enc = new TextEncoder();
+                  return new Response(new ReadableStream({ async start(c) {
+                    for (let i = 0; i < 200; i++) { c.enqueue(enc.encode("chunk" + i + "\\n")); await Bun.sleep(2); }
+                    c.close();
+                  } }));
+                },
+              });
+              const base = "http://127.0.0.1:" + server.port;
+              // 10 lanes of back-to-back fetches, mixed body consumption: half
+              // buffer the whole body, half read one chunk and release the
+              // reader so the stream is still draining when the worker exits.
+              const src =
+                'const { parentPort, workerData: d } = require("node:worker_threads");' +
+                'async function lane(l) { for (let i = 0; ; i++) { try {' +
+                '  const r = await fetch(d.base + "/slow?l=" + l + "&i=" + i);' +
+                '  if (i & 1) { const rd = r.body.getReader(); await rd.read(); rd.releaseLock(); }' +
+                '  else await r.arrayBuffer(); } catch {} } }' +
+                'for (let l = 0; l < 10; l++) lane(l);' +
+                'parentPort.postMessage("up");' +
+                ${JSON.stringify(workerExit)};
+              for (let r = 0; r < ${rounds * 2}; r++) {
+                const T = 60 + ((r * 37) % 200);
+                const w = new Worker(src, { eval: true, workerData: { base, T } });
+                w.on("error", () => {});
+                const exited = new Promise(res => w.once("exit", res));
+                await new Promise(res => w.once("message", res));
+                ${parentAction ? `await Bun.sleep(T); ${parentAction}` : ""}
+                await exited;
+                // Keep-alive pool must stay healthy across the shutdown.
+                const t = await fetch(base + "/health").then(x => x.text());
+                if (t !== "ok") throw new Error("pool unhealthy after round " + r);
+              }
+              server.stop(true);
+              console.log("survived");
+            `,
+            ],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+
+          const [stdout, stderr, exitCode] = await Promise.all([
+            proc.stdout.text(),
+            proc.stderr.text(),
+            proc.exited,
+          ]);
+          // Check stderr first: on failure the sanitizer report is the useful part.
+          expect(stderr).toBe("");
+          expect(stdout).toBe("survived\n");
+          expect(exitCode).toBe(0);
+        },
+        timeout,
+      );
+    }
+  },
+);

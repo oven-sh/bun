@@ -540,10 +540,9 @@ impl JSGlobalObject {
         .throw()
     }
 
-    /// Renders Node's `ERR_INVALID_ARG_TYPE` message through the same C++
-    /// formatter the C++ error paths use, so the two agree on `argument` vs
-    /// `property` for dotted names and on `of type` vs `an instance of` for
-    /// the expected types. Returns a +1-ref'd string wrapped in [`OwnedString`].
+    /// Renders Node's `ERR_INVALID_ARG_TYPE` message via the shared C++ formatter
+    /// so Rust and C++ agree on `argument`/`property` and `of type`/`an instance of`.
+    /// https://github.com/nodejs/node/blob/main/lib/internal/errors.js
     pub fn format_invalid_argument_type(
         global: &Self,
         argname: &[u8],
@@ -579,13 +578,9 @@ impl JSGlobalObject {
         )))
     }
 
-    /// "The {argname} argument must be of type {typename}. Received {value}"
-    ///
-    /// `typename` is used verbatim; when the accepted types are a list of type
-    /// or class names, use [`Self::throw_invalid_argument_type_list`] instead so
-    /// Node's "of type" / "an instance of" grouping applies.
-    ///
-    /// Accepts `&str`, `&[u8]`, or `b"..."` for `argname`/`typename`.
+    /// "The {argname} argument must be of type {typename}. Received {value}".
+    /// `typename` is used verbatim; for a list of type/class names use
+    /// [`Self::throw_invalid_argument_type_list`] to get Node's grouping.
     pub fn throw_invalid_argument_type_value(
         &self,
         argname: impl AsRef<[u8]>,

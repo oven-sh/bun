@@ -233,6 +233,18 @@ pub enum PathOrFileDescriptor {
     Path(PathLike),
 }
 
+impl PathOrFileDescriptor {
+    /// The path the permission model must approve, or `None` when the caller
+    /// passed a file descriptor (already approved when it was opened).
+    #[inline]
+    pub fn permission_path(&self) -> Option<&PathLike> {
+        match self {
+            Self::Fd(_) => None,
+            Self::Path(path) => Some(path),
+        }
+    }
+}
+
 impl Default for PathOrFileDescriptor {
     #[inline]
     fn default() -> Self {

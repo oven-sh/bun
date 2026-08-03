@@ -285,11 +285,14 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\""
     ),
-    // Node's permission model. Hidden from `--help` (empty description) until
-    // every scope is enforced: today only `net` is, so advertising
-    // `--allow-fs-read` as a filesystem guard would promise a sandbox that
-    // does not exist. The flags are still parsed so `process.permission`
-    // reports what was granted.
+    // Node's permission model. Hidden from `--help` (empty description, the
+    // same convention the node trace flags use) because the filesystem scope is
+    // only enforced for `node:fs`: the module loader, `Bun.file` and the
+    // compile cache still read and write outside the grants. Advertising
+    // `--allow-fs-read` would promise a sandbox with known holes. Un-hide these
+    // once every path to the filesystem goes through the model. The flags are
+    // still parsed, so `process.permission` reports what was granted and the
+    // scopes that *are* enforced (node:fs, net) hold.
     parse_param!("--permission"),
     parse_param!("--allow-fs-read <STR>..."),
     parse_param!("--allow-fs-write <STR>..."),

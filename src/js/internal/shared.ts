@@ -195,10 +195,11 @@ function returnStackFrames(_err: unknown, frames: unknown[]) {
 // stackTraceLimit, accessor prepareStackTrace) never escapes to callers
 // like url.parse that never touched Error.* before.
 function isInsideNodeModules(frameLimit: number): boolean {
-  const prevLimit = Error.stackTraceLimit;
-  const prevPrepare = Error.prepareStackTrace;
+  let prevLimit: unknown, prevPrepare: unknown;
   let frames: { getFileName(): string | null }[] | undefined;
   try {
+    prevLimit = Error.stackTraceLimit;
+    prevPrepare = Error.prepareStackTrace;
     Error.stackTraceLimit = frameLimit;
     Error.prepareStackTrace = returnStackFrames;
     const target: { stack?: unknown } = {};

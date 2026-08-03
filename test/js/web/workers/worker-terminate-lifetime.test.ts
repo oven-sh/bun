@@ -482,9 +482,9 @@ test.skipIf(!isDebug && !isASAN)(
           // and overlaps the parent's terminate(). The async completion then
           // allocates a 64-byte Buffer via JSBuffer__bufferFromPointerAndLengthAndDeinit.
           'const salt = Buffer.alloc(3 << 20, 0xaa);' +
-          'parentPort.postMessage("up");' +
           'function lane() { crypto.pbkdf2(salt, salt, 1, 64, "sha256", lane); }' +
-          'for (let i = 0; i < 8; i++) lane();';
+          'for (let i = 0; i < 8; i++) lane();' +
+          'parentPort.postMessage("up");';
         function ready(w) {
           return new Promise((res, rej) => {
             w.once("message", res);

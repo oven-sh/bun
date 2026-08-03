@@ -128,9 +128,7 @@ function normalizeSSLMode(value: string): SSLMode {
   switch (value) {
     case "disable":
       return SSLMode.disable;
-    case "allow":
-    // libpq "allow" tries plaintext first then TLS; "prefer" is the closest
-    // mode we implement (either outcome is accepted).
+    case "allow": // libpq value; both accept either outcome, so map to prefer
     case "prefer":
       return SSLMode.prefer;
     case "require":

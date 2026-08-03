@@ -9,7 +9,6 @@ use bun_collections::linear_fifo::DynamicBuffer;
 use bun_event_loop::ConcurrentTask::AutoDeinit;
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
-use bun_jsc::StringJsc;
 use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -74,6 +73,11 @@ unsafe extern "C" {
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
     fn napi_set_last_error(env: napi_env, status: NapiStatus) -> napi_status;
+    fn napi_internal_create_string_latin1(env: *mut NapiEnv, ptr: *const u8, len: usize)
+    -> JSValue;
+    fn napi_internal_create_string_utf8(env: *mut NapiEnv, ptr: *const u8, len: usize) -> JSValue;
+    fn napi_internal_create_string_utf16(env: *mut NapiEnv, ptr: *const u16, len: usize)
+    -> JSValue;
 }
 
 impl NapiEnv {
@@ -646,22 +650,13 @@ extern "C" fn napi_create_string_latin1(
         bstr::BStr::new(slice)
     );
 
-    if slice.is_empty() {
-        let js = match bun_core::String::empty().to_js(env.to_js()) {
-            Ok(v) => v,
-            Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
-        };
-        result.set(env, js);
-        return env.ok();
-    }
-
-    let (mut string, bytes) = bun_core::String::create_uninitialized_latin1(slice.len());
-    bytes.copy_from_slice(slice);
-
-    let js = match string.transfer_to_js(env.to_js()) {
-        Ok(v) => v,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
+    // SAFETY: env is non-null (checked above); slice ptr/len from a live &[u8].
+    let js = unsafe {
+        napi_internal_create_string_latin1(env.as_mut_ptr(), slice.as_ptr(), slice.len())
     };
+    if js == JSValue::ZERO {
+        return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure);
+    }
     result.set(env, js);
     env.ok()
 }
@@ -698,12 +693,13 @@ extern "C" fn napi_create_string_utf8(
 
     bun_output::scoped_log!(napi, "napi_create_string_utf8: {}", bstr::BStr::new(slice));
 
-    let global_object = env.to_js();
-    let string = match jsc::bun_string_jsc::create_utf8_for_js(global_object, slice) {
-        Ok(v) => v,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
-    };
-    result.set(env, string);
+    // SAFETY: env is non-null (checked above); slice ptr/len from a live &[u8].
+    let js =
+        unsafe { napi_internal_create_string_utf8(env.as_mut_ptr(), slice.as_ptr(), slice.len()) };
+    if js == JSValue::ZERO {
+        return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure);
+    }
+    result.set(env, js);
     env.ok()
 }
 
@@ -747,22 +743,12 @@ extern "C" fn napi_create_string_utf16(
         );
     }
 
-    if slice.is_empty() {
-        let js = match bun_core::String::empty().to_js(env.to_js()) {
-            Ok(v) => v,
-            Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
-        };
-        result.set(env, js);
-        return env.ok();
+    // SAFETY: env is non-null (checked above); slice ptr/len from a live &[u16].
+    let js =
+        unsafe { napi_internal_create_string_utf16(env.as_mut_ptr(), slice.as_ptr(), slice.len()) };
+    if js == JSValue::ZERO {
+        return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure);
     }
-
-    let (mut string, chars) = bun_core::String::create_uninitialized_utf16(slice.len());
-    chars.copy_from_slice(slice);
-
-    let js = match string.transfer_to_js(env.to_js()) {
-        Ok(v) => v,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
-    };
     result.set(env, js);
     env.ok()
 }

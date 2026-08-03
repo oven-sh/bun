@@ -41,6 +41,7 @@
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/ExceptionScope.h>
+#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/FunctionConstructor.h>
 #include <JavaScriptCore/Heap.h>
 #include <JavaScriptCore/Identifier.h>
@@ -3293,6 +3294,50 @@ extern "C" void napi_internal_remove_finalizer(napi_env env, napi_finalize callb
 extern "C" void napi_internal_check_gc(napi_env env)
 {
     env->checkGC();
+}
+
+// Node.js does not gate napi_create_string_* behind NAPI_PREAMBLE, so a VM
+// exception may already be pending. SuspendExceptionScope stashes it for the
+// allocation and restores it on return.
+template<typename CharT, typename Maker>
+static JSC::EncodedJSValue napiCreateStringWithSuspendedException(napi_env env, const CharT* ptr, size_t length, Maker make)
+{
+    auto& vm = env->vm();
+    JSC::SuspendExceptionScope suspend(vm);
+    if (!length) {
+        return JSValue::encode(jsEmptyString(vm));
+    }
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    WTF::String str = make(std::span<const CharT>(ptr, length));
+    if (scope.exception() || str.isNull()) [[unlikely]] {
+        scope.clearExceptionExceptTermination();
+        return {};
+    }
+    return JSValue::encode(jsString(vm, WTF::move(str)));
+}
+
+extern "C" JSC::EncodedJSValue napi_internal_create_string_latin1(napi_env env, const Latin1Character* ptr, size_t length)
+{
+    return napiCreateStringWithSuspendedException(env, ptr, length, [](std::span<const Latin1Character> bytes) {
+        return WTF::String(bytes);
+    });
+}
+
+extern "C" JSC::EncodedJSValue napi_internal_create_string_utf8(napi_env env, const char* ptr, size_t length)
+{
+    return napiCreateStringWithSuspendedException(env, ptr, length, [](std::span<const char> bytes) {
+        if (simdutf::validate_ascii(bytes.data(), bytes.size())) {
+            return WTF::String(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(bytes.data()), bytes.size()));
+        }
+        return WTF::String::fromUTF8ReplacingInvalidSequences(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(bytes.data()), bytes.size()));
+    });
+}
+
+extern "C" JSC::EncodedJSValue napi_internal_create_string_utf16(napi_env env, const char16_t* ptr, size_t length)
+{
+    return napiCreateStringWithSuspendedException(env, ptr, length, [](std::span<const char16_t> units) {
+        return WTF::String(units);
+    });
 }
 
 extern "C" bool NapiEnv__hasPendingException(napi_env env)

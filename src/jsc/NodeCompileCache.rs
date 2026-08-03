@@ -594,17 +594,9 @@ pub fn note_parse_failure(filename: &[u8], is_cjs: bool) {
     state.entries.insert(key, entry);
 }
 
-/// TypeScript transpilation cache (`kStrippedTypeScript`): called once per
-/// transpiled TypeScript module with the raw source and the transpiled
-/// output. Mirrors Node's `getCompileCacheEntry`/`saveCompileCacheEntry`
-/// sequence in `stripTypeScriptModuleTypes`: validate any on-disk entry
-/// against the raw source ("retrieving transpile cache … success"), else
-/// register the transpiled output for the exit-time persist pass ("saving
-/// transpilation cache", then "writing cache … success" at exit; an accepted
-/// entry logs "skip persisting … because cache was the same" instead).
-///
-/// The stored transpiled text is validated but not yet fed back to the
-/// loader; Bun's own runtime transpiler cache already skips re-transpiling.
+/// TypeScript transpilation cache (`kStrippedTypeScript`); mirrors Node's
+/// `stripTypeScriptModuleTypes` compile-cache sequence (https://github.com/nodejs/node/blob/main/src/compile_cache.cc).
+/// Validated but not fed back — Bun's runtime transpiler cache already skips re-transpiling.
 pub fn note_transpiled(filename: &[u8], raw: &[u8], transpiled: &[u8]) {
     if !is_enabled() || filename.is_empty() || !bun_paths::is_absolute(filename) {
         return;

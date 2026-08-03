@@ -20,10 +20,8 @@ type ImportRecordList<'a> = crate::import_record::List<'a>;
 
 pub type TopLevelSymbolToParts = ArrayHashMap<Ref, AstVec<u32>, AutoContext, AstAlloc>;
 
-/// Output of the `stripTypeScriptTypes` strip pass; produced by
-/// `bun_js_parser::ts_strip` when `Features::ts_strip_mode` is set. The code
-/// is the input source with type-only spans blanked in place (positions
-/// preserved), matching Node's amaro/swc_ts_fast_strip.
+/// Output of the `stripTypeScriptTypes` strip pass (`bun_js_parser::ts_strip`):
+/// the input with type-only spans blanked in place, matching amaro/swc_ts_fast_strip.
 pub enum TsStripOutput {
     Code(Vec<u8>),
     /// amaro-compatible unsupported-syntax rejection, with the byte span of

@@ -475,11 +475,8 @@ function setSourceMapsSupport(enabled, options = kEmptyObject) {
   });
 }
 
-// `module.stripTypeScriptTypes(code[, options])` — Node v26 removed the
-// `transform` mode and source-map support (nodejs/node#61803): `mode` must be
-// 'strip', which blanks type-only syntax in place so line/column positions
-// are preserved without a source map. The heavy lifting happens in native
-// code (`node_module_binding.rs` → `bun_js_parser::ts_strip`).
+// `module.stripTypeScriptTypes(code[, options])` — Node v26 removed `transform` mode (nodejs/node#61803).
+// https://github.com/nodejs/node/blob/main/lib/internal/modules/typescript.js
 let stripTypeScriptTypesNative: ((code: string) => any) | undefined;
 let emittedStripTypesWarning = false;
 

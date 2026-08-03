@@ -1,11 +1,6 @@
 //! Native backing for `module.stripTypeScriptTypes` (`node:module`).
-//!
-//! The JS wrapper (`src/js/internal/shared.ts`) validates the arguments
-//! Node-style and handles the `sourceUrl` suffix; this binding runs Bun's
-//! parser in strip mode (`ParseOptions::ts_strip_mode`) and returns either
-//! the blanked source string or a plain object describing the amaro-style
-//! error (`{ errorCode, message, startLine, snippet }`) for the wrapper to
-//! turn into `ERR_INVALID_TYPESCRIPT_SYNTAX` / `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`.
+//! Returns the blanked source, or `{ errorCode, message, startLine, snippet }` for the JS
+//! wrapper to throw; see https://github.com/nodejs/node/blob/main/lib/internal/modules/typescript.js
 
 use bun_alloc::Arena;
 use bun_ast::Loader;

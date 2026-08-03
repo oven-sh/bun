@@ -298,11 +298,8 @@ pub struct LexerType<
     pub(crate) track_react_suppressions: bool,
     pub(crate) all_comments: Vec<Range>,
 
-    /// When set, every token is appended to `captured_tokens` (same pattern
-    /// as `track_comments`/`all_comments`). Only enabled by the
-    /// `stripTypeScriptTypes` strip pass, which needs exact token boundaries
-    /// and newline info for its whitespace-blanking output; see
-    /// `crate::ts_strip`.
+    /// When set, every token is appended to `captured_tokens`. Only enabled by
+    /// the `stripTypeScriptTypes` strip pass; see `crate::ts_strip`.
     pub(crate) track_tokens: bool,
     pub(crate) captured_tokens: Vec<crate::ts_strip::CapturedToken>,
 }
@@ -1445,10 +1442,8 @@ lexer_impl_header! {
     /// (`latin1_identifier_continue_length`, `parse_numeric_literal_or_dot`,
     /// `parse_string_literal::<QUOTE>`) stay `#[inline]`/`#[inline(always)]` so
     /// they merge *into* this body.
-    /// Thin dispatch wrapper so token capture (strip mode only) has a single
-    /// site covering every exit of the scanner. `#[inline(always)]` keeps the
-    /// partial-inlining behavior documented above intact: LLVM sees the same
-    /// `next_inner` body plus one predictable bool test.
+    /// Thin dispatch wrapper so token capture (strip mode) has a single site;
+    /// `#[inline(always)]` keeps the partial-inlining behavior above intact.
     #[inline(always)]
     pub fn next(&mut self) -> Result<(), Error> {
         let result = self.next_inner();
@@ -1460,10 +1455,8 @@ lexer_impl_header! {
         result
     }
 
-    /// Append the current token to `captured_tokens`. Rescans (`}` →
-    /// template continuation) and token splits (`<<` → `<` `<`) re-enter with
-    /// a start inside the previously captured token; pop stale entries so the
-    /// list stays sorted by start.
+    /// Append the current token to `captured_tokens`. Rescans and token splits
+    /// re-enter with a start inside the previous token; pop stale entries first.
     #[cold]
     pub(crate) fn capture_token(&mut self) {
         let start = self.start as u32;

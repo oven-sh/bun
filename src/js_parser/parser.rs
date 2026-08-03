@@ -1473,10 +1473,8 @@ pub struct PropertyOpts {
     pub(crate) has_argument_decorators: bool,
     pub(crate) has_class_decorators: bool,
 
-    /// Strip mode (`P::ts_strip`): byte offset of the first token of this
-    /// class member after decorators, so fully-erased members (overload
-    /// signatures, `declare`/`abstract` members, index signatures) can blank
-    /// their leading modifiers too.
+    /// Strip mode: byte offset of this class member's first token after
+    /// decorators, so fully-erased members blank their leading modifiers too.
     pub(crate) ts_strip_member_lo: Option<u32>,
     /// Strip mode: position of the first blanked accessibility modifier of
     /// this member, for swc's computed-key/generator `;` hazard fix.

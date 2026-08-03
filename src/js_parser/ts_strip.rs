@@ -1,26 +1,11 @@
 //! In-place TypeScript type stripping for `module.stripTypeScriptTypes`.
-//!
-//! Node's `stripTypeScriptTypes` (backed by amaro / swc_ts_fast_strip)
-//! replaces type-only syntax with whitespace so that line/column positions in
-//! the output match the input exactly. Bun's transpiler re-prints from the
-//! AST, which cannot preserve positions, so strip mode is implemented as a
-//! separate pass: while the parser skips TypeScript syntax it records the
-//! byte spans of every type-only construct (see `P::ts_strip` and the
-//! `ts_strip_*` recording helpers), and this module turns those spans into
-//! the blanked output.
-//!
-//! The algorithm is a port of amaro's `swc_ts_fast_strip` visitor
-//! (https://github.com/nodejs/amaro/blob/main/deps/swc/crates/swc_ts_fast_strip/src/lib.rs):
-//! the same whitespace substitution, the same ASI-protection semicolons, the
-//! same "unsupported syntax" rejections with the same messages.
+//! Port of https://github.com/nodejs/amaro/blob/main/deps/swc/crates/swc_ts_fast_strip/src/lib.rs —
+//! the parser records type-only spans (`P::ts_strip`); this module blanks them to whitespace.
 
 use crate::lexer::T;
 
-/// One token as captured by the lexer when `track_tokens` is enabled.
-/// Mirrors swc's `TokenAndSpan` usage in the strip pass: the strip
-/// post-processing needs exact token boundaries (to end blanked spans at the
-/// last real token, preserving trailing comments) and newline info (for ASI
-/// fixes).
+/// One token as captured by the lexer when `track_tokens` is enabled; mirrors
+/// swc's `TokenAndSpan` (exact boundaries + newline-before for ASI fixes).
 #[derive(Clone, Copy, Debug)]
 pub struct CapturedToken {
     pub start: u32,
@@ -88,10 +73,8 @@ pub enum EntryKind {
     /// Arrow-function type parameter list `<T, …>`. Needs the async/newline
     /// `(`-rewrite from swc's `visit_arrow_expr` / `fix_asi_in_arrow_expr`.
     ArrowTypeParams { is_async: bool },
-    /// Arrow-function return type `: T` between `)` and `=>`. When the type
-    /// spans a newline, `()\n: T =>` erased to spaces would put a line break
-    /// between `)` and `=>` (illegal); swc shifts the `)` down to the type's
-    /// last character.
+    /// Arrow-function return type `: T` between `)` and `=>`. If the type spans
+    /// a newline, swc shifts the `)` down so `)` and `=>` stay on one line.
     ArrowReturnType,
     /// Write `b';'` at `lo` (span is 1 byte). Emitted for the ASI hazards a
     /// blanked span cannot express (swc's class-member overwrites).
@@ -377,11 +360,9 @@ pub fn apply(
             }
             EntryKind::ArrowTypeParams { is_async } => {
                 strip.replacements.push((e.lo, hi));
-                // swc visit_arrow_expr: `async <\nT\n>(v) => v` erased to
-                // spaces would parse as a call `async\n(v)`; and swc
-                // fix_asi_in_arrow_expr: `return <T>\n(v) => v` erased would
-                // trigger ASI after `return`. In both cases rewrite the `<`
-                // to `(` and blank the original `(`.
+                // swc visit_arrow_expr / fix_asi_in_arrow_expr: `async <\nT\n>(v)=>v`
+                // would read as `async\n(v)`, and `return <T>\n(v)=>v` would hit
+                // ASI — rewrite `<` to `(` and blank the original `(`.
                 let Some(l_paren) = strip.next_token(hi) else {
                     continue;
                 };
@@ -410,10 +391,8 @@ pub fn apply(
         }
     }
 
-    // Blank the spans. Character-level port of swc's replacement loop:
-    // existing whitespace and line terminators are kept, everything else
-    // becomes a space of the same UTF-8 width (U+0020 / U+00A0 / U+2002, and
-    // U+0020+U+FEFF for 4-byte characters).
+    // Blank the spans (port of swc's replacement loop): keep whitespace/line
+    // terminators, replace the rest with a space of the same UTF-8 width.
     let mut out = source.to_vec();
     let text = match core::str::from_utf8(source) {
         Ok(t) => t,
@@ -481,10 +460,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.ts_strip.is_some()
     }
 
-    /// Record a construct that started at `lo` and has been fully consumed:
-    /// the lexer now sits on the first token *after* it, so the current token
-    /// start is an exclusive upper bound (snapped to the last real token by
-    /// `apply`).
+    /// Record a construct that started at `lo` and has been fully consumed; the
+    /// current token start is an exclusive upper bound (snapped back by `apply`).
     #[inline]
     pub fn ts_strip_record_to_here(&mut self, kind: EntryKind, lo: u32) {
         let hi = self.lexer.start as u32;
@@ -505,10 +482,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `export interface I {}` and friends re-enter `parse_stmt`, so the
-    /// erased-statement span recorded by the callee starts at the inner
-    /// keyword. Extend it to cover the `export` keyword (swc blanks the whole
-    /// `ExportDecl` span).
+    /// `export interface I {}` re-enters `parse_stmt`, so the erased span starts
+    /// at the inner keyword; extend it to cover `export` (swc blanks the whole span).
     #[inline]
     pub fn ts_strip_forward_export(&mut self, export_lo: u32, stmt: &bun_ast::Stmt) {
         let Some(r) = &mut self.ts_strip else { return };

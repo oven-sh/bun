@@ -3069,10 +3069,8 @@ fn transpile_source_code_inner(
                 // from the raw pointer, which would invalidate any earlier
                 // Unique tag under Stacked Borrows. Rederive at each use-site
                 // instead (reset, mapper, print, get_written).
-                // Node compile cache: the TypeScript transpilation entry is
-                // keyed by the raw source, which the print call below consumes
-                // (it takes `parse_result` by value); copy it out first. Only
-                // paid when NODE_COMPILE_CACHE is active for a TS file.
+                // Node compile cache: the transpilation entry is keyed by the raw
+                // source, which `print` below consumes by value — copy it out first.
                 let raw_ts_for_compile_cache: Option<Box<[u8]>> =
                     if bun_jsc::node_compile_cache::is_enabled()
                         && path.is_file()

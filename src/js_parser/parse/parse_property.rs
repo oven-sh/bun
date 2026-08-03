@@ -744,10 +744,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.skip_type_script_type(Level::Lowest)?;
                         }
                         p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, colon_lo);
-                        // swc: an uninitialized field named `get`/`set`/`static`
-                        // would fuse with the following member once its type
-                        // annotation is blanked (`get: T` → `get [x]()` reads
-                        // as a getter); re-write the `:` as `;`.
+                        // swc: a field named `get`/`set`/`static` would fuse with
+                        // the next member once `: T` is blanked; rewrite `:` as `;`.
                         if p.ts_strip_active() && p.lexer.token != T::TEquals && !is_computed {
                             if let js_ast::ExprData::EString(str_) = &key.data {
                                 if str_.eql_comptime(b"get")

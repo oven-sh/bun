@@ -3845,7 +3845,7 @@ fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
     if !current_bundle.requests.first.is_null() {
         // cannot be an assertion because in the case of OOM, the request list was not drained.
         bun_core::debug!(
-            "current_bundle.requests.first != null. this leaves pending requests without an error page!",
+            "current_bundle.requests.first != null. failing pending requests with 500 (bundle-completion OOM defer).",
         );
     }
     while let Some(node) = current_bundle.requests.pop_first() {

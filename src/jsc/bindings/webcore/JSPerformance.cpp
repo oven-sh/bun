@@ -21,7 +21,7 @@
 #include "config.h"
 #include "JSPerformance.h"
 
-#include "ActiveDOMObject.h"
+#include "ErrorCode.h"
 #include "EventNames.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -229,23 +229,6 @@ void JSPerformancePrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSPerformance::info(), JSPerformancePrototypeTableValues, *this);
-    // bool hasDisabledRuntimeProperties = false;
-    // if (!(globalObject())->inherits<JSDOMWindowBase>()) {
-    //     hasDisabledRuntimeProperties = true;
-    //     auto propertyName = Identifier::fromString(vm, "navigation"_s);
-    //     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-    //     DeletePropertySlot slot;
-    //     JSObject::deleteProperty(this, globalObject(), propertyName, slot);
-    // }
-    // if (!(globalObject())->inherits<JSDOMWindowBase>()) {
-    //     hasDisabledRuntimeProperties = true;
-    //     auto propertyName = Identifier::fromString(vm, "timing"_s);
-    //     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-    //     DeletePropertySlot slot;
-    //     JSObject::deleteProperty(this, globalObject(), propertyName, slot);
-    // }
-    // if (hasDisabledRuntimeProperties && structure()->isDictionary())
-    //     flattenDictionaryObject(vm);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -448,7 +431,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_getEntriesByTyp
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     if (callFrame->argumentCount() < 1) [[unlikely]]
-        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+        return Bun::ERR::MISSING_ARGS(throwScope, lexicalGlobalObject, "The \"type\" argument must be specified"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto type = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -468,7 +451,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_getEntriesByNam
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     if (callFrame->argumentCount() < 1) [[unlikely]]
-        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+        return Bun::ERR::MISSING_ARGS(throwScope, lexicalGlobalObject, "The \"name\" argument must be specified"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -528,6 +511,9 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_markBody(JSC::J
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    // Node reports the V8 wording here; JSC's own message differs.
+    if (argument0.value().isSymbol()) [[unlikely]]
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot convert a Symbol value to a string"_s);
     auto markName = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
@@ -549,6 +535,8 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_clearMarksBody(
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->argument(0);
+    if (argument0.value().isSymbol()) [[unlikely]]
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot convert a Symbol value to a string"_s);
     auto markName = argument0.value().isUndefined() ? String() : convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.clearMarks(WTF::move(markName)); })));
@@ -593,6 +581,8 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_clearMeasuresBo
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->argument(0);
+    if (argument0.value().isSymbol()) [[unlikely]]
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot convert a Symbol value to a string"_s);
     auto measureName = argument0.value().isUndefined() ? String() : convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.clearMeasures(WTF::move(measureName)); })));

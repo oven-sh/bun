@@ -692,7 +692,8 @@ declare module "bun" {
 
     /**
      * If `true`, wrap at word boundaries when possible.
-     * If `false`, don't perform word wrapping (only wrap at explicit newlines).
+     * If `false`, break every line at exactly the column width (characters
+     * are split wherever the limit falls, ignoring word boundaries).
      *
      * @default true
      */
@@ -777,14 +778,47 @@ declare module "bun" {
    */
   namespace TOML {
     /**
-     * Parse a TOML string into a JavaScript object.
+     * Parse a TOML (v1.1.0) document into a JavaScript object.
+     *
+     * Date/time values parse as strings of their source text. Integers
+     * outside `Number.MAX_SAFE_INTEGER` throw, since they cannot be
+     * represented losslessly as JavaScript numbers.
      *
      * @category Utilities
      *
-     * @param input The TOML string to parse
+     * @param input The TOML document to parse, as a string or UTF-8 bytes
      * @returns A JavaScript object
+     * @throws {SyntaxError} If the input is not valid TOML
      */
-    export function parse(input: string): object;
+    export function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+    ): object;
+
+    /**
+     * Serialize a JavaScript object to a TOML document.
+     *
+     * The top-level value must be an object (a TOML document is a table).
+     * `Date` values become TOML offset date-times. `null`, `BigInt`, and
+     * circular structures throw, since TOML cannot represent them;
+     * `undefined`, function, and symbol properties are skipped (inside
+     * arrays they throw, since TOML arrays cannot have holes).
+     *
+     * @category Utilities
+     *
+     * @param input The JavaScript object to serialize.
+     * @param replacer Not supported; pass `undefined` or `null`.
+     * @param space Accepted for signature parity with `YAML.stringify` and
+     * `JSON5.stringify`, but ignored: TOML output is line-oriented.
+     * @returns A TOML document string, or `undefined` if the input is `undefined`, a function, or a symbol.
+     *
+     * @example
+     * ```js
+     * import { TOML } from "bun";
+     * TOML.stringify({ name: "app", server: { port: 8080 } });
+     * // 'name = "app"\n\n[server]\nport = 8080\n'
+     * ```
+     */
+    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
   }
 
   /**
@@ -869,7 +903,7 @@ declare module "bun" {
      * Bun.JSONL.parse('{bad}\n'); // throws SyntaxError
      * ```
      */
-    export function parse(input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike): unknown[];
+    export function parse(input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike): unknown[];
 
     /**
      * Parse a JSONL chunk, designed for streaming use.
@@ -904,7 +938,7 @@ declare module "bun" {
      * ```
      */
     export function parseChunk(
-      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
       start?: number,
       end?: number,
     ): ParseChunkResult;
@@ -1303,7 +1337,7 @@ declare module "bun" {
      * ```
      */
     export function html(
-      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
       options?: Options,
     ): string;
 
@@ -1379,7 +1413,7 @@ declare module "bun" {
      * ```
      */
     export function ansi(
-      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
       theme?: AnsiTheme,
     ): string;
 
@@ -1421,7 +1455,7 @@ declare module "bun" {
      * ```
      */
     export function render(
-      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
       callbacks?: RenderCallbacks,
       options?: Options,
     ): string;
@@ -1470,7 +1504,7 @@ declare module "bun" {
      * ```
      */
     export function react(
-      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
       components?: ComponentOverrides,
       options?: ReactOptions,
     ): import("./jsx.d.ts").JSX.Element;
@@ -3044,6 +3078,14 @@ declare module "bun" {
     executablePath?: string;
     outfile?: string;
     /**
+     * Files or directories to embed into the executable under their original
+     * relative paths. At runtime they are reachable via `node:fs` and
+     * `Bun.file()` relative to `import.meta.dir`.
+     *
+     * Equivalent CLI flag: `--asset` (repeatable)
+     */
+    assets?: string[];
+    /**
      * Whether the standalone executable loads .env files when it runs
      *
      * Equivalent CLI flags: `--compile-autoload-dotenv`, `--no-compile-autoload-dotenv`
@@ -4517,6 +4559,16 @@ declare module "bun" {
      * @default true
      */
     shared?: boolean;
+    /**
+     * Byte offset into the file where the mapping starts.
+     * @default 0
+     */
+    offset?: number;
+    /**
+     * Maximum number of bytes to map. Clamped to the file size
+     * (minus `offset`). Defaults to mapping the rest of the file.
+     */
+    size?: number;
   }
   /**
    * Open a file as a live-updating `Uint8Array` without copying memory
@@ -6522,6 +6574,12 @@ declare module "bun" {
        * callback contains only the portion that fit in the buffer.
        */
       truncated: boolean;
+      /**
+       * `true` if the datagram's source address was IPv6, `false` for IPv4.
+       * Reflects the packet's own `sockaddr` — a socket adopting an existing
+       * fd may receive packets of the other family than it was created with.
+       */
+      ipv6: boolean;
     }
 
     export interface SocketHandler<DataBinaryType extends BinaryType> {
@@ -6954,8 +7012,12 @@ declare module "bun" {
        * Use this to abort the subprocess when another part of the program is
        * aborted, such as a `fetch`.
        *
-       * If the signal is aborted, the process is killed with the signal
-       * specified by `killSignal` (defaults to SIGTERM).
+       * If the signal is already aborted when `spawn` is called, no process is
+       * created and an `AbortError` (with `cause` set to `signal.reason`) is
+       * thrown synchronously.
+       *
+       * If the signal is aborted after the process starts, the process is
+       * killed with the signal specified by `killSignal` (defaults to SIGTERM).
        *
        * @example
        * ```ts
@@ -7557,6 +7619,17 @@ declare module "bun" {
   }
 
   /**
+   * Options for the in-process {@link Bun.cron} callback overload and {@link Bun.cron.parse}.
+   */
+  interface CronOptions {
+    /**
+     * IANA time-zone name to interpret the schedule in (e.g. `"UTC"`,
+     * `"America/New_York"`). Defaults to the system's local time zone.
+     */
+    tz?: string;
+  }
+
+  /**
    * Schedule cron jobs.
    *
    * Call with a callback to run an in-process job, or with a module path and
@@ -7597,8 +7670,7 @@ declare module "bun" {
      *
      * ### Cron expression syntax
      *
-     * Five fields: `minute hour day-of-month month day-of-week`. Schedules are
-     * interpreted in **UTC** — `0 9 * * *` fires at 9:00 UTC, regardless of `TZ`.
+     * Five fields: `minute hour day-of-month month day-of-week`.
      *
      * | Field | Values | Special chars |
      * |-------|--------|---------------|
@@ -7652,7 +7724,7 @@ declare module "bun" {
      * @see {@link CronJob} for the returned handle.
      * @see {@link Bun.cron.parse} to preview the next fire time.
      */
-    (schedule: CronWithAutocomplete, handler: (this: CronJob) => unknown): CronJob;
+    (schedule: CronWithAutocomplete, handler: (this: CronJob) => unknown, options?: CronOptions): CronJob;
     /**
      * Register an **OS-level** cron job that runs a JavaScript/TypeScript module on a schedule.
      *
@@ -7752,7 +7824,10 @@ declare module "bun" {
      */
     remove(title: string): Promise<void>;
     /**
-     * Parse a cron expression and return the next matching `Date` in UTC.
+     * Parse a cron expression and return the next matching `Date` in the
+     * system's local time zone — the same way crontab, launchd, and Windows
+     * Task Scheduler interpret schedules. Pass `{ tz: "UTC" }` (or any IANA
+     * time-zone name) to override.
      *
      * Supports the same syntax as {@link Bun.cron} — 5-field expressions, named
      * days/months, and predefined nicknames like `@daily`.
@@ -7761,15 +7836,23 @@ declare module "bun" {
      * matching uses OR logic per [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html):
      * a date matches if **either** field matches.
      *
+     * DST: spring-forward times shift forward by the gap; in the fall-back
+     * duplicated hour, fixed-time schedules fire once (first occurrence) while
+     * schedules with `*` minute or hour fire through both occurrences.
+     *
      * @param expression - A cron expression or nickname (e.g. `"0,15,30,45 * * * *"`, `"0 9 * * MON-FRI"`, `"@hourly"`)
      * @param relativeDate - Starting point for the search (defaults to `Date.now()`). Accepts a `Date` or milliseconds since epoch.
-     * @returns The next `Date` matching the expression in UTC, or `null` if no match exists within 8 years (e.g. `"0 0 30 2 *"` — Feb 30 never occurs)
-     * @throws If the expression is invalid or `relativeDate` is `NaN`/`Infinity`
+     * @param options - `{ tz?: string }` — IANA time-zone name to interpret the schedule in (defaults to the system's local zone).
+     * @returns The next `Date` matching the expression, or `null` if no match exists within 8 years (e.g. `"0 0 30 2 *"` — Feb 30 never occurs)
+     * @throws If the expression is invalid, `relativeDate` is `NaN`/`Infinity`, or `options.tz` is not a valid IANA name
      *
      * @example
      * ```ts
-     * // Next weekday at 09:30 UTC
+     * // Next weekday at 09:30 local time
      * const next = Bun.cron.parse("30 9 * * MON-FRI");
+     *
+     * // 09:00 in New York, regardless of the server's TZ
+     * const ny = Bun.cron.parse("0 9 * * *", Date.now(), { tz: "America/New_York" });
      *
      * // Chain calls to get a sequence
      * const from = new Date();
@@ -7777,7 +7860,7 @@ declare module "bun" {
      * const second = first ? Bun.cron.parse("@hourly", first) : null;
      * ```
      */
-    parse(expression: CronWithAutocomplete, relativeDate?: Date | number): Date | null;
+    parse(expression: CronWithAutocomplete, relativeDate?: Date | number, options?: CronOptions): Date | null;
   };
 
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */
@@ -7876,8 +7959,14 @@ declare module "bun" {
 
     /**
      * Write data to the terminal.
+     *
+     * All bytes are accepted; any portion that cannot be flushed to the PTY
+     * immediately is buffered and delivered later. The `drain` callback fires
+     * once buffered data has been flushed. Do not re-send any part of `data`
+     * based on the return value.
+     *
      * @param data The data to write (string or BufferSource)
-     * @returns The number of bytes written
+     * @returns The number of bytes accepted (the byte length of `data`)
      */
     write(data: string | BufferSource): number;
 

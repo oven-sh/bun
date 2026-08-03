@@ -102,16 +102,11 @@ impl VersionType<u32> {
 }
 
 impl<T: VersionInt> VersionType<T> {
-    /// Assumes that there is only one buffer for all the strings
-    pub fn sort_gt(ctx: &[u8], lhs: Self, rhs: Self) -> bool {
-        Self::order_fn(ctx, lhs, rhs) == Ordering::Greater
-    }
-
     pub fn order_fn(ctx: &[u8], lhs: Self, rhs: Self) -> Ordering {
         lhs.order(rhs, ctx, ctx)
     }
 
-    pub fn is_zero(self) -> bool {
+    pub(crate) fn is_zero(self) -> bool {
         self.patch == T::ZERO && self.minor == T::ZERO && self.major == T::ZERO
     }
 
@@ -127,11 +122,6 @@ impl<T: VersionInt> VersionType<T> {
             _tag_padding: Default::default(),
             tag: self.tag.clone_into(slice, buf),
         }
-    }
-
-    #[inline]
-    pub fn len(&self) -> u32 {
-        (self.tag.build.len() + self.tag.pre.len()) as u32
     }
 
     pub fn fmt<'a>(self, input: &'a [u8]) -> Formatter<'a, T> {
@@ -416,7 +406,7 @@ impl<T: VersionInt> VersionType<T> {
         true
     }
 
-    pub fn order_without_tag(lhs: Self, rhs: Self) -> Ordering {
+    pub(crate) fn order_without_tag(lhs: Self, rhs: Self) -> Ordering {
         if lhs.major < rhs.major {
             return Ordering::Less;
         }
@@ -579,9 +569,6 @@ impl<T: VersionInt> VersionType<T> {
                     }
 
                     part_start_i = i;
-                    while i < input.len() && matches!(input[i], b' ') {
-                        i += 1;
-                    }
                     let tag_result = Tag::parse(sliced_string.sub(&input[part_start_i..]));
                     result.version.tag = tag_result.tag;
                     i += tag_result.len as usize;
@@ -664,49 +651,10 @@ impl<T: VersionInt> VersionType<T> {
     }
 
     fn parse_version_number(input: &[u8]) -> Option<T> {
-        // max decimal u64 is 18446744073709551615
-        let mut bytes = [0u8; 20];
-        let mut byte_i: u8 = 0;
-
-        debug_assert!(input[0] != b'.');
-
-        for &char in input {
-            match char {
-                b'X' | b'x' | b'*' => return None,
-                b'0'..=b'9' => {
-                    // out of bounds
-                    if (byte_i as usize) + 1 > bytes.len() {
-                        return None;
-                    }
-                    bytes[byte_i as usize] = char;
-                    byte_i += 1;
-                }
-                b' ' | b'.' => break,
-                // ignore invalid characters
-                _ => {}
-            }
-        }
-
-        // If there are no numbers
-        if byte_i == 0 {
-            return None;
-        }
-
-        if bun_core::env::IS_DEBUG {
-            return match T::parse_ascii(&bytes[0..byte_i as usize]) {
-                Some(v) => Some(v),
-                None => {
-                    bun_core::pretty_errorln!(
-                        "ERROR parsing version: \"{}\", bytes: {}",
-                        bstr::BStr::new(input),
-                        bstr::BStr::new(&bytes[0..byte_i as usize]),
-                    );
-                    Some(T::ZERO)
-                }
-            };
-        }
-
-        Some(T::parse_ascii(&bytes[0..byte_i as usize]).unwrap_or(T::ZERO))
+        // Callers slice `input` from the first digit to the first non-digit,
+        // so every byte is already `b'0'..=b'9'` and the slice is non-empty.
+        debug_assert!(!input.is_empty() && input.iter().all(u8::is_ascii_digit));
+        Some(T::parse_ascii(input).unwrap_or(T::ZERO))
     }
 }
 
@@ -719,8 +667,8 @@ fn valid_pre_or_build_tag_character(c: u8) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct Formatter<'a, T: VersionInt> {
-    pub version: VersionType<T>,
-    pub input: &'a [u8],
+    pub(crate) version: VersionType<T>,
+    pub(crate) input: &'a [u8],
 }
 
 impl<'a, T: VersionInt> fmt::Display for Formatter<'a, T> {
@@ -747,10 +695,10 @@ impl<'a, T: VersionInt> fmt::Display for Formatter<'a, T> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct DiffFormatter<'a, T: VersionInt> {
-    pub version: VersionType<T>,
-    pub buf: &'a [u8],
-    pub other: VersionType<T>,
-    pub other_buf: &'a [u8],
+    pub(crate) version: VersionType<T>,
+    pub(crate) buf: &'a [u8],
+    pub(crate) other: VersionType<T>,
+    pub(crate) other_buf: &'a [u8],
 }
 
 impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
@@ -984,7 +932,7 @@ pub struct Tag {
 // TODO: support multiple tags
 
 impl Tag {
-    pub fn order_pre(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+    pub(crate) fn order_pre(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
         let lhs_str = self.pre.slice(lhs_buf);
         let rhs_str = rhs.pre.slice(rhs_buf);
 
@@ -1047,7 +995,7 @@ impl Tag {
         }
     }
 
-    pub fn order(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+    pub(crate) fn order(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
         if !self.pre.is_empty() && !rhs.pre.is_empty() {
             return self.order_pre(rhs, lhs_buf, rhs_buf);
         }
@@ -1060,7 +1008,7 @@ impl Tag {
         self.build.order(&rhs.build, lhs_buf, rhs_buf)
     }
 
-    pub fn order_without_build(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+    pub(crate) fn order_without_build(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
         if !self.pre.is_empty() && !rhs.pre.is_empty() {
             return self.order_pre(rhs, lhs_buf, rhs_buf);
         }
@@ -1118,11 +1066,14 @@ impl Tag {
         self.pre.hash == rhs.pre.hash
     }
 
-    pub fn parse(sliced_string: SlicedString) -> TagResult {
+    pub(crate) fn parse(sliced_string: SlicedString) -> TagResult {
         Self::parse_with_pre_count(sliced_string, 0)
     }
 
-    pub fn parse_with_pre_count(sliced_string: SlicedString, initial_pre_count: u32) -> TagResult {
+    pub(crate) fn parse_with_pre_count(
+        sliced_string: SlicedString,
+        initial_pre_count: u32,
+    ) -> TagResult {
         let input = sliced_string.slice;
         let mut build_count: u32 = 0;
         let mut pre_count: u32 = initial_pre_count;
@@ -1195,12 +1146,10 @@ impl Tag {
                         }
                         State::Build => {
                             result.tag.build = sliced_string.sub(&input[start..i]).external();
-                            if cfg!(debug_assertions) {
-                                debug_assert!(!strings::contains_char(
-                                    result.tag.build.slice(sliced_string.buf),
-                                    b'-'
-                                ));
-                            }
+                            debug_assert!(!strings::contains_char(
+                                result.tag.build.slice(sliced_string.buf),
+                                b'-'
+                            ));
                             state = State::None;
                         }
                     }
@@ -1236,8 +1185,8 @@ impl Tag {
 
 #[derive(Copy, Clone, Default)]
 pub struct TagResult {
-    pub tag: Tag,
-    pub len: u32,
+    pub(crate) tag: Tag,
+    pub(crate) len: u32,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1249,7 +1198,7 @@ pub struct ParseResult<T: VersionInt> {
     pub wildcard: Wildcard,
     pub valid: bool,
     pub version: Partial<T>,
-    pub len: u32,
+    pub(crate) len: u32,
 }
 
 impl<T: VersionInt> Default for ParseResult<T> {

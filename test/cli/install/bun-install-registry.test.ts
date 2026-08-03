@@ -1,5 +1,5 @@
 import { file, spawn, write } from "bun";
-import { install_test_helpers } from "bun:internal-for-testing";
+import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, mkdirSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rm, writeFile } from "fs/promises";
@@ -15,7 +15,7 @@ import {
   runBunInstall,
   runBunUpdate,
   stderrForInstall,
-  tempDirWithFiles,
+  tempDir,
   tls,
   tmpdirSync,
   toBeValidBin,
@@ -1141,7 +1141,7 @@ describe("bundledDependencies", () => {
           join(packageDir, "bunfig.toml"),
           `
 [install]
-cache = "${join(packageDir, ".bun-cache")}"
+cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
           `,
         ),
       ]);
@@ -1298,7 +1298,7 @@ describe("optionalDependencies", () => {
       join(packageDir, "bunfig.toml"),
       `
   [install]
-  cache = "${join(packageDir, ".bun-cache")}"
+  cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
   optional = false
   registry = "http://localhost:${port}/"
   `,
@@ -1784,7 +1784,7 @@ test("manifest cache will invalidate when registry changes", async () => {
       join(packageDir, "bunfig.toml"),
       `
 [install]
-cache = "${cacheDir}"
+cache = "${cacheDir.replaceAll("\\", "\\\\")}"
 registry = "http://localhost:${port}"
 saveTextLockfile = false
       `,
@@ -1819,7 +1819,7 @@ saveTextLockfile = false
       join(packageDir, "bunfig.toml"),
       `
 [install]
-cache = "${cacheDir}"
+cache = "${cacheDir.replaceAll("\\", "\\\\")}"
 `,
     ),
   ]);
@@ -3118,7 +3118,7 @@ test("--config cli flag works", async () => {
       join(packageDir, "bunfig2.toml"),
       `
 [install]
-cache = "${join(packageDir, ".bun-cache")}"
+cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
 registry = "http://localhost:${port}/"
 dev = false
 `,
@@ -6538,7 +6538,7 @@ describe("semver", () => {
 });
 
 test("doesn't error when the migration is out of sync", async () => {
-  const cwd = tempDirWithFiles("out-of-sync-1", {
+  await using cwd = tempDir("out-of-sync-1", {
     "package.json": JSON.stringify({
       "devDependencies": {
         "no-deps": "1.0.0",
@@ -9098,4 +9098,160 @@ registry = { url = "https://127.0.0.1:${otherRegistry.port}/", token = "${token}
     expect(received.filter(r => r.authorization !== null)).toEqual([]);
     expect(await exited).not.toBe(0);
   }
+});
+
+describe("registry/token env var priority", () => {
+  // BUN_CONFIG_* takes precedence over NPM_CONFIG_*, which takes precedence
+  // over npm_config_*. An empty value falls through to the next candidate.
+  async function installAndCaptureAuth(extraEnv: Record<string, string>) {
+    const received: (string | null)[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        received.push(req.headers.get("authorization"));
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        `[install]\ncache = false\nregistry = "http://localhost:${server.port}/"\n`,
+      ),
+      write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } })),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, ...extraEnv },
+    });
+    await Promise.all([stdout.text(), stderr.text(), exited]);
+    return received;
+  }
+
+  test("BUN_CONFIG_TOKEN wins over NPM_CONFIG_TOKEN and npm_config_token", async () => {
+    const received = await installAndCaptureAuth({
+      BUN_CONFIG_TOKEN: "from-bun",
+      NPM_CONFIG_TOKEN: "from-npm-upper",
+      npm_config_token: "from-npm-lower",
+    });
+    expect(received.length).toBeGreaterThan(0);
+    expect(received[0]).toBe("Bearer from-bun");
+  });
+
+  test("empty BUN_CONFIG_TOKEN falls through to NPM_CONFIG_TOKEN", async () => {
+    // npm_config_token is intentionally omitted: on Windows env vars are
+    // case-insensitive, so NPM_CONFIG_TOKEN and npm_config_token are the
+    // same key in the child and their relative priority is unobservable.
+    const received = await installAndCaptureAuth({
+      BUN_CONFIG_TOKEN: "",
+      NPM_CONFIG_TOKEN: "from-npm",
+    });
+    expect(received.length).toBeGreaterThan(0);
+    expect(received[0]).toBe("Bearer from-npm");
+  });
+
+  test("BUN_CONFIG_REGISTRY wins over NPM_CONFIG_REGISTRY", async () => {
+    const hits = { preferred: 0, other: 0 };
+    await using preferred = Bun.serve({
+      port: 0,
+      fetch() {
+        hits.preferred++;
+        return new Response("not found", { status: 404 });
+      },
+    });
+    await using other = Bun.serve({
+      port: 0,
+      fetch() {
+        hits.other++;
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    await Promise.all([
+      write(join(packageDir, "bunfig.toml"), `[install]\ncache = false\n`),
+      write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } })),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        BUN_CONFIG_REGISTRY: `http://localhost:${preferred.port}/`,
+        NPM_CONFIG_REGISTRY: `http://localhost:${other.port}/`,
+        npm_config_registry: `http://localhost:${other.port}/`,
+      },
+    });
+    await Promise.all([stdout.text(), stderr.text(), exited]);
+
+    expect(hits).toEqual({ preferred: 1, other: 0 });
+  });
+});
+
+test("npm manifest cache entries with invalid package version records are treated as invalid", async () => {
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).toContain("Saved lockfile");
+  expect(out).toContain("+ no-deps@1.0.0");
+  expect(exitCode).toBe(0);
+
+  const cacheDir = join(packageDir, ".bun-cache");
+  const manifestFile = (await readdirSorted(cacheDir)).find(name => name.endsWith(".npm"));
+  expect(manifestFile).toBeString();
+  const original = join(cacheDir, manifestFile!);
+
+  const { parseManifest } = npm_manifest_test_helpers;
+  expect(parseManifest(original, registryUrl()).versions.length).toBeGreaterThan(0);
+
+  const bytes = new Uint8Array(await file(original).arrayBuffer());
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const alignUp = (value: number, alignment: number) => Math.ceil(value / alignment) * alignment;
+  let pos = alignUp(49 + 16, 8) + 120;
+  const readArray = (alignment: number) => {
+    const byteLength = Number(view.getBigUint64(pos, true));
+    pos += 8;
+    if (byteLength === 0) return { start: pos, byteLength: 0 };
+    pos = alignUp(pos, alignment);
+    const start = pos;
+    pos += byteLength;
+    return { start, byteLength };
+  };
+  readArray(1);
+  readArray(8);
+  readArray(8);
+  readArray(8);
+  const versionRecords = readArray(8);
+  expect(versionRecords.byteLength).toBeGreaterThan(0);
+  expect(versionRecords.byteLength % 240).toBe(0);
+  expect(versionRecords.start + versionRecords.byteLength).toBeLessThanOrEqual(bytes.byteLength);
+
+  bytes.fill(0xff, versionRecords.start, versionRecords.start + versionRecords.byteLength);
+  const corrupted = join(packageDir, "corrupted-manifest.npm");
+  await write(corrupted, bytes);
+
+  expect(() => parseManifest(corrupted, registryUrl())).toThrow("manifest is invalid");
 });

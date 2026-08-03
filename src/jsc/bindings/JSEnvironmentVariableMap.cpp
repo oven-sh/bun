@@ -61,21 +61,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
     return JSValue::encode(result);
 }
 
-JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
-{
-    VM& vm = globalObject->vm();
-    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
-    if (!object)
-        return false;
-
-    auto string = JSValue::decode(value).toString(globalObject);
-    if (!string) [[unlikely]]
-        return false;
-
-    object->putDirect(vm, propertyName, string, 0);
-    return true;
-}
-
 // Proxy-related env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY and lowercase
 // variants) are read by fetch()'s native proxy resolution via
 // env_loader.getHttpProxyFor(). Writes from JS must sync back to the native env
@@ -118,14 +103,8 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * glo
     BunString val = Bun::toStringView(view);
     Bun__setEnvValue(globalObject, &name, &val);
 
-    // The proxy-var accessors are added with `DontEnum` when the var was not
-    // present in the OS env at startup. The regular env-var setter
-    // (`jsSetterEnvironmentVariable`) makes a written var enumerable by
-    // replacing the accessor with a data property; this setter keeps the
-    // accessor (so the native env map stays the source of truth) but must
-    // still clear `DontEnum` — otherwise `process.env.HTTP_PROXY = "..."`
-    // followed by `Bun.spawn({env: {...process.env}})` silently drops the var
-    // (the spread skips non-enumerable properties).
+    // Proxy-var accessors are installed DontEnum when absent from the OS env
+    // at startup; clear it on write so `{...process.env}` picks the var up.
     unsigned attributes;
     JSValue existing = object->getDirect(vm, propertyName, attributes);
     if (existing && (attributes & JSC::PropertyAttribute::DontEnum)) {
@@ -261,8 +240,6 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeTLSRejectUnauthorizedSetter, (JSGlobalObject * gl
     WTF::String str = decodedValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 
-    // TODO: only check "0". Node doesn't check both. But we already did. So we
-    // should wait to do that until Bun v1.2.0.
     applyTLSRejectFromString(globalObject, str);
 
     const auto& privateName = NODE_TLS_REJECT_UNAUTHORIZED_PRIVATE_PROPERTY(vm);
@@ -489,12 +466,15 @@ static constexpr ASCIILiteral kProxyEnvVarNames[] = {
 // side-effecting var need only be added in one place.
 static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
 {
-    if (value.length() < 32 && WTF::setTimeZoneOverride(value))
-        JSC::getVM(globalObject).dateCache.resetIfNecessarySlow();
+    if (value.length() < 32 && WTF::setTimeZoneOverride(value)) {
+        WTF::timeZoneDidChange();
+        JSC::getVM(globalObject).dateCache.clearForTimeZoneChange();
+    }
 }
 static void applyTLSRejectFromString(JSGlobalObject*, const String& value)
 {
-    Bun__setTLSRejectUnauthorizedValue((value == "0"_s || value == "false"_s) ? 0 : 1);
+    /* Node only treats the exact string "0" as disabling verification. */
+    Bun__setTLSRejectUnauthorizedValue(value == "0"_s ? 0 : 1);
 }
 static void applyVerboseFetchFromString(JSGlobalObject*, const String& value)
 {

@@ -10,7 +10,7 @@ pub enum Tag {
 }
 
 impl Tag {
-    pub fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Tag::Bun => "bun",
         }

@@ -8,14 +8,16 @@
 //!
 //! Usage pattern:
 //!
-//!     ctx.ref_();
-//!     let cell = native_promise_context::create(global, ctx);
-//!     promise.then_with_value(global, cell, on_resolve, on_reject)?;
+//! ```ignore
+//! ctx.ref_();
+//! let cell = native_promise_context::create(global, ctx);
+//! promise.then_with_value(global, cell, on_resolve, on_reject)?;
 //!
-//!     // In on_resolve/on_reject:
-//!     let Some(ctx) = native_promise_context::take::<RequestContext>(arguments[1]) else { return; };
-//!     // ... process ...
-//!     ctx.deref_();
+//! // In on_resolve/on_reject:
+//! let Some(ctx) = native_promise_context::take::<RequestContext>(arguments[1]) else { return; };
+//! // ... process ...
+//! ctx.deref_();
+//! ```
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -143,7 +145,7 @@ pub(crate) fn take<T>(cell: JSValue) -> Option<NonNull<T>> {
 /// the server — all of which may unprotect JS values or allocate. We must
 /// defer that work to the event loop.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, tag: u8) {
+extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, tag: u8) {
     DeferredDerefTask::schedule(ctx, Tag::from_raw(tag));
 }
 
@@ -157,10 +159,12 @@ pub(crate) extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, ta
 ///
 /// Layout of `Task.ptr` (read back as `usize` in dispatch):
 ///
-///     bits 63..3           bits 2..0
-///     ┌────────────────────┬─────────┐
-///     │ ctx ptr (aligned)  │ our Tag │
-///     └────────────────────┴─────────┘
+/// ```text
+/// bits 63..3           bits 2..0
+/// ┌────────────────────┬─────────┐
+/// │ ctx ptr (aligned)  │ our Tag │
+/// └────────────────────┴─────────┘
+/// ```
 ///
 /// `Task` stores `{ tag, ptr }` as separate fields, so the discriminant is
 /// carried in `Task.tag` and only the ctx|Tag packing remains in `Task.ptr`.
@@ -173,7 +177,7 @@ impl Taskable for DeferredDerefTask {
 impl DeferredDerefTask {
     const TAG_MASK: usize = 0b111;
 
-    pub(crate) fn schedule(ctx: *mut c_void, tag: Tag) {
+    fn schedule(ctx: *mut c_void, tag: Tag) {
         // SAFETY: called from the JS thread (GC sweep → C++ destructor); the
         // thread-local VM is alive for the duration of this call.
         let vm = VirtualMachine::get();

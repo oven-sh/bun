@@ -26,13 +26,6 @@ pub fn create(task: Task) -> core::ptr::NonNull<ConcurrentTask> {
 pub fn create_from<T: Taskable>(task: *mut T) -> core::ptr::NonNull<ConcurrentTask> {
     ConcurrentTask::create_from(task)
 }
-#[inline]
-pub fn from_callback<T>(
-    ptr: *mut T,
-    callback: fn(*mut T) -> crate::JsResult<()>,
-) -> core::ptr::NonNull<ConcurrentTask> {
-    ConcurrentTask::from_callback(ptr, callback)
-}
 
 // ─── Task (hot-dispatch tag+ptr, see PORTING.md §Dispatch) ──────────────────
 // Low tier (event_loop) stores `(tag, ptr)`; `bun_runtime::dispatch::run_task`
@@ -68,7 +61,8 @@ pub mod task_tag {
     }
     tags! {
         Access,
-        AnyTask,
+        AnyTaskJob,               // bun_jsc::AnyTaskJob<C> (typed job, one erased slot inside)
+        AsyncModule,
         AppendFile,
         ArchiveExtractTask,
         ArchiveBlobTask,
@@ -79,6 +73,8 @@ pub mod task_tag {
         AsyncTransformTask,
         BakeHotReloadEvent,       // bun.bake.DevServer.HotReloadEvent
         BundleV2DeferredBatchTask, // bun.bundle_v2.DeferredBatchTask
+        BundleV2PluginResolve,    // bun.bundle_v2.Resolve (JS-thread hop)
+        BundleV2PluginLoad,       // bun.bundle_v2.Load (JS-thread hop)
         ShellYesTask,             // shell.Interpreter.Builtin.Yes.YesTask
         Chmod,
         Chown,
@@ -86,19 +82,24 @@ pub mod task_tag {
         CopyFile,
         CopyFilePromiseTask,
         CppTask,
+        DuplexUpgradeContext,
         Exists,
         Fchmod,
         FChown,
         Fdatasync,
         FetchTasklet,
+        FetchTaskletPromiseSettle,
+        FileResponseStreamEof,
         Fstat,
         FSWatchTask,
         Fsync,
         FTruncate,
         Futimes,
         GetAddrInfoRequestTask,
+        GetAddrInfoLibuvComplete,
         HotReloadTask,
         ImmediateObject,
+        JSBundleCompletionTask,
         JSCDeferredWorkTask,
         Lchmod,
         Lchown,
@@ -115,6 +116,8 @@ pub mod task_tag {
         NativeZlib,
         NativeZstd,
         Open,
+        PasswordHashResult,
+        PasswordVerifyResult,
         PollPendingModulesTask,
         PosixSignalTask,
         MemoryPressureTask,
@@ -135,6 +138,7 @@ pub mod task_tag {
         RuntimeTranspilerStore,
         S3HttpDownloadStreamingTask,
         S3HttpSimpleTask,
+        SendQueueDeferred,        // bun_runtime::ipc::SendQueue (close / after-close hop)
         ServerAllConnectionsClosedTask,
         ShellAsync,
         ShellAsyncSubprocessDone,
@@ -143,7 +147,6 @@ pub mod task_tag {
         ShellGlobTask,
         ShellIOReaderAsyncDeinit,
         ShellIOWriterAsyncDeinit,
-        ShellIOWriter,
         ShellLsTask,
         ShellMkdirTask,
         ShellMvBatchedTask,
@@ -153,6 +156,7 @@ pub mod task_tag {
         ShellTouchTask,
         Stat,
         StatFS,
+        StatWatcherTimerUpdate,
         StreamPending,
         Symlink,
         ThreadSafeFunction,
@@ -160,6 +164,8 @@ pub mod task_tag {
         Truncate,
         Unlink,
         Utimes,
+        ValkeyDeferredClose,
+        WindowsNamedPipeContext,
         Write,
         WriteFile,
         WriteFileTask,
@@ -189,13 +195,6 @@ pub trait Taskable {
     /// The tag constant from [`task_tag`] for this type. Both this and the
     /// `bun_runtime::dispatch::run_task` match arm MUST agree.
     const TAG: TaskTag;
-
-    /// Build a [`Task`] from a raw pointer to `Self`. Ownership semantics are
-    /// per-variant (most arms `heap::take` on dispatch; a few are borrows).
-    #[inline]
-    fn into_task(ptr: *mut Self) -> Task {
-        Task::new(Self::TAG, ptr.cast::<()>())
-    }
 }
 
 impl Task {
@@ -220,19 +219,9 @@ impl Task {
     pub fn from_boxed<T: Taskable>(task: Box<T>) -> Task {
         Task::new(T::TAG, bun_core::heap::into_raw(task).cast::<()>())
     }
-
-    /// For the rare case where the pointer's static type differs from the
-    /// variant (e.g. when `ptr` is already erased).
-    #[inline]
-    pub fn init_with_type<T: Taskable>(ptr: *mut ()) -> Task {
-        Task::new(T::TAG, ptr)
-    }
 }
 
 // Taskable impls for the low-tier task wrappers defined in this crate.
-impl Taskable for crate::AnyTask::AnyTask {
-    const TAG: TaskTag = task_tag::AnyTask;
-}
 impl Taskable for crate::ManagedTask::ManagedTask {
     const TAG: TaskTag = task_tag::ManagedTask;
 }
@@ -301,18 +290,8 @@ impl ConcurrentTask {
     /// Heap-allocate a ConcurrentTask and return a raw pointer.
     /// The pointer is intrusive (linked into `Queue`), so we use `heap::alloc` rather than `Box<T>`.
     #[inline]
-    pub fn new(init: ConcurrentTask) -> *mut ConcurrentTask {
+    pub(crate) fn new(init: ConcurrentTask) -> *mut ConcurrentTask {
         bun_core::heap::into_raw(Box::new(init))
-    }
-
-    /// Free a ConcurrentTask previously returned by `new`.
-    ///
-    /// # Safety
-    /// `this` must have been produced by `ConcurrentTask::new` and not yet freed.
-    #[inline]
-    pub unsafe fn destroy(this: *mut ConcurrentTask) {
-        // SAFETY: caller contract above.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub fn create(task: Task) -> core::ptr::NonNull<ConcurrentTask> {
@@ -328,15 +307,6 @@ impl ConcurrentTask {
     pub fn create_from<T: Taskable>(task: *mut T) -> core::ptr::NonNull<ConcurrentTask> {
         bun_core::mark_binding!();
         Self::create(Task::init(task))
-    }
-
-    /// Typed `Box<T>`-taking constructor: the scheduler owns the
-    /// `Box` ↔ `*mut` round-trip so callers never write `heap::alloc`.
-    /// The matching `heap::take` lives in `bun_runtime::dispatch::run_task`
-    /// (or the variant's own `run_from_js_thread`), keyed by `T::TAG`.
-    #[inline]
-    pub fn create_boxed<T: Taskable>(task: Box<T>) -> core::ptr::NonNull<ConcurrentTask> {
-        Self::create(Task::from_boxed(task))
     }
 
     // callback returns `JsResult<()>` to match `ManagedTask::new`'s stored ABI;

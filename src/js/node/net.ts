@@ -122,6 +122,8 @@ const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const owner_symbol = Symbol("owner_symbol");
 
+// Write-only by design: the onconnection write is a GC edge keeping the
+// native Listener reachable via accepted socket handles (see a93d2fa48e).
 const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
@@ -141,14 +143,12 @@ const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
-const kpendingRead = Symbol("kpendingRead");
 const kupgraded = Symbol("kupgraded");
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
 const kclosed = Symbol("closed");
 const kended = Symbol("ended");
-const kReaderInterest = Symbol("kReaderInterest");
 const kpendingSession = Symbol("pendingSession");
 const kSNIError = Symbol("kSNIError");
 const kALPNError = Symbol("kALPNError");
@@ -585,6 +585,38 @@ function deferEndForOnreadTail(self) {
   return true;
 }
 
+// Node's onStreamRead destroys the stream with errnoException(nread, 'read')
+// for any read result that is not UV_EOF.
+function destroyWithReadError(self, _err) {
+  let errErrno;
+  if (_err.code === undefined && typeof (errErrno = _err.errno) === "number" && errErrno !== 0) {
+    // A codeless close error that still carries the errno (Windows IOCP
+    // delivers some this way): derive the proper code from it. Raw WSA values
+    // (-10054, ...) that the errno table cannot name fall through to the reset
+    // shape below instead of surfacing "Unknown system error N".
+    const er = new ErrnoException(errErrno, "read") as Error & { code?: string };
+    if (typeof er.code === "string" && /^E[A-Z0-9]+$/.test(er.code)) {
+      self.destroy(er);
+      return;
+    }
+  }
+  if (_err.code === undefined || _err.code === "ECONNRESET") {
+    // Shape a reset (or a fully bare close error) like Node's
+    // errnoException(UV_ECONNRESET, 'read').
+    const er = new ConnResetException("read ECONNRESET") as Error & {
+      code: string;
+      errno?: number;
+      syscall?: string;
+    };
+    er.errno = _err.errno ?? (process.platform === "win32" ? -4077 : process.platform === "linux" ? -104 : -54);
+    er.syscall = "read";
+    self.destroy(er);
+  } else {
+    // Any other coded error (ETIMEDOUT, EPIPE, ...) keeps its identity.
+    self.destroy(_err);
+  }
+}
+
 function SocketEmitEndNT(self, _err?) {
   // A read error delivered with the close (e.g. a received RST surfacing as
   // ECONNRESET) is not a clean EOF — Node destroys the socket with the error
@@ -618,41 +650,9 @@ function SocketEmitEndNT(self, _err?) {
     // that race from surfacing as an uncaught exception - the no-listener
     // case is already a documented silent close.
     self.once("error", () => {});
-    let errErrno;
-    if (_err.code === undefined && typeof (errErrno = _err.errno) === "number" && errErrno !== 0) {
-      // A codeless close error that still carries the errno (Windows IOCP
-      // delivers some this way): derive the proper code from it, like Node's
-      // errnoException(nread, 'read'). Raw WSA values (-10054, ...) that the
-      // errno table cannot name fall through to the reset shape below instead
-      // of surfacing "Unknown system error N".
-      const er = new ErrnoException(errErrno, "read") as Error & { code?: string };
-      if (typeof er.code === "string" && /^E[A-Z0-9]+$/.test(er.code)) {
-        self.destroy(er);
-        return;
-      }
-    }
-    if (_err.code === undefined || _err.code === "ECONNRESET") {
-      // Shape a reset (or a fully bare close error) like Node's
-      // errnoException(UV_ECONNRESET, 'read').
-      const er = new ConnResetException("read ECONNRESET") as Error & {
-        code: string;
-        errno?: number;
-        syscall?: string;
-      };
-      er.errno = _err.errno ?? (process.platform === "win32" ? -4077 : process.platform === "linux" ? -104 : -54);
-      er.syscall = "read";
-      self.destroy(er);
-    } else {
-      // Any other coded error (ETIMEDOUT, EPIPE, ...) keeps its identity.
-      self.destroy(_err);
-    }
-    return;
-  }
-  if (!self[kended]) {
+    destroyWithReadError(self, _err);
+  } else if (!self[kended]) {
     finishSocketEnd(self);
-    if (!self.allowHalfOpen && self[kReaderInterest] === false) {
-      setImmediate(destroyAbandonedNT, self);
-    }
   } else if (_err && !self.destroyed) {
     // An error excluded from the synthesis above (teardown noise, or no
     // listener attached): nothing more is coming, but the socket still has to
@@ -975,10 +975,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
             server.prependOnceListener("secureConnection", connectionListener);
           }
           server.emit("secureConnection", self);
-          // Same post-emit reader check onconnection does for plain net sockets.
-          if (self.readableFlowing !== null || self.listenerCount("data") > 0 || self.listenerCount("readable") > 0) {
-            self[kReaderInterest] = true;
-          }
         }
       }
       if (self.destroyed) return;
@@ -1216,29 +1212,10 @@ function onconnection(err, clientHandle) {
   }
   if (isTLS) initAcceptedTLSSocket(self, _socket);
 
-  // destroyAbandonedNT gate: === false (server-accepted only).
-  _socket[kReaderInterest] = false;
   self.emit("connection", _socket);
   if (!pauseOnConnect && !isTLS) {
     _socket.read(0);
   }
-  if (_socket.readableFlowing !== null || _socket.listenerCount("data") > 0 || _socket.listenerCount("readable") > 0) {
-    _socket[kReaderInterest] = true;
-  }
-}
-
-function destroyAbandonedNT(self) {
-  if (
-    self.destroyed ||
-    self[kReaderInterest] !== false ||
-    self.readableLength === 0 ||
-    self.readableFlowing !== null ||
-    self.listenerCount("data") > 0 ||
-    self.listenerCount("readable") > 0
-  ) {
-    return;
-  }
-  self.destroySoon();
 }
 
 // TODO: SocketHandlers2 is a bad name but its temporary. reworking the Server in a followup PR
@@ -1357,9 +1334,9 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
         // enum values are filtered out in NewSocket::on_close).
         self.destroy(err);
       }
-      return;
+    } else if (!deferEndForOnreadTail(self)) {
+      finishSocketEnd(self);
     }
-    if (!deferEndForOnreadTail(self)) finishSocketEnd(self);
     // A write that was waiting on the native drain can never complete once the
     // socket is gone - fail it so 'finish'/destroy are not stuck behind it
     // (mirrors SocketEmitEndNT).
@@ -1590,7 +1567,6 @@ function Socket(options?) {
   });
   this._parent = null;
   this._parentWrap = null;
-  this[kpendingRead] = undefined;
   this[kupgraded] = null;
 
   this[kSetNoDelay] = Boolean(noDelay);
@@ -3603,6 +3579,10 @@ Server.prototype.close = function close(callback) {
 };
 
 Server.prototype[Symbol.asyncDispose] = function () {
+  // Node resolves immediately when the server is not listening (lib/net.js
+  // SymbolAsyncDispose); without the guard a second dispose rejects with
+  // ERR_SERVER_NOT_RUNNING and re-emits 'close'.
+  if (!this._handle) return Promise.$resolve();
   const { resolve, reject, promise } = Promise.withResolvers();
   this.close(function (err, ...args) {
     if (err) reject(err);
@@ -4119,6 +4099,8 @@ function initSocketHandle(self) {
   const handle = self._handle;
   if (handle) {
     handle[owner_symbol] = self;
+    // A fresh handle (e.g. an autoSelectFamily retry) inherits a prior unref().
+    if (self[kUserUnrefed]) handle.unref?.();
   }
 }
 

@@ -30,7 +30,6 @@
 #include <string>
 #include <map>
 #include <string_view>
-#include <iostream>
 #include "MoveOnlyFunction.h"
 #include "HttpParser.h"
 #include <span>
@@ -171,6 +170,8 @@ private:
              * report _secureEstablished = false. Peer-cert authorization is
              * surfaced separately (rejectUnauthorized above / tls.authorized). */
             httpResponseData->isAuthorized = success;
+            httpResponseData->peerCertVerified = success && verify_error.error == 0;
+            httpResponseData->peerCertVerifyErrorCode = verify_error.code;
 
             /* Any connected socket should timeout until it has a request */
             ((HttpResponse<SSL> *) s)->resetTimeout();
@@ -465,8 +466,6 @@ private:
 
             /* Returning from a request handler without responding or attaching an onAborted handler is ill-use */
             if (!((HttpResponse<SSL> *) s)->hasResponded() && !httpResponseData->onAborted && !httpResponseData->socketData) {
-                /* Throw exception here? */
-                std::cerr << "Error: Returning from a request handler without responding or attaching an abort handler is forbidden!" << std::endl;
                 std::terminate();
             }
 

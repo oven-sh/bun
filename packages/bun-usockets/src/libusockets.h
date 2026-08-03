@@ -560,6 +560,9 @@ int us_ssl_pop_pending_keylog(struct ssl_st *ssl, unsigned char *out, int out_ca
  * drain per-socket with us_socket_pop_keylog after the handshake. */
 void us_listen_socket_enable_keylog(struct us_listen_socket_t *ls) nonnull_fn_decl;
 int us_socket_pop_keylog(us_socket_r s, unsigned char *out, int out_cap);
+/* The resumable session most recently delivered via the new-session callback,
+ * or NULL if none. Borrowed; valid until the next NewSessionTicket or SSL_free. */
+struct ssl_session_st *us_ssl_get_new_session(struct ssl_st *ssl);
 
 /* Public interfaces for loops */
 

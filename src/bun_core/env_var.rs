@@ -81,6 +81,10 @@ new!(pub BUN_ENABLE_CRASH_REPORTING: boolean, "BUN_ENABLE_CRASH_REPORTING", {});
 // so nothing it spawned outlives it. See `src/io/ParentDeathWatchdog.rs`.
 new!(pub BUN_FEATURE_FLAG_NO_ORPHANS: boolean, "BUN_FEATURE_FLAG_NO_ORPHANS", { default: false });
 new!(pub BUN_FEATURE_FLAG_DUMP_CODE: string, "BUN_FEATURE_FLAG_DUMP_CODE", {});
+// Counted down on each idle event-loop poll; while >0 the poll runs `heap.stopIfNecessary()` so pending finalizers get a turn (see `Bun__JSC_onBeforeWait`).
+new!(pub BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: unsigned, "BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS", {});
+new!(pub BUN_GC_TIMER_DISABLE: boolean, "BUN_GC_TIMER_DISABLE", {});
+new!(pub BUN_GC_TIMER_INTERVAL: unsigned, "BUN_GC_TIMER_INTERVAL", {});
 // TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
 // so we'll keep it for now.
 new!(pub BUN_INOTIFY_COALESCE_INTERVAL: unsigned, "BUN_INOTIFY_COALESCE_INTERVAL", { default: 100_000 });
@@ -112,8 +116,11 @@ platform_specific_new!(pub C_INCLUDE_PATH: string, posix = "C_INCLUDE_PATH", win
 // Standard C compiler environment variable for library paths (colon-separated).
 // Used by bun:ffi's TinyCC integration for systems like NixOS.
 platform_specific_new!(pub LIBRARY_PATH: string, posix = "LIBRARY_PATH", windows = None, {});
+// Drain the event loop after a file's tests finish so node-style
+// `process.on('exit')` checks (e.g. common.mustCall) see completed async work.
+// Opt-in for the vendored node:test suite and run() children.
+new!(pub BUN_TEST_DRAIN_EVENT_LOOP: boolean, "BUN_TEST_DRAIN_EVENT_LOOP", { default: false });
 new!(pub BUN_TMPDIR: string, "BUN_TMPDIR", {});
-new!(pub BUN_TRACY_PATH: string, "BUN_TRACY_PATH", {});
 new!(pub BUN_WATCHER_TRACE: string, "BUN_WATCHER_TRACE", {});
 new!(pub CI: boolean, "CI", {});
 new!(pub CI_COMMIT_SHA: string, "CI_COMMIT_SHA", {});
@@ -505,7 +512,7 @@ pub(crate) mod kind {
             pub empty_string_as: EmptyStringAs,
         }
         impl DeserOpts {
-            pub(crate) const DEFAULT: Self = Self {
+            const DEFAULT: Self = Self {
                 error_handling: ErrorHandling::DebugWarn,
                 empty_string_as: EmptyStringAs::Erroneous,
             };

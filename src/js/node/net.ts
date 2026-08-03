@@ -412,15 +412,8 @@ const SocketHandlers: SocketHandler = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    try {
-      if (!self.push(buffer)) {
-        socket.pause();
-      }
-    } catch (e) {
-      // push -> 'data' listeners -> user code; a throw here is a Node-compat
-      // uncaughtException (Node's onStreamRead runs via MakeCallback), not a
-      // Bun.listen handler error.
-      reportUncaughtException(e);
+    if (!self.push(buffer)) {
+      socket.pause();
     }
   },
   drain(socket) {
@@ -736,12 +729,8 @@ const ServerHandlers: SocketHandler<NetSocket> = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    try {
-      if (!self.push(buffer)) {
-        socket.pause();
-      }
-    } catch (e) {
-      reportUncaughtException(e);
+    if (!self.push(buffer)) {
+      socket.pause();
     }
   },
   keylog(socket, line) {
@@ -983,7 +972,15 @@ const ServerHandlers: SocketHandler<NetSocket> = {
           if (typeof connectionListener === "function") {
             server.prependOnceListener("secureConnection", connectionListener);
           }
-          server.emit("secureConnection", self);
+          try {
+            server.emit("secureConnection", self);
+          } catch (e) {
+            // A throw from the user's secureConnection listener is a
+            // Node-compat uncaughtException (Node's TLSWrap completion runs
+            // via MakeCallback); don't let it fall through to the Bun-native
+            // socket handler keep-alive path.
+            reportUncaughtException(e);
+          }
         }
       }
       if (self.destroyed) return;
@@ -1262,11 +1259,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const { self } = socket.data;
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    try {
-      if (!self.push(buffer)) socket.pause();
-    } catch (e) {
-      reportUncaughtException(e);
-    }
+    if (!self.push(buffer)) socket.pause();
   },
   drain(socket) {
     $debug("Bun.Socket drain");

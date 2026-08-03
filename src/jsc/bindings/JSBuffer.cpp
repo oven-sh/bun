@@ -405,8 +405,7 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, 0);
     }
 
-    // only JSC::JSUint8Array::create can throw and we control the ArrayBuffer passed in,
-    // but we may be entered with a worker's TerminationException already pending.
+    // only JSC::JSUint8Array::create can throw and we control the ArrayBuffer passed in.
     scope.assertNoExceptionExceptTermination();
     ASSERT(uint8Array);
 

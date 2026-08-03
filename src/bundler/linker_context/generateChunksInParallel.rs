@@ -143,7 +143,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step.
             let c_ref =
                 unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
-            let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new_mut(chunks);
+            let chunks_ref: bun_ptr::BackRef<[Chunk], bun_ptr::Mut> =
+                bun_ptr::BackRef::new_mut(chunks);
             for chunk in chunks.iter_mut() {
                 chunk_contexts.push(GenerateChunkCtx {
                     c: c_ref,
@@ -354,7 +355,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 if !dup.found_existing {
                     *dup.value_ptr = DuplicateEntry::default();
                 }
-                dup.value_ptr.sources.push(bun_ptr::BackRef::new_mut(chunk));
+                dup.value_ptr.sources.push(bun_ptr::BackRef::new(&*chunk));
                 continue;
             }
 

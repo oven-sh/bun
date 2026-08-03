@@ -1739,15 +1739,22 @@ static JSValue constructLoadEnvFile(VM& vm, JSObject* processObject)
 }
 
 // Shared helper for lazy PropertyCallback builders that enter JS.
-// setUpStaticFunctionSlot wraps reifyStaticProperty in DeferTerminationForAWhile
-// and treats a pending exception as slot-not-found, so returning {} here is
-// propagated to JS as a thrown exception.
+// setUpStaticFunctionSlot / reifyAllStaticProperties wrap the callback in
+// DeferTerminationForAWhile, so a worker terminate() mid-build does not leave a
+// TerminationException pending here. A non-termination throw from the builtin is
+// cleared and reported so the worker's reifyAllStaticProperties (triggered by
+// node:worker_threads preload deleting main-only process.* entries) does not
+// surface a half-reified process with a pending exception.
 static JSValue callLazyProcessBuilder(VM& vm, JSC::JSGlobalObject* globalObject, JSC::FunctionExecutable* (*generator)(VM&), const JSC::ArgList& args)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* function = JSC::JSFunction::create(vm, globalObject, generator(vm), globalObject);
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject->globalThis(), args);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        return jsUndefined();
+    }
     return result;
 }
 

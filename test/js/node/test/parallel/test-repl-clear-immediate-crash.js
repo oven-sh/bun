@@ -1,17 +1,14 @@
-"use strict";
-const common = require("../common");
-const child_process = require("child_process");
-const assert = require("assert");
+'use strict';
+const common = require('../common');
+const child_process = require('child_process');
+const assert = require('assert');
 
 // Regression test for https://github.com/nodejs/node/issues/37806:
 // bun: upstream spawns with '-i'; in bun that short flag is already taken by
 // --install=fallback, so the REPL is reached through the long form.
-const proc = child_process.spawn(process.execPath, ["--interactive"]);
-proc.on("error", common.mustNotCall());
-proc.on(
-  "exit",
-  common.mustCall(code => {
-    assert.strictEqual(code, 0);
-  }),
-);
-proc.stdin.write("clearImmediate({});\n.exit\n");
+const proc = child_process.spawn(process.execPath, ['--interactive']);
+proc.on('error', common.mustNotCall());
+proc.on('exit', common.mustCall((code) => {
+  assert.strictEqual(code, 0);
+}));
+proc.stdin.write('clearImmediate({});\n.exit\n');

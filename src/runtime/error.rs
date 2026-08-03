@@ -471,8 +471,6 @@ pub enum Error {
     StandaloneGraph(#[from] bun_standalone_graph::Error),
     #[error(transparent)]
     TerminalInit(crate::api::bun_terminal_body::InitError),
-    #[error(transparent)]
-    DirIterator(#[from] crate::node::dir_iterator::IteratorError),
     #[error("JSError")]
     Js(bun_jsc::JsError),
 }
@@ -533,13 +531,6 @@ impl From<bun_shell_parser::braces::ParserError> for Error {
     #[inline]
     fn from(e: bun_shell_parser::braces::ParserError) -> Self {
         Self::Shell(e.into())
-    }
-}
-
-impl From<bun_parsers::toml::lexer::Error> for Error {
-    #[inline]
-    fn from(e: bun_parsers::toml::lexer::Error) -> Self {
-        Self::Parsers(e.into())
     }
 }
 
@@ -833,7 +824,6 @@ impl Error {
             Self::Sourcemap(e) => e.name(),
             Self::StandaloneGraph(e) => e.name(),
             Self::TerminalInit(e) => <&'static str>::from(e),
-            Self::DirIterator(e) => <&'static str>::from(e),
             Self::Js(bun_jsc::JsError::OutOfMemory) => "OutOfMemory",
             Self::Js(_) => "JSError",
         }

@@ -47,7 +47,10 @@ const { validateAbortSignal, validateString, validateUint32 } = require("interna
 // node-shims eagerly loads node:{util,module,path,vm}; readline only needs
 // kEmptyObject/addAbortListener, so import them from their tiny sources.
 const { kEmptyObject } = require("internal/shared");
-const { inspect, getStringWidth, stripVTControlCharacters } = require("internal/repl/node-inspect");
+// Don't destructure `inspect` — reading it loads internal/util/inspect (99 KB).
+// Readline only touches it on the tab-completion error path.
+const nodeInspect = require("internal/repl/node-inspect");
+const { getStringWidth, stripVTControlCharacters } = nodeInspect;
 const EventEmitter = require("node:events");
 const { addAbortListener } = require("internal/abort_listener");
 const { charLengthAt, charLengthLeft, commonPrefix, kSubstringSearch } = require("internal/readline/utils");
@@ -56,9 +59,9 @@ let kFirstEventParam;
 const { clearScreenDown, cursorTo, moveCursor } = require("internal/readline/callbacks");
 
 const { StringDecoder } = require("node:string_decoder");
-// history.js eagerly loads node:{fs,os,path,timers}; keep it lazy so
-// non-terminal readline interfaces (FileHandle#readLines, tty cursor calls)
-// stay cheap.
+// history.js eagerly loads node:{fs,os,path,timers}; keep it lazy so a bare
+// require("node:readline") for cursorTo/clearLine stays cheap. Constructing
+// an Interface always calls setupHistoryManager, so readLines() still loads it.
 let ReplHistory;
 
 const kMaxUndoRedoStackSize = 2048;
@@ -145,7 +148,7 @@ const kAddNewLineOnTTY = Symbol("_addNewLineOnTTY");
 
 function InterfaceConstructor(input, output, completer, terminal) {
   this[kSawReturnAt] = 0;
-  // TODO(BridgeAR): Document this property. The name is not ideal, so we
+  // upstream-todo(BridgeAR): Document this property. The name is not ideal, so we
   // might want to expose an alias and document that instead.
   this.isCompletionEnabled = true;
   this[kSawKeyPress] = false;
@@ -689,7 +692,7 @@ class Interface extends InterfaceConstructor {
     try {
       value = await this.completer(string);
     } catch (err) {
-      this[kWriteToOutput](`Tab completion error: ${inspect(err)}`);
+      this[kWriteToOutput](`Tab completion error: ${nodeInspect.inspect(err)}`);
       return;
     } finally {
       this.resume();
@@ -909,7 +912,7 @@ class Interface extends InterfaceConstructor {
     this[kOnLine](line);
   }
 
-  // TODO(puskin94): edit [kTtyWrite] to make call this function on a new key combination
+  // upstream-todo(puskin94): edit [kTtyWrite] to make call this function on a new key combination
   //                 to make it add a new line in the middle of a "complete" multiline.
   //                 I tried with shift + enter but it is not detected. Find a new one.
   //                 Make sure to call this[kSavePreviousState](); && this.clearLine();
@@ -1080,10 +1083,10 @@ class Interface extends InterfaceConstructor {
     this[kHistoryNext]();
   }
 
-  // TODO(BridgeAR): Add underscores to the search part and a red background in
+  // upstream-todo(BridgeAR): Add underscores to the search part and a red background in
   // case no match is found. This should only be the visual part and not the
   // actual line content!
-  // TODO(BridgeAR): In case the substring based search is active and the end is
+  // upstream-todo(BridgeAR): In case the substring based search is active and the end is
   // reached, show a comment how to search the history as before. E.g., using
   // <ctrl> + N. Only show this after two/three UPs or DOWNs, not on the first
   // one.
@@ -1245,7 +1248,7 @@ class Interface extends InterfaceConstructor {
     if (key.ctrl && key.shift) {
       /* Control and shift pressed */
       switch (key.name) {
-        // TODO(BridgeAR): The transmitted escape sequence is `\b` and that is
+        // upstream-todo(BridgeAR): The transmitted escape sequence is `\b` and that is
         // identical to <ctrl>-h. It should have a unique escape sequence.
         case "backspace":
           this[kDeleteLineLeft]();
@@ -1350,7 +1353,7 @@ class Interface extends InterfaceConstructor {
           break;
 
         case "w": // Delete backwards to a word boundary
-        // TODO(BridgeAR): The transmitted escape sequence is `\b` and that is
+        // upstream-todo(BridgeAR): The transmitted escape sequence is `\b` and that is
         // identical to <ctrl>-h. It should have a unique escape sequence.
         // Falls through
         case "backspace":
@@ -1504,7 +1507,7 @@ Interface.prototype[SymbolDispose] = ObjectDefineProperty(
     this.close();
   },
   "name",
-  { __proto__: null, configurable: true, value: SymbolDispose },
+  { __proto__: null, configurable: true, value: "[Symbol.dispose]" },
 );
 
 __node_module__.exports = {

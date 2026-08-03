@@ -58,35 +58,22 @@ pub struct ErrorCode(pub ErrorCodeInt);
 //   static CODE_STR: [&str; ErrorCode::COUNT as usize]
 include!(concat!(env!("BUN_CODEGEN_DIR"), "/ErrorCode.generated.rs"));
 
-// NOTE: `ERR_SYSTEM_ERROR` / `ERR_CHILD_CLOSED_BEFORE_REPLY` intentionally
-// do NOT live here. They belong to the unrelated enum
-// `bun_runtime::node::nodejs_error_code::ErrorCode`, not to the
-// ErrorCode.ts-derived table this type mirrors. Adding them here with
-// out-of-range discriminants (≥ Self::COUNT) is a memory-safety bug: the
-// C++ side does `errors[static_cast<size_t>(code)]` against a fixed
-// `errors[COUNT]` array with no bounds check (ErrorCode.cpp /
-// ErrorCode+Data.h), so any such value reaching `ErrorCode::fmt()` →
-// `Bun__createErrorWithCode` reads past the array and past
-// `ErrorCodeCache::internalField`. Callers needing those tags must use
-// `bun_runtime::node::nodejs_error_code::ErrorCode` directly.
+// Do NOT add constants here with discriminants ≥ Self::COUNT (e.g.
+// `ERR_SYSTEM_ERROR`): `Bun__createErrorWithCode` indexes `errors[COUNT]`
+// unchecked. Codes outside ErrorCode.ts go on `SystemError.code` as a literal.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Legacy anyerror-wrapper sentinels.
 // ──────────────────────────────────────────────────────────────────────────
 impl ErrorCode {
-    pub const PARSER_ERROR: ErrorCodeInt = 0xFFFE;
+    pub(crate) const PARSER_ERROR: ErrorCodeInt = 0xFFFE;
     pub const JS_ERROR_OBJECT: ErrorCodeInt = 0xFFFD;
 }
 
 impl ErrorCode {
-    #[inline]
-    pub const fn raw(self) -> u16 {
-        self.0
-    }
-
     /// Node `error.code` string (e.g. `"ERR_INVALID_ARG_TYPE"`).
     #[inline]
-    pub fn code_str(self) -> &'static str {
+    pub(crate) fn code_str(self) -> &'static str {
         CODE_STR
             .get(self.0 as usize)
             .copied()
@@ -146,7 +133,7 @@ unsafe extern "C" {
 /// `.throw()` / `.to_js()` / `.reject()` at the use site.
 pub struct ErrorBuilder<'a, G: GlobalObjectRef + ?Sized = JSGlobalObject> {
     pub global: &'a G,
-    pub code: ErrorCode,
+    pub(crate) code: ErrorCode,
     pub args: Arguments<'a>,
 }
 
@@ -187,9 +174,9 @@ impl<'a, G: GlobalObjectRef + ?Sized> ErrorBuilder<'a, G> {
 // (`extern "C" ZigErrorCode Zig_ErrorCodeParserError;`, headers-handwritten.h).
 
 #[unsafe(no_mangle)]
-pub(crate) static Zig_ErrorCodeParserError: ErrorCodeInt = ErrorCode::PARSER_ERROR;
+static Zig_ErrorCodeParserError: ErrorCodeInt = ErrorCode::PARSER_ERROR;
 
 #[unsafe(no_mangle)]
-pub(crate) static Zig_ErrorCodeJSErrorObject: ErrorCodeInt = ErrorCode::JS_ERROR_OBJECT;
+static Zig_ErrorCodeJSErrorObject: ErrorCodeInt = ErrorCode::JS_ERROR_OBJECT;
 
 // ported from: src/jsc/bindings/ErrorCode.ts

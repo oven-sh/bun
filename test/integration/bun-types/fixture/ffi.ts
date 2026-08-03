@@ -64,12 +64,12 @@ const lib = dlopen(
 
 declare const ptr: Pointer;
 
-tsd.expectType<CString>(lib.symbols.sqlite3_libversion());
+tsd.expectType<string | null>(lib.symbols.sqlite3_libversion());
 tsd.expectType<number>(lib.symbols.add(1, 2));
 
-tsd.expectType<Pointer | null>(lib.symbols.ptr_type(ptr));
+tsd.expectType<Pointer | bigint | null>(lib.symbols.ptr_type(ptr));
 
-tsd.expectType<Pointer | null>(lib.symbols.fn_type(new JSCallback(() => {}, {})));
+tsd.expectType<Pointer | bigint | null>(lib.symbols.fn_type(new JSCallback(() => {}, {})));
 
 function _arg(
   ...params: [
@@ -161,7 +161,7 @@ const as_const_test = {
 
 const lib2 = dlopen(path, as_const_test);
 
-tsd.expectType<CString>(lib2.symbols.sqlite3_libversion());
+tsd.expectType<string | null>(lib2.symbols.sqlite3_libversion());
 // tslint:disable-next-line:no-void-expression
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type
 tsd.expectType<void>(lib2.symbols.multi_args(1, 2));

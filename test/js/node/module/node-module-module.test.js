@@ -6,7 +6,7 @@ import path from "path";
 describe.concurrent("node-module-module", () => {
   test("builtinModules exists", () => {
     expect(Array.isArray(builtinModules)).toBe(true);
-    expect(builtinModules).toHaveLength(76);
+    expect(builtinModules).toHaveLength(77);
   });
 
   test("isBuiltin() works", () => {
@@ -26,6 +26,61 @@ describe.concurrent("node-module-module", () => {
     expect(Array.isArray(require("module").globalPaths)).toBe(true);
   });
 
+  test("module.enableCompileCache validates its argument", () => {
+    expect(Module.enableCompileCache.length).toBe(1);
+    for (const invalid of [0, null, false, 1, NaN, true, Symbol(0)]) {
+      expect(() => Module.enableCompileCache(invalid)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    }
+    expect(() => Module.enableCompileCache({ directory: 1 })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    // A function is not treated as an options bag (typeof === "object" in node).
+    expect(() => Module.enableCompileCache(function () {})).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    // A throwing getter propagates unchanged.
+    expect(() =>
+      Module.enableCompileCache({
+        get directory() {
+          throw new RangeError("boom");
+        },
+      }),
+    ).toThrow(RangeError);
+    // Node destructures `directory` then `portable` before validating, so a throwing
+    // `portable` getter propagates even when `directory` is already invalid.
+    const order = [];
+    expect(() =>
+      Module.enableCompileCache({
+        get directory() {
+          order.push("directory");
+          return 42;
+        },
+        get portable() {
+          order.push("portable");
+          throw new RangeError("portable boom");
+        },
+      }),
+    ).toThrow(new RangeError("portable boom"));
+    expect(order).toEqual(["directory", "portable"]);
+    // Valid shapes: string | {directory?, portable?} | undefined.
+    for (const ok of [
+      undefined,
+      "/tmp/cache",
+      {},
+      [],
+      Object.create(null),
+      { directory: "/tmp/cache" },
+      { directory: undefined },
+    ]) {
+      expect(Module.enableCompileCache(ok)).toEqual({
+        status: Module.constants.compileCacheStatus.FAILED,
+        message: expect.any(String),
+      });
+    }
+  });
+
   test("native module functions are not constructors", () => {
     // Constructing these used to crash instead of throwing.
     const compile = new Module("not-a-constructor-test")._compile;
@@ -38,6 +93,15 @@ describe.concurrent("node-module-module", () => {
     expect(() => Reflect.construct(Module._resolveFilename, ["fs"])).toThrow(TypeError);
     // Calling still works.
     expect(Module._resolveFilename("fs")).toBe("fs");
+  });
+
+  test("Module._resolveFilename accepts an options object without paths", () => {
+    // An options object without .paths used to segfault on the isArray() check.
+    expect(Module._resolveFilename("fs", null, false, {})).toBe("fs");
+    expect(Module._resolveFilename("fs", null, false, Object.create(null))).toBe("fs");
+    expect(Module._resolveFilename("fs", null, false, [])).toBe("fs");
+    expect(Module._resolveFilename("fs", null, false, { paths: undefined })).toBe("fs");
+    expect(Module._resolveFilename("fs", null, false, { paths: null })).toBe("fs");
   });
 
   test("createRequire trailing slash", () => {
@@ -86,6 +150,43 @@ describe.concurrent("node-module-module", () => {
       ospath(root + "a/node_modules"),
       ospath(root + "node_modules"),
     ]);
+    // Node resolves `from` through `path.resolve`, so a trailing separator is
+    // dropped rather than producing an extra ".../<sep>/node_modules" entry.
+    expect(_nodeModulePaths("/a/b/c/d/")).toEqual(_nodeModulePaths("/a/b/c/d"));
+    expect(_nodeModulePaths(ospath("/a/b/c/d") + path.sep)).toEqual(_nodeModulePaths("/a/b/c/d"));
+  });
+
+  test("_nodeModulePaths() is stable across process.chdir()", async () => {
+    // process.chdir() re-seeds the resolver's cached top-level dir with a
+    // trailing separator; _nodeModulePaths("") then used to emit a duplicate
+    // `<cwd>//node_modules` entry, which surfaced as a `--parallel` flake when
+    // an earlier test file in the same worker had chdir'd.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const m = require("module");
+         const before = m._nodeModulePaths("");
+         const here = process.cwd();
+         process.chdir(require("os").tmpdir());
+         process.chdir(here);
+         process.stdout.write(JSON.stringify({
+           before,
+           empty: m._nodeModulePaths(""),
+           dot: m._nodeModulePaths("."),
+         }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { before, empty, dot } = JSON.parse(stdout);
+    expect(empty).toEqual(before);
+    expect(empty).toEqual(dot);
+    for (const p of empty) expect(p).not.toMatch(/[/\\]{2}node_modules$/);
+    expect(exitCode).toBe(0);
   });
 
   test("_nodeModulePaths() does not leak the input string", async () => {
@@ -94,14 +195,15 @@ describe.concurrent("node-module-module", () => {
     // dominates RSS noise within a few thousand iterations.
     const code = /* js */ `
         const m = require("module");
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const comp = Buffer.alloc(30, "a").toString();
         const base = "/" + Array(20).fill(comp).join("/");
         for (let i = 0; i < 200; i++) m._nodeModulePaths(base + i);
         Bun.gc(true); Bun.gc(true);
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 5000; i++) m._nodeModulePaths(base + i);
         Bun.gc(true); Bun.gc(true); Bun.gc(true);
-        process.stdout.write(String((process.memoryUsage.rss() - before) / 1024 / 1024));
+        process.stdout.write(String((rss() - before) / 1024 / 1024));
       `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--smol", "-e", code],

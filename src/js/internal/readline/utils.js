@@ -35,7 +35,7 @@ CSI.kClearToLineEnd = CSI`0K`;
 CSI.kClearLine = CSI`2K`;
 CSI.kClearScreenDown = CSI`0J`;
 
-// TODO(BridgeAR): Treat combined characters as single character, i.e,
+// upstream-todo(BridgeAR): Treat combined characters as single character, i.e,
 // 'a\u0301' and '\u0301a' (both have the same visual output).
 // Check Canonical_Combining_Class in
 // http://userguide.icu-project.org/strings/properties

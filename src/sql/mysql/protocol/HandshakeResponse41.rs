@@ -23,7 +23,7 @@ pub struct HandshakeResponse41 {
 }
 
 impl HandshakeResponse41 {
-    pub fn write_internal<Context: super::new_writer::WriterContext>(
+    pub(crate) fn write_internal<Context: super::new_writer::WriterContext>(
         &mut self,
         writer: NewWriter<Context>,
     ) -> Result<(), AnyMySQLError> {

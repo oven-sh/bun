@@ -2,6 +2,8 @@
 const common = require('../common');
 const assert = require('assert');
 const cp = require('child_process');
+// bun: upstream uses '-i'; that short flag is --install=fallback in bun, so the
+// REPL is reached through the long form.
 const child = cp.spawn(process.execPath, ['--interactive']);
 let output = '';
 

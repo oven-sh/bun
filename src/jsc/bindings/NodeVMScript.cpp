@@ -108,6 +108,8 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     if (optionsArg.isString()) {
         options.filename = optionsArg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+        // `new Script(src, "name")` is a provided filename, "" included.
+        options.filenameProvided = true;
     } else if (!options.fromJS(globalObject, vm, scope, optionsArg, &importer)) {
         RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
     }
@@ -132,16 +134,24 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     RETURN_IF_EXCEPTION(scope, {});
 
     // Node's vm.Script throws SyntaxError at construction; the REPL's
-    // recoverable-error flow (and user code) relies on that.
-    // FIXME: double-parse — checkSyntax discards its AST and runInThisContext
-    // reparses via JSC::evaluate; migrate to compile-once via m_cachedExecutable.
+    // recoverable-error flow (and user code) relies on that. This is a
+    // double-parse (checkSyntax discards its AST and runInThisContext reparses
+    // via JSC::evaluate); compile-once via m_cachedExecutable is the follow-up.
     JSC::ParserError parseError;
     if (!JSC::checkSyntax(vm, source, parseError)) {
         auto exception = parseError.toErrorObject(globalObject, source, -1);
+        // Building the error materializes its stack, running a user
+        // Error.prepareStackTrace that may throw; Node throws the SyntaxError
+        // anyway. tryClearException leaves a termination for the check below.
+        if (exception)
+            (void)scope.tryClearException();
         RETURN_IF_EXCEPTION(scope, {});
         // Node always attaches the arrow header to compile-time SyntaxErrors
         // (node_contextify.cc DecorateErrorStack), independent of displayErrors.
-        decorateParseErrorStack(globalObject, vm, exception, sourceString, options.filename, parseError, options.lineOffset);
+        // An absent filename becomes evalmachine.<anonymous>; an explicitly
+        // provided one — including "" — is used verbatim.
+        String url = options.filenameProvided ? options.filename : "evalmachine.<anonymous>"_s;
+        decorateParseErrorStack(globalObject, vm, exception, sourceString, url, parseError, options.lineOffset);
         throwException(globalObject, scope, exception);
         return {};
     }

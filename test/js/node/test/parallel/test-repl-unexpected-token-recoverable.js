@@ -7,6 +7,7 @@ const assert = require('assert');
 
 const spawn = require('child_process').spawn;
 // Use -i to force node into interactive mode, despite stdout not being a TTY
+// bun: '-i' is --install=fallback in bun, so the long form is used instead.
 const args = [ '--interactive' ];
 const child = spawn(process.execPath, args);
 

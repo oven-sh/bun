@@ -167,7 +167,15 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
 
             if (actuallyValid) {
                 auto exception = error.toErrorObject(globalObject, sourceCode, -1);
+                // Building the error materializes its stack, running a user
+                // Error.prepareStackTrace that may throw; Node throws the
+                // SyntaxError anyway. Terminations survive tryClearException.
+                if (exception)
+                    (void)throwScope.tryClearException();
                 RETURN_IF_EXCEPTION(throwScope, nullptr);
+                // Node always attaches the arrow header to compile-time SyntaxErrors
+                // (node_contextify.cc DecorateErrorStack), independent of displayErrors.
+                decorateParseErrorStack(globalObject, vm, exception, code, options.filename, error, options.lineOffset);
                 throwException(globalObject, throwScope, exception);
                 return nullptr;
             }
@@ -505,7 +513,7 @@ static String nthSourceLineForArrowHeader(StringView source, int64_t physicalLin
     return lineView.toString();
 }
 
-static void writeArrowHeaderStack(VM& vm, ErrorInstance* errorInstance, const String& url, unsigned reportedLine, const String& sourceLineText, unsigned caretColumn1Based, const String& stack)
+static void writeArrowHeaderStack(VM& vm, ErrorInstance* errorInstance, const String& url, int reportedLine, const String& sourceLineText, unsigned caretColumn1Based, const String& stack)
 {
     String prepend;
     if (!sourceLineText.isNull() && caretColumn1Based >= 1 && caretColumn1Based <= sourceLineText.length() + 1) {
@@ -578,7 +586,7 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
             }
         }
 
-        writeArrowHeaderStack(vm, errorInstance, source_url, line_and_column.line, sourceLineText, caretColumn, stack);
+        writeArrowHeaderStack(vm, errorInstance, source_url, static_cast<int>(line_and_column.line), sourceLineText, caretColumn, stack);
 
         JSC::throwException(globalObject, throwScope, exception.get());
         return true;
@@ -589,13 +597,15 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
 // Compile-time counterpart of handleException: prepends Node's arrow header
 // (`<url>:<line>\n<src>\n^\n\n`) using ParserError since there is no CodeBlock
 // yet. Node applies this unconditionally at compile time (not displayErrors).
-void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* error, StringView sourceString, const String& filename, const JSC::ParserError& parseError, OrdinalNumber lineOffset)
+void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* error, StringView sourceString, const String& url, const JSC::ParserError& parseError, OrdinalNumber lineOffset)
 {
     UNUSED_PARAM(globalObject);
     auto* errorInstance = dynamicDowncast<ErrorInstance>(error);
     if (!errorInstance)
         return;
 
+    // The caller's toErrorObject() already materialized the stack (running any
+    // user Error.prepareStackTrace), so this cannot re-enter JS or throw.
     errorInstance->materializeErrorInfoIfNeeded(vm, vm.propertyNames->stack);
     JSValue stackValue = errorInstance->getDirect(vm, vm.propertyNames->stack);
     if (!stackValue || !stackValue.isString())
@@ -605,13 +615,18 @@ void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* err
     if (stack.isNull())
         return;
 
-    String url = filename.isEmpty() ? "evalmachine.<anonymous>"_s : filename;
+    // `url` is resolved by the caller: `new Script` substitutes
+    // evalmachine.<anonymous> only when no filename was provided, while
+    // compileFunction has no such default. An explicit "" renders as ":<line>".
 
     // parseError.line() is already lineOffset-adjusted (JSC parses against a
-    // SourceCode whose start position carries the offset). Undo it to index
-    // the raw source string.
-    int reportedLine = parseError.line();
-    int64_t physicalLine = static_cast<int64_t>(reportedLine) - lineOffset.zeroBasedInt();
+    // SourceCode whose start position carries the offset), but JSC clamps a
+    // negative provider start line to zero, so a negative offset comes back as
+    // the physical line. Undo/re-apply so Node's signed header still renders.
+    int lineOff = lineOffset.zeroBasedInt();
+    int jscLine = parseError.line();
+    int64_t physicalLine = lineOff < 0 ? static_cast<int64_t>(jscLine) : static_cast<int64_t>(jscLine) - lineOff;
+    int reportedLine = static_cast<int>(physicalLine) + lineOff;
 
     // JSTextPosition::column() = offset - lineStartOffset — physical 0-based
     // column into sourceString, so columnOffset needs no adjustment.
@@ -622,7 +637,7 @@ void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* err
         caretColumn = col0 >= 0 ? static_cast<unsigned>(col0) + 1 : 1;
     }
 
-    writeArrowHeaderStack(vm, errorInstance, url, static_cast<unsigned>(reportedLine), sourceLineText, caretColumn, stack);
+    writeArrowHeaderStack(vm, errorInstance, url, reportedLine, sourceLineText, caretColumn, stack);
 }
 
 // Returns an encoded exception if the options are invalid.
@@ -1096,16 +1111,6 @@ void NodeVMGlobalObject::setContextifiedObject(JSC::JSObject* contextifiedObject
     m_sandbox.set(vm(), this, contextifiedObject);
 }
 
-void NodeVMGlobalObject::clearContextifiedObject()
-{
-    m_sandbox.clear();
-}
-
-void NodeVMGlobalObject::sigintReceived()
-{
-    vm().notifyNeedTermination();
-}
-
 void NodeVMGlobalObject::drainOwnMicrotasks()
 {
     if (!m_contextOptions.ownMicrotaskQueue)
@@ -1371,7 +1376,13 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
         RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
     }
 
-    bool isDeclaredOnSandbox = contextifiedObject->getPropertySlot(globalObject, propertyName, slot);
+    // The lookup above may have filled `slot` as cacheable (e.g. a lazy global
+    // stored as a CustomGetterSetter on a non-dictionary structure). Reusing it
+    // here would trip PropertySlot's CachingDisallowed asserts if the sandbox
+    // resolves the same name via setGetterSlot/setCustom/setValue(3-arg), which
+    // happens once the sandbox has transitioned to an uncacheable dictionary.
+    PropertySlot sandboxSlot(globalObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
+    bool isDeclaredOnSandbox = contextifiedObject->getPropertySlot(globalObject, propertyName, sandboxSlot);
     RETURN_IF_EXCEPTION(scope, false);
 
     if (isDeclaredOnSandbox && !isDeclaredOnGlobalProxy) {

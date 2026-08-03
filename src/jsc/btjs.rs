@@ -125,7 +125,7 @@ unsafe extern "C" {
 
 /// allocated using bun.default_allocator. when called from lldb, it is never freed.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn dumpBtjsTrace() -> *const c_char {
+extern "C" fn dumpBtjsTrace() -> *const c_char {
     // Must use #[cfg], not cfg!(), so the entire debug impl is DCE'd from
     // release builds.
     #[cfg(debug_assertions)]

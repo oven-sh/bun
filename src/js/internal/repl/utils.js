@@ -54,7 +54,7 @@ const previewOptions = {
   showHidden: false,
 };
 
-const REPL_MODE_STRICT = Symbol("repl-strict");
+const { REPL_MODE_SLOPPY, REPL_MODE_STRICT } = require("internal/repl/mode");
 
 // isRecoverableError is imported from internal/repl/native-parse (backed by
 // Bun's own bun_js_parser instead of a vendored acorn).
@@ -537,7 +537,7 @@ function setupReverseSearch(repl) {
   }
 
   function print(outputLine, inputLine, cursor = repl.cursor) {
-    // TODO(BridgeAR): Resizing the terminal window hides the overlay. To fix
+    // upstream-todo(BridgeAR): Resizing the terminal window hides the overlay. To fix
     // that, readline must be aware of this information. It's probably best to
     // add a couple of properties to readline that allow to do the following:
     // 1. Add arbitrary data to the end of the current line while not counting
@@ -738,7 +738,7 @@ function setReplBuiltinLibs(value) {
 }
 
 __node_module__.exports = {
-  REPL_MODE_SLOPPY: Symbol("repl-sloppy"),
+  REPL_MODE_SLOPPY,
   REPL_MODE_STRICT,
   isRecoverableError,
   kStandaloneREPL: Symbol("kStandaloneREPL"),

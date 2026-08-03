@@ -341,8 +341,6 @@ function getPriority() {
 /**
  * @typedef {Object} Ec2Options
  * @property {string} instanceType
- * @property {number} cpuCount
- * @property {number} threadsPerCore
  * @property {boolean} dryRun
  */
 
@@ -354,7 +352,7 @@ function getPriority() {
  */
 function getEc2Agent(platform, options, ec2Options) {
   const { os, arch, abi, distro, release, crossCompile } = platform;
-  const { instanceType, cpuCount, threadsPerCore } = ec2Options;
+  const { instanceType } = ec2Options;
   // Cross-compiled targets run on a Linux EC2 box; the agent tag must match
   // the host (`linux`), not the target.
   const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
@@ -368,8 +366,6 @@ function getEc2Agent(platform, options, ec2Options) {
     robobun2: true,
     "image-name": getImageName(platform, options),
     "instance-type": instanceType,
-    "cpu-count": cpuCount,
-    "threads-per-core": threadsPerCore,
     "preemptible": false,
   };
 }
@@ -428,8 +424,6 @@ function getTestAgent(platform, options) {
   if (os === "windows") {
     return getEc2Agent(platform, options, {
       instanceType: getAzureVmSize(os, arch, "test"),
-      cpuCount: 2,
-      threadsPerCore: 1,
     });
   }
 
@@ -446,14 +440,10 @@ function getTestAgent(platform, options) {
       // agent. r-family has 4× the RAM at the same vCPU.
       return getEc2Agent(platform, options, {
         instanceType: "r8g.2xlarge",
-        cpuCount: 2,
-        threadsPerCore: 1,
       });
     }
     return getEc2Agent(platform, options, {
       instanceType: musl ? "m8g.xlarge" : "c8g.xlarge",
-      cpuCount: 2,
-      threadsPerCore: 1,
     });
   }
 
@@ -461,14 +451,10 @@ function getTestAgent(platform, options) {
     // Same rationale as the aarch64 asan branch above.
     return getEc2Agent(platform, options, {
       instanceType: "r7i.2xlarge",
-      cpuCount: 2,
-      threadsPerCore: 1,
     });
   }
   return getEc2Agent(platform, options, {
     instanceType: musl ? "m7i.xlarge" : "c7i.xlarge",
-    cpuCount: 2,
-    threadsPerCore: 1,
   });
 }
 
@@ -756,6 +742,61 @@ function getVerifyBaselineStep(platform, options) {
       ...setupCommands,
       `cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml${os === "windows" ? " || exit /b 1" : ""}`,
       `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --arch ${platform.arch} --emulator ${emulator}${skipEmulationFlag}${jitStressFlag}`,
+    ],
+  };
+}
+
+/**
+ * Targets whose build lane cross-compiles (so `canTraceOrderFile()` is false)
+ * but whose test fleet is native. A `-trace-order` step runs there, downloads
+ * the cross-built `bun-profile`, traces it, and uploads the `.order` artifact
+ * that the next build's `inheritOrderFile()` picks up. One build of lag.
+ *
+ * linux-aarch64 is absent because its build lane runs on the aarch64 host and
+ * traces itself; `packageAndUpload()` is its sole publisher.
+ */
+const traceOrderTargets = [
+  { os: "darwin", arch: "aarch64", on: { os: "darwin", arch: "aarch64", release: "26", tier: "latest" } },
+  { os: "linux", arch: "x64", on: { os: "linux", arch: "x64", distro: "debian", release: "13" } },
+];
+
+/**
+ * Trace the symbol order file for a cross-compiled target on a native-arch
+ * host, so the next build's `inheritOrderFile()` has something to download.
+ *
+ * The build lane cross-compiles from the aarch64 `buildHostPlatform` and cannot
+ * run the binary it linked. This step runs on the target-arch test fleet,
+ * downloads that lane's unstripped `bun-profile`, runs it under `scripts/
+ * orderfile/generate.ts` (the traced binary doubles as the interpreter), and
+ * uploads the result.
+ *
+ * Non-PR only — `orderFileEligible()` ignores PR builds, so a trace there has
+ * no consumer. Soft-fail: the order file is an optimization, and a broken
+ * tracer must not fail a build.
+ * @param {Target} target
+ * @param {Platform} tracePlatform
+ * @param {PipelineOptions} options
+ * @returns {CommandStep}
+ */
+function getTraceOrderStep(target, tracePlatform, options) {
+  const targetKey = getTargetKey(target);
+  const triplet = getTargetTriplet(target);
+  const profileDir = `${triplet}-profile`;
+  return {
+    key: `${targetKey}-trace-order`,
+    label: `${getTargetLabel(target)} - trace-order`,
+    depends_on: [`${targetKey}-build-bun`],
+    agents: getTestAgent(tracePlatform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    soft_fail: true,
+    timeout_in_minutes: 15,
+    command: [
+      `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
+      `unzip -o '${profileDir}.zip'`,
+      `chmod +x ${profileDir}/bun-profile`,
+      `./${profileDir}/bun-profile scripts/orderfile/generate.ts --build-dir=${profileDir} --out=${triplet}.order`,
+      `buildkite-agent artifact upload '${triplet}.order'`,
     ],
   };
 }
@@ -1498,6 +1539,25 @@ async function getPipeline(options = {}) {
           const verifyDeps =
             verifyImageKey !== imageKey && imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-build-image`] : [];
           steps.push(getStepWithDependsOn(getVerifyBaselineStep(target, options), ...verifyDeps));
+        }
+
+        // Seed the symbol order file for a cross-compiled target on its native
+        // test fleet (see getTraceOrderStep). Always on main so the inheritance
+        // chain stays fed, and anywhere else on commit-message opt-in so a PR
+        // that changes the tracer can prove the step works before merge — the
+        // same `[generate symbol order]` tag ci.ts already honours. Release
+        // profile only — usesOrderFile() is false under a sanitizer anyway.
+        const traceOn = traceOrderTargets.find(
+          t =>
+            t.os === target.os && t.arch === target.arch && !target.abi && (target.profile ?? "release") === "release",
+        );
+        if (traceOn && (isMainBranch() || /\[generate symbol order\]/i.test(getCommitMessage()))) {
+          // The trace host's image, same as verify-baseline: on the step, so
+          // build-cpp/build-bun don't wait for it. Darwin has no cloud image.
+          const traceImageKey = getImageKey(traceOn.on);
+          const traceDeps =
+            traceImageKey !== imageKey && imagePlatforms.has(traceImageKey) ? [`${traceImageKey}-build-image`] : [];
+          steps.push(getStepWithDependsOn(getTraceOrderStep(target, traceOn.on, options), ...traceDeps));
         }
 
         return getStepWithDependsOn(

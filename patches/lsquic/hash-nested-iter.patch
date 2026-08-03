@@ -1,0 +1,58 @@
+--- a/src/liblsquic/lsquic_hash.h
++++ b/src/liblsquic/lsquic_hash.h
+@@ -69,6 +69,19 @@
+ struct lsquic_hash_elem *
+ lsquic_hash_next (struct lsquic_hash *);
+ 
++/* lsquic_hash_first()/_next() keep their cursor INSIDE the hash, so a second
++ * walk started while one is in progress resets the first one's position. Use
++ * these when a nested walk of the same hash is possible: the caller holds the
++ * cursor, so nesting is safe. */
++struct lsquic_hash_elem *
++lsquic_hash_first_nested (struct lsquic_hash *);
++
++static inline struct lsquic_hash_elem *
++lsquic_hash_next_nested (struct lsquic_hash_elem *el)
++{
++    return TAILQ_NEXT(el, qhe_next_all);
++}
++
+ unsigned
+ lsquic_hash_count (struct lsquic_hash *);
+ 
+--- a/src/liblsquic/lsquic_hash.c
++++ b/src/liblsquic/lsquic_hash.c
+@@ -209,6 +209,13 @@
+ }
+ 
+ 
++struct lsquic_hash_elem *
++lsquic_hash_first_nested (struct lsquic_hash *hash)
++{
++    return TAILQ_FIRST(&hash->qh_all);
++}
++
++
+ void
+ lsquic_hash_reset_iter (struct lsquic_hash *hash)
+ {
+--- a/src/liblsquic/lsquic_send_ctl.c
++++ b/src/liblsquic/lsquic_send_ctl.c
+@@ -2984,9 +2984,15 @@
+     if (!(ctl->sc_conn_pub->cp_flags & CP_HAVE_PRIO))
+         return BPT_HIGHEST_PRIO;
+ 
++    /* Nest-safe walk: ietf_full_conn_ci_close() iterates all_streams with the
++     * hash's shared cursor and resets each bidi stream; when the send
++     * controller cannot send immediately that RESET_STREAM takes the buffered
++     * path and lands here. lsquic_hash_first() would reset the cursor the
++     * close loop is walking, restarting it over a hash whose elements it is
++     * destroying. */
+     all_streams = ctl->sc_conn_pub->all_streams;
+-    for (el = lsquic_hash_first(all_streams); el;
+-                                     el = lsquic_hash_next(all_streams))
++    for (el = lsquic_hash_first_nested(all_streams); el;
++                                     el = lsquic_hash_next_nested(el))
+     {
+         other_stream = lsquic_hashelem_getdata(el);
+         if (other_stream != stream

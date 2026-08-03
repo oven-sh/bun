@@ -67,7 +67,7 @@ impl MutableString {
         Ok(())
     }
 
-    pub fn writable_n_bytes_assume_capacity(&mut self, amount: usize) -> &mut [u8] {
+    pub(crate) fn writable_n_bytes_assume_capacity(&mut self, amount: usize) -> &mut [u8] {
         // SAFETY: caller has reserved at least `amount` bytes of spare capacity
         // (debug-asserted in the callee) and fully writes the returned slice
         // before reading it.
@@ -107,7 +107,7 @@ impl MutableString {
         self.grow_if_needed(amount)
     }
 
-    pub fn init_copy(str: impl AsRef<[u8]>) -> Result<MutableString, AllocError> {
+    pub(crate) fn init_copy(str: impl AsRef<[u8]>) -> Result<MutableString, AllocError> {
         let str = str.as_ref();
         let mut mutable = MutableString::init(str.len())?;
         mutable.copy(str)?;
@@ -207,7 +207,7 @@ impl MutableString {
         self.list.len()
     }
 
-    pub fn copy(&mut self, str: impl AsRef<[u8]>) -> Result<(), AllocError> {
+    pub(crate) fn copy(&mut self, str: impl AsRef<[u8]>) -> Result<(), AllocError> {
         let str = str.as_ref();
         self.list.reserve(str.len().saturating_sub(self.list.len()));
 
@@ -325,15 +325,6 @@ impl MutableString {
 
     pub fn slice(&mut self) -> &mut [u8] {
         &mut self.list
-    }
-
-    pub fn index_of(&self, str: u8) -> Option<usize> {
-        // Single-byte search (the `str` parameter is one byte despite the name).
-        self.list.iter().position(|&b| b == str)
-    }
-
-    pub fn eql(&self, other: &[u8]) -> bool {
-        self.list.as_slice() == other
     }
 
     pub fn write_all(&mut self, bytes: &[u8]) -> Result<usize, AllocError> {

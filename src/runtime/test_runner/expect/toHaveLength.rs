@@ -12,8 +12,7 @@ pub(crate) fn to_have_length(
     let (this, value, not) =
         this.matcher_prelude(global, frame.this(), "toHaveLength", "<green>expected<r>")?;
 
-    let arguments_ = frame.arguments_old::<1>();
-    let arguments = arguments_.slice();
+    let arguments = frame.arguments();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!("toHaveLength() takes 1 argument")));

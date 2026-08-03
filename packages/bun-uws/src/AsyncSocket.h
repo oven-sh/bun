@@ -27,7 +27,6 @@
  * to signal error with -1 (which is how the entire UNIX syscalling is built). */
 
 #include <cstring>
-#include <iostream>
 
 #include "libusockets.h"
 #include "bun-usockets/src/internal/internal.h"

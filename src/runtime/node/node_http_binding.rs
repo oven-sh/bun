@@ -9,8 +9,7 @@ pub(crate) fn get_bun_server_all_closed_promise(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<1>();
-    let arguments = arguments.slice();
+    let arguments = frame.arguments();
     if arguments.is_empty() {
         return Err(global.throw_not_enough_arguments(
             "getBunServerAllClosePromise",
@@ -58,8 +57,7 @@ pub(crate) fn set_max_http_header_size(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<1>();
-    let arguments = arguments.slice();
+    let arguments = frame.arguments();
     if arguments.is_empty() {
         return Err(global.throw_not_enough_arguments("setMaxHTTPHeaderSize", 1, arguments.len()));
     }

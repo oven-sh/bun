@@ -56,21 +56,21 @@ impl FieldMessage {
         }
     }
 
-    pub fn decode_list<Context: super::new_reader::ReaderContext>(
+    pub(crate) fn decode_list<Context: super::new_reader::ReaderContext>(
         mut reader: NewReader<Context>,
+        mut remaining: usize,
     ) -> Result<Vec<FieldMessage>, AnyPostgresError> {
         let mut messages: Vec<FieldMessage> = Vec::new();
-        loop {
+        while remaining > 0 {
             let field_int: u8 = reader.int::<u8>()?;
+            remaining -= 1;
             if field_int == 0 {
                 break;
             }
             let field: FieldType = FieldType::from(field_int);
 
-            let message = reader.read_z()?;
-            if message.slice().is_empty() {
-                break;
-            }
+            let (message, consumed) = reader.string_within(remaining)?;
+            remaining -= consumed;
 
             let Ok(field_msg) = FieldMessage::init(field, message.slice()) else {
                 continue;
@@ -81,7 +81,7 @@ impl FieldMessage {
         Ok(messages)
     }
 
-    pub fn init(tag: FieldType, message: &[u8]) -> crate::Result<FieldMessage> {
+    pub(crate) fn init(tag: FieldType, message: &[u8]) -> crate::Result<FieldMessage> {
         Ok(match tag {
             FieldType::SEVERITY => FieldMessage::Severity(String::clone_utf8(message)),
             // Ignore this one for now.

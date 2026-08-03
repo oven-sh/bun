@@ -1,5 +1,8 @@
 name: Update SQLite3
 
+permissions:
+  contents: read
+
 on:
   schedule:
     - cron: "0 6 * * 0" # Run weekly
@@ -14,7 +17,9 @@ jobs:
       pull-requests: write
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Check SQLite version
         id: check-version
@@ -70,8 +75,11 @@ jobs:
 
       - name: Update SQLite if needed
         if: success() && steps.check-version.outputs.current_num < steps.check-version.outputs.latest_num
+        env:
+          LATEST_NUM: ${{ steps.check-version.outputs.latest_num }}
+          LATEST_YEAR: ${{ steps.check-version.outputs.latest_year }}
         run: |
-          ./scripts/update-sqlite-amalgamation.sh ${{ steps.check-version.outputs.latest_num }} ${{ steps.check-version.outputs.latest_year }}
+          ./scripts/update-sqlite-amalgamation.sh "$LATEST_NUM" "$LATEST_YEAR"
 
       - name: Create Pull Request
         if: success() && steps.check-version.outputs.current_num < steps.check-version.outputs.latest_num

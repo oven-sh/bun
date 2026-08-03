@@ -1810,10 +1810,8 @@ impl<const SSL: bool> SocketHandler<SSL> {
     ) -> JsTerminatedResult<()> {
         this.client_mut().socket = Self::socket(socket);
         if SSL {
-            // Set the SNI server_name before the TLS handshake runs. Prefer an
-            // explicit `tls.serverName`; otherwise fall back to the URL host
-            // (skipping IP literals per RFC 6066). `on_handshake` reads this
-            // back via `SSL_get_servername` for the identity check.
+            // SNI: `tls.serverName` else the URL host (IP literals skipped per
+            // RFC 6066); `on_handshake`'s `SSL_get_servername` reads it back.
             let ssl_ptr: *mut boringssl::c::SSL = this
                 .client
                 .get()

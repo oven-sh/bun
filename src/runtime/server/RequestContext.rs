@@ -3502,7 +3502,7 @@ where
     /// Takes the status, not the Response: `run_error_handler` below runs user
     /// JS, which may write through the cell pointer the caller holds.
     fn reject_unsendable_response(&mut self, status: u16) -> bool {
-        if HTTPStatusText::is_sendable(status) {
+        if HTTPStatusText::is_handler_writable(status) {
             return false;
         }
         let Some(server) = self.server else {
@@ -3511,9 +3511,15 @@ where
         };
         // SAFETY: BACKREF
         let global_this = (*server).global_this();
-        let err = global_this.create_error_instance(format_args!(
-            "Cannot send a Response with status {status}. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).",
-        ));
+        let err = if status == 101 {
+            global_this.create_error_instance(format_args!(
+                "Bun.serve cannot send a Response with status 101 (Switching Protocols): the fetch handler has no way to take over the connection after the protocol switch. Use server.upgrade() for WebSocket upgrades.",
+            ))
+        } else {
+            global_this.create_error_instance(format_args!(
+                "Cannot send a Response with status {status}. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).",
+            ))
+        };
         self.run_error_handler(err);
         true
     }
@@ -3608,7 +3614,8 @@ where
                         // An unsendable Response from the error handler itself
                         // falls through to the default error page below.
                         // SAFETY: `response` is the live, rooted cell pointer.
-                        if HTTPStatusText::is_sendable(unsafe { (*response).status_code() }) {
+                        if HTTPStatusText::is_handler_writable(unsafe { (*response).status_code() })
+                        {
                             // SAFETY: as above.
                             unsafe { self.render(response) };
                             return;
@@ -3662,7 +3669,7 @@ where
                 };
 
                 // SAFETY: `response` is the live, rooted cell pointer.
-                if !HTTPStatusText::is_sendable(unsafe { (*response).status_code() }) {
+                if !HTTPStatusText::is_handler_writable(unsafe { (*response).status_code() }) {
                     ctx.finish_running_error_handler(value, status);
                     return;
                 }

@@ -1516,6 +1516,112 @@ describe("Response.error()", () => {
   });
 });
 
+// Bun.serve has no non-WebSocket socket-handoff API, so a 101 Switching
+// Protocols returned from the fetch handler is unfulfillable: the connection
+// would keep parsing HTTP/1.1 and answer the client's post-switch bytes with
+// 400 Bad Request. It must be refused before it reaches the wire.
+describe("Response with status 101", () => {
+  const refused =
+    "Bun.serve cannot send a Response with status 101 (Switching Protocols): the fetch handler has no way to take over the connection after the protocol switch. Use server.upgrade() for WebSocket upgrades.";
+
+  const switching = () => new Response(null, { status: 101, headers: { Upgrade: "my-proto", Connection: "Upgrade" } });
+
+  // Send a request offering a protocol upgrade and return the server's raw
+  // reply once the status line is available. The connection is torn down by
+  // `await using`; we do not rely on the server closing it.
+  async function rawUpgradeExchange(port: number): Promise<string> {
+    const received: Buffer[] = [];
+    const gotStatus = Promise.withResolvers<void>();
+    await using connection = await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      socket: {
+        data(_socket, data) {
+          received.push(Buffer.from(data));
+          if (Buffer.concat(received).includes("\r\n")) gotStatus.resolve();
+        },
+        close() {
+          gotStatus.resolve();
+        },
+        error(_socket, error) {
+          gotStatus.reject(error);
+        },
+      },
+    });
+    connection.write("GET / HTTP/1.1\r\nHost: h\r\nConnection: Upgrade\r\nUpgrade: my-proto\r\n\r\n");
+    connection.flush();
+    await gotStatus.promise;
+    return Buffer.concat(received).toString();
+  }
+
+  it.each([
+    ["sync", switching],
+    ["async", async () => switching()],
+  ])("a %s fetch handler returning it reaches error() and never writes 101", async (_label, fetchImpl) => {
+    const errors: Error[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      development: false,
+      fetch: fetchImpl,
+      error(error) {
+        errors.push(error);
+        return new Response("handled", { status: 502 });
+      },
+    });
+
+    const raw = await rawUpgradeExchange(server.port);
+    // The unfulfillable 101 must never reach the wire.
+    expect(raw).toStartWith("HTTP/1.1 502 Bad Gateway\r\n");
+    expect(errors.map(error => error.message)).toEqual([refused]);
+  });
+
+  it("responds 500 with no error() handler, and when error() returns it too", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const switching = () => new Response(null, { status: 101, headers: { Upgrade: "my-proto", Connection: "Upgrade" } });
+        const servers = [
+          Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: switching }),
+          Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: switching, error: switching }),
+          Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: switching, error: () => Promise.resolve(switching()) }),
+          Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: switching, error: async () => switching() }),
+        ];
+        for (const server of servers) {
+          const response = await fetch(server.url);
+          console.log(response.status, await response.text());
+          server.stop(true);
+        }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("500 Something went wrong!\n".repeat(4));
+    expect(stderr).toContain(refused);
+    // The child reports each refusal as an unhandled error, so it exits 1 by
+    // design; a crash after the last print would read as a signal exit instead.
+    expect(exitCode).toBe(1);
+  });
+
+  it.each([
+    ["in-memory body", () => switching()],
+    ["Bun.file body", () => new Response(Bun.file(import.meta.path), { status: 101 })],
+  ])("is rejected when registered as a static route (%s)", (_label, makeResponse) => {
+    expect(() =>
+      Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        routes: { "/": makeResponse() },
+      }),
+    ).toThrow(
+      "Cannot use a Response with status 101 (Switching Protocols) as a static route: Bun.serve has no way to hand the connection over after the protocol switch. Use server.upgrade() for WebSocket upgrades.",
+    );
+  });
+});
+
 describe("response framing", () => {
   type RawResponse = { statusLine: string; headerNames: string[]; headers: Record<string, string>; body: string };
   // Read the raw response so that `Content-Length: 0` and an absent
@@ -1563,10 +1669,11 @@ describe("response framing", () => {
 
   // https://github.com/oven-sh/bun/issues/20676
   // RFC 9110 8.6: a server MUST NOT send a Content-Length header field in any
-  // response with a status code of 1xx or 204. The Response constructor only
-  // accepts 101 out of the 1xx range, so that is the 1xx witness.
+  // response with a status code of 1xx or 204. There is no 1xx witness left:
+  // the Response constructor only accepts 101 out of the 1xx range, and
+  // Bun.serve refuses to write 101 (it has no socket-handoff API).
   describe.each(["GET", "HEAD"])("%s", method => {
-    it.each([101, 204])("a %i response carries no Content-Length header", async status => {
+    it.each([204])("a %i response carries no Content-Length header", async status => {
       using server = Bun.serve({
         port: 0,
         hostname: "127.0.0.1",
@@ -1662,8 +1769,6 @@ describe("response framing", () => {
   // it on the `fetch` path; the static `routes:` path must too.
   describe.each(["routes", "fetch"] as const)("%s: a Response body on a null-body status is dropped", kind => {
     const cases: [status: number, method: string, contentLength: string | null][] = [
-      [101, "GET", null],
-      [101, "HEAD", null],
       [204, "GET", null],
       [204, "HEAD", null],
       [205, "GET", "0"],
@@ -1694,18 +1799,18 @@ describe("response framing", () => {
 
   // `FileRoute` ships its body via sendfile / `HttpResponse::write()`, neither
   // of which goes through `internalEnd`, so it needs its own null-body-status
-  // drop. 101 is the one null-body status its bodiless list was missing.
+  // drop (the 101 that originally motivated this is now refused at config time).
   it.each(["GET", "HEAD"])("a Bun.file route on a null-body status serves no body bytes (%s)", async method => {
     using dir = tempDir("framing-file-route", { "f.bin": "data" });
     using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
-      routes: { "/": new Response(Bun.file(join(String(dir), "f.bin")), { status: 101 }) },
+      routes: { "/": new Response(Bun.file(join(String(dir), "f.bin")), { status: 204 }) },
       fetch: () => new Response("unreachable", { status: 500 }),
     });
     const { statusLine, headers, body } = await rawRequest(server.port, method);
     expect({ statusLine: statusLine.slice(0, 12), contentLength: headers["content-length"] ?? null, body }).toEqual({
-      statusLine: "HTTP/1.1 101",
+      statusLine: "HTTP/1.1 204",
       contentLength: null,
       body: "",
     });

@@ -11,10 +11,19 @@ pub(crate) const fn is_sendable(code: u16) -> bool {
     matches!(code, 100..=999)
 }
 
+/// A status Bun.serve can write from a handler-returned Response. 101 is
+/// refused: the fetch handler has no socket-handoff API, so the advertised
+/// protocol switch is unfulfillable. `server.upgrade()` writes its own 101.
+pub const fn is_handler_writable(code: u16) -> bool {
+    is_sendable(code) && code != 101
+}
+
+pub const ROUTE_101_REFUSED: &str = "Cannot use a Response with status 101 (Switching Protocols) as a static route: Bun.serve has no way to hand the connection over after the protocol switch. Use server.upgrade() for WebSocket upgrades.";
+
 pub fn get(code: u16) -> Option<&'static [u8]> {
     match code {
         100 => Some(b"100 Continue"),
-        101 => Some(b"101 Switching protocols"),
+        101 => Some(b"101 Switching Protocols"),
         102 => Some(b"102 Processing"),
         103 => Some(b"103 Early Hints"),
         200 => Some(b"200 OK"),

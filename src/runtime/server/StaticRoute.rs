@@ -160,10 +160,16 @@ impl StaticRoute {
         // unsafe in `JSValue`); every `Response` accessor used below takes
         // `&self` (interior mutability for `body`), so no `&mut` is needed.
         if let Some(response) = argument.as_class_ref::<Response>() {
-            if !HTTPStatusText::is_sendable(response.status_code()) {
+            let status = response.status_code();
+            if !HTTPStatusText::is_sendable(status) {
                 return Err(global_this.throw_invalid_arguments(format_args!(
-                    "Cannot use a Response with status {} as a static route. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).",
-                    response.status_code(),
+                    "Cannot use a Response with status {status} as a static route. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).",
+                )));
+            }
+            if status == 101 {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "{}",
+                    HTTPStatusText::ROUTE_101_REFUSED
                 )));
             }
 

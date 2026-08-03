@@ -3,10 +3,9 @@
 //! Node accepts env/isolate options in a worker's execArgv and rejects
 //! per-process options, V8 flags, unknown flags, and missing required values
 //! with `ERR_WORKER_INVALID_EXEC_ARGV` (behavior verified on node v26.3.0).
-//! Bun's accept set = its own runtime flag tables (`RUNTIME_PARAMS_` +
-//! `TRANSPILER_PARAMS_` + `AUTO_ONLY_PARAMS` + `BASE_PARAMS_` — everything
-//! `create_exec_argv`'s `AUTO_PARAMS` can put into `process.execArgv`, minus
-//! process-global flags node also rejects) plus
+//! Bun's accept set = its own runtime flag surface (`AUTO_PARAMS` — everything
+//! `create_exec_argv` can put into `process.execArgv`, minus process-global
+//! flags node also rejects) plus
 //! the node options in `NODE_FLAGS`. Deliberate supersets of node: Bun-only
 //! runtime flags, and `--expose-gc`/`--stack-trace-limit` (both honored
 //! per-worker here, so rejecting them to mimic node would be a regression).
@@ -187,21 +186,14 @@ fn table_map() -> &'static bun_collections::StringArrayHashMap<FlagSpec> {
             bun_core::handle_oom(map.put(&key, spec));
         };
         // Bun's runtime flag surface first, then NODE_FLAGS overrides.
-        // The chained set must cover everything `create_exec_argv` can emit
-        // into `process.execArgv` (its source is `AUTO_PARAMS` =
-        // AUTO_ONLY_PARAMS + RUNTIME_PARAMS_ + TRANSPILER_PARAMS_ +
-        // BASE_PARAMS_; AUTO_ONLY_PARAMS already contains AUTO_OR_RUN_PARAMS,
-        // whose run-surface flags tooling forwards into worker
+        // The set must cover everything `create_exec_argv` can emit into
+        // `process.execArgv` (its source is `AUTO_PARAMS`, which already
+        // contains the run-surface flags tooling forwards into worker
         // execArgv/NODE_OPTIONS — Next.js propagates `--bun` from
         // process.execArgv into its build workers' NODE_OPTIONS). A narrower
         // set rejects flags Bun itself reports in `process.execArgv` and
         // breaks value-consumption in `scan_process_exec_argv`.
-        for param in crate::cli::arguments::RUNTIME_PARAMS_
-            .iter()
-            .chain(crate::cli::arguments::TRANSPILER_PARAMS_)
-            .chain(crate::cli::arguments::AUTO_ONLY_PARAMS)
-            .chain(crate::cli::arguments::BASE_PARAMS_)
-        {
+        for param in crate::cli::arguments::AUTO_PARAMS.iter() {
             let value = match param.takes_value {
                 bun_clap::Values::None => ValueMode::None,
                 bun_clap::Values::OneOptional => ValueMode::Optional,

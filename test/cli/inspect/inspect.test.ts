@@ -457,6 +457,125 @@ describe("unix domain socket without websocket", () => {
   }
 });
 
+// WTF::HashMap<unsigned, ...> reserves 0 as the empty-bucket key and UINT32_MAX as
+// the deleted-bucket key. InspectorDebuggerAgent parses the protocol scriptId string
+// to a uint32_t and calls m_scripts.find() with it; without an isValidKey() guard,
+// scriptId "0" asserts on ASSERT_ENABLED builds and on release returns a phantom
+// default-constructed Script (empty scriptSource) because the lookup matches the
+// first empty bucket. Unparseable scriptIds collapse to 0 via value_or(0) as well.
+describe("Debugger scriptId validation", () => {
+  async function openSession() {
+    const child = spawn({
+      cmd: [bunExe(), "--inspect=127.0.0.1:0/tok", "-e", "setInterval(()=>{},1e3)"],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+
+    let url: URL | undefined;
+    let stderr = "";
+    const decoder = new TextDecoder();
+    for await (const chunk of child.stderr as ReadableStream) {
+      stderr += decoder.decode(chunk);
+      for (const line of stderr.split("\n")) {
+        try {
+          const candidate = new URL(line);
+          if (candidate.protocol.includes("ws")) url = candidate;
+        } catch {}
+      }
+      if (url || stderr.includes("Listening:")) break;
+    }
+    if (!url) {
+      process.stderr.write(stderr);
+      child.kill("SIGKILL");
+      throw new Error("inspector did not print a ws:// URL");
+    }
+
+    const ws = new WebSocket(url);
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve());
+      ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+    });
+
+    const pending = new Map<number, (reply: any) => void>();
+    let closed = false;
+    ws.addEventListener("message", ({ data }) => {
+      const msg = JSON.parse(String(data));
+      if (typeof msg.id === "number") pending.get(msg.id)?.(msg);
+    });
+    ws.addEventListener("close", ev => {
+      closed = true;
+      for (const [, resolve] of pending) resolve({ __closed: { code: ev.code, reason: ev.reason } });
+      pending.clear();
+    });
+
+    let nextId = 1;
+    const send = (method: string, params: Record<string, unknown>) => {
+      const id = nextId++;
+      const reply = new Promise<any>(resolve => pending.set(id, resolve));
+      ws.send(JSON.stringify({ id, method, params }));
+      return reply;
+    };
+
+    expect(await send("Debugger.enable", {})).toMatchObject({ result: {} });
+
+    return {
+      child,
+      send,
+      get closed() {
+        return closed;
+      },
+      [Symbol.dispose]() {
+        try {
+          ws.close();
+        } catch {}
+        child.kill("SIGKILL");
+      },
+    };
+  }
+
+  const invalidScriptIds = ["0", "4294967295", "-1", "99999999999999999999", "not-a-number"];
+  const missingScript = { error: { message: expect.stringContaining("Missing script") } };
+
+  test("Debugger.getScriptSource returns an error for the reserved hash keys", async () => {
+    using session = await openSession();
+    for (const scriptId of invalidScriptIds) {
+      const reply = await session.send("Debugger.getScriptSource", { scriptId });
+      expect({ scriptId, reply }).toMatchObject({ scriptId, reply: missingScript });
+      expect(reply.result).toBeUndefined();
+    }
+    expect(session.closed).toBe(false);
+    expect(session.child.exitCode).toBeNull();
+    expect(session.child.signalCode).toBeNull();
+  });
+
+  test("Debugger.searchInContent returns an error for the reserved hash keys", async () => {
+    using session = await openSession();
+    for (const scriptId of invalidScriptIds) {
+      const reply = await session.send("Debugger.searchInContent", { scriptId, query: "x" });
+      expect({ scriptId, reply }).toMatchObject({ scriptId, reply: missingScript });
+      expect(reply.result).toBeUndefined();
+    }
+    expect(session.closed).toBe(false);
+    expect(session.child.exitCode).toBeNull();
+    expect(session.child.signalCode).toBeNull();
+  });
+
+  test("Debugger.setBreakpoint / getBreakpointLocations reject scriptId 0 in location", async () => {
+    using session = await openSession();
+    for (const scriptId of invalidScriptIds) {
+      const location = { scriptId, lineNumber: 0, columnNumber: 0 };
+      const setReply = await session.send("Debugger.setBreakpoint", { location });
+      expect({ scriptId, setReply }).toMatchObject({ scriptId, setReply: missingScript });
+      const locReply = await session.send("Debugger.getBreakpointLocations", { start: location, end: location });
+      expect({ scriptId, locReply }).toMatchObject({ scriptId, locReply: missingScript });
+    }
+    expect(session.closed).toBe(false);
+    expect(session.child.exitCode).toBeNull();
+    expect(session.child.signalCode).toBeNull();
+  });
+});
+
 /// TODO: this test is flaky because the inspect may not send all messages before the process exit
 /// we need to implement a way/option so we wait every message from the inspector before exiting
 test.todo("junit reporter", async () => {

@@ -2552,8 +2552,6 @@ impl ThreadSafeFunction {
         }
 
         let mut is_first = true;
-        // One backup dispatch per `on_dispatch` (see `dispatch_one`).
-        let mut scheduled_backup = false;
         unsafe { (*this).dispatch_depth += 1 };
 
         // Run the tasks.
@@ -2565,7 +2563,7 @@ impl ThreadSafeFunction {
             }
             // SAFETY: `this` is live (see above); `dispatch_one` takes the raw
             // pointer because it enters user JS.
-            if unsafe { Self::dispatch_one(this, is_first, &mut scheduled_backup) } {
+            if unsafe { Self::dispatch_one(this, is_first) } {
                 is_first = false;
                 unsafe {
                     (*this)
@@ -2670,7 +2668,7 @@ impl ThreadSafeFunction {
     /// # Safety
     /// `this` is a live threadsafe function on the JS thread; destroy is
     /// deferred while `dispatch_depth > 0`.
-    unsafe fn dispatch_one(this: *mut Self, is_first: bool, scheduled_backup: &mut bool) -> bool {
+    unsafe fn dispatch_one(this: *mut Self, is_first: bool) -> bool {
         let mut queue_finalizer_after_call = false;
         let task = 'brk: {
             // SAFETY: scoped reborrow; nothing in this block enters JS.
@@ -2705,12 +2703,13 @@ impl ThreadSafeFunction {
                 self_.blocking_condvar.signal();
             }
 
-            if prev_count > 1 && !*scheduled_backup {
+            if prev_count > 1 && self_.inflight_dispatch_tasks.load(Ordering::SeqCst) == 0 {
                 // `call` below can block in a nested event loop (bun:test's
                 // expect(promise).rejects), stranding the items still queued
-                // behind this one. One backup dispatch lets a nested loop keep
-                // draining; if nothing blocks, it is a no-op.
-                *scheduled_backup = true;
+                // behind this one. With no dispatch task in flight, schedule
+                // one backup so a nested loop can keep draining; if nothing
+                // blocks, it is a no-op. The read is stable here: increments
+                // happen under `lock`, and the decrement runs on this thread.
                 self_.schedule_dispatch();
             }
 

@@ -3167,12 +3167,14 @@ extern "C" fn napi_unref_threadsafe_function(
         return NapiStatus::invalid_arg as napi_status;
     }
     #[cfg(debug_assertions)]
-    // SAFETY: `func` was null-checked above; `env_` is either null or a valid
-    // napi_env per N-API contract; JS thread, shared read.
-    if let (Some(loop_), Some(env)) =
-        (unsafe { (*func).event_loop.as_ref() }, unsafe { env_.as_ref() })
     {
-        debug_assert!(core::ptr::eq(loop_.global.unwrap().as_ptr(), env.to_js()));
+        // SAFETY: `func` was null-checked above; JS thread, shared read.
+        let loop_ = unsafe { (*func).event_loop.as_ref() };
+        // SAFETY: `env_` is either null or a valid napi_env per N-API contract.
+        let env = unsafe { env_.as_ref() };
+        if let (Some(loop_), Some(env)) = (loop_, env) {
+            debug_assert!(core::ptr::eq(loop_.global.unwrap().as_ptr(), env.to_js()));
+        }
     }
     #[cfg(not(debug_assertions))]
     let _ = env_;
@@ -3191,12 +3193,14 @@ extern "C" fn napi_ref_threadsafe_function(
         return NapiStatus::invalid_arg as napi_status;
     }
     #[cfg(debug_assertions)]
-    // SAFETY: `func` was null-checked above; `env_` is either null or a valid
-    // napi_env per N-API contract; JS thread, shared read.
-    if let (Some(loop_), Some(env)) =
-        (unsafe { (*func).event_loop.as_ref() }, unsafe { env_.as_ref() })
     {
-        debug_assert!(core::ptr::eq(loop_.global.unwrap().as_ptr(), env.to_js()));
+        // SAFETY: `func` was null-checked above; JS thread, shared read.
+        let loop_ = unsafe { (*func).event_loop.as_ref() };
+        // SAFETY: `env_` is either null or a valid napi_env per N-API contract.
+        let env = unsafe { env_.as_ref() };
+        if let (Some(loop_), Some(env)) = (loop_, env) {
+            debug_assert!(core::ptr::eq(loop_.global.unwrap().as_ptr(), env.to_js()));
+        }
     }
     #[cfg(not(debug_assertions))]
     let _ = env_;

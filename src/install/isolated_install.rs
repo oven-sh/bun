@@ -100,6 +100,33 @@ struct StackFrame {
     hasher: Wyhash,
 }
 
+/// Lockfile string hash of the DefinitelyTyped package name for `name`:
+/// `react` -> `@types/react`, `@scope/pkg` -> `@types/scope__pkg`.
+/// `None` when the mangled name is too long to be a real package name.
+fn types_package_name_hash(name: &[u8]) -> Option<PackageNameHash> {
+    const PREFIX: &[u8] = b"@types/";
+    let mut buf = [0u8; 256];
+    buf[..PREFIX.len()].copy_from_slice(PREFIX);
+    let mut len = PREFIX.len();
+    for &c in name.strip_prefix(b"@").unwrap_or(name) {
+        if c == b'/' {
+            if len + 2 > buf.len() {
+                return None;
+            }
+            buf[len] = b'_';
+            buf[len + 1] = b'_';
+            len += 2;
+        } else {
+            if len >= buf.len() {
+                return None;
+            }
+            buf[len] = c;
+            len += 1;
+        }
+    }
+    Some(semver::semver_string::Builder::string_hash(&buf[..len]))
+}
+
 #[derive(Clone, Copy)]
 struct WorkFrame {
     v: u32,
@@ -1163,6 +1190,7 @@ pub(crate) fn install_isolated_packages(
 
             let node_pkg_ids = store.nodes.items_pkg_id();
             let node_dep_ids = store.nodes.items_dep_id();
+            let node_peers = store.nodes.items_peers();
 
             let pkgs = lockfile.packages.slice();
             let pkg_names = pkgs.items_name();
@@ -1177,6 +1205,16 @@ pub(crate) fn install_isolated_packages(
             // lockfile) will have their lifecycle scripts run this install; treat
             // them the same as lockfile-trusted packages for eligibility.
             let trusted_from_update = manager.find_trusted_dependencies_from_update_requests();
+
+            // Name hashes of every `@types/*` package in the lockfile. Only
+            // non-empty for projects using DefinitelyTyped packages.
+            let mut types_pkg_name_hashes: ArrayHashMap<PackageNameHash, ()> =
+                ArrayHashMap::default();
+            for pkg_idx in 0..lockfile.packages.len() {
+                if pkg_names[pkg_idx].slice(string_buf).starts_with(b"@types/") {
+                    types_pkg_name_hashes.put(pkg_name_hashes[pkg_idx], ())?;
+                }
+            }
 
             let mut states = vec![State::Unvisited; store.entries.len()].into_boxed_slice();
 
@@ -1285,6 +1323,47 @@ pub(crate) fn install_isolated_packages(
                                     .is_some_and(|n| **n == *dep_name)
                                 {
                                     break 'eligible false;
+                                }
+                                // TypeScript type-checks this entry's declaration
+                                // files at their realpath inside `<cache>/links/`
+                                // and resolves their imports by walking
+                                // node_modules upward from there, falling back to
+                                // `@types/*`. That walk never re-enters the
+                                // project, so a peer import typed by a
+                                // project-installed `@types/*` package would
+                                // silently resolve as untyped. Keep such entries
+                                // project-local, where the hidden hoisted layer
+                                // (`node_modules/.bun/node_modules`) is reachable.
+                                if types_pkg_name_hashes.count() > 0 {
+                                    let peers = &node_peers[node_id.get() as usize];
+                                    'next_peer: for peer in peers.slice() {
+                                        let peer_name = dependencies[peer.dep_id as usize]
+                                            .name
+                                            .slice(string_buf);
+                                        let Some(types_name_hash) =
+                                            types_package_name_hash(peer_name)
+                                        else {
+                                            continue;
+                                        };
+                                        if types_pkg_name_hashes
+                                            .get_index(&types_name_hash)
+                                            .is_none()
+                                        {
+                                            continue;
+                                        }
+                                        // An entry that depends on the `@types`
+                                        // package itself (a lib declaring
+                                        // `@types/react` in its real deps) keeps
+                                        // it resolvable inside the store.
+                                        for dep in entry_dependencies[idx].slice() {
+                                            if dependencies[dep.dep_id as usize].name_hash
+                                                == types_name_hash
+                                            {
+                                                continue 'next_peer;
+                                            }
+                                        }
+                                        break 'eligible false;
+                                    }
                                 }
                                 break 'eligible true;
                             }

@@ -4750,6 +4750,7 @@ impl<'a> HTTPClient<'a> {
         let mut location: &[u8] = b"";
         let mut pretend_304 = false;
         let mut is_server_sent_events = false;
+        let mut unsupported_transfer_coding = false;
         let mut content_codings: u32 = 0;
         for (header_i, header) in response.headers.list.iter().enumerate() {
             match hash_header_name(header.name()) {
@@ -4836,7 +4837,11 @@ impl<'a> HTTPClient<'a> {
                             Some(Encoding::Chunked) => {
                                 self.state.transfer_encoding = Encoding::Chunked;
                             }
-                            Some(_) => {}
+                            Some(Encoding::Identity) => {}
+                            // We never send a TE request header, so any other coding
+                            // has no decoder here. Defer the error: RFC 9112 §6.1
+                            // allows this header on HEAD/304 where there is no body.
+                            Some(_) => unsupported_transfer_coding = true,
                             None => return Err(crate::Error::UnsupportedTransferEncoding),
                         }
                     }
@@ -5228,6 +5233,9 @@ impl<'a> HTTPClient<'a> {
                 // undrained body bytes so it must be closed, not pooled.
                 self.state.flags.allow_keepalive = false;
                 return Ok(ShouldContinue::Finished);
+            }
+            if unsupported_transfer_coding && self.state.transfer_encoding != Encoding::Chunked {
+                return Err(crate::Error::UnsupportedTransferEncoding);
             }
             Ok(ShouldContinue::ContinueStreaming)
         } else {

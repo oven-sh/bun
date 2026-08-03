@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
@@ -364,7 +364,7 @@ console.log("About manifest:", aboutHtml);
   // changes; otherwise the browser 304s to a body that points at chunks the
   // server no longer has.
   test("html-import/etag-changes-with-referenced-chunks", async () => {
-    const dir = tempDirWithFiles("html-etag", {
+    await using dir = tempDir("html-etag", {
       "server.ts": `import m from "./index.html"; console.log(JSON.stringify(m));`,
       "index.html": `<!doctype html><script type="module" src="./app.ts"></script>`,
       "app.ts": `console.log(1);`,

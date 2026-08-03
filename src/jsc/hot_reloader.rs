@@ -1,7 +1,9 @@
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use bun_collections::{StringHashMap, StringSet};
+#[cfg(not(windows))]
+use bun_collections::StringHashMap;
+use bun_collections::StringSet;
 use bun_core::Output;
 use bun_core::ZStr;
 #[cfg(not(windows))]
@@ -37,22 +39,6 @@ pub enum ImportWatcher {
 const _: () = assert!(bun_watcher::Loader::File.0 == bun_ast::Loader::File as u8);
 
 impl ImportWatcher {
-    pub fn start(&mut self) -> Result<(), crate::CrateError> {
-        match self {
-            ImportWatcher::Hot(w) => w.start().map_err(Into::into),
-            ImportWatcher::Watch(w) => w.start().map_err(Into::into),
-            ImportWatcher::None => Ok(()),
-        }
-    }
-
-    #[inline]
-    pub fn index_of(&self, hash: bun_watcher::HashType) -> Option<u32> {
-        match self {
-            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w.index_of(hash),
-            ImportWatcher::None => None,
-        }
-    }
-
     /// Look up the cached fd (and `package_json` column) for `hash` under the
     /// watcher's mutex, snapshotting both before returning.
     ///
@@ -159,8 +145,7 @@ impl HotReloaderCtx for VirtualMachine {
         // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
         // `enable_hot_module_reloading`; non-null whenever the reloader is
         // running. The cast recovers the concrete type the field was erased to.
-        let import_watcher = unsafe { &mut *self.bun_watcher.cast::<ImportWatcher>() };
-        match import_watcher {
+        match unsafe { &mut *self.bun_watcher.cast::<ImportWatcher>() } {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => &mut **w,
             ImportWatcher::None => unreachable!("bun_watcher_mut on un-enabled reloader"),
         }
@@ -316,12 +301,9 @@ impl HotReloaderEventLoop for EventLoop {
     }
 }
 
-/// `bun build --watch` instantiates `NewHotReloader<BundleV2, AnyEventLoop, true>`.
-/// With `RELOAD_IMMEDIATELY = true`, `Task::enqueue` either diverges via
-/// `bun_core::reload_process()` or takes the kill-signal branch — but the
-/// latter requires `watch_kill_signal_has_listeners()`, which is never true
-/// for the `BundleV2`/`AnyEventLoop` instantiations, so this is never
-/// reached.
+/// `bun build --watch` instantiates `NewHotReloader<BundleV2, AnyEventLoop, true>`. With
+/// `RELOAD_IMMEDIATELY = true`, `Task::enqueue` either diverges or takes the kill-signal branch —
+/// the latter needs `watch_kill_signal_has_listeners()`, never true here, so this is never reached.
 impl HotReloaderEventLoop for bun_event_loop::AnyEventLoop {
     fn enqueue_task_concurrent(_this: &Self, _task: core::ptr::NonNull<ConcurrentTask>) {
         unreachable!()
@@ -473,13 +455,14 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     /// BACKREF to the owning context (Bundler / VM transpiler store) that
     /// created this reloader. Set once at init and never reassigned; the
     /// context outlives the reloader (and every `Task` it spawns).
-    pub ctx: bun_ptr::BackRef<Ctx>,
-    pub verbose: bool,
-    pub pending_count: AtomicU32,
+    pub ctx: bun_ptr::BackRef<Ctx, bun_ptr::Mut>,
+    pub(crate) verbose: bool,
+    pub(crate) pending_count: AtomicU32,
 
-    pub main: MainFile,
+    pub(crate) main: MainFile,
 
-    pub tombstones: StringHashMap<*mut Fs::EntriesOption>,
+    #[cfg(not(windows))]
+    pub(crate) tombstones: StringHashMap<*mut Fs::EntriesOption>,
 
     _event_loop: PhantomData<*mut EventLoopType>,
 }
@@ -489,11 +472,11 @@ pub struct MainFile {
     // `'static` is the API contract of `enable_hot_module_reloading`
     // (`entry_path: Option<&'static [u8]>`): the entry path is owned by the
     // Ctx, which outlives the leaked Reloader for the process lifetime.
-    pub dir: &'static [u8],
-    pub dir_hash: bun_watcher::HashType,
+    pub(crate) dir: &'static [u8],
+    pub(crate) dir_hash: bun_watcher::HashType,
 
     pub file: &'static [u8],
-    pub hash: bun_watcher::HashType,
+    pub(crate) hash: bun_watcher::HashType,
 
     /// On macOS, vim's atomic save triggers a race condition:
     /// 1. Old file gets NOTE_RENAME (file renamed to temp name: a.js -> a.js~)
@@ -505,7 +488,7 @@ pub struct MainFile {
     /// To fix this: when the entrypoint gets NOTE_RENAME, we set this flag
     /// and skip the reload. Then when the parent directory gets NOTE_WRITE,
     /// we check if the file exists and trigger the reload.
-    pub is_waiting_for_dir_change: bool,
+    pub(crate) is_waiting_for_dir_change: bool,
 }
 
 impl Default for MainFile {
@@ -521,7 +504,7 @@ impl Default for MainFile {
 }
 
 impl MainFile {
-    pub fn init(file: &'static [u8]) -> MainFile {
+    pub(crate) fn init(file: &'static [u8]) -> MainFile {
         let mut main = MainFile {
             file,
             hash: if !file.is_empty() {
@@ -545,15 +528,15 @@ impl MainFile {
 }
 
 pub struct Task<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
-    pub count: u8,
-    pub hashes: [u32; 8],
+    pub(crate) count: u8,
+    pub(crate) hashes: [u32; 8],
     // Only meaningful for the DevServer Ctx, but Rust can't branch a field
     // type on a generic parameter without specialization, so it is stored
     // unconditionally (8 fat pointers of overhead for non-DevServer Ctx).
-    pub paths: [&'static [u8]; 8],
+    pub(crate) paths: [&'static [u8]; 8],
     /// Left `None` until [`Self::enqueue`] populates it on the heap copy.
-    pub concurrent_task: Option<ConcurrentTask>,
-    pub reloader: *mut NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>,
+    pub(crate) concurrent_task: Option<ConcurrentTask>,
+    pub(crate) reloader: *mut NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>,
 }
 
 impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
@@ -562,7 +545,7 @@ where
     Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
     EventLoopType: HotReloaderEventLoop,
 {
-    pub fn init_empty(
+    pub(crate) fn init_empty(
         reloader: *mut NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>,
     ) -> Self {
         Self {
@@ -610,7 +593,7 @@ where
         unsafe { (*core::ptr::addr_of!((*self.reloader).ctx)).as_ptr() }
     }
 
-    pub fn append(&mut self, id: u32) {
+    pub(crate) fn append(&mut self, id: u32) {
         if self.count == 8 {
             self.enqueue();
             self.count = 0;
@@ -648,7 +631,7 @@ where
         }
     }
 
-    pub fn enqueue(&mut self) {
+    pub(crate) fn enqueue(&mut self) {
         crate::mark_binding!();
         if self.count == 0 {
             return;
@@ -658,6 +641,7 @@ where
         // loop so the JS thread emits them before execve (node runs the child's
         // handlers on kill); otherwise execve immediately (node's default kill).
         if RELOAD_IMMEDIATELY && !crate::posix_signal_handle::watch_kill_signal_has_listeners() {
+            crate::node_compile_cache::persist_now();
             Output::flush();
             flush_changed_paths_for_reload();
             bun_core::reload_process(
@@ -691,15 +675,9 @@ where
                 task: JscTask::new(tag, that.cast::<()>()),
                 ..Default::default()
             });
-            // `&that.concurrent_task` is an interior pointer into a
-            // Box-allocated Task; the event loop must not outlive `that`.
-            //
-            // Inlines `NewHotReloader::enqueue_task_concurrent` to avoid forming
-            // a whole-struct `&NewHotReloader` (see `Self::pending_count` doc).
-            // `RELOAD_IMMEDIATELY` either diverged above or took the
-            // kill-signal branch; for the BundleV2/AnyEventLoop instantiations
-            // `watch_kill_signal_has_listeners()` is never true, so this path
-            // only runs with `RELOAD_IMMEDIATELY = false`.
+            // `&that.concurrent_task` is interior to a Box-allocated Task; the loop must not
+            // outlive `that`. Inlines `enqueue_task_concurrent` to avoid forming a whole-struct
+            // `&NewHotReloader`. BundleV2/AnyEventLoop reach here only with RELOAD_IMMEDIATELY=false.
             let ctx = self.ctx_ptr();
             // SAFETY: ctx outlives reloader (BACKREF); `event_loop()` returns
             // the live event-loop pointer owned by `Ctx`.
@@ -711,13 +689,9 @@ where
         }
         self.count = 0;
 
-        // The JS thread will emit the kill-signal listeners then execve. If it's
-        // stuck in synchronous code it never drains the posted task, so saving
-        // the file would stop restarting the process. Arm a one-shot detached
-        // timer that forces the reload after a bounded window (node's watcher
-        // SIGKILLs an unresponsive child after its kill-signal grace period).
-        // The watcher thread itself returns to its normal blocking read, so the
-        // responsive-JS path behaves exactly as it did without this fallback.
+        // The JS thread emits kill-signal listeners then execve; if it's stuck in sync code it
+        // never drains the posted task. Arm a one-shot timer that forces the reload after a
+        // bounded window (node's watcher SIGKILLs an unresponsive child after its grace period).
         if RELOAD_IMMEDIATELY {
             arm_watch_reload_grace_timer();
         }
@@ -728,34 +702,56 @@ static WATCH_RELOAD_GRACE_ARMED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 fn arm_watch_reload_grace_timer() {
-    if WATCH_RELOAD_GRACE_ARMED.swap(true, core::sync::atomic::Ordering::Relaxed) {
+    if WATCH_RELOAD_GRACE_ARMED.load(core::sync::atomic::Ordering::Relaxed) {
         return;
     }
-    let _ = std::thread::Builder::new()
+    let reload_started = bun_core::is_process_reload_in_progress_on_another_thread;
+    let handler_running = crate::posix_signal_handle::is_emitting_watch_kill_signal;
+    let force = || -> ! {
+        Output::flush();
+        bun_core::reload_process(
+            CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
+            false,
+        );
+        unreachable!();
+    };
+    let spawned = std::thread::Builder::new()
         .name("WatchReloadGrace".into())
-        .spawn(|| {
-            const GRACE_MS: u64 = 500;
+        .spawn(move || {
             const STEP_MS: u64 = 10;
+            // Budget to drain the posted WatchReloadTask; extended once when
+            // the kill-signal emit is observed so a bounded synchronous
+            // handler has time to finish before being torn down mid-run.
+            const DRAIN_MS: u64 = 500;
+            const HANDLER_MS: u64 = 2000;
+            let mut deadline = DRAIN_MS;
+            let mut extended = false;
             let mut waited = 0u64;
-            while waited < GRACE_MS && !bun_core::is_process_reload_in_progress_on_another_thread()
-            {
+            while waited < deadline {
+                if reload_started() {
+                    // execve prep has begun; park until it tears this thread down.
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(3600));
+                    }
+                }
+                if !extended && handler_running() {
+                    deadline = waited + HANDLER_MS;
+                    extended = true;
+                }
                 std::thread::sleep(std::time::Duration::from_millis(STEP_MS));
                 waited += STEP_MS;
             }
-            if !bun_core::is_process_reload_in_progress_on_another_thread() {
-                Output::flush();
-                bun_core::reload_process(
-                    CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
-                    false,
-                );
-                unreachable!();
-            }
-            // The JS thread owns the reload; park until execve tears this
-            // thread down (re-arming is pointless, the process is going away).
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(3600));
-            }
-        });
+            // Deadline hit without reload_process starting: either the task
+            // never drained, or the handler itself is wedged. Force it (node
+            // SIGKILLs the child after its own grace period either way).
+            force();
+        })
+        .is_ok();
+    if spawned {
+        WATCH_RELOAD_GRACE_ARMED.store(true, core::sync::atomic::Ordering::Relaxed);
+    } else {
+        force();
+    }
 }
 
 impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
@@ -764,64 +760,8 @@ where
     Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
     EventLoopType: HotReloaderEventLoop,
 {
-    /// # Safety
-    /// `ctx` must point to a live `Ctx` that outlives the returned watcher and
-    /// the leaked `NewHotReloader` (BACKREF held for the process lifetime).
-    pub unsafe fn init(
-        ctx: *mut Ctx,
-        fs: &'static FileSystem,
-        verbose: bool,
-        clear_screen_flag: bool,
-    ) -> Box<Watcher> {
-        let reloader = bun_core::heap::into_raw(Box::new(Self {
-            // SAFETY: precondition — `ctx` is the live owning context; it
-            // outlives the reloader and every Task spawned from it (BACKREF).
-            ctx: unsafe { bun_ptr::BackRef::from_raw(ctx) },
-            verbose: cfg!(feature = "debug_logs") || verbose,
-            pending_count: AtomicU32::new(0),
-            main: MainFile::default(),
-            tombstones: StringHashMap::default(),
-            _event_loop: PhantomData,
-        }));
-
-        // SAFETY: single-threaded init; watcher thread not yet started.
-        CLEAR_SCREEN.store(clear_screen_flag, core::sync::atomic::Ordering::Relaxed);
-        let mut watcher = match Watcher::init(reloader, fs.top_level_dir) {
-            Ok(w) => w,
-            Err(err) => {
-                bun_core::handle_error_return_trace(&err);
-                Output::panic(format_args!(
-                    "Failed to enable File Watcher: {}",
-                    err.name()
-                ));
-            }
-        };
-        if let Err(err) = watcher.start() {
-            bun_core::handle_error_return_trace(&err);
-            // A --watch child that just execve'd can transiently fail
-            // pthread_create on musl; exit with the message (the parent
-            // watcher restarts) rather than reporting a crash.
-            bun_core::pretty_errorln!(
-                "<red>error<r><d>:<r> Failed to start File Watcher: {}",
-                err.name()
-            );
-            Output::flush();
-            bun_core::Global::exit(1);
-        }
-        watcher
-    }
-
     fn debug(args: core::fmt::Arguments<'_>) {
-        if cfg!(feature = "debug_logs") {
-            bun_core::scoped_log!(hot_reloader, "{}", args);
-        } else {
-            bun_core::pretty_errorln!("<cyan>watcher<r><d>:<r> {}", args);
-        }
-    }
-
-    pub fn event_loop(&self) -> *mut EventLoopType {
-        // `ctx` is a BACKREF that outlives the reloader.
-        self.ctx.event_loop()
+        bun_core::pretty_errorln!("<cyan>watcher<r><d>:<r> {}", args);
     }
 
     /// # Safety
@@ -830,24 +770,25 @@ where
     /// process lifetime.
     pub unsafe fn enable_hot_module_reloading(this: *mut Ctx, entry_path: Option<&'static [u8]>) {
         // SAFETY: precondition — `this` is the live owning `Ctx`; it outlives
-        // the reloader allocated below.
-        let ctx = unsafe { &mut *this };
-
-        if ctx.is_watcher_enabled() {
+        // the reloader allocated below. Borrows are scoped per access.
+        if unsafe { (*this).is_watcher_enabled() } {
             return;
         }
 
         let reloader = bun_core::heap::into_raw(Box::new(Self {
             // SAFETY: `this` is the live owning context; it outlives the reloader.
-            ctx: unsafe { bun_ptr::BackRef::from_raw(this) },
-            verbose: cfg!(feature = "debug_logs") || ctx.log_level_at_least_info(),
+            ctx: unsafe { bun_ptr::BackRef::from_raw_mut(this) },
+            // SAFETY: see above.
+            verbose: unsafe { (*this).log_level_at_least_info() },
             pending_count: AtomicU32::new(0),
             main: MainFile::init(entry_path.unwrap_or(b"")),
+            #[cfg(not(windows))]
             tombstones: StringHashMap::default(),
             _event_loop: PhantomData,
         }));
 
-        let watcher = match Watcher::init(reloader, ctx.watcher_top_level_dir()) {
+        // SAFETY: see above; `watcher_top_level_dir` returns `&'static [u8]`.
+        let watcher = match Watcher::init(reloader, unsafe { (*this).watcher_top_level_dir() }) {
             Ok(w) => w,
             Err(err) => {
                 bun_core::handle_error_return_trace(&err);
@@ -858,15 +799,17 @@ where
             }
         };
 
-        let watcher_ptr = ctx.install_bun_watcher(watcher, RELOAD_IMMEDIATELY);
+        // SAFETY: see above.
+        let watcher_ptr = unsafe { (*this).install_bun_watcher(watcher, RELOAD_IMMEDIATELY) };
 
         // SAFETY: single-threaded init; watcher thread not yet started.
         CLEAR_SCREEN.store(
-            ctx.compute_clear_screen(),
+            // SAFETY: see above.
+            unsafe { (*this).compute_clear_screen() },
             core::sync::atomic::Ordering::Relaxed,
         );
 
-        // SAFETY: `watcher_ptr` was just installed into `ctx` and is live.
+        // SAFETY: `watcher_ptr` was just installed into the ctx and is live.
         if let Err(err) = unsafe { (*watcher_ptr).start() } {
             bun_core::handle_error_return_trace(&err);
             bun_core::pretty_errorln!(
@@ -888,7 +831,7 @@ where
         self.tombstones.get(key).copied()
     }
 
-    pub fn on_error(_: &mut Self, err: &bun_sys::Error) {
+    pub(crate) fn on_error(_: &mut Self, err: &bun_sys::Error) {
         // `bun_sys::Error::name()` does the errno→tag-name lookup.
         Output::err(err.name(), "Watcher crashed", ());
         if cfg!(debug_assertions) {
@@ -908,12 +851,12 @@ where
         unsafe { self.ctx.get_mut() }
     }
 
-    pub fn get_context(&mut self) -> &mut Watcher {
+    pub(crate) fn get_context(&mut self) -> &mut Watcher {
         self.ctx_mut().bun_watcher_mut()
     }
 
     #[inline(never)]
-    pub fn on_file_update(
+    pub(crate) fn on_file_update(
         &mut self,
         events: &mut [bun_watcher::WatchEvent],
         changed_files: &[ChangedFilePath],
@@ -961,9 +904,6 @@ where
             // SAFETY: the Watcher outlives this call (it owns the Reloader that calls us).
             unsafe { (*ctx).flush_evictions() };
         });
-        // SAFETY: the Watcher outlives this call (it owns the Reloader that calls us).
-        let ctx = unsafe { &mut *ctx };
-
         let fs: &mut FileSystem = FileSystem::instance();
         let rfs: &mut Fs::file_system::RealFS = &mut fs.fs;
         #[cfg(windows)]
@@ -990,7 +930,19 @@ where
                     if event.op.contains(WatchOp::DELETE)
                         || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE)
                     {
-                        ctx.remove_at_index(bun_watcher::Kind::File, event.index, 0, &[]);
+                        // SAFETY: the Watcher outlives this call (it owns the
+                        // Reloader that calls us); `remove_at_index::<false>`
+                        // only buffers the eviction, and the borrow is scoped
+                        // to this call so it never overlaps the watchlist
+                        // column slices above.
+                        unsafe {
+                            (*ctx).remove_at_index::<false>(
+                                bun_watcher::Kind::File,
+                                event.index,
+                                0,
+                                &[],
+                            )
+                        };
                     }
 
                     if self.verbose {
@@ -1213,8 +1165,10 @@ where
 
                         if let Some(dir_ent) = entries_option {
                             // SAFETY: dir_ent points into rfs.entries (or a tombstoned copy);
-                            // both outlive this loop iteration.
-                            let dir_ent = unsafe { &mut *dir_ent };
+                            // both outlive this loop iteration. Shared access only —
+                            // `entries()` takes `&self` and per-entry mutation below goes
+                            // through the entry's own mutex + cells.
+                            let dir_ent = unsafe { &*dir_ent };
                             let mut last_file_hash: bun_watcher::HashType =
                                 bun_watcher::HashType::MAX;
 
@@ -1276,12 +1230,17 @@ where
                                                                     )
                                                                 ));
                                                             }
-                                                            ctx.remove_at_index(
-                                                                bun_watcher::Kind::File,
-                                                                entry_id as u16,
-                                                                0,
-                                                                &[],
-                                                            );
+                                                            // SAFETY: see the
+                                                            // File-arm call
+                                                            // above.
+                                                            unsafe {
+                                                                (*ctx).remove_at_index::<false>(
+                                                                    bun_watcher::Kind::File,
+                                                                    entry_id as u16,
+                                                                    0,
+                                                                    &[],
+                                                                )
+                                                            };
                                                         }
                                                     }
 

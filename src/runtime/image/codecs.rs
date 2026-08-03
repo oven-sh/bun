@@ -29,7 +29,7 @@ pub use super::backend_coregraphics as system_backend;
 pub use super::backend_wic as system_backend;
 
 /// `true` on platforms where `system_backend` is present.
-pub(crate) const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
+const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 
 /// Process-global selector exposed as `Bun.Image.backend`.
 ///
@@ -209,9 +209,9 @@ bun_core::comptime_string_map! {
 
 #[derive(Default)]
 pub struct Decoded {
-    pub rgba: Vec<u8>, // global allocator (mimalloc)
-    pub width: u32,
-    pub height: u32,
+    pub(crate) rgba: Vec<u8>, // global allocator (mimalloc)
+    pub(crate) width: u32,
+    pub(crate) height: u32,
     /// ICC color profile bytes pulled from the source container (JPEG APP2,
     /// PNG iCCP, WebP ICCP), global-allocator-owned. `None` when the
     /// source didn't carry one or the decode path doesn't extract it —
@@ -223,7 +223,7 @@ pub struct Decoded {
     /// with them. Dropping it on a Display-P3 / Adobe RGB / XYB source
     /// would reinterpret the values as sRGB and visibly shift the
     /// colours. See issue #30197.
-    pub icc_profile: Option<Vec<u8>>,
+    pub(crate) icc_profile: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
@@ -261,11 +261,11 @@ pub(crate) const DEFAULT_MAX_PIXELS: u64 = 0x3FFF * 0x3FFF;
 #[derive(Copy, Clone, Default)]
 pub struct DecodeHint {
     /// Final output dims (after rotate). 0 = "no resize, full decode".
-    pub target_w: u32,
-    pub target_h: u32,
+    pub(crate) target_w: u32,
+    pub(crate) target_h: u32,
 }
 
-pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded, Error> {
+pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded, Error> {
     let fmt = Format::sniff(bytes).ok_or(Error::UnknownFormat)?;
     match fmt {
         Format::Jpeg => jpeg::decode(bytes, max_pixels, hint),
@@ -430,20 +430,20 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
 
 #[derive(Copy, Clone)]
 pub struct EncodeOptions {
-    pub format: Format,
+    pub(crate) format: Format,
     /// 0–100 for JPEG/WebP-lossy. Ignored for PNG.
-    pub quality: u8,
+    pub(crate) quality: u8,
     /// WebP only: emit lossless VP8L instead of lossy VP8.
-    pub lossless: bool,
+    pub(crate) lossless: bool,
     /// PNG only: zlib level 0–9. -1 = libspng default.
-    pub compression_level: i8,
+    pub(crate) compression_level: i8,
     /// PNG only: quantize to ≤ `colors` and emit an indexed PNG.
-    pub palette: bool,
-    pub colors: u16,
+    pub(crate) palette: bool,
+    pub(crate) colors: u16,
     /// PNG palette only: Floyd–Steinberg error-diffusion dither.
-    pub dither: bool,
+    pub(crate) dither: bool,
     /// JPEG only: emit a progressive scan script (coarse-to-fine render).
-    pub progressive: bool,
+    pub(crate) progressive: bool,
     /// ICC profile to embed in the output container (JPEG APP2, PNG iCCP,
     /// WebP ICCP). `None` ⇒ no profile chunk/marker is written. The
     /// pipeline forwards this from the decode step so a non-sRGB source
@@ -452,7 +452,7 @@ pub struct EncodeOptions {
     // SAFETY invariant: borrowed from the caller and only valid for the
     // duration of `encode()`; raw ptr instead of a lifetime param per the
     // repo rule against lifetime params on structs.
-    pub icc_profile: Option<NonNull<[u8]>>,
+    pub(crate) icc_profile: Option<NonNull<[u8]>>,
 }
 
 impl Default for EncodeOptions {
@@ -482,8 +482,8 @@ impl Default for EncodeOptions {
 pub struct Encoded {
     // SAFETY: fat pointer (ptr+len) owned by whichever C allocator produced
     // it; `free` is the matching deallocator. Not a Box — drop must call `free`.
-    pub bytes: NonNull<[u8]>,
-    pub free: unsafe extern "C" fn(*mut c_void, *mut c_void),
+    pub(crate) bytes: NonNull<[u8]>,
+    pub(crate) free: unsafe extern "C" fn(*mut c_void, *mut c_void),
 }
 
 impl Drop for Encoded {

@@ -383,6 +383,112 @@ test.concurrent("rejects a RESP simple-string reply whose line terminator never 
   }
 });
 
+test.concurrent(
+  "RedisClient read buffer stays bounded when every socket read ends with a partial reply",
+  async () => {
+    const ROUNDS = isASAN ? 900 : 1200;
+    const src = `
+    const B = 131072;
+    const K = 64;
+    const WINDOW = 16;
+    const CRLF = "\\r\\n";
+    const body = Buffer.alloc(B, "x");
+    const header = Buffer.from("$" + B + CRLF);
+    const first = Buffer.concat([header, body, Buffer.from(CRLF), header, body.subarray(0, K)]);
+    const next = Buffer.concat([body.subarray(K), Buffer.from(CRLF), header, body.subarray(0, K)]);
+    const GET = "*2" + CRLF + "$3" + CRLF + "GET" + CRLF + "$1" + CRLF + "k" + CRLF;
+    const net = require("node:net");
+    const sockets = [];
+    const server = net.createServer(socket => {
+      sockets.push(socket);
+      socket.setNoDelay(true);
+      socket.on("error", () => {});
+      let buf = "";
+      let hello = false;
+      let replied = 0;
+      socket.on("data", d => {
+        buf += d.toString("latin1");
+        if (!hello) {
+          if (!buf.includes("HELLO")) return;
+          hello = true;
+          buf = "";
+          socket.write("+OK" + CRLF);
+          return;
+        }
+        let idx;
+        while ((idx = buf.indexOf(GET)) !== -1) {
+          buf = buf.slice(idx + GET.length);
+          socket.write(replied++ === 0 ? first : next);
+        }
+      });
+    });
+    await new Promise((resolve, reject) => {
+      server.listen(0, "127.0.0.1", resolve);
+      server.on("error", reject);
+    });
+    const client = new Bun.RedisClient("redis://127.0.0.1:" + server.address().port, {
+      autoReconnect: false,
+      connectionTimeout: 30000,
+    });
+    await client.connect();
+    async function run(count, label) {
+      const inflight = [];
+      let received = 0;
+      for (let i = 0; i < count; i++) {
+        inflight.push(client.get("k"));
+        if (inflight.length === WINDOW || i === count - 1) {
+          const values = await Promise.all(inflight);
+          inflight.length = 0;
+          for (const v of values) {
+            if (typeof v !== "string" || v.length !== B) throw new Error("bad " + label + " reply " + received);
+            received++;
+          }
+          Bun.gc(false);
+        }
+      }
+      if (received !== count) throw new Error("expected " + count + " " + label + " replies, got " + received);
+    }
+    await run(2 * WINDOW, "warmup");
+    Bun.gc(true);
+    const baseline = process.memoryUsage().rss;
+    const ROUNDS = ${ROUNDS};
+    await run(ROUNDS, "measured");
+    Bun.gc(true);
+    await 1;
+    Bun.gc(true);
+    const growthMB = (process.memoryUsage().rss - baseline) / (1024 * 1024);
+    const trafficMB = (ROUNDS * (B + K + 16)) / (1024 * 1024);
+    client.close();
+    for (const s of sockets) s.destroy();
+    server.close();
+    console.log(JSON.stringify({ growthMB, trafficMB }));
+    process.exit(0);
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    const { growthMB, trafficMB } = JSON.parse(stdout.trim());
+    expect(trafficMB).toBeGreaterThan(70);
+    // ASAN's allocator keeps freed pages resident, so the child's RSS tracks
+    // peak allocation there rather than retention; the tight ratio is
+    // enforced on non-sanitized lanes.
+    expect(growthMB).toBeLessThan(trafficMB * (isASAN ? 1.5 : 0.85));
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  },
+  180_000,
+);
+
 // Buffer-mode replies (`getBuffer` and friends) adopt the RESP parser's
 // payload allocation as the Buffer backing store instead of copying it. The
 // pointer is handed to JSC and freed by the ArrayBuffer deallocator when the

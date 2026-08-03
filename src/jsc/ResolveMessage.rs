@@ -21,8 +21,8 @@ pub struct ResolveMessage {
     // Note: only the referrer path's `.text` is ever read;
     // store the duped text directly so we don't pull in `bun_paths::fs::Path`
     // (which is lifetime-parameterised over its backing buffer).
-    pub referrer: Option<Box<[u8]>>,
-    pub logged: Cell<bool>,
+    pub(crate) referrer: Option<Box<[u8]>>,
+    pub(crate) logged: Cell<bool>,
 }
 
 impl Default for ResolveMessage {
@@ -56,14 +56,9 @@ fn import_kind_label(kind: ImportKind) -> &'static [u8] {
     }
 }
 
-/// Host-agnostic bare-specifier check for Node ESM error shaping. Node
-/// classifies specifiers platform-independently (URL-based), so this must not
-/// vary by host: relative (`./`, `../`, `.`, `..`), separator-led (`/`, `\`),
-/// and ASCII-letter drive forms (`C:/`, `C:\`) are path-like; everything else
-/// is a package. Unlike host-native `bun_paths::is_absolute`, the drive byte
-/// must be alphabetic — its Windows arm accepts any byte before `:`, which
-/// made `:://x` classify as a module on Windows but a package on POSIX
-/// (Node says "Cannot find package '::'" on both).
+/// Host-agnostic bare-specifier check for Node ESM error shaping. Must not vary by host:
+/// relative, separator-led, and ASCII-letter drive forms are path-like; everything else is a
+/// package. Unlike `bun_paths::is_absolute`, the drive byte must be alphabetic.
 fn is_bare_esm_specifier(s: &[u8]) -> bool {
     let is_sep = |b: u8| b == b'/' || b == b'\\';
     match s {
@@ -260,7 +255,7 @@ impl ResolveMessage {
         out
     }
 
-    pub fn to_string_fn(&self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_string_fn(&self, global: &JSGlobalObject) -> JSValue {
         let mut text = Vec::new();
         // Keep `String(err)` consistent with `err.message`/`err.stack`, which
         // route through `node_message()` for the reshaped module-not-found

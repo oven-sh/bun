@@ -3,12 +3,8 @@ interface Transpiler {
 }
 
 export function unstableParse(this: Transpiler, code: any, opts: any) {
-  const result = this.$unstableParseNative(code, opts);
-  if (!result || !(result.buffer instanceof ArrayBuffer)) {
-    return result;
-  }
-
-  const buffer: ArrayBuffer = result.buffer;
+  // Native throws on every failure path and otherwise returns {buffer: ArrayBuffer}.
+  const buffer: ArrayBuffer = this.$unstableParseNative(code, opts).buffer;
   const dv = new DataView(buffer);
   if (dv.getUint32(0, true) !== 0x42554e41) throw new TypeError("unstable_parse: bad buffer magic");
   const version = dv.getUint32(4, true);

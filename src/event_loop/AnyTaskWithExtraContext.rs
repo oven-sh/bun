@@ -6,10 +6,10 @@ use core::marker::PhantomData;
 use core::ptr::NonNull;
 
 pub struct AnyTaskWithExtraContext {
-    pub ctx: Option<NonNull<()>>,
-    pub callback: fn(*mut (), *mut ()),
+    pub(crate) ctx: Option<NonNull<()>>,
+    pub(crate) callback: fn(*mut (), *mut ()),
     /// Intrusive link for `UnboundedQueue(AnyTaskWithExtraContext, .next)` (MiniEventLoop).
-    pub next: bun_threading::Link<AnyTaskWithExtraContext>,
+    pub(crate) next: bun_threading::Link<AnyTaskWithExtraContext>,
 }
 
 impl Default for AnyTaskWithExtraContext {
@@ -77,7 +77,7 @@ impl AnyTaskWithExtraContext {
         std::ptr::from_mut::<Self>(self)
     }
 
-    pub fn run(&mut self, extra: *mut c_void) {
+    pub(crate) fn run(&mut self, extra: *mut c_void) {
         let callback = self.callback;
         let ctx = self.ctx;
         // SAFETY: caller contract — `ctx` was set by `init`/`from*` to a live pointer.

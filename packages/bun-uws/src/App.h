@@ -85,6 +85,7 @@ namespace uWS {
         unsigned int crl_count = 0;
         int allow_partial_trust_chain = 0;
         const char *sigalgs = nullptr;
+        const char *ecdh_curve = nullptr;
 
         /* Conversion operator used internally */
         operator struct us_bun_socket_context_options_t() const {
@@ -418,19 +419,16 @@ public:
 
         /* Terminate on misleading idleTimeout values */
         if (behavior.idleTimeout && behavior.idleTimeout < 8) {
-            std::cerr << "Error: idleTimeout must be either 0 or greater than 8!" << std::endl;
             std::terminate();
         }
 
         /* Maximum idleTimeout is 16 minutes */
         if (behavior.idleTimeout > 240 * 4) {
-            std::cerr << "Error: idleTimeout must not be greater than 960 seconds!" << std::endl;
             std::terminate();
         }
 
         /* Maximum maxLifetime is 4 hours */
         if (behavior.maxLifetime > 240) {
-            std::cerr << "Error: maxLifetime must not be greater than 240 minutes!" << std::endl;
             std::terminate();
         }
 

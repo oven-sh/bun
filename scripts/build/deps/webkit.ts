@@ -3,14 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-// oven-sh/WebKit main: macOS + Windows artifacts cross-compiled on Linux,
-// -lto variants built with ThinLTO (per-module summaries for cross-language
-// importing), every x64 at the nehalem floor (no separate -baseline variant),
-// typed-array constructor ClassInfo kept address-unique under LTO, the
-// Windows ICU data table filtered + per-item zstd compressed, and Windows
-// unwind info (RtlAddGrowableFunctionTable) registered for the fixed JIT
-// pool (LLInt pending offlineasm .seh_* emission).
-export const WEBKIT_VERSION = "a40d462206e1caf8388062120acde61e37a4ae7d";
+export const WEBKIT_VERSION = "34c01d13391e00c06862a3d2c5b7fff350ac87e0";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -112,6 +105,11 @@ function prebuiltDestDir(cfg: Config): string {
 // ───────────────────────────────────────────────────────────────────────────
 // Lib paths — relative to destDir (prebuilt) or buildDir (local)
 // ───────────────────────────────────────────────────────────────────────────
+
+export function webkitTestFFIPath(cfg: Config): string {
+  const root = cfg.webkit === "prebuilt" ? prebuiltDestDir(cfg) : depBuildDir(cfg, "WebKit");
+  return resolve(root, "bin", cfg.windows ? "testFFI.exe" : "testFFI");
+}
 
 /** Build a lib path under the WebKit install's lib/ dir. */
 function wkLib(cfg: Config, name: string): string {

@@ -63,21 +63,6 @@ extern "C" mach_port_t io_darwin_create_machport(int32_t fd,
     }
 }
 
-extern "C" bool getaddrinfo_send_reply(mach_port_t port,
-    void (*sendReply)(void*))
-{
-    mach_msg_empty_rcv_t msg;
-    mach_msg_return_t status;
-
-    status = mach_msg(&msg.header, MACH_RCV_MSG, 0, sizeof(msg), port,
-        MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
-    if (status != MACH_MSG_SUCCESS) {
-        return false;
-    }
-    sendReply(&msg);
-    return true;
-}
-
 extern "C" bool io_darwin_schedule_wakeup(mach_port_t waker)
 {
     mach_msg_header_t msg = {

@@ -188,7 +188,7 @@ pub mod prompt {
 
     /// Reads bytes until `delimiter` (exclusive), erroring with `StreamTooLong`
     /// once `max_size` bytes have been appended.
-    pub fn read_until_delimiter_array_list_append_assume_capacity<R: ReadByte>(
+    pub(crate) fn read_until_delimiter_array_list_append_assume_capacity<R: ReadByte>(
         reader: &mut R,
         array_list: &mut Vec<u8>,
         delimiter: u8,
@@ -229,7 +229,7 @@ pub mod prompt {
 
     /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
     #[bun_jsc::host_fn(export = "WebCore__prompt")]
-    pub(crate) fn call(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    fn call(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments();
         let output = Output::writer();
         let has_message = !arguments.is_empty();

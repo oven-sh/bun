@@ -556,6 +556,13 @@ describe("zlib.zstd", () => {
     expect(roundtrip.toString()).toEqual(inputString);
   });
 
+  it.each([undefined, null])("zstdCompress accepts explicit %p options", async opts => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    zlib.zstdCompress(inputString, opts, (err, out) => (err ? reject(err) : resolve(out)));
+    const compressed = await promise;
+    expect(compressed.toString("base64")).toEqual(compressedString);
+  });
+
   it("zstdCompressSync", () => {
     const compressed = zlib.zstdCompressSync(inputString);
     expect(compressed.toString("base64")).toEqual(compressedString);
@@ -564,6 +571,12 @@ describe("zlib.zstd", () => {
   it("zstdDecompressSync", () => {
     const roundtrip = zlib.zstdDecompressSync(compressedBuffer);
     expect(roundtrip.toString()).toEqual(inputString);
+  });
+
+  it("zstdDecompressSync decodes concatenated frames", () => {
+    const f1 = zlib.zstdCompressSync(Buffer.from("first\n"));
+    const f2 = zlib.zstdCompressSync(Buffer.from("second\n"));
+    expect(zlib.zstdDecompressSync(Buffer.concat([f1, f2])).toString()).toBe("first\nsecond\n");
   });
 
   it("can compress streaming", async () => {

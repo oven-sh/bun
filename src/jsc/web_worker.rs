@@ -397,14 +397,14 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn WebWorker__getParentWorker(vm: &VirtualMachine) -> *mut c_void {
+extern "C" fn WebWorker__getParentWorker(vm: &VirtualMachine) -> *mut c_void {
     vm.worker_ref()
         .map(|w| w.cpp_worker)
         .unwrap_or(core::ptr::null_mut())
 }
 
 impl WebWorker {
-    pub fn has_requested_terminate(&self) -> bool {
+    pub(crate) fn has_requested_terminate(&self) -> bool {
         self.requested_terminate.load(Ordering::Acquire)
     }
 
@@ -471,7 +471,7 @@ impl WebWorker {
     /// set and nothing to clean up (no keep-alive held, no allocation
     /// outstanding).
     #[unsafe(export_name = "WebWorker__create")]
-    pub unsafe extern "C" fn create(
+    pub(crate) unsafe extern "C" fn create(
         cpp_worker: *mut c_void,
         parent: *mut VirtualMachine,
         name_str: BunString,
@@ -633,7 +633,7 @@ impl WebWorker {
     /// allocator is mimalloc (thread-safe), so the caller's thread doesn't
     /// matter.
     #[unsafe(export_name = "WebWorker__destroy")]
-    pub unsafe extern "C" fn destroy(this: *mut WebWorker) {
+    pub(crate) unsafe extern "C" fn destroy(this: *mut WebWorker) {
         // SAFETY: this was heap-allocated in create(); C++ owns it and calls
         // destroy exactly once.
         let this = unsafe { bun_core::heap::take(this) };
@@ -655,7 +655,7 @@ impl WebWorker {
     /// dereferences this struct; materialising `&mut WebWorker` here would be
     /// aliased-&mut UB.
     #[unsafe(export_name = "WebWorker__setRef")]
-    pub extern "C" fn set_ref(this: *mut WebWorker, value: bool) {
+    pub(crate) extern "C" fn set_ref(this: *mut WebWorker, value: bool) {
         // `this` is a valid heap allocation owned by C++ `WebCore::Worker`
         // (alive while JSWorker holds its Ref) — `ParentRef` invariant holds.
         // `bun_io::js_vm_ctx()` resolves to this (parent) thread's loop, which
@@ -685,7 +685,7 @@ impl WebWorker {
     /// `vm_lock`, reading `vm`); materialising `&mut WebWorker` on the parent
     /// thread while the worker holds any reference is aliased-&mut UB.
     #[unsafe(export_name = "WebWorker__notifyNeedTermination")]
-    pub extern "C" fn notify_need_termination(this: *mut WebWorker) {
+    pub(crate) extern "C" fn notify_need_termination(this: *mut WebWorker) {
         // `this` is a valid heap allocation owned by C++ `WebCore::Worker`
         // (alive while JSWorker holds its Ref) — `ParentRef` invariant holds.
         // Only atomic / lock-guarded fields are touched cross-thread; never
@@ -721,7 +721,7 @@ impl WebWorker {
     /// (the worker thread has exited by the time this runs, so `&mut` would be
     /// sound here, but matching signatures avoids surprises).
     #[unsafe(export_name = "WebWorker__releaseParentPollRef")]
-    pub extern "C" fn release_parent_poll_ref(this: *mut WebWorker) {
+    pub(crate) extern "C" fn release_parent_poll_ref(this: *mut WebWorker) {
         // `this` is a valid heap allocation owned by C++ — `ParentRef` invariant
         // holds; parent-thread only.
         let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
@@ -732,12 +732,12 @@ impl WebWorker {
     /// (`parent_poll_ref` keeps the parent loop alive until the close task
     /// runs).
     #[inline]
-    pub fn parent_vm(&self) -> bun_ptr::BackRef<VirtualMachine> {
+    pub(crate) fn parent_vm(&self) -> bun_ptr::BackRef<VirtualMachine> {
         self.parent
     }
 
     #[inline]
-    pub fn execution_context_id(&self) -> u32 {
+    pub(crate) fn execution_context_id(&self) -> u32 {
         self.execution_context_id
     }
 
@@ -746,12 +746,12 @@ impl WebWorker {
     /// `Zig__GlobalObject__create` so the ZigGlobalObject is born with its
     /// WorkerGlobalScope wired.
     #[inline]
-    pub fn cpp_worker(&self) -> *mut c_void {
+    pub(crate) fn cpp_worker(&self) -> *mut c_void {
         self.cpp_worker
     }
 
     #[inline]
-    pub fn mini(&self) -> bool {
+    pub(crate) fn mini(&self) -> bool {
         self.mini
     }
 
@@ -869,8 +869,8 @@ impl WebWorker {
             // reads the slice and owns its own temporary allocations.
             let parsed = unsafe { (hooks.parse_worker_exec_argv_allow_addons)(exec_argv) };
             if let Some(allow_addons) = parsed {
-                // override the existing even if it was set
-                transform_options.allow_addons = Some(allow_addons);
+                let parent_allows = transform_options.allow_addons.unwrap_or(true);
+                transform_options.allow_addons = Some(parent_allows && allow_addons);
             }
         }
 
@@ -1310,6 +1310,9 @@ impl WebWorker {
             // worker VM is dealloc'd-without-Drop so anything still in
             // self.tasks leaks. Mirrors the global_exit() ordering.
             vm.event_loop_mut().release_queued_tasks_for_shutdown();
+            if let Some(rare) = vm.rare_data.as_deref_mut() {
+                rare.release_js_handles();
+            }
             exit_code = i32::from(vm.exit_handler.exit_code);
             global_object = Some(vm.global);
         }

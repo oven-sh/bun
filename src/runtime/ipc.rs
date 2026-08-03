@@ -606,7 +606,7 @@ pub(crate) fn decode_ipc_message(
 ) -> Result<DecodeIPCMessageResult, IPCDecodeError> {
     // The previous message's JS handler may have taken a worker's termination
     // trap; JSONParse with it pending trips LiteralParser's state assert.
-    if global.bun_vm().script_execution_status() != crate::ScriptExecutionStatus::Running {
+    if global.bun_vm().script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
         return Err(IPCDecodeError::JSTerminated);
     }
     match mode {

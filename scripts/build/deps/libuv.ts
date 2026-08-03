@@ -18,7 +18,7 @@ import type { Dependency } from "../source.ts";
 // instead of aborting on AssignProcessToJobObject failure (oven-sh/libuv#12),
 // and closes the process/thread handles on that error path (oven-sh/libuv#13).
 // To bump, update `bun`.
-const LIBUV_COMMIT = "3aab69bc2b7bc5a61d57ce91ca10b039f73d766d";
+const LIBUV_COMMIT = "89ee34396dc7f5f1bce620e23d9fe6bbd0facd97";
 
 // prettier-ignore
 const SHARED = [

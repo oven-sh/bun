@@ -3121,7 +3121,6 @@ where
                 this.run_error_handler(js_err);
                 return;
             }
-            // .InlineBlob,
             Body::Value::WTFStringImpl(_) | Body::Value::InternalBlob(_) | Body::Value::Blob(_) => {
                 // toBlobIfPossible checks for WTFString needing a conversion.
                 this.blob = value.use_as_any_blob_allow_non_utf8_string();
@@ -4150,8 +4149,6 @@ where
 
                 let total = bytes.len() + chunk.len();
                 'getter: {
-                    // TODO: small-body fast path via InlineBlob is not
-                    // implemented; always build an InternalBlob.
                     // Vec aborts on OOM (repo-wide abort-on-OOM policy).
                     bytes.reserve_exact(total.saturating_sub(bytes.len()));
                     bytes.extend_from_slice(chunk);

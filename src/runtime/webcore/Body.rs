@@ -277,6 +277,20 @@ impl Default for PendingValue {
 }
 
 impl PendingValue {
+    /// Once `readable` is set the live handle is `NewSource.producer`; these
+    /// hooks go stale when the producer (e.g. `FetchTasklet`) is freed.
+    fn detach_producer(&mut self) {
+        self.on_start_buffering = None;
+        self.on_start_streaming = None;
+        self.on_readable_stream_available = None;
+        if self.on_receive_value.is_none() {
+            // A registered `on_receive_value` means `task` is the consumer's
+            // ctx (overwriting the producer), read by `resolve()`.
+            self.task = None;
+        }
+        self.producer = streams::SourceHandle::None;
+    }
+
     /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global` back-pointer.
     #[inline]
     pub(crate) fn global(&self) -> &JSGlobalObject {
@@ -509,8 +523,6 @@ pub enum Value {
     /// Single-use Blob
     /// Avoids a heap allocation.
     InternalBlob(InternalBlob),
-    /// Single-use Blob that stores the bytes in the Value itself.
-    // InlineBlob(InlineBlob),
     Locked(PendingValue),
     Used,
     Empty,
@@ -544,7 +556,6 @@ pub enum Tag {
     Blob,
     WTFStringImpl,
     InternalBlob,
-    // InlineBlob,
     Locked,
     Used,
     Empty,
@@ -714,7 +725,6 @@ impl Value {
                 AnyBlob::Blob(b) => Value::Blob(b),
                 AnyBlob::InternalBlob(b) => Value::InternalBlob(b),
                 AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(s),
-                // AnyBlob::InlineBlob(b) => Value::InlineBlob(b),
             };
         }
     }
@@ -725,7 +735,6 @@ impl Value {
             Value::InternalBlob(b) => b.slice_const().len() as blob::SizeType,
             Value::WTFStringImpl(s) => wtf_impl(s).utf8_byte_length() as blob::SizeType,
             Value::Locked(l) => l.size_hint(),
-            // Value::InlineBlob(b) => b.slice_const().len() as blob::SizeType,
             _ => 0,
         }
     }
@@ -738,7 +747,6 @@ impl Value {
             // ByteStream buffer, separately accounted), so reporting the
             // content-length here mis-trains JSC's GC live-size estimate.
             Value::Locked(_) => 0,
-            // Value::InlineBlob(b) => b.slice_const().len(),
             _ => 0,
         }
     }
@@ -749,7 +757,6 @@ impl Value {
             Value::WTFStringImpl(s) => wtf_impl(s).byte_slice().len(),
             // See memory_cost(): size_hint is anticipated, not allocated.
             Value::Locked(_) => 0,
-            // Value::InlineBlob(b) => b.slice_const().len(),
             _ => 0,
         }
     }
@@ -909,9 +916,10 @@ impl Value {
         };
         locked.readable = webcore::readable_stream::Strong::init(readable, global_this);
 
-        if let Some(on_readable_stream_available) = locked.on_readable_stream_available {
+        if let Some(on_readable_stream_available) = locked.on_readable_stream_available.take() {
             on_readable_stream_available(locked.task.unwrap(), global_this, readable);
         }
+        locked.detach_producer();
 
         // In text mode the returned stream emits strings, so it must not be
         // cached as the body's byte stream (consulted by `.body`, `bodyUsed`,
@@ -1097,7 +1105,7 @@ impl Value {
                     // These ones must use promise.wrap() to handle exceptions thrown while calling .toJS() on the value.
                     // These exceptions can happen if the String is too long, ArrayBuffer is too large, JSON parse error, etc.
                     Action::GetText => match new {
-                        Value::WTFStringImpl(_) | Value::InternalBlob(_) /* | Value::InlineBlob(_) */ => {
+                        Value::WTFStringImpl(_) | Value::InternalBlob(_) => {
                             let mut blob = new.use_as_any_blob_allow_non_utf8_string();
                             let result = promise.wrap(global, |g| blob.to_string_transfer(g));
                             blob.detach();
@@ -1223,17 +1231,6 @@ impl Value {
                 wtf_ref.deref();
                 new_blob
             }
-            // Value::InlineBlob(_) => {
-            //     let cloned = self.InlineBlob.bytes;
-            //     // keep same behavior as InternalBlob but clone the data
-            //     let new_blob = Blob::create(
-            //         &cloned[0..self.InlineBlob.len],
-            //         VirtualMachine::get().global,
-            //         false,
-            //     );
-            //     *self = Value::Used;
-            //     new_blob
-            // }
             // `Blob::default()` leaves `global_this` null which matches the
             // don't-care contract here.
             _ => Blob::default(),
@@ -1292,7 +1289,6 @@ impl Value {
                     break 'brk AnyBlob::WTFStringImpl(str);
                 }
             }
-            // Value::InlineBlob(b) => AnyBlob::InlineBlob(b),
             Value::Locked(l) => l
                 .to_any_blob_allow_promise()
                 .unwrap_or(AnyBlob::Blob(Blob::default())),
@@ -1315,7 +1311,6 @@ impl Value {
                 let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
                 AnyBlob::WTFStringImpl(s)
             }
-            // Value::InlineBlob(b) => AnyBlob::InlineBlob(b),
             Value::Locked(l) => l
                 .to_any_blob_allow_promise()
                 .unwrap_or(AnyBlob::Blob(Blob::default())),
@@ -1538,13 +1533,14 @@ impl Value {
             global_this,
         );
 
-        if let Some(on_readable_stream_available) = locked.on_readable_stream_available {
+        if let Some(on_readable_stream_available) = locked.on_readable_stream_available.take() {
             on_readable_stream_available(
                 locked.task.unwrap(),
                 global_this,
                 locked.readable.get(global_this).unwrap(),
             );
         }
+        locked.detach_producer();
 
         let teed = match locked.readable.tee(global_this)? {
             Some(t) => t,
@@ -1694,7 +1690,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if let Some(stream) = locked.readable.get(global_object) {
                     stream.value.ensure_still_alive();
                     Self::stream_set_cached(js_value, global_object, stream.value);
-                    locked.readable.downgrade();
+                    locked.readable.downgrade(global_object);
                 }
             }
         }
@@ -2316,7 +2312,6 @@ impl<'a> ValueBufferer<'a> {
                 (self.on_finished_buffering)(self.ctx, b"", Some(err_copy), false);
                 return Ok(());
             }
-            // Value::InlineBlob(_) |
             Value::WTFStringImpl(_) | Value::InternalBlob(_) | Value::Blob(_) => {
                 // toBlobIfPossible checks for WTFString needing a conversion.
                 let mut input = value.use_as_any_blob_allow_non_utf8_string();

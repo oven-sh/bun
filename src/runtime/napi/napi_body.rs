@@ -365,6 +365,8 @@ pub enum NapiStatus {
     arraybuffer_expected = 19,
     detachable_arraybuffer_expected = 20,
     would_deadlock = 21,
+    no_external_buffers_allowed = 22,
+    cannot_run_js = 23,
 }
 
 /// This is not an `enum` so that the enum values cannot be trivially returned from NAPI functions,
@@ -701,7 +703,7 @@ extern "C" fn napi_create_string_utf8(
     let global_object = env.to_js();
     let string = match jsc::bun_string_jsc::create_utf8_for_js(global_object, slice) {
         Ok(v) => v,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
+        Err(_) => return env.generic_failure(),
     };
     result.set(env, string);
     env.ok()
@@ -1129,14 +1131,12 @@ extern "C" fn napi_async_init(
     env_: napi_env,
     _async_resource: napi_value,
     _async_resource_name: napi_value,
-    async_ctx: *mut *mut c_void,
+    async_ctx_: *mut *mut c_void,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_async_init");
     let env = get_env!(env_);
-    // SAFETY: async_ctx is a valid out-pointer per N-API contract. We store the
-    // original `*mut NapiEnv` (preserving write provenance) rather than deriving
-    // it from the `&NapiEnv` borrow.
-    unsafe { *async_ctx = env_.cast::<c_void>() };
+    let async_ctx = get_out!(env, async_ctx_);
+    *async_ctx = env_.cast::<c_void>();
     env.ok()
 }
 
@@ -1162,20 +1162,23 @@ extern "C" fn napi_make_callback(
     bun_output::scoped_log!(napi, "napi_make_callback");
     let env = preamble!(env_);
     let (recv, func) = (recv_.get(), func_.get());
+    if recv.is_empty() {
+        return env.invalid_arg();
+    }
+    if arg_count > 0 && args.is_null() {
+        return env.invalid_arg();
+    }
     if func.is_empty_or_undefined_or_null()
         || (!func.is_callable() && !func.is_async_context_frame())
     {
-        return NapiEnv::set_last_error(Some(env), NapiStatus::function_expected);
+        return env.invalid_arg();
     }
 
-    let this_value = if !recv.is_empty() {
-        recv
-    } else {
-        JSValue::UNDEFINED
-    };
-    let args_slice: &[JSValue] = if arg_count > 0 && !args.is_null() {
-        // SAFETY: napi_value is repr(transparent) over i64, same as JSValue; caller guarantees
-        // [args, args+arg_count) is valid.
+    let this_value = recv;
+    let args_slice: &[JSValue] = if arg_count > 0 {
+        // SAFETY: napi_value is repr(transparent) over i64, same as JSValue; the
+        // arg_count > 0 && args.is_null() case returned napi_invalid_arg above,
+        // and caller guarantees [args, args+arg_count) is valid.
         unsafe { bun_core::ffi::slice(args.cast::<JSValue>(), arg_count) }
     } else {
         &[]
@@ -1299,7 +1302,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_is_error(env_: napi_env, value_: napi_value, result: *mut bool) -> napi_status {
+extern "C" fn napi_is_error(env_: napi_env, value_: napi_value, result_: *mut bool) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_error");
     let env = get_env!(env_);
     env.check_gc();
@@ -1307,8 +1310,8 @@ extern "C" fn napi_is_error(env_: napi_env, value_: napi_value, result: *mut boo
     if value.is_empty() {
         return env.invalid_arg();
     }
-    // SAFETY: result is a valid out-pointer per N-API contract.
-    unsafe { *result = value.is_any_error() };
+    let result = get_out!(env, result_);
+    *result = value.is_any_error();
     env.ok()
 }
 
@@ -1549,7 +1552,7 @@ extern "C" fn napi_resolve_deferred(
     let resolution = resolution_.get();
     let prom = deferred_box.get();
     if prom.resolve(env.to_js(), resolution).is_err() {
-        return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception);
+        return env.generic_failure();
     }
     env.ok()
 }
@@ -1567,7 +1570,7 @@ extern "C" fn napi_reject_deferred(
     let rejection = rejection_.get();
     let prom = deferred_box.get();
     if prom.reject(env.to_js(), Ok(rejection)).is_err() {
-        return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception);
+        return env.generic_failure();
     }
     env.ok()
 }
@@ -2002,7 +2005,7 @@ extern "C" fn napi_create_buffer_copy(
     let result = get_out!(env, result_);
     let buffer: JSValue = match JSValue::create_buffer_from_length(env.to_js(), length) {
         Ok(b) => b,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
+        Err(_) => return env.generic_failure(),
     };
     if let Some(mut array_buf) = buffer.as_array_buffer(env.to_js()) {
         if length > 0 {
@@ -3153,14 +3156,19 @@ extern "C" fn napi_unref_threadsafe_function(
     func: napi_threadsafe_function,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_unref_threadsafe_function");
-    let env = get_env!(env_);
-    // SAFETY: func is non-null per N-API contract.
-    let func = unsafe { &mut *func };
-    if let Some(loop_) = func.event_loop.as_ref() {
+    // SAFETY: caller passes a pointer from napi_create_threadsafe_function.
+    let Some(func) = (unsafe { func.as_mut() }) else {
+        return NapiStatus::invalid_arg as napi_status;
+    };
+    #[cfg(debug_assertions)]
+    // SAFETY: env_ is either null or a valid napi_env per N-API contract.
+    if let (Some(loop_), Some(env)) = (func.event_loop.as_ref(), unsafe { env_.as_ref() }) {
         debug_assert!(core::ptr::eq(loop_.global.unwrap().as_ptr(), env.to_js()));
     }
+    #[cfg(not(debug_assertions))]
+    let _ = env_;
     func.unref();
-    env.ok()
+    NapiStatus::ok as napi_status
 }
 
 #[unsafe(no_mangle)]
@@ -3169,14 +3177,19 @@ extern "C" fn napi_ref_threadsafe_function(
     func: napi_threadsafe_function,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_ref_threadsafe_function");
-    let env = get_env!(env_);
-    // SAFETY: func is non-null per N-API contract.
-    let func = unsafe { &mut *func };
-    if let Some(loop_) = func.event_loop.as_ref() {
+    // SAFETY: caller passes a pointer from napi_create_threadsafe_function.
+    let Some(func) = (unsafe { func.as_mut() }) else {
+        return NapiStatus::invalid_arg as napi_status;
+    };
+    #[cfg(debug_assertions)]
+    // SAFETY: env_ is either null or a valid napi_env per N-API contract.
+    if let (Some(loop_), Some(env)) = (func.event_loop.as_ref(), unsafe { env_.as_ref() }) {
         debug_assert!(core::ptr::eq(loop_.global.unwrap().as_ptr(), env.to_js()));
     }
+    #[cfg(not(debug_assertions))]
+    let _ = env_;
     func.ref_();
-    env.ok()
+    NapiStatus::ok as napi_status
 }
 
 const NAPI_AUTO_LENGTH: usize = usize::MAX;

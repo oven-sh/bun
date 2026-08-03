@@ -37,14 +37,13 @@ describe.concurrent("bun run --workspaces", () => {
 
     expect(stderr).toBe("");
     // Packages run in parallel so output order is not deterministic; compare sorted lines.
+    // The root package must not be included when using --workspaces, which the exact line set proves.
     expect(stdout.split("\n").filter(Boolean).sort()).toEqual([
       "a test: Exited with code 0",
       "a test: package a test",
       "b test: Exited with code 0",
       "b test: package b test",
     ]);
-    // Root should not be included when using --workspaces
-    expect(stdout).not.toContain("root test");
     expect(exitCode).toBe(0);
   });
 

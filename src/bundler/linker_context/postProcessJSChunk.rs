@@ -98,7 +98,7 @@ pub(crate) fn post_process_js_chunk(
     // Create ModuleInfo for ESM bytecode in --compile builds
     let generate_module_info = c.options.generate_bytecode_cache
         && c.options.output_format == options::OutputFormat::Esm
-        && c.options.compile;
+        && c.options.compile_mode.is_executable();
     let loader =
         c.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize];
     let is_typescript = loader.is_type_script();
@@ -324,6 +324,7 @@ pub(crate) fn post_process_js_chunk(
                                         irp_id,
                                         default_id,
                                         local_name_id,
+                                        analyze_transpiled_module::ImportAttributes::None,
                                         false,
                                     );
                                 }
@@ -342,6 +343,7 @@ pub(crate) fn post_process_js_chunk(
                                         irp_id,
                                         alias_id,
                                         local_name_id,
+                                        analyze_transpiled_module::ImportAttributes::None,
                                         false,
                                     );
                                 }
@@ -355,7 +357,11 @@ pub(crate) fn post_process_js_chunk(
                                     let local_name = chunk.renamer.name_for_symbol(s.namespace_ref);
                                     mi.str(local_name)
                                 };
-                                mi.add_import_info_namespace(irp_id, local_name_id);
+                                mi.add_import_info_namespace(
+                                    irp_id,
+                                    local_name_id,
+                                    analyze_transpiled_module::ImportAttributes::None,
+                                );
                             }
                         }
                         _ => {}

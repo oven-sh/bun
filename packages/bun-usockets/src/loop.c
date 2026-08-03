@@ -490,7 +490,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 if (error || eof) {
                     connect_error = us_socket_get_error((struct us_socket_t *) p);
                     if (connect_error == 0) {
+#ifdef _WIN32
+                        connect_error = WSAECONNRESET;
+#else
                         connect_error = ECONNRESET;
+#endif
                     }
                 }
                 us_internal_socket_after_open((struct us_socket_t *) p, connect_error);

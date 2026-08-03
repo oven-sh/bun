@@ -712,6 +712,22 @@ describe("Bun.file in serve routes", () => {
       expect(await res.text()).toBe("56789");
       expect(res.headers.get("Content-Length")).toBe("5");
     });
+
+    // The slice is shorter than the file, so the byte budget runs out before
+    // the reader reports EOF: the response completes inline while a deferred
+    // completion still hops through the event loop. Repeated requests must
+    // each deliver exactly the slice and recycle the request context cleanly.
+    it("truncated-length EOF path completes cleanly across repeated requests", async () => {
+      for (let i = 0; i < 32; i++) {
+        const res = await fetch(new URL(`/partial-slice.txt`, server.url));
+        expect(res.status).toBe(200);
+        expect(await res.text()).toBe("56789");
+        expect(res.headers.get("Content-Length")).toBe("5");
+      }
+      // The pool is still healthy afterwards: an unrelated route responds.
+      const check = await fetch(new URL(`/hello-blob.txt`, server.url));
+      expect(check.status).toBe(200);
+    });
   });
 
   describe.concurrent("Special status codes", () => {

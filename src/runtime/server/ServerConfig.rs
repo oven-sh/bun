@@ -1495,7 +1495,7 @@ impl ServerConfig {
                 };
                 let hostname = base_url.hostname;
                 let needs_brackets: bool =
-                    strings::is_ipv6_address(hostname) && hostname[0] != b'[';
+                    bun_core::ip_address::is_ipv6_address(hostname) && hostname[0] != b'[';
                 let pathname = strings::trim_leading_char(base_url.pathname, b'/');
                 let mut buf: Vec<u8> = Vec::new();
                 if needs_brackets {
@@ -1556,7 +1556,8 @@ impl ServerConfig {
                 b"0.0.0.0"
             };
 
-            let needs_brackets: bool = strings::is_ipv6_address(hostname) && hostname[0] != b'[';
+            let needs_brackets: bool =
+                bun_core::ip_address::is_ipv6_address(hostname) && hostname[0] != b'[';
 
             let protocol: &[u8] = if args.ssl_config.is_some() {
                 b"https"

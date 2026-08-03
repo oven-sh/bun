@@ -60,8 +60,6 @@ public:
     Vector<RefPtr<PerformanceEntry>> getMarks(const String& name) const;
     Vector<RefPtr<PerformanceEntry>> getMeasures(const String& name) const;
 
-    static bool isRestrictedMarkName(const String& markName);
-
     size_t memoryCost() const;
 
 private:

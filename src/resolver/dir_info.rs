@@ -42,7 +42,7 @@ pub type Index = IndexType;
 /// in `BackRef::get` instead of being re-derived per wrapper type.
 #[repr(transparent)]
 #[derive(Copy, Clone)]
-pub struct DirInfoRef(bun_ptr::BackRef<DirInfo>);
+pub struct DirInfoRef(bun_ptr::BackRef<DirInfo, bun_ptr::Mut>);
 
 impl DirInfoRef {
     /// Wrap a raw BSSMap slot pointer.
@@ -57,7 +57,7 @@ impl DirInfoRef {
     pub(crate) const unsafe fn from_raw(p: *mut DirInfo) -> Self {
         // SAFETY: caller contract — `p` is a non-null BSSMap slot that
         // outlives every copy of the handle (the `BackRef` invariant).
-        DirInfoRef(unsafe { bun_ptr::BackRef::from_raw(p) })
+        DirInfoRef(unsafe { bun_ptr::BackRef::from_raw_mut(p) })
     }
 
     /// Wrap a BSSMap slot reference. Safe: a `&mut DirInfo` obtained from

@@ -36,8 +36,6 @@ namespace WebCore {
 using namespace JSC;
 using namespace Bun::WebStreams;
 
-static constexpr auto directControllerClosedMessage = "ReadableStreamDirectController is now closed"_s;
-
 const ClassInfo JSDirectStreamController::s_info = { "DirectStreamController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDirectStreamController) };
 
 JSDirectStreamController::JSDirectStreamController(VM& vm, Structure* structure, DirectSinkKind sinkKind)
@@ -433,17 +431,6 @@ static void callUnderlyingSourceClose(JSC::VM& vm, JSGlobalObject* globalObject,
         if (takeAbruptCompletion(globalObject, catchScope).isEmpty())
             return;
     }
-}
-
-// Drop the direct controller's retained user-source state once no further pull/close callbacks
-// can run (m_closed set, or the stream has left Readable). Idempotent.
-static void directStreamControllerClearSource(JSDirectStreamController* controller)
-{
-    controller->m_underlyingSource.clear();
-    controller->m_pull.clear();
-    controller->m_deferCloseReason.clear();
-    if (auto* stream = controller->m_stream.get())
-        readableStreamClearSourceBarriers(stream);
 }
 
 void JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue error)
@@ -897,6 +884,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectEndOfTickFlush, (JSGlobalOb
 }
 
 // The FIVE public own methods are JSBoundFunctions over these [bound-convention] targets.
+// Once m_closed is set they no-op: a late call from an in-flight pull() must not throw.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectWrite, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
@@ -905,7 +893,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectWrite, (JSGlobalObject *
     if (!controller) [[unlikely]]
         return JSValue::encode(jsUndefined());
     if (controller->m_closed)
-        return throwVMTypeError(globalObject, scope, directControllerClosedMessage);
+        return JSValue::encode(jsNumber(0));
     JSValue wrote = writeToDirectSink(globalObject, controller, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
     controller->armEndOfTickFlush(globalObject);
@@ -918,10 +906,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectClose, (JSGlobalObject *
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(0));
-    if (!controller) [[unlikely]]
+    if (!controller || controller->m_closed) [[unlikely]]
         return JSValue::encode(jsUndefined());
-    if (controller->m_closed)
-        return throwVMTypeError(globalObject, scope, directControllerClosedMessage);
     controller->onClose(globalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
@@ -932,10 +918,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectFlush, (JSGlobalObject *
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(0));
-    if (!controller) [[unlikely]]
+    if (!controller || controller->m_closed) [[unlikely]]
         return JSValue::encode(jsUndefined());
-    if (controller->m_closed)
-        return throwVMTypeError(globalObject, scope, directControllerClosedMessage);
     controller->onFlush(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
@@ -946,10 +930,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectError, (JSGlobalObject *
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(0));
-    if (!controller) [[unlikely]]
+    if (!controller || controller->m_closed) [[unlikely]]
         return JSValue::encode(jsUndefined());
-    if (controller->m_closed)
-        return throwVMTypeError(globalObject, scope, directControllerClosedMessage);
     controller->handleError(globalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
@@ -991,6 +973,15 @@ namespace WebStreams {
 using namespace JSC;
 using WebCore::JSDirectStreamController;
 using WebCore::JSStreamsRuntime;
+
+void directStreamControllerClearSource(JSDirectStreamController* controller)
+{
+    controller->m_underlyingSource.clear();
+    controller->m_pull.clear();
+    controller->m_deferCloseReason.clear();
+    if (auto* stream = controller->m_stream.get())
+        readableStreamClearSourceBarriers(stream);
+}
 
 void setUpDirectStreamController(JSC::JSGlobalObject* globalObject, JSReadableStream* stream, DirectSinkKind sinkKind, double highWaterMark)
 {

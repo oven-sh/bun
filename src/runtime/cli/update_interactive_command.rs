@@ -272,7 +272,7 @@ impl UpdateInteractiveCommand {
         }
 
         let cli = CommandLineArguments::parse(Subcommand::Update)?;
-        let silent = cli.silent;
+        let silent = cli.log_level.is_silent();
 
         let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Update)
         {

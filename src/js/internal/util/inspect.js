@@ -2997,30 +2997,4 @@ export default {
   formatWithOptions,
   getStringWidth,
   stripVTControlCharacters,
-  //! non-standard properties, should these be kept? (not currently exposed)
-  //stylizeWithColor,
-  //stylizeWithHTML(str, styleType) {
-  //  const style = inspect.styles[styleType];
-  //  if (style !== undefined) {
-  //    return `<span style="color:${style};">${escapeHTML(str)}</span>`;
-  //  }
-  //  return escapeHTML(str);
-  //},
 };
-
-// unused without `stylizeWithHTML`
-/*const entities = {
-  34: "&quot;",
-  38: "&amp;",
-  39: "&apos;",
-  60: "&lt;",
-  62: "&gt;",
-  160: "&nbsp;",
-};
-function escapeHTML(str) {
-  return str.replace(/[\u0000-\u002F\u003A-\u0040\u005B-\u0060\u007B-\u00FF]/g, c => {
-    const code = String(c.charCodeAt(0));
-    const ent = entities[code];
-    return ent || "&#" + code + ";";
-  });
-}*/

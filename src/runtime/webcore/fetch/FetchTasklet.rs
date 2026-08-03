@@ -5,7 +5,6 @@ use bun_boringssl as boringssl;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{MutableString, OwnedString, String as BunString, ZigStringSlice};
 use bun_event_loop::{
-    AnyTask::AnyTask,
     ConcurrentTask::{AutoDeinit, ConcurrentTask},
     Task, Taskable,
 };
@@ -37,7 +36,7 @@ use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Respo
 
 use bun_jsc::JsTerminatedResult;
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
-// ConcurrentTask/AnyTask callbacks at the tier-3 layer.
+// ConcurrentTask callbacks at the tier-3 layer.
 type ElJsResult<T> = bun_event_loop::JsResult<T>;
 
 use boringssl::c::{X509_free, d2i_X509};
@@ -1177,10 +1176,9 @@ impl FetchTasklet {
         let tracker = self.tracker;
         tracker.will_dispatch(&global_this);
         // defer block:
-        let dispatch_cleanup = |this: &mut FetchTasklet| {
+        let dispatch_cleanup = |_this: &mut FetchTasklet| {
             bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: promise_value is not null");
             tracker.did_dispatch(&global_this);
-            this.promise = jsc::JSPromiseStrong::empty();
         };
 
         let result = if success {
@@ -1212,69 +1210,16 @@ impl FetchTasklet {
 
         promise_value.ensure_still_alive();
 
-        struct Holder {
-            held: StrongOptional,
-            promise: jsc::JSPromiseStrong,
-            global_object: GlobalRef,
-            task: AnyTask,
-        }
-
-        impl Holder {
-            fn resolve(self_: *mut Holder) -> JsTerminatedResult<()> {
-                // SAFETY: allocated via heap::alloc below; consumed once
-                let mut self_ = unsafe { bun_core::heap::take(self_) };
-                // resolve the promise
-                let prom = self_.promise.value_or_empty().as_any_promise().unwrap();
-                let res = self_.held.swap();
-                res.ensure_still_alive();
-                let r = prom.resolve(&self_.global_object, res);
-                self_.held.deinit();
-                self_.promise = jsc::JSPromiseStrong::empty();
-                drop(self_);
-                r
-            }
-
-            fn reject(self_: *mut Holder) -> JsTerminatedResult<()> {
-                // SAFETY: allocated via heap::alloc below; consumed once
-                let mut self_ = unsafe { bun_core::heap::take(self_) };
-                // reject the promise
-                let prom = self_.promise.value_or_empty().as_any_promise().unwrap();
-                let res = self_.held.swap();
-                res.ensure_still_alive();
-                let r = prom.reject_with_async_stack(&self_.global_object, res);
-                self_.held.deinit();
-                self_.promise = jsc::JSPromiseStrong::empty();
-                drop(self_);
-                r
-            }
-        }
-
-        // Map `JsTerminated` to the low-tier `Terminated` tag so the dispatcher unwinds correctly.
-        fn resolve_erased(p: *mut Holder) -> ElJsResult<()> {
-            Holder::resolve(p).map_err(|_| bun_event_loop::ErasedJsError::Terminated)
-        }
-        fn reject_erased(p: *mut Holder) -> ElJsResult<()> {
-            Holder::reject(p).map_err(|_| bun_event_loop::ErasedJsError::Terminated)
-        }
-
-        let holder = bun_core::heap::into_raw(Box::new(Holder {
+        let holder = Box::new(FetchTaskletPromiseSettle {
             held: result,
             // we need the promise to be alive until the task is done
             promise: self.promise.take(),
             global_object: global_this,
-            task: AnyTask::default(),
-        }));
-        // SAFETY: holder is valid until consumed by resolve/reject
+            success,
+        });
+        // SAFETY: `vm.event_loop()` is the live JS-thread loop.
         unsafe {
-            (*holder).task = AnyTask::from_typed(
-                holder,
-                if success {
-                    resolve_erased
-                } else {
-                    reject_erased
-                },
-            );
-            (*vm.event_loop()).enqueue_task(Task::init(&raw mut (*holder).task));
+            (*vm.event_loop()).enqueue_task(Task::from_boxed(holder));
         }
 
         dispatch_cleanup(self);
@@ -2184,9 +2129,7 @@ impl FetchTasklet {
         );
         let http_client = fetch_tasklet.http.as_mut().unwrap();
         http_client.client.flags.is_streaming_request_body = is_stream;
-        http_client.client.flags.force_http2 = fetch_options.force_http2;
-        http_client.client.flags.force_http3 = fetch_options.force_http3;
-        http_client.client.flags.force_http1 = fetch_options.force_http1;
+        http_client.client.flags.forced_protocol = fetch_options.forced_protocol;
         http_client.client.flags.is_node_http_client = fetch_options.is_node_http_client;
         fetch_tasklet.is_waiting_request_stream_start = is_stream;
         if is_stream {
@@ -2834,9 +2777,7 @@ pub struct FetchOptions {
     pub(crate) unix_socket_path: ZigStringSlice,
     pub(crate) ssl_config: Option<http::ssl_config::SharedPtr>,
     pub(crate) upgraded_connection: bool,
-    pub(crate) force_http2: bool,
-    pub(crate) force_http3: bool,
-    pub(crate) force_http1: bool,
+    pub(crate) forced_protocol: Option<http::Protocol>,
     pub(crate) is_node_http_client: bool,
     pub(crate) compress: Option<http::compress_body::CompressOption>,
 }
@@ -2870,11 +2811,37 @@ impl Default for FetchOptions {
             unix_socket_path: ZigStringSlice::EMPTY,
             ssl_config: None,
             upgraded_connection: false,
-            force_http2: false,
-            force_http3: false,
-            force_http1: false,
+            forced_protocol: None,
             is_node_http_client: false,
             compress: None,
         }
     }
+}
+
+pub(crate) struct FetchTaskletPromiseSettle {
+    held: StrongOptional,
+    promise: jsc::JSPromiseStrong,
+    global_object: GlobalRef,
+    success: bool,
+}
+
+impl FetchTaskletPromiseSettle {
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub(crate) fn run(mut self: Box<Self>) -> jsc::JsTerminatedResult<()> {
+        let prom = self.promise.value_or_empty().as_any_promise().unwrap();
+        let res = self.held.swap();
+        res.ensure_still_alive();
+        let r = if self.success {
+            prom.resolve(&self.global_object, res)
+        } else {
+            prom.reject_with_async_stack(&self.global_object, res)
+        };
+        self.held.deinit();
+        self.promise = jsc::JSPromiseStrong::empty();
+        r
+    }
+}
+
+impl bun_event_loop::Taskable for FetchTaskletPromiseSettle {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletPromiseSettle;
 }

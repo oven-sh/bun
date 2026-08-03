@@ -65,12 +65,6 @@ public:
         m_slots[index].set(vm, this, value);
     }
 
-    JSC::JSValue read(unsigned index) const
-    {
-        ASSERT(index < capacity);
-        return m_slots[index].get();
-    }
-
     bool clear(unsigned index)
     {
         ASSERT(index < capacity);
@@ -81,15 +75,6 @@ public:
     }
 
     bool isFull() const { return m_occupiedCount == capacity; }
-
-    // Clear the stored value but keep the slot occupied so a later write()
-    // reuses it without touching the bitset (Bun__StrongRef__clear).
-    void clearValue(unsigned index)
-    {
-        ASSERT(index < capacity);
-        ASSERT(m_occupied.get(index));
-        m_slots[index].clear();
-    }
 
     // Returns the lowest free slot index, or `capacity` if full.
     unsigned findFreeSlot() const

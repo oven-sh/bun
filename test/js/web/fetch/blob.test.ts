@@ -249,6 +249,8 @@ test("new Blob('123') is NOT supported", async () => {
 });
 
 test("blob: can set name property #10178", () => {
+  // `name` is not an accessor on Blob.prototype (it lives on File.prototype),
+  // so assigning to it creates a plain own property, matching Node and browsers.
   const blob = new Blob([Buffer.from("Hello, World")]);
   // @ts-expect-error
   expect(blob.name).toBeUndefined();
@@ -259,7 +261,7 @@ test("blob: can set name property #10178", () => {
   // @ts-expect-error
   blob.name = 10;
   // @ts-expect-error
-  expect(blob.name).toBe("logo.svg");
+  expect(blob.name).toBe(10);
   Object.defineProperty(blob, "name", {
     value: 42,
     writable: false,
@@ -281,7 +283,7 @@ test("blob: can set name property #10178", () => {
   // @ts-expect-error
   myBlob.name = 10;
   // @ts-expect-error
-  expect(myBlob.name).toBe("logo.svg");
+  expect(myBlob.name).toBe(10);
   Object.defineProperty(myBlob, "name", {
     value: 42,
     writable: false,
@@ -300,6 +302,120 @@ test("blob: can set name property #10178", () => {
   expect(myOtherBlob.name).toBe("logo.svg");
   myOtherBlob.name = 10;
   expect(myOtherBlob.name).toBe(10);
+});
+
+// https://github.com/oven-sh/bun/issues/20700
+// https://github.com/oven-sh/bun/issues/14257
+test("name and lastModified live on File.prototype, not Blob.prototype", () => {
+  expect("name" in new Blob()).toBe(false);
+  expect("lastModified" in new Blob()).toBe(false);
+  expect(Object.getOwnPropertyNames(Blob.prototype).sort()).not.toContain("name");
+  expect(Object.getOwnPropertyNames(Blob.prototype).sort()).not.toContain("lastModified");
+
+  expect(File.prototype).not.toBe(Blob.prototype);
+  expect(Object.getPrototypeOf(File.prototype)).toBe(Blob.prototype);
+  expect(Object.getOwnPropertyNames(File.prototype)).toContain("name");
+  expect(Object.getOwnPropertyNames(File.prototype)).toContain("lastModified");
+  expect(File.prototype.constructor).toBe(File);
+  expect(Object.getPrototypeOf(File)).toBe(Blob);
+
+  const file = new File(["foo"], "bar.txt");
+  expect("name" in file).toBe(true);
+  expect("lastModified" in file).toBe(true);
+  expect(file.name).toBe("bar.txt");
+  expect(typeof file.lastModified).toBe("number");
+  expect(Object.getPrototypeOf(file)).toBe(File.prototype);
+  expect(file.constructor).toBe(File);
+  expect(file instanceof File).toBe(true);
+  expect(file instanceof Blob).toBe(true);
+  expect(file[Symbol.toStringTag]).toBe("File");
+  expect(Object.prototype.toString.call(file)).toBe("[object File]");
+
+  expect(new Blob() instanceof File).toBe(false);
+
+  // Patching File.prototype must not leak onto plain Blobs.
+  try {
+    (File.prototype as any).__filePrototypePatch = 7;
+    expect((new Blob(["b"]) as any).__filePrototypePatch).toBeUndefined();
+    expect((new File(["x"], "n") as any).__filePrototypePatch).toBe(7);
+  } finally {
+    delete (File.prototype as any).__filePrototypePatch;
+  }
+
+  // File.prototype.slice() returns a plain Blob, not a File.
+  const slice = file.slice(0, 2);
+  expect(Object.getPrototypeOf(slice)).toBe(Blob.prototype);
+  expect(slice instanceof File).toBe(false);
+  expect("name" in slice).toBe(false);
+  expect(slice[Symbol.toStringTag]).toBe("Blob");
+
+  // structuredClone preserves File-ness.
+  const cloned = structuredClone(file);
+  expect(Object.getPrototypeOf(cloned)).toBe(File.prototype);
+  expect(cloned.constructor).toBe(File);
+  expect(cloned.name).toBe("bar.txt");
+  expect(Object.getPrototypeOf(structuredClone(new Blob(["x"])))).toBe(Blob.prototype);
+
+  // Bun.file() keeps its documented .name / .lastModified via File.prototype.
+  const bunFile = Bun.file(import.meta.path);
+  expect("name" in bunFile).toBe(true);
+  expect(bunFile.name).toBe(import.meta.path);
+  expect(typeof bunFile.lastModified).toBe("number");
+  expect(bunFile instanceof Blob).toBe(true);
+
+  // WebIDL: attribute getters throw TypeError on incompatible receivers.
+  const nameGet = Object.getOwnPropertyDescriptor(File.prototype, "name").get;
+  const lmGet = Object.getOwnPropertyDescriptor(File.prototype, "lastModified").get;
+  expect(() => nameGet.call({})).toThrow(TypeError);
+  expect(() => lmGet.call({})).toThrow(TypeError);
+  expect(nameGet.call(file)).toBe("bar.txt");
+});
+
+test("Body.blob() returns a plain Blob even when the body is a File", async () => {
+  const bodies = [new File(["hello"], "x.txt"), Bun.file(import.meta.path)];
+  for (const body of bodies) {
+    const result = await new Response(body).blob();
+    expect(Object.getPrototypeOf(result)).toBe(Blob.prototype);
+    expect(result instanceof File).toBe(false);
+    expect("name" in result).toBe(false);
+    expect(result[Symbol.toStringTag]).toBe("Blob");
+  }
+
+  // structuredClone of that result must also be a plain Blob.
+  const b = await new Response(new File(["hello"], "x.txt")).blob();
+  const cloned = structuredClone(b);
+  expect(Object.getPrototypeOf(cloned)).toBe(Blob.prototype);
+  expect(cloned instanceof File).toBe(false);
+  expect(Bun.inspect(b).startsWith("Blob")).toBe(true);
+});
+
+test("structuredClone of a file-backed plain Blob stays a Blob", async () => {
+  // These inputs share a Data::File store but have is_jsdom_file=false;
+  // the structured-clone round-trip must not promote them to File.prototype.
+  const bunFile = Bun.file(import.meta.path);
+  const inputs = [bunFile.slice(0, 5), new Blob([bunFile]), await new Response(bunFile).blob()];
+  for (const input of inputs) {
+    expect(Object.getPrototypeOf(input)).toBe(Blob.prototype);
+    const clone = structuredClone(input);
+    expect({
+      proto: Object.getPrototypeOf(clone) === Blob.prototype,
+      isFile: clone instanceof File,
+      hasName: "name" in clone,
+    }).toEqual({ proto: true, isFile: false, hasName: false });
+  }
+});
+
+test("File.prototype.constructor is set before the File global is touched", async () => {
+  // Bun.file() creates an instance with File.prototype before anything reads
+  // globalThis.File; .constructor must still resolve to File, not Blob.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `const c = Bun.file("/tmp/x").constructor; console.log(c.name, c === File);`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "File true", exitCode: 0 });
 });
 
 test("#12894", () => {

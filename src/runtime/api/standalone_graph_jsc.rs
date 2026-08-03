@@ -58,6 +58,12 @@ impl FileJsc for File {
             let store_ptr = store.as_ptr();
 
             let b = Blob::init_with_store(store, global);
+            // Embedded assets are conceptually files (they carry a name and
+            // represent a path in the compiled executable). Tag the cached
+            // blob so every `.dupe()` — from `Bun.embeddedFiles`, the
+            // `Bun.file()` standalone-graph short-circuit, or structured
+            // clone — routes through File.prototype.
+            b.is_jsdom_file.set(true);
 
             if let Some(mime) = MimeType::by_extension_no_default(strings::trim_leading_char(
                 bun_paths::extension(self.name),

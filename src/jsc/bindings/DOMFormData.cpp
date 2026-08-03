@@ -99,7 +99,10 @@ void DOMFormData::append(const String& name, const String& value)
 
 void DOMFormData::append(const String& name, RefPtr<Blob> blob, const String& filename)
 {
-    blob->setFileName(replaceUnpairedSurrogatesWithReplacementCharacter(String(filename)));
+    // https://xhr.spec.whatwg.org/#create-an-entry: a Blob entry is always
+    // surfaced as a File. A non-null fileName is what tells toJS(Blob&) to
+    // wrap with File.prototype; WebSocket blob payloads leave it null.
+    blob->setFileName(filename.isNull() ? emptyString() : replaceUnpairedSurrogatesWithReplacementCharacter(String(filename)));
     m_items.append({ replaceUnpairedSurrogatesWithReplacementCharacter(String(name)), blob });
 }
 void DOMFormData::remove(const StringView name)
@@ -148,7 +151,7 @@ void DOMFormData::set(const String& name, const String& value)
 
 void DOMFormData::set(const String& name, RefPtr<Blob> blob, const String& filename)
 {
-    blob->setFileName(filename);
+    blob->setFileName(filename.isNull() ? emptyString() : filename);
     set(name, { name, blob });
 }
 

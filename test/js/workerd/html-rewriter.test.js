@@ -1271,3 +1271,125 @@ describe("tagName, endTag.name, and comment.text setters", () => {
     expect(savedComment.text).toBeNull();
   });
 });
+
+describe("text handler does not transcode unmodified non-UTF-8 bytes", () => {
+  // A text handler forces every text token through encoding_rs's lossy decoder
+  // so the callback can observe `t.text` as a JS string. Previously the
+  // serializer then wrote that decoded string back, replacing every non-UTF-8
+  // input byte with U+FFFD even when the handler was a pure observer. The
+  // rewriter now re-emits the original input bytes for any chunk whose text
+  // was not replaced, so a no-op text handler is byte-identical to no handler.
+
+  const wrap = body => Buffer.concat([Buffer.from("<p>"), Buffer.from(body), Buffer.from("</p>")]);
+  const rewrite = async (src, spec) =>
+    Buffer.from(await new HTMLRewriter().on("*", spec).transform(new Response(src)).arrayBuffer());
+
+  // - lone continuation byte, multiple invalid bytes, invalid/valid UTF-8 mixed
+  // - truncated 2/3/4-byte sequence immediately before the closing tag (these
+  //   are the bytes encoding_rs holds as decoder state and flushes on the
+  //   lastInTextNode chunk)
+  // - text node that is ONLY a truncated sequence (handler call for the body
+  //   is skipped entirely; only the flush chunk fires)
+  // - invalid byte past 1 KB (fast-path prefix then slow path for the rest)
+  //   and before 1 KB (slow path loops past one decode-buffer fill)
+  // - ScriptData text-type and multiple sibling text nodes
+  const cases = [
+    ["lone continuation byte", wrap([0xa9])],
+    ["multiple invalid bytes", wrap([0xa9, 0xff, 0x80, 0xc0])],
+    [
+      "mixed valid and invalid UTF-8",
+      Buffer.concat([Buffer.from("<p>héllo"), Buffer.from([0xa9]), Buffer.from("wörld</p>")]),
+    ],
+    [
+      "truncated 3-byte lead before close tag",
+      Buffer.concat([Buffer.from("<p>aa"), Buffer.from([0xe2]), Buffer.from("</p>")]),
+    ],
+    [
+      "truncated 3-byte prefix before close tag",
+      Buffer.concat([Buffer.from("<p>aa"), Buffer.from([0xe2, 0x82]), Buffer.from("</p>")]),
+    ],
+    ["truncated 4-byte prefix before close tag", wrap([0xf0, 0x9f, 0x98])],
+    ["text node that is only a truncated lead byte", wrap([0xe2])],
+    [
+      "invalid byte after the 1 KB fast-path cutoff",
+      Buffer.concat([Buffer.from("<p>"), Buffer.alloc(2000, 0x61), Buffer.from([0xa9]), Buffer.from("z</p>")]),
+    ],
+    [
+      "invalid byte before the 1 KB fast-path cutoff",
+      Buffer.concat([Buffer.from("<p>"), Buffer.from([0xa9]), Buffer.alloc(3000, 0x62), Buffer.from("</p>")]),
+    ],
+    ["script text", Buffer.concat([Buffer.from("<script>var x="), Buffer.from([0xa9]), Buffer.from(";</script>")])],
+    [
+      "multiple text nodes",
+      Buffer.concat([
+        Buffer.from("<p>"),
+        Buffer.from([0xa9]),
+        Buffer.from("<b>"),
+        Buffer.from([0xff]),
+        Buffer.from("</b>"),
+        Buffer.from([0xc0]),
+        Buffer.from("</p>"),
+      ]),
+    ],
+  ];
+
+  describe.each(cases)("%s", (name, src) => {
+    it("no-op element text handler", async () => {
+      expect(await rewrite(src, { text() {} })).toEqual(src);
+    });
+    it("no-op onDocument text handler", async () => {
+      const out = Buffer.from(
+        await new HTMLRewriter()
+          .onDocument({ text() {} })
+          .transform(new Response(src))
+          .arrayBuffer(),
+      );
+      expect(out).toEqual(src);
+    });
+  });
+
+  it("reading .text observes U+FFFD but the output is still the raw bytes", async () => {
+    const src = Buffer.concat([Buffer.from("<p>x"), Buffer.from([0xa9]), Buffer.from("y</p>")]);
+    let seen = "";
+    const out = await rewrite(src, { text: t => void (seen += t.text) });
+    expect(seen).toBe("x\uFFFDy");
+    expect(out).toEqual(src);
+  });
+
+  it("a truncated lead byte is reported as U+FFFD on the lastInTextNode chunk and still round-trips", async () => {
+    const src = wrap([0xe2]);
+    const chunks = [];
+    const out = await rewrite(src, { text: t => chunks.push({ text: t.text, last: t.lastInTextNode }) });
+    expect(out).toEqual(src);
+    expect(chunks).toEqual([{ text: "\uFFFD", last: true }]);
+  });
+
+  it("before()/after() keep the chunk body as raw bytes", async () => {
+    const src = wrap([0xa9]);
+    const out = await rewrite(src, {
+      text(t) {
+        if (!t.lastInTextNode) t.before("[", { html: true });
+        if (t.lastInTextNode) t.after("]", { html: true });
+      },
+    });
+    expect(out).toEqual(Buffer.concat([Buffer.from("<p>["), Buffer.from([0xa9]), Buffer.from("]</p>")]));
+  });
+
+  it("replace() and remove() still drop the raw bytes", async () => {
+    const src = wrap([0xa9]);
+    expect(await rewrite(src, { text: t => t.replace("X", { html: true }) })).toEqual(Buffer.from("<p>XX</p>"));
+    expect(await rewrite(src, { text: t => t.remove() })).toEqual(Buffer.from("<p></p>"));
+  });
+
+  it("text outside the selector passes through even when matched text is replaced", async () => {
+    // <p>a\xa9b</p>c\xe9d
+    const src = Buffer.concat([wrap([0x61, 0xa9, 0x62]), Buffer.from([0x63, 0xe9, 0x64])]);
+    const out = Buffer.from(
+      await new HTMLRewriter()
+        .on("p", { text: t => t.replace("x", { html: true }) })
+        .transform(new Response(src))
+        .arrayBuffer(),
+    );
+    expect(out).toEqual(Buffer.concat([Buffer.from("<p>xx</p>c"), Buffer.from([0xe9, 0x64])]));
+  });
+});

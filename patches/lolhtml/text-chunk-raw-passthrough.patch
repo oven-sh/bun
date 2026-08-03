@@ -1,0 +1,387 @@
+--- a/src/rewritable_units/text_decoder.rs
++++ b/src/rewritable_units/text_decoder.rs
+@@ -1,6 +1,7 @@
+ use crate::base::{Bytes, SharedEncoding, SourceLocation, Spanned};
+ use crate::rewriter::RewritingError;
+ use encoding_rs::{CoderResult, Decoder, Encoding, UTF_8};
++use std::borrow::Cow;
+ 
+ const DEFAULT_BUFFER_LEN: usize = if cfg!(test) { 13 } else { 1024 };
+ 
+@@ -8,11 +9,23 @@
+     encoding: SharedEncoding,
+     pending_source_location_bytes_start: usize,
+     pending_text_streaming_decoder: Option<Decoder>,
++    // Raw input bytes the decoder has consumed whose decoded characters have
++    // NOT yet been delivered to `output_handler`. For UTF-8 this is exactly
++    // the incomplete-sequence tail encoding_rs keeps in its own state (<= 3
++    // bytes); it is owned here so the NEXT emitted chunk can expose those
++    // bytes as its `raw` prefix and preserve byte-identical passthrough.
++    pending_raw: Vec<u8>,
+     text_buffer: String,
+ }
+ 
+-pub(crate) type OutputHandlerCallback<'tmp> =
+-    dyn FnMut(&str, bool, &'static Encoding, SourceLocation) -> Result<(), RewritingError> + 'tmp;
++pub(crate) type OutputHandlerCallback<'tmp, 'i> = dyn FnMut(
++        &str,
++        Option<Cow<'i, [u8]>>,
++        bool,
++        &'static Encoding,
++        SourceLocation,
++    ) -> Result<(), RewritingError>
++    + 'tmp;
+ 
+ impl TextDecoder {
+     #[inline]
+@@ -22,6 +35,7 @@
+             pending_source_location_bytes_start: 0,
+             encoding,
+             pending_text_streaming_decoder: None,
++            pending_raw: Vec::new(),
+             // this will be later initialized to DEFAULT_BUFFER_LEN,
+             // because encoding_rs wants a slice
+             text_buffer: String::new(),
+@@ -31,7 +45,7 @@
+     #[inline]
+     pub fn flush_pending(
+         &mut self,
+-        output_handler: &mut OutputHandlerCallback<'_>,
++        output_handler: &mut OutputHandlerCallback<'_, '_>,
+     ) -> Result<(), RewritingError> {
+         if self.pending_text_streaming_decoder.is_some() {
+             self.feed_text(
+@@ -44,11 +58,11 @@
+     }
+ 
+     #[inline(never)]
+-    pub fn feed_text(
++    pub fn feed_text<'i>(
+         &mut self,
+-        input_span: Spanned<Bytes<'_>>,
++        input_span: Spanned<Bytes<'i>>,
+         last_in_text_node: bool,
+-        output_handler: &mut OutputHandlerCallback<'_>,
++        output_handler: &mut OutputHandlerCallback<'_, 'i>,
+     ) -> Result<(), RewritingError> {
+         let mut raw_input = input_span.as_slice();
+         let mut next_source_location_bytes_start = input_span.source_location().bytes().start;
+@@ -56,6 +70,7 @@
+         let encoding = self.encoding.get();
+ 
+         if let Some((utf8_text, rest)) = self.split_utf8_start(raw_input, encoding) {
++            debug_assert!(self.pending_raw.is_empty());
+             raw_input = rest;
+             let really_last = last_in_text_node && rest.is_empty();
+ 
+@@ -63,7 +78,13 @@
+                 SourceLocation::from_start_len(next_source_location_bytes_start, utf8_text.len());
+             next_source_location_bytes_start = source_location.bytes().end;
+ 
+-            (output_handler)(utf8_text, really_last, encoding, source_location)?;
++            (output_handler)(
++                utf8_text,
++                Some(Cow::Borrowed(utf8_text.as_bytes())),
++                really_last,
++                encoding,
++                source_location,
++            )?;
+ 
+             if really_last {
+                 debug_assert!(self.pending_text_streaming_decoder.is_none());
+@@ -89,6 +110,37 @@
+                 SourceLocation::from_start_len(next_source_location_bytes_start, read);
+             next_source_location_bytes_start = source_location.bytes().end;
+ 
++            // Raw-byte accounting for this chunk (UTF-8 only):
++            //   raw(chunk) = pending_raw ++ raw_input[..read - tail]
++            //   pending_raw' = raw_input[read - tail .. read]
++            // where `tail` is the number of bytes encoding_rs kept as internal
++            // state (an incomplete sequence at end-of-input). OutputFull and
++            // last=true never leave state, so `tail` is only nonzero on the
++            // final InputEmpty of a non-last call. For non-UTF-8 document
++            // encodings `raw` is `None` and the serializer re-encodes the
++            // decoded text, which is the pre-patch behaviour: the tail-length
++            // computation is UTF-8-specific and other multi-byte encodings are
++            // not worth the extra state.
++            let (raw, carry): (Option<Cow<'i, [u8]>>, &[u8]) = if encoding == UTF_8 {
++                let consumed = raw_input.get(..read).unwrap_or_default();
++                let tail = if finished_decoding && !last_in_text_node {
++                    utf8_incomplete_tail_len(consumed)
++                } else {
++                    0
++                };
++                let (emit, carry) = consumed.split_at(read - tail);
++                let raw = if self.pending_raw.is_empty() {
++                    Cow::Borrowed(emit)
++                } else {
++                    let mut v = std::mem::take(&mut self.pending_raw);
++                    v.extend_from_slice(emit);
++                    Cow::Owned(v)
++                };
++                (Some(raw), carry)
++            } else {
++                (None, &[][..])
++            };
++
+             if written > 0 || last_in_text_node {
+                 // the last call to feed_text() may make multiple calls to output_handler,
+                 // but only one call to output_handler can be *the* last one.
+@@ -97,15 +149,25 @@
+                 (output_handler)(
+                     // this will always be in bounds, but unwrap_or_default optimizes better
+                     buffer.get(..written).unwrap_or_default(),
++                    raw,
+                     really_last,
+                     encoding,
+                     source_location,
+                 )?;
++                self.pending_raw.clear();
++                self.pending_raw.extend_from_slice(carry);
++            } else if let Some(raw) = raw {
++                // Handler call skipped: everything we would have emitted as raw
++                // (including any carried prefix) defers to the next chunk.
++                let mut deferred = raw.into_owned();
++                deferred.extend_from_slice(carry);
++                self.pending_raw = deferred;
+             }
+ 
+             if finished_decoding {
+                 if last_in_text_node {
+                     self.pending_text_streaming_decoder = None;
++                    debug_assert!(self.pending_raw.is_empty());
+                 } else {
+                     self.pending_source_location_bytes_start = next_source_location_bytes_start;
+                 }
+@@ -152,3 +214,20 @@
+         }
+     }
+ }
++
++/// Length of the incomplete-but-still-valid UTF-8 sequence at the end of
++/// `input`: the bytes a WHATWG UTF-8 decoder holds as state when fed `input`
++/// with `last=false`. At most 3 bytes.
++#[inline]
++fn utf8_incomplete_tail_len(input: &[u8]) -> usize {
++    let mut tail = &input[input.len().saturating_sub(3)..];
++    loop {
++        match std::str::from_utf8(tail) {
++            Ok(_) => return 0,
++            Err(e) => match e.error_len() {
++                None => return tail.len() - e.valid_up_to(),
++                Some(n) => tail = &tail[e.valid_up_to() + n..],
++            },
++        }
++    }
++}
+--- a/src/rewritable_units/tokens/text_chunk.rs
++++ b/src/rewritable_units/tokens/text_chunk.rs
+@@ -74,6 +74,9 @@
+ /// [`last_in_text_node`]: #method.last_in_text_node
+ pub struct TextChunk<'i> {
+     text: Cow<'i, str>,
++    // Input bytes this chunk was decoded from. Cleared by any API that
++    // mutates `text` so `serialize_self` only uses it for true passthrough.
++    raw: Option<Cow<'i, [u8]>>,
+     text_type: TextType,
+     last_in_text_node: bool,
+     encoding: &'static Encoding,
+@@ -87,6 +90,7 @@
+     #[must_use]
+     pub(crate) fn new(
+         text: &'i str,
++        raw: Option<Cow<'i, [u8]>>,
+         text_type: TextType,
+         last_in_text_node: bool,
+         encoding: &'static Encoding,
+@@ -94,6 +98,7 @@
+     ) -> Self {
+         TextChunk {
+             text: text.into(),
++            raw,
+             text_type,
+             last_in_text_node,
+             encoding,
+@@ -130,6 +135,7 @@
+     /// It may be necessary to buffer the text. See [`TextChunk::last_in_text_node`].
+     #[inline]
+     pub fn as_mut_str(&mut self) -> &mut String {
++        self.raw = None;
+         self.text.to_mut()
+     }
+ 
+@@ -139,6 +145,7 @@
+     /// See [`TextChunk::text_type`].
+     #[inline]
+     pub fn set_str(&mut self, text: String) {
++        self.raw = None;
+         self.text = Cow::Owned(text);
+     }
+ 
+@@ -354,7 +361,11 @@
+ 
+     #[inline]
+     fn serialize_self(&self, sink: &mut StreamingHandlerSink<'_>) -> Result<(), RewritingError> {
+-        if !self.text.is_empty() {
++        if let Some(raw) = &self.raw {
++            if !raw.is_empty() {
++                (sink.output_handler())(raw);
++            }
++        } else if !self.text.is_empty() {
+             // The "text" here is actually markup
+             sink.write_str(&self.text, ContentType::Html);
+         }
+@@ -429,6 +440,7 @@
+         let encoding = Encoding::for_label_no_replacement(b"utf-8").unwrap();
+         let mut chunk = TextChunk::new(
+             "original text",
++            None,
+             TextType::PlainText,
+             true,
+             encoding,
+@@ -444,6 +456,7 @@
+ 
+     mod serialization {
+         use super::*;
++        use crate::{ElementContentHandlers, HandlerResult, HtmlRewriter, Settings};
+ 
+         const HTML: &str = "Lorem ipsum dolor sit amet, cÔnsectetur adipiscing elit, sed do eiusmod tempor \
+              incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud \
+@@ -568,5 +581,87 @@
+             });
+             assert_eq!("<p>\u{fffd}\u{fffd}\u{fffd} last</p>", rewritten);
+         }
++
++        fn rewrite_with_writes(
++            writes: &[&[u8]],
++            handler: impl FnMut(&mut TextChunk<'_>) -> HandlerResult + 'static,
++        ) -> Vec<u8> {
++            let mut out = Vec::new();
++            let mut r = HtmlRewriter::new(
++                Settings {
++                    element_content_handlers: vec![(
++                        std::borrow::Cow::Owned("p".parse().unwrap()),
++                        ElementContentHandlers::default().text(handler),
++                    )],
++                    ..Settings::new()
++                },
++                |c: &[u8]| out.extend_from_slice(c),
++            );
++            for w in writes {
++                r.write(w).unwrap();
++            }
++            r.end().unwrap();
++            out
++        }
++
++        #[test]
++        fn unmodified_chunk_raw_bytes_stay_code_point_aligned_across_writes() {
++            // `<p>a😀b</p>` with the write boundary inside 😀 (F0 9F 98 80),
++            // and a handler that conditionally replaces only one of the two
++            // resulting chunks. Each unmodified chunk's raw bytes must begin
++            // and end on a code-point boundary, so the output stays valid
++            // UTF-8 regardless of which neighbour was replaced.
++            let writes: &[&[u8]] = &[b"<p>a\xF0\x9F", b"\x98\x80b</p>"];
++
++            assert_eq!(
++                rewrite_with_writes(writes, |t| {
++                    if t.as_str().contains('\u{1F600}') {
++                        t.replace(":)", ContentType::Text);
++                    }
++                    Ok(())
++                }),
++                b"<p>a:)</p>",
++            );
++
++            assert_eq!(
++                rewrite_with_writes(writes, |t| {
++                    if t.as_str() == "a" {
++                        t.replace("X", ContentType::Text);
++                    }
++                    Ok(())
++                }),
++                "<p>X\u{1F600}b</p>".as_bytes(),
++            );
++
++            assert_eq!(
++                rewrite_with_writes(writes, |_| Ok(())),
++                "<p>a\u{1F600}b</p>".as_bytes(),
++            );
++        }
++
++        #[test]
++        fn write_containing_only_an_incomplete_lead_does_not_emit_an_empty_chunk() {
++            // `<p>a€b</p>` with the € split as `E2 82` / `AC`. The first text
++            // write (lexeme "a") is followed by one whose decoded text would
++            // be empty (just the buffered `E2 82`): the handler must not be
++            // invoked for that empty chunk, and a later `before()` must not
++            // land between the lead bytes and the continuation.
++            let writes: &[&[u8]] = &[b"<p>a", b"\xE2\x82", b"\xACb</p>"];
++            let out = rewrite_with_writes(writes, |t| {
++                assert!(t.last_in_text_node() || !t.as_str().is_empty());
++                t.before("|", ContentType::Text);
++                Ok(())
++            });
++            assert_eq!(std::str::from_utf8(&out).unwrap(), "<p>|a|\u{20AC}b|</p>");
++        }
++
++        #[test]
++        fn non_utf8_bytes_pass_through_when_unmodified() {
++            let input: &[u8] = b"<p>a\x93\xE9\x94\xC0\xAF\xFF\xED\xA0\x80b</p>c\xE9d";
++            assert_eq!(
++                rewrite_with_writes(&[input], |_| Ok(())),
++                input,
++            );
++        }
+     }
+ }
+--- a/src/transform_stream/dispatcher.rs
++++ b/src/transform_stream/dispatcher.rs
+@@ -11,6 +11,7 @@
+ use crate::rewritable_units::{DocumentEnd, Serialize, ToToken, Token, TokenCaptureFlags};
+ use crate::rewriter::RewritingError;
+ use encoding_rs::Encoding;
++use std::borrow::Cow;
+ 
+ pub(crate) struct AuxStartTagInfo<'i> {
+     pub input: &'i Bytes<'i>,
+@@ -149,6 +150,7 @@
+     fn text_token_produced(
+         &mut self,
+         text: &str,
++        raw: Option<Cow<'_, [u8]>>,
+         encoding: &'static Encoding,
+         text_type: TextType,
+         is_last_in_node: bool,
+@@ -156,6 +158,7 @@
+     ) -> Result<(), RewritingError> {
+         let mut token = Token::TextChunk(TextChunk::new(
+             text,
++            raw,
+             text_type,
+             is_last_in_node,
+             encoding,
+@@ -219,9 +222,10 @@
+                 self.text_decoder.feed_text(
+                     lexeme.spanned(),
+                     false,
+-                    &mut |text, is_last, encoding, source_location| {
++                    &mut |text, raw, is_last, encoding, source_location| {
+                         self.delegate.text_token_produced(
+                             text,
++                            raw,
+                             encoding,
+                             self.last_text_type,
+                             is_last,
+@@ -331,9 +335,10 @@
+     #[inline]
+     fn flush_pending_captured_text(&mut self) -> Result<(), RewritingError> {
+         self.text_decoder
+-            .flush_pending(&mut |text, is_last, encoding, source_location| {
++            .flush_pending(&mut |text, raw, is_last, encoding, source_location| {
+                 self.delegate.text_token_produced(
+                     text,
++                    raw,
+                     encoding,
+                     self.last_text_type,
+                     is_last,

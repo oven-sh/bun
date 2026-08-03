@@ -1921,7 +1921,13 @@ where
     fn do_render_with_body_locked(this: *mut c_void, value: &mut Body::Value) {
         // SAFETY: caller upholds the fn-level contract — `this` is the
         // `*mut RequestContext` previously registered as `lock.task`.
-        Self::do_render_with_body(unsafe { bun_ptr::callback_ctx::<Self>(this) }, value, None);
+        let this = unsafe { bun_ptr::callback_ctx::<Self>(this) };
+        // Releases the ref taken when this callback was registered.
+        let _ref = RequestContextRef(std::ptr::from_mut::<Self>(this));
+        if this.is_aborted_or_ended() {
+            return;
+        }
+        Self::do_render_with_body(this, value, None);
     }
 
     fn render_with_blob_from_body_value(&mut self) {
@@ -3266,7 +3272,12 @@ where
                     return;
                 }
 
-                // when there's no stream, we need to
+                // No stream and no producer hooks: the body will be filled in
+                // later via `Value::resolve`. Hold a ref and mark pending so
+                // `should_render_missing` does not recycle this context before
+                // the callback fires; `do_render_with_body_locked` releases it.
+                this.ref_();
+                this.flags.set_has_marked_pending(true);
                 lock.on_receive_value =
                     Some(|ctx, value| Self::do_render_with_body_locked(ctx, value));
                 lock.task = Some(std::ptr::from_mut::<Self>(this).cast::<c_void>());

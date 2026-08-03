@@ -2867,13 +2867,15 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__evictProjectModulesForTestIsolation
             }
             if (scope.exception()) [[unlikely]]
                 scope.clearExceptionExceptTermination();
-            for (unsigned i = 0; i < evict.size(); ++i) {
-                requireMap->remove(globalObject, evict.at(i));
-                if (scope.exception()) [[unlikely]]
-                    scope.clearExceptionExceptTermination();
+            if (!evict.hasOverflowed()) [[likely]] {
+                for (unsigned i = 0; i < evict.size(); ++i) {
+                    requireMap->remove(globalObject, evict.at(i));
+                    if (scope.exception()) [[unlikely]]
+                        scope.clearExceptionExceptTermination();
+                }
+                evictedCjs = evict.size();
             }
         }
-        evictedCjs = evict.size();
     }
 
     if (outEvictedEsm)

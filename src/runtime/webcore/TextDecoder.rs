@@ -355,19 +355,12 @@ impl TextDecoder {
                 let buf =
                     unsafe { core::slice::from_raw_parts_mut(units.as_mut_ptr(), out_length) };
                 let out = strings::copy_cp1252_into_utf16(buf, buffer_slice);
-                // SAFETY: the copy above initialized all `out_length` units (one per input byte).
+                // CP1252 maps every byte to exactly one code unit, so the copy
+                // above initialized all `out_length` units.
+                debug_assert_eq!(out.written as usize, out_length);
+                // SAFETY: see above; every unit in `..out_length` is initialized.
                 unsafe { units.set_len(out_length) };
-                // The boxed slice is a tight allocation (no excess capacity).
-                let bytes = units.into_boxed_slice();
-                // SAFETY: `bytes` was allocated by the global allocator; `into_raw`
-                // transfers ownership of the buffer to JSC's external-string finalizer.
-                Ok(unsafe {
-                    jsc::zig_string::to_external_u16(
-                        bun_core::heap::into_raw(bytes).cast::<u16>(),
-                        out.written as usize,
-                        global_this,
-                    )
-                })
+                jsc::zig_string::external_string_from_utf16_vec(global_this, units)
             }
             EncodingLabel::Utf8 => {
                 // Prepend the partial UTF-8 sequence carried over from the
@@ -449,23 +442,9 @@ impl TextDecoder {
                             });
                         }
                     }
-                    let len = decoded.len();
-                    // `to_external_u16` returns `jsEmptyString` and never
-                    // calls `free_global_string` for `len == 0`, so a
-                    // zero-length decode (e.g. a buffered partial sequence
-                    // with `stream: true`, or all-replaced bytes when
-                    // `fatal: false`) would strand the `Vec`'s reserved
-                    // backing store. Drop it here and return the canonical
-                    // empty string instead.
-                    if len == 0 {
-                        drop(decoded);
-                        return Ok(ZigString::EMPTY.to_js(global_this));
-                    }
-                    // PERF: Vec::leak may retain excess capacity — profile if it shows up on a hot path.
-                    let ptr = decoded.leak().as_mut_ptr();
-                    // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
-                    // ownership transfers to JSC's external-string finalizer.
-                    return Ok(unsafe { jsc::zig_string::to_external_u16(ptr, len, global_this) });
+                    // `_vec`: no shrink-realloc for excess decode capacity —
+                    // the finalizer frees the whole allocation by pointer.
+                    return jsc::zig_string::external_string_from_utf16_vec(global_this, decoded);
                 }
 
                 // All-ASCII input needed no conversion. `ZigString::init(..).to_js`
@@ -531,14 +510,10 @@ impl TextDecoder {
                     return Ok(ZigString::EMPTY.to_js(global_this));
                 }
 
-                // Transfer ownership of the backing allocation to JSC; freed via
-                // free_global_string -> mi_free when the string is collected.
-                let len = decoded.len();
-                // PERF: Vec::leak may retain excess capacity — profile if it shows up on a hot path.
-                let ptr = decoded.leak().as_mut_ptr();
-                // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
-                // ownership transfers to JSC's external-string finalizer.
-                Ok(unsafe { jsc::zig_string::to_external_u16(ptr, len, global_this) })
+                // Transfer ownership of the backing allocation to JSC; freed
+                // when the external string is collected. `_vec`: no
+                // shrink-realloc for excess capacity.
+                jsc::zig_string::external_string_from_utf16_vec(global_this, decoded)
             }
 
             // Every other encoding goes through encoding_rs.
@@ -586,11 +561,7 @@ impl TextDecoder {
                     return Ok(ZigString::EMPTY.to_js(global_this));
                 }
 
-                let len = decoded.len();
-                let ptr = decoded.leak().as_mut_ptr();
-                // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
-                // ownership transfers to JSC's external-string finalizer.
-                Ok(unsafe { jsc::zig_string::to_external_u16(ptr, len, global_this) })
+                jsc::zig_string::external_string_from_utf16_vec(global_this, decoded)
             }
         }
     }

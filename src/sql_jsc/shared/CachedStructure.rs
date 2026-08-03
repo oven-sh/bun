@@ -111,21 +111,19 @@ impl CachedStructure {
             // becomes responsible for freeing the alloc'd slice.
             self.set(global_object, None, Some(heap_ids.into_boxed_slice()));
         } else {
-            // Every element in `ids[..]` was `.write()`n above; C++ reads them as
-            // `ExternColumnIdentifier` by raw pointer, so pass the buffer through
-            // without materialising a typed slice (avoids an unsafe assume-init cast).
+            // SAFETY: every `ids[..]` slot was `.write()`n in the loop above,
+            // so the `MaybeUninit` view is fully initialized.
+            let names = unsafe {
+                core::slice::from_raw_parts_mut(
+                    ids.as_mut_ptr().cast::<ExternColumnIdentifier>(),
+                    ids.len(),
+                )
+            };
             self.set(
                 global_object,
-                // SAFETY: every `ids[..len]` slot was initialized in the loop
-                // above; the stack buffer outlives the FFI call.
-                Some(unsafe {
-                    JSObject::create_structure(
-                        global_object,
-                        owner,
-                        ids.len() as u32,
-                        ids.as_mut_ptr().cast::<ExternColumnIdentifier>(),
-                    )
-                }),
+                // SAFETY: `owner` is the cell-tagged row object (caller
+                // contract); the buffer outlives the FFI call.
+                Some(unsafe { JSObject::create_structure(global_object, owner, names) }),
                 None,
             );
         }

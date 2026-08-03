@@ -246,11 +246,7 @@ test.skipIf(!isLinux || !cc)(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Three requests; one injected EIO on request #1's second read. The slice
     // was already satisfied by read #1, so all three responses carry the full

@@ -909,9 +909,16 @@ impl Value {
         };
         locked.readable = webcore::readable_stream::Strong::init(readable, global_this);
 
-        if let Some(on_readable_stream_available) = locked.on_readable_stream_available {
+        if let Some(on_readable_stream_available) = locked.on_readable_stream_available.take() {
             on_readable_stream_available(locked.task.unwrap(), global_this, readable);
         }
+        // Delivery is now owned by the ByteStream's `NewSource.producer`; the
+        // producer hooks and `task` here point at (e.g.) a `FetchTasklet` that
+        // can be freed once the transfer completes, so a later consumer
+        // (`Bun.write`, `ValueBufferer`) must not call them.
+        locked.on_start_buffering = None;
+        locked.task = None;
+        locked.producer = streams::SourceHandle::None;
 
         // In text mode the returned stream emits strings, so it must not be
         // cached as the body's byte stream (consulted by `.body`, `bodyUsed`,
@@ -1538,13 +1545,17 @@ impl Value {
             global_this,
         );
 
-        if let Some(on_readable_stream_available) = locked.on_readable_stream_available {
+        if let Some(on_readable_stream_available) = locked.on_readable_stream_available.take() {
             on_readable_stream_available(
                 locked.task.unwrap(),
                 global_this,
                 locked.readable.get(global_this).unwrap(),
             );
         }
+        // See `locked_to_native_stream`: the ByteStream now owns delivery.
+        locked.on_start_buffering = None;
+        locked.task = None;
+        locked.producer = streams::SourceHandle::None;
 
         let teed = match locked.readable.tee(global_this)? {
             Some(t) => t,

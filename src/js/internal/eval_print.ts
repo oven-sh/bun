@@ -34,7 +34,7 @@ function registerEvalPrint(result: unknown, awaitFirst: boolean = false) {
     // (Bun extension - Node rejects --print with ESM input entirely) and keep
     // printing the promise itself if it never settles. If module evaluation
     // rejects, the loader already reports the error, so skip the print.
-    (result as Promise<unknown>).then(
+    (result as Promise<unknown>).$then(
       value => {
         result = value;
       },

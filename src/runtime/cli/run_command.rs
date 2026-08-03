@@ -2965,6 +2965,18 @@ impl RunCommand {
     /// `Run::start` performs the actual syntax check against the stored source
     /// instead of executing anything user-provided.
     pub fn exec_check(ctx: &mut ContextData) -> crate::Result<()> {
+        // RunCommand prepends a literal "run" positional; the user's file (if
+        // any) is the first positional after it. AutoCommand / RunAsNodeCommand
+        // have no such prefix. Strip it in place so both the file lookup below
+        // and `exec_eval`'s positional → passthrough merge see only user args.
+        if ctx
+            .positionals
+            .first()
+            .is_some_and(|p| p.as_ref() == b"run")
+        {
+            ctx.positionals.remove(0);
+        }
+
         let (source, display_name): (Box<[u8]>, Box<[u8]>) = if !ctx.positionals.is_empty() {
             // Resolve the file argument against cwd, like a normal entry point.
             let mut cwd_buf = PathBuffer::uninit();
@@ -3005,7 +3017,11 @@ impl RunCommand {
         } else {
             // No file argument: check stdin, like `node --check` with piped input.
             let mut list: Vec<u8> = Vec::new();
-            let _ = sys::File::stdin().read_to_end_into(&mut list);
+            if let Err(err) = sys::File::stdin().read_to_end_into(&mut list) {
+                pretty_errorln!("Error: reading stdin: {}", err);
+                Output::flush();
+                Global::exit(1);
+            }
             (list.into_boxed_slice(), Box::from(&b"[stdin]"[..]))
         };
 
@@ -3026,7 +3042,15 @@ impl RunCommand {
         let _ = CHECK_SYNTAX_TARGET.set((source, display_name, module_type));
 
         // No-op eval entry: nothing user-visible executes, but preloads run and
-        // the JSC global the syntax check needs exists.
+        // the JSC global the syntax check needs exists. Sanitize any eval state
+        // that leaked in from argument parsing so this stays an inert stand-in:
+        // a bare `-p` would otherwise leave `eval_and_print` set and print
+        // `undefined`, and `process._eval` would expose the no-op `"\n"` to
+        // `--require` preloads. Routing `interactive_script` to empty makes
+        // `process._eval` report `undefined` (see `node_process::get_eval`).
+        ctx.runtime_options.eval.eval_and_print = false;
+        ctx.runtime_options.eval.provided = false;
+        ctx.runtime_options.eval.interactive_script = Some(Box::default());
         ctx.runtime_options.eval.script = Box::from(&b"\n"[..]);
         Self::exec_eval(ctx)
     }

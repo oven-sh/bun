@@ -442,7 +442,8 @@ _bun_run_completion() {
         '--bun[Force a script or package to use Bun'"'"'s runtime instead of Node.js (via symlinking node)]' \
         '-b[Force a script or package to use Bun'"'"'s runtime instead of Node.js (via symlinking node)]' \
         '--cwd[Absolute path to resolve files & entry points from. This just changes the process cwd]:cwd' \
-        '--config[Config file to load bun from (e.g. -c bunfig.toml]: :->config' \
+        '--config[Config file to load Bun from (e.g. --config bunfig.toml)]: :->config' \
+        '--check[Check the syntax of the entry point without executing it]' \
         '-c[Check the syntax of the entry point without executing it]' \
         '--env-file[Load environment variables from the specified file(s)]:env-file' \
         '--extension-order[Defaults to: .tsx,.ts,.jsx,.js,.json]:extension-order' \

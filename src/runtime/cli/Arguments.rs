@@ -867,17 +867,17 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
                 )
             {
-                // `diag.arg` is the argument as written with its leading
+                // `diag.arg()` is the argument as written with its leading
                 // dashes stripped. Node echoes it verbatim, so the long form
                 // keeps a trailing '=' ("node --eval=" reports
                 // "--eval= requires an argument"); the short form reports the
                 // single flag that wanted the value rather than the cluster
                 // it arrived in.
-                let node_flag: Option<Vec<u8>> = match (diag.short, diag.long.as_deref()) {
+                let node_flag: Option<Vec<u8>> = match (diag.short(), diag.long()) {
                     (Some(short @ (b'e' | b'p')), _) => Some(vec![b'-', short]),
                     (_, Some(b"eval" | b"print" | b"inspect-port" | b"debug-port")) => {
                         let mut flag = b"--".to_vec();
-                        flag.extend_from_slice(&diag.arg);
+                        flag.extend_from_slice(diag.arg());
                         Some(flag)
                     }
                     _ => None,

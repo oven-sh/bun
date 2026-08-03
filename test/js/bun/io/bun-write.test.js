@@ -776,7 +776,10 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         // detect_leaks=0: the write promise never settles on a stream-backed
         // body (#13237), so WriteFileWaitFromLockedValueTask is still live at
         // process.exit; this test is about the heap-use-after-free only.
-        env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":") },
+        env: {
+          ...bunEnv,
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+        },
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

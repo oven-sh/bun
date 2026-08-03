@@ -739,6 +739,102 @@ it("delivers 'session' even when the data handler destroys the socket immediatel
   await once(server, "close");
 });
 
+describe.each(["TLSv1.2", "TLSv1.3"] as const)("%s: getSession() / getTLSTicket()", version => {
+  // BoringSSL never folds a TLS 1.3 NewSessionTicket into the SSL's own
+  // established_session; it only hands the ticket-bearing session to the
+  // new-session callback. getSession()/getTLSTicket() must read from that
+  // session once it arrives, or the blob they return cannot resume.
+  type Snapshot = {
+    protocol: string | null;
+    viaGetSession: Buffer | undefined;
+    ticket: Buffer | undefined;
+  };
+
+  function onFirstSession(client: TLSSocket) {
+    const { promise, resolve, reject } = Promise.withResolvers<Snapshot>();
+    client.on("error", reject);
+    client.on("data", () => {});
+    client.once("session", () =>
+      resolve({
+        protocol: client.getProtocol(),
+        viaGetSession: client.getSession(),
+        ticket: client.getTLSTicket(),
+      }),
+    );
+    return promise;
+  }
+
+  it("returns a resumable session once the NewSessionTicket arrives", async () => {
+    const serverReused: boolean[] = [];
+    const twoConnections = Promise.withResolvers<void>();
+    await using server = tls.createServer({ ...COMMON_CERT_, minVersion: version, maxVersion: version }, socket => {
+      serverReused.push(socket.isSessionReused());
+      if (serverReused.length === 2) twoConnections.resolve();
+      socket.write("x");
+      socket.on("data", () => {});
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as AddressInfo).port;
+    const opts = {
+      port,
+      host: "127.0.0.1",
+      servername: "localhost",
+      ca: COMMON_CERT_.cert,
+      minVersion: version,
+      maxVersion: version,
+    } as const;
+
+    const first = tlsConnect(opts);
+    const { protocol, viaGetSession, ticket } = await onFirstSession(first);
+    first.destroy();
+    await once(first, "close");
+
+    expect(protocol).toBe(version);
+    expect(Buffer.isBuffer(viaGetSession)).toBe(true);
+
+    // Second connection: the getSession() blob resumes on both ends.
+    const second = tlsConnect({ ...opts, session: viaGetSession });
+    second.on("data", () => {});
+    await once(second, "secureConnect");
+    const clientReused = second.isSessionReused();
+    await twoConnections.promise;
+    second.destroy();
+    await once(second, "close");
+
+    expect({ clientReused, serverReused }).toEqual({ clientReused: true, serverReused: [false, true] });
+    expect(Buffer.isBuffer(ticket)).toBe(true);
+    expect(ticket!.length).toBeGreaterThan(0);
+  });
+
+  it("over a duplex-wrapped TLSSocket", async () => {
+    await using server = tls.createServer({ ...COMMON_CERT_, minVersion: version, maxVersion: version }, socket => {
+      socket.on("data", () => socket.end());
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as AddressInfo).port;
+
+    const raw = net.connect(port, "127.0.0.1");
+    await once(raw, "connect");
+    const client = tls.connect({
+      socket: new SocketProxy(raw),
+      servername: "localhost",
+      ca: COMMON_CERT_.cert,
+      minVersion: version,
+      maxVersion: version,
+    });
+    const snapshot = onFirstSession(client);
+    await once(client, "secureConnect");
+    client.write("x");
+    const { viaGetSession, ticket } = await snapshot;
+    client.destroy();
+    await once(client, "close");
+
+    expect(Buffer.isBuffer(viaGetSession)).toBe(true);
+    expect(Buffer.isBuffer(ticket)).toBe(true);
+    expect(ticket!.length).toBeGreaterThan(0);
+  });
+});
+
 it("a write before 'secureConnect' still reports the handshake's own failure", async () => {
   // An early write drives the handshake from inside SSL_write. The fatal
   // reason that write hit used to be dropped, so the handshake dispatch had
@@ -1149,5 +1245,50 @@ it("an inherited checkServerIdentity cannot become the hostname verifier", async
     stdout: "polluted=false",
     exitCode: 0,
     failureDetail: "",
+  });
+});
+
+describe("throwing 'secureConnect' listener", () => {
+  // Node has no try/catch around the handshake-done emits, so a throwing
+  // listener becomes uncaughtException — never a socket 'error'. Verified
+  // against node v26.3.0.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
+  it("becomes uncaughtException, not a socket 'error'", async () => {
+    const script = `
+      const tlsMod = require("node:tls");
+      const state = { uncaught: null, socketError: null };
+      function finish() {
+        console.log(JSON.stringify(state));
+        process.exit(0);
+      }
+      process.on("uncaughtException", function onUncaught(err) {
+        state.uncaught = err.message;
+        setImmediate(finish);
+      });
+      const server = tlsMod.createServer(${JSON.stringify(COMMON_CERT_)}, function onConn() {});
+      server.listen(0, "127.0.0.1", function onListen() {
+        const client = tlsMod.connect({
+          port: server.address().port,
+          host: "127.0.0.1",
+          rejectUnauthorized: false,
+        });
+        client.on("secureConnect", function onSecureConnect() {
+          throw new Error("boom-secureConnect");
+        });
+        client.on("error", function onError(err) {
+          state.socketError = err.message;
+          setImmediate(finish);
+        });
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout.trim())).toEqual({ uncaught: "boom-secureConnect", socketError: null });
+    expect(exitCode).toBe(0);
   });
 });

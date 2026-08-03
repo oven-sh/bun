@@ -111,3 +111,8 @@ test/bundler/native-plugin.test.ts
 # `bun run build` in the react templates loads bun-plugin-tailwind's napi
 # addon, same Init() pattern.
 test/cli/init/init.test.ts
+
+# JSC JSONP fast path (Interpreter::executeProgram doGet lambda) does an
+# unchecked getPropertySlot/getValue pair; only throwable through
+# NodeVMGlobalObject's overridden getOwnPropertySlot. Needs a WebKit-side fix.
+test/js/node/test/parallel/test-repl-inspect-defaults.js

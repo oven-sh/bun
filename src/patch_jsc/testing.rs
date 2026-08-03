@@ -7,13 +7,13 @@ use bun_jsc::{
 use bun_patch::{ParseErr, PatchFile, git_diff_internal, parse_patch_file};
 use bun_sys::{Fd, FdExt};
 
-pub struct TestingAPIs;
+pub(crate) struct TestingAPIs;
 
 impl TestingAPIs {
     // `#[bun_jsc::host_fn]` Free-kind shim emits an unqualified
     // `fn_name(g, f)` call, so it cannot wrap an associated fn. The C-ABI
     // shim is emitted at module scope below (`__jsc_host_*`).
-    pub fn make_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn make_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM
         // outlives this call frame.
         let mut arguments = ArgumentsSlice::init(global.bun_vm(), frame.arguments());
@@ -58,7 +58,7 @@ impl TestingAPIs {
         }
     }
 
-    pub fn apply(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn apply(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let args = Self::parse_apply_args(global, frame)?;
 
         let patchfile: PatchFile<'_> =
@@ -72,7 +72,7 @@ impl TestingAPIs {
     }
 
     /// Used in JS tests, see `internal-for-testing.ts` and patch tests.
-    pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM
         // outlives this call frame.
         let mut arguments = ArgumentsSlice::init(global.bun_vm(), frame.arguments());
@@ -109,7 +109,10 @@ impl TestingAPIs {
         Ok(js)
     }
 
-    pub fn parse_apply_args(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<ApplyArgs> {
+    pub(crate) fn parse_apply_args(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<ApplyArgs> {
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM
         // outlives this call frame.
         let mut arguments = ArgumentsSlice::init(global.bun_vm(), frame.arguments());

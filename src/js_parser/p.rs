@@ -105,7 +105,7 @@ impl<'a> ImportRecordList<'a> {
         }
     }
     #[inline]
-    pub(crate) fn push(&mut self, record: ImportRecord) {
+    fn push(&mut self, record: ImportRecord) {
         match self {
             Self::Owned(v) => v.push(record),
             Self::Borrowed(v) => v.push(record),
@@ -173,16 +173,16 @@ pub use crate::visit::visit_binary::BinaryExpressionVisitor;
 pub use crate::scan::scan_side_effects::BinaryExpressionSimplifyVisitor;
 
 pub struct RecentlyVisitedTSNamespace {
-    pub expr: js_ast::ExprData,
+    pub(crate) expr: js_ast::ExprData,
     // ARENA back-pointer — `StoreRef` for safe `Deref` at the read sites.
-    pub map: Option<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
+    pub(crate) map: Option<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
 }
 
 #[derive(Clone, Copy)]
 pub struct ReactRefreshImportClause<'a> {
-    pub name: &'a [u8],
-    pub enabled: bool,
-    pub r#ref: Ref,
+    pub(crate) name: &'a [u8],
+    pub(crate) enabled: bool,
+    pub(crate) r#ref: Ref,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -201,44 +201,44 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// expression arms (see the `bun .` startup note in `parser.rs`) and the
     /// 4× monomorphization (TYPESCRIPT × JSX) faulted in four copies of every
     /// parser / visitor / lowerer body at startup.
-    pub jsx_transform: JSXTransformType,
-    pub macro_: MacroState<'a>,
-    pub arena: &'a Bump,
-    pub options: ParserOptions<'a>,
+    pub(crate) jsx_transform: JSXTransformType,
+    pub(crate) macro_: MacroState<'a>,
+    pub(crate) arena: &'a Bump,
+    pub(crate) options: ParserOptions<'a>,
     /// Raw pointer alias of `lexer.log`. Rust cannot store two `&'a mut Log` to one allocation
     /// (Stacked-Borrows UB), so this is a `NonNull` and reborrowed at use sites
     /// via `P::log()`. The pointee outlives `'a` (enforced by `Parser::init`).
-    pub log: core::ptr::NonNull<bun_ast::Log>,
-    pub define: &'a Define,
-    pub source: &'a bun_ast::Source,
+    pub(crate) log: core::ptr::NonNull<bun_ast::Log>,
+    pub(crate) define: &'a Define,
+    pub(crate) source: &'a bun_ast::Source,
     pub lexer: js_lexer::Lexer<'a>,
-    pub allow_in: bool,
-    pub allow_private_identifiers: bool,
+    pub(crate) allow_in: bool,
+    pub(crate) allow_private_identifiers: bool,
 
-    pub has_top_level_return: bool,
-    pub latest_return_had_semicolon: bool,
-    pub has_import_meta: bool,
-    pub has_es_module_syntax: bool,
-    pub top_level_await_keyword: bun_ast::Range,
-    pub fn_or_arrow_data_parse: FnOrArrowDataParse,
-    pub fn_or_arrow_data_visit: FnOrArrowDataVisit,
-    pub fn_only_data_visit: FnOnlyDataVisit<'a>,
-    pub allocated_names: List<'a, &'a [u8]>,
+    pub(crate) has_top_level_return: bool,
+    pub(crate) latest_return_had_semicolon: bool,
+    pub(crate) has_import_meta: bool,
+    pub(crate) has_es_module_syntax: bool,
+    pub(crate) top_level_await_keyword: bun_ast::Range,
+    pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
+    pub(crate) fn_or_arrow_data_visit: FnOrArrowDataVisit,
+    pub(crate) fn_only_data_visit: FnOnlyDataVisit<'a>,
+    pub(crate) allocated_names: List<'a, &'a [u8]>,
     // allocated_names: ListManaged(string) = ListManaged(string).init(bun.default_allocator),
     // allocated_names_pool: ?*AllocatedNamesPool.Node = null,
-    pub latest_arrow_arg_loc: bun_ast::Loc,
-    pub forbid_suffix_after_as_loc: bun_ast::Loc,
-    pub current_scope: js_ast::StoreRef<js_ast::Scope>,
-    pub scopes_for_current_part: List<'a, *mut js_ast::Scope>,
-    pub symbols: ListManaged<'a, js_ast::Symbol>,
-    pub ts_use_counts: List<'a, u32>,
-    pub exports_ref: Ref,
-    pub require_ref: Ref,
-    pub module_ref: Ref,
-    pub filename_ref: Ref,
-    pub dirname_ref: Ref,
-    pub import_meta_ref: Ref,
-    pub hmr_api_ref: Ref,
+    pub(crate) latest_arrow_arg_loc: bun_ast::Loc,
+    pub(crate) forbid_suffix_after_as_loc: bun_ast::Loc,
+    pub(crate) current_scope: js_ast::StoreRef<js_ast::Scope>,
+    pub(crate) scopes_for_current_part: List<'a, *mut js_ast::Scope>,
+    pub(crate) symbols: ListManaged<'a, js_ast::Symbol>,
+    pub(crate) ts_use_counts: List<'a, u32>,
+    pub(crate) exports_ref: Ref,
+    pub(crate) require_ref: Ref,
+    pub(crate) module_ref: Ref,
+    pub(crate) filename_ref: Ref,
+    pub(crate) dirname_ref: Ref,
+    pub(crate) import_meta_ref: Ref,
+    pub(crate) hmr_api_ref: Ref,
 
     /// If bake is enabled and this is a server-side file, we want to use
     /// special `Response` class inside the `bun:app` built-in module to
@@ -249,53 +249,53 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// top of the file
     ///
     /// We need to declare this `response_ref` upfront
-    pub response_ref: Ref,
+    pub(crate) response_ref: Ref,
     /// We also need to declare the namespace ref for `bun:app` and attach
     /// it to the symbol so the code generated `e_import_identifier`'s
-    pub bun_app_namespace_ref: Ref,
+    pub(crate) bun_app_namespace_ref: Ref,
 
     /// Used to track the `feature` function from `import { feature } from "bun:bundle"`.
     /// When visiting e_call, if the target ref matches this, we replace the call with
     /// a boolean based on whether the feature flag is enabled.
-    pub bundler_feature_flag_ref: Ref,
+    pub(crate) bundler_feature_flag_ref: Ref,
     /// Set to true when visiting an if/ternary condition. feature() calls are only valid in this context.
-    pub in_branch_condition: bool,
+    pub(crate) in_branch_condition: bool,
 
-    pub has_classic_runtime_warned: bool,
-    pub macro_call_count: MacroCallCountType,
+    pub(crate) has_classic_runtime_warned: bool,
+    pub(crate) macro_call_count: MacroCallCountType,
 
-    pub hoisted_ref_for_sloppy_mode_block_fn: RefRefMap,
+    pub(crate) hoisted_ref_for_sloppy_mode_block_fn: RefRefMap,
 
     // Used for forcing CommonJS
-    pub has_with_scope: bool,
+    pub(crate) has_with_scope: bool,
 
-    pub is_file_considered_to_have_esm_exports: bool,
+    pub(crate) is_file_considered_to_have_esm_exports: bool,
 
-    pub has_called_runtime: bool,
+    pub(crate) has_called_runtime: bool,
 
-    pub symbol_uses: SymbolUseMap,
-    pub declared_symbols: bun_ast::DeclaredSymbolList,
-    pub runtime_imports: RuntimeImports,
+    pub(crate) symbol_uses: SymbolUseMap,
+    pub(crate) declared_symbols: bun_ast::DeclaredSymbolList,
+    pub(crate) runtime_imports: RuntimeImports,
 
     /// Used with unwrap_commonjs_packages
-    pub imports_to_convert_from_require: List<'a, DeferredImportNamespace>,
-    pub unwrap_all_requires: bool,
+    pub(crate) imports_to_convert_from_require: List<'a, DeferredImportNamespace>,
+    pub(crate) unwrap_all_requires: bool,
 
-    pub commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
-    pub commonjs_named_exports_deoptimized: bool,
-    pub commonjs_module_exports_assigned_deoptimized: bool,
-    pub commonjs_named_exports_needs_conversion: u32,
-    pub had_commonjs_named_exports_this_visit: bool,
-    pub commonjs_replacement_stmts: StmtNodeList,
+    pub(crate) commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
+    pub(crate) commonjs_named_exports_deoptimized: bool,
+    pub(crate) commonjs_module_exports_assigned_deoptimized: bool,
+    pub(crate) commonjs_named_exports_needs_conversion: u32,
+    pub(crate) had_commonjs_named_exports_this_visit: bool,
+    pub(crate) commonjs_replacement_stmts: StmtNodeList,
 
-    pub parse_pass_symbol_uses: ParsePassSymbolUsageType<'a>,
+    pub(crate) parse_pass_symbol_uses: ParsePassSymbolUsageType<'a>,
 
     /// Used by commonjs_at_runtime
-    pub has_commonjs_export_names: bool,
+    pub(crate) has_commonjs_export_names: bool,
 
-    pub stack_check: bun_core::StackCheck,
+    pub(crate) stack_check: bun_core::StackCheck,
 
-    pub reported_stack_overflow: core::cell::Cell<bool>,
+    pub(crate) reported_stack_overflow: core::cell::Cell<bool>,
 
     /// Attempts to skip the constraint of an `infer` type that already backtracked,
     /// keyed by the byte offset of the `extends` token shifted left by one, with the
@@ -307,7 +307,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// for deeply nested `infer X extends` constraints inside template literal types
     /// (found by fuzzing). Kept sorted for binary search; stays empty (no allocation)
     /// until a constraint attempt actually backtracks, which is rare in real code.
-    pub ts_infer_constraint_backtracks: Vec<u32>,
+    pub(crate) ts_infer_constraint_backtracks: Vec<u32>,
 
     /// When this flag is enabled, we attempt to fold all expressions that
     /// TypeScript would consider to be "constant expressions". This flag is
@@ -339,11 +339,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     ///
     /// This flag is also set globally when minify_syntax is enabled, in which this means
     /// we always fold constant expressions.
-    pub should_fold_typescript_constant_expressions: bool,
+    pub(crate) should_fold_typescript_constant_expressions: bool,
 
-    pub emitted_namespace_vars: RefMap,
-    pub is_exported_inside_namespace: RefRefMap,
-    pub local_type_names: StringBoolMap,
+    pub(crate) emitted_namespace_vars: RefMap,
+    pub(crate) is_exported_inside_namespace: RefRefMap,
+    pub(crate) local_type_names: StringBoolMap,
 
     // This is the reference to the generated function argument for the namespace,
     // which is different than the reference to the namespace itself:
@@ -359,52 +359,52 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     //
     // This variable is "ns2" not "ns1". It is only used during the second
     // "visit" pass.
-    pub enclosing_namespace_arg_ref: Option<Ref>,
+    pub(crate) enclosing_namespace_arg_ref: Option<Ref>,
 
-    pub jsx_imports: crate::JSXImportSymbols,
+    pub(crate) jsx_imports: crate::JSXImportSymbols,
 
     /// only applicable when `.options.features.react_fast_refresh` is set.
     /// populated before visit pass starts.
-    pub react_refresh: ReactRefresh<'a>,
+    pub(crate) react_refresh: ReactRefresh<'a>,
 
     /// only applicable when `.options.features.react_compiler` is set.
     /// populated before visit pass starts; `take()`n at each post-visit
     /// hook site so a `ReactCompilerHost(&mut P)` can borrow alongside it.
-    pub react_compiler: Option<Box<bun_react_compiler::ReactCompilerState>>,
+    pub(crate) react_compiler: Option<Box<bun_react_compiler::ReactCompilerState>>,
     /// Binding name from the `S::Function` / `S::Local` / `S::ExportDefault`
     /// statement currently being visited. Set in `visit_stmt`, consumed by
     /// `visit_func` / arrow-visit one frame down.
-    pub react_compiler_candidate_name: Option<js_ast::Ref>,
+    pub(crate) react_compiler_candidate_name: Option<js_ast::Ref>,
     /// Set alongside `react_compiler_candidate_name` when the candidate
     /// expression is a `memo(...)` / `forwardRef(...)` call.
-    pub react_compiler_in_react_hoc: bool,
+    pub(crate) react_compiler_in_react_hoc: bool,
     /// See [`bun_react_compiler::PendingCompile`]. Set by `visit_func` /
     /// arrow-visit, consumed inside `visit_stmts` between visit and mangle.
-    pub react_compiler_pending: Option<bun_react_compiler::PendingCompile>,
+    pub(crate) react_compiler_pending: Option<bun_react_compiler::PendingCompile>,
     /// Compiled args/flags written by the `visit_stmts` hook for `visit_func` /
     /// arrow-visit to apply to the original `G::Fn` / `E::Arrow`.
-    pub react_compiler_result: Option<bun_react_compiler::CompileResult>,
+    pub(crate) react_compiler_result: Option<bun_react_compiler::CompileResult>,
 
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
-    pub server_components_wrap_ref: Ref,
+    pub(crate) server_components_wrap_ref: Ref,
 
-    pub jest: Jest,
+    pub(crate) jest: Jest,
 
     // Imports (both ES6 and CommonJS) are tracked at the top level
-    pub import_records: ImportRecordList<'a>,
-    pub import_records_for_current_part: List<'a, u32>,
-    pub export_star_import_records: List<'a, u32>,
-    pub import_symbol_property_uses: SymbolPropertyUseMap,
+    pub(crate) import_records: ImportRecordList<'a>,
+    pub(crate) import_records_for_current_part: List<'a, u32>,
+    pub(crate) export_star_import_records: List<'a, u32>,
+    pub(crate) import_symbol_property_uses: SymbolPropertyUseMap,
 
     // These are for handling ES6 imports and exports
-    pub esm_import_keyword: bun_ast::Range,
-    pub esm_export_keyword: bun_ast::Range,
-    pub enclosing_class_keyword: bun_ast::Range,
-    pub import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
-    pub is_import_item: RefMap,
-    pub named_imports: NamedImportsType<'a>,
-    pub named_exports: bun_ast::ast_result::NamedExports,
+    pub(crate) esm_import_keyword: bun_ast::Range,
+    pub(crate) esm_export_keyword: bun_ast::Range,
+    pub(crate) enclosing_class_keyword: bun_ast::Range,
+    pub(crate) import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
+    pub(crate) is_import_item: RefMap,
+    pub(crate) named_imports: NamedImportsType<'a>,
+    pub(crate) named_exports: bun_ast::ast_result::NamedExports,
 
     // When we're only scanning the imports
     // If they're using the automatic JSX runtime
@@ -412,7 +412,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // symbol counts. Instead, we ask:
     // "Did we parse anything that looked like JSX"?
     // If yes, then automatically add the JSX import.
-    pub needs_jsx_import: NeedsJSXType,
+    pub(crate) needs_jsx_import: NeedsJSXType,
 
     // The parser does two passes and we need to pass the scope tree information
     // from the first pass to the second pass. That's done by tracking the calls
@@ -428,7 +428,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // symbols must be separate from the pass that binds identifiers to declared
     // symbols to handle declaring a hoisted "var" symbol in a nested scope and
     // binding a name to it in a parent or sibling scope.
-    pub scopes_in_order: ScopeOrderList<'a>,
+    pub(crate) scopes_in_order: ScopeOrderList<'a>,
     // Shared slice: the visit pass only ever *reads* `ScopeOrder` (which is
     // `Copy`) and advances/reslices the cursor. A `&'a mut [_]` here forced
     // raw-ptr round-trips at the enum-preprocess save/restore sites and
@@ -436,19 +436,19 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // `visit_stmts` re-looked-up the same arena slice from
     // `scopes_in_order_for_enum`. A `&'a [_]` is `Copy`, so save/restore is a
     // plain value copy and the map can hand out the same slice freely.
-    pub scope_order_to_visit: &'a [ScopeOrder<'a>],
+    pub(crate) scope_order_to_visit: &'a [ScopeOrder<'a>],
 
     // These properties are for the visit pass, which runs after the parse pass.
     // The visit pass binds identifiers to declared symbols, does constant
     // folding, substitutes compile-time variable definitions, and lowers certain
     // syntactic constructs as appropriate.
-    pub stmt_expr_value: js_ast::ExprData,
-    pub call_target: js_ast::ExprData,
-    pub delete_target: js_ast::ExprData,
-    pub loop_body: js_ast::StmtData,
-    pub module_scope: js_ast::StoreRef<js_ast::Scope>,
-    pub module_scope_directive_loc: bun_ast::Loc,
-    pub is_control_flow_dead: bool,
+    pub(crate) stmt_expr_value: js_ast::ExprData,
+    pub(crate) call_target: js_ast::ExprData,
+    pub(crate) delete_target: js_ast::ExprData,
+    pub(crate) loop_body: js_ast::StmtData,
+    pub(crate) module_scope: js_ast::StoreRef<js_ast::Scope>,
+    pub(crate) module_scope_directive_loc: bun_ast::Loc,
+    pub(crate) is_control_flow_dead: bool,
 
     /// True while `visit_single_stmt` is visiting a non-block body. `if`,
     /// `else`, `while`, and `do` reach it without pushing a scope, so inside
@@ -458,12 +458,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// gate the CJS→ESM `export {}` rewrite. (`for`/`with`/`label` callers
     /// push a scope first, and braced bodies take the `visit_single_stmt_block`
     /// path which also pushes a scope, so this flag is redundant for those.)
-    pub is_inside_single_stmt_body: bool,
+    pub(crate) is_inside_single_stmt_body: bool,
 
     /// We must be careful to avoid revisiting nodes that have scopes.
-    pub is_revisit_for_substitution: bool,
+    pub(crate) is_revisit_for_substitution: bool,
 
-    pub method_call_must_be_replaced_with_undefined: bool,
+    pub(crate) method_call_must_be_replaced_with_undefined: bool,
 
     // Inside a TypeScript namespace, an "export declare" statement can be used
     // to cause a namespace to be emitted even though it has no other observable
@@ -519,29 +519,29 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     //   })(ns or (ns = {}));
     //
     // Relevant issue: https://github.com/evanw/esbuild/issues/1158
-    pub has_non_local_export_declare_inside_namespace: bool,
+    pub(crate) has_non_local_export_declare_inside_namespace: bool,
 
     // This helps recognize the "await import()" pattern. When this is present,
     // warnings about non-string import paths will be omitted inside try blocks.
-    pub await_target: Option<js_ast::ExprData>,
+    pub(crate) await_target: Option<js_ast::ExprData>,
 
-    pub to_expr_wrapper_namespace: Binding2ExprWrapperNamespace,
-    pub to_expr_wrapper_hoisted: Binding2ExprWrapperHoisted,
+    pub(crate) to_expr_wrapper_namespace: Binding2ExprWrapperNamespace,
+    pub(crate) to_expr_wrapper_hoisted: Binding2ExprWrapperHoisted,
 
     // This helps recognize the "import().catch()" pattern. We also try to avoid
     // warning about this just like the "try { await import() }" pattern.
-    pub then_catch_chain: ThenCatchChain,
+    pub(crate) then_catch_chain: ThenCatchChain,
 
     // Temporary variables used for lowering
-    pub temp_refs_to_declare: List<'a, TempRef>,
-    pub temp_ref_count: i32,
+    pub(crate) temp_refs_to_declare: List<'a, TempRef>,
+    pub(crate) temp_ref_count: i32,
 
     // When bundling, hoisted top-level local variables declared with "var" in
     // nested scopes are moved up to be declared in the top-level scope instead.
     // The old "var" statements are turned into regular assignments instead. This
     // makes it easier to quickly scan the top-level statements for "var" locals
     // with the guarantee that all will be found.
-    pub relocated_top_level_vars: List<'a, js_ast::LocRef>,
+    pub(crate) relocated_top_level_vars: List<'a, js_ast::LocRef>,
 
     // ArrowFunction is a special case in the grammar. Although it appears to be
     // a PrimaryExpression, it's actually an AssignmentExpression. This means if
@@ -559,15 +559,15 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     //     AssignmentExpression
     //     Expression , AssignmentExpression
     //
-    pub after_arrow_body_loc: bun_ast::Loc,
+    pub(crate) after_arrow_body_loc: bun_ast::Loc,
 
-    pub const_values: bun_ast::ast_result::ConstValuesMap,
+    pub(crate) const_values: bun_ast::ast_result::ConstValuesMap,
 
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
-    pub binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor>,
+    pub(crate) binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor>,
     // Reusable stack for `SideEffects::simplify_unused_binary_comma_expr`;
     // the path is recursive, so callers truncate back to their entry watermark.
-    pub binary_expression_simplify_stack: ListManaged<'a, BinaryExpressionSimplifyVisitor>,
+    pub(crate) binary_expression_simplify_stack: ListManaged<'a, BinaryExpressionSimplifyVisitor>,
 
     /// We build up enough information about the TypeScript namespace hierarchy to
     /// be able to resolve scope lookups and property accesses for TypeScript enum
@@ -577,33 +577,33 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// In addition, there is a map from each relevant symbol reference to the data
     /// associated with that namespace or namespace member: "ref_to_ts_namespace_member".
     /// This gives enough info to be able to resolve queries into the namespace.
-    pub ref_to_ts_namespace_member: HashMap<Ref, js_ast::ts::Data>,
+    pub(crate) ref_to_ts_namespace_member: HashMap<Ref, js_ast::ts::Data>,
     /// Arena-allocated `TSNamespaceScope`s; their global-heap maps are freed in `Drop`.
-    pub ts_namespace_scopes: Vec<js_ast::StoreRef<js_ast::TSNamespaceScope>>,
+    pub(crate) ts_namespace_scopes: Vec<js_ast::StoreRef<js_ast::TSNamespaceScope>>,
     /// Companion list (sibling scopes share a map, so the scope list can't free it).
-    pub ts_namespace_member_maps: Vec<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
+    pub(crate) ts_namespace_member_maps: Vec<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
     /// When visiting expressions, namespace metadata is associated with the most
     /// recently visited node. If namespace metadata is present, "tsNamespaceTarget"
     /// will be set to the most recently visited node (as a way to mark that this
     /// node has metadata) and "tsNamespaceMemberData" will be set to the metadata.
-    pub ts_namespace: RecentlyVisitedTSNamespace,
-    pub top_level_enums: List<'a, Ref>,
+    pub(crate) ts_namespace: RecentlyVisitedTSNamespace,
+    pub(crate) top_level_enums: List<'a, Ref>,
 
     // Value is a shared `&'a [ScopeOrder<'a>]`. The visit pass never writes
     // through these slices — it only reads
     // `Copy` elements and advances a cursor — so the map and
     // `scope_order_to_visit` may safely alias the same arena allocation.
-    pub scopes_in_order_for_enum: ArrayHashMap<bun_ast::Loc, &'a [ScopeOrder<'a>]>,
+    pub(crate) scopes_in_order_for_enum: ArrayHashMap<bun_ast::Loc, &'a [ScopeOrder<'a>]>,
 
     // If this is true, then all top-level statements are wrapped in a try/catch
-    pub will_wrap_module_in_try_catch_for_using: bool,
+    pub(crate) will_wrap_module_in_try_catch_for_using: bool,
 
     /// Used for react refresh, it must be able to insert `const _s = $RefreshSig$();`
-    pub nearest_stmt_list: Option<NonNull<ListManaged<'a, Stmt>>>,
+    pub(crate) nearest_stmt_list: Option<NonNull<ListManaged<'a, Stmt>>>,
     // Lifetime caution: points at a stack local saved/restored across calls.
     /// Name from assignment context for anonymous decorated class expressions.
     /// Set before visitExpr, consumed by lowerStandardDecoratorsImpl.
-    pub decorator_class_name: Option<&'a [u8]>,
+    pub(crate) decorator_class_name: Option<&'a [u8]>,
 }
 
 // `binding::ToExprWrapper` type-erases `*P` (which is generic over
@@ -625,13 +625,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIP
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub const IS_TYPESCRIPT_ENABLED: bool = TYPESCRIPT;
-    pub const TRACK_SYMBOL_USAGE_DURING_PARSE_PASS: bool = SCAN_ONLY && TYPESCRIPT;
+    pub(crate) const IS_TYPESCRIPT_ENABLED: bool = TYPESCRIPT;
+    pub(crate) const TRACK_SYMBOL_USAGE_DURING_PARSE_PASS: bool = SCAN_ONLY && TYPESCRIPT;
 
     /// Runtime replacement for the former `IS_JSX_ENABLED` associated const
     /// (JSX is no longer a const-generic type parameter — see `jsx_transform`).
     #[inline]
-    pub fn is_jsx_enabled(&self) -> bool {
+    pub(crate) fn is_jsx_enabled(&self) -> bool {
         self.jsx_transform.is_enabled()
     }
 
@@ -641,7 +641,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `log()` live at once.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn log(&self) -> &mut bun_ast::Log {
+    pub(crate) fn log(&self) -> &mut bun_ast::Log {
         // SAFETY: `self.log` was created from an `&'a mut Log` that outlives
         // `'a` (and therefore `self`). `self.lexer.log` aliases the same
         // allocation as a `NonNull` (not `&mut`), so no long-lived Unique tag
@@ -649,7 +649,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         unsafe { &mut *self.log.as_ptr() }
     }
 
-    pub fn report_stack_overflow(&self, loc: bun_ast::Loc) {
+    pub(crate) fn report_stack_overflow(&self, loc: bun_ast::Loc) {
         if self.reported_stack_overflow.get() {
             return;
         }
@@ -666,7 +666,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `&mut self` cannot alias any other live borrow. Centralises the
     /// `unsafe` so call sites stay safe.
     #[inline]
-    pub fn nearest_stmt_list_mut(&mut self) -> Option<&mut ListManaged<'a, Stmt>> {
+    pub(crate) fn nearest_stmt_list_mut(&mut self) -> Option<&mut ListManaged<'a, Stmt>> {
         // SAFETY: `nearest_stmt_list` is a back-pointer to stack storage on
         // the enclosing visit frame, set before recursion and restored before
         // that frame returns. It is disjoint from `*self` and from any other
@@ -682,7 +682,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// every reassignment (push/pop scope) stores another arena-owned handle;
     /// the pointee outlives `'a` and is never freed during parsing.
     #[inline]
-    pub fn current_scope(&self) -> &js_ast::Scope {
+    pub(crate) fn current_scope(&self) -> &js_ast::Scope {
         &self.current_scope
     }
 
@@ -691,20 +691,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Caller must not also hold a borrow obtained via `module_scope[_mut]()`
     /// when the two handles alias (top level).
     #[inline]
-    pub fn current_scope_mut(&mut self) -> &mut js_ast::Scope {
+    pub(crate) fn current_scope_mut(&mut self) -> &mut js_ast::Scope {
         &mut self.current_scope
     }
 
     /// Shared borrow of the module (top-level) scope.
     #[inline]
-    pub fn module_scope(&self) -> &js_ast::Scope {
+    pub(crate) fn module_scope(&self) -> &js_ast::Scope {
         &self.module_scope
     }
 
     /// Unique borrow of the module scope. Takes `&mut self` (see
     /// `current_scope_mut`).
     #[inline]
-    pub fn module_scope_mut(&mut self) -> &mut js_ast::Scope {
+    pub(crate) fn module_scope_mut(&mut self) -> &mut js_ast::Scope {
         &mut self.module_scope
     }
 
@@ -715,7 +715,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// it sidesteps the borrowck conflict that `current_scope()` (which
     /// returns a `&Scope` tied to `&self`) would hit.
     #[inline]
-    pub fn current_scope_ref(&self) -> js_ast::StoreRef<js_ast::Scope> {
+    pub(crate) fn current_scope_ref(&self) -> js_ast::StoreRef<js_ast::Scope> {
         self.current_scope
     }
 
@@ -723,12 +723,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Same rationale as [`current_scope_ref`] — `Copy` and does not borrow
     /// `self`, so it can be held across `&mut self` calls.
     #[inline]
-    pub fn module_scope_ref(&self) -> js_ast::StoreRef<js_ast::Scope> {
+    pub(crate) fn module_scope_ref(&self) -> js_ast::StoreRef<js_ast::Scope> {
         self.module_scope
     }
 
     #[inline]
-    pub fn new_expr<T>(&mut self, t: T, loc: bun_ast::Loc) -> Expr
+    pub(crate) fn new_expr<T>(&mut self, t: T, loc: bun_ast::Loc) -> Expr
     where
         T: js_ast::expr::IntoExprData,
     {
@@ -756,14 +756,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    pub fn s<T>(&self, t: T, loc: bun_ast::Loc) -> Stmt
+    pub(crate) fn s<T>(&self, t: T, loc: bun_ast::Loc) -> Stmt
     where
         T: js_ast::stmt::StatementData,
     {
         Stmt::alloc(t, loc)
     }
 
-    pub fn load_name_from_ref(&self, r#ref: Ref) -> &'a [u8] {
+    pub(crate) fn load_name_from_ref(&self, r#ref: Ref) -> &'a [u8] {
         use js_ast::base::RefTag;
         match r#ref.tag() {
             // SAFETY: original_name is an arena-owned slice valid for 'a (Symbol is created
@@ -783,12 +783,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub const ALLOW_MACROS: bool = !cfg!(target_family = "wasm");
+    pub(crate) const ALLOW_MACROS: bool = !cfg!(target_family = "wasm");
 
     /// use this instead of checking p.source.index
     /// because when not bundling, p.source.index is `0`
     #[inline]
-    pub fn is_source_runtime(&self) -> bool {
+    pub(crate) fn is_source_runtime(&self) -> bool {
         // Index 0 is the synthetic runtime chunk.
         self.options.bundle && self.source.index.0 == 0
     }
@@ -825,7 +825,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(b"")
     }
 
-    pub fn check_dynamic_specifier(
+    pub(crate) fn check_dynamic_specifier(
         &mut self,
         arg: Expr,
         loc: bun_ast::Loc,
@@ -890,13 +890,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // `&mut P` — avoids the aliased-`&mut` that arises when a transposer
     // *field* holds `&mut self` while a `&mut P` is materialised inside the
     // visitor (PORTING.md §Forbidden).
-    pub fn maybe_transpose_if_import(&mut self, arg: Expr, state: &TransposeState) -> Expr {
+    pub(crate) fn maybe_transpose_if_import(&mut self, arg: Expr, state: &TransposeState) -> Expr {
         match arg.data {
             js_ast::ExprData::EIf(ex) => Expr::init(
                 E::If {
                     yes: self.maybe_transpose_if_import(ex.yes, state),
                     no: self.maybe_transpose_if_import(ex.no, state),
-                    test_: ex.test_,
+                    test: ex.test,
                 },
                 arg.loc,
             ),
@@ -904,13 +904,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn maybe_transpose_if_require(&mut self, arg: Expr, state: &TransposeState) -> Expr {
+    pub(crate) fn maybe_transpose_if_require(&mut self, arg: Expr, state: &TransposeState) -> Expr {
         match arg.data {
             js_ast::ExprData::EIf(ex) => Expr::init(
                 E::If {
                     yes: self.maybe_transpose_if_require(ex.yes, state),
                     no: self.maybe_transpose_if_require(ex.no, state),
-                    test_: ex.test_,
+                    test: ex.test,
                 },
                 arg.loc,
             ),
@@ -918,7 +918,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn transpose_known_to_be_if_require(&mut self, arg: Expr, state: &TransposeState) -> Expr {
+    pub(crate) fn transpose_known_to_be_if_require(
+        &mut self,
+        arg: Expr,
+        state: &TransposeState,
+    ) -> Expr {
         // Caller guarantees `arg.data` is `EIf`.
         let js_ast::ExprData::EIf(ex) = arg.data else {
             unreachable!()
@@ -927,19 +931,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::If {
                 yes: self.maybe_transpose_if_require(ex.yes, state),
                 no: self.maybe_transpose_if_require(ex.no, state),
-                test_: ex.test_,
+                test: ex.test,
             },
             arg.loc,
         )
     }
 
-    pub fn maybe_transpose_if_require_resolve(&mut self, arg: Expr, state: Expr) -> Expr {
+    pub(crate) fn maybe_transpose_if_require_resolve(&mut self, arg: Expr, state: Expr) -> Expr {
         match arg.data {
             js_ast::ExprData::EIf(ex) => Expr::init(
                 E::If {
                     yes: self.maybe_transpose_if_require_resolve(ex.yes, state),
                     no: self.maybe_transpose_if_require_resolve(ex.no, state),
-                    test_: ex.test_,
+                    test: ex.test,
                 },
                 arg.loc,
             ),
@@ -947,7 +951,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn transpose_known_to_be_if_require_resolve(&mut self, arg: Expr, state: Expr) -> Expr {
+    pub(crate) fn transpose_known_to_be_if_require_resolve(
+        &mut self,
+        arg: Expr,
+        state: Expr,
+    ) -> Expr {
         // Caller guarantees `arg.data` is `EIf`.
         let js_ast::ExprData::EIf(ex) = arg.data else {
             unreachable!()
@@ -956,13 +964,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::If {
                 yes: self.maybe_transpose_if_require_resolve(ex.yes, state),
                 no: self.maybe_transpose_if_require_resolve(ex.no, state),
-                test_: ex.test_,
+                test: ex.test,
             },
             arg.loc,
         )
     }
 
-    pub fn transpose_import(&mut self, arg: Expr, state: &TransposeState) -> Expr {
+    pub(crate) fn transpose_import(&mut self, arg: Expr, state: &TransposeState) -> Expr {
         // The argument must be a string
         if let Some(mut str_) = arg.data.as_e_string() {
             // Ignore calls to import() if the control flow is provably dead here.
@@ -1026,7 +1034,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    pub fn transpose_require_resolve(&mut self, arg: Expr, require_resolve_ref: Expr) -> Expr {
+    pub(crate) fn transpose_require_resolve(
+        &mut self,
+        arg: Expr,
+        require_resolve_ref: Expr,
+    ) -> Expr {
         // The argument must be a string
         if matches!(arg.data, js_ast::ExprData::EString(_)) {
             return self.transpose_require_resolve_known_string(arg);
@@ -1058,7 +1070,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    pub fn transpose_require_resolve_known_string(&mut self, arg: Expr) -> Expr {
+    pub(crate) fn transpose_require_resolve_known_string(&mut self, arg: Expr) -> Expr {
         debug_assert!(matches!(arg.data, js_ast::ExprData::EString(_)));
 
         // Ignore calls to import() if the control flow is provably dead here.
@@ -1095,7 +1107,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    pub fn transpose_require(&mut self, arg: Expr, state: &TransposeState) -> Expr {
+    pub(crate) fn transpose_require(&mut self, arg: Expr, state: &TransposeState) -> Expr {
         if !self.options.features.allow_runtime {
             return self.new_expr(
                 E::Call {
@@ -1238,7 +1250,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    pub fn should_unwrap_common_js_to_esm(&self) -> bool {
+    pub(crate) fn should_unwrap_common_js_to_esm(&self) -> bool {
         self.options.features.unwrap_commonjs_to_esm
     }
 
@@ -1246,15 +1258,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // ─── visit modules call the `_common_js_` two-word forms above. Keep    ───
     // ─── both spellings until call sites are reconciled.                   ───
     #[inline]
-    pub fn should_unwrap_commonjs_to_esm(&self) -> bool {
+    pub(crate) fn should_unwrap_commonjs_to_esm(&self) -> bool {
         self.should_unwrap_common_js_to_esm()
     }
     #[inline]
-    pub fn is_deoptimized_commonjs(&self) -> bool {
+    pub(crate) fn is_deoptimized_commonjs(&self) -> bool {
         self.is_deoptimized_common_js()
     }
     #[inline]
-    pub fn deoptimize_commonjs_named_exports(&mut self) {
+    pub(crate) fn deoptimize_commonjs_named_exports(&mut self) {
         self.deoptimize_common_js_named_exports();
     }
 
@@ -1344,14 +1356,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ///
     /// If a caller needs to wrap an already-stored payload, call `Binding::init` directly.
     #[inline]
-    pub fn b<T>(&mut self, t: T, loc: bun_ast::Loc) -> Binding
+    pub(crate) fn b<T>(&mut self, t: T, loc: bun_ast::Loc) -> Binding
     where
         T: js_ast::binding::BindingAlloc,
     {
         Binding::alloc(self.arena, t, loc)
     }
 
-    pub fn record_exported_binding(&mut self, binding: Binding) {
+    pub(crate) fn record_exported_binding(&mut self, binding: Binding) {
         match binding.data {
             js_ast::b::B::BMissing(_) => {}
             js_ast::b::B::BIdentifier(ident) => {
@@ -1376,7 +1388,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn record_export(
+    pub(crate) fn record_export(
         &mut self,
         loc: bun_ast::Loc,
         alias: &'a [u8],
@@ -1419,11 +1431,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn is_deoptimized_common_js(&self) -> bool {
+    pub(crate) fn is_deoptimized_common_js(&self) -> bool {
         self.commonjs_named_exports_deoptimized && self.commonjs_named_exports.count() > 0
     }
 
-    pub fn record_usage(&mut self, ref_: Ref) {
+    pub(crate) fn record_usage(&mut self, ref_: Ref) {
         if self.is_revisit_for_substitution {
             return;
         }
@@ -1449,7 +1461,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn log_arrow_arg_errors(&mut self, errors: &mut DeferredArrowArgErrors) {
+    pub(crate) fn log_arrow_arg_errors(&mut self, errors: &mut DeferredArrowArgErrors) {
         if errors.invalid_expr_await.len > 0 {
             let r = errors.invalid_expr_await;
             self.log().add_range_error(
@@ -1472,7 +1484,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // Only reached while building diagnostics — keep it off the hot parse path.
     #[cold]
     #[inline(never)]
-    pub fn key_name_for_error(&mut self, key: &js_ast::Expr) -> &'a [u8] {
+    pub(crate) fn key_name_for_error(&mut self, key: &js_ast::Expr) -> &'a [u8] {
         match &key.data {
             js_ast::ExprData::EString(s) => s.string(self.arena).expect("unreachable"),
             js_ast::ExprData::EPrivateIdentifier(private) => self.load_name_from_ref(private.ref_),
@@ -1481,7 +1493,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// This function is very very hot.
-    pub fn handle_identifier(
+    pub(crate) fn handle_identifier(
         &mut self,
         loc: bun_ast::Loc,
         ident: E::Identifier,
@@ -1498,8 +1510,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // Create an error for assigning to an import namespace
-        if (opts.assign_target() != js_ast::AssignTarget::None || opts.is_delete_target())
+        // Run-time TypeError per spec; only hard-error when bundling (scope hoisting would hide it).
+        if self.options.bundle
+            && (opts.assign_target() != js_ast::AssignTarget::None || opts.is_delete_target())
             && self.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import
         {
             let r = js_lexer::range_of_identifier(self.source, loc);
@@ -1672,7 +1685,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn generate_import_stmt_for_bake_response(
+    pub(crate) fn generate_import_stmt_for_bake_response(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
     ) -> Result<(), crate::Error> {
@@ -1761,7 +1774,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn generate_import_stmt<I, Sym>(
+    pub(crate) fn generate_import_stmt<I, Sym>(
         &mut self,
         import_path: &'a [u8],
         imports: I,
@@ -1903,7 +1916,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn generate_react_refresh_import(
+    pub(crate) fn generate_react_refresh_import(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
         import_path: &'a [u8],
@@ -2054,7 +2067,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn substitute_single_use_symbol_in_stmt(
+    pub(crate) fn substitute_single_use_symbol_in_stmt(
         &mut self,
         stmt: Stmt,
         r#ref: Ref,
@@ -2077,10 +2090,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::StmtData::SIf(mut if_stmt) => {
-                    break 'brk js_ast::StoreRef::from_bump(&mut if_stmt.test_);
+                    break 'brk js_ast::StoreRef::from_bump(&mut if_stmt.test);
                 }
                 js_ast::StmtData::SSwitch(mut switch_stmt) => {
-                    break 'brk js_ast::StoreRef::from_bump(&mut switch_stmt.test_);
+                    break 'brk js_ast::StoreRef::from_bump(&mut switch_stmt.test);
                 }
                 js_ast::StmtData::SLocal(mut local) => {
                     if local.decls.len_u32() > 0 {
@@ -2181,7 +2194,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue(_) => {}
+                        Substitution::Continue => {}
                         Substitution::Success(result) => {
                             new.target = result;
                             return Substitution::Success(expr);
@@ -2200,7 +2213,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 replacement,
                                 replacement_can_be_removed,
                             ) {
-                                Substitution::Continue(_) => {}
+                                Substitution::Continue => {}
                                 Substitution::Success(result) => {
                                     *arg = result;
                                     return Substitution::Success(expr);
@@ -2220,7 +2233,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue(_) => {}
+                        Substitution::Continue => {}
                         Substitution::Success(result) => {
                             spread.value = result;
                             return Substitution::Success(expr);
@@ -2238,7 +2251,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue(_) => {}
+                        Substitution::Continue => {}
                         Substitution::Success(result) => {
                             await_expr.value = result;
                             return Substitution::Success(expr);
@@ -2260,7 +2273,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue(_) => {}
+                        Substitution::Continue => {}
                         Substitution::Success(result) => {
                             yield_.value = Some(result);
                             return Substitution::Success(expr);
@@ -2278,7 +2291,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue(_) => {}
+                        Substitution::Continue => {}
                         Substitution::Success(result) => {
                             import.expr = result;
                             return Substitution::Success(expr);
@@ -2297,7 +2310,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if replacement_can_be_removed
                         && self.expr_can_be_removed_if_unused(&import.expr)
                     {
-                        return Substitution::Continue(expr);
+                        return Substitution::Continue;
                     }
                 }
                 js_ast::ExprData::EUnary(mut e) => {
@@ -2315,7 +2328,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             replacement,
                             replacement_can_be_removed,
                         ) {
-                            Substitution::Continue(_) => {}
+                            Substitution::Continue => {}
                             Substitution::Success(result) => {
                                 e.value = result;
                                 return Substitution::Success(expr);
@@ -2334,7 +2347,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue(_) => {}
+                        Substitution::Continue => {}
                         Substitution::Success(result) => {
                             e.target = result;
                             return Substitution::Success(expr);
@@ -2354,7 +2367,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             replacement,
                             replacement_can_be_removed,
                         ) {
-                            Substitution::Continue(_) => {}
+                            Substitution::Continue => {}
                             Substitution::Success(result) => {
                                 e.left = result;
                                 return Substitution::Success(expr);
@@ -2395,7 +2408,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue(_) => {}
+                        Substitution::Continue => {}
                         Substitution::Success(result) => {
                             e.right = result;
                             return Substitution::Success(expr);
@@ -2408,18 +2421,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::ExprData::EIf(mut e) => {
                     match self.substitute_single_use_symbol_in_expr(
-                        e.test_,
+                        e.test,
                         r#ref,
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue(_) => {}
+                        Substitution::Continue => {}
                         Substitution::Success(result) => {
-                            e.test_ = result;
+                            e.test = result;
                             return Substitution::Success(expr);
                         }
                         Substitution::Failure(result) => {
-                            e.test_ = result;
+                            e.test = result;
                             return Substitution::Failure(expr);
                         }
                     }
@@ -2457,8 +2470,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         // Side effects in either branch should stop us from continuing to try to
                         // substitute the replacement after the control flow branches merge again.
-                        if !matches!(yes, Substitution::Continue(_))
-                            || !matches!(no, Substitution::Continue(_))
+                        if !matches!(yes, Substitution::Continue)
+                            || !matches!(no, Substitution::Continue)
                         {
                             return Substitution::Failure(expr);
                         }
@@ -2471,7 +2484,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue(_) => {}
+                        Substitution::Continue => {}
                         Substitution::Success(result) => {
                             index.target = result;
                             return Substitution::Success(expr);
@@ -2491,7 +2504,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             replacement,
                             replacement_can_be_removed,
                         ) {
-                            Substitution::Continue(_) => {}
+                            Substitution::Continue => {}
                             Substitution::Success(result) => {
                                 index.index = result;
                                 return Substitution::Success(expr);
@@ -2521,7 +2534,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         replacement,
                         replacement_can_be_removed,
                     ) {
-                        Substitution::Continue(_) => {}
+                        Substitution::Continue => {}
                         Substitution::Success(result) => {
                             e.target = result;
                             return Substitution::Success(expr);
@@ -2542,7 +2555,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 replacement,
                                 replacement_can_be_removed,
                             ) {
-                                Substitution::Continue(_) => {}
+                                Substitution::Continue => {}
                                 Substitution::Success(result) => {
                                     *arg = result;
                                     return Substitution::Success(expr);
@@ -2563,7 +2576,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             replacement,
                             replacement_can_be_removed,
                         ) {
-                            Substitution::Continue(_) => {}
+                            Substitution::Continue => {}
                             Substitution::Success(result) => {
                                 *item = result;
                                 return Substitution::Success(expr);
@@ -2585,7 +2598,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 replacement,
                                 replacement_can_be_removed,
                             ) {
-                                Substitution::Continue(_) => {}
+                                Substitution::Continue => {}
                                 Substitution::Success(result) => {
                                     property.key = Some(result);
                                     return Substitution::Success(expr);
@@ -2608,7 +2621,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 replacement,
                                 replacement_can_be_removed,
                             ) {
-                                Substitution::Continue(_) => {}
+                                Substitution::Continue => {}
                                 Substitution::Success(result) => {
                                     property.value =
                                         if matches!(result.data, js_ast::ExprData::EMissing(_)) {
@@ -2639,7 +2652,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             replacement,
                             replacement_can_be_removed,
                         ) {
-                            Substitution::Continue(_) => {}
+                            Substitution::Continue => {}
                             Substitution::Success(result) => {
                                 *tag = result;
                                 return Substitution::Success(expr);
@@ -2662,7 +2675,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             replacement,
                             replacement_can_be_removed,
                         ) {
-                            Substitution::Continue(_) => {}
+                            Substitution::Continue => {}
                             Substitution::Success(result) => {
                                 part.value = result;
                                 // todo: mangle template parts
@@ -2682,19 +2695,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // If both the replacement and this expression have no observable side
         // effects, then we can reorder the replacement past this expression
         if replacement_can_be_removed && self.expr_can_be_removed_if_unused(&expr) {
-            return Substitution::Continue(expr);
+            return Substitution::Continue;
         }
 
         // We can always reorder past primitive values
         if js_ast::ExprTag::is_primitive_literal(expr.data.tag()) {
-            return Substitution::Continue(expr);
+            return Substitution::Continue;
         }
 
         // Otherwise we should stop trying to substitute past this point
         Substitution::Failure(expr)
     }
 
-    pub fn prepare_for_visit_pass(&mut self) -> Result<(), crate::Error> {
+    pub(crate) fn prepare_for_visit_pass(&mut self) -> Result<(), crate::Error> {
         {
             // The wrapper stores only the arena and a non-capturing
             // fn-pointer trampoline; the `*mut P` context is supplied *at call
@@ -3182,7 +3195,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         *head
     }
 
-    pub fn push_scope_for_visit_pass(
+    pub(crate) fn push_scope_for_visit_pass(
         &mut self,
         kind: js_ast::scope::Kind,
         loc: bun_ast::Loc,
@@ -3227,7 +3240,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // All call sites pass a literal so the branch on `kind` is trivially predicted.
     #[allow(non_snake_case)]
-    pub fn push_scope_for_parse_pass(
+    pub(crate) fn push_scope_for_parse_pass(
         &mut self,
         KIND: js_ast::scope::Kind,
         loc: bun_ast::Loc,
@@ -3482,7 +3495,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn convert_expr_to_binding_and_initializer(
+    pub(crate) fn convert_expr_to_binding_and_initializer(
         &mut self,
         _expr: &mut ExprNodeIndex,
         invalid_log: &mut LocList,
@@ -3521,7 +3534,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[cold]
     #[inline(never)]
-    pub fn forbid_lexical_decl(&mut self, loc: bun_ast::Loc) {
+    pub(crate) fn forbid_lexical_decl(&mut self, loc: bun_ast::Loc) {
         self.log().add_error(
             Some(self.source),
             loc,
@@ -3532,7 +3545,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// If we attempt to parse TypeScript syntax outside of a TypeScript file
     /// make it a compile error
     #[inline]
-    pub fn mark_type_script_only(&self) {
+    pub(crate) fn mark_type_script_only(&self) {
         // Const-generic specialization can't express a compile error in stable
         // Rust, so this is a runtime assertion instead.
         if !TYPESCRIPT {
@@ -3540,7 +3553,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn log_expr_errors(&mut self, errors: &mut DeferredErrors) {
+    pub(crate) fn log_expr_errors(&mut self, errors: &mut DeferredErrors) {
         if let Some(r) = errors.invalid_expr_default_value {
             self.log()
                 .add_range_error(Some(self.source), r, b"Unexpected \"=\"");
@@ -3558,7 +3571,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn pop_and_discard_scope(&mut self, scope_index: usize) {
+    pub(crate) fn pop_and_discard_scope(&mut self, scope_index: usize) {
         // Move up to the parent scope
         let to_discard = self.current_scope_ref();
         let parent = to_discard.parent.expect("unreachable");
@@ -3582,7 +3595,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Only assert above; do not actually pop.
     }
 
-    pub fn process_import_statement(
+    pub(crate) fn process_import_statement(
         &mut self,
         stmt_: S::Import,
         path: ParsedPath<'a>,
@@ -3730,7 +3743,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     uses.put(
                         name,
                         crate::parser::ParsePassSymbolUse {
-                            r#ref: stmt.namespace_ref,
                             used: false,
                             import_record_index: stmt.import_record_index,
                         },
@@ -3824,7 +3836,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         uses.put(
                             name,
                             crate::parser::ParsePassSymbolUse {
-                                r#ref,
                                 used: false,
                                 import_record_index: stmt.import_record_index,
                             },
@@ -3905,7 +3916,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     uses.put(
                         name,
                         crate::parser::ParsePassSymbolUse {
-                            r#ref,
                             used: false,
                             import_record_index: stmt.import_record_index,
                         },
@@ -4002,7 +4012,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn create_default_name(&mut self, loc: bun_ast::Loc) -> js_ast::LocRef {
+    pub(crate) fn create_default_name(&mut self, loc: bun_ast::Loc) -> js_ast::LocRef {
         let identifier: &'a [u8] = {
             let s = format!("{}_default", self.source.path.name().fmt_identifier());
             self.arena.alloc_slice_copy(s.as_bytes())
@@ -4018,7 +4028,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name
     }
 
-    pub fn new_symbol(&mut self, kind: js_ast::symbol::Kind, identifier: &'a [u8]) -> Ref {
+    pub(crate) fn new_symbol(&mut self, kind: js_ast::symbol::Kind, identifier: &'a [u8]) -> Ref {
         let inner_index = self.symbols.len() as js_ast::base::RefInt; // @truncate
         self.symbols.push(Symbol {
             kind,
@@ -4037,7 +4047,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    pub fn default_name_for_expr(&mut self, expr: Expr, loc: bun_ast::Loc) -> LocRef {
+    pub(crate) fn default_name_for_expr(&mut self, expr: Expr, loc: bun_ast::Loc) -> LocRef {
         match &expr.data {
             js_ast::ExprData::EFunction(func_container) => {
                 if let Some(_name) = &func_container.func.name {
@@ -4075,7 +4085,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.create_default_name(loc)
     }
 
-    pub fn discard_scopes_up_to(&mut self, scope_index: usize) {
+    pub(crate) fn discard_scopes_up_to(&mut self, scope_index: usize) {
         // Remove any direct children from their parent. `StoreRef` is `Copy` and
         // does not borrow `self`, so the immutable iter over `scopes_in_order`
         // can run while `children` is held `&mut` through the handle.
@@ -4110,7 +4120,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // (e.g. node_modules), so keep it out of the hot parse/visit icache window.
     #[cold]
     #[inline(never)]
-    pub fn define_exported_namespace_binding(
+    pub(crate) fn define_exported_namespace_binding(
         &mut self,
         exported_members: &mut js_ast::TSNamespaceMemberMap,
         binding: Binding,
@@ -4147,7 +4157,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn forbid_initializers(
+    pub(crate) fn forbid_initializers(
         &mut self,
         decls: &[G::Decl],
         loop_type: &'static str,
@@ -4184,7 +4194,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[allow(non_snake_case)]
-    pub fn require_initializers(
+    pub(crate) fn require_initializers(
         &mut self,
         KIND: js_ast::s::Kind,
         decls: &[G::Decl],
@@ -4234,7 +4244,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // use that earlier namespace's object instead.
     #[cold]
     #[inline(never)]
-    pub fn get_or_create_exported_namespace_members(
+    pub(crate) fn get_or_create_exported_namespace_members(
         &mut self,
         name: &[u8],
         is_export: bool,
@@ -4295,9 +4305,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // TODO:
-    pub fn check_for_non_bmp_code_point(&mut self, _: bun_ast::Loc, _: &[u8]) {}
+    pub(crate) fn check_for_non_bmp_code_point(&mut self, _: bun_ast::Loc, _: &[u8]) {}
 
-    pub fn mark_strict_mode_feature(
+    pub(crate) fn mark_strict_mode_feature(
         &mut self,
         feature: StrictModeFeature,
         r: bun_ast::Range,
@@ -4379,12 +4389,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    pub fn is_strict_mode(&self) -> bool {
+    pub(crate) fn is_strict_mode(&self) -> bool {
         self.current_scope().strict_mode != js_ast::StrictModeKind::SloppyMode
     }
 
     #[inline]
-    pub fn is_strict_mode_output_format(&self) -> bool {
+    pub(crate) fn is_strict_mode_output_format(&self) -> bool {
         self.options.bundle && self.options.output_format.is_esm()
     }
 
@@ -4411,7 +4421,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Named for its original CJS-wrapper callers. For parser-generated symbols
     /// consumed BY REF (never via `find_symbol`), use
     /// [`Self::declare_generated_symbol`].
-    pub fn declare_common_js_symbol(
+    pub(crate) fn declare_common_js_symbol(
         &mut self,
         kind: js_ast::symbol::Kind,
         name: &'static [u8],
@@ -4504,7 +4514,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// computed at runtime (react-compiler temps, namespace refs from import
     /// paths, `${name}` CJS-export shims) hand-roll `new_symbol` +
     /// `module_scope.generated.append` instead.
-    pub fn declare_generated_symbol(
+    pub(crate) fn declare_generated_symbol(
         &mut self,
         kind: js_ast::symbol::Kind,
         name: &'static [u8],
@@ -4519,7 +4529,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ref_
     }
 
-    pub fn declare_symbol(
+    pub(crate) fn declare_symbol(
         &mut self,
         kind: js_ast::symbol::Kind,
         loc: bun_ast::Loc,
@@ -4612,7 +4622,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(ref_)
     }
 
-    pub fn validate_function_name(&mut self, func: &G::Fn, kind: FunctionKind) {
+    pub(crate) fn validate_function_name(&mut self, func: &G::Fn, kind: FunctionKind) {
         if let Some(name) = &func.name {
             // SAFETY: Symbol.original_name is an arena/source-contents slice valid for 'a.
             let original_name: &[u8] = self.symbols[name.ref_.inner_index() as usize]
@@ -4638,7 +4648,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn declare_binding(
+    pub(crate) fn declare_binding(
         &mut self,
         kind: js_ast::symbol::Kind,
         binding: &mut BindingNodeIndex,
@@ -4647,7 +4657,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match &mut binding.data {
             js_ast::b::B::BMissing(_) => {}
             js_ast::b::B::BIdentifier(bind) => {
-                if !opts.is_typescript_declare || (opts.is_namespace_scope && opts.is_export) {
+                if !opts.is_typescript_declare || (opts.scope.is_namespace() && opts.is_export) {
                     bind.r#ref = self.declare_symbol(
                         kind,
                         binding.loc,
@@ -4671,7 +4681,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn store_name_in_ref(&mut self, name: &'a [u8]) -> Ref {
+    pub(crate) fn store_name_in_ref(&mut self, name: &'a [u8]) -> Ref {
         if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
             if let Some(uses) = &mut self.parse_pass_symbol_uses {
                 if let Some(res) = uses.get_mut(name) {
@@ -4709,7 +4719,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // load_name_from_ref() lives in the impl block above (deduped).
 
     #[inline]
-    pub fn add_import_record(
+    pub(crate) fn add_import_record(
         &mut self,
         kind: ImportKind,
         loc: bun_ast::Loc,
@@ -4718,7 +4728,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.add_import_record_by_range(kind, self.source.range_of_string(loc), name)
     }
 
-    pub fn add_import_record_by_range(
+    pub(crate) fn add_import_record_by_range(
         &mut self,
         kind: ImportKind,
         range: bun_ast::Range,
@@ -4727,7 +4737,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.add_import_record_by_range_and_path(kind, range, &fs::Path::init(name))
     }
 
-    pub fn add_import_record_by_range_and_path(
+    pub(crate) fn add_import_record_by_range_and_path(
         &mut self,
         kind: ImportKind,
         range: bun_ast::Range,
@@ -4757,7 +4767,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         u32::try_from(index).expect("int cast")
     }
 
-    pub fn pop_scope(&mut self) {
+    pub(crate) fn pop_scope(&mut self) {
         // `StoreRef` handle is `Copy` and does not borrow `self`, so the loop
         // body can write to `self.symbols` (disjoint allocation) while the
         // scope is read via `Deref`.
@@ -4823,7 +4833,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         });
     }
 
-    pub fn mark_expr_as_parenthesized(&mut self, expr: &mut Expr) {
+    pub(crate) fn mark_expr_as_parenthesized(&mut self, expr: &mut Expr) {
         match &mut expr.data {
             js_ast::ExprData::EArray(ex) => ex.is_parenthesized = true,
             js_ast::ExprData::EObject(ex) => ex.is_parenthesized = true,
@@ -4832,22 +4842,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[cold]
-    pub fn panic(&mut self, fmt: &'static str, args: core::fmt::Arguments) -> ! {
+    pub(crate) fn panic(&mut self, fmt: &'static str, args: core::fmt::Arguments) -> ! {
         self.panic_loc(fmt, args, None)
     }
 
     #[cold]
     #[inline(never)]
-    pub fn panic_loc(
+    pub(crate) fn panic_loc(
         &mut self,
         fmt: &'static str,
         args: core::fmt::Arguments,
         loc: Option<bun_ast::Loc>,
     ) -> ! {
-        // `Log::print` takes `IntoLogWrite` (`fmt::Write`), so write into a
-        // bump-backed `String` — one contiguous text output.
-        let mut panic_stream = bun_alloc::ArenaString::with_capacity_in(32 * 1024, self.arena);
-
         // panic during visit pass leaves the lexer at the end, which
         // would make this location absolutely useless.
         let location = loc.unwrap_or_else(|| self.lexer.loc());
@@ -4863,12 +4869,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         self.log().level = bun_ast::Level::Verbose;
-        let _ = self.log().print(&mut panic_stream);
+        let _ = self.log().print(std::ptr::from_mut(Output::error_writer()));
 
-        Output::panic(format_args!("{}\n{}{}", fmt, args, panic_stream.as_str()));
+        Output::panic(format_args!("{}\n{}", fmt, args));
     }
 
-    pub fn jsx_strings_to_member_expression(
+    pub(crate) fn jsx_strings_to_member_expression(
         &mut self,
         loc: bun_ast::Loc,
         parts: &[&'a [u8]],
@@ -4925,7 +4931,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         value
     }
 
-    pub fn will_need_binding_pattern(&self) -> bool {
+    pub(crate) fn will_need_binding_pattern(&self) -> bool {
         match self.lexer.token {
             // "[a] = b;"
             js_lexer::T::TEquals => true,
@@ -4937,7 +4943,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn append_part(
+    pub(crate) fn append_part(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
         stmts: &'a mut [Stmt],
@@ -5214,12 +5220,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         true
     }
 
-    pub fn deoptimize_common_js_named_exports(&mut self) {
+    pub(crate) fn deoptimize_common_js_named_exports(&mut self) {
         // exists for debugging
         self.commonjs_named_exports_deoptimized = true;
     }
 
-    pub fn maybe_keep_expr_symbol_name(
+    pub(crate) fn maybe_keep_expr_symbol_name(
         &mut self,
         expr: Expr,
         original_name: &'a [u8],
@@ -5232,7 +5238,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn value_for_this(&mut self, loc: bun_ast::Loc) -> Option<Expr> {
+    pub(crate) fn value_for_this(&mut self, loc: bun_ast::Loc) -> Option<Expr> {
         // Substitute "this" if we're inside a static class property initializer
         if self
             .fn_only_data_visit
@@ -5294,7 +5300,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // PERF: takes `&Expr` — `Expr` inlines `ExprData`, so a by-value pass copies
     // the full union. The only caller (`visit_expr_in_out`) already holds `&mut Expr`.
-    pub fn is_valid_assignment_target(&self, expr: &Expr) -> bool {
+    pub(crate) fn is_valid_assignment_target(&self, expr: &Expr) -> bool {
         match &expr.data {
             js_ast::ExprData::EIdentifier(ident) => {
                 !is_eval_or_arguments(self.load_name_from_ref(ident.ref_))
@@ -5309,7 +5315,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// This is only allowed to be called if allow_runtime is true
     /// If --target=bun, this does nothing.
-    pub fn record_usage_of_runtime_require(&mut self) {
+    pub(crate) fn record_usage_of_runtime_require(&mut self) {
         // target bun does not have __require
         if self.options.features.auto_polyfill_require {
             debug_assert!(self.options.features.allow_runtime);
@@ -5319,7 +5325,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn ignore_usage_of_runtime_require(&mut self) {
+    pub(crate) fn ignore_usage_of_runtime_require(&mut self) {
         if self.options.features.auto_polyfill_require {
             debug_assert!(!self.runtime_imports.__require.is_empty());
             let r = self.runtime_identifier_ref(b"__require");
@@ -5332,7 +5338,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    pub fn value_for_require(&self, loc: bun_ast::Loc) -> Expr {
+    pub(crate) fn value_for_require(&self, loc: bun_ast::Loc) -> Expr {
         debug_assert!(!self.is_source_runtime());
         Expr {
             data: js_ast::ExprData::ERequireCallTarget,
@@ -5341,7 +5347,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    pub fn value_for_import_meta_main(&mut self, inverted: bool, loc: bun_ast::Loc) -> Expr {
+    pub(crate) fn value_for_import_meta_main(&mut self, inverted: bool, loc: bun_ast::Loc) -> Expr {
         if let Some(known) = self.options.import_meta_main_value {
             return Expr {
                 loc,
@@ -5370,11 +5376,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn keep_expr_symbol_name(&mut self, _value: Expr, _name: &[u8]) -> Expr {
+    pub(crate) fn keep_expr_symbol_name(&mut self, _value: Expr, _name: &[u8]) -> Expr {
         _value
     }
 
-    pub fn is_simple_parameter_list(args: &[G::Arg], has_rest_arg: bool) -> bool {
+    pub(crate) fn is_simple_parameter_list(args: &[G::Arg], has_rest_arg: bool) -> bool {
         if has_rest_arg {
             return false;
         }
@@ -5387,7 +5393,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // This one is never called in places that haven't already checked if DCE is enabled.
-    pub fn class_can_be_removed_if_unused(&mut self, class: &G::Class) -> bool {
+    pub(crate) fn class_can_be_removed_if_unused(&mut self, class: &G::Class) -> bool {
         if let Some(extends) = &class.extends {
             if !self.expr_can_be_removed_if_unused_without_dce_check(extends) {
                 return false;
@@ -5404,21 +5410,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
 
-            if !self.expr_can_be_removed_if_unused_without_dce_check(
-                property.key.as_ref().expect("unreachable"),
-            ) {
+            // ToPropertyKey on a computed key can run user code unless it's a primitive literal.
+            if property.flags.contains(Flags::Property::IsComputed)
+                && !property
+                    .key
+                    .map(|key| key.unwrap_inlined().is_primitive_literal())
+                    .unwrap_or(false)
+            {
                 return false;
             }
 
-            if let Some(val) = &property.value {
-                if !self.expr_can_be_removed_if_unused_without_dce_check(val) {
-                    return false;
+            // Non-static values/initializers only run on construction or access, never for an unused class.
+            if property.flags.contains(Flags::Property::IsStatic) {
+                if let Some(val) = &property.value {
+                    if !self.expr_can_be_removed_if_unused_without_dce_check(val) {
+                        return false;
+                    }
                 }
-            }
 
-            if let Some(val) = &property.initializer {
-                if !self.expr_can_be_removed_if_unused_without_dce_check(val) {
-                    return false;
+                if let Some(val) = &property.initializer {
+                    if !self.expr_can_be_removed_if_unused_without_dce_check(val) {
+                        return false;
+                    }
                 }
             }
         }
@@ -5429,7 +5442,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // TODO:
     // When React Fast Refresh is enabled, anything that's a JSX component should not be removable
     // This is to improve the reliability of fast refresh between page loads.
-    pub fn expr_can_be_removed_if_unused(&mut self, expr: &Expr) -> bool {
+    pub(crate) fn expr_can_be_removed_if_unused(&mut self, expr: &Expr) -> bool {
         if !self.options.features.dead_code_elimination {
             return false;
         }
@@ -5516,10 +5529,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return true;
             }
             js_ast::ExprData::EIf(ex) => {
-                return self.expr_can_be_removed_if_unused_without_dce_check(&ex.test_)
-                    && (self.is_side_effect_free_unbound_identifier_ref(ex.yes, ex.test_, true)
+                return self.expr_can_be_removed_if_unused_without_dce_check(&ex.test)
+                    && (self.is_side_effect_free_unbound_identifier_ref(ex.yes, ex.test, true)
                         || self.expr_can_be_removed_if_unused_without_dce_check(&ex.yes))
-                    && (self.is_side_effect_free_unbound_identifier_ref(ex.no, ex.test_, false)
+                    && (self.is_side_effect_free_unbound_identifier_ref(ex.no, ex.test, false)
                         || self.expr_can_be_removed_if_unused_without_dce_check(&ex.no));
             }
             js_ast::ExprData::EArray(ex) => {
@@ -5784,7 +5797,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn jsx_import_automatic(&mut self, loc: bun_ast::Loc, is_static: bool) -> Expr {
+    pub(crate) fn jsx_import_automatic(&mut self, loc: bun_ast::Loc, is_static: bool) -> Expr {
         self.jsx_import(
             if is_static
                 && !self.options.jsx.development
@@ -5800,7 +5813,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    pub fn jsx_import(&mut self, kind: JSXImport, loc: bun_ast::Loc) -> Expr {
+    pub(crate) fn jsx_import(&mut self, kind: JSXImport, loc: bun_ast::Loc) -> Expr {
         let ref_: Ref = match self.jsx_imports.get_with_tag(kind) {
             Some(existing) => existing,
             None => {
@@ -5825,7 +5838,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    pub fn select_local_kind(&self, kind: js_ast::s::Kind) -> js_ast::s::Kind {
+    pub(crate) fn select_local_kind(&self, kind: js_ast::s::Kind) -> js_ast::s::Kind {
         // Use "var" instead of "let" and "const" if the variable declaration may
         // need to be separated from the initializer. This allows us to safely move
         // this declaration into a nested scope.
@@ -5849,7 +5862,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         kind
     }
 
-    pub fn ignore_usage(&mut self, r#ref: Ref) {
+    pub(crate) fn ignore_usage(&mut self, r#ref: Ref) {
         if !self.is_control_flow_dead && !self.is_revisit_for_substitution {
             debug_assert!((r#ref.inner_index() as usize) < self.symbols.len());
             self.symbols[r#ref.inner_index() as usize].use_count_estimate = self.symbols
@@ -5871,7 +5884,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // the value is ignored because that's what the TypeScript compiler does.
     }
 
-    pub fn ignore_usage_of_identifier_in_dot_chain(&mut self, expr: Expr) {
+    pub(crate) fn ignore_usage_of_identifier_in_dot_chain(&mut self, expr: Expr) {
         let mut current = expr;
         loop {
             match &current.data {
@@ -5894,12 +5907,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn is_export_to_eliminate(&self, r#ref: Ref) -> bool {
+    pub(crate) fn is_export_to_eliminate(&self, r#ref: Ref) -> bool {
         let symbol_name = self.load_name_from_ref(r#ref);
         self.options.features.replace_exports.contains(symbol_name)
     }
 
-    pub fn inject_replacement_export(
+    pub(crate) fn inject_replacement_export(
         &mut self,
         stmts: &mut crate::parser::StmtList<'a>,
         name_ref: Ref,
@@ -5953,7 +5966,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn replace_decl_and_possibly_remove(
+    pub(crate) fn replace_decl_and_possibly_remove(
         &mut self,
         decl: &mut G::Decl,
         replacement: &crate::parser::Runtime::ReplaceableExport,
@@ -5998,13 +6011,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[cold]
     #[inline(never)]
-    pub fn mark_exported_decls_inside_namespace(&mut self, ns_ref: Ref, decls: &[G::Decl]) {
+    pub(crate) fn mark_exported_decls_inside_namespace(&mut self, ns_ref: Ref, decls: &[G::Decl]) {
         for decl in decls {
             self.mark_exported_binding_inside_namespace(ns_ref, decl.binding);
         }
     }
 
-    pub fn append_if_body_preserving_scope(
+    pub(crate) fn append_if_body_preserving_scope(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
         body: Stmt,
@@ -6065,7 +6078,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // Large TS namespace/enum lowering body — cold for already-transpiled JS.
     #[cold]
     #[inline(never)]
-    pub fn generate_closure_for_type_script_namespace_or_enum(
+    pub(crate) fn generate_closure_for_type_script_namespace_or_enum(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
         stmt_loc: bun_ast::Loc,
@@ -6245,7 +6258,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[cold]
     #[inline(never)]
-    pub fn wrap_inlined_enum(&mut self, value: Expr, comment: &'a [u8]) -> Expr {
+    pub(crate) fn wrap_inlined_enum(&mut self, value: Expr, comment: &'a [u8]) -> Expr {
         if strings::contains(comment, b"*/") {
             // Don't wrap with a comment
             return value;
@@ -6261,7 +6274,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    pub fn runtime_identifier_ref(&mut self, name: &'static [u8]) -> Ref {
+    pub(crate) fn runtime_identifier_ref(&mut self, name: &'static [u8]) -> Ref {
         self.has_called_runtime = true;
 
         if !self.runtime_imports.contains(name) {
@@ -6273,13 +6286,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn runtime_identifier(&mut self, loc: bun_ast::Loc, name: &'static [u8]) -> Expr {
+    pub(crate) fn runtime_identifier(&mut self, loc: bun_ast::Loc, name: &'static [u8]) -> Expr {
         let ref_ = self.runtime_identifier_ref(name);
         self.record_usage(ref_);
         self.new_expr(E::ImportIdentifier::new(ref_, false), loc)
     }
 
-    pub fn call_runtime(
+    pub(crate) fn call_runtime(
         &mut self,
         loc: bun_ast::Loc,
         name: &'static [u8],
@@ -6296,7 +6309,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    pub fn value_for_define(
+    pub(crate) fn value_for_define(
         &mut self,
         loc: bun_ast::Loc,
         assign_target: js_ast::AssignTarget,
@@ -6342,7 +6355,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // `parts` is `&[Box<[u8]>]` to match the active `DotDefine.parts:
     // Vec<Box<[u8]>>` shape (auto-derefs at call sites). The full draft uses
     // `StoreSlice<StoreStr>`; both index to a `[u8]` so the body is unchanged.
-    pub fn is_dot_define_match(&mut self, expr: Expr, parts: &[Box<[u8]>]) -> bool {
+    pub(crate) fn is_dot_define_match(&mut self, expr: Expr, parts: &[Box<[u8]>]) -> bool {
         match expr.data {
             js_ast::ExprData::EDot(ex) => {
                 if parts.len() > 1 {
@@ -6446,7 +6459,7 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub fn lower_class(&mut self, stmtorexpr: js_ast::StmtOrExpr) -> &'a mut [Stmt] {
+    pub(crate) fn lower_class(&mut self, stmtorexpr: js_ast::StmtOrExpr) -> &'a mut [Stmt] {
         use js_ast::g::PropertyKind;
         match stmtorexpr {
             js_ast::StmtOrExpr::Stmt(stmt) => {
@@ -7186,7 +7199,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     E::If {
                         yes,
                         no: dots,
-                        test_: maybe_defined_dots,
+                        test: maybe_defined_dots,
                     },
                     bun_ast::Loc::EMPTY,
                 );
@@ -7198,7 +7211,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[cold]
     #[inline(never)]
-    pub fn wrap_identifier_namespace(&mut self, loc: bun_ast::Loc, r#ref: Ref) -> Expr {
+    pub(crate) fn wrap_identifier_namespace(&mut self, loc: bun_ast::Loc, r#ref: Ref) -> Expr {
         let enclosing_ref = self
             .enclosing_namespace_arg_ref
             .expect("infallible: in namespace");
@@ -7224,7 +7237,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    pub fn wrap_identifier_hoisting(&mut self, loc: bun_ast::Loc, r#ref: Ref) -> Expr {
+    pub(crate) fn wrap_identifier_hoisting(&mut self, loc: bun_ast::Loc, r#ref: Ref) -> Expr {
         self.relocated_top_level_vars
             .push(LocRef { loc, ref_: r#ref });
         self.record_usage(r#ref);
@@ -7232,7 +7245,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // One statement could potentially expand to several statements
-    pub fn stmts_to_single_stmt(&mut self, loc: bun_ast::Loc, stmts: &'a mut [Stmt]) -> Stmt {
+    pub(crate) fn stmts_to_single_stmt(
+        &mut self,
+        loc: bun_ast::Loc,
+        stmts: &'a mut [Stmt],
+    ) -> Stmt {
         if stmts.is_empty() {
             return Stmt {
                 data: js_ast::StmtData::SEmpty(S::Empty {}),
@@ -7254,7 +7271,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    pub fn find_label_symbol(&mut self, loc: bun_ast::Loc, name: &[u8]) -> FindLabelSymbolResult {
+    pub(crate) fn find_label_symbol(
+        &mut self,
+        loc: bun_ast::Loc,
+        name: &[u8],
+    ) -> FindLabelSymbolResult {
         let mut res = FindLabelSymbolResult {
             r#ref: Ref::NONE,
             is_loop: false,
@@ -7308,7 +7329,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         res
     }
 
-    pub fn extract_decls_for_binding(
+    pub(crate) fn extract_decls_for_binding(
         binding: Binding,
         decls: &mut ListManaged<'a, G::Decl>,
     ) -> Result<(), crate::Error> {
@@ -7335,7 +7356,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    pub fn module_exports(&mut self, loc: bun_ast::Loc) -> Expr {
+    pub(crate) fn module_exports(&mut self, loc: bun_ast::Loc) -> Expr {
         let target = self.new_expr(
             E::Identifier {
                 ref_: self.module_ref,
@@ -7361,7 +7382,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // If we do an orderedRemove, it gets very slow.
     // swapRemove is fast. But a little more dangerous.
     // Instead, we just tombstone it.
-    pub fn pop_and_flatten_scope(&mut self, scope_index: usize) {
+    pub(crate) fn pop_and_flatten_scope(&mut self, scope_index: usize) {
         // Move up to the parent scope. `StoreRef` handles are `Copy` and carry
         // safe `Deref`/`DerefMut`, so the parent-chain walk needs no open-coded
         // raw-pointer derefs. `to_flatten` and `parent` are distinct arena
@@ -7399,11 +7420,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// When not transpiling we dont use the renamer, so our solution is to generate really
     /// hard to collide with variables, instead of actually making things collision free
-    pub fn generate_temp_ref(&mut self, default_name: Option<&'a [u8]>) -> Ref {
+    pub(crate) fn generate_temp_ref(&mut self, default_name: Option<&'a [u8]>) -> Ref {
         self.generate_temp_ref_with_scope(default_name, self.current_scope)
     }
 
-    pub fn generate_temp_ref_with_scope(
+    pub(crate) fn generate_temp_ref_with_scope(
         &mut self,
         default_name: Option<&'a [u8]>,
         mut scope: js_ast::StoreRef<Scope>,
@@ -7428,7 +7449,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r#ref
     }
 
-    pub fn should_lower_using_declarations(&self, stmts: &[Stmt]) -> bool {
+    pub(crate) fn should_lower_using_declarations(&self, stmts: &[Stmt]) -> bool {
         // TODO: We do not support lowering await, but when we do this needs to point to that var
         let lower_await = false;
 
@@ -7465,7 +7486,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// with ones that were imported, so that it can share an import record.
     ///
     /// This function replaces all specifier strings with `e_special.resolved_specifier_string`
-    pub fn handle_import_meta_hot_accept_call(&mut self, call: &mut E::Call) {
+    pub(crate) fn handle_import_meta_hot_accept_call(&mut self, call: &mut E::Call) {
         if call.args.len_u32() == 0 {
             return;
         }
@@ -7531,7 +7552,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn handle_react_refresh_register(
+    pub(crate) fn handle_react_refresh_register(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
         original_name: &'a [u8],
@@ -7547,7 +7568,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn emit_react_refresh_register(
+    pub(crate) fn emit_react_refresh_register(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
         original_name: &'a [u8],
@@ -7589,7 +7610,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn wrap_value_for_server_component_reference(
+    pub(crate) fn wrap_value_for_server_component_reference(
         &mut self,
         val: Expr,
         original_name: &'a [u8],
@@ -7628,7 +7649,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    pub fn handle_react_refresh_hook_call(
+    pub(crate) fn handle_react_refresh_hook_call(
         &mut self,
         hook_call: &mut E::Call,
         original_name: &[u8],
@@ -7737,7 +7758,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ctx.hasher.update(b"\x00");
     }
 
-    pub fn handle_react_refresh_post_visit_function_body(
+    pub(crate) fn handle_react_refresh_post_visit_function_body(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
         hook: &crate::HookContext,
@@ -7781,7 +7802,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmts[0] = prepended_stmt;
     }
 
-    pub fn get_react_refresh_hook_signal_decl(&mut self, signal_cb_ref: Ref) -> Stmt {
+    pub(crate) fn get_react_refresh_hook_signal_decl(&mut self, signal_cb_ref: Ref) -> Stmt {
         let loc = bun_ast::Loc::EMPTY;
         self.react_refresh.latest_signature_ref = signal_cb_ref;
         // var s_ = $RefreshSig$();
@@ -7807,7 +7828,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    pub fn get_react_refresh_hook_signal_init(
+    pub(crate) fn get_react_refresh_hook_signal_init(
         &mut self,
         ctx: &mut crate::HookContext,
         function_with_hook_calls: Expr,
@@ -7880,7 +7901,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 // P::to_ast — final assembly P→Ast.
 // ═══════════════════════════════════════════════════════════════════════════
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub fn to_ast(
+    pub(crate) fn to_ast(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
         exports_kind: js_ast::ExportsKind,
@@ -8452,7 +8473,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[cold]
     #[inline(never)]
-    pub fn compute_ts_enums_map(
+    pub(crate) fn compute_ts_enums_map(
         &self,
         _arena: &'a Bump,
     ) -> Result<bun_ast::ast_result::TsEnumsMap, crate::Error> {
@@ -8504,9 +8525,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// The bundler will generate wrappers to contain top-level side effects using
     /// the '__esm' helper. Example:
     ///
-    ///     var init_foo = __esm(() => {
-    ///         someExport = Math.random();
-    ///     });
+    /// ```js
+    /// var init_foo = __esm(() => {
+    ///     someExport = Math.random();
+    /// });
+    /// ```
     ///
     /// This wrapper can be removed if all of the constructs get moved
     /// outside of the file. Due to paralleization, we can't retroactively
@@ -8528,7 +8551,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                     js_ast::StmtData::SLocal(local) => {
-                        if local.was_commonjs_export || self.commonjs_named_exports.count() == 0 {
+                        if local.origin.is_commonjs_export()
+                            || self.commonjs_named_exports.count() == 0
+                        {
                             for decl in local.decls.slice() {
                                 if let Some(value) = &decl.value {
                                     if !matches!(value.data, js_ast::ExprData::EMissing(_))
@@ -8834,14 +8859,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 }
 
 // ─── LowerUsingDeclarationsContext ───
-pub struct LowerUsingDeclarationsContext {
-    pub first_using_loc: bun_ast::Loc,
-    pub stack_ref: Ref,
-    pub has_await_using: bool,
+pub(crate) struct LowerUsingDeclarationsContext {
+    pub(crate) first_using_loc: bun_ast::Loc,
+    pub(crate) stack_ref: Ref,
+    pub(crate) has_await_using: bool,
 }
 
 impl LowerUsingDeclarationsContext {
-    pub fn init<'a, const T: bool, const S_: bool>(
+    pub(crate) fn init<'a, const T: bool, const S_: bool>(
         p: &mut P<'a, T, S_>,
     ) -> Result<Self, crate::Error> {
         Ok(Self {
@@ -8851,7 +8876,7 @@ impl LowerUsingDeclarationsContext {
         })
     }
 
-    pub fn scan_stmts<'a, const T: bool, const S_: bool>(
+    pub(crate) fn scan_stmts<'a, const T: bool, const S_: bool>(
         &mut self,
         p: &mut P<'a, T, S_>,
         stmts: &mut [Stmt],
@@ -8916,7 +8941,7 @@ impl LowerUsingDeclarationsContext {
         }
     }
 
-    pub fn finalize<'a, const T: bool, const S_: bool>(
+    pub(crate) fn finalize<'a, const T: bool, const S_: bool>(
         &mut self,
         p: &mut P<'a, T, S_>,
         stmts: &'a mut [Stmt],
@@ -9207,7 +9232,7 @@ impl LowerUsingDeclarationsContext {
             S::Try {
                 body: non_exported_statements,
                 body_loc: loc,
-                catch_: Some(js_ast::Catch {
+                catch: Some(js_ast::Catch {
                     binding: Some(catch_binding),
                     body: catch_body,
                     body_loc: loc,
@@ -9248,14 +9273,14 @@ pub trait GenerateImportSymbols {
 // These are fns rather than statics since `js_ast::ExprData` has interior
 // pointers and isn't `const`.
 #[inline]
-pub fn null_expr_data() -> js_ast::ExprData {
+pub(crate) fn null_expr_data() -> js_ast::ExprData {
     js_ast::ExprData::EMissing(E::Missing {})
 }
 #[inline]
-pub fn null_stmt_data() -> js_ast::StmtData {
+pub(crate) fn null_stmt_data() -> js_ast::StmtData {
     js_ast::StmtData::SEmpty(S::Empty {})
 }
 #[inline]
-pub fn null_value_expr() -> js_ast::ExprData {
+pub(crate) fn null_value_expr() -> js_ast::ExprData {
     js_ast::ExprData::ENull(E::Null {})
 }

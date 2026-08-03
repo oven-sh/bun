@@ -9,7 +9,7 @@ import {
   zstdDecompressSync,
 } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, rss } from "harness";
 import path from "path";
 
 describe("Zstandard compression", async () => {
@@ -66,7 +66,7 @@ describe("Zstandard compression", async () => {
         } catch {}
       }
       Bun.gc(true);
-      return process.memoryUsage.rss();
+      return rss();
     }
 
     // Warm up until RSS stabilizes (allocator / ASAN quarantine reach steady state).

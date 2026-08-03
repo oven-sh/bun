@@ -231,7 +231,7 @@ impl FileResponseStream {
 
     // ───────────────────────── reader backend ─────────────────────────
 
-    pub(crate) fn on_read_chunk(&mut self, chunk_: &[u8], state_: ReadState) -> bool {
+    fn on_read_chunk(&mut self, chunk_: &[u8], state_: ReadState) -> bool {
         let this: *mut Self = self;
         // SAFETY: `this` is the live intrusive allocation owning `self`.
         let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
@@ -304,13 +304,13 @@ impl FileResponseStream {
         }
     }
 
-    pub(crate) fn on_reader_done(&mut self) {
+    fn on_reader_done(&mut self) {
         // Adopts the in-flight read ref taken before `reader.read()`.
         let _guard = self.take_read_ref();
         self.finish();
     }
 
-    pub(crate) fn on_reader_error(&mut self, err: sys::Error) {
+    fn on_reader_error(&mut self, err: sys::Error) {
         // Adopts the in-flight read ref taken before `reader.read()`.
         let _guard = self.take_read_ref();
         self.fail_with(err);
@@ -506,11 +506,11 @@ impl FileResponseStream {
         unsafe { Self::deref(self) };
     }
 
-    pub(crate) fn event_loop(&self) -> EventLoopHandle {
+    fn event_loop(&self) -> EventLoopHandle {
         EventLoopHandle::init(self.vm.event_loop().cast::<()>())
     }
 
-    pub(crate) fn r#loop(&self) -> *mut bun_io::Loop {
+    fn r#loop(&self) -> *mut bun_io::Loop {
         #[cfg(windows)]
         {
             // SAFETY: `r#loop()` returns the live uws WindowsLoop; its `uv_loop`

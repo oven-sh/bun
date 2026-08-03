@@ -64,7 +64,7 @@ impl<'a> Execute<'a> {
         Ok(())
     }
 
-    pub fn write_internal<C: WriterContext>(
+    pub(crate) fn write_internal<C: WriterContext>(
         &self,
         writer: NewWriter<C>,
     ) -> Result<(), any_mysql_error::Error> {

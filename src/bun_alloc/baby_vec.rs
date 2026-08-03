@@ -216,20 +216,6 @@ impl<'a, T> BabyVec<'a, T> {
         }
     }
 
-    pub fn remove(&mut self, index: usize) -> T {
-        let len = self.len as usize;
-        assert!(index < len, "BabyVec::remove index {index} >= len {len}");
-        // SAFETY: `index < len`; read moves out the element, then shift the
-        // `len-1-index` initialized tail down by one. `len` decremented after.
-        unsafe {
-            let p = self.ptr.as_ptr().add(index);
-            let v = p.read();
-            ptr::copy(p.add(1), p, len - index - 1);
-            self.len -= 1;
-            v
-        }
-    }
-
     #[inline]
     pub fn truncate(&mut self, new_len: usize) {
         if new_len >= self.len as usize {
@@ -256,7 +242,7 @@ impl<'a, T> BabyVec<'a, T> {
     /// `Vec::leak` parity — forget the `BabyVec`, return the buffer as an
     /// arena-lifetime slice. Reclaimed when the arena resets/drops.
     #[inline]
-    pub fn leak(self) -> &'a mut [T] {
+    pub(crate) fn leak(self) -> &'a mut [T] {
         let me = ManuallyDrop::new(self);
         // SAFETY: `[ptr, ptr+len)` are `len` initialized `T` valid for `'a`
         // (the buffer is owned by `me.alloc`, which outlives `'a`).

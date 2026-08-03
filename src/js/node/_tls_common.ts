@@ -1,6 +1,5 @@
 // Hardcoded module "node:_tls_common"
-// Deprecated shim mirroring node's lib/_tls_common.js: re-exports the real
-// implementations and warns on load.
+// Deprecated shim: re-exports the real impls and warns on load.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_tls_common.js
 const { SecureContext, createSecureContext } = require("node:tls");
 

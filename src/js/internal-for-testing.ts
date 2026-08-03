@@ -1,11 +1,7 @@
 // Hardcoded module "bun:internal-for-testing"
 
-// If you want to test an internal API, add a binding into this file.
-//
-// Then at test time: import ... from "bun:internal-for-testing"
-//
-// In a debug build, the import is always allowed.
-// It is disallowed in release builds unless run in Bun's CI.
+// Add bindings for internal APIs here and `import ... from "bun:internal-for-testing"`.
+// Always allowed in debug builds; in release builds only under Bun's CI.
 
 const fmtBinding = $bindgenFn("fmt_jsc.bind.ts", "fmtString");
 
@@ -148,10 +144,9 @@ export const setSyntheticAllocationLimitForTesting: (limit: number) => number = 
   1,
 );
 
-// Shrink the markdown parser's block-metadata cap (in bytes) so its
-// `TooManyBlocks` error is reachable without 4 GiB of input. The cap can only
-// be lowered, never raised past the real limit. Returns the previous value so
-// a test can restore it.
+// Lower the markdown parser's block-metadata cap (bytes) so `TooManyBlocks` is
+// reachable without 4 GiB of input. Can only lower, never raise past the real
+// limit; returns the previous value so a test can restore it.
 export const setMaxMarkdownBlockBytesForTesting: (limit: number) => number = $newRustFunction(
   "MarkdownObject.rs",
   "setMaxMarkdownBlockBytesForTesting",
@@ -311,9 +306,7 @@ function assignFunctionName(name, fn, descriptor = nodeKEmptyObject) {
   });
 }
 
-// Ported from node lib/internal/util.js pendingDeprecate(). Bun tracks
-// --pending-deprecation natively and never surfaces it to JS, so the emitter
-// here is a no-op; the wrapper still has to preserve `length` like node's.
+// No-op emitter (Bun handles --pending-deprecation natively) but preserves `length`.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util.js#L204
 function nodePendingDeprecate(fn) {
   function deprecated(...args) {
@@ -451,11 +444,9 @@ function nodeGetValidStdio(stdio, sync?) {
 
 let cachedInternalChildProcess;
 
-// Userland access to node-internal modules for vendored node tests that
-// declare `// Flags: --expose-internals` (served via the require interceptor
-// in test/js/node/test/common/index.js). Static requires only — the builtin
-// bundler cannot rewrite variable-path requires. Extend the map as more
-// vendored tests need more internals.
+// Node-internal modules for vendored tests with `// Flags: --expose-internals`
+// (served via test/js/node/test/common/index.js). Static requires only — the
+// builtin bundler cannot rewrite variable-path requires.
 export const exposedInternals = {
   "internal/streams/add-abort-signal": require("internal/streams/add-abort-signal"),
   "internal/util/debuglog": require("internal/util/debuglog"),
@@ -522,12 +513,9 @@ export const exposedInternals = {
   // module (src/js/internal/test/binding.ts), not from here.
 };
 
-// State of a web ReadableStream/WritableStream for vendored node tests that
-// read Node's `stream[kState].state` / `.storedError` (served through the
-// internal/webstreams/util shim in test/js/node/test/common/index.js).
-// The stream's closed promise is settled from every terminal transition, so its
-// status is the state. A WritableStream mid-`erroring` still reports "writable":
-// erroring is not terminal, and nothing observable distinguishes the two here.
+// Web stream state for vendored node tests that read `stream[kState].state`.
+// The closed promise's status is the state; a mid-`erroring` WritableStream
+// reports "writable" (erroring is non-terminal, nothing observable differs).
 export function getWebStreamState(stream: ReadableStream | WritableStream): {
   state: string;
   storedError: unknown;

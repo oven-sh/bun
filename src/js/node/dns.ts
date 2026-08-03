@@ -214,10 +214,7 @@ function validateOrderOption(options) {
   }
 }
 
-// The record types node's resolveMap has an entry for. Anything else is an
-// ERR_INVALID_ARG_VALUE, checked before the name and callback so that
-// dns.resolve(name, 'toString') reports the rrtype rather than tripping over
-// Object.prototype.
+// rrtypes in node's resolveMap; anything else is ERR_INVALID_ARG_VALUE, checked first.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/dns/callback_resolver.js#L95
 const rrtypes = new Set(["A", "AAAA", "ANY", "CAA", "CNAME", "MX", "NAPTR", "NS", "PTR", "SOA", "SRV", "TXT"]);
 

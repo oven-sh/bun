@@ -228,10 +228,7 @@ static const HashTableValue JSEventPrototypeTableValues[] = {
     { "BUBBLING_PHASE"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 3 } },
 };
 
-// node collapses an event to its bare constructor name once the depth budget
-// is spent (`util.inspect(new Event('x'), { depth: -1 })` is `'Event'`, not
-// `'[Event]'`). Returning `this` for every other depth hands the value back to
-// the inspector unchanged, so Bun's own richer event formatting is untouched.
+// depth < 0 collapses to the constructor name; otherwise return `this` so Bun's own formatting runs.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/event_target.js#L200
 JSC_DEFINE_HOST_FUNCTION(jsEventPrototype_inspectCustom, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -239,10 +236,8 @@ JSC_DEFINE_HOST_FUNCTION(jsEventPrototype_inspectCustom, (JSC::JSGlobalObject * 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thisValue = callFrame->thisValue();
-    // Bun's native inspector consults this hook on Event.prototype itself,
-    // which node's skips (it bails out when value.constructor.prototype ===
-    // value). Hand the value straight back rather than throwing ERR_INVALID_THIS
-    // at something the inspector is legitimately formatting.
+    // Bun's inspector calls this on Event.prototype itself (node bails when
+    // value.constructor.prototype === value); hand it back instead of ERR_INVALID_THIS.
     if (!JSEvent::toWrapped(vm, thisValue)) {
         return JSValue::encode(thisValue);
     }

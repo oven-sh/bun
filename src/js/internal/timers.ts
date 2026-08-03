@@ -48,10 +48,8 @@ function setUnrefTimeout(callback, after, arg1, arg2, arg3) {
 
 export default {
   TIMEOUT_MAX,
-  // For hiding Timeouts on other internals. A registered symbol so the node
-  // test harness's --expose-internals shim ("internal/timers" virtual module
-  // in test/js/node/test/common/index.js) can hand the same symbol to ported
-  // tests that inspect socket[kTimeout].
+  // Registered symbol so the --expose-internals shim (test/js/node/test/common/index.js)
+  // hands the same symbol to ported tests that inspect socket[kTimeout].
   kTimeout: Symbol.for("::buntimeout::"),
   getTimerDuration,
   setUnrefTimeout,

@@ -2,14 +2,13 @@ import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 import { Worker } from "node:worker_threads";
 
-import { bunEnv, bunExe, disableAggressiveGCScope, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isWindows } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
-// Spawn a cluster fixture with a hard deadline and no-orphan protection. The
-// toRun() matcher uses spawnSync, which a test timeout cannot interrupt, so a
-// hung fixture leaks the primary + workers onto a non-ephemeral CI agent and
-// every later UDP test in the shard then times out too. Bun.spawn lets the
+// Spawn a cluster fixture with a hard deadline and no-orphan protection so a
+// hung fixture doesn't leak the primary + workers onto a non-ephemeral CI agent
+// and make every later UDP test in the shard time out too. Bun.spawn lets the
 // test-level timeout actually fire, `await using` kills the primary on the way
 // out, and BUN_FEATURE_FLAG_NO_ORPHANS makes the workers follow it.
 async function runClusterFixture(fixture: string, deadlineMs: number) {
@@ -230,12 +229,12 @@ describe("createSocket()", () => {
 
 describe("unref()", () => {
   test("call before bind() does not hang", async () => {
-    expect([path.join(import.meta.dir, "dgram-unref-hang-fixture.ts")]).toRun();
+    expect(await bunRun(path.join(import.meta.dir, "dgram-unref-hang-fixture.ts"))).toSpawn();
   });
 
   // The last ref()/unref() before bind wins, like Node's always-present handle.
   test("ref() after unref() before bind() keeps the socket ref'd", async () => {
-    expect([path.join(import.meta.dir, "dgram-ref-after-unref-fixture.ts")]).toRun();
+    expect(await bunRun(path.join(import.meta.dir, "dgram-ref-after-unref-fixture.ts"))).toSpawn();
   });
 });
 

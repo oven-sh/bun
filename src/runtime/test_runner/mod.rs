@@ -160,7 +160,6 @@ cfg_jsc! {
 cfg_jsc! {
     pub mod timers {
         #[path = "FakeTimers.rs"] pub mod fake_timers;
-        pub use fake_timers::FakeTimers;
     }
 }
 
@@ -169,7 +168,7 @@ pub mod expect {
     // Re-export the umbrella surface so every matcher can `use super::*`.
     pub use super::expect_core::*;
     pub use super::expect_core::mock;
-    pub use super::diff_format::DiffFormatter;
+    pub(crate) use super::diff_format::DiffFormatter;
 
     /// `Expect.js.*GetCached` / `*SetCached` accessors (generate-classes.ts
     /// `cache: true` slots from jest.classes.ts). Exposed as a
@@ -184,7 +183,7 @@ pub mod expect {
     /// which Rust does not allow for associated fns. Thin shim keeps those
     /// modules unmodified.
     #[inline]
-    pub fn get_signature(
+    pub(crate) fn get_signature(
         matcher_name: &'static str,
         args: &'static str,
         not: bool,
@@ -392,7 +391,7 @@ pub mod expect {
     /// borrows `global_this`), so provide the constructor every matcher
     /// expected.
     #[inline]
-    pub fn make_formatter(global: &JSGlobalObject) -> Formatter<'_> {
+    pub(crate) fn make_formatter(global: &JSGlobalObject) -> Formatter<'_> {
         let mut f = Formatter::new(global);
         f.quote_strings = true;
         f
@@ -457,7 +456,7 @@ pub mod expect {
         /// `toBeLessThan` / `toBeLessThanOrEqual`. The four matchers
         /// differ only in `name`, the `>`/`>=`/`<`/`<=` operator, and which
         /// `BigIntCompare` arms count as a pass — all of which `rel` encodes.
-        pub(super) fn numeric_ordering_matcher(
+        fn numeric_ordering_matcher(
             &self,
             global: &JSGlobalObject,
             frame: &bun_jsc::CallFrame,

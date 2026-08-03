@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
@@ -21,7 +21,7 @@ beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);
 });
 
-const BUN = process.argv0;
+const BUN = bunExe();
 const DEV_NULL = process.platform === "win32" ? "NUL" : "/dev/null";
 
 describe.concurrent("bunshell rm", () => {
@@ -34,7 +34,7 @@ describe.concurrent("bunshell rm", () => {
     const files = {
       "existent.txt": "",
     };
-    const tempdir = tempDirWithFiles("rmforce", files);
+    await using tempdir = tempDir("rmforce", files);
 
     expect(await $`rm -f ${tempdir}/non_existent.txt`.then(o => o.exitCode)).toBe(0);
 
@@ -58,7 +58,7 @@ describe.concurrent("bunshell rm", () => {
       "existent.txt": "",
     };
 
-    const tempdir = tempDirWithFiles("rmrecursive", files);
+    await using tempdir = tempDir("rmrecursive", files);
 
     // test on a file
     {
@@ -121,7 +121,7 @@ foo/
       "sub_dir_files/file.txt": "",
     };
 
-    const tempdir = tempDirWithFiles("rmdir", files);
+    await using tempdir = tempDir("rmdir", files);
 
     {
       const { stdout, stderr, exitCode } = await $`rm -d ${tempdir}/existent.txt`;
@@ -262,7 +262,7 @@ test.skipIf(process.platform === "win32")(
           files[`target/d${i}/f${j}.txt`] = "";
         }
       }
-      const root = tempDirWithFiles(`rm-swap-${iter}`, files);
+      await using root = tempDir(`rm-swap-${iter}`, files);
       const victimDir = path.join(root, "victim");
       const victimFile = path.join(victimDir, "keep.txt");
       const target = path.join(root, "target");
@@ -287,5 +287,45 @@ test.skipIf(process.platform === "win32")(
       expect(existsSync(victimFile)).toBeTrue();
       expect(existsSync(victimDir)).toBeTrue();
     }
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "relative operands are resolved against the shell cwd, not the process cwd",
+  async () => {
+    using dir = tempDir("rm-shell-cwd", {
+      "work/file.txt": "content",
+      "work/sub/inner.txt": "content",
+      "keep.txt": "keep",
+    });
+    const base = String(dir);
+    const shellCwd = path.join(base, "work");
+
+    const fixture = /* ts */ `
+      import { $ } from "bun";
+      const shellCwd = process.env.SHELL_CWD!;
+      const { exitCode, stderr } = await $\`rm -rf .\`.cwd(shellCwd).quiet().nothrow();
+      console.log(JSON.stringify({ exitCode, stderr: stderr.toString() }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, SHELL_CWD: shellCwd },
+      cwd: "/",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = JSON.parse(stdout.trim());
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/^rm: \.: /);
+    if (process.platform === "linux") {
+      // Only Linux permits unlinking "." out from under itself; macOS returns
+      // before iterating, so its children survive there.
+      expect(existsSync(path.join(base, "work", "file.txt"))).toBeFalse();
+      expect(existsSync(path.join(base, "work", "sub"))).toBeFalse();
+    }
+    expect(existsSync(path.join(base, "work"))).toBeTrue();
+    expect(existsSync(path.join(base, "keep.txt"))).toBeTrue();
+    expect(exitCode).toBe(0);
   },
 );

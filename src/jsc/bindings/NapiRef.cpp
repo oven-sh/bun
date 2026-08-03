@@ -14,8 +14,6 @@ void NapiRef::ref()
         auto& vm = globalObject.get()->vm();
         strongRef.set(vm, weakValueRef.get());
 
-        // isSet() will return always true after being set once
-        // We cannot rely on isSet() to check if the value is set we need to use isClear()
         // .setString/.setObject/.setPrimitive will assert fail if called more than once (even after clear())
         // We should not clear the weakValueRef here because we need to keep it if we call NapiRef::unref()
         // so we can call the finalizer

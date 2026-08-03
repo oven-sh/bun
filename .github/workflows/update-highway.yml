@@ -1,5 +1,8 @@
 name: Update highway
 
+permissions:
+  contents: read
+
 on:
   schedule:
     - cron: "0 4 * * 0"
@@ -14,7 +17,9 @@ jobs:
       pull-requests: write
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Check highway version
         id: check-version

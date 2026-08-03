@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import * as net from "node:net";
+import { Readable } from "node:stream";
 
 // https://github.com/oven-sh/bun/issues/9180
 test("weird headers", async () => {
@@ -155,6 +156,386 @@ describe("response Connection: close closes the socket", () => {
 
       expect(handled).toBe(2);
       expect(raw.toLowerCase()).not.toContain("connection: close");
+    } finally {
+      socket.destroy();
+    }
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/10507
+// Bun.serve stripped a handler-set Content-Length on ReadableStream bodies and
+// fell back to Transfer-Encoding: chunked, so clients never saw the size the
+// handler already knew (proxies, downloads).
+describe("response Content-Length for ReadableStream bodies", () => {
+  async function rawGET(port: number, method = "GET"): Promise<{ head: string; body: Buffer }> {
+    const socket = net.connect(port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write(`${method} / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+      const chunks: Buffer[] = [];
+      const { promise, resolve } = Promise.withResolvers<void>();
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      socket.on("data", c => {
+        chunks.push(c);
+        // Resolve as soon as the response is complete so we don't depend on
+        // Connection: close actually closing the socket.
+        const raw = Buffer.concat(chunks);
+        const sep = raw.indexOf("\r\n\r\n");
+        if (sep === -1) return;
+        const head = raw.subarray(0, sep).toString("latin1");
+        const body = raw.subarray(sep + 4);
+        if (method === "HEAD") return finish();
+        const m = head.match(/^content-length:\s*(\d+)\r?$/im);
+        if (m) {
+          if (body.length >= Number(m[1])) finish();
+        } else if (/^transfer-encoding:\s*chunked/im.test(head)) {
+          if (body.includes("\r\n0\r\n\r\n") || body.subarray(0, 5).equals(Buffer.from("0\r\n\r\n"))) finish();
+        }
+      });
+      socket.on("close", finish);
+      await promise;
+      const raw = Buffer.concat(chunks);
+      const sep = raw.indexOf("\r\n\r\n");
+      return { head: raw.subarray(0, sep).toString("latin1"), body: raw.subarray(sep + 4) };
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  function contentLength(head: string): string[] {
+    return [...head.matchAll(/^content-length:\s*(\d+)\r?$/gim)].map(m => m[1]);
+  }
+
+  test.concurrent("async pull stream", async () => {
+    const chunk = Buffer.alloc(1024, "A");
+    const total = 5 * chunk.length;
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch() {
+        let left = 5;
+        return new Response(
+          new ReadableStream({
+            async pull(c) {
+              if (left-- === 0) return c.close();
+              await new Promise(r => setImmediate(r));
+              c.enqueue(chunk);
+            },
+          }),
+          { headers: { "Content-Length": String(total) } },
+        );
+      },
+    });
+
+    const { head, body } = await rawGET(server.port);
+    expect(head.toLowerCase()).not.toContain("transfer-encoding");
+    expect(contentLength(head)).toEqual([String(total)]);
+    expect(body.length).toBe(total);
+    expect(body.subarray(0, 4).toString()).toBe("AAAA");
+  });
+
+  // Exercises HTTPServerWritable's single-write fast path: a sub-highWaterMark
+  // stream that enqueues once and closes synchronously buffers then ends in one
+  // send, and end() must not let try_end() add a second Content-Length.
+  test.concurrent("sub-highWaterMark stream, single write", async () => {
+    const payload = Buffer.alloc(100, "S");
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(payload);
+              c.close();
+            },
+          }),
+          { headers: { "Content-Length": String(payload.length) } },
+        );
+      },
+    });
+
+    const { head, body } = await rawGET(server.port);
+    expect(head.toLowerCase()).not.toContain("transfer-encoding");
+    expect(contentLength(head)).toEqual([String(payload.length)]);
+    expect(body.equals(payload)).toBe(true);
+  });
+
+  // The stream errors after the Content-Length is already on the wire: the
+  // server must close the socket rather than leave the client waiting on the
+  // promised bytes.
+  test.concurrent("stream that errors after Content-Length is committed closes the socket", async () => {
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            async pull() {
+              await new Promise(r => setImmediate(r));
+              throw new Error("boom");
+            },
+          }),
+          { headers: { "Content-Length": "100" } },
+        );
+      },
+      error() {},
+    });
+
+    const socket = net.connect(server.port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      // A forced close can surface as ECONNRESET before "close", which would
+      // reject once(socket, "close"); await the event directly instead.
+      const closed = Promise.withResolvers<void>();
+      socket.on("close", () => closed.resolve());
+      await once(socket, "connect");
+      socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      const chunks: Buffer[] = [];
+      socket.on("data", c => chunks.push(c));
+      await closed.promise;
+      // The close is the invariant under test; a reset may beat the header
+      // flush, so the head is only checked when it made it out.
+      const raw = Buffer.concat(chunks);
+      const sep = raw.indexOf("\r\n\r\n");
+      if (sep !== -1) {
+        const head = raw.subarray(0, sep).toString("latin1");
+        expect(contentLength(head)).toEqual(["100"]);
+        expect(raw.length - (sep + 4)).toBeLessThan(100);
+      }
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  test.concurrent("Readable.toWeb stream (node:stream source)", async () => {
+    const payload = Buffer.alloc(4096, "C");
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch() {
+        const r = Readable.from([payload.subarray(0, 2048), payload.subarray(2048)]);
+        return new Response(Readable.toWeb(r) as ReadableStream, {
+          headers: { "Content-Length": String(payload.length) },
+        });
+      },
+    });
+
+    const { head, body } = await rawGET(server.port);
+    expect(head.toLowerCase()).not.toContain("transfer-encoding");
+    expect(contentLength(head)).toEqual([String(payload.length)]);
+    expect(body.equals(payload)).toBe(true);
+  });
+
+  test.concurrent("proxied fetch().body", async () => {
+    const payload = Buffer.alloc(8000, "D");
+    using upstream = Bun.serve({
+      port: 0,
+      development: false,
+      fetch() {
+        // Stream the body so the proxy cannot have it fully buffered before
+        // rendering (the byte_stream path, not the blob fast path).
+        let sent = 0;
+        return new Response(
+          new ReadableStream({
+            async pull(c) {
+              if (sent >= payload.length) return c.close();
+              await new Promise(r => setImmediate(r));
+              c.enqueue(payload.subarray(sent, (sent += 2000)));
+            },
+          }),
+          { headers: { "Content-Length": String(payload.length) } },
+        );
+      },
+    });
+    using proxy = Bun.serve({
+      port: 0,
+      development: false,
+      async fetch() {
+        const r = await fetch(upstream.url);
+        return new Response(r.body, {
+          headers: { "Content-Length": String(payload.length) },
+        });
+      },
+    });
+
+    const res = await fetch(proxy.url);
+    expect(res.headers.get("content-length")).toBe(String(payload.length));
+    expect(res.headers.has("transfer-encoding")).toBe(false);
+    const body = Buffer.from(await res.arrayBuffer());
+    expect(body.equals(payload)).toBe(true);
+  });
+
+  // The upstream dies mid-body after the proxy committed the Content-Length:
+  // the proxy must close its own socket, not end the response cleanly.
+  test.concurrent("proxied fetch().body whose upstream errors closes the socket", async () => {
+    let upstreamSocket: net.Socket | undefined;
+    const upstream = net.createServer(s => {
+      upstreamSocket = s;
+      s.on("error", () => {});
+      s.write("HTTP/1.1 200 OK\r\nContent-Length: 8000\r\n\r\n");
+      s.write(Buffer.alloc(2000, "F"));
+    });
+    await new Promise<void>(r => upstream.listen(0, "127.0.0.1", r));
+    const upstreamPort = (upstream.address() as net.AddressInfo).port;
+    using proxy = Bun.serve({
+      port: 0,
+      development: false,
+      async fetch() {
+        const r = await fetch(`http://127.0.0.1:${upstreamPort}/`);
+        return new Response(r.body, { headers: { "Content-Length": "8000" } });
+      },
+      error() {},
+    });
+
+    const socket = net.connect(proxy.port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      // A forced close can surface as ECONNRESET before "close", which would
+      // reject once(socket, "close"); await the event directly instead.
+      const closed = Promise.withResolvers<void>();
+      socket.on("close", () => closed.resolve());
+      await once(socket, "connect");
+      // Keep-alive on purpose: a clean end would leave this socket open
+      // waiting on the remaining promised bytes.
+      socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      const chunks: Buffer[] = [];
+      let killed = false;
+      socket.on("data", c => {
+        chunks.push(c);
+        const raw = Buffer.concat(chunks);
+        const sep = raw.indexOf("\r\n\r\n");
+        if (!killed && sep !== -1 && raw.length >= sep + 4 + 2000) {
+          killed = true;
+          upstreamSocket!.destroy();
+        }
+      });
+      await closed.promise;
+      const raw = Buffer.concat(chunks);
+      const sep = raw.indexOf("\r\n\r\n");
+      const head = raw.subarray(0, sep).toString("latin1");
+      expect(contentLength(head)).toEqual(["8000"]);
+      expect(raw.length - (sep + 4)).toBeLessThan(8000);
+    } finally {
+      socket.destroy();
+      upstream.close();
+    }
+  });
+
+  test.concurrent("HEAD matches GET framing", async () => {
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch() {
+        let left = 3;
+        return new Response(
+          new ReadableStream({
+            pull(c) {
+              if (left-- === 0) return c.close();
+              c.enqueue(new Uint8Array(10));
+            },
+          }),
+          { headers: { "Content-Length": "30" } },
+        );
+      },
+    });
+
+    const { head, body } = await rawGET(server.port, "HEAD");
+    expect(head.toLowerCase()).not.toContain("transfer-encoding");
+    expect(contentLength(head)).toEqual(["30"]);
+    expect(body.length).toBe(0);
+  });
+
+  test.concurrent("no Content-Length still uses chunked", async () => {
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch() {
+        let left = 2;
+        return new Response(
+          new ReadableStream({
+            async pull(c) {
+              if (left-- === 0) return c.close();
+              await new Promise(r => setImmediate(r));
+              c.enqueue(new TextEncoder().encode("abc"));
+            },
+          }),
+        );
+      },
+    });
+
+    const { head } = await rawGET(server.port);
+    expect(head.toLowerCase()).toContain("transfer-encoding: chunked");
+    expect(contentLength(head)).toEqual([]);
+  });
+
+  // Unchanged: for in-memory bodies Bun frames from the actual byte length,
+  // not the handler's header.
+  test.concurrent("in-memory body still framed from actual size", async () => {
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch: () => new Response("hi", { headers: { "Content-Length": "999" } }),
+    });
+
+    const { head, body } = await rawGET(server.port);
+    expect(contentLength(head)).toEqual(["2"]);
+    expect(body.toString()).toBe("hi");
+  });
+
+  test.concurrent("keep-alive: second request parses after a CL-framed stream body", async () => {
+    const payload = Buffer.alloc(256, "E");
+    let handled = 0;
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch() {
+        handled++;
+        let left = 2;
+        return new Response(
+          new ReadableStream({
+            async pull(c) {
+              if (left-- === 0) return c.close();
+              await new Promise(r => setImmediate(r));
+              c.enqueue(payload.subarray(0, 128));
+            },
+          }),
+          { headers: { "Content-Length": String(payload.length) } },
+        );
+      },
+    });
+
+    const socket = net.connect(server.port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      const chunks: Buffer[] = [];
+      const { promise, resolve } = Promise.withResolvers<void>();
+      let sent2 = false;
+      socket.on("data", c => {
+        chunks.push(c);
+        const raw = Buffer.concat(chunks);
+        const sep = raw.indexOf("\r\n\r\n");
+        if (!sent2 && sep !== -1 && raw.length >= sep + 4 + payload.length) {
+          sent2 = true;
+          socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        }
+        if ((raw.toString("latin1").match(/HTTP\/1\.1 200/g) ?? []).length === 2) resolve();
+      });
+      socket.on("close", resolve);
+      await promise;
+      const raw = Buffer.concat(chunks).toString("latin1");
+      const head1 = raw.split("\r\n\r\n")[0];
+      expect(contentLength(head1)).toEqual([String(payload.length)]);
+      expect((raw.match(/HTTP\/1\.1 200/g) ?? []).length).toBe(2);
+      expect(handled).toBe(2);
     } finally {
       socket.destroy();
     }

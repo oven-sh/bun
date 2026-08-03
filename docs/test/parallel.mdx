@@ -155,7 +155,7 @@ The file is plain JSON, slowest first, so it doubles as a "what's slow" report:
 
 #### One timings file per shard
 
-`--timings` can be passed more than once. All the files are merged into one table before anything is scheduled, and `--update-timings` writes to the **first** path. When the same test appears in several files, a value that file's writer measured itself (listed in its `updated`) wins over a value it merely carried through, so shard outputs merge the same way regardless of the order they're given in.
+`--timings` can be passed more than once. All the files are merged into one table before anything is scheduled, and `--update-timings` writes to the **first** path. When the same test file has an entry in several of them, a value that timings file's writer measured itself (listed in its `updated`) wins over a value it merely carried through, so shard outputs merge the same way regardless of the order they're given in.
 
 That makes sharded CI self-contained — each shard writes its own file, and every shard reads all of last run's files:
 
@@ -169,7 +169,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install
-      # last successful run's per-shard timings (empty on the very first run)
+      # last successful run's per-shard timings (missing on the very first run; bun creates the directory)
       - uses: actions/cache/restore@v4
         with:
           path: .bun-test-timings

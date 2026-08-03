@@ -92,16 +92,17 @@ impl Timings {
             bun_core::Global::exit(1);
         };
         // Without an `updated` list every entry is authoritative (hand-written or single-writer file).
-        let mut updated: Option<StringArrayHashMap<()>> = None;
-        if let Some(mut it) = root.get_array(b"updated") {
+        let updated: Option<StringArrayHashMap<()>> = root.as_property(b"updated").map(|q| {
             let mut set = StringArrayHashMap::new();
-            while let Some(item) = it.next() {
-                if let Some(k) = item.as_utf8_string_literal() {
-                    let _ = set.put(k, ());
+            if let Some(mut it) = q.expr.as_array() {
+                while let Some(item) = it.next() {
+                    if let Some(k) = item.as_utf8_string_literal() {
+                        let _ = set.put(k, ());
+                    }
                 }
             }
-            updated = Some(set);
-        }
+            set
+        });
         files.for_each_property(|key, _, value| {
             if let Some(ms) = value.as_number()
                 && ms.is_finite()
@@ -251,7 +252,9 @@ impl Timings {
         let _ = write!(&mut tmp, ".{}.tmp", std::process::id());
         let tmp_z = bun_core::ZBox::from_vec(tmp);
         let dest_z = bun_core::ZBox::from_bytes(&self.path);
-        let result = File::create(Fd::cwd(), tmp_z.as_bytes(), true)
+        let flags =
+            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC;
+        let result = File::make_open(tmp_z.as_bytes(), flags, 0o666)
             .and_then(|f| f.write_all(&out))
             .and_then(|()| bun_sys::renameat(Fd::cwd(), &tmp_z, Fd::cwd(), &dest_z));
         if let Err(err) = result {

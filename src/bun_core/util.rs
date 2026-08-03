@@ -4363,25 +4363,17 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     RELOAD_IN_PROGRESS.store(true, AOrdering::Relaxed);
     RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.set(true));
 
-    // Once this thread enters execve(), the kernel's de_thread makes a
-    // concurrent pthread_create on any other thread fail with EAGAIN.
-    // WTF::Thread::create treats that as fatal and abort()s, and the SIGABRT
-    // can land before exec reaches its point of no return, killing the whole
-    // watcher instead of restarting it. Install a non-resetting handler that
-    // parks any such thread via pthread_exit so the exec can complete. The
-    // crash handler's SIGABRT hook already does this, but it is one-shot
-    // (SA_RESETHAND) and not installed under ASAN. execve resets signal
-    // dispositions, so this handler does not leak into the new image.
+    // execve()'s de_thread makes a concurrent pthread_create on any other
+    // thread fail with EAGAIN; WTF::Thread::create abort()s on that and the
+    // SIGABRT can beat the exec. Park those threads so the exec completes.
     #[cfg(unix)]
     {
         extern "C" fn park_during_reload(sig: core::ffi::c_int) {
             if is_process_reload_in_progress_on_another_thread() {
                 exit_thread();
             }
-            // Fired on the reloading thread itself: restore default and
-            // re-raise so the fault terminates normally.
-            // SAFETY: sigaction/raise are async-signal-safe; a zeroed
-            // sigaction is SIG_DFL.
+            // Reloading thread itself: let the signal terminate normally.
+            // SAFETY: sigaction/raise are async-signal-safe; zeroed = SIG_DFL.
             unsafe {
                 let act: libc::sigaction = core::mem::zeroed();
                 libc::sigaction(sig, &raw const act, core::ptr::null_mut());

@@ -501,7 +501,7 @@ impl StatWatcherScheduler {
 pub struct StatWatcher {
     pub(crate) next: bun_threading::Link<StatWatcher>, // INTRUSIVE link for UnboundedQueue
 
-    // JSC_BORROW per LIFETIMES.tsv — VM outlives the watcher. `BackRef` gives
+    // JSC_BORROW per LIFETIMES.tsv — VM outlives the watcher.
     ctx: BackRef<VirtualMachine, bun_ptr::Mut>,
 
     ref_count: ThreadSafeRefCount<StatWatcher>,

@@ -519,7 +519,7 @@ pub(crate) fn watch(
     // DEFAULT_MANAGER is only read/written while holding DEFAULT_MANAGER_MUTEX
     // (see static decl). The guard covers the whole registration — not just the
     // slot load — because `PathWatcher::init` below mutates the manager's
-    // `watchers` map, and `fs.watch()` is reachable from Worker threads: two
+    // `watchers` map, and `fs.watch()` is reachable from Worker threads.
     let _g = DEFAULT_MANAGER_MUTEX.lock_guard();
     let existing = DEFAULT_MANAGER.load();
     // The manager is bound to one VM's uv_loop; reusing it from a different VM

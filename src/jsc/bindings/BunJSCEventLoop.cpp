@@ -23,9 +23,11 @@ extern "C" uint64_t us_internal_monotonic_ns(void);
 // it as an atomic rather than through a plain `int`.
 extern "C" std::atomic<int32_t> Bun__defaultRemainingRunsUntilSkipReleaseAccess;
 
+extern "C" void Bun__memdebugMaybeDump(JSC::VM*);
 extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs)
 {
     ASSERT(vm);
+    Bun__memdebugMaybeDump(vm);
     const bool previouslyHadAccess = vm->heap.hasHeapAccess();
     // sanity check for debug builds to ensure we're not doing a
     // use-after-free here

@@ -1602,9 +1602,7 @@ test.skipIf(!isASAN)(
       const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
       await proc.exited;
 
-      const pluginFrames = stderr
-        .split("\n")
-        .filter(l => /JSBundlerPlugin\.cpp|BundlerPlugin::|FilterRegExp/.test(l));
+      const pluginFrames = stderr.split("\n").filter(l => /JSBundlerPlugin\.cpp|BundlerPlugin::|FilterRegExp/.test(l));
       if (pluginFrames.length > 0) {
         frames.push(`attempt ${attempt}:\n${pluginFrames.join("\n")}`);
       }

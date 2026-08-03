@@ -137,15 +137,11 @@ impl BodyAbortListener {
             response.get_body_value(),
             BodyValue::Used | BodyValue::Error(_) | BodyValue::Null | BodyValue::Empty
         ) {
-            // `get_body_readable_stream`'s `js_ref()` path reads `m_stream` off
-            // a raw `JsRef::Weak(JSValue)` to the wrapper; when the wrapper is
-            // unmarked but its MarkedBlock destructor has not yet run (lazy
-            // sweep), that chain reaches the stream's `m_nativePtr` source
-            // cell, a PreciseAllocation whose destructor has already freed the
-            // `NewSource` box. `Locked.readable` is a real `JSC::Weak` on the
-            // stream and is cleared at weak-reap time, so it returns `None`
-            // exactly when the stream (and with it the box) is collected, and
-            // the live stream when a reader still roots it without the wrapper.
+            // Not `get_body_readable_stream`: its `js_ref()` path reads a raw
+            // JSValue to a wrapper that may be unmarked but not yet swept,
+            // reaching a `NewSource` box the source cell's (PreciseAllocation)
+            // destructor already freed. `Locked.readable` is a real `JSC::Weak`
+            // on the stream and reads `None` exactly when the box is gone.
             if let BodyValue::Locked(locked) = response.get_body_value() {
                 if let Some(readable) = locked.readable.get(&global) {
                     readable.value.ensure_still_alive();

@@ -21,13 +21,9 @@ pub struct ReadableStream {
 // ─── ReadableStream::Strong ──────────────────────────────────────────────────
 
 /// A `ReadableStream` handle for [`crate::webcore::body::PendingValue`] and the
-/// producers that feed it. `held` roots the stream as a GC root; after
-/// [`Self::downgrade`] the stream is owned by the wrapper's traced `m_stream`
-/// slot instead and `weak` observes it via a real `JSC::Weak`, so readers of
-/// `Locked.readable` keep working without the handle pinning the stream (and
-/// its captured async context) past the wrapper's lifetime, and see `None` the
-/// moment GC reaps the stream rather than a dangling `Source` pointer into a
-/// freed `Box<NewSource<_>>`.
+/// producers that feed it. `held` roots the stream; after [`Self::downgrade`]
+/// `weak` observes it via a real `JSC::Weak` so readers see `None` once the
+/// stream (and its `Box<NewSource<_>>`) is collected, not a dangling `Source`.
 pub struct Strong {
     held: bun_jsc::strong::Optional, // jsc.Strong.Optional = .empty
     weak: bun_jsc::Weak<()>,
@@ -68,11 +64,9 @@ impl Strong {
         }
     }
 
-    /// Release the GC root while keeping the stream readable for native
-    /// consumers. The owning `Request`/`Response` wrapper's `m_stream`
-    /// `WriteBarrier` keeps the stream alive from here; `weak` tracks it as a
-    /// real `JSC::Weak` so `get()` returns `None` once the wrapper (and with it
-    /// the stream's native `NewSource` box) is collected.
+    /// Release the GC root while keeping the stream readable via `weak` (a
+    /// real `JSC::Weak`). The owning wrapper's `m_stream` `WriteBarrier` keeps
+    /// the stream alive from here.
     pub(crate) fn downgrade(&mut self, global: &JSGlobalObject) {
         if let Some(value) = self.held.get() {
             self.weak = bun_jsc::Weak::create_passive(value, global);

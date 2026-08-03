@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import vm from "node:vm";
+import { bunEnv, bunExe } from "harness";
 
 // Regression tests for https://github.com/oven-sh/bun/issues/16277
 //
@@ -38,7 +39,7 @@ test("error stack includes the reconstructed tail-call frame", () => {
   // The reconstructed frame has codeBlock=inner's but callee=null; the fix is
   // that Bun's stack formatter null-checks the callee before `->getObject()`.
   const stack = String(err.stack);
-  expect(stack.includes("is not a function") || stack.includes("not callable")).toBe(true);
+  expect(stack).toContain("is not a function");
   expect(stack).toContain("inner");
   // `outer` was the tail caller of `inner`; its own frame is legitimately gone
   // (tail-call semantics), but `inner` must be present.
@@ -61,13 +62,34 @@ test("same path through a node:vm context", () => {
   expect(stack).toContain("is not a function");
 });
 
-test("error whose stack is materialized lazily during GC does not crash", () => {
-  // Create Errors with tail-call frames and drop them without touching `.stack`
-  // so JSC materializes the stack string in the ErrorInstance finalizer, which
-  // runs under Heap::runEndPhase.
-  for (let i = 0; i < 64; i++) makeTailCallError();
-  Bun.gc(true);
-  // If we got here the finalizer did not crash; finish with a positive check.
-  const stack = String((makeTailCallError() as Error).stack);
-  expect(stack).toContain("inner");
+test("stack materialized in ErrorInstance::finalizeUnconditionally does not crash", async () => {
+  // ErrorInstance::finalizeUnconditionally runs on ErrorInstances that survive
+  // a collection, and calls computeErrorInfo only when one of the captured
+  // frames' callee or codeBlock is unmarked. So: retain the Error, but let the
+  // per-iteration Function (and thus its CodeBlock) become unreachable, so the
+  // reconstructed frame's codeBlock is unmarked at Bun.gc(true). On Bun 1.1.43
+  // the child segfaults at address 0x5 inside Bun.gc(true); that crash trace is
+  // the one in the original report.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `"use strict";
+       const errs = [];
+       for (let i = 0; i < 64; i++) {
+         const inner = new Function("fn", "'use strict'; return fn();");
+         const outer = new Function("inner", "fn", "'use strict'; return inner(fn);");
+         try { outer(inner, null); } catch (e) { errs.push(e); }
+       }
+       Bun.gc(true);
+       process.stdout.write(String(errs.length) + " " + typeof errs[0].stack + "\\n");`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("64 string\n");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
 });

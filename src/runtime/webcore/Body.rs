@@ -856,7 +856,12 @@ impl Value {
         let Value::Locked(locked) = self else {
             unreachable!("locked_to_native_stream on non-Locked Value");
         };
-        if locked.promise.is_some() || !locked.action.is_none() {
+        // A registered `on_receive_value` means a native consumer (Bun.write,
+        // the server's render-wait) owns this body and has retargeted `task`
+        // to its own context; materializing a stream here would dispatch the
+        // producer's remaining callbacks with that foreign context.
+        if locked.promise.is_some() || !locked.action.is_none() || locked.on_receive_value.is_some()
+        {
             return ReadableStream::used(global_this);
         }
         let mut drain_result = DrainResult::EstimatedSize(0);

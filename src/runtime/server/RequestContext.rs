@@ -1968,7 +1968,8 @@ where
     }
 
     fn do_render_with_body_locked(this: NonNull<c_void>, value: &mut Body::Value) {
-        let pinned = RequestContextRef::pin(this.cast::<Self>().as_ptr());
+        // Consumes the +1 taken at the `on_receive_value` registration site.
+        let pinned = RequestContextRef::adopt(this.cast::<Self>().as_ptr());
         pinned
             .ctx()
             .do_render_with_body(std::ptr::from_mut(value), None);

@@ -1823,8 +1823,7 @@ fn index_of_char_t<T: PathCharCwd>(haystack: &[T], needle: T, from: usize) -> Op
 }
 
 /// Node's `WINDOWS_RESERVED_NAMES` membership test, case-insensitive.
-/// The `COM¹`/`LPT²` spellings carry U+00B9/U+00B2/U+00B3, which is one code
-/// unit in WTF-16 and the two bytes `C2 B9` in UTF-8.
+/// `COM¹`/`LPT²` superscripts are U+00B9/B2/B3: one WTF-16 unit, two UTF-8 bytes (`C2 Bx`).
 /// https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L72-L84
 fn is_windows_reserved_name_t<T: PathCharCwd>(device_part: &[T]) -> bool {
     if device_part.len() == 3 {
@@ -1849,10 +1848,8 @@ fn is_windows_reserved_name_t<T: PathCharCwd>(device_part: &[T]) -> bool {
     }
 }
 
-/// Leading slots `normalize_windows_t` reserves in its output buffer for the
-/// `.\` prefix Node prepends for CVE-2024-36139 and for reserved device names.
-/// Reserving them up front keeps that a write instead of a shift of the whole
-/// result. Callers must size the buffer to include them.
+/// Leading slots `normalize_windows_t` reserves for the `.\` prefix Node prepends
+/// (CVE-2024-36139 / reserved device names). Callers must size the buffer to include them.
 pub(crate) const WIN32_NORMALIZE_RESERVE: usize = 2;
 
 /// Based on Node v26.3.0 path.win32.normalize
@@ -2068,9 +2065,7 @@ fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> &'a 
 
     buf_size = buf_offset + tail_len;
 
-    // If the original path was not absolute and we could not resolve it relative
-    // to a particular device, `tail` must not have become something Windows would
-    // read as an absolute path. See CVE-2024-36139.
+    // CVE-2024-36139: a relative, device-less input must not normalize to something Windows reads as absolute.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L437-L456
     if !_is_absolute && device_len.is_none() {
         if let Some(first_colon) = colon_index {
@@ -2098,12 +2093,8 @@ fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> &'a 
         }
     }
 
-    // Translated from the following JS code:
-    //   const colonIndex = StringPrototypeIndexOf(path, ':');
-    //   if (isWindowsReservedName(path, colonIndex)) {
-    //     return `.\\${device ?? ''}${tail}`;
-    //   }
-    // `slice(0, -1)` drops the last code unit when there is no colon.
+    // Node: `if (isWindowsReservedName(path, colonIndex)) return `.\\${device ?? ''}${tail}`;`
+    // Node's helper does `slice(0, -1)` (drop last code unit) when there is no colon.
     if is_windows_reserved_name_t(match colon_index {
         Some(ci) => &path[0..ci],
         None => &path[0..len - 1],
@@ -3326,14 +3317,8 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
                                     continue 'paths;
                                 }
 
-                                // Translated from the following JS code:
-                                //   } else {
-                                //     // We matched a device root (e.g. \\\\.\\PHYSICALDRIVE0)
-                                //     device = `\\\\${firstPart}`;
-                                //     rootEnd = 4;
-                                //   }
-                                // `firstPart` is a single `.` or `?` here, so the
-                                // device is always 3 chars and the root always 4.
+                                // Node device root (e.g. \\.\PHYSICALDRIVE0): `device = \\\\${firstPart}`, `rootEnd = 4`.
+                                // `firstPart` is a single `.` or `?`, so device is 3 chars and root 4.
                                 let first_part_is_device_root = first_part_end - first_part_start
                                     == 1
                                     && (path!()[first_part_start] == T::from_u8(CHAR_DOT)

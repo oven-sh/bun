@@ -1670,10 +1670,7 @@ unsafe extern "C" {
     safe fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) -> *mut JSGlobalObject;
 }
 
-/// Renders an `ERR_INVALID_ARG_TYPE` parameter name the way Node's `addParameter`
-/// does: a name already ending in `" argument"` is used verbatim, otherwise it is
-/// quoted and labelled `property` when it contains a dot and `argument` when it
-/// does not.
+/// Node `ERR_INVALID_ARG_TYPE` name formatting: `" argument"` suffix verbatim, dotted → `"x" property`, else `"x" argument`.
 /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1407-L1414
 pub struct ArgumentName<'a>(pub &'a [u8]);
 

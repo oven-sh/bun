@@ -1112,11 +1112,12 @@ class Session extends EventEmitter {
     if (this.#adapter !== undefined) {
       inProcessAdapters.delete(this.#adapter);
       this.#adapter = undefined;
-      // Node fails pending callbacks with -32000 "Execution context was destroyed.": https://github.com/nodejs/node/blob/main/lib/inspector.js
+      // Node fails pending callbacks with ERR_INSPECTOR_CLOSED: https://github.com/nodejs/node/blob/main/lib/inspector.js
       const pending = this.#pendingResults;
       this.#pendingResults = new SafeMap();
+      const closedError = $ERR_INSPECTOR_CLOSED();
       for (const done of pending.values()) {
-        process.nextTick(done, { code: -32000, message: "Execution context was destroyed." });
+        process.nextTick(done, closedError);
       }
       if (inProcessAdapters.size === 0) disconnectInProcessInspector();
     }
@@ -1144,12 +1145,8 @@ class Session extends EventEmitter {
     if (callback !== undefined) validateFunction(callback, "callback");
 
     if (!this.#connected) {
-      const error = $ERR_INSPECTOR_NOT_CONNECTED();
-      if (callback) {
-        queueMicrotask(callback.bind(undefined, error));
-        return;
-      }
-      throw error;
+      // Node throws synchronously regardless of callback: https://github.com/nodejs/node/blob/main/lib/inspector.js
+      throw $ERR_INSPECTOR_NOT_CONNECTED();
     }
 
     let result = this.#handleMethod(method, params as object | undefined);
@@ -1176,6 +1173,12 @@ class Session extends EventEmitter {
       case "Runtime.enable":
         runtimeEnabledSessions.add(this);
         installConsoleHooks();
+        // CDP requires executionContextCreated after enable: https://chromedevtools.github.io/devtools-protocol/tot/Runtime/#event-executionContextCreated
+        queueMicrotask(() =>
+          emitToSession(this, "Runtime.executionContextCreated", {
+            context: { id: 1, origin: "", name: "Bun", uniqueId: "1", auxData: { isDefault: true } },
+          }),
+        );
         return {};
 
       case "Runtime.disable":
@@ -1384,12 +1387,15 @@ class Session extends EventEmitter {
           return $ERR_INSPECTOR_COMMAND("-32000: NodeWorker.enable is not supported on the main thread yet");
         }
         const title = `[worker ${wt.threadId}] ${wt.threadName}`;
-        const workerInfo = { workerId: String(wt.threadId), type: "worker", title };
-        queueMicrotask(() => {
-          this.emit("NodeWorker.attachedToWorker", {
-            params: { sessionId: `worker:${wt.threadId}`, workerInfo },
-          });
-        });
+        // AttachedToWorkerEvent shape: https://github.com/nodejs/node/blob/main/src/inspector/node_protocol.pdl
+        const workerInfo = { workerId: String(wt.threadId), type: "worker", title, url: "" };
+        queueMicrotask(() =>
+          emitToSession(this, "NodeWorker.attachedToWorker", {
+            sessionId: `worker:${wt.threadId}`,
+            workerInfo,
+            waitingForDebugger: false,
+          }),
+        );
         return {};
       }
 
@@ -1426,16 +1432,9 @@ class Session extends EventEmitter {
         }
         const { collected, metadata } = require("internal/trace_events").inspectorStop();
         // Node streams dataCollected (events, then metadata) then tracingComplete: https://github.com/nodejs/node/tree/main/src/inspector
-        // Emit synchronously so listeners see all of it before the post() callback microtask runs.
-        this.emit("NodeTracing.dataCollected", {
-          method: "NodeTracing.dataCollected",
-          params: { value: collected },
-        });
-        this.emit("NodeTracing.dataCollected", {
-          method: "NodeTracing.dataCollected",
-          params: { value: metadata },
-        });
-        this.emit("NodeTracing.tracingComplete", { method: "NodeTracing.tracingComplete", params: {} });
+        emitToSession(this, "NodeTracing.dataCollected", { value: collected });
+        emitToSession(this, "NodeTracing.dataCollected", { value: metadata });
+        emitToSession(this, "NodeTracing.tracingComplete", {});
         return {};
       }
 

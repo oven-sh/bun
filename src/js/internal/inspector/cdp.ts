@@ -727,12 +727,13 @@ class InspectorCDPAdapter {
     try {
       parsed = JSON.parse(message);
     } catch {
-      parsed = null;
+      // JSON-RPC -32700 Parse error: https://www.jsonrpc.org/specification#error_object
+      this.#replyErrorToClient(0, -32700, "Parse error");
+      return;
     }
     if (!parsed || typeof parsed !== "object" || typeof parsed.method !== "string") {
-      // V8's dispatcher answers any malformed message (unparseable, non-object,
-      // or method-less) with method-not-found on the given id, 0 otherwise.
-      this.#replyErrorToClient(parsed?.id ?? 0, -32601, "'' wasn't found");
+      // JSON-RPC -32600 Invalid Request: https://www.jsonrpc.org/specification#error_object
+      this.#replyErrorToClient(parsed?.id ?? 0, -32600, "Invalid Request");
       return;
     }
     const { id, method, params } = parsed;
@@ -812,6 +813,9 @@ class InspectorCDPAdapter {
             origin: "",
             name: "Bun",
             uniqueId: String(EXECUTION_CONTEXT_ID),
+            // vscode-js-debug / puppeteer select the default context via auxData.isDefault:
+            // https://chromedevtools.github.io/devtools-protocol/tot/Runtime/#type-ExecutionContextDescription
+            auxData: { isDefault: true },
           },
         });
         this.#sendToBackend("Runtime.enable");

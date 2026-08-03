@@ -392,6 +392,76 @@ describe("bundler", () => {
       stdout: '[[{"xyz":456},456],[{"xyz":123},123],[{"xyz":456},456],[{"xyz":123},123]]',
     },
   });
+  // https://github.com/oven-sh/bun/issues/13194
+  // Some npm packages ship pre-bundled code containing `eval("__dirname")` to
+  // dodge the upstream bundler's path rewriting. When we wrap such a module in
+  // `__commonJS(function(exports, module) { ... })`, the eval must still see
+  // `__dirname` and `__filename`.
+  itBundled("cjs2esm/DirectEvalKeepsDirnameFilename", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import lib from "./node_modules/pkg/index.js";
+        console.log(JSON.stringify(lib));
+      `,
+      "/node_modules/pkg/index.js": /* js */ `
+        var dir = eval("__dirname");
+        var file = eval("__filename");
+        module.exports = {
+          dir: dir.split(/[\\\\/]/).slice(-2).join("/"),
+          file: file.split(/[\\\\/]/).slice(-3).join("/"),
+        };
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: '{"dir":"node_modules/pkg","file":"node_modules/pkg/index.js"}',
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      expect(out).toMatch(/var __dirname = ".*", __filename = "/);
+    },
+  });
+  itBundled("cjs2esm/DirectEvalKeepsDirnameFilenameMinified", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import lib from "./node_modules/pkg/index.js";
+        console.log(JSON.stringify(lib));
+      `,
+      "/node_modules/pkg/index.js": /* js */ `
+        var path = require("path");
+        var childPath = path.join(eval("__dirname"), "child");
+        module.exports = {
+          child: childPath.split(/[\\\\/]/).slice(-3).join("/"),
+          file: eval("typeof __filename"),
+        };
+      `,
+    },
+    target: "bun",
+    minifyIdentifiers: true,
+    run: {
+      stdout: '{"child":"node_modules/pkg/child","file":"string"}',
+    },
+  });
+  itBundled("cjs2esm/DirectEvalDirnameNotInjectedForEsm", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import lib from "./lib.mjs";
+        console.log(lib);
+      `,
+      "/lib.mjs": /* js */ `
+        export default eval("typeof __dirname") + " " + eval("typeof __filename");
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: "undefined undefined",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      expect(out).not.toContain("var __dirname");
+      expect(out).not.toContain("var __filename");
+    },
+  });
   // https://github.com/oven-sh/bun/issues/4565
   // `exports.x = ...` as the unbraced body of if/while/do/else must not be
   // converted to `var $x = ...; export { $x as x };` because `export` is only

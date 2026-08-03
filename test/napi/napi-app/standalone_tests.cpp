@@ -1831,6 +1831,34 @@ static napi_value test_napi_null_value_args(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static napi_value test_napi_null_env_and_result(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  napi_value undef;
+  NODE_API_CALL(env, napi_get_undefined(env, &undef));
+  napi_value name;
+  NODE_API_CALL(env, napi_create_string_utf8(env, "n", NAPI_AUTO_LENGTH, &name));
+
+  napi_valuetype ty;
+  printf("napi_typeof(NULL env) -> %d\n",
+         (int)napi_typeof(nullptr, undef, &ty));
+
+  bool pending;
+  printf("napi_is_exception_pending(NULL env) -> %d\n",
+         (int)napi_is_exception_pending(nullptr, &pending));
+
+  printf("napi_call_function(NULL env) -> %d\n",
+         (int)napi_call_function(nullptr, undef, undef, 0, nullptr, nullptr));
+
+  printf("napi_is_error(NULL result) -> %d\n",
+         (int)napi_is_error(env, undef, nullptr));
+
+  printf("napi_async_init(NULL result) -> %d\n",
+         (int)napi_async_init(env, nullptr, name, nullptr));
+
+  return ok(env);
+}
+
 // Test for Object.freeze and Object.seal with indexed properties
 static napi_value
 test_napi_freeze_seal_indexed(const Napi::CallbackInfo &info) {
@@ -3549,6 +3577,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_dataview_bounds_errors);
   REGISTER_FUNCTION(env, exports, test_napi_typeof_empty_value);
   REGISTER_FUNCTION(env, exports, test_napi_null_value_args);
+  REGISTER_FUNCTION(env, exports, test_napi_null_env_and_result);
   REGISTER_FUNCTION(env, exports, test_napi_freeze_seal_indexed);
   REGISTER_FUNCTION(env, exports, test_napi_object_coercion);
   REGISTER_FUNCTION(env, exports, test_napi_create_external_buffer_empty);

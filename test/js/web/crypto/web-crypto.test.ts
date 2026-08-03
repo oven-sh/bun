@@ -1407,7 +1407,11 @@ describe("SubtleCrypto.supports", () => {
     }
     // PBKDF2 cannot run zero iterations.
     expect(
-      SubtleCrypto.supports("deriveBits", { name: "PBKDF2", hash: "SHA-256", salt: new Uint8Array(), iterations: 0 }, 8),
+      SubtleCrypto.supports(
+        "deriveBits",
+        { name: "PBKDF2", hash: "SHA-256", salt: new Uint8Array(), iterations: 0 },
+        8,
+      ),
     ).toBe(false);
   });
 

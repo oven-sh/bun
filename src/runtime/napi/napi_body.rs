@@ -1758,7 +1758,10 @@ impl napi_async_work {
             env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
             execute,
             // SAFETY: `event_loop()` is the live JS-thread loop (non-null,
-            // stable address) and outlives every napi_async_work.
+            // stable address). Liveness across a worker `terminate()` is
+            // guaranteed by `schedule()`'s `work_pool_task_ref()`: the worker
+            // shutdown barrier waits for `run()` to `work_pool_task_unref()`
+            // before the VM box (and this `EventLoop`) are freed.
             event_loop: unsafe { bun_ptr::BackRef::from_raw(global.bun_vm().event_loop()) },
             complete,
             data,
@@ -1783,6 +1786,10 @@ impl napi_async_work {
         }
         self.scheduled = true;
         self.poll_ref.ref_(bun_io::js_vm_ctx());
+        // Hold the worker-shutdown barrier open until the pool thread has
+        // finished `execute` and posted the completion; matched by
+        // `work_pool_task_unref()` at the end of `run()`.
+        self.event_loop.work_pool_task_ref();
         WorkPool::schedule(&raw mut self.task);
     }
 
@@ -1808,6 +1815,9 @@ impl napi_async_work {
                         self.concurrent_task
                             .from(self_ptr, AutoDeinit::ManualDeinit),
                     ));
+                // Last EventLoop/VM access; pairs with `work_pool_task_ref()`
+                // in `schedule()` and releases `WebWorker::shutdown`'s barrier.
+                self.event_loop.work_pool_task_unref();
                 return;
             }
         }
@@ -1822,6 +1832,33 @@ impl napi_async_work {
                 self.concurrent_task
                     .from(self_ptr, AutoDeinit::ManualDeinit),
             ));
+        // Last EventLoop/VM access; pairs with `work_pool_task_ref()` in
+        // `schedule()` and releases `WebWorker::shutdown`'s barrier.
+        self.event_loop.work_pool_task_unref();
+    }
+
+    /// Shutdown-drain counterpart of [`Self::run_from_js`] for a completion
+    /// that reached the queue after the worker thread stopped ticking (the
+    /// `work_pool_pending` barrier in `WebWorker::shutdown` guarantees the
+    /// post lands before this drain). Runs on the worker's JS thread with the
+    /// JSC heap and VM still live (before `teardownJSCVM`), so it is safe to
+    /// invoke the addon's `complete` callback here. Node.js does the same via
+    /// its env-close `uv_run` drain: `complete` runs with the status `execute`
+    /// left, so the addon can free its per-work native state.
+    ///
+    /// # Safety
+    /// `this` must be the live heap `napi_async_work` whose embedded
+    /// `concurrent_task` was popped from the shutdown drain; the pool thread
+    /// no longer holds it.
+    pub(crate) unsafe fn run_from_js_for_shutdown(this: *mut napi_async_work) {
+        // `complete` may `napi_delete_async_work(self)`, so copy the global
+        // handle out before forming `&mut *this` (matches the normal dispatch
+        // arm, which passes `vm`/`global` from the loop, not from `self`).
+        // SAFETY: see fn contract.
+        let global: GlobalRef = unsafe { (*this).global };
+        // SAFETY: see fn contract; `run_from_js` is documented to tolerate
+        // `self` being freed by the user's `complete`.
+        unsafe { (*this).run_from_js(global.bun_vm().as_mut(), &global) };
     }
 
     pub(crate) fn cancel(&mut self) -> bool {

@@ -518,6 +518,62 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(output).toContain("success!");
       expect(output).not.toContain("failure!");
     });
+    // worker.terminate() while execute callbacks are still running on the
+    // thread pool must not free the worker's VirtualMachine (the pool-thread
+    // completion would enqueue into a freed EventLoop) or its JSC heap (the
+    // ArrayBuffer backing store would be finalized while the addon is still
+    // writing it). WebWorker::shutdown now waits for every queued
+    // napi_async_work's pool-thread callback to finish and then runs
+    // complete() on the shutdown drain, matching Node.js. The positive
+    // assertion on stdout catches every crash mode (panic, ASAN abort,
+    // SIGSEGV) without matching on "panic" in stderr; on an unfixed build
+    // the subprocess aborts before printing PASS.
+    it("worker.terminate() with execute callbacks in flight waits for them and does not UAF", async () => {
+      const addon = join(__dirname, "napi-app/build/Debug/test_async_work_worker_terminate.node");
+      const workerSrc = /* js */ `
+        const { parentPort, workerData } = require("node:worker_threads");
+        const addon = require(workerData.addon);
+        const keep = [];
+        for (let i = 0; i < 4; i++) {
+          const ab = new ArrayBuffer(16 << 20);
+          keep.push(ab);
+          addon.queueWork(ab, 300 + i * 50, () => {});
+        }
+        parentPort.postMessage("up");
+        setInterval(() => {}, 1000);
+      `;
+      const script = /* js */ `
+        const { Worker } = require("node:worker_threads");
+        (async () => {
+          for (let r = 0; r < ${isASAN ? 3 : 5}; r++) {
+            const w = new Worker(process.env.WORKER_SRC, {
+              eval: true,
+              workerData: { addon: process.env.ADDON },
+            });
+            let err;
+            w.on("error", e => { err = e; });
+            await new Promise(resolve => {
+              w.once("message", resolve);
+              w.once("exit", resolve);
+            });
+            if (err) throw err;
+            await w.terminate();
+          }
+          console.log("PASS");
+        })().catch(e => {
+          console.error(String(e));
+          process.exit(1);
+        });
+      `;
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, ADDON: addon, WORKER_SRC: workerSrc },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "PASS", stderr: "", exitCode: 0 });
+    }, 30_000);
   });
 
   describe("napi_threadsafe_function", () => {

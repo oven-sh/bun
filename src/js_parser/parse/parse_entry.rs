@@ -1095,11 +1095,9 @@ impl<'a> Parser<'a> {
         // https://github.com/lodash/lodash/issues/5660
         let mut force_esm = false;
 
-        // node evaluates data: URL modules as ESM unconditionally
-        // (lib/internal/modules/esm/load.js), so CommonJS feature usage must
-        // not downgrade them to CJS — `module`/`exports` stay unbound and
-        // throw at runtime, as in node. The runtime loader is what forces
-        // `module_type` to Esm for data: URLs (jsc_hooks.rs).
+        // data: URL modules are always ESM in node; CJS feature usage must not
+        // downgrade them (jsc_hooks.rs sets module_type=Esm for data: URLs).
+        // https://github.com/nodejs/node/blob/main/lib/internal/modules/esm/load.js
         if p.options.module_type == options::ModuleType::Esm
             && p.source.path.text.starts_with(b"data:")
         {

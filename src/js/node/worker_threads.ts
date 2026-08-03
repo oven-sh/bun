@@ -331,10 +331,9 @@ const BUN_WORKER_STDIO_KEY = "@@bunWorkerThreadsStdio";
 const BUN_WORKER_MESSAGING_KEY = "@@bunWorkerThreadsMessaging";
 const BUN_WORKER_CWD_COUNTER_KEY = "@@bunWorkerThreadsCwdCounter";
 
-// Shared cwd-invalidation counter, mirroring lib/internal/worker.js: the main
-// thread bumps it on every process.chdir(), and each worker wraps process.cwd
-// to re-read the real cwd when the counter changed (the wrapper's AtomicsLoad
-// call is observable — test-worker-process-cwd asserts it in the source).
+// Shared cwd-invalidation counter: main thread bumps it on chdir(), workers
+// re-read the real cwd when it changes (AtomicsLoad is source-observable).
+// https://github.com/nodejs/node/blob/main/lib/internal/worker.js
 const AtomicsAdd = Atomics.add;
 const AtomicsLoad = Atomics.load;
 let cwdCounter: Uint32Array | undefined;

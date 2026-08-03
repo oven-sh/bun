@@ -1017,17 +1017,24 @@ impl EventLoop {
     /// is visible, making the subsequent VM dealloc safe.
     #[inline]
     pub fn work_pool_task_unref(&self) {
-        self.work_pool_pending.fetch_sub(1, Ordering::Release);
+        if self.work_pool_pending.fetch_sub(1, Ordering::Release) == 1 {
+            bun_threading::Futex::wake(&self.work_pool_pending, u32::MAX);
+        }
     }
 
-    /// Worker-thread shutdown barrier. Spins (yielding) until every
-    /// outstanding [`Self::work_pool_task_ref`] has been matched by
-    /// [`Self::work_pool_task_unref`]. Each pending task is one bounded
-    /// `execute`/compression/IO step, so the wait is bounded; `terminate()`
-    /// already runs user exit handlers before this.
+    /// Worker-thread shutdown barrier. Blocks until every outstanding
+    /// [`Self::work_pool_task_ref`] has been matched by
+    /// [`Self::work_pool_task_unref`]. The wait is bounded only by the
+    /// slowest in-flight pool callback (for `napi_async_work` that is
+    /// arbitrary addon code); Node.js's env-close `uv_run` drain has the
+    /// same `terminate()` latency model.
     pub fn wait_for_pending_work_pool_tasks(&self) {
-        while self.work_pool_pending.load(Ordering::Acquire) > 0 {
-            std::thread::yield_now();
+        loop {
+            let n = self.work_pool_pending.load(Ordering::Acquire);
+            if n == 0 {
+                return;
+            }
+            let _ = bun_threading::Futex::wait(&self.work_pool_pending, n, None);
         }
     }
 

@@ -550,13 +550,11 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
               eval: true,
               workerData: { addon: process.env.ADDON },
             });
-            let err;
-            w.on("error", e => { err = e; });
-            await new Promise(resolve => {
+            await new Promise((resolve, reject) => {
               w.once("message", resolve);
-              w.once("exit", resolve);
+              w.once("error", reject);
+              w.once("exit", code => reject(new Error("worker exited before queueing work, code " + code)));
             });
-            if (err) throw err;
             await w.terminate();
           }
           console.log("PASS");

@@ -1801,6 +1801,11 @@ impl napi_async_work {
 
     fn run(&mut self) {
         let self_ptr: *mut Self = self;
+        // After `enqueue_task_concurrent` the JS thread may pick this work up,
+        // run `complete`, and `napi_delete_async_work` it before we reach the
+        // `work_pool_task_unref()` below; copy the handle out so that last
+        // access does not touch `self`.
+        let event_loop = self.event_loop;
         if let Err(state) = self.status.compare_exchange(
             AsyncWorkStatus::Pending as u32,
             AsyncWorkStatus::Started as u32,
@@ -1810,14 +1815,13 @@ impl napi_async_work {
             if state == AsyncWorkStatus::Cancelled as u32 {
                 // `concurrent_task` is the live inline field of this heap work;
                 // the queue takes ownership of its `next` link.
-                self.event_loop
-                    .enqueue_task_concurrent(core::ptr::NonNull::from(
-                        self.concurrent_task
-                            .from(self_ptr, AutoDeinit::ManualDeinit),
-                    ));
+                event_loop.enqueue_task_concurrent(core::ptr::NonNull::from(
+                    self.concurrent_task
+                        .from(self_ptr, AutoDeinit::ManualDeinit),
+                ));
                 // Last EventLoop/VM access; pairs with `work_pool_task_ref()`
                 // in `schedule()` and releases `WebWorker::shutdown`'s barrier.
-                self.event_loop.work_pool_task_unref();
+                event_loop.work_pool_task_unref();
                 return;
             }
         }
@@ -1827,14 +1831,13 @@ impl napi_async_work {
 
         // `concurrent_task` is the live inline field of this heap work; the
         // queue takes ownership of its `next` link.
-        self.event_loop
-            .enqueue_task_concurrent(core::ptr::NonNull::from(
-                self.concurrent_task
-                    .from(self_ptr, AutoDeinit::ManualDeinit),
-            ));
+        event_loop.enqueue_task_concurrent(core::ptr::NonNull::from(
+            self.concurrent_task
+                .from(self_ptr, AutoDeinit::ManualDeinit),
+        ));
         // Last EventLoop/VM access; pairs with `work_pool_task_ref()` in
         // `schedule()` and releases `WebWorker::shutdown`'s barrier.
-        self.event_loop.work_pool_task_unref();
+        event_loop.work_pool_task_unref();
     }
 
     /// Shutdown-drain counterpart of [`Self::run_from_js`] for a completion

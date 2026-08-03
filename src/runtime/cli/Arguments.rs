@@ -1157,9 +1157,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             Global::exit(1);
         }
 
-        // Node exits 9 on `--debug`/`--debug-brk` with this message, so tools
-        // that still pass the pre-io.js flags get told what to use instead
-        // rather than silently running without a debugger.
+        // Node exits 9 on `--debug`/`--debug-brk` (DEP0062).
         // https://github.com/nodejs/node/blob/v26.3.0/src/node_options.cc#L56-L60
         if args.option(b"--debug").is_some() || args.option(b"--debug-brk").is_some() {
             Output::err_generic(
@@ -1212,10 +1210,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             // Defined in BunProcess.cpp; backs process.debugPort.
             fn Bun__setProcessDebugPort(port: u16);
         }
-        // Node's --inspect-port=[host:]port: the port for an active
-        // `--inspect*` listener, and the value of process.debugPort either
-        // way -- `--inspect-port=0` alone reports 0 without starting a
-        // server. An explicit `--inspect=<port>` keeps its own port.
+        // Node's --inspect-port=[host:]port: process.debugPort always, and the
+        // active `--inspect*` listener's port unless `--inspect=<port>` set
+        // one. https://github.com/nodejs/node/blob/main/src/node_options.cc
         if let Some(inspect_port_flag) = args.option(b"--inspect-port") {
             let port_bytes = match inspect_port_flag.iter().rposition(|&byte| byte == b':') {
                 Some(at) => &inspect_port_flag[at + 1..],

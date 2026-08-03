@@ -1388,10 +1388,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_disconnectInProcessInspector, (JSGlobalObjec
     return JSValue::encode(jsUndefined());
 }
 
-// node:inspector's `inspector.console`. V8 routes those calls to the inspector
-// only, so nothing reaches stdout or stderr; Bun::ConsoleObject writes the
-// terminal output *and* forwards to the inspector controller's own console
-// client, so calling that client directly is the inspector-only half.
+// node:inspector's `inspector.console`: inspector-only, no stdio. Call the
+// inspector controller's console client directly (Bun::ConsoleObject would
+// also write to the terminal). https://github.com/nodejs/node/blob/main/lib/inspector.js
 JSC_DEFINE_HOST_FUNCTION(jsFunction_inspectorConsoleCall, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

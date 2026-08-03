@@ -70,11 +70,9 @@ const inspectorConsoleCall = $newCppFunction("BunDebugger.cpp", "jsFunction_insp
 const ErrorObject = globalThis.Error;
 const errorCaptureStackTrace = ErrorObject.captureStackTrace;
 
-// Set only by open(): the debugger thread then owns a backend that this
-// thread's Sessions must share, which is what the Debugger.* forwarding in
-// #handleMethod keys off. A server started by --inspect is *listening* but
-// owns no such backend, so url()/close()/waitForDebugger() consult
-// getNodeInspectorUrl() instead of this.
+// Set only by open(): flags that the debugger thread owns a backend Sessions
+// must share (what #handleMethod's Debugger.* forwarding keys off). --inspect
+// sets no such backend, so url()/close()/waitForDebugger() use getNodeInspectorUrl().
 let activeInspectorUrl: string | undefined;
 
 // Same check as Node's internal/net.js isLoopback().
@@ -88,10 +86,8 @@ function isLoopbackHost(host: string) {
   );
 }
 
-// The URL of the node-inspector server this thread has listening, from either
-// inspector.open() or --inspect. The server's state is owned by the main
-// thread, and a worker cannot start one of its own (open() rejects there), so
-// a worker never has a URL.
+// URL of the listening node-inspector server (from open() or --inspect).
+// Workers never have one: the main thread owns it and open() rejects there.
 function listeningInspectorUrl(): string | undefined {
   if (!Bun.isMainThread) return undefined;
   return getNodeInspectorUrl() ?? undefined;
@@ -1143,10 +1139,9 @@ class Session extends EventEmitter {
     }
   }
 
-  // Delivered synchronously, replies included: Node dispatches into V8 from
-  // post() and the reply reaches the callback before post() returns (verified
-  // on v26.3.0). #onClientMessage turns a throwing callback into a process
-  // warning, so nothing escapes into the adapter's dispatch.
+  // Synchronous, replies included: in Node the reply reaches the callback
+  // before post() returns. #onClientMessage turns a throw into a warning.
+  // https://github.com/nodejs/node/blob/main/src/inspector_js_api.cc
   #deliverClientMessage(clientMessage: string) {
     let parsed;
     try {
@@ -1523,9 +1518,7 @@ class Session extends EventEmitter {
       case "NodeWorker.detach":
         return {};
 
-      // The categories Node's tracing agent knows about, in the order it
-      // lists them. Bun's trace_events emits a subset; a client picks from
-      // this list either way.
+      // Node's tracing-agent category list, same order (Bun emits a subset).
       // https://github.com/nodejs/node/blob/v26.3.0/src/inspector/tracing_agent.cc#L181-L206
       case "NodeTracing.getCategories":
         return {
@@ -1606,10 +1599,9 @@ class Session extends EventEmitter {
   }
 }
 
-// Node's `inspector.console` is V8's inspector console: each call becomes a
-// Runtime.consoleAPICalled notification for attached sessions and nothing is
-// written to stdout or stderr. Ids match Bun::InspectorConsoleMethod in
-// src/jsc/bindings/BunDebugger.h.
+// Node's `inspector.console` = V8's inspector console: Runtime.consoleAPICalled
+// only, no stdio. Ids match Bun::InspectorConsoleMethod in BunDebugger.h.
+// https://github.com/nodejs/node/blob/main/lib/inspector.js
 const InspectorConsoleMethod = {
   log: 0,
   info: 1,

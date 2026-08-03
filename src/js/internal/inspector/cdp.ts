@@ -301,11 +301,8 @@ function ownSourceMappingURL(source: string): string {
 }
 
 // ── RemoteObject / ObjectPreview ───────────────────────────────────────────
-// JSON cannot carry NaN, ±Infinity or -0, so V8 moves them out of `value` into
-// `unserializableValue`; bigints are reported the same way. JSC instead sends
-// `value: null` plus a `description`, so the two protocols disagree on every
-// such value.
-// https://chromedevtools.github.io/devtools-protocol/tot/Runtime/#type-UnserializableValue
+// V8 reports NaN/±Infinity/-0/bigint via `unserializableValue`; JSC sends
+// `value: null` + `description`. https://chromedevtools.github.io/devtools-protocol/tot/Runtime/#type-UnserializableValue
 const UNSERIALIZABLE_NUMBERS = new Set(["NaN", "Infinity", "-Infinity", "-0"]);
 
 // Commands whose reply carries `wasThrown`; a thrown reply is enriched with
@@ -352,11 +349,9 @@ function toCdpObjectPreview(preview: AnyObject | undefined, nested = false): Any
     // The JSC-only properties were what made the preview lossy.
     if (rest.subtype === "error") out.overflow = false;
   }
-  // V8 omits `entries` from the preview of an empty Map/Set; JSC sends an
-  // empty array. Node's debugger REPL branches on the field's presence
-  // (`Map(0) {}` vs `Map(0) {  }`), so keep it presence-equivalent. V8 also
-  // reports entries only on the top-level preview: a Map/Set nested inside
-  // one is elided to overflow (`Set(1) { ... }`).
+  // V8 omits `entries` when empty (JSC sends []) and only on the top-level
+  // preview (nested Map/Set is elided to overflow); Node's REPL branches on
+  // the field's presence, so match V8.
   if (entries && entries.length > 0) {
     if (nested) {
       out.overflow = true;
@@ -496,10 +491,8 @@ class InspectorCDPAdapter {
   // V8 reports the pause that ends a step command with reason "step"; JSC does
   // not distinguish it from any other pause, so track the step here.
   #steppingToNextPause = false;
-  // V8 reports the scheduled --inspect-brk pause with reason "Break on start"
-  // (clients branch on it: NODE_INSPECT_RESUME_ON_START, the REPL header).
-  // Bun implements --inspect-brk as a prepended `debugger;`, which JSC reports
-  // like any other debugger statement, so latch the release of a waiting
+  // V8 labels the --inspect-brk pause "Break on start"; Bun's injected
+  // `debugger;` is indistinguishable to JSC, so latch the release of a waiting
   // target and relabel the pause it triggers.
   #breakOnStartPending = false;
   #pending = new Map<
@@ -713,11 +706,9 @@ class InspectorCDPAdapter {
     this.#replyEvaluateLike(id, method, result);
   }
 
-  // V8's exceptionDetails for a thrown evaluation carry the throw site, the
-  // script it happened in, a structured stackTrace, and a description that
-  // embeds the formatted stack; JSC reports only the bare exception object.
-  // Recover the missing pieces from the exception's own properties (stack,
-  // line, column, sourceURL) with one extra backend roundtrip before replying.
+  // V8's exceptionDetails carry throw site + stackTrace + formatted stack;
+  // JSC reports only the bare exception. Recover from the error's own
+  // stack/line/column/sourceURL via one extra Runtime.getProperties roundtrip.
   #replyEvaluateLike(clientId: number | string, method: string, jscResult: AnyObject): void {
     const remote = jscResult.result;
     const objectId = jscResult.wasThrown ? remote?.objectId : undefined;
@@ -816,13 +807,9 @@ class InspectorCDPAdapter {
       }
       if (callFrames.length > 0) details.stackTrace = { callFrames };
     }
-    // JSC positions are 1-based; CDP's are 0-based. JSC records the callee
-    // position of the throwing `new`; V8 reports the start of the throwing
-    // statement. Approximate it from the raw (generated) position: take the
-    // mapping at-or-before it and walk back to that original line's first
-    // mapping (the statement's start unless several statements share the
-    // line, which the transpiler's one-statement-per-generated-line printing
-    // makes rare at a throw site).
+    // JSC is 1-based and records the callee position; V8/CDP is 0-based and
+    // reports the throwing statement's start. Approximate the latter via the
+    // source-map mapping at-or-before the generated position, walked to line start.
     const scriptId = sourceURL !== undefined ? this.#scriptIdsByUrl.get(sourceURL) : undefined;
     const statementStart =
       scriptId !== undefined && typeof generatedLine === "number" && generatedLine > 0
@@ -1010,10 +997,9 @@ class InspectorCDPAdapter {
       }
       resets.push({ clientBreakpointId, bp, generated });
     }
-    // Two phases: every stale breakpoint is removed before any is re-added.
-    // JSC resolves distinct pre-parse requests on an unmapped line forward to
-    // one shared pause location; removing one of them after a re-added
-    // breakpoint resolved to that same location cleared the re-added one too.
+    // Remove all before re-adding any: JSC merges pre-parse requests on an
+    // unmapped line to one pause location, so removing one after a re-add
+    // resolved to the same spot cleared the re-added one too.
     for (const { bp } of resets) {
       bp.resetPending = true;
       this.#sendToBackend("Debugger.removeBreakpoint", { breakpointId: bp.jscId });
@@ -1764,11 +1750,9 @@ class InspectorCDPAdapter {
             if (data?.breakpointId) cdpParams.hitBreakpoints = [this.#toClientBreakpointId(data.breakpointId)];
             break;
         }
-        // The first pause after releasing a parked target is the scheduled
-        // break on start; it precedes all user code, so it wins over a
-        // breakpoint on the first statement (V8 labels that pause the same
-        // way) -- but not over an exception, which means user code already
-        // ran and the chance has passed.
+        // The first pause after releasing a parked target is "Break on start";
+        // it wins over a breakpoint (V8 does too) but not over an exception,
+        // which means user code already ran.
         const breakOnStart = this.#breakOnStartPending;
         this.#breakOnStartPending = false;
         if (breakOnStart && cdpParams.reason !== "exception" && cdpParams.reason !== "assert") {

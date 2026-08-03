@@ -883,10 +883,9 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
         bun_core::Output::err("Debugger", "{}", format_args!("create failed: {e:?}"));
         return;
     }
-    // Even without a connection wait, hold the thread here until the
-    // inspector server is up: Node binds it synchronously, so its listening
-    // banner precedes any script output and the resolved process.debugPort is
-    // visible to the first user statement.
+    // Hold until the inspector server is up even without a connection wait:
+    // Node binds synchronously, so the banner precedes script output and
+    // process.debugPort is resolved before the first user statement.
     bun_jsc::debugger::Debugger::wait_for_thread_startup();
     if block_until_connected {
         bun_jsc::debugger::Debugger::wait_for_debugger_if_necessary(vm);

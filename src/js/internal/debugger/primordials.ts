@@ -1,8 +1,6 @@
-// Primordial-style helpers used by the `node inspect` CLI port under
-// internal/debugger/. The debugger CLI runs in its own process and never
-// evaluates user code (the debuggee is a separate child process), so these do
-// not need to be tamper-proof — they only exist so the files ported from
-// Node's lib/internal/debugger/* can stay close to upstream.
+// Primordial-style helpers for the `node inspect` CLI port; not tamper-proof
+// (the CLI never evaluates user code), just keeps the port close to upstream.
+// https://github.com/nodejs/node/blob/main/lib/internal/per_context/primordials.js
 
 const SafePromiseAllReturnArrayLike = (values, mapFn?) => {
   return Promise.all(mapFn ? Array.from(values, mapFn) : values);

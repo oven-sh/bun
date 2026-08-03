@@ -1,11 +1,6 @@
-// Minimal REPL used by the `node inspect` CLI port (internal/debugger/*).
-//
-// Bun does not implement node:repl yet, so this provides just the subset of
-// the REPLServer surface that lib/internal/debugger/inspect_repl.js relies on:
-// Repl.start() with a custom evaluator, an assignable `context`/`history`,
-// setPrompt/displayPrompt/pause/resume, dot-commands via defineCommand
-// (".exit", ".interrupt"), and "SIGINT"/"exit" events. Input is consumed line
-// by line via node:readline; line editing and completion are not supported.
+// Minimal REPLServer subset for the `node inspect` CLI port (Bun lacks
+// node:repl); just what inspect_repl.js needs, line-by-line via readline.
+// https://github.com/nodejs/node/blob/main/lib/repl.js
 "use strict";
 
 const { EventEmitter } = require("node:events");

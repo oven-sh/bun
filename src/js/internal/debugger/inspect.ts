@@ -283,14 +283,8 @@ const kInspectArgOptions = {
   timeout: { type: "string" },
 };
 
-// Parses args once and decides whether the user wants the inspect help, probe
-// mode, or interactive mode. The mode is determined by the first option,
-// option-terminator, or positional token in the input.
-//
-// Returns one of:
-//   { mode: 'help' }
-//   { mode: 'probe', tokens, args }
-//   { mode: 'interactive' }
+// Returns { mode: 'help' | 'probe' | 'interactive', ... } for `inspect` args;
+// the first option/terminator/positional token decides the mode.
 function parseInspectMode(args) {
   const { tokens } = util.parseArgs({
     args,

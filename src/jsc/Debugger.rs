@@ -380,10 +380,9 @@ impl Debugger {
         }
     }
 
-    /// Block until the debugger thread finishes its startup (inspector server
-    /// listening or failed): `create()` arms the futex before spawning and
-    /// `start_js_debugger_thread` clears it on every exit path. A no-op when
-    /// the thread already started (futex back at 0).
+    /// Block until the debugger thread finishes startup: `create()` arms the
+    /// futex before spawning, `start_js_debugger_thread` clears it on every
+    /// exit path. No-op once the thread already started.
     pub fn wait_for_thread_startup() {
         while FUTEX_ATOMIC.load(Ordering::Relaxed) > 0 {
             bun_threading::Futex::wait_forever(&FUTEX_ATOMIC, 1);
@@ -419,11 +418,9 @@ impl Debugger {
 
         if !this_ref.has_started_debugger {
             this_ref.as_mut().has_started_debugger = true;
-            // Armed before the spawn; `start_js_debugger_thread` clears it on
-            // every exit path once the inspector server is up (or failed).
-            // `wait_for_thread_startup` blocks on it so a `--inspect` process
-            // prints the listening banner before any script output, as Node
-            // does (its inspector server binds synchronously at startup).
+            // Armed before spawn, cleared on every `start_js_debugger_thread`
+            // exit; `wait_for_thread_startup` blocks on it so `--inspect`
+            // prints its banner before script output, as Node does.
             FUTEX_ATOMIC.store(1, Ordering::Relaxed);
             // `std::thread::spawn` requires `Send`; raw `*mut
             // VirtualMachine` is `!Send`. Wrap in a `Send` newtype — the

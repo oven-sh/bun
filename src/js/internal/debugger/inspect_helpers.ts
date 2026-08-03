@@ -134,14 +134,9 @@ async function launchChildProcess(childArgs, inspectHost, inspectPort, childOutp
     await portIsFree(inspectHost, inspectPort);
   }
 
-  // Upstream always spawns with --inspect-brk. Bun implements --inspect-brk by
-  // prepending a `debugger;` statement to the entry point, so an interactive
-  // session stops twice on the first line: once on the injected statement and
-  // again on the user's first statement. `deferBreakToClient` swaps in
-  // --inspect-wait, which blocks without injecting anything, and the caller
-  // arms the break itself (see NodeInspector.run). Probe mode keeps
-  // --inspect-brk: it needs the entry script parsed before it resolves probe
-  // locations, and only --inspect-brk parks the target that late.
+  // Bun's --inspect-brk injects a `debugger;`, making interactive sessions
+  // stop twice; `deferBreakToClient` uses --inspect-wait and arms the break in
+  // NodeInspector.run. Probe mode keeps --inspect-brk so the entry is parsed.
   const args = [options.deferBreakToClient ? `--inspect-wait=${inspectPort}` : `--inspect-brk=${inspectPort}`];
   ArrayPrototypePushApply(args, childArgs);
 

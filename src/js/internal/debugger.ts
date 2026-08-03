@@ -151,12 +151,9 @@ export default function (
     return;
   }
 
-  // Control channel between the inspected thread and the debugger thread for
-  // a server node:inspector owns: inspector.close() stops it, a later
-  // inspector.open() starts a new one here instead of spawning another
-  // debugger thread, and an in-process inspector.Session forwards its
-  // Debugger.* commands to the backend a remote frontend shares.
-  // `initial` is the server that is already listening, if any.
+  // Control channel from the inspected thread to a node:inspector-owned
+  // server: close() stops it, open() restarts it here, and an in-process
+  // Session forwards Debugger.* to the shared backend. `initial` may be nil.
   function createNodeInspectorControl(initial: Debugger | undefined) {
     let debug = initial;
     let sessionBackend: Backend | undefined;
@@ -262,11 +259,9 @@ export default function (
   }
 
   if (isNodeInspector) {
-    // node:inspector's inspector.open(): connections speak the V8 Chrome
-    // DevTools Protocol, the listening URL is reported back to the inspected
-    // thread (which prints Node's "Debugger listening on ..." line), and a
-    // control callback lets the inspected thread close the server or forward
-    // commands from the in-process inspector.Session.
+    // node:inspector's inspector.open(): serve CDP, report the URL back (for
+    // Node's "Debugger listening on ..." line), and hand back a control
+    // callback so the inspected thread can close the server / forward commands.
     let debug: Debugger | undefined;
     try {
       debug = new Debugger(
@@ -315,12 +310,9 @@ export default function (
 
   const { cdpUrl } = debug;
 
-  // If the user types --inspect, we print the URL to the console.
-  // If the user is using an editor extension, don't print anything.
-  // Printed before reportNodeInspectorServerStarted releases the inspected
-  // thread: Node writes its banner before any script output, and tools
-  // scraping stderr for it (test-inspector-port-zero) rely on that order --
-  // a short-lived script could otherwise exit before this thread got to it.
+  // Print the URL for --inspect (not for editor extensions), *before*
+  // reportNodeInspectorServerStarted releases the inspected thread: Node's
+  // banner precedes script output and stderr-scraping tools rely on that order.
   if (!isAutomatic) {
     const debugUrl = debug.url;
     if (debugUrl) {
@@ -349,11 +341,9 @@ export default function (
     }
   }
 
-  // --inspect serves a CDP endpoint alongside Bun's JSC one. Report it so
-  // node:inspector answers url() with it, refuses inspector.open() with
-  // ERR_INSPECTOR_ALREADY_ACTIVATED and can stop the server through
-  // inspector.close(), the way Node behaves for a CLI-started inspector.
-  // This also releases the inspected thread, which blocks on the report.
+  // Report --inspect's CDP endpoint so node:inspector's url()/open()/close()
+  // behave as Node does for a CLI-started inspector; this also releases the
+  // inspected thread, which blocks on the report.
   if (enableNodeCDP && cdpUrl) {
     reportNodeInspectorServerStarted(cdpUrl, createNodeInspectorControl(debug), undefined);
   }

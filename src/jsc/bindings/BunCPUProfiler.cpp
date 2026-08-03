@@ -360,11 +360,9 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         double startTime = s_profilingStartTime;
         double lastTime = s_profilingStartTime;
 
-        // V8 accounts for the wall-clock time the thread spent outside JS with
-        // (idle) samples, which Node drives from the event loop's idle
-        // callback. JSC's sampling profiler records nothing at all then, so
-        // reconstruct them: a hole longer than one extra sampling period means
-        // no JS ran across it.
+        // V8 fills time outside JS with (idle) samples (Node drives them from
+        // the event-loop idle callback); JSC records nothing then, so infer
+        // one where the sample gap exceeds an extra sampling period.
         int idleNodeId = 0;
         auto appendIdleSampleBefore = [&](double sampleTime) {
             double gap = sampleTime - lastTime;

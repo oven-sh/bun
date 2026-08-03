@@ -1016,18 +1016,9 @@ mod _async_tasks {
     // NewAsyncFSTask — runs a NodeFS method on the thread pool.
     // ──────────────────────────────────────────────────────────────────────────
 
-    /// Trait abstracting over Argument types' deinit/toThreadSafe.
-    ///
-    /// Every Arguments struct defines `to_thread_safe` (clone
-    /// any borrowed JS-backed slices so the work-pool callback may run off-thread).
-    /// The trait methods are **required** so missing impls are a compile error rather
-    /// than a silent UAF/leak.
-    /// What the permission model must approve before an fs operation runs.
-    ///
     /// One variant per distinct `THROW_IF_INSUFFICIENT_PERMISSIONS` sequence in
-    /// <https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc>. The
-    /// order matters: Node reports the first scope that is denied, and tests
-    /// assert on which flag the message names.
+    /// <https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc>. Order
+    /// matters: Node reports the first denied scope, and tests assert on it.
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum FsPermission {
         /// File-descriptor-only operation. The descriptor was already approved
@@ -1173,11 +1164,9 @@ mod _async_tasks {
         }
     }
 
-    /// Implements [`FsPermissionInfo`] for the `args::*` types.
-    ///
-    /// `$perm` is the operation's entry in Node's table; the closure returns the
-    /// path arguments in the order Node checks them. Types not listed here take
-    /// the trait defaults, which is correct for the fd-only operations.
+    /// Implements [`FsPermissionInfo`] for the `args::*` types. `$perm` is the
+    /// operation's entry in Node's table; the closure returns paths in the
+    /// order Node checks them. Unlisted types take the fd-only defaults.
     macro_rules! impl_fs_permission {
         ( $( $ty:ty => $perm:ident $( , |$s:ident| $paths:expr )? );+ $(;)? ) => {
             $( impl FsPermissionInfo for $ty {
@@ -1256,9 +1245,8 @@ mod _async_tasks {
     }
 
     /// The single place every `node:fs` entry point asks the permission model.
-    ///
-    /// Runs before the operation does anything, so a denial has no side
-    /// effects. When `--permission` is absent this is one relaxed atomic load.
+    /// Runs before any side effect; one relaxed atomic load when `--permission`
+    /// is absent.
     #[inline]
     pub fn check_fs_permission<A: FsPermissionInfo>(
         global: &JSGlobalObject,

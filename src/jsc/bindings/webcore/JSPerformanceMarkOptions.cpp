@@ -21,6 +21,7 @@
 #include "config.h"
 #include "JSPerformanceMarkOptions.h"
 
+#include "ErrorCode.h"
 #include "JSDOMConvertAny.h"
 #include "JSDOMConvertNumbers.h"
 #include <JavaScriptCore/JSCInlines.h>
@@ -58,7 +59,12 @@ template<> PerformanceMarkOptions convertDictionary<PerformanceMarkOptions>(JSGl
         startTimeValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "startTime"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
-    if (!startTimeValue.isUndefined()) {
+    if (!startTimeValue.isUndefinedOrNull()) {
+        // Node: validateNumber(options.startTime ?? now()), no ToNumber coercion.
+        if (!startTimeValue.isNumber()) {
+            Bun::ERR::INVALID_ARG_TYPE(throwScope, &lexicalGlobalObject, "startTime"_s, "number"_s, startTimeValue);
+            return {};
+        }
         result.startTime = convert<IDLDouble>(lexicalGlobalObject, startTimeValue);
         RETURN_IF_EXCEPTION(throwScope, {});
     }

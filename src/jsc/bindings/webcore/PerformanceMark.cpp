@@ -36,6 +36,7 @@
 #include "SerializedScriptValue.h"
 // #include "WorkerGlobalScope.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
+#include <wtf/text/StringConcatenateNumbers.h>
 
 namespace WebCore {
 
@@ -46,12 +47,15 @@ static double performanceNow(ScriptExecutionContext& scriptExecutionContext)
 
 ExceptionOr<Ref<PerformanceMark>> PerformanceMark::create(JSC::JSGlobalObject& globalObject, ScriptExecutionContext& scriptExecutionContext, const String& name, std::optional<PerformanceMarkOptions>&& markOptions)
 {
+    if (PerformanceUserTiming::isRestrictedMarkName(name))
+        return Exception { NodeInvalidArgValueError, makeString("The argument 'name' is invalid. Received '"_s, name, "'"_s) };
+
     double startTime;
     JSC::JSValue detail;
     if (markOptions) {
         if (markOptions->startTime) {
             if (*markOptions->startTime < 0)
-                return Exception { TypeError };
+                return Exception { PerformanceInvalidTimestampError, makeString(*markOptions->startTime, " is not a valid timestamp"_s) };
             startTime = *markOptions->startTime;
         } else
             startTime = performanceNow(scriptExecutionContext);

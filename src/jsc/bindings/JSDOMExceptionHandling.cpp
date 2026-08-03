@@ -163,6 +163,24 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
     case ExceptionCode::EVENT_RECURSION:
         return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_EVENT_RECURSION, message);
 
+    case ExceptionCode::NodeInvalidArgValueError:
+        return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_ARG_VALUE, message);
+
+    case ExceptionCode::PerformanceInvalidTimestampError:
+        return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_PERFORMANCE_INVALID_TIMESTAMP, message);
+
+    case ExceptionCode::PerformanceMeasureInvalidOptionsError:
+        return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_PERFORMANCE_MEASURE_INVALID_OPTIONS, message);
+
+    case ExceptionCode::InvalidPerformanceMarkError: {
+        // Node: DOMException "SyntaxError"; ExceptionCode::SyntaxError above yields a JS SyntaxError.
+        JSDOMGlobalObject* globalObject = deprecatedGlobalObjectForPrototype(lexicalGlobalObject);
+        JSValue errorObject = toJS(lexicalGlobalObject, globalObject, DOMException::create(message, "SyntaxError"_s));
+        ASSERT(errorObject);
+        addErrorInfo(lexicalGlobalObject, asObject(errorObject), true);
+        return errorObject;
+    }
+
     default: {
         // FIXME: All callers to createDOMException need to pass in the correct global object.
         // For now, we're going to assume the lexicalGlobalObject. Which is wrong in cases like this:

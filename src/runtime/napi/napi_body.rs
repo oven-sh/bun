@@ -2527,8 +2527,11 @@ impl ThreadSafeFunction {
         // SAFETY for the per-field derefs below: `this` is a live heap
         // allocation owned by the event loop dispatch, and destroy is
         // deferred while `dispatch_depth > 0` or tasks remain in flight.
-        let inflight =
-            unsafe { (*this).inflight_dispatch_tasks.fetch_sub(1, Ordering::SeqCst) } - 1;
+        let inflight = unsafe {
+            (*this)
+                .inflight_dispatch_tasks
+                .fetch_sub(1, Ordering::SeqCst)
+        } - 1;
         if unsafe { (*this).env_dead.load(Ordering::SeqCst) } {
             // `env_teardown` already released everything and owns the free
             // decision. The loop this task came from is being destroyed.

@@ -94,9 +94,8 @@ pub fn queue_task(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) 
         .enqueue_task(Task::init(task));
 }
 
-/// Like `Bun__queueTask`, but the task runs on the *next* event-loop
-/// iteration — after the current tick's drain-until-empty loop, the I/O poll,
-/// and due timers. JS-thread only (same contract as `Bun__queueTask`).
+/// Like `Bun__queueTask`, but runs on the *next* loop iteration (after I/O
+/// poll + due timers). JS-thread only.
 // HOST_EXPORT(Bun__queueTaskNextLoopIteration, c)
 pub fn queue_task_next_loop_iteration(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
     crate::mark_binding!();

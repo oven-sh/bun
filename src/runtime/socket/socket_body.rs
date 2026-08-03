@@ -1574,12 +1574,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             Self::handlers_set_cached(value, global, handlers.cell());
         }
         if self.socket.get().is_detached() {
-            // A detached handle (node:net's pre-connect `newDetachedSocket`)
-            // has no native events that could outlive the JS references to the
-            // wrapper, and nothing ever runs mark_inactive() on it — a Strong
-            // here is permanent and pins every aborted-before-connect socket
-            // forever. Hold it weak; the connect paths upgrade
-            // (connect_finish / mark_active) once native events are possible.
+            // Detached (node:net pre-connect) has no native events and never
+            // hits mark_inactive(), so a Strong would leak. Hold weak; connect
+            // paths upgrade via connect_finish / mark_active.
             self.this_value.with_mut(|r| r.set_weak(value));
         } else {
             // Hold strong until the socket is closed / marked inactive.
@@ -2084,15 +2081,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                 &global,
             );
         } else if SSL && reason.is_some_and(|r| !r.is_null()) {
-            // openssl.c's fatal-close path hands the full OpenSSL error string
-            // (e.g. a received certificate_required alert after the handshake).
-            // Copy it into a JS Error before entering the callback — the
-            // pointer is the loop's per-SSL scratch buffer, valid only for
-            // this synchronous dispatch. net.ts decorates it with the
-            // ERR_SSL_<REASON> code node uses for these.
-            // SAFETY: non-null NUL-terminated C string per the ssl_close call
-            // in ssl_on_data's fatal branch — the only non-null reason
-            // producer for these contexts.
+            // openssl.c's fatal-close hands the OpenSSL error string (per-loop
+            // scratch, valid only for this sync dispatch); net.ts adds ERR_SSL_*.
+            // SAFETY: NUL-terminated C string from ssl_on_data's fatal branch.
             let msg = unsafe { core::ffi::CStr::from_ptr(reason.unwrap().cast()) };
             if !msg.is_empty() {
                 use bun_jsc::StringJsc as _;

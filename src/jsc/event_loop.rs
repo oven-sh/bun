@@ -68,13 +68,9 @@ pub struct EventLoop {
     pub immediate_tasks: Vec<*mut ()>,
     pub next_immediate_tasks: Vec<*mut ()>,
 
-    /// Tasks that must not run until the *next* event-loop iteration — after
-    /// `tick()` returns and the loop has polled I/O and fired due timers.
-    /// `tick()` promotes them into `tasks` on entry, so a task here can never
-    /// be picked up by the drain-until-empty loop of the tick that queued it.
-    /// This is the same starvation guard as node's `uv_async_send` reschedule
-    /// in `MessagePort::OnMessage` (src/node_messaging.cc): a re-posted batch
-    /// continuation yields to timers instead of running back-to-back.
+    /// Tasks deferred to the *next* event-loop iteration (after I/O poll +
+    /// due timers); `tick()` promotes them on entry. Same starvation guard as
+    /// node's `uv_async_send` in https://github.com/nodejs/node/blob/main/src/node_messaging.cc
     pub next_loop_iteration_tasks: Vec<Task>,
 
     pub concurrent_tasks: ConcurrentQueue,

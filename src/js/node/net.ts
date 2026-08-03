@@ -390,10 +390,8 @@ function tlsHandshakeError(verifyError) {
   return new ConnResetException("socket hang up");
 }
 
-// A fatal SSL-library error carries the full OpenSSL error string
-// ("error:0a00042e:SSL routines:OPENSSL_internal:TLSV1_ALERT_PROTOCOL_VERSION").
-// Decompose it into Node's library/function/reason properties and the
-// ERR_SSL_<REASON> code the way ThrowCryptoError does.
+// Decompose an OpenSSL error string into Node's {library,function,reason,code}
+// shape, like ThrowCryptoError: https://github.com/nodejs/node/blob/main/src/crypto/crypto_util.cc
 function decorateOpenSSLError(err) {
   const match = /^error:[0-9a-f]+:SSL routines:([^:]*):(.+)$/.exec(err.message);
   if (!match) return false;

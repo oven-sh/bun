@@ -1227,9 +1227,7 @@ function serverTlsClientErrorListener(this: Server, err, conn) {
 function onNodeHTTPHandshakeDeadline(socket, server) {
   socket[kHandshakeTimer] = undefined;
   if (socket.destroyed || socket._secureEstablished) return;
-  // Node routes this through TLSSocket._emitTLSError → the server's
-  // 'tlsClientError' (the socket itself gets no 'error' before control is
-  // released to user code).
+  // Node routes this via TLSSocket._emitTLSError → server 'tlsClientError'.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1105-L1110
   server.emit("tlsClientError", $ERR_TLS_HANDSHAKE_TIMEOUT(), socket);
 }

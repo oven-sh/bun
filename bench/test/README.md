@@ -4,19 +4,23 @@
 
 `app/setup.ts` generates a small app — `src/` modules built on `zod`,
 `date-fns` and `lodash` — and N TypeScript test files that import it and run
-8 tests each. The test files use global `describe`/`test`/`expect`, so the
-identical suite runs under all three runners with their stock configs
-(`jest.config.cjs` uses `@swc/jest`; `vitest.config.ts` sets `globals: true`).
+8 tests each, plus a `preload.ts` setup file (custom matcher + hooks) wired
+into each runner (`bunfig.toml`, `setupFilesAfterEnv`, `setupFiles`). The test
+files use global `describe`/`test`/`expect`, so the identical suite runs under
+all three runners with their stock configs (`jest.config.cjs` uses `@swc/jest`;
+`vitest.config.ts` sets `globals: true`).
 
 ```sh
 cd bench/test
 bun install
-bun app/setup.ts 128 2000        # files, items-per-test
-hyperfine --warmup 1 --runs 5 -N \
-  -n 'bun test'            'bun test app/tests' \
-  -n 'bun test --parallel' 'bun test --parallel app/tests' \
-  -n 'jest'                './node_modules/.bin/jest' \
-  -n 'vitest run'          './node_modules/.bin/vitest run app/tests'
+bun app/setup.ts 2000 20         # files, items-per-test
+hyperfine --warmup 1 --runs 3 -N \
+  -n 'bun test'                         'bun test app/tests' \
+  -n 'bun test --parallel'              'bun test --parallel app/tests' \
+  -n 'bun test --parallel --no-isolate' 'bun test --parallel --no-isolate app/tests' \
+  -n 'jest'                             './node_modules/.bin/jest' \
+  -n 'vitest run'                       './node_modules/.bin/vitest run app/tests' \
+  -n 'vitest run --no-isolate'          './node_modules/.bin/vitest run --no-isolate app/tests'
 ```
 
 ## `parallel/`: many independent slow files

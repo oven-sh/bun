@@ -20,6 +20,7 @@ const root = import.meta.dir;
 
 rmSync(root + "/src", { recursive: true, force: true });
 rmSync(root + "/tests", { recursive: true, force: true });
+rmSync(root + "/preload.ts", { force: true });
 mkdirSync(root + "/src", { recursive: true });
 mkdirSync(root + "/tests", { recursive: true });
 
@@ -78,10 +79,36 @@ for (let f = 0; f < FILES; f++) {
     expect(s.spanDays).toBe(${ITEMS - 1 + t});
     expect(s.tags).toEqual(["even", "odd"]);
     expect(Item${m}.safeParse({ id: "nope" }).success).toBe(false);
+    (expect(items[0]) as any).toBeItemNamed("item-0");
+    expect((globalThis as any).__fixture).toBeDefined();
   });\n`;
   }
   body += `});\n`;
   writeFileSync(`${root}/tests/model${String(f).padStart(3, "0")}.test.ts`, body);
 }
 
-console.log(`wrote ${MODULES} src modules and ${FILES} test files × ${TESTS_PER_FILE} tests to ${root}`);
+// A setup file every runner loads before each test file (bun --preload,
+// jest setupFilesAfterEnv, vitest setupFiles): a custom matcher + a global hook.
+writeFileSync(
+  `${root}/preload.ts`,
+  `import { make0 } from "./src";
+
+expect.extend({
+  toBeItemNamed(received: unknown, name: string) {
+    const pass = typeof received === "object" && received !== null && (received as any).name === name;
+    return { pass, message: () => \`expected \${JSON.stringify(received)} to be an item named \${name}\` };
+  },
+});
+
+let made = 0;
+beforeEach(() => {
+  made++;
+  (globalThis as any).__fixture = make0(made);
+});
+afterEach(() => {
+  (globalThis as any).__fixture = undefined;
+});
+`,
+);
+
+console.log(`wrote ${MODULES} src modules, preload.ts and ${FILES} test files × ${TESTS_PER_FILE} tests to ${root}`);

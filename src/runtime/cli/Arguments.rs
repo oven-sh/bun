@@ -598,6 +598,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--isolate                        Run each test file in a fresh global object. Leaked handles from one file cannot affect another."
     ),
     parse_param!(
+        "--no-isolate                     With --parallel: let each worker keep one global and module registry across the files it runs (faster; files can see each other's leftovers)."
+    ),
+    parse_param!(
         "--parallel <NUMBER>?             Run test files in parallel using N worker processes. Implies --isolate. Defaults to CPU core count."
     ),
     parse_param!(
@@ -1807,7 +1810,8 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     ctx.test_options.pass_with_no_tests = args.flag(b"--pass-with-no-tests");
     ctx.test_options.concurrent = args.flag(b"--concurrent");
     ctx.test_options.randomize = args.flag(b"--randomize");
-    ctx.test_options.isolate = args.flag(b"--isolate");
+    let no_isolate = args.flag(b"--no-isolate");
+    ctx.test_options.isolate = args.flag(b"--isolate") && !no_isolate;
     ctx.test_options.test_worker = args.flag(b"--test-worker");
 
     if let Some(parallel_str) = args.option(b"--parallel") {
@@ -1832,8 +1836,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             Global::exit(1);
         }
         ctx.test_options.parallel = parsed;
-        // --parallel implies --isolate inside each worker.
-        ctx.test_options.isolate = true;
+        ctx.test_options.isolate = !no_isolate;
     }
 
     if let Some(delay_str) = args.option(b"--parallel-delay") {

@@ -5,11 +5,11 @@ description: "Run test files across CPU cores with --parallel, isolate files fro
 
 `bun test` has three independent knobs for running more than one thing at a time:
 
-| Flag                               | Unit of parallelism             | What it does                                                                                               |
-| ---------------------------------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `--parallel[=N]`                   | test **files**, in processes    | Runs files across `N` worker processes (default: number of CPU cores). Implies `--isolate`.                |
-| `--concurrent` / `test.concurrent` | **tests** within one file       | Lets `async` tests in the same file overlap while one is awaiting.                                         |
-| `--shard=i/n`                      | test files, across **machines** | Runs the `i`-th of `n` deterministic slices of the suite. Combine with `--timings` to balance by duration. |
+| Flag                               | Unit of parallelism             | What it does                                                                                                         |
+| ---------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `--parallel[=N]`                   | test **files**, in processes    | Runs files across `N` worker processes (default: number of CPU cores). Implies `--isolate`; `--no-isolate` opts out. |
+| `--concurrent` / `test.concurrent` | **tests** within one file       | Lets `async` tests in the same file overlap while one is awaiting.                                                   |
+| `--shard=i/n`                      | test files, across **machines** | Runs the `i`-th of `n` deterministic slices of the suite. Combine with `--timings` to balance by duration.           |
 
 They compose: a CI job can run `bun test --shard=2/4 --parallel`, and files in that shard can still contain `test.concurrent` tests.
 
@@ -41,9 +41,11 @@ Workers start lazily. The first worker starts immediately; the rest are only spa
 
 Files are sorted by path and split into one contiguous chunk per worker, so files in the same directory — which usually import the same modules — mostly land in the same process (a chunk boundary can fall inside a directory, and stolen files move). When a worker drains its chunk it steals the back half of the largest remaining chunk from another worker. With [`--timings`](#balancing-with---timings) the chunks are cut by recorded duration instead of file count, each worker starts its slowest file first, and an idle worker steals the slowest not-yet-started file from whichever chunk has the most time left.
 
-### Every file is isolated
+### Every file is isolated (unless you opt out)
 
 `--parallel` implies [`--isolate`](#--isolate): each file runs in a fresh global object even when two files land on the same worker. Tests that pass with `--parallel` don't depend on state leaked by an earlier file.
+
+`--parallel --no-isolate` turns that off: each worker keeps a single global and module registry for all the files it is handed, exactly like a serial `bun test` does for the whole suite. Imports (and `--preload` modules) are evaluated once per worker instead of once per file, which is the fastest way to run a large suite of small files — at the price that a file can observe whatever an earlier file on the same worker left behind. Preload-level `beforeAll`/`afterAll` hooks still wrap every file, since a worker never knows which file is its last.
 
 ### Worker environment
 
@@ -155,7 +157,21 @@ The file is plain JSON, slowest first, so it doubles as a "what's slow" report:
 
 #### One timings file per shard
 
-`--timings` can be passed more than once; the files are read as one table (paths that don't exist yet are skipped), and `--update-timings` writes to the **first** path. Under `--shard` that output contains just the files the shard ran, so the shards' outputs are disjoint and, read together on the next run, add up to the whole suite. No merge step is needed:
+`--timings` can be passed more than once; the files are read as one table (paths that don't exist yet are skipped), and `--update-timings` writes to the **first** path. Under `--shard` that output contains just the files the shard ran, so the shards' outputs are disjoint and, read together on the next run, add up to the whole suite — no merge step. The [large codebases](#large-codebases-putting-it-together) section below has the full CI workflow.
+
+## Large codebases: putting it together
+
+For a suite with thousands of files the pieces above stack. Roughly in order of payoff:
+
+**1. Use every core: `--parallel`.** One worker per core, files handed out one at a time.
+
+**2. Decide how much isolation you need.** `--parallel` gives every file a fresh global, which is the safe default and what Jest/Vitest do. If your files don't leak state into each other (they already pass under plain `bun test`, which shares one global), `--parallel --no-isolate` lets each worker evaluate your imports and preloads once instead of once per file. On suites made of many small files that is the single biggest win — see the table below.
+
+**3. Split across machines: `--shard=i/n`.** Deterministic, no coordinator; each CI job runs one slice, and each slice still uses `--parallel` locally.
+
+**4. Balance by time, not count: `--timings`.** With recorded durations, shards are cut so each gets about the same total time (longest-processing-time style, but keeping path-neighbours together so a worker's module cache stays warm), each worker starts its slowest file first, and idle workers steal the slowest remaining file — so the run isn't held up by one long file that happened to start last.
+
+**5. Keep the timings fresh automatically: `--update-timings`.** Each shard writes the durations of the files it ran; the next run reads all of them. In GitHub Actions that looks like:
 
 ```yaml title=".github/workflows/test.yml" icon="github"
 jobs:
@@ -196,22 +212,25 @@ jobs:
           key: bun-test-timings-${{ github.run_id }}
 ```
 
-Every shard must read the _same set_ of timings files for the shards to add up to the whole suite, which is why a run reads the previous run's files (restored from the cache) and writes its own somewhere they won't be picked up by sibling shards still in flight (`next/` above).
+Every shard must read the _same set_ of timings files for the shards to add up to the whole suite, which is why a run reads the previous run's files (restored from the cache) and writes its own where sibling shards still in flight won't pick them up (`next/` above). Add `--no-isolate` to the `bun test` line if step 2 applies to you.
+
+**6. Within a file: `test.concurrent`** for I/O-bound tests that spend their time awaiting.
 
 ## How it compares
 
-Jest and Vitest also run one file per worker with a fresh global per file, so `bun test --parallel` is the like-for-like mode to compare. On a suite of 128 TypeScript test files that each import a small app built on `zod`, `date-fns` and `lodash` and run 8 tests ([`bench/test/app`](https://github.com/oven-sh/bun/tree/main/bench/test)), on a 16-core Apple M4 Max:
+2 000 TypeScript test files × 8 small tests each, all importing a small app built on `zod`, `date-fns` and `lodash`, with a shared setup file (custom matcher + `beforeEach`/`afterEach`) loaded via each runner's preload mechanism — the shape of a large application's unit-test suite ([`bench/test/app`](https://github.com/oven-sh/bun/tree/main/bench/test), `bun app/setup.ts 2000 20`). 16-core Apple M4 Max:
 
-| Runner                                   |  Wall time | CPU time |
-| ---------------------------------------- | ---------: | -------: |
-| `bun test --parallel`                    | **0.91 s** |    9.9 s |
-| `bun test` (serial, shared global)       |     2.58 s |    3.1 s |
-| `jest` 30 (`@swc/jest`, default workers) |     3.14 s |   29.4 s |
-| `vitest run` 4.1 (default pool)          |     9.44 s |  107.6 s |
+| Mode                             | Bun                                           | Vitest 4.1                                            | Jest 30 (`@swc/jest`)                                  |
+| -------------------------------- | --------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------ |
+| all cores, one global per worker | `bun test --parallel --no-isolate` **0.75 s** | `vitest run --no-isolate` 3.7 s                       | —                                                      |
+| all cores, fresh global per file | `bun test --parallel` **6.8 s**               | `vitest run` 133 s                                    | `jest` 19.1 s                                          |
+| one thread, one global           | `bun test` **2.4 s**                          | `vitest run --no-isolate --no-file-parallelism` 8.5 s | — (`jest --runInBand`, 80 s, still isolates each file) |
 
 <Note>
-  Measured with `hyperfine --warmup 1 --runs 5` on Bun 1.4, Node.js 25.6. The suite and configs are in the repository so
-  you can rerun it; numbers will differ with your hardware and, more importantly, with what your tests actually do.
+  Wall-clock, `hyperfine --warmup 1`, Bun 1.4, Node.js 25.6, each runner's stock config plus its setup-file option
+  (`bunfig.toml` `test.preload`, `setupFilesAfterEnv`, `setupFiles`). The generator and configs are in the repository so
+  you can rerun it; the ratios move with what your tests actually do — this suite is deliberately dominated by per-file
+  overhead rather than test bodies.
 </Note>
 
-Most of the gap is per-file overhead. All three runners give each file a fresh global, but Bun workers share transpiled source and bytecode across those globals, so a module imported by 100 files is parsed once per worker rather than 100 times.
+Where the time goes: with a fresh global per file, every runner re-evaluates the imports and setup file 2 000 times. Bun shares transpiled source and bytecode across those globals so nothing is re-parsed, but module evaluation and JIT warm-up still repeat per file — which is why, on this shape, one shared global (`bun test`) beats sixteen isolated workers, and sixteen shared globals (`--parallel --no-isolate`) beat both.

@@ -271,7 +271,11 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     );
     argv.push(lit(b"test\0"));
     argv.push(lit(b"--test-worker\0"));
-    argv.push(lit(b"--isolate\0"));
+    argv.push(if opts.isolate {
+        lit(b"--isolate\0")
+    } else {
+        lit(b"--no-isolate\0")
+    });
 
     argv.push(print_z(format_args!(
         "--timeout={}",
@@ -552,8 +556,7 @@ impl<'a> WorkerLoop<'a> {
             let before = *self.reporter.summary();
             let before_unhandled = self.reporter.jest.unhandled_errors_between_tests;
 
-            // Workers always run with --isolate; every file is its own
-            // complete run from the preload's perspective.
+            // A worker never knows which file is its last, so preload-level hooks wrap every file (with or without --isolate).
             if let Err(err) = TestCommand::run(
                 self.reporter,
                 vm,
@@ -565,12 +568,16 @@ impl<'a> WorkerLoop<'a> {
             ) {
                 test_command::handle_top_level_test_error_before_javascript_start(&err);
             }
-            crate::jsc_hooks::close_isolation_handles(vm);
-            vm.swap_global_for_test_isolation();
-            self.reporter
-                .jest
-                .bun_test_root
-                .reset_hook_scope_for_test_isolation();
+            if vm.test_isolation_enabled {
+                crate::jsc_hooks::close_isolation_handles(vm);
+                vm.swap_global_for_test_isolation();
+                self.reporter
+                    .jest
+                    .bun_test_root
+                    .reset_hook_scope_for_test_isolation();
+            } else {
+                Global::mimalloc_cleanup(false);
+            }
             self.reporter.jest.default_timeout_override = u32::MAX;
 
             if let Some(junit) = &mut self.reporter.reporters.junit {
@@ -625,8 +632,8 @@ pub(crate) fn run_as_worker(
 ) -> ! {
     // SAFETY: caller guarantees `vm` is a valid live VM pointer for the duration.
     let vm_ref = unsafe { &mut *vm };
-    vm_ref.test_isolation_enabled = true;
-    vm_ref.auto_killer.enabled = true;
+    vm_ref.test_isolation_enabled = ctx.test_options.isolate;
+    vm_ref.auto_killer.enabled = ctx.test_options.isolate;
 
     // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`
     // reader was dropped from the GC path (see web_worker.rs, which wires its

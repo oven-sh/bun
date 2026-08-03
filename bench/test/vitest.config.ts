@@ -5,5 +5,6 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["**/suite/**/*.test.ts", "app/tests/**/*.test.ts"],
+    setupFiles: ["app/preload.ts"],
   },
 });

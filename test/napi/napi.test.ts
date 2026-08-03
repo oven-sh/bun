@@ -1644,7 +1644,7 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
 
     it("napi_reference_ref returns 0 after the referent is collected", async () => {
       const output = await checkSameOutput("test_reference_ref_after_collect_driver", []);
-      expect(output).toContain("reference_ref count=0");
+      expect(output).toContain("get_reference_value is undefined=1 reference_ref count=0");
       expect(output).toContain("second reference_ref count=0");
     });
 

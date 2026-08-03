@@ -1,8 +1,8 @@
 // Compiled against Bun's in-tree <node_api.h> (src/runtime/napi). Exercises
 // the Node 26 type surface and the modern NAPI_MODULE_INIT() that exports
-// node_api_module_get_api_version_v1.
+// node_api_module_get_api_version_v1. NAPI_VERSION is left unset on purpose
+// so the test also pins Bun's default (10).
 
-#define NAPI_VERSION 9
 #include <node_api.h>
 
 NAPI_MODULE_INIT() {

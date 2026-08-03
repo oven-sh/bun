@@ -81,6 +81,27 @@ describe.skipIf(isFFIUnavailable)("cc() bundled N-API headers", () => {
     const marker = { marker: 42 };
     expect(symbols.passthrough(undefined, marker)).toBe(marker);
   });
+
+  it.todoIf(isWindows || isASAN)("provides the Node 26 type surface and NAPI_MODULE_INIT()", () => {
+    const { symbols } = cc({
+      source: join(__dirname, "napi-app/bundled_napi_headers_node26.c"),
+      symbols: {
+        node_api_module_get_api_version_v1: { args: [], returns: "i32" },
+        use_node26_types: { args: ["napi_env"], returns: "i32" },
+      },
+    });
+    expect(symbols.node_api_module_get_api_version_v1()).toBe(10);
+    expect(symbols.use_node26_types(undefined)).toBe(10);
+  });
+
+  it.todoIf(isWindows || isASAN)("compiles with NAPI_EXPERIMENTAL defined", () => {
+    const { symbols } = cc({
+      source: join(__dirname, "napi-app/bundled_napi_headers_experimental.c"),
+      symbols: { passthrough: { args: ["napi_env", "napi_value"], returns: "napi_value" } },
+    });
+    const marker = { marker: 42 };
+    expect(symbols.passthrough(undefined, marker)).toBe(marker);
+  });
 });
 
 // Bun's in-tree N-API headers (src/runtime/napi) are what napi.cpp compiles
@@ -119,14 +140,14 @@ describe.skipIf(isWindows || !systemCC)("in-tree N-API headers", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
 
     // NAPI_MODULE_INIT() must emit node_api_module_get_api_version_v1 returning
-    // the NAPI_VERSION the addon was built for; dlopen it and call it.
+    // the header's default NAPI_VERSION; dlopen it and call it.
     const lib = dlopen(out, {
       node_api_module_get_api_version_v1: { args: [], returns: "i32" },
       use_node26_types: { args: ["ptr"], returns: "i32" },
     });
     try {
-      expect(lib.symbols.node_api_module_get_api_version_v1()).toBe(9);
-      expect(lib.symbols.use_node26_types(null)).toBe(9);
+      expect(lib.symbols.node_api_module_get_api_version_v1()).toBe(10);
+      expect(lib.symbols.use_node26_types(null)).toBe(10);
     } finally {
       lib.close();
     }

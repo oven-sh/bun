@@ -269,10 +269,9 @@ function translateLookupOptions(options) {
   };
 }
 
-// node reports a 'dns' performance entry for every successful lookup,
-// lookupService and resolver query. Resolver entries are named after the
-// c-ares binding (queryAny, queryA, ...) rather than the JS method.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/dns/callback_resolver.js#L38-L81
+// Node reports a 'dns' perf entry per successful lookup/lookupService/resolver query,
+// named after the c-ares binding (queryAny, queryA, ...).
+// https://github.com/nodejs/node/blob/main/lib/internal/dns/callback_resolver.js
 const kPerfHooksDnsContext = Symbol("kPerfHooksDnsContext");
 
 const kQueryBindingNames = {

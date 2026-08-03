@@ -917,12 +917,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
                 )
             {
-                // `diag.arg` is the argument as written with its leading
-                // dashes stripped. Node echoes it verbatim, so the long form
-                // keeps a trailing '=' (`node --eval=` reports
-                // "--eval= requires an argument"); the short form reports the
-                // single flag that wanted the value, not the cluster it
-                // arrived in.
+                // `diag.arg` is the arg with leading dashes stripped. Node echoes it
+                // verbatim (long form keeps trailing '='); short form reports the single
+                // flag that wanted the value, not the cluster it arrived in.
                 let node_flag: Option<Vec<u8>> = match (diag.short, diag.long.as_deref()) {
                     (Some(short @ (b'e' | b'p')), _) => Some(vec![b'-', short]),
                     (_, Some(b"eval" | b"print" | b"inspect-port" | b"debug-port")) => {
@@ -1348,14 +1345,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         }
 
-        // Node registers `--print` as a boolean and `--print <arg>` as an alias
-        // for `-pe`, i.e. `--print --eval <arg>`, so -p turns on print mode and
-        // may also carry the script (`bun -p 42`, `bun -pe 42`, `bun -p -e 42`).
-        //
-        // Divergence: because both spellings feed one upstream `--eval` string,
-        // Node takes whichever came last, so `node -p 7 -e 9` prints 9. Bun's
-        // parser keeps the two options in separate slots with no relative
-        // order, so a script on -p wins and it prints 7.
+        // Node's `--print <arg>` is an alias for `-pe`, so -p turns on print mode and may
+        // also carry the script. Divergence: Node takes whichever came last (`-p 7 -e 9`
+        // → 9); Bun keeps separate slots so a script on -p wins (→ 7).
         let print_arg = args.option(b"--print");
         let eval_arg = args.option(b"--eval");
         if print_arg.is_some() || eval_arg.is_some() {
@@ -1482,10 +1474,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         }
 
-        // `--inspect-port` / `--debug-port` (Node alias) set the default
-        // debugger target used when --inspect/--inspect-wait/--inspect-brk is
-        // passed without its own [host:]port. They do not activate the
-        // debugger on their own, matching Node.
+        // `--inspect-port`/`--debug-port` set the default debugger target for
+        // --inspect/--inspect-wait/--inspect-brk passed without its own [host:]port.
+        // They do not activate the debugger on their own, matching Node.
         let inspect_port_value: Option<&[u8]> =
             match (args.option(b"--inspect-port"), args.option(b"--debug-port")) {
                 (Some(value), _) => {

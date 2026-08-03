@@ -444,25 +444,18 @@ fn message_with_type_and_level_(
     delivered
 }
 
-/// Runs `f` against the sink this console message belongs on.
-///
-/// Node performs every console write through `process.std{out,err}.write`, so
-/// replacing that method has to be observed here too. While nobody has
-/// replaced it we keep writing straight to the native buffered writer; the
-/// check is a null test until the stream is first touched and a `getDirect`
-/// comparison afterwards.
+/// Runs `f` against this message's sink. Node routes every console write through
+/// `process.std{out,err}.write`, so a replaced `write` must be observed; while
+/// pristine we use the native buffered writer (null test / getDirect comparison).
 fn with_console_sink<R>(
     global: &JSGlobalObject,
     use_stderr: bool,
     f: impl FnOnce(&mut dyn bun_io::Write) -> R,
 ) -> (R, JsResult<()>) {
     let console: *mut ConsoleObject = vm_console(global);
-    // Nothing can have replaced `write` before the stream object exists, so
-    // until one is built the whole check is a single relaxed load and the
-    // native writer is used unconditionally. The flag is process-wide rather
-    // than per-VM on purpose: a worker creating its own stdout only ever
-    // turns it on, and a spurious `true` just means the (still cheap)
-    // per-VM lookup below runs.
+    // Until the stream object exists nothing can replace `write`, so the check is one
+    // relaxed load. Process-wide (not per-VM) on purpose: workers only ever set it,
+    // and a spurious `true` just runs the per-VM lookup below.
     let stream = if STDIO_WRITE_STREAM_EXISTS.load(core::sync::atomic::Ordering::Relaxed) {
         Bun__Process__stdioStreamWithReplacedWrite(global, if use_stderr { 2 } else { 1 })
     } else {
@@ -497,11 +490,9 @@ fn with_console_sink<R>(
     )
 }
 
-/// `process._rawDebug(...args)`. Node formats the arguments with
-/// `util.format` and writes the line straight to fd 2, deliberately skipping
-/// `process.stderr` so it still reports when that stream is broken or has been
-/// replaced.
-/// <https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/per_thread.js#L146-L148>
+/// `process._rawDebug(...args)`: `util.format` the args and write straight to fd 2,
+/// skipping `process.stderr` so it works when that stream is broken or replaced.
+/// <https://github.com/nodejs/node/blob/main/lib/internal/process/per_thread.js>
 #[unsafe(no_mangle)]
 #[crate::host_call]
 pub extern "C" fn Bun__Process__rawDebug(
@@ -546,10 +537,9 @@ pub extern "C" fn Bun__Console__onStdioWriteStreamCreated() {
 }
 
 unsafe extern "C" {
-    /// `src/jsc/bindings/BunProcess.cpp` — `process.stdout` (fd 1) or
-    /// `process.stderr` (fd 2) when its `write` is no longer the one Bun
-    /// installed, otherwise the empty `JSValue`. Resolves `write` with
-    /// `getDirect`, so it cannot run user code or throw.
+    /// `BunProcess.cpp` — `process.stdout`/`stderr` when its `write` is no longer
+    /// Bun's own, else the empty `JSValue`. Resolves `write` with `getDirect`, so it
+    /// cannot run user code or throw.
     safe fn Bun__Process__stdioStreamWithReplacedWrite(global: &JSGlobalObject, fd: i32)
     -> JSValue;
 }
@@ -601,10 +591,9 @@ fn write_message(
     writer: &mut dyn bun_io::Write,
 ) -> JsResult<()> {
     if message_type == MessageType::Assert {
-        // Node turns the first argument into `Assertion failed: <arg>` and
-        // forwards everything to console.warn, so the prefix participates in
-        // the same `%s` substitution pass as the rest of the message.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/console/constructor.js#L379-L385
+        // Node turns the first arg into `Assertion failed: <arg>` and forwards to
+        // console.warn, so the prefix joins the same `%s` substitution pass.
+        // https://github.com/nodejs/node/blob/main/lib/internal/console/constructor.js
         let colors = Output::enable_ansi_colors_stderr();
         let text: &str = match (len == 0, colors) {
             (true, true) => pfmt!("<r><red>Assertion failed<r>\n", true),
@@ -1057,10 +1046,9 @@ impl<'a> TablePrinter<'a> {
         // reshaped for borrowck — re-borrow through the guard.
         let columns: &mut Vec<Column> = &mut **_deref_names;
 
-        // The leading index column. Node labels it "(iteration index)" for a
-        // Map, a Set or one of their iterators and "(index)" for everything
-        // else, including arrays.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/console/constructor.js#L676-L679
+        // Leading index column: "(iteration index)" for Map/Set or their iterators,
+        // "(index)" otherwise (including arrays).
+        // https://github.com/nodejs/node/blob/main/lib/internal/console/constructor.js
         let index_column_name = if matches!(
             self.jstype,
             jsc::JSType::MapIterator | jsc::JSType::SetIterator

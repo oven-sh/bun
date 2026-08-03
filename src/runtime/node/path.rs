@@ -991,10 +991,9 @@ const CHAR_SUPERSCRIPT_ONE: u32 = 0xb9;
 const CHAR_SUPERSCRIPT_TWO: u32 = 0xb2;
 const CHAR_SUPERSCRIPT_THREE: u32 = 0xb3;
 
-/// `isWindowsReservedName(path, colonIndex)`: is everything before `colon_index`
-/// a reserved DOS device name? A missing colon reproduces JS `slice(0, -1)`,
-/// which drops the final character ("PRNX" is treated as "PRN").
-/// https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L81-L84
+/// `isWindowsReservedName(path, colonIndex)`: is everything before `colon_index` a
+/// reserved DOS device name? Missing colon mirrors JS `slice(0, -1)` ("PRNX" → "PRN").
+/// https://github.com/nodejs/node/blob/main/lib/path.js
 pub(crate) fn is_windows_reserved_name_t<T: PathCharCwd>(
     path: &[T],
     colon_index: Option<usize>,
@@ -1929,10 +1928,8 @@ fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> &'a 
                         && (first_part[0].eq_ascii(CHAR_DOT)
                             || first_part[0].eq_ascii(CHAR_QUESTION_MARK))
                     {
-                        // We matched a device root (e.g. \\\\.\\PHYSICALDRIVE0)
-                        // Translated from the following JS code:
-                        //   device = `\\\\${firstPart}`;
-                        //   rootEnd = 4;
+                        // We matched a device root (e.g. \\\\.\\PHYSICALDRIVE0).
+                        // JS: device = `\\\\${firstPart}`; rootEnd = 4;
                         buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
                         buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
                         buf[2] = first_part[0];
@@ -2061,10 +2058,9 @@ fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> &'a 
     buf_size = buf_offset + tail_len;
 
     let colon_index = index_of_colon_t(path);
-    // If the original path was not absolute and we could not resolve it relative
-    // to a particular device, make sure the tail cannot be read back as an
-    // absolute path. See CVE-2024-36139.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L455-L471
+    // Original path is not absolute and not tied to a device: keep the tail from reading
+    // back as absolute (CVE-2024-36139).
+    // https://github.com/nodejs/node/blob/main/lib/path.js
     let mut needs_dot_prefix = false;
     if !_is_absolute && device_len.is_none() && colon_index.is_some() {
         let tail = &buf[buf_offset..buf_size];

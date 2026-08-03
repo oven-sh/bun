@@ -695,10 +695,9 @@ static bool inheritsFromErrorPrototype(JSC::JSGlobalObject* globalObject, ThrowS
     return false;
 }
 
-// node compares an error's message/name/cause/errors even though they are
-// normally non-enumerable, unless the right-hand side owns the property
-// enumerably - in which case the ordinary key walk already covers it.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L392-L404
+// Node compares an error's message/name/cause/errors even when non-enumerable, unless
+// the RHS owns the property enumerably (then the ordinary key walk covers it).
+// https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 static bool errorLikeFieldsEqual(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSObject* o1, JSObject* o2)
 {
@@ -795,11 +794,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         return false;
     }
 
-    // node's loose mode (`assert.deepEqual`): node semantics everywhere except
-    // that non-objects compare with `==`, prototypes are not compared, and
-    // symbol-keyed properties are ignored. node's strict mode is
-    // `isStrict && checkPrototypes`; Bun's own comparators never set
-    // checkPrototypes and are unaffected by every `kNodeLoose` branch below.
+    // node's loose mode (`assert.deepEqual`): non-objects compare with `==`, prototypes
+    // are not compared, symbol keys ignored. node strict is `isStrict && checkPrototypes`;
+    // Bun's own comparators never set checkPrototypes.
     constexpr bool kNodeLoose = !isStrict && checkPrototypes;
 
     // need to check this before primitives, asymmetric matchers
@@ -839,11 +836,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     if (v1.isEmpty() || v2.isEmpty())
         return v1.isEmpty() == v2.isEmpty();
 
-    // node's loose mode splits on `typeof x !== 'object'`, which counts
-    // callables as non-objects, and compares two non-objects with `==` (plus
-    // NaN == NaN). Only node's `assert.deepEqual` behaves this way; Bun's own
-    // loose comparison stays value-identity based.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L152-L167
+    // node's loose mode splits on `typeof !== 'object'` (callables are non-objects) and
+    // compares non-objects with `==` (plus NaN==NaN). Bun's loose stays value-identity.
+    // https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
     if constexpr (kNodeLoose) {
         bool v1IsObject = v1.isObject() && !v1.isCallable();
         bool v2IsObject = v2.isObject() && !v2.isCallable();
@@ -890,10 +885,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     ASSERT(c1);
     ASSERT(c2);
 
-    // Node's deepStrictEqual compares [[Prototype]]s with ===. Only the
-    // node:assert/node:util entry point does this; Bun.deepEquals and
-    // expect() keep their prototype-blind semantics. node's loose mode does
-    // not compare prototypes at all, only the object tag (checked below).
+    // Node's deepStrictEqual compares [[Prototype]]s with ===. Only node:assert/node:util
+    // do this; Bun.deepEquals and expect() stay prototype-blind. node's loose mode
+    // compares only the object tag (below), not prototypes.
     if constexpr (isStrict && checkPrototypes && !skipPrototypeIdentity) {
         JSObject* protoCheck1 = v1.getObject();
         JSObject* protoCheck2 = v2.getObject();
@@ -908,10 +902,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
     }
 
-    // node's loose mode does not compare prototypes, but it does compare
-    // Object.prototype.toString tags, which is what separates an Arguments
-    // object from a plain object with the same keys.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L184-L196
+    // node's loose mode compares Object.prototype.toString tags (not prototypes), which
+    // separates an Arguments object from a plain object with the same keys.
+    // https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
     if constexpr (kNodeLoose) {
         JSString* tag1 = JSC::objectPrototypeToString(globalObject, v1);
         RETURN_IF_EXCEPTION(scope, false);
@@ -925,11 +918,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     if constexpr (checkPrototypes) {
-        // Distinct WeakMaps, WeakSets and Promises are never equal - their
-        // contents cannot be inspected. node tests this on the LEFT operand
-        // only, which makes the comparison asymmetric: a Proxy wrapping a
-        // promise equals that promise, but only with the proxy on the left.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L449-L451
+        // Distinct WeakMap/WeakSet/Promise are never equal. node tests only the LEFT
+        // operand, making the relation asymmetric for Proxy-wrapped promises.
+        // https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
         uint8_t leftType = c1->type();
         if (leftType == JSC::JSWeakMapType || leftType == JSC::JSWeakSetType || leftType == JSC::JSPromiseType) {
             return false;
@@ -1085,10 +1076,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     if constexpr (isStrict && !skipPrototypeIdentity) {
-        // A Proxy is transparent to this comparison: its traps forward
-        // [[GetPrototypeOf]] and own-property enumeration to the target, but
-        // JSC reports the proxy's own class name, which would reject every
-        // proxy/target pair. node compares prototypes, never class names.
+        // A Proxy is transparent here: its traps forward [[GetPrototypeOf]] and own-key
+        // enumeration, but JSC reports the proxy's own class name. node compares
+        // prototypes, never class names.
         if (!o1->isProxy() && !o2->isProxy()) {
             if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
                 return false;
@@ -1341,12 +1331,9 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        // node's setEquiv pairs the two sets off: an element of set2 consumes
-        // the element of set1 it matched, so Set([{a:1},{a:1}]) is not equal to
-        // Set([{a:1},{a:2}]) even though every element of the first has some
-        // partner in the second. Only the node entry point pays for the
-        // matching pass; Bun.deepEquals keeps its "has a partner" rule.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L677-L719
+        // node's setEquiv pairs elements off so Set([{a:1},{a:1}]) != Set([{a:1},{a:2}]).
+        // Only the node entry point pays for this; Bun.deepEquals keeps "has a partner".
+        // https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
         if constexpr (checkPrototypes) {
             // Elements stay rooted by set1 for as long as it is alive, which it
             // is: c1 is reachable from the caller's gcBuffer.
@@ -1440,10 +1427,9 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        // As with sets, node pairs entries off: a key of map2 consumes the
-        // map1 entry it matched, so two entries with deep-equal-but-distinct
-        // object keys cannot both match the same partner.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L721-L787
+        // node pairs map entries off: a key of map2 consumes the map1 entry it matched,
+        // so two deep-equal-but-distinct object keys cannot both match the same partner.
+        // https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
         if constexpr (checkPrototypes) {
             // Entries stay rooted by map1, which the caller's gcBuffer keeps alive.
             Vector<std::pair<JSValue, JSValue>, 8> unpaired;
@@ -1704,10 +1690,9 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 return false;
             }
 
-            // `.errors` (AggregateError) is non-enumerable too. node compares it
-            // whenever it is not an own enumerable property of the right-hand
-            // side, in which case the enumerable walk below covers it.
-            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L392-L400
+            // `.errors` (AggregateError) is non-enumerable too; node compares it unless it
+            // is own-enumerable on the RHS (then the enumerable walk below covers it).
+            // https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
             const PropertyName errorsName(vm.propertyNames->errors);
             PropertySlot rightErrorsSlot(right, PropertySlot::InternalMethodType::GetOwnProperty);
             bool rightOwnsEnumerableErrors = right->methodTable()->getOwnPropertySlot(right, globalObject, errorsName, rightErrorsSlot)
@@ -3283,10 +3268,9 @@ bool Bun__deepEqualsNodeStrictSkipProto(JSC::EncodedJSValue JSValue0, JSC::Encod
     return deepEqualsWrapperImpl<true, false, true, true>(JSValue0, JSValue1, globalObject);
 }
 
-// node:assert deepEqual / notDeepEqual: node's loose mode. Same rules as
-// Bun__deepEqualsNodeStrict except that non-objects compare with `==`,
-// [[Prototype]]s are not compared and symbol keys are ignored. This is a
-// different relation from Bun.deepEquals(a, b, false), which expect() uses.
+// node:assert deepEqual/notDeepEqual (loose mode): like Bun__deepEqualsNodeStrict but
+// non-objects compare with `==`, [[Prototype]]s are not compared, symbol keys ignored.
+// Distinct from Bun.deepEquals(a, b, false) which expect() uses.
 bool Bun__deepEqualsNodeLoose(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject)
 {
     return deepEqualsWrapperImpl<false, false, true>(JSValue0, JSValue1, globalObject);

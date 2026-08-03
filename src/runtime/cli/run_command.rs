@@ -3012,11 +3012,9 @@ impl RunCommand {
         Self::boot(ctx, entry, None)
     }
 
-    /// `--check` / `-c` (Node.js compatibility): read the entry point (or
-    /// stdin), then boot the VM with a no-op eval entry so `--require` /
-    /// `--preload` modules still execute the way they do under `node --check`.
-    /// `Run::start` performs the actual syntax check against the stored source
-    /// instead of executing anything user-provided.
+    /// `--check`/`-c` (Node compat): read the entry point (or stdin), boot the VM with a
+    /// no-op eval entry so `--require`/`--preload` still run like `node --check`, then
+    /// `Run::start` syntax-checks the stored source instead of executing it.
     pub fn exec_check(ctx: &mut ContextData) -> crate::Result<()> {
         // `ctx.args.entry_points` is the positional list with the leading
         // subcommand keyword ("run") already stripped.
@@ -3226,10 +3224,9 @@ impl CheckModuleType {
     }
 }
 
-/// `--check` target: (source bytes, display name shown in errors, module type).
-/// Set once during CLI startup in `exec_check` before `boot()`, read in
-/// `Run::start` after the (no-op) entry evaluates. CLI-process state, not
-/// per-VM state: `--check` only ever applies to the single CLI entry point.
+/// `--check` target: (source bytes, display name, module type). Set once in `exec_check`
+/// before `boot()`, read in `Run::start` after the no-op entry evaluates. CLI-process
+/// state, not per-VM: `--check` only applies to the single CLI entry point.
 static CHECK_SYNTAX_TARGET: std::sync::OnceLock<(Box<[u8]>, Box<[u8]>, CheckModuleType)> =
     std::sync::OnceLock::new();
 

@@ -62,12 +62,9 @@ void emitImmediateAsyncHook(JSC::JSGlobalObject* globalObject, JSC::JSValue time
     args.append(JSC::jsNumber(static_cast<unsigned>(kind)));
     args.append(timer);
 
-    // internal/async_hooks catches a throwing user hook itself and exits the way
-    // node's fatalError does, so anything still pending after this call is a
-    // VM-level failure (OOM, termination). Hand it to the caller rather than
-    // swallowing it: functionSetImmediate/functionClearImmediate propagate it
-    // with RETURN_IF_EXCEPTION, and the timer dispatcher routes it through the
-    // unhandled-error path.
+    // internal/async_hooks catches throwing user hooks itself (node's fatalError), so a
+    // pending exception here is VM-level (OOM, termination). Propagate it: the timer
+    // dispatcher routes it through the unhandled-error path.
     scope.release();
     JSC::call(globalObject, emitter, callData, JSC::jsUndefined(), args);
 }

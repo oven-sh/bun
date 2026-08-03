@@ -171,12 +171,9 @@ where
                     }));
                 }
 
-                // `--no-<x>` where `<x>` is a known option that carries a
-                // value cannot mean anything, and Node rejects it
-                // (src/node_options-inl.h). An *unknown* `--no-<x>` is left
-                // alone: Bun ignores unrecognized flags on purpose so the many
-                // Node options it does not implement (--no-global-search-paths,
-                // --no-extra-info-on-fatal-exception, …) stay harmless.
+                // `--no-<x>` for a known value-carrying `<x>` is rejected like Node
+                // (https://github.com/nodejs/node/blob/main/src/node_options-inl.h).
+                // Unknown `--no-<x>` is ignored so unimplemented Node flags stay harmless.
                 if self.reject_bad_negations {
                     if let Some(negated) = name.strip_prefix(b"no-") {
                         let negates_a_value = params.iter().any(|p| {
@@ -408,24 +405,9 @@ where
         }))
     }
 
-    /// Bind the value of a param declared with Node's value semantics
-    /// ([`clap::Values::OneNoDashValue`] / [`clap::Values::OneOptionalNoDashValue`]).
-    ///
-    /// Mirrors nodejs/node v26.3.0 `src/node_options-inl.h`:
-    ///
-    /// * An `=`-attached value binds verbatim. For the required form an empty
-    ///   one is an error rather than an empty value (`node --eval=` exits 9);
-    ///   the optional form is a boolean upstream, so `--print=` is no value.
-    /// * A separate following argument that starts with '-' is never the
-    ///   value; it is a missing value instead (`node -e -p` exits 9). This is
-    ///   why an expression like `-42` must be passed as `--eval=-42`.
-    /// * A separate following argument may escape that rule with a leading
-    ///   backslash, which is then stripped: `node -p "\-42"` prints -42. The
-    ///   `=` form does not unescape, so `--eval=\-42` keeps the backslash.
-    /// * For the optional form (upstream's `--print <arg>` alias) an *empty*
-    ///   following argument is additionally not consumed. It stays a
-    ///   positional, which is why `node -p "" -e 42` prints `undefined`: the
-    ///   positional ends option parsing before `-e` is seen.
+    /// Bind a [`clap::Values::OneNoDashValue`]/[`clap::Values::OneOptionalNoDashValue`] param,
+    /// mirroring https://github.com/nodejs/node/blob/main/src/node_options-inl.h: `=` binds
+    /// verbatim (empty → error/none); a following `-…` arg is never the value; `\` escapes it.
     fn node_style_value(
         &mut self,
         takes_value: clap::Values,

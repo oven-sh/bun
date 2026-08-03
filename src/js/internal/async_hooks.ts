@@ -1,16 +1,6 @@
-// Port of the parts of node's lib/internal/async_hooks.js that Bun can honour.
-//
-// Bun tracks async ids for process.nextTick (TickObject), setImmediate
-// (Immediate), callback-style fs requests (FSREQCALLBACK) and AsyncResource.
-// Promises and the remaining native handles (sockets, HTTP parsers) are NOT
-// tracked, so `init`/`before`/`after`/`destroy` never fire for them and
-// `promiseResolve` never fires at all.
-//
-// Everything here is behind `state.active`, a latch flipped the first time a
-// hook is enabled or a caller asks for an async id. While it is false the
-// instrumented paths do one boolean load and nothing else. It is never
-// cleared: disabling a hook between a resource's `before` and `after` must not
-// leave the id stack unbalanced.
+// Port of https://github.com/nodejs/node/blob/main/lib/internal/async_hooks.js.
+// Bun tracks TickObject/Immediate/FSREQCALLBACK/AsyncResource only; promises and other
+// native handles never fire hooks. `state.active` latches on first use and never clears.
 
 const setImmediateAsyncHooksEmitter = $newCppFunction("NodeAsyncHooks.cpp", "jsSetImmediateAsyncHooksEmitter", 1);
 

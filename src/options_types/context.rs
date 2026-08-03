@@ -567,10 +567,9 @@ pub struct RuntimeOptions {
 pub struct Eval {
     pub script: Box<[u8]>,
     pub eval_and_print: bool,
-    /// True when `-e`/`--eval`/`-p`/`--print` was passed at all. Node tracks
-    /// the same fact as `[has_eval_string]`, and it is what distinguishes an
-    /// empty script from an absent one: `bun -e ""` runs an empty program and
-    /// bare `bun -p` prints undefined, rather than falling through to help.
+    /// True when `-e`/`--eval`/`-p`/`--print` was passed (Node's `[has_eval_string]`).
+    /// Distinguishes an empty script from an absent one: `bun -e ""` runs an empty
+    /// program and bare `bun -p` prints undefined, rather than falling through to help.
     pub provided: bool,
     /// `--input-type`: module type for string input (stdin / `--eval`),
     /// "module" or "commonjs". Empty when not passed.
@@ -582,10 +581,9 @@ pub struct Eval {
 }
 
 impl Eval {
-    /// Whether an eval entry point should run. Either the user asked for one
-    /// with `-e`/`-p` (`provided`, which holds even for an empty script), or an
-    /// internal path staged a script to run instead of a file: piped stdin, or
-    /// the no-op entry `--check` uses to reach the syntax checker.
+    /// Whether an eval entry point should run: `-e`/`-p` was passed (`provided`, even
+    /// for an empty script), or an internal path staged a script instead of a file
+    /// (piped stdin, or the no-op entry `--check` uses to reach the syntax checker).
     pub fn has_entry(&self) -> bool {
         self.provided || !self.script.is_empty()
     }

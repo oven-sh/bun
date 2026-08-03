@@ -2741,10 +2741,9 @@ enum class BunProcessStdinFdType : int32_t {
 extern "C" BunProcessStdinFdType Bun__Process__getStdinFdType(void*, int fd);
 
 extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGlobalObject*, JSC::EncodedJSValue);
-// Resolves `name` by walking the prototype chain with getDirect(), which never
-// invokes an accessor, a Proxy trap or any other user code. An exotic chain
-// yields no direct slot and therefore compares unequal to the recorded
-// pristine value, which routes the caller through the ordinary JS path.
+// Resolves `name` via getDirect() along the prototype chain: never invokes accessors,
+// Proxy traps or other user code. An exotic chain yields no direct slot and compares
+// unequal to the recorded pristine value, routing the caller through the JS path.
 static JSValue directPropertyValue(JSC::VM& vm, JSObject* object, const JSC::Identifier& name)
 {
     for (JSObject* current = object; current;) {
@@ -2823,17 +2822,15 @@ void Process::setStdioWriteStream(JSC::VM& vm, int fd, JSObject* stream, JSValue
     unsigned slot = static_cast<unsigned>(fd) - 1;
     m_stdioWriteStream[slot].set(vm, this, stream);
     m_pristineStdioWrite[slot].set(vm, this, pristineWrite);
-    // The console's per-write check resolves `write` with getDirect() so it
-    // never runs user code. That only agrees with the get() above while the
-    // property is a plain data property somewhere on the chain, which is how
-    // Bun's stream classes declare it.
+    // The console's per-write check uses getDirect() so it never runs user code; that
+    // only agrees with the get() above while `write` is a plain data property on the
+    // chain, which is how Bun's stream classes declare it.
     ASSERT(directPropertyValue(vm, stream, WebCore::builtinNames(vm).writePublicName()) == pristineWrite);
 }
 
-// Console write path (src/jsc/ConsoleObject.rs). Returns null when the stream
-// has never been created or still carries Bun's own `write`, which is the
-// signal to keep using the native buffered writer. Deliberately declares no
-// throw scope: the caller is Rust, and nothing here can run user code.
+// Console write path (src/jsc/ConsoleObject.rs). Returns null when the stream is
+// uncreated or still has Bun's own `write` (signal to use the native writer).
+// No throw scope: the caller is Rust and nothing here can run user code.
 extern "C" JSC::EncodedJSValue Bun__Process__stdioStreamWithReplacedWrite(Zig::GlobalObject* globalObject, int32_t fd)
 {
     if (!globalObject->hasProcessObject())

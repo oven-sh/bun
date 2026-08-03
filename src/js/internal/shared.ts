@@ -403,10 +403,8 @@ const kInternalAssertionSuffix =
 
 //
 
-// State behind `node:module`'s getSourceMapsSupport()/setSourceMapsSupport().
-// Bun resolves source maps for stack traces without an opt-in flag, so the
-// initial state reports enabled.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L59
+// State for `node:module` get/setSourceMapsSupport(). Bun resolves source maps by default.
+// https://github.com/nodejs/node/blob/main/lib/internal/source_map/source_map_cache.js
 var sourceMapsSupport = ObjectFreeze({
   __proto__: null,
   enabled: true,

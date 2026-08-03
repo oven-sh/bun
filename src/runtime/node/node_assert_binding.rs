@@ -3,15 +3,8 @@ use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
 
 use super::node_assert;
 
-/// ```ts
-/// const enum DiffType {
-///     Insert = 0,
-///     Delete = 1,
-///     Equal  = 2,
-/// }
-/// type Diff = { operation: DiffType, text: string };
-/// declare function myersDiff(actual: string | string[], expected: string | string[]): Diff[];
-/// ```
+/// `myersDiff(actual: string | string[], expected: string | string[]): Diff[]` where
+/// `Diff = { operation: 0|1|2, text: string }` (Insert=0, Delete=1, Equal=2).
 #[bun_jsc::host_fn]
 fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let nargs = frame.arguments_count();

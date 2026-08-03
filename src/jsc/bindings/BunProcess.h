@@ -32,11 +32,9 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSString> m_cachedCwd;
     WriteBarrier<Unknown> m_argv;
     WriteBarrier<Unknown> m_execArgv;
-    // process.stdout / process.stderr as produced by their lazy properties,
-    // paired with the `write` each one had at that moment. Node routes every
-    // console.log through the stream's write(), so the native console has to
-    // notice when user code replaces it. Index 0 is fd 1, index 1 is fd 2;
-    // both slots stay empty until the corresponding stream is first touched.
+    // process.stdout/stderr from their lazy properties, paired with the `write` each had
+    // at creation so the native console can notice when user code replaces it.
+    // Index 0 = fd 1, index 1 = fd 2; empty until first touched.
     WriteBarrier<JSObject> m_stdioWriteStream[2];
     WriteBarrier<Unknown> m_pristineStdioWrite[2];
 

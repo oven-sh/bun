@@ -1771,9 +1771,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         if self.pending_requests == 0 && !self.has_listener() && !self.has_active_web_sockets() {
             // Make the wrapper collectible. Dispatch still works while it is
-            // `Weak` (its WriteBarrier slots still root the handlers); the
-            // `js_value_for_dispatch` gate only trips once the wrapper is
-            // actually finalized.
+            // `Weak` (its WriteBarrier slots still root the handlers); see
+            // `js_value_for_dispatch` for the conditions under which the gate
+            // trips.
             self.js_value.downgrade();
             if let Some(ws) = self.config.websocket.as_mut() {
                 ws.handler.app = None;

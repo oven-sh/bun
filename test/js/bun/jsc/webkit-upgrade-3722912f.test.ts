@@ -32,11 +32,11 @@ describe.concurrent("WebKit 3722912ff800 upgrade", () => {
     expect(typeof desc?.get).toBe("function");
   });
 
-  test("indirect, namespace and star re-exports link (BunAnalyzeTranspiledModule + 90b2ecf79ae3)", async () => {
+  test("indirect, namespace and star re-exports link on the JSC ModuleAnalyzer path (90b2ecf79ae3)", async () => {
     // Upstream now threads ScriptFetchParameters::Type through createIndirect /
-    // createNamespace / addStarExportEntry and starExportEntries(). Bun's
-    // analyze-module bindings supply Type::JavaScript for each; this verifies
-    // the three shapes still link and resolve.
+    // createNamespace / addStarExportEntry and starExportEntries(). This runs
+    // under plain `bun run` so JSC's own ModuleAnalyzer builds the record; the
+    // BunTranspiledModule path is covered by the --isolate test below.
     using dir = tempDir("wk-reexport", {
       "leaf.mjs": `export const a = 1; export const b = 2; export const c = 3;`,
       "mid.mjs": `

@@ -50,21 +50,21 @@ unsafe impl bytemuck::Zeroable for RecordKind {}
 unsafe impl bytemuck::Pod for RecordKind {}
 
 impl RecordKind {
-    /// module_name, import_name, local_name
+    /// module_name, import_name, local_name, fetch_parameters
     pub(crate) const IMPORT_INFO_SINGLE: Self = Self(0);
-    /// module_name, import_name, local_name
+    /// module_name, import_name, local_name, fetch_parameters
     pub(crate) const IMPORT_INFO_SINGLE_TYPE_SCRIPT: Self = Self(1);
-    /// module_name, import_name = '*', local_name
+    /// module_name, import_name = '*', local_name, fetch_parameters
     pub(crate) const IMPORT_INFO_NAMESPACE: Self = Self(2);
-    /// export_name, import_name, module_name
+    /// export_name, import_name, module_name, fetch_parameters
     pub(crate) const EXPORT_INFO_INDIRECT: Self = Self(3);
-    /// export_name, local_name, padding (for local => indirect conversion)
+    /// export_name, local_name, padding, fetch_parameters (for local => indirect conversion)
     pub(crate) const EXPORT_INFO_LOCAL: Self = Self(4);
-    /// export_name, module_name
+    /// export_name, module_name, fetch_parameters
     pub(crate) const EXPORT_INFO_NAMESPACE: Self = Self(5);
-    /// module_name
+    /// module_name, fetch_parameters
     pub(crate) const EXPORT_INFO_STAR: Self = Self(6);
-    /// module_name, import_name = '*', local_name (ModulePhase::Defer)
+    /// module_name, import_name = '*', local_name, fetch_parameters (ModulePhase::Defer)
     pub(crate) const IMPORT_INFO_NAMESPACE_DEFER: Self = Self(7);
 
     // PascalCase aliases — `bundler_jsc::analyze_jsc` pattern-matches on these

@@ -110,6 +110,11 @@ extern "C" void JSC_JSModuleRecord__addRequestedModuleHostDefined(JSModuleRecord
     moduleRecord->appendRequestedModule(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), std::move(attributes), toModulePhase(phaseDefer));
 }
 
+static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::JavaScript) == 1, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
+static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::WebAssembly) == 2, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
+static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::JSON) == 3, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
+static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::HostDefined) == 4, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
+
 extern "C" void JSC_JSModuleRecord__addImportEntrySingle(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName, uint8_t moduleRequestType)
 {
     moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {

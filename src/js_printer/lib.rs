@@ -247,17 +247,14 @@ pub mod analyze_transpiled_module {
     }
 
     /// Insertion-ordered list of requested modules. Dedup key is
-    /// `(specifier, phase)` to match JSC's `ModuleAnalyzer::appendRequestedModule`,
-    /// which appends one entry per unique pair — so the same specifier can be
-    /// requested at both Evaluation and Defer phase.
+    /// `(specifier, ScriptFetchParameters::Type, phase)` per JSC's
+    /// `ModuleAnalyzer::appendRequestedModule` (WebKit 90b2ecf79ae3).
     // PERF: three allocations + a side HashMap; revisit with a real IndexMap.
     #[derive(Default)]
     struct RequestedModules {
         keys: Vec<StringID>,
         values: Vec<FetchParameters>,
         phases: Vec<ModulePhase>,
-        /// Keyed on `(specifier, ScriptFetchParameters::Type, phase)` per
-        /// JSC's `ModuleAnalyzer::appendRequestedModule` (WebKit 90b2ecf79ae3).
         index: HashMap<(StringID, u8, ModulePhase), usize>,
     }
     impl RequestedModules {

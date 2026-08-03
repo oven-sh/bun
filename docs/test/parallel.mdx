@@ -39,7 +39,7 @@ Workers start lazily. The first worker starts immediately; the rest are only spa
 
 ### How files are distributed
 
-Files are sorted by path and split into one contiguous chunk per worker, so files in the same directory — which usually import the same modules — run in the same process. When a worker drains its chunk it steals the back half of the largest remaining chunk from another worker. With [`--timings`](#balancing-with---timings) the chunks are cut by recorded duration instead of file count, each worker starts its slowest file first, and an idle worker steals the slowest not-yet-started file from whichever chunk has the most time left.
+Files are sorted by path and split into one contiguous chunk per worker, so files in the same directory — which usually import the same modules — mostly land in the same process (a chunk boundary can fall inside a directory, and stolen files move). When a worker drains its chunk it steals the back half of the largest remaining chunk from another worker. With [`--timings`](#balancing-with---timings) the chunks are cut by recorded duration instead of file count, each worker starts its slowest file first, and an idle worker steals the slowest not-yet-started file from whichever chunk has the most time left.
 
 ### Every file is isolated
 
@@ -176,6 +176,7 @@ Each shard's output is the committed table with that shard's entries refreshed, 
 
 ```ts title="merge-timings.ts" icon="/icons/typescript.svg"
 // usage: bun merge-timings.ts .bun-test-timings.json timings-*/.bun-test-timings.json
+import { rename } from "node:fs/promises";
 const [basePath, ...shardPaths] = process.argv.slice(2);
 const base = (await Bun.file(basePath).json()).files;
 const files = { ...base };
@@ -184,7 +185,8 @@ for (const path of shardPaths) {
     if (base[file] !== ms) files[file] = ms;
   }
 }
-await Bun.write(basePath, JSON.stringify({ version: 1, files }, null, 2) + "\n");
+await Bun.write(basePath + ".tmp", JSON.stringify({ version: 1, files }, null, 2) + "\n");
+await rename(basePath + ".tmp", basePath);
 ```
 
 ## How it compares

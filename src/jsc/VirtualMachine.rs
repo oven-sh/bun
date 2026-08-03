@@ -1787,15 +1787,8 @@ pub struct RuntimeHooks {
         transpiler: *mut Transpiler<'static>,
         graph: &'static dyn bun_resolver::StandaloneModuleGraph,
     ),
-    /// Parse `execArgv` against the `RunCommand`
-    /// param table and return the resulting `allow_addons` value
-    /// (`!args.flag("--no-addons")`), or `None` if parsing failed.
-    /// The param table lives in
-    /// `bun_runtime::cli` (forward-dep). Only `--no-addons` is honoured;
-    /// the caller writes the returned `allow_addons` back into
-    /// `transform_options.allow_addons` so the override semantics
-    /// ("override the existing even if it was set") match, and applies
-    /// `cpu_prof` to the worker VM.
+    /// Parse `execArgv` against the `RunCommand` param table (lives in `bun_runtime::cli`, forward-dep).
+    /// Caller writes `allow_addons` back into `transform_options` and applies `cpu_prof` to the worker VM.
     pub parse_worker_exec_argv: unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> WorkerExecArgv,
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
     /// `bun_runtime::api::cron`.
@@ -2015,10 +2008,8 @@ fn get_origin_timestamp() -> u64 {
     (now - ORIGIN_RELATIVE_EPOCH).max(0) as u64
 }
 
-/// `performance.timeOrigin` is the PROCESS start time and every thread reports
-/// the same one — a worker's timeOrigin equals the main thread's in node, and
-/// `performance.now()` inside a worker is relative to that same origin. Capture
-/// it on the first VM so worker VMs inherit it instead of restarting the clock.
+/// `performance.timeOrigin` is the PROCESS start time, shared by every thread (a worker's equals the
+/// main thread's in node). Captured once on the first VM so worker VMs inherit instead of restarting.
 fn process_origin() -> (std::time::Instant, u64) {
     static ORIGIN: std::sync::OnceLock<(std::time::Instant, u64)> = std::sync::OnceLock::new();
     *ORIGIN.get_or_init(|| (std::time::Instant::now(), get_origin_timestamp()))

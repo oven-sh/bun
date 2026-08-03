@@ -1511,21 +1511,9 @@ unsafe fn apply_standalone_runtime_flags(
     crate::run_main::apply_standalone_runtime_flags(unsafe { &mut *transpiler }, graph);
 }
 
-/// Parse a Worker's `execArgv` against the
-/// `RunCommand` param table and return `!args.flag("--no-addons")`, or `None`
-/// on parse error.
-///
-/// Note: the Rust `bun_clap::parse_ex` port currently constrains
-/// `ArgIter<'static>` (parsed values are stored by reference), which would
-/// force leaking the per-call UTF-8 copies of `exec_argv`. Only flags whose
-/// values need not outlive the parse are read, so this body scans the converted
-/// argv directly with the same `stop_after_positional_at = 1` short-circuit.
-/// Full clap routing can return when `ComptimeClap` grows a borrowed-lifetime
-/// variant.
-///
+/// Parse a Worker's `execArgv`; scans argv directly since `ArgIter<'static>` would leak the UTF-8 copies.
 /// # Safety
-/// Each `WTFStringImpl` in `exec_argv` is a live WTF string (the C++
-/// `Worker::create` array, kept alive for the worker's lifetime).
+/// Each `WTFStringImpl` in `exec_argv` is a live WTF string kept alive for the worker's lifetime.
 unsafe fn parse_worker_exec_argv(
     exec_argv: &[bun_core::WTFStringImpl],
 ) -> bun_jsc::virtual_machine::WorkerExecArgv {

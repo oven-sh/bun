@@ -405,13 +405,9 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
     }
 }
 
-/// The PARENT reading a live worker's loop counters. False once the worker VM is
-/// gone, which node reports as all-zero. `vm_lock` only closes the TOCTOU on
-/// `vm`: `idle_ns` is atomic and `loop_start` is fixed before publish.
-///
-/// # Safety
-/// `worker` is a live `WebWorker*` owned by the calling C++ `Worker`; the out
-/// params are non-null and writable.
+/// Parent reading a live worker's loop counters; false once the VM is gone (node reports all-zero).
+/// `vm_lock` only closes the TOCTOU on `vm` — `idle_ns` is atomic, `loop_start` fixed before publish.
+/// SAFETY: `worker` is a live `WebWorker*` owned by the C++ `Worker`; out params are non-null/writable.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn WebWorker__getELU(
     worker: *mut WebWorker,
@@ -425,13 +421,9 @@ pub(crate) unsafe extern "C" fn WebWorker__getELU(
     let loop_ptr = w.elu_loop.get();
     let live = !vm_ptr.is_null() && !loop_ptr.is_null();
     if live {
-        // No `&VirtualMachine` or `&Loop` binding: the worker thread holds
-        // `&mut` to both while parked. Raw-pointer access only, matching the
-        // us_wakeup_loop re-export convention in Loop.rs.
-        // SAFETY: elu_loop was cached under vm_lock alongside vm; the real loop
-        // outlives the vm publish window (freed only after vm is nulled).
-        // Idle BEFORE elapsed, matching node's order — reversed, idle is dated
-        // after now and active = now - idle comes out short.
+        // Raw-pointer only (worker thread holds `&mut` to both while parked). Idle BEFORE elapsed per
+        // node's order — reversed, active = now - idle comes out short.
+        // SAFETY: elu_loop cached under vm_lock alongside vm; loop outlives the vm publish window.
         let idle_ms = unsafe { bun_uws::us_loop_idle_ns(loop_ptr) } as f64 / 1_000_000.0;
         // SAFETY: vm_ptr is published under vm_lock and non-null here;
         // loop_start is Copy and fixed before the VM was published.
@@ -908,16 +900,9 @@ impl WebWorker {
         // and passes the owned struct as `args` to the new VM.
         let mut transform_options = (*parent.transpiler.options.transform_options).clone();
 
-        // Honours `--no-addons` and `--cpu-prof`; the hook owns the temporary
-        // UTF-8 allocs. The param table lives in `bun_runtime::cli` (forward-dep),
-        // so dispatch through `RuntimeHooks::parse_worker_exec_argv`.
-        //
-        // SAFETY: `exec_argv` borrows C++ `WorkerOptions` kept alive by the
-        // owning `WebCore::Worker` for `self`'s lifetime; the hook only reads
-        // the slice and owns its own temporary allocations.
-        // `None` means "inherit from the parent" (WorkerOptions.h); an explicit
-        // list — even an empty one — replaces the parent's, as node resets to
-        // fresh defaults whenever execArgv is given (node_worker.cc).
+        // Param table lives in `bun_runtime::cli` (forward-dep). `None` ⇒ inherit from parent; an explicit
+        // list (even empty) replaces it, as node resets to fresh defaults per execArgv (src/node_worker.cc).
+        // SAFETY: `exec_argv` borrows C++ `WorkerOptions` kept alive by the owning `WebCore::Worker`.
         let own_exec_argv = self.exec_argv();
         let exec_argv = match own_exec_argv {
             // SAFETY: `a` is this worker's execArgv, owned by the WebWorker and

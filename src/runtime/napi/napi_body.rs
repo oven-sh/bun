@@ -1136,8 +1136,6 @@ extern "C" fn napi_async_init(
     bun_output::scoped_log!(napi, "napi_async_init");
     let env = get_env!(env_);
     let async_ctx = get_out!(env, async_ctx_);
-    // Store the original `*mut NapiEnv` (preserving write provenance) rather than
-    // deriving it from the `&NapiEnv` borrow.
     *async_ctx = env_.cast::<c_void>();
     env.ok()
 }

@@ -228,6 +228,7 @@ describe("terminate() resolves for a worker in a microtask-bound ReadableStream 
               }
             }
             console.log("PASS");
+            process.exit(0);
           `,
           ],
           env: bunEnv,

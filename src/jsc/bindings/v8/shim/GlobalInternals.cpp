@@ -34,6 +34,8 @@ GlobalInternals* GlobalInternals::create(VM& vm, Structure* structure, Zig::Glob
 void GlobalInternals::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
+    m_emptyString.m_taggedMap = TaggedPointer(const_cast<Map*>(&Map::string_map()));
+    m_emptyString.m_contents.cell.set(vm, this, JSC::jsEmptyString(vm));
     m_objectTemplateStructure.initLater([](LazyClassStructure::Initializer& init) {
         init.setStructure(ObjectTemplate::createStructure(init.vm, init.global, init.global->functionPrototype()));
     });
@@ -64,6 +66,7 @@ void GlobalInternals::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_functionTemplateStructure.visit(visitor);
     thisObject->m_v8FunctionStructure.visit(visitor);
     thisObject->m_globalHandles.visit(visitor);
+    visitor.append(thisObject->m_emptyString.m_contents.cell);
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, GlobalInternals);

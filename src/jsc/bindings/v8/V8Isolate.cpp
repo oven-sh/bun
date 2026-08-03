@@ -16,6 +16,7 @@ CHECK_ROOT_INDEX(kTheHoleValueRootIndex)
 CHECK_ROOT_INDEX(kNullValueRootIndex)
 CHECK_ROOT_INDEX(kTrueValueRootIndex)
 CHECK_ROOT_INDEX(kFalseValueRootIndex)
+CHECK_ROOT_INDEX(kEmptyStringRootIndex)
 
 namespace v8 {
 
@@ -52,6 +53,9 @@ Isolate::Isolate(shim::GlobalInternals* globalInternals)
     m_roots[kNullValueRootIndex] = TaggedPointer(&globalInternals->m_nullValue);
     m_roots[kTrueValueRootIndex] = TaggedPointer(&globalInternals->m_trueValue);
     m_roots[kFalseValueRootIndex] = TaggedPointer(&globalInternals->m_falseValue);
+    // The backing ObjectLayout's cell is populated in GlobalInternals::finishCreation; this runs in
+    // the member initializer list before that, but only needs the (stable) address.
+    m_roots[kEmptyStringRootIndex] = TaggedPointer(&globalInternals->m_emptyString);
 }
 
 HandleScope* Isolate::currentHandleScope()

@@ -3116,12 +3116,7 @@ impl DeferredRequest {
                 saved
                     .ctx
                     .set_signal_aborted(jsc::CommonAbortReason::ConnectionClosed);
-                // `AnyRequestContext` is `Copy`: `drop(saved)` alone releases
-                // only `js_request`. Balance the `prepare_and_save_...` +1 so
-                // `RequestContext::on_abort`'s own `RequestContextRef` drop (on
-                // the client-disconnect path) reaches zero and runs
-                // `on_request_complete` — otherwise the pool slot and
-                // `pending_requests` both stick.
+                // `ctx` is `Copy`; explicit deinit so `on_abort`'s deref reaches 0.
                 saved.deinit();
             }
             Handler::BundledHtmlPage(r) => {

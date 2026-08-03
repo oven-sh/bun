@@ -875,10 +875,8 @@ pub trait PathLikeExt {
     where
         Self: Sized;
 
-    /// `from_js` + the `ERR_INVALID_ARG_TYPE` Node's `validatePath` throws on
-    /// `None`. Collapses the open-coded
-    /// `?.ok_or_else(|| ctx.throw_invalid_arguments(...))?` repeated 22× in
-    /// `node_fs.rs::args::*::from_js`.
+    /// `from_js` + Node's `validatePath` `ERR_INVALID_ARG_TYPE` on `None`.
+    /// https://github.com/nodejs/node/blob/main/lib/internal/fs/utils.js
     #[inline]
     fn from_js_required(
         ctx: &JSGlobalObject,
@@ -919,11 +917,9 @@ pub(crate) trait PathOrFdExt {
     where
         Self: Sized;
 
-    /// `from_js` + the `ERR_INVALID_ARG_TYPE` Node throws for a value that is
-    /// neither a valid path nor a file descriptor. Node reports these with the
-    /// plain path message (`fs.readFile(() => {})` in v26.3.0 throws
-    /// `The "path" argument must be of type string or an instance of Buffer or
-    /// URL. Received function `), so the fd spelling is deliberately absent.
+    /// `from_js` + Node's `ERR_INVALID_ARG_TYPE` for a non-path, non-fd value.
+    /// Node uses the plain path message here (no fd spelling) — matches
+    /// `fs.readFile(() => {})` in v26.3.0.
     #[inline]
     fn from_js_required(
         ctx: &JSGlobalObject,

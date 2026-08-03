@@ -30,6 +30,7 @@ unsafe extern "C" {
     safe fn JSC__VM__runGC(vm: &VM, sync: bool) -> usize;
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM);
+    safe fn JSC__VM__reduceMemoryFootprintOnIdle(vm: &VM);
     safe fn JSC__VM__setExecutionForbidden(vm: &VM, forbidden: bool);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
@@ -100,6 +101,11 @@ impl VM {
 
     pub(crate) fn collect_async(&self) {
         JSC__VM__collectAsync(self)
+    }
+
+    /// Synchronous full `collectNow` (plus source-provider-cache clear and `deleteAllUnlinkedCodeBlocks`) then `WTF::releaseFastMallocFreeMemory()`; unlike [`shrink_footprint`](Self::shrink_footprint) leaves linked code blocks and JIT code alone.
+    pub(crate) fn reduce_memory_footprint_on_idle(&self) {
+        JSC__VM__reduceMemoryFootprintOnIdle(self)
     }
 
     pub fn set_execution_forbidden(&self, forbidden: bool) {

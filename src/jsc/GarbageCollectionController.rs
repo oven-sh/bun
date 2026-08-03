@@ -1,4 +1,4 @@
-//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this only adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
+//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` plus a one-shot full `collectNow` + allocator scavenge after the heap has been stable for `STABLE_TICKS_BEFORE_REDUCTION` fast ticks, so a process that stops allocating still sweeps old-generation garbage and returns pages to the OS. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`, `BUN_IDLE_MEMORY_REDUCER_DISABLE`. One per JS thread, not thread-safe.
 
 use core::ffi::c_int;
 
@@ -9,15 +9,22 @@ use bun_uws as uws;
 use crate::virtual_machine::VirtualMachine;
 
 const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;
+/// Stable fast ticks before the one-shot full GC + scavenge and the drop to slow mode; 30 s at the default 1 s interval so a brief lull on a busy server doesn't eat a full-GC pause.
+const STABLE_TICKS_BEFORE_REDUCTION: u8 = 30;
+/// Skip the idle full GC for small heaps; the pause isn't worth the bytes.
+const MIN_HEAP_FOR_IDLE_REDUCTION: usize = 16 * 1024 * 1024;
 
 pub struct GarbageCollectionController {
     pub gc_repeating_timer: EventLoopTimer,
     /// Written by every `perform_gc()` caller, so the fast/slow comparison sees the last such call, not strictly the last fire; external callers are one-shot so worst case is one extra 30 s slow interval.
     pub(crate) gc_last_heap_size: usize,
+    /// Post-reduction heap size; another reduction only fires once the heap has grown past this by the stability tolerance, so a truly idle process doesn't re-run full GC every `STABLE_TICKS_BEFORE_REDUCTION` ticks.
+    pub(crate) gc_last_reduction_heap_size: usize,
     pub(crate) heap_size_didnt_change_for_repeating_timer_ticks_count: u8,
     pub(crate) gc_timer_interval: i32,
     pub(crate) gc_repeating_timer_fast: bool,
     pub(crate) disabled: bool,
+    pub(crate) idle_memory_reducer_disabled: bool,
 }
 
 bun_event_loop::impl_timer_owner!(
@@ -30,12 +37,21 @@ impl Default for GarbageCollectionController {
         Self {
             gc_repeating_timer: EventLoopTimer::init_paused(TimerTag::GcRepeating),
             gc_last_heap_size: 0,
+            gc_last_reduction_heap_size: 0,
             heap_size_didnt_change_for_repeating_timer_ticks_count: 0,
             gc_timer_interval: 0,
             gc_repeating_timer_fast: true,
             disabled: false,
+            idle_memory_reducer_disabled: false,
         }
     }
+}
+
+/// `block_bytes_allocated()` includes `extraMemorySize()` which jitters a few KB between eden sweeps on an idle heap, so treat samples within `max(prev/32, 64 KiB)` as unchanged.
+#[inline]
+fn heap_size_is_stable(prev: usize, new: usize) -> bool {
+    let tolerance = (prev >> 5).max(64 * 1024);
+    new.abs_diff(prev) <= tolerance
 }
 
 impl GarbageCollectionController {
@@ -81,6 +97,8 @@ impl GarbageCollectionController {
         }
 
         self.disabled = env_var::BUN_GC_TIMER_DISABLE::get().unwrap_or(false);
+        self.idle_memory_reducer_disabled =
+            env_var::BUN_IDLE_MEMORY_REDUCER_DISABLE::get().unwrap_or(false);
     }
 
     /// Idempotent. Must run before JSC teardown: `~RunLoop::Timer` frees the
@@ -123,7 +141,15 @@ impl GarbageCollectionController {
         self.gc_last_heap_size = vm.block_bytes_allocated();
     }
 
-    /// `Tag::GcRepeating` fire body: 1 s in fast mode, 30 s in slow mode; drops to slow after 30 fires with no heap growth.
+    fn perform_idle_memory_reduction(&mut self) {
+        let vm = VirtualMachine::get().jsc_vm();
+        vm.reduce_memory_footprint_on_idle();
+        bun_core::Global::mimalloc_cleanup(true);
+        self.gc_last_heap_size = vm.block_bytes_allocated();
+        self.gc_last_reduction_heap_size = self.gc_last_heap_size;
+    }
+
+    /// `Tag::GcRepeating` fire body: 1 s fast / 30 s slow; after `STABLE_TICKS_BEFORE_REDUCTION` stable fast ticks runs one full GC + scavenge and drops to slow, heap growth past the tolerance resets to fast.
     ///
     /// # Safety
     /// `this` is the live per-VM controller; `vm` is the per-thread VM.
@@ -134,19 +160,35 @@ impl GarbageCollectionController {
         if this.disabled {
             return;
         }
+        let jsc_vm = VirtualMachine::get().jsc_vm();
         let prev_heap_size = this.gc_last_heap_size;
-        this.perform_gc();
-        if prev_heap_size == this.gc_last_heap_size {
+        let current = jsc_vm.block_bytes_allocated();
+        if heap_size_is_stable(prev_heap_size, current) {
             this.heap_size_didnt_change_for_repeating_timer_ticks_count = this
                 .heap_size_didnt_change_for_repeating_timer_ticks_count
                 .saturating_add(1);
-            if this.heap_size_didnt_change_for_repeating_timer_ticks_count >= 30 {
+            if this.gc_repeating_timer_fast
+                && this.heap_size_didnt_change_for_repeating_timer_ticks_count
+                    >= STABLE_TICKS_BEFORE_REDUCTION
+            {
                 this.gc_repeating_timer_fast = false;
+                if !this.idle_memory_reducer_disabled
+                    && current >= MIN_HEAP_FOR_IDLE_REDUCTION
+                    && !heap_size_is_stable(this.gc_last_reduction_heap_size, current)
+                {
+                    // The reducer's collectNow(Sync, Full) subsumes this tick's collect_async.
+                    this.perform_idle_memory_reduction();
+                    let interval = this.repeat_interval();
+                    Self::arm(vm, &raw mut this.gc_repeating_timer, interval);
+                    return;
+                }
             }
         } else {
             this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
             this.gc_repeating_timer_fast = true;
         }
+        jsc_vm.collect_async();
+        this.gc_last_heap_size = jsc_vm.block_bytes_allocated();
         let interval = this.repeat_interval();
         Self::arm(vm, &raw mut this.gc_repeating_timer, interval);
     }

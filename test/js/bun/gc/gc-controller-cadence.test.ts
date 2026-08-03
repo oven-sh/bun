@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 // Bun's GarbageCollectionController used to sample `blockBytesAllocated +
 // extraMemorySize` on every event-loop tick and arm a 16 ms one-shot whenever
@@ -78,4 +78,78 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
     // Observed ~128 before the fix (env var ignored).
     expect(eden).toBeLessThan(5);
   });
+});
+
+// https://github.com/oven-sh/bun/issues/13666
+// After a burst of allocation (webpack compile, big JSON parse, ...) the idle
+// timer's collectAsync() picks Eden every tick because there is no allocation
+// pressure, so old-generation garbage is never swept and RSS stays at the
+// post-burst peak. The controller now runs one Full collectNow + allocator
+// scavenge once the heap has been stable for 30 ticks, and the stability check
+// tolerates the few-KB jitter in extraMemorySize between eden sweeps.
+describe("GarbageCollectionController idle memory reducer", () => {
+  // ~130 MB of retained objects/strings that stay live for the whole run, so
+  // block_bytes_allocated is well above the 16 MB reducer floor and the only
+  // heap movement is the GC timer itself. 50 setInterval ticks at 50 ms with a
+  // 50 ms GC timer interval reaches 30 stable ticks around the 1.5 s mark and
+  // then spends the rest of the run in slow mode.
+  const fixture = `
+    const hold = [];
+    for (let i = 0; i < 1024; i++) {
+      const s = Buffer.alloc(32 * 1024).toString("base64");
+      hold.push({ id: i, s, nested: { a: s.slice(1), b: s.slice(2) } });
+    }
+    globalThis.__hold = hold;
+    let n = 0;
+    const id = setInterval(() => { if (++n >= 50) clearInterval(id); }, 50);
+  `;
+
+  async function runFixture(extraEnv: Record<string, string | undefined>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: {
+        ...bunEnv,
+        BUN_GC_TIMER_DISABLE: undefined,
+        BUN_GC_TIMER_INTERVAL: "50",
+        BUN_IDLE_MEMORY_REDUCER_DISABLE: undefined,
+        BUN_JSC_logGC: "true",
+        ...extraEnv,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const reducerFires = (stderr.match(/IdleMemoryReducer fired/g) ?? []).length;
+    const eden = (stderr.match(/=> EdenCollection/g) ?? []).length;
+    expect(exitCode, stderr).toBe(0);
+    return { reducerFires, eden };
+  }
+
+  test.concurrent(
+    "runs a full GC + scavenge once the heap has been stable",
+    async () => {
+      const r = await runFixture({});
+      // Before the fix the reducer did not exist (0 fires).
+      expect(r.reducerFires).toBeGreaterThanOrEqual(1);
+      // The exact-equality stability check never matched (extraMemorySize
+      // jitters by a few KB each eden sweep), so the timer stayed in 50 ms fast
+      // mode for the whole 2.5 s (~50 eden collections). With the
+      // tolerance-based check it drops to slow mode after 30 ticks. Debug+ASAN
+      // coalesces collect requests (see the cadence tests above) so the count
+      // cannot distinguish there.
+      if (!isDebug && !isASAN) {
+        expect(r.eden).toBeLessThan(45);
+      }
+    },
+    20_000,
+  );
+
+  test.concurrent(
+    "BUN_IDLE_MEMORY_REDUCER_DISABLE=1 turns the reducer off",
+    async () => {
+      const r = await runFixture({ BUN_IDLE_MEMORY_REDUCER_DISABLE: "1" });
+      expect(r.reducerFires).toBe(0);
+    },
+    20_000,
+  );
 });

@@ -1,17 +1,6 @@
-//! Node's permission model (`--permission`).
-//!
-//! Ported from `src/permission/` in nodejs/node v26.3.0:
-//! <https://github.com/nodejs/node/blob/v26.3.0/src/permission/permission.cc>
-//! <https://github.com/nodejs/node/blob/v26.3.0/src/permission/fs_permission.cc>
-//!
-//! The model is configured once from the CLI (`init_from_cli`) and afterwards
-//! only ever narrowed by `process.permission.drop()`. Every enforcement site
-//! goes through [`is_granted`] so the matching rules live in exactly one place.
-//!
-//! Node stores this state per `Environment`, so a `drop()` inside a worker only
-//! affects that worker. Bun stores it per process: the CLI-supplied grants are
-//! process-wide either way, but a `drop()` on a worker thread is visible to
-//! every thread.
+//! Node's permission model (`--permission`) — ported from
+//! <https://github.com/nodejs/node/blob/v26.3.0/src/permission/>. Node stores
+//! state per-`Environment`; Bun stores it per-process, so `drop()` is global.
 
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
@@ -35,12 +24,8 @@ pub fn is_enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
-/// The scopes Node's permission model knows about.
-///
 /// Mirrors `PERMISSIONS(V)` in
 /// <https://github.com/nodejs/node/blob/v26.3.0/src/permission/permission_base.h>.
-/// The name is what `process.permission.has()` accepts; the flag is what the
-/// `ERR_ACCESS_DENIED` message tells the user to pass.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Scope {
     FileSystem,
@@ -103,12 +88,9 @@ impl Scope {
     }
 }
 
-/// The grants for one filesystem direction (read or write).
-///
-/// Node keeps a radix tree plus the list of granted strings; the list is what
-/// `RevokeAccess` matches against and the tree is rebuilt from it. The matching
-/// rules the tree implements are reproduced by [`grant_covers`], so the list
-/// alone is enough.
+/// Grants for one fs direction. Node keeps a radix tree + the grant list (for
+/// `RevokeAccess`); [`grant_covers`] reproduces the tree's matching, so the
+/// list alone suffices: <https://github.com/nodejs/node/blob/v26.3.0/src/permission/fs_permission.cc>.
 struct FsGrants {
     /// Resolved grants, each already passed through [`wildcard_if_dir`].
     granted: Vec<Vec<u8>>,
@@ -178,12 +160,9 @@ impl FsGrants {
     }
 }
 
-/// Whether the stored grant `grant` covers the resolved path `path`.
-///
-/// Reproduces `FSPermission::RadixTree::Lookup`: a `*` matches the whole
-/// remainder of the path, and a grant stored as `dir/*` also covers the bare
-/// `dir` (Lookup's `path_len >= parent_node_prefix_len - 2` case, where the 2
-/// is the trailing separator and `*`).
+/// Reproduces `FSPermission::RadixTree::Lookup`: `*` matches the rest of the
+/// path, and `dir/*` also covers bare `dir` (its `path_len >= prefix_len - 2`
+/// case). <https://github.com/nodejs/node/blob/v26.3.0/src/permission/fs_permission.cc>
 fn grant_covers(grant: &[u8], path: &[u8]) -> bool {
     let Some(star) = grant.iter().position(|&c| c == b'*') else {
         return grant == path;
@@ -687,13 +666,9 @@ pub(crate) fn is_permission_model_enabled(_global: &JSGlobalObject) -> JSValue {
     JSValue::from(is_enabled())
 }
 
-/// `$newRustFunction("permission.rs", "netAccessDeniedError", 1)` — the error
-/// object for a denied outbound connection, or `undefined` when net is
-/// granted.
-///
-/// Node's `ERR_ACCESS_DENIED_IF_INSUFFICIENT_PERMISSIONS` in `tcp_wrap.cc`
-/// *returns* the error instead of throwing it, so `net.js` can wrap it in
-/// `ExceptionWithHostPort`; this keeps that shape.
+/// `netAccessDeniedError` — error for a denied connection, or `undefined` when
+/// net is granted. Returned (not thrown) so `net.js` can wrap it in
+/// `ExceptionWithHostPort`: <https://github.com/nodejs/node/blob/main/src/tcp_wrap.cc>.
 pub(crate) fn net_access_denied_error(
     global: &JSGlobalObject,
     frame: &CallFrame,

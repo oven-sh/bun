@@ -153,7 +153,7 @@ impl CallFrame {
     }
 
     #[cfg(debug_assertions)]
-    pub fn describe_frame(&self) -> &ZStr {
+    pub(crate) fn describe_frame(&self) -> &ZStr {
         // SAFETY: FFI returns a NUL-terminated C string with lifetime tied to the frame.
         unsafe {
             let p = Bun__CallFrame__describeFrame(self);
@@ -203,7 +203,7 @@ pub struct Arguments<const MAX: usize> {
 
 impl<const MAX: usize> Arguments<MAX> {
     #[inline]
-    pub fn init_undef(i: usize, src: &[JSValue]) -> Self {
+    pub(crate) fn init_undef(i: usize, src: &[JSValue]) -> Self {
         let mut args: [JSValue; MAX] = [JSValue::UNDEFINED; MAX];
         args[0..i].copy_from_slice(&src[0..i]);
         Self { ptr: args, len: i }
@@ -240,29 +240,19 @@ pub struct ArgumentsSlice<'a> {
     /// Cursor into `remaining_buf`; advances on `eat()`.
     remaining_start: usize,
     pub vm: &'a VirtualMachine,
-    /// `bun_alloc::Arena` is a `MimallocArena`
-    /// whose `new()` calls `mi_heap_new()` eagerly, so we keep it `None` until a
-    /// caller actually needs scratch storage (currently none do).
-    pub arena: Option<bun_alloc::Arena>,
     pub all: &'a [JSValue],
-    pub protected: IntegerBitSet<32>,
+    pub(crate) protected: IntegerBitSet<32>,
     pub will_be_async: bool,
 }
 
 impl<'a> ArgumentsSlice<'a> {
     /// View of arguments not yet consumed by `eat()`.
     #[inline]
-    pub fn remaining(&self) -> &[JSValue] {
+    pub(crate) fn remaining(&self) -> &[JSValue] {
         &self.remaining_buf[self.remaining_start..]
     }
 
-    /// Lazily create the scratch arena.
-    #[inline]
-    pub fn arena(&mut self) -> &bun_alloc::Arena {
-        self.arena.get_or_insert_with(bun_alloc::Arena::new)
-    }
-
-    pub fn unprotect(&mut self) {
+    pub(crate) fn unprotect(&mut self) {
         let mut iter = self.protected.iterator::<true, true>();
         while let Some(i) = iter.next() {
             self.all[i].unprotect();
@@ -295,7 +285,6 @@ impl<'a> ArgumentsSlice<'a> {
             remaining_start: 0,
             vm,
             all: slice,
-            arena: None,
             protected: IntegerBitSet::<32>::init_empty(),
             will_be_async: false,
         }
@@ -328,7 +317,6 @@ impl<'a> ArgumentsSlice<'a> {
 impl<'a> Drop for ArgumentsSlice<'a> {
     fn drop(&mut self) {
         self.unprotect();
-        // arena dropped automatically
     }
 }
 

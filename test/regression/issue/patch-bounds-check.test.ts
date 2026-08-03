@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDir } from "harness";
 
 const normalizeBunSnapshot = (str: string) => {
   str = normalizeBunSnapshot_(str);
@@ -10,7 +10,7 @@ const normalizeBunSnapshot = (str: string) => {
 };
 
 test("patch application should handle out-of-bounds line numbers gracefully", async () => {
-  const dir = tempDirWithFiles("patch-bounds-test", {
+  await using dir = tempDir("patch-bounds-test", {
     "package.json": JSON.stringify({
       name: "test-pkg",
       version: "1.0.0",
@@ -51,7 +51,7 @@ test("patch application should handle out-of-bounds line numbers gracefully", as
 });
 
 test("patch application should handle deletion beyond file bounds", async () => {
-  const dir = tempDirWithFiles("patch-deletion-bounds-test", {
+  await using dir = tempDir("patch-deletion-bounds-test", {
     "package.json": JSON.stringify({
       name: "test-pkg",
       version: "1.0.0",
@@ -93,7 +93,7 @@ test("patch application should handle deletion beyond file bounds", async () => 
 });
 
 test("patch application should work correctly with valid patches", async () => {
-  const dir = tempDirWithFiles("patch-valid-test", {
+  await using dir = tempDir("patch-valid-test", {
     "package.json": JSON.stringify({
       name: "test-pkg",
       version: "1.0.0",

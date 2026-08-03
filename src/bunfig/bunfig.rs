@@ -27,10 +27,8 @@ use bun_options_types::schema::api;
 use bun_options_types::command_tag::Tag as CommandTag;
 use bun_options_types::context::ContextData;
 
-pub use bun_options_types::offline_mode::OfflineMode;
-
 // TODO: replace api.TransformOptions with Bunfig
-pub struct Bunfig;
+pub(crate) struct Bunfig;
 
 /// Owned clone of an `EString` payload (transcoding UTF-16 → UTF-8 if needed).
 #[inline]
@@ -141,7 +139,7 @@ fn num_to_u32(n: f64) -> u32 {
 // Parser
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct Parser<'a> {
+struct Parser<'a> {
     json: Expr,
     source: &'a bun_ast::Source,
     log: &'a mut bun_ast::Log,
@@ -185,7 +183,7 @@ impl<'a> Parser<'a> {
         Err(crate::Error::InvalidBunfig)
     }
 
-    pub(crate) fn expect_string(&mut self, expr: &Expr) -> crate::Result<()> {
+    fn expect_string(&mut self, expr: &Expr) -> crate::Result<()> {
         match &expr.data {
             ExprData::EString(_) => Ok(()),
             _ => self.add_error_format(
@@ -213,7 +211,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    pub(crate) fn expect(&mut self, expr: &Expr, token: ExprTag) -> crate::Result<()> {
+    fn expect(&mut self, expr: &Expr, token: ExprTag) -> crate::Result<()> {
         if expr.data.tag() != token {
             return self.add_error_format(
                 expr.loc,
@@ -348,7 +346,7 @@ impl<'a> Parser<'a> {
     // already derives `enum_map::Enum`, which conflicts). Monomorphising over
     // `cmd` would only dead-code-eliminate untaken arms; the
     // runtime branches below are equivalent and the few hot fields are tiny.
-    pub(crate) fn parse(&mut self, cmd: CommandTag) -> crate::Result<()> {
+    fn parse(&mut self, cmd: CommandTag) -> crate::Result<()> {
         bun_analytics::features::bunfig.fetch_add(1, Ordering::Relaxed);
 
         let json = self.json;
@@ -411,34 +409,34 @@ impl<'a> Parser<'a> {
         }
 
         if cmd == CommandTag::TestCommand {
-            if let Some(test_) = json.get(b"test") {
-                if let Some(root) = test_.get(b"root") {
+            if let Some(test) = json.get(b"test") {
+                if let Some(root) = test.get(b"root") {
                     self.ctx.debug.test_directory = root.as_string(self.bump).unwrap_or(b"").into();
                 }
 
-                if let Some(expr) = test_.get(b"preload") {
+                if let Some(expr) = test.get(b"preload") {
                     self.load_preload(&expr)?;
                 }
 
-                if let Some(expr) = test_.get(b"smol") {
+                if let Some(expr) = test.get(b"smol") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.runtime_options.smol =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(b"coverage") {
+                if let Some(expr) = test.get(b"coverage") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.coverage.enabled =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(b"onlyFailures") {
+                if let Some(expr) = test.get(b"onlyFailures") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.reporters.only_failures =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(b"reporter") {
+                if let Some(expr) = test.get(b"reporter") {
                     self.expect(&expr, ExprTag::EObject)?;
                     if let Some(junit_expr) = expr.get(b"junit") {
                         self.expect_string(&junit_expr)?;
@@ -457,7 +455,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = test_.get(b"coverageReporter") {
+                if let Some(expr) = test.get(b"coverageReporter") {
                     'brk: {
                         self.ctx.test_options.coverage.reporters = CoverageReporters {
                             text: false,
@@ -478,7 +476,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = test_.get(b"coverageDir") {
+                if let Some(expr) = test.get(b"coverageDir") {
                     self.expect_string(&expr)?;
                     self.ctx.test_options.coverage.reports_directory = estring_to_owned(
                         expr.data
@@ -489,7 +487,7 @@ impl<'a> Parser<'a> {
                     );
                 }
 
-                if let Some(expr) = test_.get(b"coverageThreshold") {
+                if let Some(expr) = test.get(b"coverageThreshold") {
                     'outer: {
                         if let ExprData::ENumber(n) = expr.data {
                             let v = n.value();
@@ -523,13 +521,13 @@ impl<'a> Parser<'a> {
                 }
 
                 // This mostly exists for debugging.
-                if let Some(expr) = test_.get(b"coverageIgnoreSourcemaps") {
+                if let Some(expr) = test.get(b"coverageIgnoreSourcemaps") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.coverage.ignore_sourcemap =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(b"coverageSkipTestFiles") {
+                if let Some(expr) = test.get(b"coverageSkipTestFiles") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.coverage.skip_test_files =
                         expr.as_bool().expect("infallible: type checked");
@@ -537,14 +535,14 @@ impl<'a> Parser<'a> {
 
                 let mut randomize_from_config: Option<bool> = None;
 
-                if let Some(expr) = test_.get(b"randomize") {
+                if let Some(expr) = test.get(b"randomize") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     randomize_from_config = expr.as_bool();
                     self.ctx.test_options.randomize =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(b"seed") {
+                if let Some(expr) = test.get(b"seed") {
                     self.expect(&expr, ExprTag::ENumber)?;
                     let seed_value =
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
@@ -562,7 +560,7 @@ impl<'a> Parser<'a> {
                     self.ctx.test_options.seed = Some(seed_value);
                 }
 
-                if let Some(expr) = test_.get(b"rerunEach") {
+                if let Some(expr) = test.get(b"rerunEach") {
                     self.expect(&expr, ExprTag::ENumber)?;
                     if self.ctx.test_options.retry != 0 {
                         self.add_error(expr.loc, b"\"rerunEach\" cannot be used with \"retry\"")?;
@@ -572,7 +570,7 @@ impl<'a> Parser<'a> {
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
 
-                if let Some(expr) = test_.get(b"retry") {
+                if let Some(expr) = test.get(b"retry") {
                     self.expect(&expr, ExprTag::ENumber)?;
                     if self.ctx.test_options.repeat_count != 0 {
                         self.add_error(expr.loc, b"\"retry\" cannot be used with \"rerunEach\"")?;
@@ -582,7 +580,7 @@ impl<'a> Parser<'a> {
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
 
-                if let Some(expr) = test_.get(b"concurrentTestGlob") {
+                if let Some(expr) = test.get(b"concurrentTestGlob") {
                     match &expr.data {
                         ExprData::EString(s) => {
                             if s.len() == 0 {
@@ -634,7 +632,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = test_.get(b"coveragePathIgnorePatterns") {
+                if let Some(expr) = test.get(b"coveragePathIgnorePatterns") {
                     'brk: {
                         match &expr.data {
                             ExprData::EString(s) => {
@@ -670,7 +668,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = test_.get(b"pathIgnorePatterns") {
+                if let Some(expr) = test.get(b"pathIgnorePatterns") {
                     'brk: {
                         // Only skip if --path-ignore-patterns was explicitly passed via CLI
                         if self.ctx.test_options.path_ignore_patterns_from_cli {
@@ -1097,7 +1095,7 @@ impl<'a> Parser<'a> {
 }
 
 impl Bunfig {
-    pub fn parse(
+    pub(crate) fn parse(
         cmd: CommandTag,
         source: &bun_ast::Source,
         ctx: &mut ContextData,

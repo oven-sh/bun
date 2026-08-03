@@ -1571,7 +1571,8 @@ test.skipIf(!isASAN)(
     files["parent.mjs"] = `
       import { Worker } from "node:worker_threads";
       const dir = process.argv[2];
-      for (let r = 0; r < 40; r++) {
+      const t0 = performance.now();
+      for (let r = 0; r < 40 && performance.now() - t0 < 8000; r++) {
         const ws = [];
         for (let i = 0; i < 2; i++) {
           const w = new Worker(dir + "/w.cjs", { workerData: { dir } });
@@ -1589,9 +1590,13 @@ test.skipIf(!isASAN)(
 
     // The subprocess is expected to crash (the unrelated complete_on_bundle_thread UAF
     // still exists on main), and on a given crash it may land in either site. Run enough
-    // attempts that, without the fix, at least one lands in JSBundlerPlugin.cpp.
+    // attempts that, without the fix, at least one lands in JSBundlerPlugin.cpp. Once
+    // #35158 / #35767 land this can become a plain expect(stdout).toContain("ok") +
+    // expect(exitCode).toBe(0).
     const ATTEMPTS = 8;
     const frames: string[] = [];
+    let sawSanitizerReport = false;
+    let sawCleanExit = false;
     for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), join(String(dir), "parent.mjs"), String(dir)],
@@ -1602,14 +1607,20 @@ test.skipIf(!isASAN)(
       const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
       await proc.exited;
 
+      if (/AddressSanitizer|runtime error:|SUMMARY: /.test(stderr)) sawSanitizerReport = true;
+      if (stdout.includes("ok") && stderr === "") sawCleanExit = true;
+
       const pluginFrames = stderr.split("\n").filter(l => /JSBundlerPlugin\.cpp|BundlerPlugin::|FilterRegExp/.test(l));
       if (pluginFrames.length > 0) {
         frames.push(`attempt ${attempt}:\n${pluginFrames.join("\n")}`);
         break;
       }
-      if (stdout.includes("ok") && stderr === "") break;
+      if (sawCleanExit) break;
     }
 
+    // Prove the race actually produced symbolicated sanitizer output (or ran clean
+    // end-to-end) so the absence check below is meaningful.
+    expect(sawSanitizerReport || sawCleanExit).toBe(true);
     expect(frames).toEqual([]);
   },
   180_000,

@@ -1620,7 +1620,7 @@ pub mod js_bundler {
         bv2_mut(this.bv2).on_load_async(this);
     }
 
-    /// Opaque FFI handle for the C++ `JSBundlerPlugin`. The opaque type and
+    /// Opaque FFI handle for the C++ `Bun::BundlerPlugin`. The opaque type and
     /// `has_any_matches` (the one method `bun_bundler` needs) live in the
     /// lower-tier crate; JSC-aware methods are added here via `PluginJscExt`.
     pub use bun_bundler::bundle_v2::api::JSBundler::Plugin;
@@ -1663,9 +1663,9 @@ pub mod js_bundler {
         ) -> JSValue;
     }
 
-    /// JSC-aware methods on the C++ `JSBundlerPlugin` opaque. The opaque type
-    /// itself is owned by `bun_bundler` (lower tier, no JSC dep), so these are
-    /// added as an extension trait rather than an inherent `impl`.
+    /// JSC-aware methods on the C++ `Bun::BundlerPlugin` opaque. The opaque
+    /// type itself is owned by `bun_bundler` (lower tier, no JSC dep), so these
+    /// are added as an extension trait rather than an inherent `impl`.
     pub trait PluginJscExt {
         fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> *mut Plugin;
         fn run_on_end_callbacks(

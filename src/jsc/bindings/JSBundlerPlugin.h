@@ -142,8 +142,7 @@ public:
     BunPluginTarget target { BunPluginTargetBrowser };
 
     WriteBarrierList<JSC::JSPromise> deferredPromises = {};
-    // Keeps each registered NapiExternal alive for GC so its finalizer does not
-    // release the user context while the build is still using it.
+    // Roots each registered NapiExternal against normal GC while the build runs.
     WriteBarrierList<NapiExternal> onBeforeParseExternals = {};
 
     JSBundlerPluginAddErrorCallback addError;

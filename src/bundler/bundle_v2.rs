@@ -191,7 +191,7 @@ impl<'a> BundleV2<'a> {
         self.client_transpiler.as_deref()
     }
 
-    /// Safe projection of the `plugins` backref (opaque C++ `BunPlugin`).
+    /// Safe projection of the `plugins` backref (opaque C++ `Bun::BundlerPlugin`).
     /// Set once in `init` from `BakeOptions` / completion config; live for the
     /// bundle pass.
     #[inline]
@@ -694,12 +694,13 @@ pub mod bv2_impl {
             use bun_core::String as BunString;
             use bun_resolver::fs::PathResolverExt as _;
 
-            // `Plugin = opaque {}` — backed by C++ `BunPlugin`. The bundler calls
-            // `has_any_matches` / `match_on_load` / `match_on_resolve` directly
-            // (no JSC types needed — only `BunString` / raw context ptrs). The
-            // JSC-aware methods (`create`, `add_plugin`, `global_object`, …) are
-            // added by `bun_runtime` via the `PluginJscExt` extension trait so
-            // this crate stays free of `JSValue` / `JSGlobalObject`.
+            // `Plugin = opaque {}` — backed by C++ `Bun::BundlerPlugin` (heap,
+            // ThreadSafeRefCounted). The bundler calls `has_any_matches` /
+            // `match_on_load` / `match_on_resolve` directly (no JSC types
+            // needed — only `BunString` / raw context ptrs). The JSC-aware
+            // methods (`create`, `add_plugin`, `global_object`, …) are added by
+            // `bun_runtime` via the `PluginJscExt` extension trait so this
+            // crate stays free of `JSValue` / `JSGlobalObject`.
             bun_opaque::opaque_ffi! { pub struct Plugin; }
             unsafe extern "C" {
                 // The three `safe fn`s below take only Rust references / by-value

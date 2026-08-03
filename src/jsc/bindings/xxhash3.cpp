@@ -1,11 +1,11 @@
 // Runtime-dispatched SIMD xxHash3 (XXH3_64bits) via Google Highway.
 //
 // Bun.hash.xxHash3 used the twox-hash Rust crate, which selects its SIMD
-// backend at compile time. On the linux-x64-baseline build (nehalem / SSE2)
-// that meant the long-input stripe loop never reached AVX2, costing ~19% on
-// 128 KB inputs versus the haswell build. This file moves the hot path to
-// Highway's HWY_DYNAMIC_DISPATCH (the same mechanism as highway_strings.cpp),
-// so a single binary picks the widest ISA the CPU actually supports.
+// backend at compile time. On a nehalem (SSE2) target that meant the
+// long-input stripe loop never reached AVX2, costing ~19% on 128 KB inputs.
+// This file moves the hot path to Highway's HWY_DYNAMIC_DISPATCH (the same
+// mechanism as highway_strings.cpp), so a single binary picks the widest ISA
+// the CPU actually supports.
 //
 // Output is bit-identical to the reference XXH3_64bits for every input: only
 // the long-keys stripe loop (accumulate_512 + scrambleAcc) is vectorized, and

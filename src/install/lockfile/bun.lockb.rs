@@ -27,7 +27,6 @@ use bun_semver::{self as semver, String as SemverString};
 // save path zeroes padding explicitly (see the note in `save` and the
 // `assert_no_uninitialized_padding` invariant in `Package::Serializer`).
 
-pub const VERSION: &[u8] = b"bun-lockfile-format-v0\n";
 const HEADER_BYTES: &[u8] = b"#!/usr/bin/env bun\nbun-lockfile-format-v0\n";
 
 // Native-endian reinterpretation of 8 bytes as u64.
@@ -64,7 +63,7 @@ impl<'a> StreamType<'a> {
     }
 
     #[inline]
-    pub(crate) fn write_all(&mut self, data: &[u8]) -> Result<(), Error> {
+    fn write_all(&mut self, data: &[u8]) -> Result<(), Error> {
         self.bytes.extend_from_slice(data);
         Ok(())
     }
@@ -164,7 +163,7 @@ impl<'a, 'b> bun_collections::array_hash_map::ArrayHashAdapter<SemverString, Sem
     }
 }
 
-pub fn save(
+pub(crate) fn save(
     this: &mut Lockfile,
     options: &PackageManagerOptions,
     bytes: &mut Vec<u8>,
@@ -352,7 +351,7 @@ pub fn save(
 #[derive(Default)]
 pub struct SerializerLoadResult {
     pub packages_need_update: bool,
-    pub migrated_from_lockb_v2: bool,
+    pub(crate) migrated_from_lockb_v2: bool,
 }
 
 pub(crate) fn load(
@@ -791,9 +790,7 @@ pub(crate) fn load(
         }
     }
 
-    if cfg!(debug_assertions) {
-        debug_assert!(stream.pos as u64 == total_buffer_size);
-    }
+    debug_assert!(stream.pos as u64 == total_buffer_size);
 
     Ok(res)
 }

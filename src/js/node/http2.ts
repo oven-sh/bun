@@ -125,39 +125,16 @@ const kDefaultSettings = {
   enableConnectProtocol: false,
 };
 
-const kLocalSettingsKeys = [
-  "headerTableSize",
-  "enablePush",
-  "maxConcurrentStreams",
-  "initialWindowSize",
-  "maxFrameSize",
-  "maxHeaderListSize",
-  "maxHeaderSize",
-  "enableConnectProtocol",
-];
-
-// node's session.localSettings reflects the settings this side submitted (including
-// customSettings) from the moment they go out with the connection preface — it does not wait for
-// the peer's SETTINGS ACK. Overlay the user-submitted values on top of the pre-ACK defaults; the
-// native localSettings dispatch replaces the object with the engine's confirmed view once the ACK
-// arrives.
-function applySubmittedLocalSettings(target: Record<string, any>, submitted: any) {
-  if (submitted == null || typeof submitted !== "object") return target;
-  for (let i = 0; i < kLocalSettingsKeys.length; i++) {
-    const key = kLocalSettingsKeys[i];
-    const value = submitted[key];
-    if (value !== undefined) target[key] = value;
+// Pre-ACK localSettings view: node's getSettings() reads nghttp2's effective local settings
+// (protocol defaults until the first ACK) but carries submitted customSettings forward from
+// the SETTINGS frame buffer, so only customSettings is visible pre-ACK.
+function initialLocalSettings(submitted: any) {
+  const settings: any = { ...kDefaultSettings };
+  const custom = submitted?.customSettings;
+  if (custom != null && typeof custom === "object") {
+    settings.customSettings = { ...custom };
   }
-  // maxHeaderListSize and maxHeaderSize alias the same SETTINGS entry.
-  if (submitted.maxHeaderListSize !== undefined && submitted.maxHeaderSize === undefined) {
-    target.maxHeaderSize = submitted.maxHeaderListSize;
-  } else if (submitted.maxHeaderSize !== undefined && submitted.maxHeaderListSize === undefined) {
-    target.maxHeaderListSize = submitted.maxHeaderSize;
-  }
-  if (submitted.customSettings != null && typeof submitted.customSettings === "object") {
-    target.customSettings = { ...submitted.customSettings };
-  }
-  return target;
+  return settings;
 }
 
 function throwSettingRangeError(name: string, value: any) {
@@ -3312,17 +3289,16 @@ class ServerHttp2Stream extends Http2Stream {
     try {
       parser.pushPromise(this.id, pushId, headers, sensitiveNames);
     } catch (err) {
-      // pushPromise() can throw synchronously (invalid token, invalid pseudo-header, oversized
-      // block). The pushed stream was already created by getNextStream's streamStart; tear it
-      // down so the connection count and its context root do not leak, and report the error
-      // through the callback like node does.
+      // pushPromise() throws synchronously on an invalid header block. The pushed stream was
+      // already created by getNextStream's streamStart; tear it down without an error so the
+      // callback is the only error channel, matching node.
       if (pushedStream && !pushedStream.destroyed) {
         // The PUSH_PROMISE never reached the wire; sending RST_STREAM for the reserved id would
         // be a protocol violation (the peer sees an idle stream). The skipped reset dispatch is
         // also what releases the session's bookkeeping - do that explicitly.
         pushedStream[kNeverAnnounced] = true;
         session[kReleaseUnannouncedStream](pushId);
-        pushedStream.destroy(err);
+        pushedStream.destroy();
       }
       process.nextTick(callback, err);
       return;
@@ -4005,19 +3981,7 @@ class ServerHttp2Session extends Http2Session {
   #url: URL;
   #isServer: boolean = false;
   #alpnProtocol: string | undefined = undefined;
-  #localSettings: Settings | null = {
-    headerTableSize: 4096,
-    // RFC 9113 §6.5.2: servers MUST NOT advertise ENABLE_PUSH != 0. The
-    // initial SETTINGS frame forces this to 0 in the constructor — keep the
-    // default here in sync so `session.localSettings.enablePush` agrees with
-    // the wire before the peer's SETTINGS ACK arrives.
-    enablePush: false,
-    maxConcurrentStreams: 100,
-    initialWindowSize: 65535,
-    maxFrameSize: 16384,
-    maxHeaderListSize: 65535,
-    maxHeaderSize: 65535,
-  };
+  #localSettings: Settings | null = null;
   #encrypted: boolean = false;
   #pendingSettingsAck: boolean = true;
   // Count of SETTINGS frames sent that the peer has not yet ACKed (the initial connection
@@ -4464,8 +4428,7 @@ class ServerHttp2Session extends Http2Session {
       validateSettings(options.settings);
     }
     const nativeSettings = serverNativeSettings(options);
-    // localSettings reads the submitted values (incl. customSettings) before the peer ACKs.
-    this.#localSettings = applySubmittedLocalSettings({ ...this.#localSettings }, nativeSettings);
+    this.#localSettings = initialLocalSettings(nativeSettings);
     this.#parser = new H2FrameParser({
       native: nativeSocket,
       context: this,
@@ -4518,11 +4481,13 @@ class ServerHttp2Session extends Http2Session {
   }
 
   get remoteSettings() {
-    return this.#remoteSettings;
+    if (this.destroyed || this.connecting) return {};
+    return (this.#remoteSettings ??= getDefaultSettings());
   }
 
   get localSettings() {
-    return this.#localSettings;
+    if (this.destroyed || this.connecting) return {};
+    return (this.#localSettings ??= getDefaultSettings());
   }
 
   get pendingSettingsAck() {
@@ -4919,15 +4884,7 @@ class ClientHttp2Session extends Http2Session {
   #url: URL;
   #authority: string;
   #alpnProtocol: string | undefined = undefined;
-  #localSettings: Settings | null = {
-    headerTableSize: 4096,
-    enablePush: true,
-    maxConcurrentStreams: 100,
-    initialWindowSize: 65535,
-    maxFrameSize: 16384,
-    maxHeaderListSize: 65535,
-    maxHeaderSize: 65535,
-  };
+  #localSettings: Settings | null = null;
   #encrypted: boolean = false;
   #pendingSettingsAck: boolean = true;
   // Count of SETTINGS frames sent that the peer has not yet ACKed (the initial connection
@@ -5415,11 +5372,13 @@ class ClientHttp2Session extends Http2Session {
   }
 
   get remoteSettings() {
-    return this.#remoteSettings;
+    if (this.destroyed || this.connecting) return {};
+    return (this.#remoteSettings ??= getDefaultSettings());
   }
 
   get localSettings() {
-    return this.#localSettings;
+    if (this.destroyed || this.connecting) return {};
+    return (this.#localSettings ??= getDefaultSettings());
   }
 
   get pendingSettingsAck() {
@@ -5642,8 +5601,7 @@ class ClientHttp2Session extends Http2Session {
       validateSettings(options.settings);
     }
     const nativeSettings = { ...options, ...options?.settings };
-    // localSettings reads the submitted values (incl. customSettings) before the peer ACKs.
-    this.#localSettings = applySubmittedLocalSettings({ ...this.#localSettings }, nativeSettings);
+    this.#localSettings = initialLocalSettings(nativeSettings);
     this.#parser = new H2FrameParser({
       native: nativeSocket,
       context: this,

@@ -88,7 +88,7 @@ impl From<Box<[Box<[u8]>]>> for MemberList {
 
 impl MemberList {
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             MemberList::Static(s) => s.len(),
             MemberList::Owned(o) => o.len(),
@@ -96,12 +96,7 @@ impl MemberList {
     }
 
     #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    #[inline]
-    pub fn get(&self, i: usize) -> Option<&[u8]> {
+    pub(crate) fn get(&self, i: usize) -> Option<&[u8]> {
         match self {
             MemberList::Static(s) => s.get(i).copied(),
             MemberList::Owned(o) => o.get(i).map(|b| &**b),
@@ -232,35 +227,6 @@ impl Pragma {
         }
     }
 
-    pub fn parse_package_name(str: &[u8]) -> &[u8] {
-        if str.is_empty() {
-            return str;
-        }
-        if str[0] == b'@' {
-            if let Some(first_slash) = strings::index_of_char(&str[1..], b'/') {
-                let first_slash = first_slash as usize;
-                let remainder = &str[1 + first_slash + 1..];
-
-                if let Some(last_slash) = strings::index_of_char(remainder, b'/') {
-                    let last_slash = last_slash as usize;
-                    return &str[0..first_slash + 1 + last_slash + 1];
-                }
-            }
-        }
-
-        if let Some(first_slash) = strings::index_of_char(str, b'/') {
-            return &str[0..first_slash as usize];
-        }
-
-        str
-    }
-
-    pub fn is_react_like(&self) -> bool {
-        &*self.package_name == b"react"
-            || &*self.package_name == b"@emotion/jsx"
-            || &*self.package_name == b"@emotion/react"
-    }
-
     /// When `package_name` is the default `"react"`, this borrows the
     /// interned `defaults::IMPORT_SOURCE*` with zero allocations.
     pub fn set_import_source(&mut self) {
@@ -289,10 +255,6 @@ impl Pragma {
         out.extend_from_slice(pkg);
         out.extend_from_slice(suffix);
         Cow::Owned(out)
-    }
-
-    pub fn set_production(&mut self, is_production: bool) {
-        self.development = !is_production;
     }
 
     // "React.createElement" => ["React", "createElement"]

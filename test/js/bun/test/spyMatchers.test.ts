@@ -593,7 +593,7 @@ describe("toHaveReturned", () => {
     expect(() => jestExpect(fn).not.toHaveReturned()).toThrow();
   });
 
-  test.todo("throw matcher error if received is spy", () => {
+  test("throw matcher error if received is spy", () => {
     const spy = createSpy(jest.fn());
 
     expect(() => jestExpect(spy).toHaveReturned()).toThrow();
@@ -725,7 +725,7 @@ describe("toHaveReturned", () => {
 });
 
 describe("toHaveReturnedTimes", () => {
-  test.todo("throw matcher error if received is spy", () => {
+  test("throw matcher error if received is spy", () => {
     const spy = createSpy(jest.fn());
 
     expect(() => jestExpect(spy).not.toHaveReturnedTimes(2)).toThrow();

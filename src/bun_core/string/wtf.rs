@@ -1,10 +1,9 @@
 use crate::string::ZigStringSlice;
 use crate::strings;
 
-// Canonical layout lives in `bun_alloc` (lowest-tier crate) so the
-// `is_wtf_allocator` vtable-identity check is a local pointer compare with no
-// upward dependency. Re-exported here for back-compat with existing
-// `bun_core::wtf::*` / `bun_core::WTFStringImpl*` import paths.
+// Canonical layout lives in `bun_alloc` (lowest-tier crate); re-exported here
+// for back-compat with existing `bun_core::wtf::*` /
+// `bun_core::WTFStringImpl*` import paths.
 pub use bun_alloc::{WTFStringImpl, WTFStringImplPtr, WTFStringImplStruct};
 
 /// Behaves like `WTF::Ref<WTF::StringImpl>`. The
@@ -12,15 +11,6 @@ pub use bun_alloc::{WTFStringImpl, WTFStringImplPtr, WTFStringImplStruct};
 /// the trait in `bun_core::external_shared` (orphan rule: trait owner gets
 /// the impl since the type is foreign — defined in `bun_alloc`).
 pub use crate::external_shared::WTFString;
-
-/// `WTF::RefPtr<T>` — a nullable owning reference into an externally-refcounted
-/// object. Generic re-export so callers can write `wtf::RefPtr<StringImpl>`
-/// (matching the C++ spelling) without reaching into `bun_ptr` directly.
-pub type RefPtr<T> = crate::external_shared::ExternalShared<T>;
-
-/// `WTF::StringImpl` — alias to the layout-mirroring struct so call sites can
-/// spell `wtf::StringImpl` (used by `wtf::RefPtr<StringImpl>`).
-pub type StringImpl = WTFStringImplStruct;
 
 /// Extension methods on [`WTFStringImplStruct`] that depend on
 /// `bun_string` types ([`ZigStringSlice`], `crate::ZBox`) or
@@ -165,9 +155,7 @@ impl WTFStringImplExt for WTFStringImplStruct {
     /// Caller must ensure that the string is 8-bit and ASCII.
     #[inline]
     fn utf8_slice(&self) -> &[u8] {
-        if cfg!(debug_assertions) {
-            debug_assert!(self.can_use_as_utf8());
-        }
+        debug_assert!(self.can_use_as_utf8());
         self.raw_bytes(self.length() as usize)
     }
 }

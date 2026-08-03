@@ -131,10 +131,13 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * and everything after the end of the message is opaque data for the
          * 'upgrade' listener's socket. */
         HTTP_NODE_TUNNEL_AFTER_BODY = 1 << 14,
-        /* The peer half-closed (FIN) while pipelined responses were still queued
-         * behind the in-flight one. Like Node's http server, the connection stays
-         * open so those responses can still be written; it is shut down once the
-         * pipeline has drained (see shouldCloseConnection()). */
+        /* The peer half-closed (FIN) while there was still something to flush
+         * before teardown: buffered/pinned response bytes, or (with
+         * httpAllowHalfOpen) an in-flight or queued pipelined response. The
+         * connection is shut down from the shouldCloseConnection()/onWritable
+         * gates once those have drained. Without httpAllowHalfOpen, onWritable
+         * forces the close as soon as the buffer has flushed (Node's
+         * socketOnEnd -> socket.end()). */
         HTTP_NODE_RECEIVED_FIN = 1 << 15,
         /* NodeHttpResponseData::nodeHttpResponseTrailers is non-empty. Mirrored
          * into the shared word so the shared response-end path (internalEnd) never
@@ -195,6 +198,11 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * so it cannot live in `state`. */
     bool isConnectRequest = false;
 
+    /* Chunk-extension bytes consumed on the current chunk-size line, reset per
+     * chunk (llhttp's on_chunk_header); capped at MAX_CHUNK_EXTENSION_SIZE for
+     * both Bun.serve and node:http servers. */
+    uint64_t chunkedExtensionsByteCount = 0;
+
     /* node:http server compat: number of pipelined responses dispatched to JS
      * that have not yet become this connection's current response. While
      * non-zero, newly parsed requests keep being queued (preserving response
@@ -234,11 +242,6 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
      * Mirrors last_message_start_/headers_completed_ in Node's http parser
      * ConnectionsList, which back server.headersTimeout/requestTimeout. */
     uint64_t lastMessageStartMs = 0;
-    /* Bytes of chunk extensions consumed on the current chunk-size line of the
-     * request body, matching llhttp/Node which resets the counter in
-     * on_chunk_header (per chunk, not per message). The parser gets it as a
-     * nullable pointer (see HttpParser::consumePostPadded). */
-    uint64_t chunkedExtensionsByteCount = 0;
     /* Trailer fields set via response.addTrailers(), pre-rendered as
      * "name: value\r\n" lines. Written between the terminating 0 chunk and the
      * final CRLF of a chunked response (RFC 9112 7.1.2); non-empty also forces

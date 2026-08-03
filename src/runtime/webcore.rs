@@ -362,8 +362,8 @@ pub enum SinkHandle {
     #[default]
     None,
     ServerResponse(crate::server::AnyRequestContext),
-    FetchRequestBody(bun_ptr::BackRef<fetch::FetchRequestBodySink>),
-    S3Upload(bun_ptr::BackRef<streams::NetworkSink>),
+    FetchRequestBody(bun_ptr::BackRef<fetch::FetchRequestBodySink, bun_ptr::Mut>),
+    S3Upload(bun_ptr::BackRef<streams::NetworkSink, bun_ptr::Mut>),
     FileSink(bun_ptr::BackRef<file_sink::FileSink>),
     ValueBufferer(*mut core::ffi::c_void, SinkWriteFn),
 }

@@ -1,5 +1,3 @@
-use core::ptr::NonNull;
-
 use crate::BundledAst as JSAst;
 use bun_alloc::Arena as ThreadLocalArena;
 use bun_alloc::{AstAlloc, AstVec};
@@ -23,7 +21,7 @@ pub struct Graph<'a> {
     // (sibling field). `BackRef` (not raw `NonNull`) so the read accessor `pool()` is
     // safe — the BACKREF invariant (pointee outlives holder) holds for the entire
     // bundle pass.
-    pub pool: bun_ptr::BackRef<ThreadPool>,
+    pub pool: bun_ptr::BackRef<ThreadPool, bun_ptr::Mut>,
     pub(crate) heap: &'a ThreadLocalArena,
 
     /// Mapping user-specified entry points to their Source Index
@@ -154,7 +152,7 @@ impl<'a> Graph<'a> {
         Self {
             // Self-referential arena pointer; real value wired in
             // `BundleV2::init` before any use.
-            pool: bun_ptr::BackRef::from(NonNull::<ThreadPool>::dangling()),
+            pool: bun_ptr::BackRef::dangling(),
             heap,
             entry_points: Vec::new(),
             entry_point_original_names: IndexStringMap::default(),

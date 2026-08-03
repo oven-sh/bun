@@ -1009,14 +1009,11 @@ mod _async_tasks {
 
         /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
         pub(crate) unsafe fn destroy(this: *mut Self) {
-            // SAFETY: caller guarantees `this` is a live Box-leaked allocation
-            let this_ref = unsafe { &mut *this };
+            // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
+            // reclaim ownership (paired with the Box::leak in create()).
+            let mut task = unsafe { bun_core::heap::take(this) };
             // `bun_sys::Error` frees its path on Drop.
-            this_ref.r#ref.unref(bun_io::js_vm_ctx());
-            // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
-            this_ref.promise = JSPromiseStrong::default();
-            // SAFETY: paired with Box::leak in create()
-            drop(unsafe { bun_core::heap::take(this) });
+            task.r#ref.unref(bun_io::js_vm_ctx());
         }
     }
 
@@ -1323,24 +1320,30 @@ mod _async_tasks {
         }
 
         fn work_pool_callback(task: *mut WorkPoolTask) {
-            // SAFETY: task points to Self.task
-            let this = unsafe { &mut *Self::from_task_ptr(task) };
+            // SAFETY: `task` points to `Self.task` (container-of).
+            let this = unsafe { Self::from_task_ptr(task) };
 
             let mut node_fs = NodeFS::default();
-            this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
+            // SAFETY: `this` is the live Box-leaked task; the work-pool thread owns
+            // it exclusively until the enqueue below hands it to the JS thread.
+            // `args` and `result` are disjoint fields.
+            unsafe {
+                (*this).result =
+                    NodeFS::dispatch::<R, A, F>(&mut node_fs, &(*this).args, Flavor::Async);
+            }
             // `sys::Error::path` is `Box<[u8]>` boxed at the
             // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
 
             // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
             // documented accessor for off-thread (work-pool) callers; the
             // event-loop's concurrent queue is MPSC-safe.
-            let vm = this.global_object().bun_vm_concurrently();
+            // SAFETY: `this` is still exclusively owned here (see above).
+            let vm = unsafe { (*this).global_object().bun_vm_concurrently() };
             // SAFETY: VirtualMachine and its event loop are process-static
-            // (LIFETIMES.tsv); the concurrent queue is MPSC-safe.
+            // (LIFETIMES.tsv); the concurrent queue is MPSC-safe. Ownership of
+            // `this` transfers to the JS thread here — no use after this call.
             unsafe {
-                (*(*vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create_from(
-                    std::ptr::from_mut::<Self>(this),
-                ));
+                (*(*vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create_from(this));
                 // Pairs with `concurrent_poster_begin` in `create()`. The JS
                 // thread may free `this` the moment the task above is popped,
                 // and may tear the VM down once this count reaches zero — so
@@ -1398,15 +1401,11 @@ mod _async_tasks {
 
         /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
         pub(crate) unsafe fn destroy(this: *mut Self) {
-            // SAFETY: caller guarantees `this` is a live Box-leaked allocation
-            let this_ref = unsafe { &mut *this };
+            // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
+            // reclaim ownership (paired with the Box::leak in create()).
+            let mut task = unsafe { bun_core::heap::take(this) };
             // `bun_sys::Error` frees its path on Drop.
-            // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
-            this_ref.r#ref.unref(bun_io::js_vm_ctx());
-            // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
-            this_ref.promise = JSPromiseStrong::default();
-            // SAFETY: paired with Box::leak in create()
-            drop(unsafe { bun_core::heap::take(this) });
+            task.r#ref.unref(bun_io::js_vm_ctx());
         }
     }
 
@@ -1454,7 +1453,7 @@ mod _async_tasks {
         /// BACKREF — `Some` iff `IS_SHELL`. The shell `ShellCpTask` owns and
         /// outlives this task; `ParentRef` gives a safe `&ShellCpTask` projection
         /// for `cp_on_copy` and round-trips the `*mut` for `cp_on_finish`.
-        pub(crate) shelltask: Option<bun_ptr::ParentRef<ShellCpTask>>,
+        pub(crate) shelltask: Option<bun_ptr::ParentRef<ShellCpTask, bun_ptr::Mut>>,
     }
 
     bun_threading::intrusive_work_task!([const IS_SHELL: bool] NewAsyncCpTask<IS_SHELL>, task);
@@ -1467,7 +1466,7 @@ mod _async_tasks {
         /// as `ParentRef` (constructed from the `*mut` with `Box::leak` provenance)
         /// so shared reads are safe-projected and `as_mut_ptr()` round-trips the
         /// original write provenance for `on_subtask_done`'s `&mut` promotion.
-        pub(crate) cp_task: bun_ptr::ParentRef<NewAsyncCpTask<IS_SHELL>>,
+        pub(crate) cp_task: bun_ptr::ParentRef<NewAsyncCpTask<IS_SHELL>, bun_ptr::Mut>,
         /// Single owned allocation laid out as `<src>\0<dest>\0`. Ownership is
         /// encoded directly as `Box<[OSPathChar]>` and
         /// the two NUL-terminated views are reconstructed via `src()` / `dest()`.
@@ -1493,9 +1492,9 @@ mod _async_tasks {
             WorkPool::schedule_new(CpSingleTask {
                 // `parent` is the `Box::leak`'d task — never null; `NonNull → ParentRef`
                 // preserves the mutable provenance for `on_subtask_done`.
-                cp_task: bun_ptr::ParentRef::from(
-                    core::ptr::NonNull::new(parent).expect("cp parent"),
-                ),
+                // SAFETY: `parent` is the live `Box::leak`'d task (write provenance), never null.
+                cp_task: unsafe { bun_ptr::ParentRef::from_nullable_mut(parent) }
+                    .expect("cp parent"),
                 path_buf,
                 src_len,
                 dest_len,
@@ -1622,7 +1621,9 @@ mod _async_tasks {
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
                 subtask_count: AtomicUsize::new(1),
-                shelltask: core::ptr::NonNull::new(shelltask).map(bun_ptr::ParentRef::from),
+                // SAFETY: `shelltask` (when non-null) is the live heap-alloc'd `ShellCpTask`
+                // that owns and outlives this task; pointer carries write provenance.
+                shelltask: unsafe { bun_ptr::ParentRef::from_nullable_mut(shelltask) },
             });
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
@@ -1660,7 +1661,9 @@ mod _async_tasks {
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker { id: 0 },
                 subtask_count: AtomicUsize::new(1),
-                shelltask: core::ptr::NonNull::new(shelltask).map(bun_ptr::ParentRef::from),
+                // SAFETY: `shelltask` (when non-null) is the live heap-alloc'd `ShellCpTask`
+                // that owns and outlives this task; pointer carries write provenance.
+                shelltask: unsafe { bun_ptr::ParentRef::from_nullable_mut(shelltask) },
             });
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
@@ -1816,13 +1819,10 @@ mod _async_tasks {
 
             // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
             unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-            // SAFETY: `promise` points at a GC-rooted JS heap cell (see above), still
-            // valid after `destroy` dropped only the `Strong` wrapper.
-            let promise = unsafe { &mut *promise };
             if success {
-                promise.resolve(global_object, result)?;
+                bun_jsc::JSPromise::opaque_mut(promise).resolve(global_object, result)?;
             } else {
-                promise.reject(global_object, Ok(result))?;
+                bun_jsc::JSPromise::opaque_mut(promise).reject(global_object, Ok(result))?;
             }
             Ok(())
         }
@@ -1830,21 +1830,16 @@ mod _async_tasks {
         /// SAFETY: `this` must be the pointer returned by Box::leak in
         /// `create_with_shell_task()`/`create_mini()`; called exactly once.
         pub(crate) unsafe fn destroy(this: *mut Self) {
-            // SAFETY: caller guarantees `this` is a live Box-leaked allocation
-            let this_ref = unsafe { &mut *this };
-            // `bun_sys::Error` owns its path slice (`Box<[u8]>`) and frees it on
-            // Drop (in `heap::take` below).
+            // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
+            // reclaim ownership (paired with the Box::leak in
+            // create_with_shell_task()/create_mini()).
+            let mut task = unsafe { bun_core::heap::take(this) };
             if !IS_SHELL {
-                this_ref
-                    .r#ref
-                    .unref(event_loop_handle_to_ctx(this_ref.evtloop));
+                let ctx = event_loop_handle_to_ctx(task.evtloop);
+                task.r#ref.unref(ctx);
             }
-            // `args.deinit()` → `Drop` on `args::Cp` (via `heap::take` below).
             // `Drop for ThreadSafe<args::Cp>` releases the `protect()` taken by
             // `to_thread_safe()` when `src`/`dest` are Buffers, so nothing leaks here.
-            this_ref.promise = JSPromiseStrong::default();
-            // SAFETY: paired with Box::leak in create_with_shell_task()/create_mini()
-            drop(unsafe { bun_core::heap::take(this) });
         }
 
         /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version
@@ -2294,7 +2289,7 @@ mod _async_tasks {
     }
 
     pub(super) struct ReaddirSubtask {
-        pub readdir_task: bun_ptr::ParentRef<AsyncReaddirRecursiveTask>,
+        pub readdir_task: bun_ptr::ParentRef<AsyncReaddirRecursiveTask, bun_ptr::Mut>,
         /// Heap-owned, NUL-terminated (`[basename.., 0]`); freed on drop.
         pub basename: Box<[u8]>,
         pub task: WorkPoolTask,
@@ -2493,8 +2488,8 @@ mod _async_tasks {
         }
 
         fn work_pool_callback(task: *mut WorkPoolTask) {
-            // SAFETY: task points to Self.task
-            let this = unsafe { &mut *Self::from_task_ptr(task) };
+            // SAFETY: `task` points to `Self.task` (container-of).
+            let this = unsafe { Self::from_task_ptr(task) };
             let mut buf = PathBuffer::uninit();
             // `root_path` backing is fixed for the task's lifetime and only
             // `perform_work`'s callee reads it (it mutates other fields), so
@@ -2502,11 +2497,17 @@ mod _async_tasks {
             // `perform_work` body's own `args_ptr` erase, and line ~6623).
             let root_path_z = {
                 // SAFETY: `root_path` is a NUL-terminated `Box<[u8]>` set in
-                // `create()` and not reallocated for the task's lifetime.
-                let bytes: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&this.root_path[..]) };
+                // `create()` and not reallocated for the task's lifetime; shared
+                // field borrow only.
+                let root_path: &[u8] = unsafe { &(*this).root_path };
+                // SAFETY: see above — the backing bytes outlive this call.
+                let bytes: &'static [u8] = unsafe { bun_ptr::detach_lifetime(root_path) };
                 ZStr::from_buf(bytes, bytes.len() - 1)
             };
-            this.perform_work(root_path_z, &mut buf, true);
+            // SAFETY: `this` is the live Box-leaked task; this scan task holds one
+            // `subtask_count` reference, so the JS thread cannot free it during
+            // the call. The `&mut` is scoped to the call.
+            unsafe { (*this).perform_work(root_path_z, &mut buf, true) };
         }
 
         pub(crate) fn write_results<T: IntoResultListEntry>(&mut self, result: &mut Vec<T>) {
@@ -2590,19 +2591,21 @@ mod _async_tasks {
 
             // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
             // documented accessor for off-thread (work-pool) callers.
-            // SAFETY: `bun_vm_concurrently()` returns the process-singleton VM;
-            // sole `&mut` borrow at this point on the work-pool thread.
-            let vm = unsafe { &mut *self.global_object().bun_vm_concurrently() };
+            let vm = self.global_object().bun_vm_concurrently();
             // `ConcurrentTask::create` heap-allocates a fresh task; the
             // queue takes ownership of it.
-            vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(std::ptr::from_mut::<
-                Self,
-            >(self))));
+            // SAFETY: `vm` is the process-singleton VM (LIFETIMES.tsv); the
+            // concurrent queue is MPSC-safe and the borrow is scoped to the call.
+            unsafe {
+                (*vm).enqueue_task_concurrent(ConcurrentTask::create(Task::init(
+                    std::ptr::from_mut::<Self>(self),
+                )));
+            }
             // Pairs with `concurrent_poster_begin` in `create()`. The JS thread
             // may free `self` the moment the task above is popped, and may tear
             // the VM down once this count reaches zero — last touch of both.
             // SAFETY: `event_loop()` is a value field of the process-static VM.
-            unsafe { (*vm.event_loop()).concurrent_poster_end() };
+            unsafe { (*(*vm).event_loop()).concurrent_poster_end() };
         }
 
         fn clear_result_list(&mut self) {
@@ -2681,32 +2684,27 @@ mod _async_tasks {
 
             // SAFETY: self was Box::leak'd in create(); destroyed exactly once here
             unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-            // SAFETY: GC-rooted JS heap cell, valid past `destroy` (see above).
-            let promise = unsafe { &mut *promise };
             if success {
-                promise.resolve(global_object, result)?;
+                bun_jsc::JSPromise::opaque_mut(promise).resolve(global_object, result)?;
             } else {
-                promise.reject(global_object, Ok(result))?;
+                bun_jsc::JSPromise::opaque_mut(promise).reject(global_object, Ok(result))?;
             }
             Ok(())
         }
 
         /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
         pub(crate) unsafe fn destroy(this: *mut Self) {
-            // SAFETY: caller guarantees `this` is a live Box-leaked allocation
-            let this_ref = unsafe { &mut *this };
-            debug_assert!(this_ref.root_fd == FD::INVALID); // should already have closed it
+            // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
+            // reclaim ownership (paired with the Box::leak in create()).
+            let mut task = unsafe { bun_core::heap::take(this) };
+            debug_assert!(task.root_fd == FD::INVALID); // should already have closed it
             // `bun_sys::Error` frees on Drop; nothing to do.
-            let _ = this_ref.pending_err.take();
+            let _ = task.pending_err.take();
             // `KeepAlive::unref` takes the type-erased
             // `EventLoopCtx`. Resolve via the global JS-loop hook (single JS thread).
-            this_ref.r#ref.unref(bun_io::js_vm_ctx());
-            // `args.deinit()` → `Drop` on `args::Readdir` (via `heap::take` below).
-            this_ref.free_root_path();
-            this_ref.clear_result_list();
-            // `JSPromiseStrong` releases on Drop (via heap::take below).
-            // SAFETY: paired with Box::leak in create()
-            drop(unsafe { bun_core::heap::take(this) });
+            task.r#ref.unref(bun_io::js_vm_ctx());
+            task.free_root_path();
+            task.clear_result_list();
         }
     }
 
@@ -5930,14 +5928,13 @@ impl NodeFS {
                                     {
                                         // is a directory. break.
                                         if !res {
-                                            // SAFETY: `working_mem` is not used after this return; re-derive
-                                            // the &mut PathBuffer from the stored raw ptr instead of `&mut self`.
-                                            let buf = unsafe { &mut *sync_error_buf_ptr };
+                                            // SAFETY: `working_mem` is not used after this return; the
+                                            // re-derived &mut PathBuffer is scoped to the call.
                                             return Err(sys::Error {
                                                 errno: E::ENOTDIR as _,
                                                 syscall: sys::Tag::mkdir,
                                                 path: Self::os_path_into_buf(
-                                                    buf,
+                                                    unsafe { &mut *sync_error_buf_ptr },
                                                     without_nt_prefix(&(&path[..])[..len as usize]),
                                                 )
                                                 .into(),
@@ -6004,10 +6001,10 @@ impl NodeFS {
                             E::EEXIST => {}
                             // NOENT shouldn't happen here
                             _ => {
-                                // SAFETY: `working_mem` is not used after this return.
-                                let buf = unsafe { &mut *sync_error_buf_ptr };
+                                // SAFETY: `working_mem` is not used after this return;
+                                // the re-derived &mut PathBuffer is scoped to the call.
                                 return Err(err.with_path(Self::os_path_into_buf(
-                                    buf,
+                                    unsafe { &mut *sync_error_buf_ptr },
                                     without_nt_prefix(&path[..]),
                                 )));
                             }
@@ -6033,11 +6030,12 @@ impl NodeFS {
             Err(err) => match err.get_errno() {
                 E::EEXIST => {}
                 _ => {
-                    // SAFETY: `working_mem` is not used after this return.
-                    let buf = unsafe { &mut *sync_error_buf_ptr };
-                    return Err(
-                        err.with_path(Self::os_path_into_buf(buf, without_nt_prefix(&path[..])))
-                    );
+                    // SAFETY: `working_mem` is not used after this return; the
+                    // re-derived &mut PathBuffer is scoped to the call.
+                    return Err(err.with_path(Self::os_path_into_buf(
+                        unsafe { &mut *sync_error_buf_ptr },
+                        without_nt_prefix(&path[..]),
+                    )));
                 }
             },
             Ok(_) => {}

@@ -327,6 +327,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // the remaining integration work lands. BUN_JSC_useTemporal=1
             // re-enables it for opt-in testing.
             JSC::Options::useTemporal() = false;
+            // Upstream enabled Wasm Memory64 by default (0d0080ea539d); keep
+            // it off in Bun while upstream stabilises it.
+            // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.
+            JSC::Options::useWasmMemory64() = false;
             JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG

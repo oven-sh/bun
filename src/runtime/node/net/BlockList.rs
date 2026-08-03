@@ -443,13 +443,13 @@ impl BlockList {
         // SAFETY: `*ptr` and `end` bound a contiguous byte buffer owned by the
         // caller (C++ SerializedScriptValue); `end >= *ptr`. `ptr` itself is a
         // non-null out-param the caller expects us to advance.
-        let ptr = unsafe { &mut *ptr };
-        let total_length: usize = (end as usize) - (*ptr as usize);
-        // SAFETY: `*ptr` through `end` is the contiguous C++-owned deserialization
-        // buffer (see above); `total_length = end - *ptr`, so the resulting slice
+        let start: *mut u8 = unsafe { *ptr };
+        let total_length: usize = (end as usize) - (start as usize);
+        // SAFETY: `start` through `end` is the contiguous C++-owned deserialization
+        // buffer (see above); `total_length = end - start`, so the resulting slice
         // is exactly that buffer and stays valid for the lifetime of `r`.
         let mut r =
-            bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*ptr, total_length) });
+            bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(start, total_length) });
 
         let nonce = match r.read_int_le::<u64>() {
             Ok(n) => n,
@@ -460,9 +460,10 @@ impl BlockList {
             }
         };
 
-        // Advance the pointer by the number of bytes consumed
-        // SAFETY: `r.pos <= total_length` (`read_exact` bounds-checks via `checked_add`).
-        *ptr = unsafe { (*ptr).add(r.pos) };
+        // Advance the caller's cursor by the number of bytes consumed
+        // SAFETY: `r.pos <= total_length` (`read_exact` bounds-checks via
+        // `checked_add`); `ptr` is the caller's live out-param (see above).
+        unsafe { *ptr = start.add(r.pos) };
 
         // A single SerializedScriptValue can be deserialized multiple times
         // (e.g. BroadcastChannel fan-out), so each wrapper must own its own ref

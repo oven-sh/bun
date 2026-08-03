@@ -1837,7 +1837,6 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         bun_sys::Result::Err(e) => Some(e),
         bun_sys::Result::Ok(()) => None,
     };
-    // `bun_event_loop::JsResult` carries the low-tier `ErasedJsError`; shim the
     // callback signature to match `ManagedTask::new`'s `fn(*mut T) -> JsResult<()>`.
     fn call_erased(this: *mut CopyFileWindows<'_>) -> bun_event_loop::JsResult<()> {
         // SAFETY: `this` is the heap-allocated `CopyFileWindows` passed to

@@ -37,7 +37,7 @@ use bun_sys::{self as sys, Fd};
 // FFI handle (zero Rust-visible bytes). All mutation happens on the C++ side;
 // Rust only ever holds `&JSGlobalObject`, so deriving a `*mut` from that shared
 // reference would violate provenance. This matches the convention in
-// `src/jsc/lib.rs` / `src/jsc/ipc.rs`.
+// `src/jsc/lib.rs`.
 unsafe extern "C" {
     fn Bun__REPL__evaluate(
         globalObject: *const JSGlobalObject,

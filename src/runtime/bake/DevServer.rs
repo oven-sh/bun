@@ -3143,7 +3143,8 @@ impl DeferredRequest {
         }
     }
 
-    /// Deinitializes state by aborting the connection.
+    /// Client-disconnect path (uWS `onAborted` / `RequestContext::on_abort`);
+    /// the response is already dead. Server-side abandonment uses [`fail()`].
     fn abort(&mut self) {
         deferred_request::debug_log_dr!(
             "DeferredRequest(0x{:x}) abort",
@@ -3163,11 +3164,27 @@ impl DeferredRequest {
                 // Note: saved.js_request (jsc::Strong) drops at end of arm
                 drop(saved);
             }
+            Handler::BundledHtmlPage(_) | Handler::Aborted => {}
+        }
+    }
+
+    /// Server-side abandonment (plugin load failure, bundle-completion OOM
+    /// defer): respond 500 and release both `RequestContext` refs. Callers
+    /// follow with `deref_()`.
+    fn fail(&mut self) {
+        match ::core::mem::replace(&mut self.handler, Handler::Aborted) {
+            Handler::ServerHandler(mut saved) => {
+                let resp = saved.response;
+                let ctx = saved.ctx;
+                // Deref both (prepare_and_save +1, defer_request +1) first so
+                // `detach_response` clears the uWS callbacks before the 500.
+                saved.deinit();
+                ctx.deref();
+                resp.write_status(b"500 Internal Server Error");
+                resp.write_header_int(b"Content-Length", 0);
+                resp.end_without_body(true);
+            }
             Handler::BundledHtmlPage(r) => {
-                // Reached from JS event-loop tasks (on_plugins_rejected, the
-                // bundle-completion OOM cleanup defer), so end_without_body
-                // alone cannot close the socket; write Content-Length so the
-                // client has framing.
                 r.response.write_status(b"500 Internal Server Error");
                 r.response.write_header_int(b"Content-Length", 0);
                 r.response.end_without_body(true);
@@ -3838,7 +3855,7 @@ fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
         // SAFETY: pop_first returns a live `*mut Node<T>`; `data` was
         // initialized by `defer_request`.
         let req = unsafe { (*node).data.assume_init_mut() };
-        req.abort();
+        req.fail();
         req.deref_();
     }
 }
@@ -6219,16 +6236,26 @@ impl DevServer {
 
     pub(crate) fn on_plugins_rejected(&mut self) -> crate::Result<()> {
         self.plugin_state = PluginState::Err;
+        // Keep `pending_requests > 0` for the drain: `fail()`'s ctx deref
+        // reaches `deinit_if_we_can()`, which would drop `Box<DevServer>`
+        // (i.e. `*self`) mid-loop if `stop()` had already taken the listener.
+        let server = self.server;
+        if let Some(mut s) = server {
+            s.on_pending_request();
+        }
         while let Some(item) = self.next_bundle.requests.pop_first() {
             // SAFETY: `pop_first` returns a valid `*mut Node<DeferredRequest>`;
             // `data` was initialized by `defer_request`.
             unsafe {
                 let d = (*item).data.assume_init_mut();
-                d.abort();
+                d.fail();
                 d.deref_();
             }
         }
         self.next_bundle.route_queue.clear_retaining_capacity();
+        if let Some(mut s) = server {
+            s.on_static_request_complete();
+        }
         // TODO: allow recovery from this state
         Ok(())
     }

@@ -537,7 +537,18 @@ pub fn install_with_manager(
         }
     }
 
-    resolve_pending_tasks(manager, log_level)?;
+    // An install whose manifest diff produced no work — nothing to decide,
+    // nothing pending — leaves the loaded lockfile exactly as recorded; skip
+    // the resolution passes entirely.
+    let resolve_needed = needs_new_lockfile
+        || !redecide_ids.is_empty()
+        || manager.summary.add > 0
+        || manager.summary.update > 0
+        || manager.pending_task_count() > 0
+        || manager.pending_pre_calc_hashes.load(Ordering::Relaxed) > 0;
+    if resolve_needed {
+        resolve_pending_tasks(manager, log_level)?;
+    }
 
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
     manager
@@ -1467,7 +1478,11 @@ fn resolve_pending_tasks(
         PrePatchHashWait::run_and_wait(manager)?;
     }
 
-    manager.resolve_graph::<InstallWaitCallbacks>(log_level, &[], announce, true)?;
+    manager.resolve_graph::<InstallWaitCallbacks>(
+        log_level,
+        &[],
+        resolve_graph::ResolveOptions::install(announce),
+    )?;
     Ok(())
 }
 

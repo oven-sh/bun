@@ -88,6 +88,9 @@ impl Node {
 /// The node whose edges are currently being decided, and the resume position.
 struct NodeCursor {
     node: NodeId,
+    /// `nodes.len()` when this node started: the nodes created while its
+    /// edges were decided are its children, prefetched once it finishes.
+    children_start: usize,
     edges: Vec<DependencyID>,
     index: usize,
 }
@@ -158,10 +161,6 @@ enum EdgeMatch<'a> {
     /// A concrete package (pre-bound edges, locally resolved packages,
     /// downloaded packages): satisfied only by that same package.
     Exact { package_id: PackageID },
-    /// Never satisfied; classifies an occupant as same-kind (an npm package)
-    /// or not. Used to give dist-tag peers the conflict policy range peers
-    /// have before the tag is resolved.
-    SameName,
 }
 
 /// The cursor runs two passes. The first places every edge the lockfile
@@ -221,6 +220,32 @@ pub(crate) enum Announce {
     OnFirstWait,
 }
 
+/// How a resolve run behaves for its caller.
+pub(crate) struct ResolveOptions {
+    pub announce: Announce,
+    /// Whether peer edges are decided. The runtime auto-installer resolves
+    /// only what an import needs and leaves peers unresolved.
+    pub resolve_peers: bool,
+}
+
+impl ResolveOptions {
+    /// The install command: full resolution, peers included.
+    pub(crate) fn install(announce: Announce) -> Self {
+        Self {
+            announce,
+            resolve_peers: true,
+        }
+    }
+
+    /// The runtime auto-installer: one import's closure, quiet.
+    pub(crate) fn auto_install() -> Self {
+        Self {
+            announce: Announce::Silent,
+            resolve_peers: false,
+        }
+    }
+}
+
 impl PackageManager {
     /// Resolve every unbound dependency edge reachable from the root package,
     /// growing the graph. Blocks the calling thread, ticking the event loop
@@ -230,14 +255,14 @@ impl PackageManager {
         &mut self,
         log_level: LogLevel,
         extra_root_edges: &[DependencyID],
-        announce: Announce,
-        resolve_peers: bool,
+        opts: ResolveOptions,
     ) -> Result<(), crate::Error> {
         if self.lockfile.packages.len() == 0 {
             return Ok(());
         }
+        let announce = opts.announce;
 
-        let mut resolver = GraphResolver::new(extra_root_edges.to_vec(), resolve_peers);
+        let mut resolver = GraphResolver::new(extra_root_edges.to_vec(), opts.resolve_peers);
         resolver.seed_root();
 
         let mut announced = announce == Announce::Already;
@@ -260,8 +285,7 @@ impl PackageManager {
 
         // Downloads and extractions fired during resolution carry ids into the
         // current lockfile buffers; they must all land before the caller
-        // rebuilds those buffers (`clean_with_logger` renumbers packages and
-        // dependencies).
+        // renumbers those buffers (`clean_with_logger`).
         if self.pending_task_count() > 0 {
             if announce == Announce::OnFirstWait && !announced {
                 announced = true;
@@ -548,7 +572,11 @@ impl GraphResolver {
                 .get(&(*this_ptr).lockfile, workspace_name_hash)
         };
         let slice = this.lockfile.packages.items_dependencies()[root_id as usize];
-        if !(dep_id >= slice.off && dep_id < slice.off + slice.len) {
+        // A dependency of the current root package, or a catalog reference
+        // (declared in any workspace package but versioned by the root's
+        // catalog, so `bun update` moves it too).
+        let is_root_dep = dep_id >= slice.off && dep_id < slice.off + slice.len;
+        if !(is_root_dep || dependency.version.tag == dependency::version::Tag::Catalog) {
             return false;
         }
         this.update_requests.is_empty()
@@ -583,7 +611,17 @@ impl GraphResolver {
         let (node, dep_id) = {
             let cursor = self.current.as_ref().unwrap();
             if cursor.index >= cursor.edges.len() {
+                // The node's slots all exist now, so its children's walks
+                // are gated correctly: start their manifest fetches ahead
+                // of the cursor reaching them (level-wide pipelining) without
+                // requesting a name a sibling slot here already satisfies.
+                let children = cursor.children_start..self.nodes.len();
                 self.current = None;
+                for child in children {
+                    let child = NodeId::try_from(child).expect("tree node overflow");
+                    let edges = self.decide_edges_of(this, child);
+                    self.prefetch_node_deps(this, child, &edges);
+                }
                 return Ok(Step::Progress);
             }
             (cursor.node, cursor.edges[cursor.index])
@@ -680,6 +718,7 @@ impl GraphResolver {
 
         self.current = Some(NodeCursor {
             node,
+            children_start: self.nodes.len(),
             edges,
             index: 0,
         });
@@ -804,14 +843,24 @@ impl GraphResolver {
         at: NodeId,
         folder_name_hash: PackageNameHash,
         package_id: PackageID,
-    ) -> Result<NodeId, crate::Error> {
-        let _ = this;
-        let id = self.push_node(at, package_id);
+    ) -> Result<(), crate::Error> {
+        // The package already sits at `at` or above it: a version-conflict
+        // cycle (`a@1` needs `a@2` needs `a@1`) that no layout satisfies.
+        // Bind without another node, as npm does.
+        if self.ancestor_has_package(at, package_id) {
+            return Ok(());
+        }
+        let id = self.push_node(this, at, package_id);
         self.nodes[at as usize].slots.insert(folder_name_hash, id);
-        Ok(id)
+        Ok(())
     }
 
-    fn push_node(&mut self, parent: NodeId, package_id: PackageID) -> NodeId {
+    fn push_node(
+        &mut self,
+        this: &mut PackageManager,
+        parent: NodeId,
+        package_id: PackageID,
+    ) -> NodeId {
         debug_assert!(
             !self.ancestor_has_package(parent, package_id),
             "cycle: package placed under itself"
@@ -826,18 +875,49 @@ impl GraphResolver {
         if self.pass == Pass::PlaceBound {
             self.queue.push_back(id);
         }
+        let _ = this;
         id
+    }
+
+    /// The edges of a node that the decide pass will decide: unbound,
+    /// non-optional-peer, honoring the peer switch and the settled-hole rule.
+    fn decide_edges_of(&self, this: &PackageManager, node: NodeId) -> Vec<DependencyID> {
+        let package_id = self.nodes[node as usize].package_id;
+        let dependency_slice = this.lockfile.packages.items_dependencies()[package_id as usize];
+        let end = dependency_slice.off.saturating_add(dependency_slice.len);
+        let dependencies = this.lockfile.buffers.dependencies.as_slice();
+        let resolutions = this.lockfile.buffers.resolutions.as_slice();
+        let packages_len = this.lockfile.packages.len();
+        let mut edges = Vec::new();
+        for dep_id in dependency_slice.off..end {
+            let behavior = dependencies[dep_id as usize].behavior;
+            if behavior.is_optional_peer() || (!self.resolve_peers && behavior.is_peer()) {
+                continue;
+            }
+            let bound = (resolutions[dep_id as usize] as usize) < packages_len;
+            if !bound && !this.edge_is_settled_unresolved(dep_id) {
+                edges.push(dep_id);
+            }
+        }
+        edges
     }
 
     /// A package that was resolved for an edge but has nowhere to go — its
     /// name is taken at the owner's own scope — still needs its dependency
     /// list decided. Give it a node with no slot (nothing can walk to it by
     /// name); the hoister reports the conflict itself later.
-    fn place_detached_if_unplaced(&mut self, parent: NodeId, package_id: PackageID) {
-        if self.package_first_node.get(&package_id).is_some() {
+    fn place_detached_if_unplaced(
+        &mut self,
+        this: &mut PackageManager,
+        parent: NodeId,
+        package_id: PackageID,
+    ) {
+        if self.package_first_node.get(&package_id).is_some()
+            || self.ancestor_has_package(parent, package_id)
+        {
             return;
         }
-        self.push_node(parent, package_id);
+        self.push_node(this, parent, package_id);
     }
 
     /// Place a package for an edge given the walk's result: dedupe onto a
@@ -867,7 +947,7 @@ impl GraphResolver {
                     // The name is taken at every scope down to the owner: no
                     // slot for this package. Its dependency list is still
                     // walked; the hoister reports the conflict.
-                    self.place_detached_if_unplaced(at, package_id);
+                    self.place_detached_if_unplaced(this, at, package_id);
                     return Ok(());
                 }
                 self.place(this, at, folder_name_hash, package_id)?;
@@ -901,7 +981,7 @@ impl GraphResolver {
                     .get(&folder_name_hash)
                     .is_some()
                 {
-                    self.place_detached_if_unplaced(at, package_id);
+                    self.place_detached_if_unplaced(this, at, package_id);
                     return Ok(());
                 }
                 self.place(this, at, folder_name_hash, package_id)?;
@@ -917,7 +997,7 @@ impl GraphResolver {
                     .get(&folder_name_hash)
                     .is_some()
                 {
-                    self.place_detached_if_unplaced(owner, package_id);
+                    self.place_detached_if_unplaced(this, owner, package_id);
                     return Ok(());
                 }
                 self.place(this, owner, folder_name_hash, package_id)?;
@@ -1094,7 +1174,7 @@ impl GraphResolver {
                 )? {
                     NpmResolve::Package(package_id) => {
                         this.assign_resolution(dep_id, package_id);
-                        self.place_detached_if_unplaced(node, package_id);
+                        self.place_detached_if_unplaced(this, node, package_id);
                         Ok(EdgeStep::Done)
                     }
                     NpmResolve::Blocked(target) => Ok(EdgeStep::Blocked(target)),
@@ -1245,26 +1325,11 @@ impl GraphResolver {
         real_name_hash: PackageNameHash,
         version: &dependency::Version,
     ) -> Result<EdgeStep, crate::Error> {
-        // A dist-tag peer takes the conflict policy range peers have: bind to
-        // a same-named registry package already in the parent scope (warning
-        // when it is not the tagged version) instead of installing another.
-        if dependency.behavior.is_peer() {
-            let start = self.lookup_start(node, true);
-            if let Walk::Conflict {
-                occupant,
-                same_kind: true,
-                ..
-            } = self.walk(this, start, dependency.name_hash, &EdgeMatch::SameName)
-            {
-                warn_incorrect_peer(this, occupant);
-                this.assign_resolution(dep_id, occupant);
-                return Ok(EdgeStep::Done);
-            }
-        }
-
         // A tag names a concrete version; resolve it first, then the edge
-        // behaves like an exact edge. (A tag is never satisfied by a present
-        // range match, so only the update-target flag matters here.)
+        // behaves like an exact edge — a peer whose parent scope holds a
+        // different same-named package binds to it in `bind_resolved`. (A
+        // tag is never satisfied by a present range match, so only the
+        // update-target flag matters here.)
         let update_target = self.is_update_target(this, dep_id, dependency);
         let package_id = match self.resolve_npm_package(
             this,
@@ -1353,16 +1418,20 @@ impl GraphResolver {
             folder_name_hash,
             &EdgeMatch::Exact { package_id },
         );
-        if let (
-            Walk::Conflict {
+        // A peer whose parent scope already holds a different same-kind
+        // package binds to it with a warning rather than installing a second
+        // copy — the same policy range peers get in `decide_npm`.
+        if is_peer {
+            if let Walk::Conflict {
                 occupant,
                 same_kind: true,
                 ..
-            },
-            true,
-        ) = (&walk, is_peer)
-        {
-            warn_incorrect_peer(this, *occupant);
+            } = walk
+            {
+                warn_incorrect_peer(this, occupant);
+                this.assign_resolution(dep_id, occupant);
+                return Ok(EdgeStep::Done);
+            }
         }
         self.place_resolved(this, walk, node, dep_id, is_peer, package_id)
     }
@@ -1488,15 +1557,6 @@ fn download_resolution(version: &dependency::Version) -> Resolution {
 
 fn edge_matches(this: &PackageManager, edge: &EdgeMatch, occupant: PackageID) -> Satisfies {
     match edge {
-        EdgeMatch::SameName => {
-            if this.lockfile.packages.items_resolution()[occupant as usize].tag
-                == ResolutionTag::Npm
-            {
-                Satisfies::No
-            } else {
-                Satisfies::WrongKind
-            }
-        }
         EdgeMatch::Exact { package_id } => {
             if *package_id == occupant {
                 Satisfies::Yes
@@ -2461,16 +2521,8 @@ fn fire_download_task(
                 if this.has_created_network_task(clone_id, dependency.behavior.is_required()) {
                     return Ok(DownloadStep::Wait(WaitTarget::GitClone(clone_id)));
                 }
-                let task = enqueue_git_clone(
-                    this,
-                    clone_id,
-                    alias,
-                    &repository,
-                    dep_id,
-                    dependency,
-                    res,
-                    None,
-                );
+                let task =
+                    enqueue_git_clone(this, clone_id, alias, &repository, dependency, res, None);
                 this.task_batch.push(ThreadPool::Batch::from(task));
                 return Ok(DownloadStep::Wait(WaitTarget::GitClone(clone_id)));
             };

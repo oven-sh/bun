@@ -654,7 +654,6 @@ pub struct GitCloneRequest {
     // `Map` owns its storage; store a
     // `&'static` into the global `Repository.shared_env` instead — see `SharedEnv::get`.
     pub(crate) env: &'static dot_env::Map,
-    pub(crate) dep_id: DependencyID,
     pub(crate) res: Resolution,
 }
 

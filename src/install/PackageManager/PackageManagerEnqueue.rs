@@ -191,16 +191,7 @@ pub fn enqueue_git_for_checkout(
         }
 
         let dep = this.lockfile.buffers.dependencies[dependency_id as usize].clone();
-        let task = enqueue_git_clone(
-            this,
-            clone_id,
-            alias,
-            &repository,
-            dependency_id,
-            &dep,
-            resolution,
-            None,
-        );
+        let task = enqueue_git_clone(this, clone_id, alias, &repository, &dep, resolution, None);
         this.task_batch.push(ThreadPool::Batch::from(task));
     }
 }
@@ -359,8 +350,7 @@ pub fn enqueue_dependency_to_root(
         if let Err(err) = this.resolve_graph::<VoidRunTasksCallbacks>(
             log_level,
             &[dep_id],
-            super::resolve_graph::Announce::Silent,
-            false,
+            super::resolve_graph::ResolveOptions::auto_install(),
         ) {
             return DependencyToEnqueue::Failure(err);
         }
@@ -510,7 +500,6 @@ pub(crate) fn enqueue_git_clone(
     task_id: Task::Id,
     name: &[u8],
     repository: &Repository,
-    dep_id: DependencyID,
     dependency: &Dependency,
     res: &Resolution,
     // if patched then we need to do apply step after network task is done
@@ -559,7 +548,6 @@ pub(crate) fn enqueue_git_clone(
                 )
                 .expect("unreachable"),
                 env: crate::repository::SharedEnv::get(this.env_mut()),
-                dep_id,
                 res: *res,
             }),
         },

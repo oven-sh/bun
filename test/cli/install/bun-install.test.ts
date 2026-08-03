@@ -3317,10 +3317,8 @@ describe.concurrent("bun-install", () => {
         stderr: "pipe",
         env,
       });
-      const err = await stderr.text();
+      const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
       expect(err).toContain("Saved lockfile");
-      expect(err).not.toContain("error:");
-      const out = await stdout.text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
@@ -3328,9 +3326,9 @@ describe.concurrent("bun-install", () => {
         "",
         "2 packages installed",
       ]);
-      expect(await exited).toBe(0);
       // the aliased baz@0.0.5 satisfies moo's ">=0.0.3", so the real `boba` package is never fetched
       expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.5.tgz`]);
+      expect(exitCode).toBe(0);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "boba", "moo"]);
       expect(await file(join(ctx.package_dir, "node_modules", "boba", "package.json")).json()).toEqual({

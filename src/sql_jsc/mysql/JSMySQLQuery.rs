@@ -409,9 +409,7 @@ impl JSMySQLQuery {
         self.this_value.with_mut(|v| v.upgrade(global_object));
         // R-2: errdefer rollback — `&Self` is `Copy`; the guard captures it by
         // value, mutation is `JsCell`-backed, and `into_inner` disarms on the
-        // success path below. Only the `upgrade()` is undone; `status` stays
-        // `Pending` so the caller's `reject_with_js_value` (which no-ops on an
-        // already-`Fail` query) can still reject the promise.
+        // success path below.
         let errguard = scopeguard::guard(self, |s| {
             s.this_value.with_mut(|v| v.downgrade());
         });

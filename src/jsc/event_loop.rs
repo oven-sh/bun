@@ -1014,12 +1014,12 @@ impl EventLoop {
     /// callback (after [`Self::enqueue_task_concurrent`]). The `Release` store
     /// pairs with [`Self::wait_for_pending_work_pool_tasks`]'s `Acquire` load
     /// so `WebWorker::shutdown` cannot observe zero until every prior access
-    /// is visible, making the subsequent VM dealloc safe.
+    /// is visible, making the subsequent VM dealloc safe. This must be the
+    /// last access to `self`: once the waiter observes zero it may free the
+    /// `VirtualMachine` box this `EventLoop` lives in.
     #[inline]
     pub fn work_pool_task_unref(&self) {
-        if self.work_pool_pending.fetch_sub(1, Ordering::Release) == 1 {
-            bun_threading::Futex::wake(&self.work_pool_pending, u32::MAX);
-        }
+        self.work_pool_pending.fetch_sub(1, Ordering::Release);
     }
 
     /// Worker-thread shutdown barrier. Blocks until every outstanding
@@ -1034,7 +1034,11 @@ impl EventLoop {
             if n == 0 {
                 return;
             }
-            let _ = bun_threading::Futex::wait(&self.work_pool_pending, n, None);
+            // Timed wait: the pool thread cannot `Futex::wake` here because
+            // its last safe access to `self` is the `fetch_sub` above, after
+            // which this `EventLoop` may be freed. 1ms re-check adds at most
+            // 1ms to `terminate()`.
+            let _ = bun_threading::Futex::wait(&self.work_pool_pending, n, Some(1_000_000));
         }
     }
 

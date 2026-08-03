@@ -21,7 +21,6 @@ static void sleep_ms(unsigned ms) { usleep(ms * 1000); }
   } while (0)
 
 typedef struct {
-  napi_env env;
   napi_async_work work;
   napi_ref buf_ref;
   napi_ref cb_ref;
@@ -71,7 +70,6 @@ static napi_value queue_work(napi_env env, napi_callback_info info) {
   }
 
   work_t *w = (work_t *)calloc(1, sizeof(*w));
-  w->env = env;
 
   void *data = NULL;
   size_t len = 0;

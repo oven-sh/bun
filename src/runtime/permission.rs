@@ -253,10 +253,9 @@ static STATE: RwLock<State> = RwLock::new(State::new());
 pub struct CliGrants<'a> {
     pub fs_read: &'a [&'static [u8]],
     pub fs_write: &'a [&'static [u8]],
-    /// Read grants Node adds without a flag: the entrypoint script and every
-    /// preloaded (`-r`) module (`env.cc`, "Implicit allow entrypoint to
-    /// kFileSystemRead"). Kept separate from `fs_read` so the
-    /// comma-separated-list warning only looks at what the user typed.
+    /// Entrypoint + `-r` preloads Node grants read implicitly; kept separate so
+    /// the comma-list warning only inspects user-typed grants.
+    /// https://github.com/nodejs/node/blob/main/src/env.cc
     pub implicit_fs_read: &'a [&'a [u8]],
     pub child: bool,
     pub worker: bool,
@@ -597,10 +596,9 @@ fn scope_and_reference(
     Ok((scope, Some(reference)))
 }
 
-/// `Permission::is_scope_granted` / `Permission::Drop` publish to the
-/// `node:permission-model:<scope>` diagnostics channels; the channel registry
-/// lives in JS, so route through `internal/permission`'s
-/// `publishPermissionEvent` (which also holds node's re-entrancy guard).
+/// Publishes to `node:permission-model:<scope>` diagnostics channels via
+/// `internal/permission` (which holds the re-entrancy guard).
+/// https://github.com/nodejs/node/blob/main/src/permission/permission.cc
 fn publish_permission_event(
     global: &JSGlobalObject,
     scope: Scope,
@@ -716,10 +714,8 @@ pub(crate) fn net_access_denied_error(
     ))
 }
 
-/// `$newRustFunction("permission.rs", "jsIsGranted", 2)` — the `has()`
-/// predicate for builtin modules, immune to user tampering with
-/// `process.permission`. Callers pass builtin string literals, so no
-/// argument validation.
+/// Tamper-proof `has()` predicate for builtin modules; callers pass string
+/// literals so no argument validation.
 pub(crate) fn js_is_granted(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [scope_arg, reference_arg] = frame.arguments_as_array::<2>();
     let scope_slice = scope_arg.to_slice(global)?;
@@ -733,12 +729,9 @@ pub(crate) fn js_is_granted(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
     Ok(JSValue::from(is_granted(scope, Some(reference.slice()))))
 }
 
-/// The permission-model flags a sandboxed Node parent copies into
-/// `NODE_OPTIONS` when spawning `process.execPath`
-/// (`copyPermissionModelFlagsToEnv` in lib/child_process.js). Bun's
-/// child_process does the same, and this parses them back out at startup so
-/// children inherit the sandbox. Every other `NODE_OPTIONS` token is ignored,
-/// as before.
+/// Permission-model flags a sandboxed parent copies into `NODE_OPTIONS`; parsed
+/// back out here so children inherit the sandbox. Other tokens are ignored.
+/// https://github.com/nodejs/node/blob/main/lib/child_process.js
 pub struct NodeOptionsGrants {
     pub permission: bool,
     pub fs_read: Vec<&'static [u8]>,
@@ -801,11 +794,8 @@ pub extern "C" fn Bun__Permission__isEnabled() -> bool {
     is_enabled()
 }
 
-/// Gate for C++ callers (`process.chdir`, `process.report.writeReport`):
-/// throws `ERR_ACCESS_DENIED` and returns true when `path` is not covered by
-/// the requested fs scope. A null `ptr` means "the cwd" (what node reports
-/// for `writeReport()` with no filename).
-///
+/// C++ gate (`process.chdir`, `writeReport`): throws `ERR_ACCESS_DENIED` and
+/// returns true on denial. Null `ptr` means "the cwd".
 /// SAFETY precondition: `ptr` is either null or valid for `len` bytes.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Permission__throwIfFsDenied(

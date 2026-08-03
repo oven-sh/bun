@@ -521,10 +521,10 @@ pub enum Flavor {
 // AsyncFSTask / UVFSRequest / NewAsyncCpTask / AsyncReaddirRecursiveTask are
 // the thread-pool wrappers that back every `fs.promises.*` call (and the shell
 // `cp` builtin).
-/// Node's fs permission checks: the `THROW_IF_INSUFFICIENT_PERMISSIONS` sites
-/// in node_file.cc, keyed by argument struct. The `resource` on a denial is
-/// the path exactly as the caller passed it (Node reports `ToNamespacedPath`
-/// output, which is the input path on POSIX).
+
+/// Node's `THROW_IF_INSUFFICIENT_PERMISSIONS` checks, keyed by argument struct;
+/// the denial `resource` is the path exactly as passed.
+/// https://github.com/nodejs/node/blob/main/src/node_file.cc
 pub(crate) mod fs_perm {
     use crate::node::types::{PathLike, PathOrFileDescriptor};
     use crate::permission::{self, Scope};
@@ -1155,10 +1155,8 @@ mod _async_tasks {
 
     pub trait FsArgument: Sized + Unprotect + FsPermissionInfo {
         const HAVE_ABORT_SIGNAL: bool = false;
-        /// The permission check node_file.cc performs for this operation's
-        /// arguments; `None` when granted. Callers gate on
-        /// [`crate::permission::is_enabled`] first, so implementations may
-        /// assume the model is on.
+        /// The node_file.cc permission check for this op; `None` when granted.
+        /// Callers gate on [`crate::permission::is_enabled`] first.
         #[inline]
         fn permission_denied(&self) -> Option<super::fs_perm::Denied> {
             None

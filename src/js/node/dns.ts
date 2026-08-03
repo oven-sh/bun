@@ -2,12 +2,9 @@
 let dns = Bun.dns;
 const permission = require("internal/permission");
 if (permission.enabled) {
-  // cares_wrap.cc gates every query on the net scope per call
-  // (ERR_ACCESS_DENIED_IF_INSUFFICIENT_PERMISSIONS), so a later
-  // `process.permission.drop('net')` takes effect immediately. Swap the
-  // binding for a checking facade so every query path — callback, promises,
-  // and Resolver instances — goes through one gate; server management stays
-  // available either way.
+  // cares_wrap.cc gates every query on the net scope per call; wrap the binding
+  // so all query paths (callback/promises/Resolver) share one per-call gate.
+  // https://github.com/nodejs/node/blob/main/src/cares_wrap.cc
   dns = makePermissionCheckedDnsFacade(dns);
 }
 

@@ -1534,17 +1534,12 @@ impl Run {
             Err(err) => entry_point_load_failed(vm, &err.into()),
         }
 
-        // `initializePermission` in Node's pre_execution.js emits these via
-        // process.emitWarning, whose nextTick fires only after the main
-        // module's synchronous body — so a `process.on('warning')` listener
-        // registered at the top of the entry script observes them. Bun's
-        // module load drains tick queues, so emitting before the load (the
-        // obvious spot) fires too early for such listeners.
+        // Node's initializePermission warns via nextTick after the main module
+        // body; Bun drains ticks during load, so emit here instead.
+        // https://github.com/nodejs/node/blob/main/lib/internal/process/pre_execution.js
         crate::permission::emit_startup_warnings(vm.global());
         if crate::permission::is_enabled() {
-            // Drain the queued warning ticks even when the script scheduled
-            // no other work (the run loop below only spins while the event
-            // loop is alive).
+            // Drain queued warning ticks even when no other work is scheduled.
             // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
             // accessed here.
             vm.event_loop_ref().tick();

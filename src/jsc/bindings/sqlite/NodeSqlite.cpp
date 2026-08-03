@@ -1457,13 +1457,15 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncFunction, (JSGlobalObject * globalObject,
     // function(name, func) or function(name, options, func)
     size_t fnIndex = callFrame->argumentCount() < 3 ? 1 : 2;
     JSValue fnVal = callFrame->argument(fnIndex);
-    JSValue optsVal = fnIndex == 2 ? callFrame->argument(1) : jsUndefined();
 
     bool useBigIntArgs = false;
     bool varargs = false;
     bool deterministic = false;
     bool directOnly = false;
-    if (!optsVal.isUndefined()) {
+    // Node validates on arity: with three arguments the middle one MUST be an
+    // object, so `function(name, undefined, fn)` throws.
+    if (fnIndex == 2) {
+        JSValue optsVal = callFrame->uncheckedArgument(1);
         if (!optsVal.isObject()) {
             return throwNodeArgType(globalObject, scope, "options"_s, "an object"_s);
         }
@@ -1636,8 +1638,10 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncCreateSession, (JSGlobalObject * globalOb
 
     WTF::String table;
     WTF::String dbName = "main"_s;
-    JSValue optsVal = callFrame->argument(0);
-    if (!optsVal.isUndefined()) {
+    // Node validates on args.Length() > 0: an explicit `createSession(undefined)`
+    // throws while `createSession()` does not.
+    if (callFrame->argumentCount() > 0) {
+        JSValue optsVal = callFrame->uncheckedArgument(0);
         if (!optsVal.isObject()) {
             return throwNodeArgType(globalObject, scope, "options"_s, "an object"_s);
         }
@@ -2076,17 +2080,21 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDeserialize, (JSGlobalObject * globalObje
     memcpy(owned, span.data(), span.size());
 
     // Invalidate every existing statement first — after the schema
-    // swap they reference tables that no longer exist. Bumping the
-    // open-generation makes every live JSStatementSync report
-    // isFinalized() without us having to track them explicitly (same
-    // mechanism close()+open() relies on), and Node finalizes its
-    // statements before deserializing too, so the bump stays ahead of
-    // the fallible call. We leave the underlying sqlite3_stmt* alone:
-    // the JS wrappers still own those handles and will
-    // sqlite3_finalize() them on GC, so finalizing here would make the
-    // wrapper double-free a dangling pointer. sqlite3_deserialize
-    // tolerates the outstanding stmts — they simply fail if stepped,
-    // which the generation check prevents.
+    // swap they reference tables that no longer exist. Node
+    // sqlite3_finalize()s its tracked statements here; we can't
+    // (the JS wrappers still own those handles and finalize on GC, so
+    // a pre-emptive finalize would double-free), but an un-reset
+    // iterate() cursor holds a read transaction that makes
+    // sqlite3_deserialize()'s internal ATTACH return SQLITE_BUSY.
+    // Reset every outstanding stmt on the connection so the swap
+    // succeeds, then bump the open-generation so every JSStatementSync
+    // reports isFinalized() (same mechanism close()+open() uses). The
+    // bump stays ahead of the fallible call to match Node, which
+    // finalizes unconditionally before deserializing.
+    for (sqlite3_stmt* s = sqlite3_next_stmt(self->connection(), nullptr); s;
+        s = sqlite3_next_stmt(self->connection(), s)) {
+        sqlite3_reset(s);
+    }
     self->bumpOpenGeneration();
 
     int r = sqlite3_deserialize(self->connection(), dbNameUtf8.data(), owned,
@@ -2117,16 +2125,17 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncCreateTagStore, (JSGlobalObject * globalO
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    // Node: `int capacity = args[0].As<Number>()->Value()` then passed as
+    // size_t to LRUCache. No clamp: -1 wraps to SIZE_MAX (unlimited), 0 stays 0.
+    // JSC::toInt32 avoids the double→int UB Node has for NaN/±Inf/>2^31.
     int capacity = 1000;
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isNumber()) {
-        capacity = arg0.toInt32(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (capacity < 1) capacity = 1;
+        capacity = JSC::toInt32(arg0.asNumber());
     }
     auto* zigGlobal = defaultGlobalObject(globalObject);
     auto* structure = zigGlobal->m_JSNodeSqliteTagStoreClassStructure.get(zigGlobal);
-    auto* store = JSNodeSqliteTagStore::create(vm, structure, self, static_cast<unsigned>(capacity));
+    auto* store = JSNodeSqliteTagStore::create(vm, structure, self, static_cast<size_t>(capacity));
     return JSValue::encode(store);
 }
 
@@ -2285,8 +2294,11 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSDatabaseSyncConstructor::construct(JSG
     DatabaseSyncOpenConfiguration config {};
     bool openImmediately = true;
 
-    JSValue optsVal = callFrame->argument(1);
-    if (!optsVal.isUndefined()) {
+    // Node validates on args.Length() > 1, not IsUndefined(): an explicit
+    // second argument must be an object (so `new DatabaseSync(p, undefined)`
+    // throws while `new DatabaseSync(p)` does not).
+    if (callFrame->argumentCount() > 1) {
+        JSValue optsVal = callFrame->uncheckedArgument(1);
         if (!optsVal.isObject()) {
             return throwNodeArgType(globalObject, scope, "options"_s, "an object"_s);
         }
@@ -2605,7 +2617,7 @@ bool JSStatementSync::bindValue(JSGlobalObject* globalObject, ThrowScope& scope,
         RETURN_IF_EXCEPTION(scope, false);
         auto cmp = JSBigInt::compare(value, roundTrip);
         if (cmp != JSBigInt::ComparisonResult::Equal) {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "BigInt value is too large to bind"_s);
+            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "BigInt value is too large to bind."_s);
             return false;
         }
         r = sqlite3_bind_int64(m_stmt, index, iv);
@@ -2619,7 +2631,7 @@ bool JSStatementSync::bindValue(JSGlobalObject* globalObject, ThrowScope& scope,
         r = sqlite3_bind_blob64(m_stmt, index, span.data() ? static_cast<const void*>(span.data()) : "", span.size(), SQLITE_TRANSIENT);
     } else {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
-            makeString("Provided value cannot be bound to SQLite parameter "_s, index));
+            makeString("Provided value cannot be bound to SQLite parameter "_s, index, '.'));
         return false;
     }
     if (r != SQLITE_OK) {
@@ -3517,7 +3529,7 @@ void JSNodeSqliteLimits::getOwnPropertyNames(JSObject* object, JSGlobalObject* g
 const ClassInfo JSNodeSqliteTagStore::s_info = { "SQLTagStore"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeSqliteTagStore) };
 const ClassInfo JSNodeSqliteTagStorePrototype::s_info = { "SQLTagStore"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeSqliteTagStorePrototype) };
 
-JSNodeSqliteTagStore* JSNodeSqliteTagStore::create(VM& vm, Structure* structure, JSDatabaseSync* db, unsigned capacity)
+JSNodeSqliteTagStore* JSNodeSqliteTagStore::create(VM& vm, Structure* structure, JSDatabaseSync* db, size_t capacity)
 {
     auto* ptr = new (NotNull, allocateCell<JSNodeSqliteTagStore>(vm)) JSNodeSqliteTagStore(vm, structure);
     ptr->finishCreation(vm, db, capacity);
@@ -3528,7 +3540,7 @@ JSC_DECLARE_CUSTOM_GETTER(jsTagStoreCapacity);
 JSC_DECLARE_CUSTOM_GETTER(jsTagStoreDb);
 JSC_DECLARE_CUSTOM_GETTER(jsTagStoreSize);
 
-void JSNodeSqliteTagStore::finishCreation(VM& vm, JSDatabaseSync* db, unsigned capacity)
+void JSNodeSqliteTagStore::finishCreation(VM& vm, JSDatabaseSync* db, size_t capacity)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
@@ -3682,11 +3694,13 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
 
         {
             WTF::Locker locker { cellLock() };
-            if (m_order.size() >= m_capacity) m_order.removeLast();
             Entry e;
             e.sql = sqlStr;
             e.stmt.set(vm, this, stmtObj);
             m_order.insert(0, std::move(e));
+            // Node's LRUCache::Put inserts then evicts with `size > capacity`,
+            // so capacity=0 prepares but never caches.
+            if (m_order.size() > m_capacity) m_order.removeLast();
         }
     }
 
@@ -3792,13 +3806,13 @@ JSC_DEFINE_CUSTOM_GETTER(jsTagStoreCapacity, (JSGlobalObject*, EncodedJSValue th
 {
     auto* self = dynamicDowncast<JSNodeSqliteTagStore>(JSValue::decode(thisValue));
     if (!self) return JSValue::encode(jsUndefined());
-    return JSValue::encode(jsNumber(self->capacity()));
+    return JSValue::encode(jsNumber(static_cast<double>(self->capacity())));
 }
 JSC_DEFINE_CUSTOM_GETTER(jsTagStoreSize, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName))
 {
     auto* self = dynamicDowncast<JSNodeSqliteTagStore>(JSValue::decode(thisValue));
     if (!self) return JSValue::encode(jsUndefined());
-    return JSValue::encode(jsNumber(self->size()));
+    return JSValue::encode(jsNumber(static_cast<double>(self->size())));
 }
 JSC_DEFINE_CUSTOM_GETTER(jsTagStoreDb, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName))
 {
@@ -3894,8 +3908,10 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
     WTF::String targetName = "main"_s;
     JSObject* progressFn = nullptr;
 
-    JSValue optsVal = callFrame->argument(2);
-    if (!optsVal.isUndefined()) {
+    // Node validates on args.Length() > 2: an explicit `backup(db, p, undefined)`
+    // throws while `backup(db, p)` does not.
+    if (callFrame->argumentCount() > 2) {
+        JSValue optsVal = callFrame->uncheckedArgument(2);
         if (!optsVal.isObject()) {
             return throwNodeArgType(globalObject, scope, "options"_s, "an object"_s);
         }
@@ -3987,66 +4003,68 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
         return rejectWithPending();
     }
 
-    // Node retries SQLITE_BUSY/LOCKED indefinitely (BackupJob just calls
-    // ScheduleWork() again with no timeout), so match that: no invented
-    // busy budget. Back off between retries so a contended destination
-    // doesn't busy-spin at 100% CPU. Unlike Node this loop runs on the JS
-    // thread, so a permanently-locked destination would be an unrecoverable
-    // hang; the progress callback fires on BUSY/LOCKED too so a caller can
-    // throw from it to abort. (Node fires progress between retries too, but
-    // gated on remaining_pages != 0 — Bun fires unconditionally so the
-    // escape hatch works even before the first successful step.)
+    // Node's BackupJob::AfterThreadPoolWork only reschedules when
+    // sqlite3_backup_remaining() != 0. A step that never reaches the page
+    // copy (destination locked, source == destination file, source in a
+    // write txn) returns BUSY with remaining still 0, so Node rejects on
+    // the first iteration instead of spinning. Match that gate exactly —
+    // this loop is synchronous on the JS thread, so an unconditional BUSY
+    // retry would be an unrecoverable process hang.
     constexpr int kBusyRetrySleepMs = 25;
 
     int totalPages = 0;
     while (true) {
         r = sqlite3_backup_step(backup, rate);
+
+        if (r != SQLITE_OK && r != SQLITE_DONE && r != SQLITE_BUSY && r != SQLITE_LOCKED) {
+            // Hard error. Node's HandleBackupError(resolver, backup_status_)
+            // builds the rejection from the step return code itself.
+            throwSqliteMessage(globalObject, scope, r, WTF::String::fromUTF8(sqlite3_errstr(r)));
+            sqlite3_backup_finish(backup);
+            sqlite3_close_v2(dest);
+            return rejectWithPending();
+        }
+
         totalPages = sqlite3_backup_pagecount(backup);
         int remaining = sqlite3_backup_remaining(backup);
 
-        if (progressFn && (r == SQLITE_OK || r == SQLITE_BUSY || r == SQLITE_LOCKED)) {
-            JSObject* payload = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-            payload->putDirect(vm, Identifier::fromString(vm, "totalPages"_s), jsNumber(totalPages), 0);
-            payload->putDirect(vm, Identifier::fromString(vm, "remainingPages"_s), jsNumber(remaining), 0);
-            MarkedArgumentBuffer args;
-            args.append(payload);
-            auto callData = JSC::getCallData(progressFn);
-            JSC::call(globalObject, progressFn, callData, jsNull(), args);
-            if (scope.exception()) [[unlikely]] {
+        if (remaining != 0) {
+            if (progressFn) {
+                JSObject* payload = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+                payload->putDirect(vm, Identifier::fromString(vm, "totalPages"_s), jsNumber(totalPages), 0);
+                payload->putDirect(vm, Identifier::fromString(vm, "remainingPages"_s), jsNumber(remaining), 0);
+                MarkedArgumentBuffer args;
+                args.append(payload);
+                auto callData = JSC::getCallData(progressFn);
+                JSC::call(globalObject, progressFn, callData, jsNull(), args);
+                if (scope.exception()) [[unlikely]] {
+                    sqlite3_backup_finish(backup);
+                    sqlite3_close_v2(dest);
+                    return rejectWithPending();
+                }
+            }
+            // Poll the termination trap so Worker.terminate() / the watchdog
+            // can break a very large copy; the VM is being torn down so
+            // clean up and unwind without allocating JS.
+            if (vm.traps().needHandling(VMTraps::NeedTermination) || vm.hasPendingTerminationException()) [[unlikely]] {
                 sqlite3_backup_finish(backup);
                 sqlite3_close_v2(dest);
-                return rejectWithPending();
+                scope.release();
+                return JSValue::encode(jsUndefined());
             }
-        }
-
-        if (r == SQLITE_DONE) break;
-        // Without a progress callback the loop never re-enters JS, so
-        // Worker.terminate() / the watchdog cannot land at a safepoint and
-        // hasTerminationRequest() is never set. Poll the trap bit directly
-        // (written atomically by notifyNeedTermination from the parent
-        // thread) so termination breaks a BUSY spin or a very large copy;
-        // Node's retry-forever semantics are preserved otherwise. The VM is
-        // being torn down, so just clean up and let the unwind happen — no
-        // JS allocation on a terminating VM.
-        if (vm.traps().needHandling(VMTraps::NeedTermination) || vm.hasPendingTerminationException()) [[unlikely]] {
-            sqlite3_backup_finish(backup);
-            sqlite3_close_v2(dest);
-            scope.release();
-            return JSValue::encode(jsUndefined());
-        }
-        if (r == SQLITE_OK) continue;
-        if (r == SQLITE_BUSY || r == SQLITE_LOCKED) {
-            sqlite3_sleep(kBusyRetrySleepMs);
+            if (r == SQLITE_BUSY || r == SQLITE_LOCKED) {
+                sqlite3_sleep(kBusyRetrySleepMs);
+            }
             continue;
         }
 
-        // sqlite3_backup_step()'s *return value* is the authoritative
-        // error here. It isn't reliably mirrored onto `dest`'s
-        // sqlite3_errcode() until sqlite3_backup_finish() runs (and
-        // that also clears some codes), so asking `dest` can yield
-        // "not an error"/errcode 0. Node's BackupJob uses the step
-        // return code directly for the rejected error — do the same.
-        throwSqliteMessage(globalObject, scope, r, WTF::String::fromUTF8(sqlite3_errstr(r)));
+        if (r == SQLITE_DONE) break;
+
+        // remaining == 0 with OK/BUSY/LOCKED: the step never advanced.
+        // Node's HandleBackupError(resolver) reads sqlite3_errcode(dest)
+        // here — which backup_step leaves untouched — so the observed
+        // error is errcode 0 / "not an error". Match that verbatim.
+        throwSqliteError(globalObject, scope, dest);
         sqlite3_backup_finish(backup);
         sqlite3_close_v2(dest);
         return rejectWithPending();

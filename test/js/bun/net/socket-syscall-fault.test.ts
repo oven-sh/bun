@@ -8,6 +8,94 @@ import { join } from "node:path";
 
 const skip = !fault.available() || isWindows;
 
+// us_poll_start_rc wraps uv_poll_init_socket on Windows and EPOLL_CTL_ADD /
+// kevent on posix. On Windows the return value was ignored, so an ioctlsocket
+// FIONBIO failure left a never-initialized uv_poll_t that uv_unref/uv_poll_start
+// then operated on (assertion failure at libuv win/poll.c:508 in debug,
+// undefined behaviour in release). The fd is always fresh from the kernel at
+// that point, so the failure path is unreachable without injection; each case
+// runs in a subprocess so a crash surfaces as a non-zero exit rather than
+// taking the test runner down.
+describe.skipIf(!fault.available())("poll_start failure is reported, not a crash", () => {
+  // WSAENOTSOCK is what ioctlsocket(FIONBIO) on a bad handle yields. ENOMEM is
+  // one of the documented EPOLL_CTL_ADD failure modes.
+  const errno = isWindows ? 10038 : "ENOMEM";
+  const arm = `fault.set({ syscall: "poll_start", action: "errno", errno: ${JSON.stringify(errno)}, repeat: 1 })`;
+
+  async function run(body: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+         try { ${body} } finally { fault.clear(); }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout: stdout.trim(),
+      signalCode: proc.signalCode,
+      exitCode,
+      stderrTail: exitCode === 0 ? "" : stderr.slice(-2000),
+    }).toEqual({ stdout: "OK", signalCode: null, exitCode: 0, stderrTail: "" });
+  }
+
+  test.concurrent("Bun.listen", () =>
+    run(`
+      ${arm};
+      let err;
+      try {
+        const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+        server.stop(true);
+      } catch (e) { err = e; }
+      if (!(err instanceof Error)) throw new Error("expected Bun.listen to throw, got: " + err);
+      // A second listen after the one-shot fault disarms must succeed, proving
+      // the failed attempt didn't corrupt loop state.
+      const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+      server.stop(true);
+      console.log("OK");
+    `),
+  );
+
+  test.concurrent("Bun.udpSocket", () =>
+    run(`
+      ${arm};
+      let err;
+      try {
+        const s = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
+        s.close();
+      } catch (e) { err = e; }
+      if (!(err instanceof Error)) throw new Error("expected Bun.udpSocket to reject, got: " + err);
+      const s = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
+      s.close();
+      console.log("OK");
+    `),
+  );
+
+  test.concurrent("Bun.connect", () =>
+    run(`
+      const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {}, open() {}, close() {} } });
+      try {
+        ${arm};
+        let err;
+        try {
+          const s = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+          s.end();
+        } catch (e) { err = e; }
+        if (!(err instanceof Error)) throw new Error("expected Bun.connect to reject, got: " + err);
+        const s = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {}, open(s) { s.end(); } } });
+        s.end();
+        console.log("OK");
+      } finally {
+        server.stop(true);
+      }
+    `),
+  );
+});
+
 // uSockets' TLS low-priority handshake queue (loop->data.low_prio_head)
 // shares its prev/next links with group->head_sockets. A socket already
 // parked in the queue used to be parked a SECOND time whenever a writable
@@ -45,6 +133,33 @@ test.skipIf(skip)(
   },
   180_000,
 );
+
+// us_socket_group_close_all_ex walks group->head_sockets during
+// server.stop(true), closing each connection. Closing a socket dispatches its
+// JS close/handshake handler; if that handler closes a *sibling* connection,
+// the walk used to advance onto the freed sibling it had cached as `next` and
+// dereference its vtable (`panic: us_socket_t with kind=invalid`, a
+// use-after-free). The fixture reproduces it with a burst of TLS connections
+// torn down mid-handshake while the handlers close siblings.
+//
+// The explicit timeout matches the low-prio fixture above: this spawns child
+// Bun processes and drives hundreds of concurrent TLS handshakes across
+// several rounds, which runs long on a debug+ASAN build.
+test("TLS server.stop(true): a close handler that closes a sibling does not crash the teardown walk", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "tls-close-all-sibling-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout: stdout.trim(),
+    signalCode: proc.signalCode,
+    exitCode,
+    stderrTail: exitCode === 0 ? "" : stderr.slice(-2000),
+  }).toEqual({ stdout: "OK", signalCode: null, exitCode: 0, stderrTail: "" });
+}, 180_000);
 
 // An injected send() errno that is neither would-block/transient
 // (EAGAIN/ENOBUFS/ENOMEM) nor a known peer-gone error (EPIPE/ECONNRESET/...)

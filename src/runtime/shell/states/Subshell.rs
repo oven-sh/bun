@@ -1,19 +1,17 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{
-    Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind, log,
-};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::states::script::Script;
 use crate::shell::yield_::Yield;
 
 pub struct Subshell {
-    pub base: Base,
+    pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Subshell>,
-    pub io: IO,
-    pub state: SubshellState,
-    pub exit_code: ExitCode,
+    pub(crate) io: IO,
+    pub(crate) state: SubshellState,
+    pub(crate) exit_code: ExitCode,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -38,7 +36,7 @@ impl Subshell {
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Subshell(Subshell {
-            base: Base::new(StateKind::Subshell, parent, shell),
+            base: Base::new(parent, shell),
             node: bun_ptr::BackRef::new(node),
             io,
             state: SubshellState::Idle,

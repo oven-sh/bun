@@ -12,7 +12,7 @@
 //! | `cityHash64`   | [`CityHash64::hash_with_seed`]                | u64 → u64     |
 //! | `xxHash32`     | [`XxHash32::hash`]                            | u32 → u32     |
 //! | `xxHash64`     | [`XxHash64::hash`]                            | u64 → u64     |
-//! | `xxHash3`      | [`XxHash3::hash`]                             | u64 → u64     |
+//! | `xxHash3`      | `bun_highway::xxhash3_64`                     | u64 → u64     |
 //! | `murmur32v2`   | [`Murmur2_32::hash_with_seed`]                | u32 → u32     |
 //! | `murmur32v3`   | [`Murmur3_32::hash_with_seed`]                | u32 → u32     |
 //! | `murmur64v2`   | [`Murmur2_64::hash_with_seed`]                | u64 → u64     |
@@ -31,7 +31,7 @@ pub use adler32::Adler32;
 pub use cityhash::{CityHash32, CityHash64};
 pub use murmur::{Murmur2_32, Murmur2_64, Murmur3_32};
 pub use rapidhash::RapidHash;
-pub use xxhash::{XxHash3, XxHash32, XxHash64, XxHash64Streaming};
+pub use xxhash::{XxHash32, XxHash64, XxHash64Streaming};
 
 #[cfg(test)]
 pub(crate) mod verify {

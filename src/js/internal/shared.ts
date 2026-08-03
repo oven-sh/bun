@@ -57,7 +57,7 @@ class ExceptionWithHostPort extends Error {
   port?: number;
   address: string;
 
-  constructor(err: number, syscall: string, address: string, port?: number) {
+  constructor(err: number, syscall: string, address: string, port?: number, additional?: string) {
     // TODO(joyeecheung): We have to use the type-checked
     // getSystemErrorName(err) to guard against invalid arguments from users.
     // This can be replaced with [ code ] = errmap.get(err) when this method
@@ -69,6 +69,9 @@ class ExceptionWithHostPort extends Error {
       details = ` ${address}:${port}`;
     } else if (address) {
       details = ` ${address}`;
+    }
+    if (additional) {
+      details += ` - Local (${additional})`;
     }
 
     super(`${syscall} ${code}${details}`);
@@ -132,13 +135,26 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
   return function (...args) {
     if (called) return returnValue;
     called = true;
-    const result = callback.$apply(this, args);
+    const fn = callback;
+    // Drop the reference so the wrapper cannot keep the callback's
+    // closure (and everything it captured) alive once it has run.
+    callback = undefined;
+    const result = fn.$apply(this, args);
     returnValue = preserveReturnValue ? result : undefined;
     return result;
   };
 }
 
 const kEmptyObject = ObjectFreeze(Object.create(null));
+
+// Marks an addEventListener() options object so that dispatch still invokes the
+// listener after an unrelated listener called event.stopImmediatePropagation().
+// `$kResistStopPropagation` is a private symbol the native EventTarget reads, so
+// only these internal modules can reach it.
+function resistStopPropagation<T extends object>(options: T): T {
+  (options as AddEventListenerOptions).$kResistStopPropagation = true;
+  return options;
+}
 
 function getLazy<T>(initializer: () => T) {
   let value: T;
@@ -163,7 +179,7 @@ const observerCounts = new Map();
 const kObservers = new Set();
 
 /** Entry types routed through this JS-side registry instead of the native observer. */
-const kNodeEntryTypes = new Set(["net", "dns", "http", "function"]);
+const kNodeEntryTypes = new Set(["net", "dns", "http", "function", "quic"]);
 
 function hasObserver(type) {
   return (observerCounts.get(type) ?? 0) > 0;
@@ -304,9 +320,16 @@ function makeNodeEntryList(entries) {
   };
 }
 
+// Node's ERR_INTERNAL_ASSERTION constructor appends this automatically; bun's
+// $ERR_INTERNAL_ASSERTION takes the full message, so call sites share it here.
+const kInternalAssertionSuffix =
+  "\nThis is caused by either a bug in Node.js or incorrect usage of Node.js internals.\n" +
+  "Please open an issue with this stack trace at https://github.com/nodejs/node/issues\n";
+
 //
 
 export default {
+  kInternalAssertionSuffix,
   NotImplementedError,
   throwNotImplemented,
   hideFromStack,
@@ -317,6 +340,7 @@ export default {
   ErrnoException,
   once,
   getLazy,
+  resistStopPropagation,
 
   hasObserver,
   startPerf,
@@ -328,7 +352,6 @@ export default {
 
   kHandle: Symbol("kHandle"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
-  kResistStopPropagation: Symbol("kResistStopPropagation"),
   kWeakHandler: Symbol("kWeak"),
   kGetNativeReadableProto: Symbol("kGetNativeReadableProto"),
   kEmptyObject,

@@ -5,7 +5,6 @@
 
 using Ticket = JSC::DeferredWorkTimer::Ticket;
 using Task = JSC::DeferredWorkTimer::Task;
-using TicketData = JSC::DeferredWorkTimer::TicketData;
 
 namespace Bun {
 using namespace JSC;
@@ -15,13 +14,13 @@ extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta)
 
 class JSCDeferredWorkTask {
 public:
-    JSCDeferredWorkTask(Ref<TicketData> ticket, Task&& task)
+    JSCDeferredWorkTask(Ref<Ticket> ticket, Task&& task)
         : ticket(WTF::move(ticket))
         , task(WTF::move(task))
     {
     }
 
-    Ref<TicketData> ticket;
+    Ref<Ticket> ticket;
     Task task;
     ~JSCDeferredWorkTask()
     {
@@ -32,14 +31,9 @@ public:
     WTF_MAKE_TZONE_ALLOCATED(JSCDeferredWorkTask);
 };
 
-static JSC::VM& getVM(Ticket& ticket)
-{
-    return ticket->scriptExecutionOwner()->vm();
-}
-
 // Drop `ticket` from whichever pending set holds it. Caller holds m_lock; the
 // event-loop ref is balanced after the caller releases the lock.
-static bool dropPendingTicketLocked(Bun::JSCTaskScheduler& scheduler, Ticket ticket) WTF_REQUIRES_LOCK(scheduler.m_lock)
+static bool dropPendingTicketLocked(Bun::JSCTaskScheduler& scheduler, Ticket* ticket) WTF_REQUIRES_LOCK(scheduler.m_lock)
 {
     bool isKeepingEventLoopAlive = scheduler.m_pendingTicketsKeepingEventLoopAlive.removeIf([ticket](auto pendingTicket) {
         return pendingTicket.ptr() == ticket;
@@ -53,7 +47,7 @@ static bool dropPendingTicketLocked(Bun::JSCTaskScheduler& scheduler, Ticket tic
     return isKeepingEventLoopAlive;
 }
 
-void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref<TicketData>&& ticket, JSC::DeferredWorkTimer::WorkType kind)
+void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref<Ticket>&& ticket, JSC::DeferredWorkTimer::WorkType kind)
 {
     auto& scheduler = clientData->deferredWorkTimer;
     Locker<Lock> holder { scheduler.m_lock };
@@ -66,7 +60,7 @@ void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref
         scheduler.m_pendingTicketsOther.add(WTF::move(ticket));
     }
 }
-void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ticket ticket, Task&& task)
+void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ref<Ticket>&& ticket, Task&& task)
 {
     auto& scheduler = clientData->deferredWorkTimer;
     Locker<Lock> holder { scheduler.m_lock };
@@ -80,23 +74,23 @@ void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, T
     // across the check and the enqueue so the transition in markShuttingDown
     // cannot race a cross-thread Atomics.notify.
     if (scheduler.m_isShuttingDown) [[unlikely]] {
-        bool wasKeepingAlive = dropPendingTicketLocked(scheduler, ticket);
+        bool wasKeepingAlive = dropPendingTicketLocked(scheduler, ticket.ptr());
         holder.unlockEarly();
         if (wasKeepingAlive)
             Bun__eventLoop__incrementRefConcurrently(clientData->bunVM, -1);
         return;
     }
-    auto* job = new JSCDeferredWorkTask(*ticket, WTF::move(task));
+    auto* job = new JSCDeferredWorkTask(WTF::move(ticket), WTF::move(task));
     Bun__queueJSCDeferredWorkTaskConcurrently(clientData->bunVM, job);
 }
 
-void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, Ticket ticket)
+void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, Ticket& ticket)
 {
     auto* bunVM = clientData->bunVM;
     auto& scheduler = clientData->deferredWorkTimer;
 
     Locker<Lock> holder { scheduler.m_lock };
-    bool wasKeepingAlive = dropPendingTicketLocked(scheduler, ticket);
+    bool wasKeepingAlive = dropPendingTicketLocked(scheduler, &ticket);
     holder.unlockEarly();
     if (wasKeepingAlive)
         Bun__eventLoop__incrementRefConcurrently(bunVM, -1);
@@ -114,7 +108,7 @@ static void runPendingWork(void* bunVM, Bun::JSCTaskScheduler& scheduler, JSCDef
     holder.unlockEarly();
 
     if (pendingTicket && !pendingTicket->isCancelled()) {
-        job->task(job->ticket.ptr());
+        job->task(job->ticket.get());
     }
 
     delete job;
@@ -138,7 +132,7 @@ extern "C" void Bun__JSCTaskScheduler__markShuttingDown(JSC::JSGlobalObject* glo
 }
 
 // Reclaim a queued-but-never-dispatched job during shutdown. Called while the
-// JSC VM is still alive, so ~Ref<TicketData> and the captured Task lambda may
+// JSC VM is still alive, so ~Ref<Ticket> and the captured Task lambda may
 // safely touch TZone-allocated / JSC-owned state. Mirrors runPendingWork's
 // ticket take() so the pending set and event-loop ref stay balanced.
 extern "C" void Bun__deleteDeferredWorkTask(Bun::JSCDeferredWorkTask* job)

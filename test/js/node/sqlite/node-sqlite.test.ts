@@ -6,7 +6,6 @@ import { builtinModules, isBuiltin } from "node:module";
 import path from "node:path";
 import { DatabaseSync, Session, StatementSync, backup, constants } from "node:sqlite";
 import { pathToFileURL } from "node:url";
-import { Worker } from "node:worker_threads";
 
 // On macOS bun dlopens the system libsqlite3.dylib, which Apple builds
 // without SQLITE_ENABLE_SESSION. createSession()/applyChangeset() throw
@@ -203,6 +202,30 @@ describe("DatabaseSync", () => {
     db.close();
   });
 
+  test("bind error messages match node's exactly (trailing period)", () => {
+    const db = new DatabaseSync(":memory:");
+    const stmt = db.prepare("SELECT ? AS v");
+    // Node's test suite asserts these messages with exact string equality, so
+    // the trailing '.' must be present for ported tests to pass unmodified.
+    for (const v of [true, false, undefined, Symbol.iterator]) {
+      expect(() => stmt.get(v as any)).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: "Provided value cannot be bound to SQLite parameter 1.",
+        }),
+      );
+    }
+    for (const v of [2n ** 64n, -(2n ** 64n)]) {
+      expect(() => stmt.get(v)).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_VALUE",
+          message: "BigInt value is too large to bind.",
+        }),
+      );
+    }
+    db.close();
+  });
+
   test("statements are unbound on each call", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (k INTEGER PRIMARY KEY, v INTEGER)");
@@ -335,6 +358,44 @@ describe("DatabaseSync", () => {
     expect(() => new DatabaseSync(Buffer.from([0x3a, 0xff, 0xfe]))).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
     );
+  });
+
+  test("explicit undefined options argument is rejected where Node validates on arity", () => {
+    // Node's constructor/createSession/function/backup gate on args.Length(),
+    // so an explicitly-passed `undefined` is rejected even though an omitted
+    // argument is accepted. prepare/applyChangeset/etc gate on IsUndefined()
+    // and accept explicit undefined; this test pins the arity-gated set.
+    const invalidOptions = expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "options" argument must be an object.',
+    });
+
+    expect(() => new DatabaseSync(":memory:", undefined)).toThrow(invalidOptions);
+    expect(() => new DatabaseSync(":memory:", null)).toThrow(invalidOptions);
+    new DatabaseSync(":memory:").close();
+
+    const db = new DatabaseSync(":memory:");
+    try {
+      expect(() => db.function("f", undefined, () => 1)).toThrow(invalidOptions);
+      expect(() => db.function("f", null, () => 1)).toThrow(invalidOptions);
+      db.function("f", () => 1);
+
+      if (sqliteHasSession) {
+        expect(() => db.createSession(undefined)).toThrow(invalidOptions);
+        expect(() => db.createSession(null)).toThrow(invalidOptions);
+        db.createSession();
+      }
+
+      expect(() => backup(db, ":memory:", undefined)).toThrow(invalidOptions);
+      expect(() => backup(db, ":memory:", null)).toThrow(invalidOptions);
+
+      // Controls: these are value-gated in Node (explicit undefined is the
+      // same as omission) and must NOT throw.
+      db.prepare("SELECT 1", undefined);
+      expect(db.location(undefined)).toBeNull();
+    } finally {
+      db.close();
+    }
   });
 
   test("file: URL objects pass query parameters to SQLite", () => {
@@ -1197,40 +1258,84 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
 // Each backup_step with rate=1 fsyncs the destination once per page; keep
 // the page count tiny so the test stays fast on slow-fsync CI filesystems.
 describe("backup()", () => {
-  test("Worker.terminate() interrupts a backup() spinning on a locked destination", async () => {
-    // With no progress callback the BUSY loop never re-enters JS, so
-    // terminate() can only land if the loop polls vm.hasTerminationRequest().
-    using dir = tempDir("node-sqlite-backup-terminate", {
-      "worker.mjs": `
-        import { DatabaseSync, backup } from "node:sqlite";
-        import { parentPort, workerData } from "node:worker_threads";
-        const src = new DatabaseSync(":memory:");
-        src.exec("CREATE TABLE t (x); INSERT INTO t VALUES (1)");
-        parentPort.postMessage("spinning");
-        // destination is held write-locked by the parent: this spins on
-        // SQLITE_BUSY until terminated.
-        await backup(src, workerData.dest);
-        parentPort.postMessage("done");
-      `,
+  test("backing up a database to its own file rejects promptly", async () => {
+    // sqlite3_backup_init only compares sqlite3* pointers, so opening the
+    // source path a second time as the destination succeeds — but the
+    // source's SHARED lock blocks the destination's EXCLUSIVE upgrade and
+    // every sqlite3_backup_step() returns SQLITE_BUSY with remaining == 0.
+    // Node only reschedules when remaining != 0, so it rejects on the first
+    // step. A regression (unconditional BUSY retry on the JS thread) wedges
+    // the process, so run in a subprocess under a bounded timeout.
+    using dir = tempDir("node-sqlite-backup-self", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { DatabaseSync, backup } = require("node:sqlite");
+         const db = new DatabaseSync(process.argv[1]);
+         db.exec("CREATE TABLE t (a); INSERT INTO t VALUES (1)");
+         backup(db, String(db.location())).then(
+           v => { console.log("resolved:" + v); process.exit(1); },
+           e => { console.log("rejected:" + e.code + ":" + e.errcode); process.exit(0); },
+         );`,
+        path.join(String(dir), "self.db"),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
     });
-    const destPath = path.join(String(dir), "locked.db");
-    using holder = new DatabaseSync(destPath);
-    // BEGIN IMMEDIATE takes a RESERVED lock so a writer from another
-    // connection sees SQLITE_BUSY.
-    holder.exec("BEGIN IMMEDIATE");
-
-    const worker = new Worker(path.join(String(dir), "worker.mjs"), { workerData: { dest: destPath } });
-    const spinning = new Promise<void>((resolve, reject) => {
-      worker.on("message", m => (m === "spinning" ? resolve() : reject(new Error(`unexpected: ${m}`))));
-      worker.on("error", reject);
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      Promise.race([proc.exited, Bun.sleep(4_000).then(() => (proc.kill(), "timeout"))]),
+    ]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "rejected:ERR_SQLITE_ERROR:0",
+      stderr: expect.any(String),
+      exitCode: 0,
     });
-    await spinning;
+  });
 
-    const exitCode = await worker.terminate();
-    // The observable invariant is that terminate() returns at all — without
-    // the poll the worker's JS thread is stuck in sqlite3_sleep and the
-    // await never resolves (the test times out).
-    expect(typeof exitCode).toBe("number");
+  test("rejects promptly when the destination is write-locked", async () => {
+    // Same remaining == 0 gate as the self-backup case: the destination
+    // connection can't take its write lock, so the first step returns BUSY
+    // without ever advancing and Node rejects rather than retrying. Run in
+    // a subprocess so a regression is a bounded kill, not a wedged test.
+    using dir = tempDir("node-sqlite-backup-locked", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { DatabaseSync, backup } = require("node:sqlite");
+         const path = require("node:path");
+         const dest = path.join(process.argv[1], "locked.db");
+         const holder = new DatabaseSync(dest);
+         holder.exec("BEGIN IMMEDIATE");
+         const src = new DatabaseSync(":memory:");
+         src.exec("CREATE TABLE t (x); INSERT INTO t VALUES (1)");
+         let calls = 0;
+         backup(src, dest, { progress: () => calls++ }).then(
+           v => { console.log("resolved:" + v); process.exit(1); },
+           e => { console.log("rejected:" + e.code + ":" + calls); process.exit(0); },
+         );`,
+        String(dir),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      Promise.race([proc.exited, Bun.sleep(4_000).then(() => (proc.kill(), "timeout"))]),
+    ]);
+    // Node gates progress on remaining != 0, which is never true here, so
+    // calls stays 0.
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "rejected:ERR_SQLITE_ERROR:0",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
   });
 
   test("re-checks the source is open after reading options", () => {
@@ -1315,66 +1420,21 @@ describe("backup()", () => {
     src.close();
   });
 
-  test("progress fires on SQLITE_BUSY so a throw can abort a locked backup", async () => {
-    // Bun runs the whole backup on the JS thread, so a permanently-locked
-    // destination would otherwise be an unrecoverable hang. Run the whole
-    // scenario in a subprocess so a regression (progress never fires →
-    // sync loop) is a bounded timeout kill, not a wedged test process.
-    using dir = tempDir("node-sqlite-backup-busy", {});
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const { DatabaseSync, backup } = require("node:sqlite");
-         const path = require("node:path");
-         const dst = path.join(process.argv[1], "dst.db");
-         // Child holds a RESERVED lock on the destination so
-         // sqlite3_backup_step returns SQLITE_BUSY. It self-exits so a
-         // regression that never fires progress still terminates.
-         const locker = Bun.spawn({
-           cmd: [process.execPath, "-e",
-             "const {DatabaseSync}=require('node:sqlite');" +
-             "const db=new DatabaseSync(process.argv[1]);" +
-             "db.exec('PRAGMA locking_mode=EXCLUSIVE');" +
-             "db.exec('BEGIN IMMEDIATE');" +
-             "db.exec('CREATE TABLE lock_t(x)');" +
-             "console.log('locked');" +
-             "setTimeout(()=>{},1<<30);",
-             dst],
-           stdout: "pipe", stderr: "inherit",
-         });
-         let ready = "";
-         for await (const c of locker.stdout) {
-           ready += Buffer.from(c).toString();
-           if (ready.includes("locked")) break;
-         }
-         if (!ready.includes("locked")) throw new Error("locker never ready");
-         const src = new DatabaseSync(":memory:");
-         src.exec("CREATE TABLE t (x)");
-         let calls = 0;
-         const p = backup(src, dst, {
-           progress: () => { if (++calls >= 2) throw new Error("busy-abort"); },
-         });
-         p.then(
-           () => { console.log("resolved"); process.exit(1); },
-           e => { console.log("rejected:" + e.message + ":" + calls); locker.kill(); process.exit(0); },
-         );`,
-        String(dir),
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+  test("progress does not fire on the final step (SQLITE_DONE)", async () => {
+    // Node fires progress only while sqlite3_backup_remaining() != 0, which
+    // is never true on the step that returns SQLITE_DONE. With rate: -1 the
+    // whole database copies in one step, so progress never fires at all.
+    using dir = tempDir("node-sqlite-backup-done", {});
+    const src = new DatabaseSync(":memory:");
+    src.exec("CREATE TABLE t (x); INSERT INTO t VALUES (1), (2), (3)");
+    let progressCalls = 0;
+    const pages = await backup(src, path.join(String(dir), "dst.db"), {
+      rate: -1,
+      progress: () => progressCalls++,
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      Promise.race([proc.exited, Bun.sleep(15_000).then(() => (proc.kill(), "timeout"))]),
-    ]);
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: "rejected:busy-abort:2",
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
+    expect(typeof pages).toBe("number");
+    expect(progressCalls).toBe(0);
+    src.close();
   });
 });
 
@@ -1491,9 +1551,83 @@ describe("serialize() / deserialize()", () => {
     dst.close();
     Bun.gc(true);
   });
+
+  test("succeeds while an iterate() cursor is open (resets outstanding statements like Node)", () => {
+    // Node calls FinalizeStatements() before sqlite3_deserialize(), so an
+    // un-reset cursor never holds a read transaction through the swap. Bun
+    // can't finalize (wrappers own the stmt*) but must reset, otherwise the
+    // internal ATTACH returns SQLITE_BUSY and the generation bump leaves
+    // every statement dead against the OLD database content.
+    const donor = new DatabaseSync(":memory:");
+    donor.exec("CREATE TABLE q(z); INSERT INTO q VALUES (9)");
+    const img = donor.serialize();
+    donor.close();
+
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t(a); INSERT INTO t VALUES (1),(2)");
+    const idle = db.prepare("SELECT a FROM t");
+    const it = db.prepare("SELECT a FROM t").iterate();
+    expect(it.next().value).toEqual({ a: 1 }); // cursor now mid-iteration: open read txn
+
+    db.deserialize(img);
+
+    expect(() => idle.get()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+    expect(db.prepare("SELECT z FROM q").get()).toEqual({ z: 9 });
+    expect(() => db.prepare("SELECT count(*) c FROM t").get()).toThrow(/no such table: t/);
+    db.close();
+  });
 });
 
 describe("createTagStore()", () => {
+  test("capacity coercion matches Node: double→int→size_t with no clamp", () => {
+    // Node: `int capacity = args[0].As<Number>()->Value()` then handed to
+    // LRUCache(size_t). -1 sign-extends to SIZE_MAX (unlimited), 0 stays 0
+    // (cache nothing), fractions truncate, non-numbers use the 1000 default.
+    const db = new DatabaseSync(":memory:");
+    expect({
+      "-1": db.createTagStore(-1).capacity,
+      "-2": db.createTagStore(-2).capacity,
+      "0": db.createTagStore(0).capacity,
+      "1.5": db.createTagStore(1.5).capacity,
+      "0.9": db.createTagStore(0.9).capacity,
+      "-0.5": db.createTagStore(-0.5).capacity,
+      "NaN": db.createTagStore(NaN).capacity,
+      "Inf": db.createTagStore(Infinity).capacity,
+      "'5'": db.createTagStore("5" as any).capacity,
+      "null": db.createTagStore(null as any).capacity,
+      "undef": db.createTagStore(undefined).capacity,
+      "noarg": db.createTagStore().capacity,
+    }).toEqual({
+      "-1": 18446744073709552000,
+      "-2": 18446744073709552000,
+      "0": 0,
+      "1.5": 1,
+      "0.9": 0,
+      "-0.5": 0,
+      // Node's raw double→int cast is UB here; Bun uses ES ToInt32 (→ 0).
+      "NaN": 0,
+      "Inf": 0,
+      "'5'": 1000,
+      "null": 1000,
+      "undef": 1000,
+      "noarg": 1000,
+    });
+
+    // Behavior, not just the getter: capacity=0 caches nothing.
+    const s0 = db.createTagStore(0);
+    expect(s0.get`SELECT 1 AS v`).toEqual({ __proto__: null, v: 1 });
+    expect(s0.get`SELECT 2 AS v`).toEqual({ __proto__: null, v: 2 });
+    expect(s0.size).toBe(0);
+
+    // capacity=-1 is effectively unlimited: three distinct SQLs all stay cached.
+    const sNeg = db.createTagStore(-1);
+    sNeg.get`SELECT 1`;
+    sNeg.get`SELECT 2`;
+    sNeg.get`SELECT 3`;
+    expect(sNeg.size).toBe(3);
+    db.close();
+  });
+
   test("reusing the same SQL while a tag.iterate() iterator is live invalidates the iterator", () => {
     // Deliberate divergence: Node's SQLTagStore resets the cached statement
     // without bumping reset_generation_, so the iterator silently re-yields

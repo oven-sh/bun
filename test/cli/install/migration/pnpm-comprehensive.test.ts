@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 describe("pnpm comprehensive migration tests", () => {
   test("large single package with many dependencies", async () => {
-    const tempDir = tempDirWithFiles("pnpm-large-single", {
+    await using tmpDir = tempDir("pnpm-large-single", {
       "package.json": JSON.stringify(
         {
           name: "large-app",
@@ -309,7 +309,7 @@ snapshots:
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "pm", "migrate"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -323,14 +323,14 @@ snapshots:
     }
     expect(exitCode).toBe(0);
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("large-single-package");
   }, 200000);
 
   test("complex monorepo with cross-dependencies", async () => {
-    const tempDir = tempDirWithFiles("pnpm-complex-workspace", {
+    await using tmpDir = tempDir("pnpm-complex-workspace", {
       "package.json": JSON.stringify(
         {
           name: "monorepo-root",
@@ -737,7 +737,7 @@ snapshots:
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -751,14 +751,14 @@ snapshots:
     }
     expect(exitCode).toBe(0);
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("complex-monorepo");
   });
 
   test("pnpm with patches and overrides", async () => {
-    const tempDir = tempDirWithFiles("pnpm-patches-overrides", {
+    await using tmpDir = tempDir("pnpm-patches-overrides", {
       "package.json": JSON.stringify(
         {
           name: "patches-test",
@@ -875,7 +875,7 @@ snapshots:
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -889,14 +889,14 @@ snapshots:
     }
     expect(exitCode).toBe(0);
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("patches-overrides");
   });
 
   test("pnpm v6 format (unsupported)", async () => {
-    const tempDir = tempDirWithFiles("pnpm-v6", {
+    await using tmpDir = tempDir("pnpm-v6", {
       "package.json": JSON.stringify({
         name: "v6-format-test",
         version: "1.0.0",
@@ -919,7 +919,7 @@ packages:
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "pm", "migrate"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -934,7 +934,7 @@ packages:
   });
 
   test("pnpm with peer dependencies and auto-install-peers", async () => {
-    const tempDir = tempDirWithFiles("pnpm-peer-deps", {
+    await using tmpDir = tempDir("pnpm-peer-deps", {
       "package.json": JSON.stringify(
         {
           name: "peer-deps-test",
@@ -1037,7 +1037,7 @@ snapshots:
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "pm", "migrate"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -1051,9 +1051,9 @@ snapshots:
     }
     expect(exitCode).toBe(0);
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("peer-deps-auto-install");
   });
 });

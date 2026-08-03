@@ -28,11 +28,11 @@ test("forEachProperty callback uses PropertyKeyKind, not an (is_symbol, is_priva
   expect(resurrected).toEqual([]);
 
   // The enum must exist on both sides with matching discriminants so the
-  // `#[repr(u8)]` <-> `uint8_t` ABI stays in sync.
+  // `#[repr(u8)]` <-> `enum class : uint8_t` ABI stays in sync.
   const jsvalue = src("src/jsc/JSValue.rs");
-  const bindings = src("src/jsc/bindings/bindings.cpp");
+  const handwritten = src("src/jsc/bindings/headers-handwritten.h");
   expect(jsvalue).toMatch(/pub enum PropertyKeyKind \{\s*String = 0,\s*Symbol = 1,\s*PrivateSymbol = 2,\s*\}/);
-  expect(bindings).toMatch(
+  expect(handwritten).toMatch(
     /enum class PropertyKeyKind : uint8_t \{\s*String = 0,\s*Symbol = 1,\s*PrivateSymbol = 2,\s*\}/,
   );
 });

@@ -2182,7 +2182,7 @@ pub type ForEachCallback =
     extern "C" fn(vm: *mut crate::VM, global: &JSGlobalObject, ctx: *mut c_void, next: JSValue);
 
 /// Kind of property key observed by [`ForEachPropertyCallback`]. Discriminants
-/// must match `PropertyKeyKind` in `bindings.cpp`.
+/// must match `PropertyKeyKind` in `headers-handwritten.h`.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PropertyKeyKind {

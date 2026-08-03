@@ -3432,7 +3432,7 @@ where
             resp.end_without_body(true);
             return;
         }
-        this.pending_requests += 1;
+        this.on_pending_request();
         req.set_yield(false);
         // SAFETY: `request_pool` is non-null while the server is alive; `claim()`
         // reserves a fresh slot whose `Drop` releases it on panic before init.

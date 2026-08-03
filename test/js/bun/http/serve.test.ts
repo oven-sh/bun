@@ -2420,12 +2420,8 @@ describe.concurrent("should error with invalid options", async () => {
           return new Response("hi");
         },
         tls: [
-          {
-            key: "lkwejflkwjeflkj",
-          },
-          {
-            key: "lkwjefhwlkejfklwj",
-          },
+          { key: tls.key, cert: tls.cert },
+          { key: tls.key, cert: tls.cert },
         ],
       });
     }).toThrow("SNI tls object must have a serverName");

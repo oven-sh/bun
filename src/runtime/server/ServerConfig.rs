@@ -1412,6 +1412,13 @@ impl ServerConfig {
                             }
                         };
 
+                        if !ssl_config.has_server_identity() {
+                            drop(ssl_config);
+                            return Err(global.throw_invalid_arguments(format_args!(
+                                "tls object must specify both \"cert\" and \"key\" to start a TLS server",
+                            )));
+                        }
+
                         if args.ssl_config.is_none() {
                             args.ssl_config = Some(ssl_config);
                         } else {
@@ -1431,6 +1438,12 @@ impl ServerConfig {
                 }
             } else {
                 if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls)? {
+                    if !ssl_config.has_server_identity() {
+                        drop(ssl_config);
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "tls object must specify both \"cert\" and \"key\" to start a TLS server",
+                        )));
+                    }
                     args.ssl_config = Some(ssl_config);
                 }
                 if global.has_exception() {
@@ -1446,7 +1459,12 @@ impl ServerConfig {
         // this used to be top-level, now it's "tls" object
         if args.ssl_config.is_none() {
             if let Some(ssl_config) = SSLConfig::from_js(vm, global, arg)? {
-                args.ssl_config = Some(ssl_config);
+                // Top-level keys that collide with TLSOptions names must not
+                // arm a certificate-less HTTPS listener; unlike an explicit
+                // `tls:` object above, ignore rather than throw.
+                if ssl_config.has_server_identity() {
+                    args.ssl_config = Some(ssl_config);
+                }
             }
             if global.has_exception() {
                 return Err(JsError::Thrown);

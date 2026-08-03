@@ -160,6 +160,14 @@ impl SSLConfig {
         }
     }
 
+    /// Whether this config carries both a certificate and a private key (inline
+    /// PEM or file path). A TLS server needs both to complete a handshake.
+    #[inline]
+    pub fn has_server_identity(&self) -> bool {
+        (self.cert.is_some() || !self.cert_file_name.is_null())
+            && (self.key.is_some() || !self.key_file_name.is_null())
+    }
+
     /// Extract the raw `*const SSLConfig` from an optional shared handle for
     /// pointer-equality comparison (interned configs have stable addresses).
     #[inline]
